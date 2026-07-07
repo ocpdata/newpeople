@@ -5,12 +5,17 @@ import { logAuditEvent } from "./audit.js";
 import { query } from "./db.js";
 import {
   AI_PARAMETER_CAPABILITY_KEYS,
+  CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES,
+  CAMPAIGN_MATRIX_PRIORITY_VALUES,
+  CAMPAIGN_MATRIX_SUBTYPE_VALUES,
+  CAMPAIGN_MATRIX_TYPE_VALUES,
   buildCompanyDocumentBranding,
   createInstitutionalAsset,
   addInstitutionalAssetVersion,
   archiveInstitutionalAsset,
   createProposalContentComponent,
   deleteProposalContentComponent,
+  getCampaignMatrixCatalogs,
   getAiParametersConfiguration,
   getCompanyDocumentBranding,
   getCompanyProfile,
@@ -1423,6 +1428,36 @@ const commercialSettingsSchema = z.object({
     .record(z.string(), z.string().max(5000))
     .optional()
     .default({}),
+  campaignMatrixRows: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(80).optional(),
+        campaignType: z.enum(CAMPAIGN_MATRIX_TYPE_VALUES),
+        priority: z.enum(CAMPAIGN_MATRIX_PRIORITY_VALUES),
+        campaignSubtype: z.enum(CAMPAIGN_MATRIX_SUBTYPE_VALUES),
+        emailType: z.enum(CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES),
+        exampleEmail: z.string().max(5000).optional().default(""),
+        operationalRequirement: z.string().max(2000).optional().default(""),
+      }),
+    )
+    .max(300)
+    .superRefine((rows, context) => {
+      const seen = new Set();
+      rows.forEach((row, index) => {
+        const key = `${row.campaignType}::${row.campaignSubtype}`;
+        if (seen.has(key)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "No se permite repetir la combinacion tipo/subtipo",
+            path: [index, "campaignSubtype"],
+          });
+          return;
+        }
+        seen.add(key);
+      });
+    })
+    .optional()
+    .default([]),
 });
 
 router.get(
@@ -1430,7 +1465,7 @@ router.get(
   requirePermission("configuracion.read"),
   async (_req, res) => {
     const settings = await getCommercialSettings();
-    res.json({ settings });
+    res.json({ settings, matrixCatalogs: getCampaignMatrixCatalogs() });
   },
 );
 
@@ -1466,6 +1501,7 @@ router.put(
     res.json({
       message: "Configuracion comercial actualizada correctamente",
       settings,
+      matrixCatalogs: getCampaignMatrixCatalogs(),
     });
   },
 );

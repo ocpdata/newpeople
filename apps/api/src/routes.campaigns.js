@@ -3,6 +3,10 @@ import { z } from "zod";
 import { requireAnyPermission } from "./auth.js";
 import { query, withTransaction } from "./db.js";
 import { ensureCampaignsSchema } from "./campaigns/schema.js";
+import {
+  buildCampaignTypeSubtypePolicy,
+  getCommercialSettings,
+} from "./settings.js";
 
 const router = express.Router();
 
@@ -82,113 +86,6 @@ const COMPATIBILIDAD_NIVEL_VALUES = [
   "bloqueado",
 ];
 
-const CAMPAIGN_TYPE_SUBTYPE_POLICY = {
-  reconocimiento: {
-    permitido: [
-      "redes_sociales_organicas",
-      "redes_sociales_pagadas",
-      "anuncios_display",
-      "correo_masivo",
-    ],
-    permitido_con_aprobacion: ["landing_page", "evento_virtual"],
-  },
-  captacion_de_leads: {
-    permitido: [
-      "landing_page",
-      "anuncios_busqueda",
-      "redes_sociales_pagadas",
-      "webinar",
-    ],
-    permitido_con_aprobacion: ["correo_masivo", "whatsapp"],
-  },
-  nutricion: {
-    permitido: ["correo_automatizado", "webinar", "correo_masivo"],
-    permitido_con_aprobacion: ["landing_page", "encuesta", "whatsapp"],
-  },
-  conversion: {
-    permitido: [
-      "landing_page",
-      "anuncios_busqueda",
-      "whatsapp",
-      "correo_masivo",
-    ],
-    permitido_con_aprobacion: ["webinar", "redes_sociales_pagadas"],
-  },
-  fidelizacion: {
-    permitido: ["correo_automatizado", "whatsapp", "encuesta"],
-    permitido_con_aprobacion: [
-      "correo_masivo",
-      "evento_presencial",
-      "evento_virtual",
-    ],
-  },
-  reactivacion: {
-    permitido: ["correo_masivo", "correo_automatizado", "whatsapp", "sms"],
-    permitido_con_aprobacion: ["encuesta", "landing_page"],
-  },
-  promocion: {
-    permitido: ["correo_masivo", "sms", "whatsapp", "redes_sociales_pagadas"],
-    permitido_con_aprobacion: ["anuncios_busqueda", "landing_page"],
-  },
-  lanzamiento_de_producto: {
-    permitido: [
-      "webinar",
-      "landing_page",
-      "evento_virtual",
-      "evento_presencial",
-    ],
-    permitido_con_aprobacion: [
-      "correo_masivo",
-      "redes_sociales_pagadas",
-      "anuncios_display",
-    ],
-  },
-  upsell: {
-    permitido: ["correo_automatizado", "whatsapp", "landing_page"],
-    permitido_con_aprobacion: ["correo_masivo", "webinar"],
-  },
-  cross_sell: {
-    permitido: [
-      "correo_automatizado",
-      "correo_masivo",
-      "landing_page",
-      "whatsapp",
-    ],
-    permitido_con_aprobacion: ["webinar", "redes_sociales_pagadas"],
-  },
-  evento: {
-    permitido: [
-      "evento_presencial",
-      "evento_virtual",
-      "webinar",
-      "landing_page",
-    ],
-    permitido_con_aprobacion: ["correo_masivo", "whatsapp", "sms"],
-  },
-  referidos: {
-    permitido: [
-      "programa_de_referidos",
-      "landing_page",
-      "correo_masivo",
-      "whatsapp",
-    ],
-    permitido_con_aprobacion: ["redes_sociales_organicas", "evento_virtual"],
-  },
-  educacion: {
-    permitido: [
-      "webinar",
-      "landing_page",
-      "correo_automatizado",
-      "correo_masivo",
-    ],
-    permitido_con_aprobacion: [
-      "evento_virtual",
-      "encuesta",
-      "redes_sociales_organicas",
-    ],
-  },
-};
-
 const campaignUpsertSchema = z.object({
   name: z.string().trim().min(2).max(180),
   description: z.string().trim().max(10000).optional().nullable(),
@@ -241,17 +138,11 @@ const upsertCampaignAccountSchema = accountInteractionInputSchema.omit({
 });
 
 const campaignEmailGuideUpsertSchema = z.object({
-  campaign_email_guide: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .nullable(),
+  campaign_email_guide: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
 const campaignEmailDraftUpsertSchema = z.object({
-  campaign_email_draft: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .nullable(),
+  campaign_email_draft: z.record(z.string(), z.unknown()).optional().nullable(),
 });
 
 function toDateOrNull(value) {
@@ -331,10 +222,14 @@ function mapCampaignRow(row) {
   };
 }
 
-function evaluateCampaignSubtypeCompatibility(tipoCampana, subtipoCampana) {
+function evaluateCampaignSubtypeCompatibility(
+  tipoCampana,
+  subtipoCampana,
+  policyByType = {},
+) {
   const tipo = String(tipoCampana || "").trim();
   const subtipo = String(subtipoCampana || "").trim();
-  const policy = CAMPAIGN_TYPE_SUBTYPE_POLICY[tipo];
+  const policy = policyByType?.[tipo];
 
   if (!policy) {
     return {
@@ -356,8 +251,20 @@ function evaluateCampaignSubtypeCompatibility(tipoCampana, subtipoCampana) {
 
   return {
     nivel: "bloqueado",
-    motivo: "Combinacion bloqueada por politica de compatibilidad",
+    motivo: "Combinacion bloqueada por matriz de configuracion",
   };
+}
+
+async function getResolvedCampaignSubtypePolicy() {
+  try {
+    const commercialSettings = await getCommercialSettings();
+    return buildCampaignTypeSubtypePolicy(
+      commercialSettings?.campaignMatrixRows,
+    );
+  } catch {
+    // Fall back to default matrix-derived policy when settings are unavailable.
+    return buildCampaignTypeSubtypePolicy([]);
+  }
 }
 
 function resolveCompatibilityApproval({ payload, compatibilidad }) {
@@ -799,6 +706,8 @@ router.get(
   "/catalogs",
   requireAnyPermission(CAMPAIGN_READ_PERMISSIONS),
   async (_req, res) => {
+    const resolvedPolicy = await getResolvedCampaignSubtypePolicy();
+    const commercialSettings = await getCommercialSettings().catch(() => null);
     const accountTypeRows = await query(
       `SELECT name
        FROM account_types
@@ -817,8 +726,9 @@ router.get(
         .filter(Boolean),
       compatibilidad_tipo_subtipo: {
         niveles: COMPATIBILIDAD_NIVEL_VALUES,
-        por_tipo: CAMPAIGN_TYPE_SUBTYPE_POLICY,
+        por_tipo: resolvedPolicy,
       },
+      campaign_matrix_rows: commercialSettings?.campaignMatrixRows || [],
     });
   },
 );
@@ -992,9 +902,11 @@ router.post(
     }
 
     const payload = parsed.data;
+    const resolvedPolicy = await getResolvedCampaignSubtypePolicy();
     const compatibilidad = evaluateCampaignSubtypeCompatibility(
       payload.tipo_campana,
       payload.subtipo_campana,
+      resolvedPolicy,
     );
     const approvalDecision = resolveCompatibilityApproval({
       payload,
@@ -1204,9 +1116,11 @@ router.patch(
     }
 
     const payload = parsed.data;
+    const resolvedPolicy = await getResolvedCampaignSubtypePolicy();
     const compatibilidad = evaluateCampaignSubtypeCompatibility(
       payload.tipo_campana,
       payload.subtipo_campana,
+      resolvedPolicy,
     );
     const approvalDecision = resolveCompatibilityApproval({
       payload,

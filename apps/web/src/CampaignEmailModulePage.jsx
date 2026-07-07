@@ -1406,24 +1406,28 @@ function normalizeCampaignEmailDraftFromDb(rawDraft, campaign) {
 
   return {
     ...base,
-    send_type: String(rawDraft.send_type || base.send_type).trim() || base.send_type,
+    send_type:
+      String(rawDraft.send_type || base.send_type).trim() || base.send_type,
     status: String(rawDraft.status || base.status).trim() || base.status,
     subject: String(rawDraft.subject || base.subject).trim(),
     preheader: "",
     cta_label: String(rawDraft.cta_label || base.cta_label).trim(),
     cta_url: String(rawDraft.cta_url || base.cta_url).trim(),
     html_content:
-      String(rawDraft.html_content || base.html_content).trim() || base.html_content,
+      String(rawDraft.html_content || base.html_content).trim() ||
+      base.html_content,
     scheduled_at: toDateInputValue(rawDraft.scheduled_at || base.scheduled_at),
-    batch_size: String(rawDraft.batch_size || base.batch_size).trim() || base.batch_size,
+    batch_size:
+      String(rawDraft.batch_size || base.batch_size).trim() || base.batch_size,
     max_sends_per_hour:
       String(rawDraft.max_sends_per_hour || base.max_sends_per_hour).trim() ||
       base.max_sends_per_hour,
     max_sends_per_day:
       String(rawDraft.max_sends_per_day || base.max_sends_per_day).trim() ||
       base.max_sends_per_day,
-    test_recipients:
-      String(rawDraft.test_recipients || base.test_recipients).trim(),
+    test_recipients: String(
+      rawDraft.test_recipients || base.test_recipients,
+    ).trim(),
     shared_document: {
       ...createDefaultSharedDocumentDraft(),
       ...(sharedDocumentRaw && typeof sharedDocumentRaw === "object"
@@ -2125,13 +2129,13 @@ function hasCampaignGuideContent(guide) {
   const analysis = normalizeCampaignGuideAnalysis(guide);
   return Boolean(
     String(analysis.summary || "").trim() ||
-      String(analysis.reason || "").trim() ||
-      String(analysis.context?.campaign || "").trim() ||
-      String(analysis.context?.objective || "").trim() ||
-      String(analysis.audience?.primary || "").trim() ||
-      String(analysis.example?.subject || "").trim() ||
-      (Array.isArray(analysis.recommendedResources) &&
-        analysis.recommendedResources.length > 0),
+    String(analysis.reason || "").trim() ||
+    String(analysis.context?.campaign || "").trim() ||
+    String(analysis.context?.objective || "").trim() ||
+    String(analysis.audience?.primary || "").trim() ||
+    String(analysis.example?.subject || "").trim() ||
+    (Array.isArray(analysis.recommendedResources) &&
+      analysis.recommendedResources.length > 0),
   );
 }
 
@@ -3016,6 +3020,37 @@ export default function CampaignEmailModulePage() {
           campaignGoalText || String(selectedCampaign.description || "").trim(),
       };
 
+      let campaignMatrixRows = [];
+      try {
+        const catalogsRes = await api.get("/api/campaigns/catalogs");
+        campaignMatrixRows = Array.isArray(
+          catalogsRes?.data?.campaign_matrix_rows,
+        )
+          ? catalogsRes.data.campaign_matrix_rows
+          : [];
+      } catch {
+        campaignMatrixRows = [];
+      }
+
+      const configuredMatrixRow = campaignMatrixRows.find(
+        (row) =>
+          String(row?.campaignType || "").trim() === campaignSnapshot.type &&
+          String(row?.campaignSubtype || "").trim() ===
+            campaignSnapshot.subtype,
+      );
+      const configuredEmailType = String(
+        configuredMatrixRow?.emailType || "",
+      ).trim();
+      const configuredPriority = String(
+        configuredMatrixRow?.priority || "",
+      ).trim();
+      const configuredOperationalRequirement = String(
+        configuredMatrixRow?.operationalRequirement || "",
+      ).trim();
+      const configuredExampleEmail = String(
+        configuredMatrixRow?.exampleEmail || "",
+      ).trim();
+
       const campaignContextExamplesText = (() => {
         if (typeof window === "undefined") return "";
         const campaignId = Number(selectedCampaign.id || 0);
@@ -3135,7 +3170,7 @@ export default function CampaignEmailModulePage() {
       }
 
       const guideSchemaExample =
-        '{"tipo_campana":"...","subtipo_campana":"...","contexto":{"campana":"...","objetivo_operativo":"...","entrega":"...","lectura_combinada":"..."},"objetivo":{"que_busca":"...","resultado_esperado":"...","senal_de_exito":"...","siguiente_paso":"..."},"a_quien_debe_ir_dirigido":{"primaria":"...","secundaria":"...","exclusion":"..."},"ejemplo_sugerido":{"subject":"...","apertura":"...","mensaje_central":"...","prueba_confianza":"...","siguiente_paso":"...","cierre":"...","cta":"..."},"recursos_necesarios":["..."]}';
+        '{"tipo_campana":"...","subtipo_campana":"...","tipo_correo_recomendado":"...","tipo_correo_razon":"...","contexto":{"campana":"...","objetivo_operativo":"...","entrega":"...","lectura_combinada":"..."},"objetivo":{"que_busca":"...","resultado_esperado":"...","senal_de_exito":"...","siguiente_paso":"..."},"a_quien_debe_ir_dirigido":{"primaria":"...","secundaria":"...","exclusion":"..."},"ejemplo_sugerido":{"subject":"...","apertura":"...","mensaje_central":"...","prueba_confianza":"...","siguiente_paso":"...","cierre":"...","cta":"..."},"recursos_necesarios":["..."]}';
 
       const waitForJobCompletion = async ({
         targetJobId,
@@ -3196,9 +3231,14 @@ export default function CampaignEmailModulePage() {
           "No hagas preguntas, no pidas confirmaciones y no solicites mas contexto.",
           "Si falta informacion, infierela de forma prudente y completa todos los campos del JSON.",
           `Contexto y ejemplos de la campaña (obligatorio usar): ${trimForPrompt(campaignContextExamplesText, 1800) || "(sin contexto y ejemplos registrados)"}`,
+          `Fila de matriz vigente (si aplica): tipo=${campaignSnapshot.type} | subtipo=${campaignSnapshot.subtype} | prioridad=${configuredPriority || "(no definida)"} | tipo_correo=${configuredEmailType || "(no definido)"} | requisito_operativo=${trimForPrompt(configuredOperationalRequirement, 280) || "(no definido)"}`,
+          `Ejemplo de correo de la matriz (si aplica): ${trimForPrompt(configuredExampleEmail, 420) || "(no definido)"}`,
+          configuredEmailType
+            ? `Debes usar obligatoriamente tipo_correo_recomendado="${configuredEmailType}" y justificarlo en tipo_correo_razon.`
+            : "Si no existe tipo de correo configurado en matriz para esta combinación, infiere uno prudente y justificalo.",
           `Usa EXACTAMENTE estos valores en el JSON: tipo_campana=\"${String(campaignSnapshot.type || "").trim()}\" y subtipo_campana=\"${String(campaignSnapshot.subtype || "").trim()}\".`,
           "No reemplaces subtipo_campana por tipo de correo ni por etiquetas alternativas.",
-          "Debes devolver SI o SI estas 5 secciones con estos nombres exactos: contexto, objetivo, a_quien_debe_ir_dirigido, ejemplo_sugerido, recursos_necesarios.",
+          "Debes devolver SI o SI estas secciones con estos nombres exactos: tipo_campana, subtipo_campana, tipo_correo_recomendado, tipo_correo_razon, contexto, objetivo, a_quien_debe_ir_dirigido, ejemplo_sugerido, recursos_necesarios.",
           `Motivo de recuperacion: ${String(reasonLabel || "sin detalle")}`,
           `Usa exactamente esta estructura: ${guideSchemaExample}`,
         ].join("\n\n");
@@ -3260,11 +3300,16 @@ export default function CampaignEmailModulePage() {
         `Tipo/Subtipo: ${formatLabel(campaignSnapshot.type)} / ${formatLabel(campaignSnapshot.subtype)}`,
         `Qué quieres lograr con la campaña: ${trimForPrompt(campaignSnapshot.goalText, 700) || "(sin texto registrado)"}`,
         `Contexto y ejemplos de la campaña (obligatorio usar): ${trimForPrompt(campaignContextExamplesText, 1800) || "(sin contexto y ejemplos registrados)"}`,
+        `Fila de matriz vigente (si aplica): tipo=${campaignSnapshot.type} | subtipo=${campaignSnapshot.subtype} | prioridad=${configuredPriority || "(no definida)"} | tipo_correo=${configuredEmailType || "(no definido)"} | requisito_operativo=${trimForPrompt(configuredOperationalRequirement, 280) || "(no definido)"}`,
+        `Ejemplo de correo de la matriz (si aplica): ${trimForPrompt(configuredExampleEmail, 420) || "(no definido)"}`,
+        configuredEmailType
+          ? `Debes usar obligatoriamente tipo_correo_recomendado="${configuredEmailType}" y justificarlo en tipo_correo_razon.`
+          : "Si no existe tipo de correo configurado en matriz para esta combinación, infiere uno prudente y justificalo.",
         "Debes reflejar explicitamente ese objetivo en contexto, objetivo y ejemplo_sugerido.",
         "Usa SOLO el nombre de campaña y la combinacion tipo/subtipo recibida.",
         "NO uses contexto de la guia del correo ni textos base de guia para razonar o completar contenido.",
         "No uses datos del borrador actual (asunto, CTA, html), ni audiencia/dispatch reales del sistema como fuente de verdad.",
-        "Debes devolver obligatoriamente SOLO estas 5 secciones con estos nombres exactos: contexto, objetivo, a_quien_debe_ir_dirigido, ejemplo_sugerido, recursos_necesarios.",
+        "Debes devolver obligatoriamente SOLO estas secciones con estos nombres exactos: tipo_campana, subtipo_campana, tipo_correo_recomendado, tipo_correo_razon, contexto, objetivo, a_quien_debe_ir_dirigido, ejemplo_sugerido, recursos_necesarios.",
         "No uses claves alternativas para esas secciones.",
         "En ejemplo_sugerido debes incluir: subject, apertura, mensaje_central, prueba_confianza, siguiente_paso, cierre, cta.",
         "No hagas preguntas ni pidas confirmaciones; entrega directamente la guia en JSON.",
@@ -3308,6 +3353,25 @@ export default function CampaignEmailModulePage() {
       }
 
       const normalizedGuideAnalysis = normalizeCampaignGuideAnalysis(parsed);
+      if (configuredEmailType) {
+        const normalizedExpectedType =
+          normalizeComparableText(configuredEmailType);
+        const normalizedRecommendedType = normalizeComparableText(
+          normalizedGuideAnalysis?.recommendedEmailType || "",
+        );
+
+        if (!normalizedRecommendedType) {
+          throw new Error(
+            "La IA no devolvio tipo_correo_recomendado pese a existir configuracion en matriz",
+          );
+        }
+
+        if (normalizedRecommendedType !== normalizedExpectedType) {
+          throw new Error(
+            "La IA devolvio un tipo de correo distinto al configurado en la matriz",
+          );
+        }
+      }
       setCampaignGuideAnalysis(normalizedGuideAnalysis);
       setCampaignGuideAnalysisNote(
         "Guia generada con la respuesta directa de la IA.",
@@ -3334,10 +3398,13 @@ export default function CampaignEmailModulePage() {
     campaignGuideAnalysisRequestRef.current += 1;
     const key = String(selectedCampaign?.id || "").trim();
     const persistedDbGuide =
-      selectedCampaign && hasCampaignGuideContent(selectedCampaign.campaign_email_guide)
+      selectedCampaign &&
+      hasCampaignGuideContent(selectedCampaign.campaign_email_guide)
         ? normalizeCampaignGuideAnalysis(selectedCampaign.campaign_email_guide)
         : null;
-    const storedLocalGuide = key ? guideAnalysesByCampaignId[key] || null : null;
+    const storedLocalGuide = key
+      ? guideAnalysesByCampaignId[key] || null
+      : null;
     const nextGuide = persistedDbGuide || storedLocalGuide || null;
 
     setCampaignGuideAnalysis(nextGuide);
@@ -3763,7 +3830,10 @@ export default function CampaignEmailModulePage() {
     const suggestedSendType = String(guide?.suggestedEmailType || "").trim();
 
     const patch = {};
-    if (suggestedSubject && (force || !String(currentDraft.subject || "").trim())) {
+    if (
+      suggestedSubject &&
+      (force || !String(currentDraft.subject || "").trim())
+    ) {
       patch.subject = suggestedSubject;
     }
     if (
@@ -3772,7 +3842,10 @@ export default function CampaignEmailModulePage() {
     ) {
       patch.preheader = suggestedPreheader;
     }
-    if (suggestedCta && (force || !String(currentDraft.cta_label || "").trim())) {
+    if (
+      suggestedCta &&
+      (force || !String(currentDraft.cta_label || "").trim())
+    ) {
       patch.cta_label = suggestedCta;
     }
     if (EMAIL_SEND_TYPE_VALUES.includes(suggestedSendType)) {
@@ -4884,9 +4957,13 @@ export default function CampaignEmailModulePage() {
                             type="button"
                             className="campaign-email-guide-ai-button"
                             onClick={handleSaveGuide}
-                            disabled={isAnalyzingCampaignGuide || isSavingCampaignGuide}
+                            disabled={
+                              isAnalyzingCampaignGuide || isSavingCampaignGuide
+                            }
                           >
-                            {isSavingCampaignGuide ? "Guardando guia..." : "Guardar guia"}
+                            {isSavingCampaignGuide
+                              ? "Guardando guia..."
+                              : "Guardar guia"}
                           </button>
                           {campaignGuidance ? (
                             <span
@@ -5177,566 +5254,594 @@ export default function CampaignEmailModulePage() {
                   <>
                     <div className="campaign-email-editor-layout">
                       <div className="campaign-email-content-grid">
-                      <div className="campaign-email-editor-setup-grid campaign-email-field-wide">
-                        <label className="campaign-email-editor-field">
-                          Asunto
-                          <input
-                            value={currentDraft.subject}
-                            onChange={(event) =>
-                              updateDraft({ subject: event.target.value })
-                            }
-                            placeholder="Asunto del correo"
-                          />
-                        </label>
-                        <label className="campaign-email-editor-field">
-                          Tipo de correo
-                          <select
-                            value={currentDraft.send_type}
-                            onChange={(event) =>
-                              updateDraft({ send_type: event.target.value })
-                            }
-                          >
-                            <option value="correo_masivo">
-                              {`Correo masivo - ${EMAIL_TYPE_DESCRIPTIONS.correo_masivo}`}
-                            </option>
-                            <option value="secuencia">
-                              {`Secuencia - ${EMAIL_TYPE_DESCRIPTIONS.secuencia}`}
-                            </option>
-                            <option value="recordatorio">
-                              {`Recordatorio - ${EMAIL_TYPE_DESCRIPTIONS.recordatorio}`}
-                            </option>
-                            <option value="seguimiento">
-                              {`Seguimiento - ${EMAIL_TYPE_DESCRIPTIONS.seguimiento}`}
-                            </option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <div className="campaign-email-cta-section campaign-email-field-wide">
-                        <div className="campaign-email-editor-field campaign-email-editor-field-wide campaign-email-cta-mode-card">
-                          <span className="campaign-email-editor-field-title">
-                            Destino del CTA principal
-                          </span>
-                          <span className="campaign-email-editor-field-caption">
-                            Elige si el CTA principal llevará a una landing o a
-                            una descarga de documento.
-                          </span>
-                          <div className="campaign-email-cta-mode-buttons">
-                            <button
-                              type="button"
-                              className={`campaign-email-cta-mode-button ${
-                                ctaDestinationMode === "landing"
-                                  ? "is-active"
-                                  : ""
-                              }`}
-                              onClick={() => {
-                                setCtaDestinationMode("landing");
-                                updateSharedDocumentDraft({
-                                  useAsPrimaryCta: false,
-                                });
-                              }}
+                        <div className="campaign-email-editor-setup-grid campaign-email-field-wide">
+                          <label className="campaign-email-editor-field">
+                            Asunto
+                            <input
+                              value={currentDraft.subject}
+                              onChange={(event) =>
+                                updateDraft({ subject: event.target.value })
+                              }
+                              placeholder="Asunto del correo"
+                            />
+                          </label>
+                          <label className="campaign-email-editor-field">
+                            Tipo de correo
+                            <select
+                              value={currentDraft.send_type}
+                              onChange={(event) =>
+                                updateDraft({ send_type: event.target.value })
+                              }
                             >
-                              Landing
-                            </button>
-                            <button
-                              type="button"
-                              className={`campaign-email-cta-mode-button ${
-                                ctaDestinationMode === "download"
-                                  ? "is-active"
-                                  : ""
-                              }`}
-                              onClick={() => {
-                                setCtaDestinationMode("download");
-                                updateSharedDocumentDraft({
-                                  useAsPrimaryCta: true,
-                                });
-                              }}
-                            >
-                              Descarga
-                            </button>
-                          </div>
+                              <option value="correo_masivo">
+                                {`Correo masivo - ${EMAIL_TYPE_DESCRIPTIONS.correo_masivo}`}
+                              </option>
+                              <option value="secuencia">
+                                {`Secuencia - ${EMAIL_TYPE_DESCRIPTIONS.secuencia}`}
+                              </option>
+                              <option value="recordatorio">
+                                {`Recordatorio - ${EMAIL_TYPE_DESCRIPTIONS.recordatorio}`}
+                              </option>
+                              <option value="seguimiento">
+                                {`Seguimiento - ${EMAIL_TYPE_DESCRIPTIONS.seguimiento}`}
+                              </option>
+                            </select>
+                          </label>
                         </div>
 
-                        {ctaDestinationMode === "landing" ? (
-                          <div className="campaign-email-cta-config-card">
-                          <label className="campaign-email-editor-field campaign-email-editor-field-stack">
+                        <div className="campaign-email-cta-section campaign-email-field-wide">
+                          <div className="campaign-email-editor-field campaign-email-editor-field-wide campaign-email-cta-mode-card">
                             <span className="campaign-email-editor-field-title">
-                              CTA principal
+                              Destino del CTA principal
                             </span>
                             <span className="campaign-email-editor-field-caption">
-                              Define el texto del boton principal y usa una
-                              sugerencia rapida cuando aplique.
+                              Elige si el CTA principal llevará a una landing o
+                              a una descarga de documento.
                             </span>
-                            <div className="campaign-email-editor-input-stack">
-                              <span className="campaign-email-editor-input-label">
-                                Sugerencias
-                              </span>
-                              <select
-                                value={selectedCtaSuggestionValue}
-                                onChange={(event) => {
-                                  const value = String(
-                                    event.target.value || "",
-                                  ).trim();
-                                  if (value) {
-                                    updateDraft({ cta_label: value });
-                                  }
+                            <div className="campaign-email-cta-mode-buttons">
+                              <button
+                                type="button"
+                                className={`campaign-email-cta-mode-button ${
+                                  ctaDestinationMode === "landing"
+                                    ? "is-active"
+                                    : ""
+                                }`}
+                                onClick={() => {
+                                  setCtaDestinationMode("landing");
+                                  updateSharedDocumentDraft({
+                                    useAsPrimaryCta: false,
+                                  });
                                 }}
                               >
-                                <option value="">Seleccionar sugerencia...</option>
-                                {CTA_SUGGESTIONS.map((option) => (
-                                  <option key={option} value={option}>
-                                    {option}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="campaign-email-editor-input-stack">
-                              <span className="campaign-email-editor-input-label">
-                                Texto final
-                              </span>
-                              <input
-                                value={currentDraft.cta_label}
-                                onChange={(event) =>
-                                  updateDraft({ cta_label: event.target.value })
-                                }
-                                placeholder="Ej. Registrarme"
-                              />
-                            </div>
-                            <div className="campaign-email-editor-input-stack">
-                              <span className="campaign-email-editor-input-label">
-                                URL final
-                              </span>
-                              <input
-                                value={currentDraft.cta_url}
-                                onChange={(event) =>
-                                  updateDraft({ cta_url: event.target.value })
-                                }
-                                placeholder="https://..."
-                              />
-                            </div>
-                          </label>
-
-                          <label className="campaign-email-editor-field campaign-email-editor-field-stack">
-                            <span className="campaign-email-editor-field-title">
-                              URL CTA
-                            </span>
-                            <span className="campaign-email-editor-field-caption">
-                              Selecciona una landing existente o pega la URL
-                              final de destino.
-                            </span>
-                            <div className="campaign-email-editor-input-stack">
-                              <span className="campaign-email-editor-input-label">
-                                Landings relacionadas
-                              </span>
-                              <select
-                                value=""
-                                onChange={(event) => {
-                                  const value = String(
-                                    event.target.value || "",
-                                  ).trim();
-                                  if (value) {
-                                    updateDraft({ cta_url: value });
-                                  }
+                                Landing
+                              </button>
+                              <button
+                                type="button"
+                                className={`campaign-email-cta-mode-button ${
+                                  ctaDestinationMode === "download"
+                                    ? "is-active"
+                                    : ""
+                                }`}
+                                onClick={() => {
+                                  setCtaDestinationMode("download");
+                                  updateSharedDocumentDraft({
+                                    useAsPrimaryCta: true,
+                                  });
                                 }}
                               >
-                                <option value="">
-                                  Seleccionar landing creada...
-                                </option>
-                                {visibleLandingUrlSuggestions.length > 0 ? (
-                                  visibleLandingUrlSuggestions.map((entry) => (
-                                    <option key={entry.url} value={entry.url}>
-                                      {`${entry.eventName || "Landing"} (${entry.slug})`}
-                                    </option>
-                                  ))
-                                ) : (
-                                  <option value="" disabled>
-                                    No hay landings relacionadas para esta campaña
-                                  </option>
-                                )}
-                              </select>
+                                Descarga
+                              </button>
                             </div>
-                          </label>
                           </div>
-                        ) : null}
 
-                        {ctaDestinationMode === "download" ? (
-                          <div className="campaign-email-shared-doc-card">
-                            <div className="campaign-email-shared-doc-head">
-                              <div>
-                                <strong>Documento para descargar</strong>
-                                <span>
-                                  Comparte un archivo local o un recurso de
-                                  biblioteca mediante enlace seguro y rastreable.
+                          {ctaDestinationMode === "landing" ? (
+                            <div className="campaign-email-cta-config-card">
+                              <label className="campaign-email-editor-field campaign-email-editor-field-stack">
+                                <span className="campaign-email-editor-field-title">
+                                  CTA principal
                                 </span>
-                              </div>
-                            </div>
-
-                            <div className="campaign-email-content-grid">
-                              <label>
-                                Origen del documento
-                                <select
-                                  value={currentSharedDocument.sourceMode}
-                                  onChange={(event) => {
-                                    updateSharedDocumentDraft({
-                                      sourceMode: event.target.value,
-                                      previewUrl: "",
-                                      previewExpiresAt: null,
-                                    });
-                                    setSharedLibraryResults([]);
-                                  }}
-                                >
-                                  <option value="library_file">Biblioteca</option>
-                                  <option value="local_upload">
-                                    Archivo local
-                                  </option>
-                                </select>
-                              </label>
-
-                              <label>
-                                Nombre visible del documento
-                                <input
-                                  value={currentSharedDocument.title}
-                                  onChange={(event) =>
-                                    updateSharedDocumentDraft({
-                                      title: event.target.value,
-                                    })
-                                  }
-                                  placeholder="Ej. Propuesta comercial"
-                                />
-                              </label>
-
-                              <label className="campaign-email-field-wide">
-                                Descripción interna
-                                <textarea
-                                  rows={2}
-                                  value={currentSharedDocument.description}
-                                  onChange={(event) =>
-                                    updateSharedDocumentDraft({
-                                      description: event.target.value,
-                                    })
-                                  }
-                                  placeholder="Notas internas para este documento compartido"
-                                />
-                              </label>
-
-                              {currentSharedDocument.sourceMode ===
-                              "local_upload" ? (
-                                <label className="campaign-email-field-wide">
-                                  Subir archivo local
-                                  <input
-                                    type="file"
+                                <span className="campaign-email-editor-field-caption">
+                                  Define el texto del boton principal y usa una
+                                  sugerencia rapida cuando aplique.
+                                </span>
+                                <div className="campaign-email-editor-input-stack">
+                                  <span className="campaign-email-editor-input-label">
+                                    Sugerencias
+                                  </span>
+                                  <select
+                                    value={selectedCtaSuggestionValue}
                                     onChange={(event) => {
-                                      void handleUploadLocalSharedDocument(
-                                        event.target.files?.[0] || null,
-                                      );
-                                      event.target.value = "";
+                                      const value = String(
+                                        event.target.value || "",
+                                      ).trim();
+                                      if (value) {
+                                        updateDraft({ cta_label: value });
+                                      }
                                     }}
-                                    disabled={isUploadingSharedDocument}
+                                  >
+                                    <option value="">
+                                      Seleccionar sugerencia...
+                                    </option>
+                                    {CTA_SUGGESTIONS.map((option) => (
+                                      <option key={option} value={option}>
+                                        {option}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="campaign-email-editor-input-stack">
+                                  <span className="campaign-email-editor-input-label">
+                                    Texto final
+                                  </span>
+                                  <input
+                                    value={currentDraft.cta_label}
+                                    onChange={(event) =>
+                                      updateDraft({
+                                        cta_label: event.target.value,
+                                      })
+                                    }
+                                    placeholder="Ej. Registrarme"
+                                  />
+                                </div>
+                                <div className="campaign-email-editor-input-stack">
+                                  <span className="campaign-email-editor-input-label">
+                                    URL final
+                                  </span>
+                                  <input
+                                    value={currentDraft.cta_url}
+                                    onChange={(event) =>
+                                      updateDraft({
+                                        cta_url: event.target.value,
+                                      })
+                                    }
+                                    placeholder="https://..."
+                                  />
+                                </div>
+                              </label>
+
+                              <label className="campaign-email-editor-field campaign-email-editor-field-stack">
+                                <span className="campaign-email-editor-field-title">
+                                  URL CTA
+                                </span>
+                                <span className="campaign-email-editor-field-caption">
+                                  Selecciona una landing existente o pega la URL
+                                  final de destino.
+                                </span>
+                                <div className="campaign-email-editor-input-stack">
+                                  <span className="campaign-email-editor-input-label">
+                                    Landings relacionadas
+                                  </span>
+                                  <select
+                                    value=""
+                                    onChange={(event) => {
+                                      const value = String(
+                                        event.target.value || "",
+                                      ).trim();
+                                      if (value) {
+                                        updateDraft({ cta_url: value });
+                                      }
+                                    }}
+                                  >
+                                    <option value="">
+                                      Seleccionar landing creada...
+                                    </option>
+                                    {visibleLandingUrlSuggestions.length > 0 ? (
+                                      visibleLandingUrlSuggestions.map(
+                                        (entry) => (
+                                          <option
+                                            key={entry.url}
+                                            value={entry.url}
+                                          >
+                                            {`${entry.eventName || "Landing"} (${entry.slug})`}
+                                          </option>
+                                        ),
+                                      )
+                                    ) : (
+                                      <option value="" disabled>
+                                        No hay landings relacionadas para esta
+                                        campaña
+                                      </option>
+                                    )}
+                                  </select>
+                                </div>
+                              </label>
+                            </div>
+                          ) : null}
+
+                          {ctaDestinationMode === "download" ? (
+                            <div className="campaign-email-shared-doc-card">
+                              <div className="campaign-email-shared-doc-head">
+                                <div>
+                                  <strong>Documento para descargar</strong>
+                                  <span>
+                                    Comparte un archivo local o un recurso de
+                                    biblioteca mediante enlace seguro y
+                                    rastreable.
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="campaign-email-content-grid">
+                                <label>
+                                  Origen del documento
+                                  <select
+                                    value={currentSharedDocument.sourceMode}
+                                    onChange={(event) => {
+                                      updateSharedDocumentDraft({
+                                        sourceMode: event.target.value,
+                                        previewUrl: "",
+                                        previewExpiresAt: null,
+                                      });
+                                      setSharedLibraryResults([]);
+                                    }}
+                                  >
+                                    <option value="library_file">
+                                      Biblioteca
+                                    </option>
+                                    <option value="local_upload">
+                                      Archivo local
+                                    </option>
+                                  </select>
+                                </label>
+
+                                <label>
+                                  Nombre visible del documento
+                                  <input
+                                    value={currentSharedDocument.title}
+                                    onChange={(event) =>
+                                      updateSharedDocumentDraft({
+                                        title: event.target.value,
+                                      })
+                                    }
+                                    placeholder="Ej. Propuesta comercial"
+                                  />
+                                </label>
+
+                                <label className="campaign-email-field-wide">
+                                  Descripción interna
+                                  <textarea
+                                    rows={2}
+                                    value={currentSharedDocument.description}
+                                    onChange={(event) =>
+                                      updateSharedDocumentDraft({
+                                        description: event.target.value,
+                                      })
+                                    }
+                                    placeholder="Notas internas para este documento compartido"
+                                  />
+                                </label>
+
+                                {currentSharedDocument.sourceMode ===
+                                "local_upload" ? (
+                                  <label className="campaign-email-field-wide">
+                                    Subir archivo local
+                                    <input
+                                      type="file"
+                                      onChange={(event) => {
+                                        void handleUploadLocalSharedDocument(
+                                          event.target.files?.[0] || null,
+                                        );
+                                        event.target.value = "";
+                                      }}
+                                      disabled={isUploadingSharedDocument}
+                                    />
+                                    <small className="campaign-email-field-help">
+                                      {isUploadingSharedDocument
+                                        ? "Cargando archivo compartido..."
+                                        : "Se persistirá como documento compartible de esta campaña."}
+                                    </small>
+                                  </label>
+                                ) : (
+                                  <div className="campaign-email-field-wide campaign-email-library-picker">
+                                    <form
+                                      className="campaign-email-library-search-row"
+                                      onSubmit={handleSearchSharedLibrary}
+                                    >
+                                      <label>
+                                        Buscar en biblioteca
+                                        <input
+                                          value={sharedLibraryQuery}
+                                          onChange={(event) =>
+                                            setSharedLibraryQuery(
+                                              event.target.value,
+                                            )
+                                          }
+                                          placeholder="Buscar por nombre o resumen"
+                                        />
+                                      </label>
+                                      <button
+                                        type="submit"
+                                        className="campaign-email-test-send-inline"
+                                        disabled={isLoadingSharedLibrary}
+                                      >
+                                        {isLoadingSharedLibrary
+                                          ? "Buscando..."
+                                          : "Buscar"}
+                                      </button>
+                                    </form>
+
+                                    {sharedLibraryResults.length > 0 ? (
+                                      <div className="campaign-email-library-results">
+                                        {sharedLibraryResults.map((item) => (
+                                          <article
+                                            key={`${item.assetPublicId}-${item.filePublicId}`}
+                                            className="campaign-email-library-item"
+                                          >
+                                            <div>
+                                              <strong>
+                                                {item.title || item.fileName}
+                                              </strong>
+                                              <p>{item.fileName}</p>
+                                              <small>
+                                                {item.summary ||
+                                                  "Sin resumen disponible"}
+                                              </small>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              className="campaign-email-ai-action campaign-email-ai-action-secondary"
+                                              onClick={() => {
+                                                void handleSelectLibraryDocument(
+                                                  item,
+                                                );
+                                              }}
+                                            >
+                                              Seleccionar
+                                            </button>
+                                          </article>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                )}
+
+                                <label>
+                                  Tipo de enlace
+                                  <select
+                                    value={currentSharedDocument.linkMode}
+                                    onChange={(event) =>
+                                      updateSharedDocumentDraft({
+                                        linkMode: event.target.value,
+                                      })
+                                    }
+                                  >
+                                    <option value="per_recipient">
+                                      Enlace único por destinatario
+                                    </option>
+                                    <option value="general">
+                                      Un enlace general para toda la campaña
+                                    </option>
+                                  </select>
+                                </label>
+
+                                <label>
+                                  Vigencia del enlace (días)
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="365"
+                                    value={currentSharedDocument.expiresDays}
+                                    onChange={(event) =>
+                                      updateSharedDocumentDraft({
+                                        expiresDays: event.target.value,
+                                      })
+                                    }
+                                  />
+                                </label>
+
+                                <label>
+                                  Texto del enlace / CTA
+                                  <input
+                                    value={currentSharedDocument.linkLabel}
+                                    onChange={(event) =>
+                                      updateSharedDocumentDraft({
+                                        linkLabel: event.target.value,
+                                      })
+                                    }
+                                    placeholder="Ej. Descargar propuesta"
+                                  />
+                                </label>
+
+                                <label>
+                                  URL del CTA principal
+                                  <input
+                                    value={currentDraft.cta_url}
+                                    onChange={(event) =>
+                                      updateDraft({
+                                        cta_url: event.target.value,
+                                      })
+                                    }
+                                    placeholder="https://..."
                                   />
                                   <small className="campaign-email-field-help">
-                                    {isUploadingSharedDocument
-                                      ? "Cargando archivo compartido..."
-                                      : "Se persistirá como documento compartible de esta campaña."}
+                                    Si el enlace del documento se usa como CTA
+                                    principal, esta URL se toma como respaldo.
                                   </small>
                                 </label>
-                              ) : (
-                                <div className="campaign-email-field-wide campaign-email-library-picker">
-                                  <form
-                                    className="campaign-email-library-search-row"
-                                    onSubmit={handleSearchSharedLibrary}
+
+                                <label>
+                                  Uso del enlace
+                                  <select
+                                    value={
+                                      currentSharedDocument.useAsPrimaryCta
+                                        ? "yes"
+                                        : "no"
+                                    }
+                                    onChange={(event) =>
+                                      updateSharedDocumentDraft({
+                                        useAsPrimaryCta:
+                                          event.target.value === "yes",
+                                      })
+                                    }
                                   >
-                                    <label>
-                                      Buscar en biblioteca
-                                      <input
-                                        value={sharedLibraryQuery}
-                                        onChange={(event) =>
-                                          setSharedLibraryQuery(event.target.value)
-                                        }
-                                        placeholder="Buscar por nombre o resumen"
-                                      />
-                                    </label>
-                                    <button
-                                      type="submit"
-                                      className="campaign-email-test-send-inline"
-                                      disabled={isLoadingSharedLibrary}
-                                    >
-                                      {isLoadingSharedLibrary
-                                        ? "Buscando..."
-                                        : "Buscar"}
-                                    </button>
-                                  </form>
+                                    <option value="yes">
+                                      Usar como CTA principal
+                                    </option>
+                                    <option value="no">
+                                      Solo generar y copiar
+                                    </option>
+                                  </select>
+                                </label>
 
-                                  {sharedLibraryResults.length > 0 ? (
-                                    <div className="campaign-email-library-results">
-                                      {sharedLibraryResults.map((item) => (
-                                        <article
-                                          key={`${item.assetPublicId}-${item.filePublicId}`}
-                                          className="campaign-email-library-item"
-                                        >
-                                          <div>
-                                            <strong>
-                                              {item.title || item.fileName}
-                                            </strong>
-                                            <p>{item.fileName}</p>
-                                            <small>
-                                              {item.summary ||
-                                                "Sin resumen disponible"}
-                                            </small>
-                                          </div>
-                                          <button
-                                            type="button"
-                                            className="campaign-email-ai-action campaign-email-ai-action-secondary"
-                                            onClick={() => {
-                                              void handleSelectLibraryDocument(
-                                                item,
-                                              );
-                                            }}
-                                          >
-                                            Seleccionar
-                                          </button>
-                                        </article>
-                                      ))}
-                                    </div>
-                                  ) : null}
+                                <div className="campaign-email-inline-actions campaign-email-field-wide">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void handleGenerateSharedPreviewLink();
+                                    }}
+                                    disabled={isGeneratingSharedPreview}
+                                  >
+                                    {isGeneratingSharedPreview
+                                      ? "Generando enlace..."
+                                      : "Generar enlace de vista previa"}
+                                  </button>
                                 </div>
-                              )}
 
-                              <label>
-                                Tipo de enlace
-                                <select
-                                  value={currentSharedDocument.linkMode}
-                                  onChange={(event) =>
-                                    updateSharedDocumentDraft({
-                                      linkMode: event.target.value,
-                                    })
-                                  }
-                                >
-                                  <option value="per_recipient">
-                                    Enlace único por destinatario
-                                  </option>
-                                  <option value="general">
-                                    Un enlace general para toda la campaña
-                                  </option>
-                                </select>
-                              </label>
-
-                              <label>
-                                Vigencia del enlace (días)
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="365"
-                                  value={currentSharedDocument.expiresDays}
-                                  onChange={(event) =>
-                                    updateSharedDocumentDraft({
-                                      expiresDays: event.target.value,
-                                    })
-                                  }
-                                />
-                              </label>
-
-                              <label>
-                                Texto del enlace / CTA
-                                <input
-                                  value={currentSharedDocument.linkLabel}
-                                  onChange={(event) =>
-                                    updateSharedDocumentDraft({
-                                      linkLabel: event.target.value,
-                                    })
-                                  }
-                                  placeholder="Ej. Descargar propuesta"
-                                />
-                              </label>
-
-                              <label>
-                                URL del CTA principal
-                                <input
-                                  value={currentDraft.cta_url}
-                                  onChange={(event) =>
-                                    updateDraft({ cta_url: event.target.value })
-                                  }
-                                  placeholder="https://..."
-                                />
-                                <small className="campaign-email-field-help">
-                                  Si el enlace del documento se usa como CTA
-                                  principal, esta URL se toma como respaldo.
-                                </small>
-                              </label>
-
-                              <label>
-                                Uso del enlace
-                                <select
-                                  value={
-                                    currentSharedDocument.useAsPrimaryCta
-                                      ? "yes"
-                                      : "no"
-                                  }
-                                  onChange={(event) =>
-                                    updateSharedDocumentDraft({
-                                      useAsPrimaryCta:
-                                        event.target.value === "yes",
-                                    })
-                                  }
-                                >
-                                  <option value="yes">
-                                    Usar como CTA principal
-                                  </option>
-                                  <option value="no">Solo generar y copiar</option>
-                                </select>
-                              </label>
-
-                              <div className="campaign-email-inline-actions campaign-email-field-wide">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    void handleGenerateSharedPreviewLink();
-                                  }}
-                                  disabled={isGeneratingSharedPreview}
-                                >
-                                  {isGeneratingSharedPreview
-                                    ? "Generando enlace..."
-                                    : "Generar enlace de vista previa"}
-                                </button>
-                              </div>
-
-                              {currentSharedDocument.document ? (
-                                <div className="campaign-email-shared-doc-selected campaign-email-field-wide">
-                                  <strong>
-                                    {currentSharedDocument.document.title ||
-                                      currentSharedDocument.title ||
-                                      "Documento seleccionado"}
-                                  </strong>
-                                  <span>
-                                    Fuente:{" "}
-                                    {currentSharedDocument.document.sourceType ===
-                                    "local_upload"
-                                      ? "Archivo local"
-                                      : "Biblioteca"}
-                                  </span>
-                                  {currentSharedDocument.document
-                                    .originalFileName ? (
+                                {currentSharedDocument.document ? (
+                                  <div className="campaign-email-shared-doc-selected campaign-email-field-wide">
+                                    <strong>
+                                      {currentSharedDocument.document.title ||
+                                        currentSharedDocument.title ||
+                                        "Documento seleccionado"}
+                                    </strong>
                                     <span>
-                                      Archivo:{" "}
-                                      {
-                                        currentSharedDocument.document
-                                          .originalFileName
-                                      }
+                                      Fuente:{" "}
+                                      {currentSharedDocument.document
+                                        .sourceType === "local_upload"
+                                        ? "Archivo local"
+                                        : "Biblioteca"}
                                     </span>
-                                  ) : null}
-                                  {currentSharedDocument.previewUrl ? (
-                                    <>
-                                      <a
-                                        className="campaign-email-inline-link"
-                                        href={currentSharedDocument.previewUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                      >
-                                        Abrir vista previa
-                                      </a>
+                                    {currentSharedDocument.document
+                                      .originalFileName ? (
                                       <span>
-                                        Expira:{" "}
-                                        {formatDateTime(
-                                          currentSharedDocument.previewExpiresAt,
-                                        )}
+                                        Archivo:{" "}
+                                        {
+                                          currentSharedDocument.document
+                                            .originalFileName
+                                        }
                                       </span>
-                                    </>
-                                  ) : null}
-                                </div>
-                              ) : null}
+                                    ) : null}
+                                    {currentSharedDocument.previewUrl ? (
+                                      <>
+                                        <a
+                                          className="campaign-email-inline-link"
+                                          href={
+                                            currentSharedDocument.previewUrl
+                                          }
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          Abrir vista previa
+                                        </a>
+                                        <span>
+                                          Expira:{" "}
+                                          {formatDateTime(
+                                            currentSharedDocument.previewExpiresAt,
+                                          )}
+                                        </span>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
                             </div>
-                          </div>
-                        ) : null}
-                      </div>
+                          ) : null}
+                        </div>
 
-                      <div className="campaign-email-editor-actions campaign-email-field-wide">
-                        <button
-                          type="button"
-                          className="campaign-email-ai-action"
-                          onClick={() => handleOpenAiPromptModal("generate")}
-                          disabled={isGeneratingWithAi}
-                          title="Generar desde cero con IA"
-                          aria-label="Generar desde cero con IA"
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="16"
-                            height="16"
-                            fill="currentColor"
-                            aria-hidden="true"
-                            focusable="false"
+                        <div className="campaign-email-editor-actions campaign-email-field-wide">
+                          <button
+                            type="button"
+                            className="campaign-email-ai-action"
+                            onClick={() => handleOpenAiPromptModal("generate")}
+                            disabled={isGeneratingWithAi}
+                            title="Generar desde cero con IA"
+                            aria-label="Generar desde cero con IA"
                           >
-                            <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z" />
-                          </svg>
-                          <span>Generar desde cero</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="campaign-email-ai-action campaign-email-ai-action-secondary"
-                          onClick={() => handleOpenAiPromptModal("improve")}
-                          disabled={isGeneratingWithAi}
-                          title="Mejorar HTML actual con IA"
-                          aria-label="Mejorar HTML actual con IA"
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="16"
-                            height="16"
-                            fill="currentColor"
-                            aria-hidden="true"
-                            focusable="false"
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="16"
+                              height="16"
+                              fill="currentColor"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <path d="M12 2l1.09 3.26L16.5 6l-3.41 1.09L12 10.5l-1.09-3.41L7.5 6l3.41-1.09L12 2zm6 10l.73 2.18L21 15l-2.27.73L18 18l-.73-2.27L15 15l2.27-.73L18 12zm-12 0l.73 2.18L9 15l-2.27.73L6 18l-.73-2.27L3 15l2.27-.73L6 12z" />
+                            </svg>
+                            <span>Generar desde cero</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="campaign-email-ai-action campaign-email-ai-action-secondary"
+                            onClick={() => handleOpenAiPromptModal("improve")}
+                            disabled={isGeneratingWithAi}
+                            title="Mejorar HTML actual con IA"
+                            aria-label="Mejorar HTML actual con IA"
                           >
-                            <path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z" />
-                          </svg>
-                          <span>Mejorar HTML actual</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="campaign-email-ai-action campaign-email-ai-action-secondary"
-                          onClick={handleLocalizeExternalImages}
-                          disabled={isGeneratingWithAi || isLocalizingImages}
-                          title="Descargar imágenes externas"
-                          aria-label="Descargar imágenes externas"
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            width="16"
-                            height="16"
-                            fill="currentColor"
-                            aria-hidden="true"
-                            focusable="false"
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="16"
+                              height="16"
+                              fill="currentColor"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zm14.71-9.04a1.003 1.003 0 000-1.42l-2.5-2.5a1.003 1.003 0 00-1.42 0l-1.96 1.96 3.75 3.75 2.13-1.79z" />
+                            </svg>
+                            <span>Mejorar HTML actual</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="campaign-email-ai-action campaign-email-ai-action-secondary"
+                            onClick={handleLocalizeExternalImages}
+                            disabled={isGeneratingWithAi || isLocalizingImages}
+                            title="Descargar imágenes externas"
+                            aria-label="Descargar imágenes externas"
                           >
-                            <path d="M12 3a1 1 0 011 1v8.59l2.3-2.29a1 1 0 111.4 1.42l-4 3.98a1 1 0 01-1.4 0l-4-3.98a1 1 0 111.4-1.42L11 12.59V4a1 1 0 011-1zM5 17a1 1 0 011 1v1h12v-1a1 1 0 112 0v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2a1 1 0 011-1z" />
-                          </svg>
-                          <span>
-                            {isLocalizingImages
-                              ? "Descargando imágenes..."
-                              : "Descargar imágenes"}
-                          </span>
-                        </button>
-                      </div>
-                      <label className="campaign-email-field-wide">
-                        <span>HTML del correo</span>
-                        <textarea
-                          className="campaign-email-html-editor-textarea"
-                          value={currentDraft.html_content}
-                          onChange={(event) =>
-                            updateDraft({ html_content: event.target.value })
-                          }
-                          onBlur={() => {
-                            handleLocalizeExternalImages();
-                          }}
-                          rows={18}
-                        />
-                      </label>
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="16"
+                              height="16"
+                              fill="currentColor"
+                              aria-hidden="true"
+                              focusable="false"
+                            >
+                              <path d="M12 3a1 1 0 011 1v8.59l2.3-2.29a1 1 0 111.4 1.42l-4 3.98a1 1 0 01-1.4 0l-4-3.98a1 1 0 111.4-1.42L11 12.59V4a1 1 0 011-1zM5 17a1 1 0 011 1v1h12v-1a1 1 0 112 0v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2a1 1 0 011-1z" />
+                            </svg>
+                            <span>
+                              {isLocalizingImages
+                                ? "Descargando imágenes..."
+                                : "Descargar imágenes"}
+                            </span>
+                          </button>
+                        </div>
+                        <label className="campaign-email-field-wide">
+                          <span>HTML del correo</span>
+                          <textarea
+                            className="campaign-email-html-editor-textarea"
+                            value={currentDraft.html_content}
+                            onChange={(event) =>
+                              updateDraft({ html_content: event.target.value })
+                            }
+                            onBlur={() => {
+                              handleLocalizeExternalImages();
+                            }}
+                            rows={18}
+                          />
+                        </label>
                       </div>
                       <div className="campaign-email-preview-card">
                         <div className="campaign-email-preview-meta">
                           <small>Asunto del correo</small>
-                          <strong>{currentDraft.subject || "Sin asunto"}</strong>
+                          <strong>
+                            {currentDraft.subject || "Sin asunto"}
+                          </strong>
                         </div>
                         <div className="campaign-email-preview-shell">
                           <div className="campaign-email-preview-shell-top">
-                            <div className="campaign-email-preview-shell-dots" aria-hidden="true">
+                            <div
+                              className="campaign-email-preview-shell-dots"
+                              aria-hidden="true"
+                            >
                               <span />
                               <span />
                               <span />

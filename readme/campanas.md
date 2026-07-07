@@ -27,8 +27,9 @@ No cubre en detalle la ejecucion de correos de campana ni la publicacion de land
   - `permitido`
   - `permitido_con_aprobacion`
   - `bloqueado`
+- La politica vigente toma como combinaciones habilitadas la matriz operativa documentada en `readme/matriz-campanas-subtipos-tipo-correo-ejemplos.md`.
 - Si la combinacion resulta `bloqueado`, la API rechaza la creacion/edicion.
-- Si la combinacion esta permitida o permitida con aprobacion, la campana puede guardarse.
+- En el estado actual, las combinaciones publicadas en la matriz operativa quedan en `permitido`; `permitido_con_aprobacion` se mantiene como nivel disponible de modelo, pero sin combinaciones activas en la politica vigente.
 
 ### Estados de campana
 

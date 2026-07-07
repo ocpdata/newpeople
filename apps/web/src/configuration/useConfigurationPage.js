@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { formatBusinessDateTime } from "../business-timezone";
+import { DEFAULT_CAMPAIGN_MATRIX_ROWS } from "./campaignMatrixDefaults";
 
 const DEFAULT_SELECTED_AI_CAPABILITY_KEY = "proposal.executive_summary";
 
@@ -134,15 +135,97 @@ const DEFAULT_LEAD_EXECUTION_GUIDES = {
   next_meeting:
     "Define fecha y hora de la siguiente reunion antes de cerrar la conversacion y confirma responsables de seguimiento.",
 };
+const EMPTY_CAMPAIGN_MATRIX_ROW = {
+  id: "",
+  campaignType: "reconocimiento",
+  priority: "prioritaria",
+  campaignSubtype: "correo_masivo",
+  emailType: "correo_masivo",
+  exampleEmail: "",
+  operationalRequirement: "",
+};
 
 const EMPTY_COMMERCIAL_SETTINGS = {
   businessTimezone: "America/Mexico_City",
   stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
   stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
   leadExecutionGuides: { ...DEFAULT_LEAD_EXECUTION_GUIDES },
+  campaignMatrixRows: [...DEFAULT_CAMPAIGN_MATRIX_ROWS],
   updatedAt: null,
   updatedByUserName: "",
 };
+
+const EMPTY_CAMPAIGN_MATRIX_CATALOGS = {
+  campaignTypes: [],
+  priorities: [],
+  campaignSubtypes: [],
+  emailTypes: [],
+};
+
+function createCampaignMatrixRowId() {
+  return `campaign_matrix_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeCampaignMatrixRows(rows) {
+  const source = Array.isArray(rows) ? rows : [];
+  const normalized = source
+    .map((row, index) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return null;
+      }
+      const campaignType = String(row.campaignType || "").trim();
+      const priority = String(row.priority || "").trim();
+      const campaignSubtype = String(row.campaignSubtype || "").trim();
+      const emailType = String(row.emailType || "").trim();
+      if (!campaignType || !priority || !campaignSubtype || !emailType) {
+        return null;
+      }
+
+      return {
+        id:
+          String(row.id || "").trim() ||
+          `campaign_matrix_${String(index + 1).padStart(3, "0")}`,
+        campaignType,
+        priority,
+        campaignSubtype,
+        emailType,
+        exampleEmail: String(row.exampleEmail || ""),
+        operationalRequirement: String(row.operationalRequirement || ""),
+      };
+    })
+    .filter(Boolean);
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return DEFAULT_CAMPAIGN_MATRIX_ROWS.map((row) => ({ ...row }));
+}
+
+function normalizeCampaignMatrixCatalogs(catalogs) {
+  return {
+    campaignTypes: Array.isArray(catalogs?.campaignTypes)
+      ? catalogs.campaignTypes
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    priorities: Array.isArray(catalogs?.priorities)
+      ? catalogs.priorities
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    campaignSubtypes: Array.isArray(catalogs?.campaignSubtypes)
+      ? catalogs.campaignSubtypes
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+    emailTypes: Array.isArray(catalogs?.emailTypes)
+      ? catalogs.emailTypes
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [],
+  };
+}
 
 const EMPTY_PROPOSAL_CONTENT_CONFIG = {
   id: null,
@@ -677,6 +760,10 @@ function normalizeCommercialSettings(settings) {
     });
   }
 
+  const campaignMatrixRows = normalizeCampaignMatrixRows(
+    settings.campaignMatrixRows,
+  );
+
   return {
     businessTimezone:
       String(settings.businessTimezone || "").trim() ||
@@ -684,6 +771,7 @@ function normalizeCommercialSettings(settings) {
     stageSlaMap,
     stageWeightMap,
     leadExecutionGuides,
+    campaignMatrixRows,
     updatedAt: settings.updatedAt || null,
     updatedByUserName: String(settings.updatedByUserName || ""),
   };
@@ -695,6 +783,9 @@ function serializeCommercialSettings(settings) {
     stageSlaMap: settings?.stageSlaMap || {},
     stageWeightMap: settings?.stageWeightMap || {},
     leadExecutionGuides: settings?.leadExecutionGuides || {},
+    campaignMatrixRows: normalizeCampaignMatrixRows(
+      settings?.campaignMatrixRows,
+    ),
   });
 }
 
@@ -789,6 +880,9 @@ export function useConfigurationPage() {
   const [commercialSettings, setCommercialSettings] = useState(
     EMPTY_COMMERCIAL_SETTINGS,
   );
+  const [campaignMatrixCatalogs, setCampaignMatrixCatalogs] = useState(
+    EMPTY_CAMPAIGN_MATRIX_CATALOGS,
+  );
   const [savingCommercialSettings, setSavingCommercialSettings] =
     useState(false);
   const [
@@ -877,9 +971,12 @@ export function useConfigurationPage() {
           api
             .get("/api/settings/chatbot")
             .catch(() => ({ data: { settings: null } })),
-          api
-            .get("/api/settings/commercial")
-            .catch(() => ({ data: { settings: null } })),
+          api.get("/api/settings/commercial").catch(() => ({
+            data: {
+              settings: null,
+              matrixCatalogs: EMPTY_CAMPAIGN_MATRIX_CATALOGS,
+            },
+          })),
           api.get("/api/catalogs/countries"),
           api
             .get("/api/catalogs/account-types-management")
@@ -924,11 +1021,15 @@ export function useConfigurationPage() {
         const nextCommercialSettings = normalizeCommercialSettings(
           commercialSettingsResponse.data?.settings,
         );
+        const nextCampaignMatrixCatalogs = normalizeCampaignMatrixCatalogs(
+          commercialSettingsResponse.data?.matrixCatalogs,
+        );
         const nextForm = normalizeProfileToForm(nextProfile);
         setCompanyProfile(nextProfile);
         setTemporaryFeatureSettings(nextTemporaryFeatureSettings);
         setChatbotSettings(nextChatbotSettings);
         setCommercialSettings(nextCommercialSettings);
+        setCampaignMatrixCatalogs(nextCampaignMatrixCatalogs);
         setForm(nextForm);
         setInitialSnapshot(serializeForm(nextForm));
         setInitialTemporaryFeaturesSnapshot(
@@ -1408,6 +1509,51 @@ export function useConfigurationPage() {
     }));
   }
 
+  function updateCampaignMatrixRow(rowId, field, value) {
+    setCommercialSettings((current) => ({
+      ...current,
+      campaignMatrixRows: normalizeCampaignMatrixRows(
+        (current.campaignMatrixRows || []).map((row) =>
+          row.id === rowId ? { ...row, [field]: value } : row,
+        ),
+      ),
+    }));
+  }
+
+  function addCampaignMatrixRow() {
+    setCommercialSettings((current) => ({
+      ...current,
+      campaignMatrixRows: [
+        ...(current.campaignMatrixRows || []),
+        {
+          ...EMPTY_CAMPAIGN_MATRIX_ROW,
+          id: createCampaignMatrixRowId(),
+          campaignType:
+            campaignMatrixCatalogs.campaignTypes[0] ||
+            EMPTY_CAMPAIGN_MATRIX_ROW.campaignType,
+          priority:
+            campaignMatrixCatalogs.priorities[0] ||
+            EMPTY_CAMPAIGN_MATRIX_ROW.priority,
+          campaignSubtype:
+            campaignMatrixCatalogs.campaignSubtypes[0] ||
+            EMPTY_CAMPAIGN_MATRIX_ROW.campaignSubtype,
+          emailType:
+            campaignMatrixCatalogs.emailTypes[0] ||
+            EMPTY_CAMPAIGN_MATRIX_ROW.emailType,
+        },
+      ],
+    }));
+  }
+
+  function removeCampaignMatrixRow(rowId) {
+    setCommercialSettings((current) => ({
+      ...current,
+      campaignMatrixRows: (current.campaignMatrixRows || []).filter(
+        (row) => row.id !== rowId,
+      ),
+    }));
+  }
+
   async function saveCommercialSettings() {
     setSavingCommercialSettings(true);
     setError("");
@@ -1421,12 +1567,16 @@ export function useConfigurationPage() {
           stageSlaMap: commercialSettings.stageSlaMap,
           stageWeightMap: commercialSettings.stageWeightMap,
           leadExecutionGuides: commercialSettings.leadExecutionGuides,
+          campaignMatrixRows: commercialSettings.campaignMatrixRows,
         }),
         api.get("/api/settings/audit?limit=25"),
       ]);
 
       const nextSettings = normalizeCommercialSettings(
         saveResponse.data?.settings,
+      );
+      setCampaignMatrixCatalogs(
+        normalizeCampaignMatrixCatalogs(saveResponse.data?.matrixCatalogs),
       );
       setCommercialSettings(nextSettings);
       window.dispatchEvent(
@@ -2701,6 +2851,7 @@ export function useConfigurationPage() {
     stageSlaEntries: STAGE_SLA_ENTRIES,
     stageWeightEntries: STAGE_WEIGHT_ENTRIES,
     leadExecutionGuideEntries: LEAD_EXECUTION_GUIDE_ENTRIES,
+    campaignMatrixCatalogs,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -2718,6 +2869,9 @@ export function useConfigurationPage() {
     updateCommercialBusinessTimezone,
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
+    updateCampaignMatrixRow,
+    addCampaignMatrixRow,
+    removeCampaignMatrixRow,
     saveCommercialSettings,
     reloadAccountTypes,
     createAccountType,

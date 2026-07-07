@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let ensureCompanyProfileTablePromise;
 let ensureTemporaryFeatureSettingsTablePromise;
@@ -14,6 +19,95 @@ const PROPOSAL_LAYOUT_MODES = ["stack", "horizontal-gallery", "manual-rows"];
 const PROPOSAL_COMPONENT_KINDS = ["system", "custom"];
 const PROPOSAL_COMPONENT_STATUSES = ["active", "archived"];
 const PROPOSAL_AI_MODES = ["auto", "manual"];
+
+export const CAMPAIGN_MATRIX_TYPE_VALUES = [
+  "reconocimiento",
+  "captacion_de_leads",
+  "nutricion",
+  "conversion",
+  "fidelizacion",
+  "reactivacion",
+  "promocion",
+  "lanzamiento_de_producto",
+  "upsell",
+  "cross_sell",
+  "evento",
+  "referidos",
+  "educacion",
+];
+
+export const CAMPAIGN_MATRIX_SUBTYPE_VALUES = [
+  "correo_masivo",
+  "correo_automatizado",
+  "redes_sociales_organicas",
+  "redes_sociales_pagadas",
+  "anuncios_busqueda",
+  "anuncios_display",
+  "webinar",
+  "landing_page",
+  "sms",
+  "whatsapp",
+  "evento_presencial",
+  "evento_virtual",
+  "encuesta",
+  "programa_de_referidos",
+];
+
+export const CAMPAIGN_MATRIX_PRIORITY_VALUES = ["prioritaria", "secundaria"];
+
+export const CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES = [
+  "correo_masivo",
+  "secuencia",
+  "recordatorio",
+  "seguimiento",
+];
+
+const CAMPAIGN_MATRIX_TYPE_LABEL_TO_CODE = {
+  Reconocimiento: "reconocimiento",
+  "Captacion de leads": "captacion_de_leads",
+  Nutricion: "nutricion",
+  Conversion: "conversion",
+  Fidelizacion: "fidelizacion",
+  Reactivacion: "reactivacion",
+  Promocion: "promocion",
+  "Lanzamiento de producto": "lanzamiento_de_producto",
+  Upsell: "upsell",
+  "Cross sell": "cross_sell",
+  Evento: "evento",
+  Referidos: "referidos",
+  Educacion: "educacion",
+};
+
+const CAMPAIGN_MATRIX_SUBTYPE_LABEL_TO_CODE = {
+  "Correo masivo": "correo_masivo",
+  "Correo automatizado": "correo_automatizado",
+  "Redes sociales organicas": "redes_sociales_organicas",
+  "Redes sociales pagadas": "redes_sociales_pagadas",
+  "Anuncios de busqueda": "anuncios_busqueda",
+  "Anuncios display": "anuncios_display",
+  Webinar: "webinar",
+  "Landing page": "landing_page",
+  SMS: "sms",
+  WhatsApp: "whatsapp",
+  "Evento presencial": "evento_presencial",
+  "Evento virtual": "evento_virtual",
+  Encuesta: "encuesta",
+  "Programa de referidos": "programa_de_referidos",
+};
+
+const CAMPAIGN_MATRIX_PRIORITY_LABEL_TO_CODE = {
+  Prioritaria: "prioritaria",
+  Secundaria: "secundaria",
+};
+
+const CAMPAIGN_MATRIX_EMAIL_TYPE_LABEL_TO_CODE = {
+  "Correo masivo": "correo_masivo",
+  Secuencia: "secuencia",
+  Recordatorio: "recordatorio",
+  Seguimiento: "seguimiento",
+};
+
+let defaultCampaignMatrixRowsCache = null;
 
 export const AI_PARAMETER_CAPABILITY_KEYS = {
   proposalExecutiveSummary: "proposal.executive_summary",
@@ -2964,6 +3058,157 @@ export function normalizeBusinessTimezone(timeZone) {
     : DEFAULT_BUSINESS_TIMEZONE;
 }
 
+function buildCampaignMatrixRowId(index, campaignType, campaignSubtype) {
+  const safeType = String(campaignType || "").trim() || "tipo";
+  const safeSubtype = String(campaignSubtype || "").trim() || "subtipo";
+  if (Number.isInteger(index) && index > 0) {
+    return `row_${String(index).padStart(3, "0")}`;
+  }
+  return `${safeType}__${safeSubtype}`;
+}
+
+function loadDefaultCampaignMatrixRows() {
+  if (Array.isArray(defaultCampaignMatrixRowsCache)) {
+    return defaultCampaignMatrixRowsCache.map((row) => ({ ...row }));
+  }
+
+  try {
+    const source = readFileSync(
+      resolve(
+        __dirname,
+        "../../../readme/matriz-campanas-subtipos-tipo-correo-ejemplos.md",
+      ),
+      "utf8",
+    );
+    const rows = [];
+    source.split("\n").forEach((line) => {
+      if (!line.startsWith("|")) return;
+      if (/^\|\s*#\s*\|/.test(line)) return;
+      if (/^\|[-\s|]+\|?$/.test(line)) return;
+
+      const cells = line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim());
+      if (cells.length !== 7) return;
+
+      const [
+        rawIndex,
+        rawType,
+        rawPriority,
+        rawSubtype,
+        rawEmailType,
+        example,
+        requirement,
+      ] = cells;
+      if (!/^\d+$/.test(rawIndex)) return;
+
+      const campaignType = CAMPAIGN_MATRIX_TYPE_LABEL_TO_CODE[rawType];
+      const priority = CAMPAIGN_MATRIX_PRIORITY_LABEL_TO_CODE[rawPriority];
+      const campaignSubtype = CAMPAIGN_MATRIX_SUBTYPE_LABEL_TO_CODE[rawSubtype];
+      const emailType = CAMPAIGN_MATRIX_EMAIL_TYPE_LABEL_TO_CODE[rawEmailType];
+      if (!campaignType || !priority || !campaignSubtype || !emailType) {
+        return;
+      }
+
+      rows.push({
+        id: buildCampaignMatrixRowId(
+          Number(rawIndex),
+          campaignType,
+          campaignSubtype,
+        ),
+        campaignType,
+        priority,
+        campaignSubtype,
+        emailType,
+        exampleEmail: String(example || "").trim(),
+        operationalRequirement: String(requirement || "").trim(),
+      });
+    });
+    defaultCampaignMatrixRowsCache = rows;
+  } catch {
+    defaultCampaignMatrixRowsCache = [];
+  }
+
+  return defaultCampaignMatrixRowsCache.map((row) => ({ ...row }));
+}
+
+export function normalizeCampaignMatrixRows(rows, options = {}) {
+  const fallbackToDefaults = options?.fallbackToDefaults !== false;
+  const source = Array.isArray(rows) ? rows : [];
+  const normalized = [];
+  const seenCombinations = new Set();
+
+  source.forEach((row, index) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+
+    const campaignType = String(row.campaignType || "").trim();
+    const priority = String(row.priority || "").trim();
+    const campaignSubtype = String(row.campaignSubtype || "").trim();
+    const emailType = String(row.emailType || "").trim();
+    const combinationKey = `${campaignType}::${campaignSubtype}`;
+
+    if (!CAMPAIGN_MATRIX_TYPE_VALUES.includes(campaignType)) return;
+    if (!CAMPAIGN_MATRIX_PRIORITY_VALUES.includes(priority)) return;
+    if (!CAMPAIGN_MATRIX_SUBTYPE_VALUES.includes(campaignSubtype)) return;
+    if (!CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES.includes(emailType)) return;
+    if (seenCombinations.has(combinationKey)) return;
+
+    seenCombinations.add(combinationKey);
+    normalized.push({
+      id:
+        String(row.id || "").trim() ||
+        buildCampaignMatrixRowId(index + 1, campaignType, campaignSubtype),
+      campaignType,
+      priority,
+      campaignSubtype,
+      emailType,
+      exampleEmail: String(row.exampleEmail || "")
+        .trim()
+        .slice(0, 5000),
+      operationalRequirement: String(row.operationalRequirement || "")
+        .trim()
+        .slice(0, 2000),
+    });
+  });
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return fallbackToDefaults ? loadDefaultCampaignMatrixRows() : [];
+}
+
+export function buildCampaignTypeSubtypePolicy(campaignMatrixRows) {
+  const rows = normalizeCampaignMatrixRows(campaignMatrixRows, {
+    fallbackToDefaults: true,
+  });
+  const policy = Object.fromEntries(
+    CAMPAIGN_MATRIX_TYPE_VALUES.map((campaignType) => [
+      campaignType,
+      {
+        permitido: [],
+        permitido_con_aprobacion: [],
+      },
+    ]),
+  );
+
+  rows.forEach((row) => {
+    policy[row.campaignType]?.permitido.push(row.campaignSubtype);
+  });
+
+  return policy;
+}
+
+export function getCampaignMatrixCatalogs() {
+  return {
+    campaignTypes: [...CAMPAIGN_MATRIX_TYPE_VALUES],
+    priorities: [...CAMPAIGN_MATRIX_PRIORITY_VALUES],
+    campaignSubtypes: [...CAMPAIGN_MATRIX_SUBTYPE_VALUES],
+    emailTypes: [...CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES],
+  };
+}
+
 function buildFallbackCommercialSettings() {
   return {
     id: null,
@@ -2972,6 +3217,9 @@ function buildFallbackCommercialSettings() {
     stageSlaMap: { ...STAGE_SLA_DEFAULTS },
     stageWeightMap: { ...STAGE_WEIGHT_DEFAULTS },
     leadExecutionGuides: { ...LEAD_EXECUTION_GUIDE_DEFAULTS },
+    campaignMatrixRows: normalizeCampaignMatrixRows([], {
+      fallbackToDefaults: true,
+    }),
     updatedAt: null,
     updatedByUserId: null,
     updatedByUserName: "",
@@ -2989,6 +3237,7 @@ function normalizeCommercialSettingsRow(row) {
   let stageSlaMap;
   let stageWeightMap;
   let leadExecutionGuides;
+  let campaignMatrixRows;
   try {
     const parsed =
       typeof row.stage_sla_days_json === "string"
@@ -3057,6 +3306,20 @@ function normalizeCommercialSettingsRow(row) {
     leadExecutionGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
   }
 
+  try {
+    const parsed =
+      typeof row.campaign_matrix_rows_json === "string"
+        ? JSON.parse(row.campaign_matrix_rows_json)
+        : row.campaign_matrix_rows_json;
+    campaignMatrixRows = normalizeCampaignMatrixRows(parsed, {
+      fallbackToDefaults: true,
+    });
+  } catch {
+    campaignMatrixRows = normalizeCampaignMatrixRows([], {
+      fallbackToDefaults: true,
+    });
+  }
+
   return {
     id: Number(row.id),
     singletonKey: String(row.singleton_key || "default"),
@@ -3064,6 +3327,7 @@ function normalizeCommercialSettingsRow(row) {
     stageSlaMap,
     stageWeightMap,
     leadExecutionGuides,
+    campaignMatrixRows,
     updatedAt: row.updated_at || null,
     updatedByUserId: row.updated_by_user_id
       ? Number(row.updated_by_user_id)
@@ -3087,6 +3351,7 @@ async function ensureCommercialSettingsTable() {
         stage_sla_days_json JSON NOT NULL,
         forecast_stage_weights_json JSON NOT NULL,
         lead_execution_guides_json LONGTEXT NULL,
+        campaign_matrix_rows_json LONGTEXT NULL,
         created_by_user_id BIGINT UNSIGNED NULL,
         updated_by_user_id BIGINT UNSIGNED NULL,
         created_at DATETIME(3) NOT NULL,
@@ -3117,6 +3382,11 @@ async function ensureCommercialSettingsTable() {
     "lead_execution_guides_json",
     "ADD COLUMN lead_execution_guides_json LONGTEXT NULL AFTER forecast_stage_weights_json",
   );
+  await ensureTableColumn(
+    "commercial_settings",
+    "campaign_matrix_rows_json",
+    "ADD COLUMN campaign_matrix_rows_json LONGTEXT NULL AFTER lead_execution_guides_json",
+  );
 }
 
 async function ensureDefaultCommercialSettings() {
@@ -3124,10 +3394,10 @@ async function ensureDefaultCommercialSettings() {
   await query(
     `INSERT INTO commercial_settings
       (singleton_key, business_timezone, stage_sla_days_json, forecast_stage_weights_json,
-         lead_execution_guides_json,
+         lead_execution_guides_json, campaign_matrix_rows_json,
        created_by_user_id, updated_by_user_id,
        created_at, updated_at)
-       SELECT 'default', ?, ?, ?, ?, NULL, NULL, NOW(3), NOW(3)
+       SELECT 'default', ?, ?, ?, ?, ?, NULL, NULL, NOW(3), NOW(3)
      WHERE NOT EXISTS (
        SELECT 1 FROM commercial_settings WHERE singleton_key = 'default'
      )`,
@@ -3136,6 +3406,9 @@ async function ensureDefaultCommercialSettings() {
       JSON.stringify(STAGE_SLA_DEFAULTS),
       JSON.stringify(STAGE_WEIGHT_DEFAULTS),
       JSON.stringify(LEAD_EXECUTION_GUIDE_DEFAULTS),
+      JSON.stringify(
+        normalizeCampaignMatrixRows([], { fallbackToDefaults: true }),
+      ),
     ],
   );
 
@@ -3145,6 +3418,18 @@ async function ensureDefaultCommercialSettings() {
        WHERE singleton_key = 'default'
          AND (lead_execution_guides_json IS NULL OR lead_execution_guides_json = '')`,
     [JSON.stringify(LEAD_EXECUTION_GUIDE_DEFAULTS)],
+  );
+
+  await query(
+    `UPDATE commercial_settings
+       SET campaign_matrix_rows_json = ?
+       WHERE singleton_key = 'default'
+         AND (campaign_matrix_rows_json IS NULL OR campaign_matrix_rows_json = '')`,
+    [
+      JSON.stringify(
+        normalizeCampaignMatrixRows([], { fallbackToDefaults: true }),
+      ),
+    ],
   );
 }
 
@@ -3182,6 +3467,12 @@ export async function saveCommercialSettings(settings, actorUserId) {
   const nextSlaMap = { ...STAGE_SLA_DEFAULTS };
   const nextStageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
   const nextLeadExecutionGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
+  const nextCampaignMatrixRows = normalizeCampaignMatrixRows(
+    settings?.campaignMatrixRows,
+    {
+      fallbackToDefaults: true,
+    },
+  );
   if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
     Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
       const parsed = Number(days);
@@ -3232,6 +3523,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
        SET business_timezone = ?,
            stage_sla_days_json = ?, forecast_stage_weights_json = ?,
            lead_execution_guides_json = ?,
+           campaign_matrix_rows_json = ?,
            updated_by_user_id = ?, updated_at = ?
        WHERE id = ?`,
       [
@@ -3239,6 +3531,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
         JSON.stringify(nextSlaMap),
         JSON.stringify(nextStageWeightMap),
         JSON.stringify(nextLeadExecutionGuides),
+        JSON.stringify(nextCampaignMatrixRows),
         actorUserId || null,
         now,
         existingId,
@@ -3248,15 +3541,16 @@ export async function saveCommercialSettings(settings, actorUserId) {
     await query(
       `INSERT INTO commercial_settings
         (singleton_key, business_timezone, stage_sla_days_json, forecast_stage_weights_json,
-         lead_execution_guides_json,
+         lead_execution_guides_json, campaign_matrix_rows_json,
          created_by_user_id, updated_by_user_id,
          created_at, updated_at)
-       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nextBusinessTimezone,
         JSON.stringify(nextSlaMap),
         JSON.stringify(nextStageWeightMap),
         JSON.stringify(nextLeadExecutionGuides),
+        JSON.stringify(nextCampaignMatrixRows),
         actorUserId || null,
         actorUserId || null,
         now,

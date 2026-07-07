@@ -1513,6 +1513,7 @@ function CommercialSettingsCard({
   stageSlaEntries,
   stageWeightEntries,
   leadExecutionGuideEntries,
+  campaignMatrixCatalogs,
   latestUpdateText,
   saving,
   canSave,
@@ -1521,6 +1522,9 @@ function CommercialSettingsCard({
   onTimezoneChange,
   onWeightChange,
   onGuideChange,
+  onMatrixRowChange,
+  onAddMatrixRow,
+  onRemoveMatrixRow,
   onSave,
 }) {
   const commonTimezones = [
@@ -1532,6 +1536,10 @@ function CommercialSettingsCard({
     "America/New_York",
     "UTC",
   ];
+  const formatOptionLabel = (value) =>
+    String(value || "")
+      .replaceAll("_", " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
 
   return (
     <section className="configuration-card">
@@ -1642,6 +1650,146 @@ function CommercialSettingsCard({
         ))}
       </div>
 
+      <div className="configuration-card-heading">
+        <div>
+          <h4>Matriz de campañas</h4>
+          <p>
+            Edita cada combinación de tipo, prioridad, subtipo y tipo de correo.
+            Puedes agregar filas nuevas o eliminar las existentes.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={onAddMatrixRow}
+        >
+          Agregar fila
+        </button>
+      </div>
+
+      <div className="configuration-table-wrapper">
+        <table className="configuration-table">
+          <thead>
+            <tr>
+              <th>Tipo</th>
+              <th>Prioridad</th>
+              <th>Subtipo</th>
+              <th>Tipo de correo</th>
+              <th>Ejemplo</th>
+              <th>Requisito operativo</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(settings.campaignMatrixRows || []).map((row) => (
+              <tr key={row.id}>
+                <td>
+                  <select
+                    value={row.campaignType || ""}
+                    onChange={(event) =>
+                      onMatrixRowChange(
+                        row.id,
+                        "campaignType",
+                        event.target.value,
+                      )
+                    }
+                  >
+                    {campaignMatrixCatalogs.campaignTypes.map((value) => (
+                      <option key={value} value={value}>
+                        {formatOptionLabel(value)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={row.priority || ""}
+                    onChange={(event) =>
+                      onMatrixRowChange(row.id, "priority", event.target.value)
+                    }
+                  >
+                    {campaignMatrixCatalogs.priorities.map((value) => (
+                      <option key={value} value={value}>
+                        {formatOptionLabel(value)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={row.campaignSubtype || ""}
+                    onChange={(event) =>
+                      onMatrixRowChange(
+                        row.id,
+                        "campaignSubtype",
+                        event.target.value,
+                      )
+                    }
+                  >
+                    {campaignMatrixCatalogs.campaignSubtypes.map((value) => (
+                      <option key={value} value={value}>
+                        {formatOptionLabel(value)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={row.emailType || ""}
+                    onChange={(event) =>
+                      onMatrixRowChange(row.id, "emailType", event.target.value)
+                    }
+                  >
+                    {campaignMatrixCatalogs.emailTypes.map((value) => (
+                      <option key={value} value={value}>
+                        {formatOptionLabel(value)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <textarea
+                    rows={3}
+                    value={row.exampleEmail || ""}
+                    onChange={(event) =>
+                      onMatrixRowChange(
+                        row.id,
+                        "exampleEmail",
+                        event.target.value,
+                      )
+                    }
+                    placeholder="Asunto y cuerpo resumido"
+                  />
+                </td>
+                <td>
+                  <textarea
+                    rows={3}
+                    value={row.operationalRequirement || ""}
+                    onChange={(event) =>
+                      onMatrixRowChange(
+                        row.id,
+                        "operationalRequirement",
+                        event.target.value,
+                      )
+                    }
+                    placeholder="Requisito operativo"
+                  />
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => onRemoveMatrixRow(row.id)}
+                  >
+                    Eliminar
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       <div className="configuration-temporary-footer">
         <span className="field-hint">
           Ultima actualizacion: {latestUpdateText}
@@ -1652,7 +1800,7 @@ function CommercialSettingsCard({
           onClick={onSave}
           disabled={saving || !canSave}
         >
-          {saving ? "Guardando..." : "Guardar SLA"}
+          {saving ? "Guardando..." : "Guardar configuracion comercial"}
         </button>
       </div>
     </section>
@@ -4283,6 +4431,7 @@ export default function ConfigurationPage() {
     stageSlaEntries,
     stageWeightEntries,
     leadExecutionGuideEntries,
+    campaignMatrixCatalogs,
     formatDateTime,
     summarizeChangedFields,
     updateField,
@@ -4300,6 +4449,9 @@ export default function ConfigurationPage() {
     updateCommercialBusinessTimezone,
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
+    updateCampaignMatrixRow,
+    addCampaignMatrixRow,
+    removeCampaignMatrixRow,
     saveCommercialSettings,
     createAccountType,
     renameAccountType,
@@ -5016,6 +5168,7 @@ export default function ConfigurationPage() {
                 stageSlaEntries={stageSlaEntries}
                 stageWeightEntries={stageWeightEntries}
                 leadExecutionGuideEntries={leadExecutionGuideEntries}
+                campaignMatrixCatalogs={campaignMatrixCatalogs}
                 latestUpdateText={latestCommercialSettingsUpdateText}
                 saving={savingCommercialSettings}
                 canSave={commercialSettingsDirty}
@@ -5024,6 +5177,9 @@ export default function ConfigurationPage() {
                 onTimezoneChange={updateCommercialBusinessTimezone}
                 onWeightChange={updateCommercialWeightSetting}
                 onGuideChange={updateCommercialGuideSetting}
+                onMatrixRowChange={updateCampaignMatrixRow}
+                onAddMatrixRow={addCampaignMatrixRow}
+                onRemoveMatrixRow={removeCampaignMatrixRow}
                 onSave={saveCommercialSettings}
               />
 

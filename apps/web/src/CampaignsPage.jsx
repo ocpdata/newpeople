@@ -968,7 +968,10 @@ function DismissibleAlert({ message, variant = "error" }) {
     variant === "success" ? "campaigns-alert-success" : "campaigns-alert-error";
 
   return (
-    <div className={`campaigns-alert ${variantClass} campaigns-alert-dismissible`} role="alert">
+    <div
+      className={`campaigns-alert ${variantClass} campaigns-alert-dismissible`}
+      role="alert"
+    >
       <span>{normalizedMessage}</span>
       <button
         type="button"
@@ -1191,6 +1194,59 @@ function buildCompatibilityPromptSnippet(policyByType) {
         ? policy.permitido_con_aprobacion.slice(0, 4)
         : [];
       return `${tipo}: permitido=[${permitido.join("|")}] aprobacion=[${aprobacion.join("|")}]`;
+    })
+    .join(" ; ");
+}
+
+function normalizeCampaignMatrixRowsForSuggestion(rows) {
+  if (!Array.isArray(rows)) return [];
+
+  return rows
+    .map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return null;
+      }
+
+      const campaignType = String(row.campaignType || "").trim();
+      const campaignSubtype = String(row.campaignSubtype || "").trim();
+      const priority = String(row.priority || "").trim();
+      const emailType = String(row.emailType || "").trim();
+      const operationalRequirement = String(
+        row.operationalRequirement || "",
+      ).trim();
+      const exampleEmail = String(row.exampleEmail || "").trim();
+
+      if (!campaignType || !campaignSubtype) return null;
+
+      return {
+        campaignType,
+        campaignSubtype,
+        priority,
+        emailType,
+        operationalRequirement,
+        exampleEmail,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildCampaignMatrixPromptSnippet(rows, maxRows = 40) {
+  const normalizedRows = normalizeCampaignMatrixRowsForSuggestion(rows);
+  if (!normalizedRows.length) {
+    return "matriz no disponible";
+  }
+
+  return normalizedRows
+    .slice(0, Math.max(1, Number(maxRows) || 40))
+    .map((row) => {
+      const requirement = trimForPrompt(row.operationalRequirement, 100);
+      return [
+        row.campaignType,
+        row.campaignSubtype,
+        row.priority || "sin_prioridad",
+        row.emailType || "sin_tipo_correo",
+        requirement || "sin_requisito",
+      ].join("|");
     })
     .join(" ; ");
 }
@@ -1563,9 +1619,17 @@ async function requestCampaignCombinationSuggestionWithAi({
   availableTypes,
   availableSubtypes,
   policyByType,
+  campaignMatrixRows,
 }) {
   const types = Array.isArray(availableTypes) ? availableTypes : [];
   const subtypes = Array.isArray(availableSubtypes) ? availableSubtypes : [];
+  const normalizedMatrixRows =
+    normalizeCampaignMatrixRowsForSuggestion(campaignMatrixRows);
+  const matrixCombinationSet = new Set(
+    normalizedMatrixRows.map(
+      (row) => `${row.campaignType}::${row.campaignSubtype}`,
+    ),
+  );
 
   if (!types.length || !subtypes.length) {
     throw new Error("No hay catálogos de tipo/subtipo disponibles");
@@ -1614,11 +1678,13 @@ async function requestCampaignCombinationSuggestionWithAi({
     "- conversion_comercial si requiere tipo_campana='conversion' porque implica cierre (demo/cotizacion/compra).",
     "Regla semántica: la razón debe explicar por qué la sub_etapa elegida coincide con el objetivo del usuario y por qué el subtipo es el canal correcto en esa sub-etapa.",
     "Regla de seguridad: no inventes estados ni señales no descritas por el usuario.",
+    "Regla de configuración: la combinación tipo/subtipo final debe existir en la matriz de campañas configurada.",
     `Tipos permitidos: ${types.join(", ")}`,
     `Subtipos permitidos: ${subtypes.join(", ")}`,
     `Contexto de tipo disponible: ${trimForPrompt(buildTypeDescriptionsPrompt(types), 1200)}`,
     `Contexto de subtipo disponible: ${trimForPrompt(buildSubtypeDescriptionsPrompt(subtypes), 1200)}`,
     `Compatibilidad por tipo (resumen): ${buildCompatibilityPromptSnippet(policyByType)}`,
+    `Matriz de configuración vigente (tipo|subtipo|prioridad|tipo_correo|requisito): ${trimForPrompt(buildCampaignMatrixPromptSnippet(normalizedMatrixRows), 3500)}`,
     "Regla: si propones un subtipo no compatible con el tipo, corrige y elige uno compatible.",
     `Objetivo de campaña (usuario): ${trimForPrompt(intentText, 700)}`,
   ].join("\n\n");
@@ -1736,6 +1802,14 @@ async function requestCampaignCombinationSuggestionWithAi({
   if (!allowedSubtypes.includes(suggestedSubtype)) {
     throw new Error("IA devolvió un subtipo incompatible con el tipo sugerido");
   }
+  if (
+    matrixCombinationSet.size > 0 &&
+    !matrixCombinationSet.has(`${suggestedType}::${suggestedSubtype}`)
+  ) {
+    throw new Error(
+      "IA devolvió una combinación que no existe en la matriz de configuración",
+    );
+  }
 
   const stageTypeConstraints = {
     lanzamiento_inicial: ["reconocimiento", "captacion_de_leads"],
@@ -1815,6 +1889,14 @@ async function requestCampaignCombinationSuggestionWithAi({
     if (!allowedCoherentSubtypes.includes(coherentSubtype)) {
       throw new Error(
         "IA devolvió un subtipo incompatible tras corrección de coherencia",
+      );
+    }
+    if (
+      matrixCombinationSet.size > 0 &&
+      !matrixCombinationSet.has(`${coherentType}::${coherentSubtype}`)
+    ) {
+      throw new Error(
+        "IA devolvió una combinación fuera de la matriz tras corrección de coherencia",
       );
     }
 
@@ -2144,6 +2226,9 @@ export default function CampaignsPage() {
   );
   const compatibilityPolicyByType =
     catalogs?.compatibilidad_tipo_subtipo?.por_tipo || {};
+  const campaignMatrixRows = Array.isArray(catalogs?.campaign_matrix_rows)
+    ? catalogs.campaign_matrix_rows
+    : [];
   const compatibleSubtypeOptions = useMemo(
     () =>
       getCompatibleSubtypeOptions(
@@ -2934,7 +3019,9 @@ export default function CampaignsPage() {
     setError("");
     setCampaignGoalText(
       readCampaignGoalTextFromStorage(campaign.id) ||
-        String(campaign?.campaign_goal_text || campaign?.description || "").trim(),
+        String(
+          campaign?.campaign_goal_text || campaign?.description || "",
+        ).trim(),
     );
     setAiSuggestionReason("");
     const persistedGuide = normalizeClassificationGuideFromDb(campaign);
@@ -2981,6 +3068,7 @@ export default function CampaignsPage() {
         availableTypes: catalogs?.tipo_campana,
         availableSubtypes: catalogs?.subtipo_campana,
         policyByType: compatibilityPolicyByType,
+        campaignMatrixRows,
       });
 
       setCampaignForm((previous) => ({
