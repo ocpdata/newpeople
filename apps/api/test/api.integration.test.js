@@ -5141,6 +5141,152 @@ describe("API integration baseline", () => {
     expect(interactionRow.analysis_status).toBe("lead_qualified");
   });
 
+  test("oportunidades.status desactiva y limpia vinculacion de lead originador", async () => {
+    const suffix = `${TEST_PREFIX}_lead_rollback_on_deactivate_${Date.now()}`;
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.opportunityFlowUserId,
+      actorUserId: ctx.opportunityFlowUserId,
+      suffix,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: ctx.opportunityFlowUserId,
+      suffix,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.flow@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const now = new Date();
+    const opportunityInsert = await query(
+      `INSERT INTO opportunities
+        (name, amount_usd, account_id, close_date, contact_id,
+         sales_stage_id, business_line_id, seller_user_id, presales_user_id,
+         activation_status_id, commercial_status_id,
+         created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        `Oportunidad rollback ${suffix}`,
+        52000,
+        accountId,
+        "2026-12-31",
+        contactId,
+        ctx.catalogIds.salesStageInitialId,
+        ctx.catalogIds.businessLineId,
+        ctx.sellerUserId,
+        null,
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        ctx.opportunityFlowUserId,
+        now,
+        ctx.opportunityFlowUserId,
+        now,
+      ],
+    );
+    const opportunityId = Number(opportunityInsert.insertId);
+    cleanup.opportunityIds.push(opportunityId);
+
+    const interactionPublicId = `lead_rb_${TEST_PREFIX}_${Date.now()}`;
+    const suggestedOpportunities = [
+      {
+        suggestionId: `opp_suggestion_${TEST_PREFIX}`,
+        name: `Oportunidad sugerida ${TEST_PREFIX}`,
+        resolutionMode: "create_new",
+        selectedOpportunityId: opportunityId,
+      },
+    ];
+
+    const interactionInsert = await query(
+      `INSERT INTO interactions
+        (public_id, title, lead_source, source_notes, summary, analysis_status,
+         warnings_json, topics_json, actions_taken_json, next_steps_json,
+         suggested_account_json, suggested_contacts_json, suggested_opportunities_json,
+         account_id, primary_opportunity_id, resolved_at,
+         created_by, updated_by, created_at, updated_at)
+       VALUES (?, ?, 'otro', NULL, ?, 'lead_qualified', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        interactionPublicId,
+        `Lead rollback oportunidad ${TEST_PREFIX}`,
+        "Lead de prueba para rollback por desactivacion",
+        JSON.stringify([]),
+        JSON.stringify([]),
+        JSON.stringify([]),
+        JSON.stringify([]),
+        JSON.stringify({ selectedAccountId: accountId }),
+        JSON.stringify([
+          {
+            suggestionId: `contact_suggestion_${TEST_PREFIX}`,
+            fullName: "Contacto demo",
+            resolutionMode: "link_existing",
+            selectedContactId: contactId,
+          },
+        ]),
+        JSON.stringify(suggestedOpportunities),
+        accountId,
+        opportunityId,
+        now,
+        ctx.opportunityFlowUserId,
+        ctx.opportunityFlowUserId,
+        now,
+        now,
+      ],
+    );
+    const interactionId = Number(interactionInsert.insertId);
+
+    await query(
+      `INSERT INTO interaction_contact_links (interaction_id, contact_id, created_at)
+       VALUES (?, ?, NOW(3))`,
+      [interactionId, contactId],
+    );
+    await query(
+      `INSERT INTO interaction_opportunity_links (interaction_id, opportunity_id, is_primary, created_at)
+       VALUES (?, ?, 1, NOW(3))`,
+      [interactionId, opportunityId],
+    );
+
+    const deactivateResponse = await request(app)
+      .patch(`/api/opportunities/${opportunityId}/status`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ statusCode: "desactivada" });
+
+    expect(deactivateResponse.status).toBe(200);
+    expect(deactivateResponse.body.message).toBe("Oportunidad desactivada");
+
+    const [interactionRow] = await query(
+      `SELECT analysis_status, primary_opportunity_id, suggested_opportunities_json
+       FROM interactions
+       WHERE id = ?
+       LIMIT 1`,
+      [interactionId],
+    );
+    expect(interactionRow.analysis_status).toBe("lead_assigned");
+    expect(interactionRow.primary_opportunity_id).toBeNull();
+
+    const persistedSuggestedOpportunities = JSON.parse(
+      interactionRow.suggested_opportunities_json || "[]",
+    );
+    expect(
+      persistedSuggestedOpportunities.some(
+        (item) => Number(item?.selectedOpportunityId || 0) === opportunityId,
+      ),
+    ).toBe(false);
+
+    const [linkCountRow] = await query(
+      `SELECT COUNT(*) AS total
+       FROM interaction_opportunity_links
+       WHERE interaction_id = ?
+         AND opportunity_id = ?`,
+      [interactionId, opportunityId],
+    );
+    expect(Number(linkCountRow.total)).toBe(0);
+  });
+
   test("interacciones marca lead no asignado cuando vincula cuenta y contacto sin vendedor", async () => {
     const loginResponse = await login(
       request(app),

@@ -391,6 +391,109 @@ async function getOpportunityCommercialStatusCodeById(statusId) {
   return rows.length ? String(rows[0].code) : null;
 }
 
+function parseJsonArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function stringifyJson(value) {
+  return JSON.stringify(value ?? null);
+}
+
+async function rollbackLeadOpportunityOnDeactivation({
+  opportunityId,
+  userId,
+}) {
+  const interactionRows = await query(
+    `SELECT DISTINCT i.id,
+            i.account_id,
+            i.analysis_status,
+            i.primary_opportunity_id,
+            i.suggested_opportunities_json
+     FROM interactions i
+     INNER JOIN interaction_opportunity_links iol ON iol.interaction_id = i.id
+     WHERE iol.opportunity_id = ?
+       AND i.analysis_status IN ('lead_assigned', 'lead_qualified')`,
+    [opportunityId],
+  );
+
+  if (!interactionRows.length) {
+    return { interactionsRolledBack: 0 };
+  }
+
+  for (const interaction of interactionRows) {
+    const interactionId = Number(interaction.id);
+    const remainingLinks = await query(
+      `SELECT opportunity_id
+       FROM interaction_opportunity_links
+       WHERE interaction_id = ?
+         AND opportunity_id <> ?
+       ORDER BY is_primary DESC, opportunity_id ASC`,
+      [interactionId, opportunityId],
+    );
+
+    const hasRemainingOpportunities = remainingLinks.length > 0;
+    const fallbackPrimaryOpportunityId = hasRemainingOpportunities
+      ? Number(remainingLinks[0].opportunity_id)
+      : null;
+
+    const cleanedSuggestions = parseJsonArray(
+      interaction.suggested_opportunities_json,
+    ).filter(
+      (suggestion) =>
+        Number(suggestion?.selectedOpportunityId || 0) !==
+        Number(opportunityId),
+    );
+
+    const nextAnalysisStatus = hasRemainingOpportunities
+      ? "lead_qualified"
+      : "lead_assigned";
+
+    await query(
+      `UPDATE interactions
+       SET analysis_status = ?,
+           primary_opportunity_id = ?,
+           suggested_opportunities_json = ?,
+           resolved_at = ?,
+           updated_by = ?,
+           updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        nextAnalysisStatus,
+        fallbackPrimaryOpportunityId,
+        stringifyJson(cleanedSuggestions),
+        hasRemainingOpportunities ? new Date() : null,
+        userId,
+        interactionId,
+      ],
+    );
+
+    await query(
+      `DELETE FROM interaction_opportunity_links
+       WHERE interaction_id = ?
+         AND opportunity_id = ?`,
+      [interactionId, opportunityId],
+    );
+
+    if (hasRemainingOpportunities) {
+      await query(
+        `UPDATE interaction_opportunity_links
+         SET is_primary = CASE WHEN opportunity_id = ? THEN 1 ELSE 0 END
+         WHERE interaction_id = ?`,
+        [fallbackPrimaryOpportunityId, interactionId],
+      );
+    }
+  }
+
+  return { interactionsRolledBack: interactionRows.length };
+}
+
 async function getOpportunitySalesStageByCode(stageCode) {
   const rows = await query(
     `SELECT id, code, name, stage_order
@@ -3629,6 +3732,13 @@ router.patch(
        WHERE id = ?`,
       [statusRows[0].id, req.user.id, now, id],
     );
+
+    if (parsed.data.statusCode === "desactivada") {
+      await rollbackLeadOpportunityOnDeactivation({
+        opportunityId: id,
+        userId: Number(req.user.id),
+      });
+    }
 
     await logAuditEvent({
       req,
