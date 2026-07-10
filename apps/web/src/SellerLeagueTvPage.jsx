@@ -6,9 +6,19 @@ const leadCountFormatter = new Intl.NumberFormat("es-MX", {
   maximumFractionDigits: 0,
 });
 
+const usdCurrencyFormatter = new Intl.NumberFormat("es-MX", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
 function formatLeadCount(value) {
   const numericValue = Math.round(Number(value || 0));
   return leadCountFormatter.format(numericValue);
+}
+
+function formatCurrencyUsd(value) {
+  return usdCurrencyFormatter.format(Number(value || 0));
 }
 
 function formatGaugeValue(value, { divisor = 1, maxFractionDigits = 0 } = {}) {
@@ -23,12 +33,24 @@ function formatGaugeValue(value, { divisor = 1, maxFractionDigits = 0 } = {}) {
 function LeadGauge({
   actual,
   target,
+  maxValue,
   valueDivisor = 1,
   valueMaxFractionDigits = 0,
+  valueSuffix = "",
+  className = "",
 }) {
   const numericTarget = Math.max(0, Number(target || 0));
-  const referenceMax = numericTarget > 0 ? numericTarget / 0.75 : 0;
-  const progressRatio = referenceMax > 0 ? Math.max(0, Math.min(Number(actual || 0) / referenceMax, 1)) : 0;
+  const explicitMax = Number(maxValue || 0);
+  const referenceMax =
+    explicitMax > 0
+      ? explicitMax
+      : numericTarget > 0
+        ? numericTarget / 0.75
+        : 0;
+  const progressRatio =
+    referenceMax > 0
+      ? Math.max(0, Math.min(Number(actual || 0) / referenceMax, 1))
+      : 0;
   const formatValue = (value) =>
     formatGaugeValue(value, {
       divisor: valueDivisor,
@@ -38,13 +60,20 @@ function LeadGauge({
   const formattedTarget = formatValue(target);
   const formattedMax = formatValue(referenceMax);
   const needleRotation = -90 + progressRatio * 180;
-  const targetAngle = Math.PI - Math.PI * 0.75;
+  const targetRatio =
+    referenceMax > 0
+      ? Math.max(0, Math.min(numericTarget / referenceMax, 1))
+      : 0;
+  const targetAngle = Math.PI - Math.PI * targetRatio;
   const targetRadius = 80;
   const targetCx = 120 + targetRadius * Math.cos(targetAngle);
   const targetCy = 120 - targetRadius * Math.sin(targetAngle);
 
   return (
-    <div className="seller-league-gauge" aria-hidden="true">
+    <div
+      className={`seller-league-gauge ${className}`.trim()}
+      aria-hidden="true"
+    >
       <svg
         className="seller-league-gauge-svg"
         viewBox="0 0 240 180"
@@ -73,15 +102,26 @@ function LeadGauge({
           className="seller-league-gauge-value-arc"
           style={{ strokeDasharray: `${progressRatio * 100} 100` }}
         />
-        <circle cx={targetCx} cy={targetCy} r="5" className="seller-league-gauge-target-dot" />
-        <text x="40" y="153" className="seller-league-gauge-label seller-league-gauge-label--min">0</text>
+        <circle
+          cx={targetCx}
+          cy={targetCy}
+          r="5"
+          className="seller-league-gauge-target-dot"
+        />
+        <text
+          x="40"
+          y="153"
+          className="seller-league-gauge-label seller-league-gauge-label--min"
+        >
+          {`0${valueSuffix}`}
+        </text>
         <text
           x={targetCx}
           y={targetCy - 10}
           textAnchor="middle"
           className="seller-league-gauge-label seller-league-gauge-label--target"
         >
-          {formattedTarget}
+          {`${formattedTarget}${valueSuffix}`}
         </text>
         <text
           x="200"
@@ -89,7 +129,7 @@ function LeadGauge({
           textAnchor="end"
           className="seller-league-gauge-label seller-league-gauge-label--max"
         >
-          {formattedMax}
+          {`${formattedMax}${valueSuffix}`}
         </text>
         <circle cx="120" cy="120" r="10" className="seller-league-gauge-hub" />
         <line
@@ -98,13 +138,23 @@ function LeadGauge({
           x2="120"
           y2="72"
           className="seller-league-gauge-needle"
-          style={{ transform: `rotate(${needleRotation}deg)`, transformOrigin: "120px 120px" }}
+          style={{
+            transform: `rotate(${needleRotation}deg)`,
+            transformOrigin: "120px 120px",
+          }}
         />
-        <circle cx="120" cy="120" r="12" className="seller-league-gauge-hub-outline" />
+        <circle
+          cx="120"
+          cy="120"
+          r="12"
+          className="seller-league-gauge-hub-outline"
+        />
       </svg>
 
       <div className="seller-league-gauge-center">
-        <strong className="seller-league-gauge-value">{formattedActual}</strong>
+        <strong className="seller-league-gauge-value">
+          {`${formattedActual}${valueSuffix}`}
+        </strong>
       </div>
     </div>
   );
@@ -117,7 +167,9 @@ export default function SellerLeagueTvPage() {
 
   async function loadDashboard() {
     try {
-      const { data } = await api.get("/api/commercial-tracking/seller-league-tv");
+      const { data } = await api.get(
+        "/api/commercial-tracking/seller-league-tv",
+      );
       setPayload(data || null);
       setError("");
     } catch (requestError) {
@@ -135,9 +187,12 @@ export default function SellerLeagueTvPage() {
   useEffect(() => {
     loadDashboard();
 
-    const refreshId = window.setInterval(() => {
-      loadDashboard();
-    }, 5 * 60 * 1000);
+    const refreshId = window.setInterval(
+      () => {
+        loadDashboard();
+      },
+      5 * 60 * 1000,
+    );
 
     return () => {
       window.clearInterval(refreshId);
@@ -193,7 +248,7 @@ export default function SellerLeagueTvPage() {
                       </h3>
                     </div>
 
-                    <div className="seller-league-metrics-grid">
+                    <div className="seller-league-metrics-grid seller-league-metrics-grid--pipeline">
                       <article className="seller-league-metric-card seller-league-metric-card--wide">
                         <div className="seller-league-metric-card-head">
                           <span className="seller-league-metric-card-title">
@@ -201,15 +256,12 @@ export default function SellerLeagueTvPage() {
                           </span>
                         </div>
 
-                        <div
-                          className="seller-league-gauge-wrap"
-                        >
+                        <div className="seller-league-gauge-wrap">
                           <LeadGauge
                             actual={row.leadActualCount}
                             target={row.leadTargetCount}
                           />
                         </div>
-
                       </article>
 
                       <article className="seller-league-metric-card seller-league-metric-card--wide">
@@ -219,37 +271,49 @@ export default function SellerLeagueTvPage() {
                           </span>
                         </div>
 
-                        <div
-                          className="seller-league-gauge-wrap"
-                        >
+                        <div className="seller-league-gauge-wrap">
                           <LeadGauge
                             actual={row.opportunityCreatedActualCount}
                             target={row.opportunityCreatedTargetCount}
                           />
                         </div>
-
                       </article>
 
                       <article className="seller-league-metric-card seller-league-metric-card--wide">
                         <div className="seller-league-metric-card-head">
                           <span className="seller-league-metric-card-title">
-                            Conversión L→O
+                            Conversión L→O %
                           </span>
                         </div>
 
-                        <div
-                          className="seller-league-gauge-wrap"
-                        >
+                        <div className="seller-league-gauge-wrap">
                           <LeadGauge
-                            actual={row.leadToOpportunityCurrentPct}
-                            target={row.leadToOpportunityTargetPct}
-                            valueDivisor={100}
-                            valueMaxFractionDigits={2}
+                            actual={row.leadToOpportunityCurrentRatio}
+                            target={0.5}
+                            maxValue={1}
+                            valueDivisor={0.01}
+                            valueMaxFractionDigits={1}
+                            className="seller-league-gauge--conversion"
                           />
                         </div>
-
                       </article>
 
+                      <article className="seller-league-metric-card seller-league-metric-card--wide">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Ticket promedio venta
+                          </span>
+                        </div>
+
+                        <div className="seller-league-ticket-value-wrap">
+                          <strong className="seller-league-ticket-value">
+                            {formatCurrencyUsd(row.averageSaleTicketAmount)}
+                          </strong>
+                          <span className="seller-league-ticket-meta">
+                            US$ por venta
+                          </span>
+                        </div>
+                      </article>
                     </div>
                   </section>
 

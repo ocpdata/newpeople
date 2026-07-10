@@ -433,7 +433,7 @@ async function loadQuarterTargetSummaryByQuarter({ user, year, sellerUserId }) {
       result.set(quarter, {
         quotaSalesAmountUsd: 0,
         quotaContributionAmountUsd: 0,
-         versionLabel: null,
+        versionLabel: null,
       });
       continue;
     }
@@ -464,7 +464,7 @@ async function loadQuarterTargetSummaryByQuarter({ user, year, sellerUserId }) {
       quotaContributionAmountUsd: toAmount(
         targetRow.expected_contribution_amount || 0,
       ),
-       versionLabel: periodRow.version_label || null,
+      versionLabel: periodRow.version_label || null,
     });
   }
 
@@ -666,7 +666,11 @@ function buildForecastQualityAssessment({
     ["bloqueada", "sin_conduccion", "esperando_interno"].includes(
       String(openItem?.executionStateCode || ""),
     );
-  const timingFlags = buildCloseTimingFlags(stageOrder, monthRange, row?.close_date);
+  const timingFlags = buildCloseTimingFlags(
+    stageOrder,
+    monthRange,
+    row?.close_date,
+  );
 
   const issueFlags = {
     noNextStep: !hasNextStep,
@@ -726,11 +730,7 @@ function buildForecastQualityAssessment({
   };
 }
 
-function clampForecastWeight({
-  weight,
-  stageOrder,
-  issueFlags,
-}) {
+function clampForecastWeight({ weight, stageOrder, issueFlags }) {
   let nextWeight = Math.max(0, Math.min(Number(weight || 0), 0.9));
 
   if (stageOrder >= 1 && stageOrder <= 3) {
@@ -845,12 +845,13 @@ function buildStatusBreakdown(items = [], statusCode) {
     return accumulator;
   }, new Map());
 
-  const dominantStageRow = Array.from(dominantStage.values()).sort((left, right) => {
-    if (right.total !== left.total) {
-      return right.total - left.total;
-    }
-    return right.amountUsd - left.amountUsd;
-  })[0] || null;
+  const dominantStageRow =
+    Array.from(dominantStage.values()).sort((left, right) => {
+      if (right.total !== left.total) {
+        return right.total - left.total;
+      }
+      return right.amountUsd - left.amountUsd;
+    })[0] || null;
 
   return {
     total: filtered.length,
@@ -906,7 +907,8 @@ function buildDashboardMonthlyRecommendations({
     recommendations.push({
       code: "gap",
       title: `Cerrar una brecha neta de ${formatCompactCurrency(remainingGap)} con rescate o reemplazo de pipeline.`,
-      impactLabel: "El mes no se cubre solo con ganado y forecast defendible actual.",
+      impactLabel:
+        "El mes no se cubre solo con ganado y forecast defendible actual.",
     });
   }
 
@@ -933,10 +935,13 @@ function buildMonthlyQuotaStatus({
   const conservative = toAmount(realWonAmount + forecastCommittedAmount);
   const base = toAmount(conservative + forecastProbableAmount);
   const extended = toAmount(base + weakAmount);
-  const weakShare = forecastGrossAmount > 0 ? weakAmount / forecastGrossAmount : 0;
-  const concentrated = criticalOpportunities.length > 0 && criticalOpportunities
-    .slice(0, 3)
-    .reduce((sum, item) => sum + Number(item.weightedAmountUsd || 0), 0) >=
+  const weakShare =
+    forecastGrossAmount > 0 ? weakAmount / forecastGrossAmount : 0;
+  const concentrated =
+    criticalOpportunities.length > 0 &&
+    criticalOpportunities
+      .slice(0, 3)
+      .reduce((sum, item) => sum + Number(item.weightedAmountUsd || 0), 0) >=
       (realWonAmount + forecastCommittedAmount + forecastProbableAmount) * 0.5;
 
   let code = "red";
@@ -1071,8 +1076,12 @@ function buildMonthlyQuotaDashboardPayload({
       0,
     ),
   );
-  const committedItems = forecastItems.filter((item) => item.category === "committed");
-  const probableItems = forecastItems.filter((item) => item.category === "probable");
+  const committedItems = forecastItems.filter(
+    (item) => item.category === "committed",
+  );
+  const probableItems = forecastItems.filter(
+    (item) => item.category === "probable",
+  );
   const weakItems = forecastItems.filter((item) => item.category === "weak");
   const forecastCommittedAmount = toAmount(
     committedItems.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
@@ -1156,7 +1165,8 @@ function buildMonthlyQuotaDashboardPayload({
   const originMap = new Map();
   [...wonItems, ...forecastItems].forEach((item) => {
     const opportunityId = Number(item.id || item.opportunityId || 0);
-    const origin = item.origin || originByOpportunity.get(opportunityId) || "direct";
+    const origin =
+      item.origin || originByOpportunity.get(opportunityId) || "direct";
     const current = originMap.get(origin) || {
       origin,
       label: origin === "lead_qualified" ? "Desde lead calificado" : "Directas",
@@ -1181,7 +1191,10 @@ function buildMonthlyQuotaDashboardPayload({
       if (item.category === "probable") current.probableCount += 1;
       if (item.category === "weak") current.weakCount += 1;
     }
-    if (String(item.commercial_status_code || item.commercialStatusCode || "") === "ganada") {
+    if (
+      String(item.commercial_status_code || item.commercialStatusCode || "") ===
+      "ganada"
+    ) {
       current.wonCount += 1;
       current.wonAmountUsd = toAmount(
         current.wonAmountUsd + Number(item.amount_usd || item.amountUsd || 0),
@@ -1210,7 +1223,10 @@ function buildMonthlyQuotaDashboardPayload({
       if (Number(right.amountUsd || 0) !== Number(left.amountUsd || 0)) {
         return Number(right.amountUsd || 0) - Number(left.amountUsd || 0);
       }
-      return Number(right.weightedAmountUsd || 0) - Number(left.weightedAmountUsd || 0);
+      return (
+        Number(right.weightedAmountUsd || 0) -
+        Number(left.weightedAmountUsd || 0)
+      );
     })
     .slice(0, 8);
 
@@ -2156,9 +2172,7 @@ async function buildForecastMonthlyPayload(user, params = {}) {
     sellerUserId,
   });
   const originByOpportunity = await listOpportunityLeadOrigins(
-    scopedOpportunities
-      .map((item) => Number(item.id || 0))
-      .filter(Boolean),
+    scopedOpportunities.map((item) => Number(item.id || 0)).filter(Boolean),
   );
   const dashboardMonthly = buildMonthlyQuotaDashboardPayload({
     monthRange,
@@ -2286,7 +2300,10 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
       const stageCode = String(item.sales_stage_code || "sin_etapa");
       const current = accumulator.get(stageCode) || {
         stageCode,
-        stageName: item.sales_stage_name || stageNameByCode.get(stageCode) || "Sin etapa",
+        stageName:
+          item.sales_stage_name ||
+          stageNameByCode.get(stageCode) ||
+          "Sin etapa",
         stageOrder: Number(item.sales_stage_order ?? 9999),
         openAmountUsd: 0,
         opportunityCount: 0,
@@ -2312,10 +2329,15 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
         openAmountUsd: toAmount(item.openAmountUsd),
         opportunityCount: Number(item.opportunityCount || 0),
         stageSharePct: funnelOpenAmountUsd
-          ? toAmount((Number(item.openAmountUsd || 0) / funnelOpenAmountUsd) * 100)
+          ? toAmount(
+              (Number(item.openAmountUsd || 0) / funnelOpenAmountUsd) * 100,
+            )
           : 0,
       }))
-      .sort((left, right) => Number(left.stageOrder || 0) - Number(right.stageOrder || 0));
+      .sort(
+        (left, right) =>
+          Number(left.stageOrder || 0) - Number(right.stageOrder || 0),
+      );
 
     const targetSummary = targetByQuarter.get(quarter) || {
       quotaSalesAmountUsd: 0,
@@ -2329,9 +2351,7 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
       wonItems.reduce(
         (sum, item) =>
           sum +
-          Number(
-            wonContributionByOpportunity.get(Number(item.id || 0)) || 0,
-          ),
+          Number(wonContributionByOpportunity.get(Number(item.id || 0)) || 0),
         0,
       ),
     );
@@ -2357,12 +2377,16 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
       label: quarterRange.label,
       startDate: formatIsoDate(quarterRange.start),
       endDate: formatIsoDate(quarterRange.end),
-       versionLabel: (targetByQuarter.get(quarter) || {}).versionLabel || null,
+      versionLabel: (targetByQuarter.get(quarter) || {}).versionLabel || null,
       quotaSalesAmountUsd: toAmount(targetSummary.quotaSalesAmountUsd || 0),
       actualSalesAmountUsd,
       salesGapAmountUsd,
       salesAttainmentPct: Number(targetSummary.quotaSalesAmountUsd || 0)
-        ? toAmount((actualSalesAmountUsd / Number(targetSummary.quotaSalesAmountUsd || 0)) * 100)
+        ? toAmount(
+            (actualSalesAmountUsd /
+              Number(targetSummary.quotaSalesAmountUsd || 0)) *
+              100,
+          )
         : null,
       quotaContributionAmountUsd: toAmount(
         targetSummary.quotaContributionAmountUsd || 0,
@@ -2475,10 +2499,7 @@ async function loadCurrentQuarterTargetsBySeller({ user, quarterSelection }) {
 }
 
 async function loadQuarterLeadCountsBySeller({ user, quarterSelection }) {
-  const params = [
-    quarterSelection.start,
-    addDays(quarterSelection.end, 1),
-  ];
+  const params = [quarterSelection.start, addDays(quarterSelection.end, 1)];
   const whereClauses = [
     "i.seller_user_id IS NOT NULL",
     "i.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified', 'lead_disqualified')",
@@ -2501,16 +2522,19 @@ async function loadQuarterLeadCountsBySeller({ user, quarterSelection }) {
 
   return new Map(
     rows
-      .map((row) => [Number(row.seller_user_id || 0), Number(row.lead_count || 0)])
+      .map((row) => [
+        Number(row.seller_user_id || 0),
+        Number(row.lead_count || 0),
+      ])
       .filter(([sellerUserId]) => sellerUserId > 0),
   );
 }
 
-async function loadQuarterQualifiedLeadCountsBySeller({ user, quarterSelection }) {
-  const params = [
-    quarterSelection.start,
-    addDays(quarterSelection.end, 1),
-  ];
+async function loadQuarterQualifiedLeadCountsBySeller({
+  user,
+  quarterSelection,
+}) {
+  const params = [quarterSelection.start, addDays(quarterSelection.end, 1)];
   const whereClauses = [
     "i.seller_user_id IS NOT NULL",
     "i.analysis_status = 'lead_qualified'",
@@ -2558,7 +2582,9 @@ async function loadSellerParametersBySeller() {
         return [
           sellerUserId,
           {
-            averageSaleTicketAmount: Number(row.average_sale_ticket_amount || 0),
+            averageSaleTicketAmount: Number(
+              row.average_sale_ticket_amount || 0,
+            ),
             leadsToOpportunitiesRatio: Number(
               row.leads_to_opportunities_ratio || 0,
             ),
@@ -2576,10 +2602,7 @@ async function loadQuarterCreatedOpportunityCountsBySeller({
   user,
   quarterSelection,
 }) {
-  const params = [
-    quarterSelection.start,
-    addDays(quarterSelection.end, 1),
-  ];
+  const params = [quarterSelection.start, addDays(quarterSelection.end, 1)];
   const whereClauses = [
     "o.seller_user_id IS NOT NULL",
     "oas.code = 'activada'",
@@ -2611,6 +2634,118 @@ async function loadQuarterCreatedOpportunityCountsBySeller({
   );
 }
 
+async function loadRecentLeadConversionBySeller({ user, sampleSize = 20 }) {
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  const params = [];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified', 'lead_disqualified')",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  params.push(normalizedSampleSize);
+  const rows = await query(
+    `SELECT recent.seller_user_id,
+            COUNT(*) AS total_lead_count,
+            SUM(
+              CASE WHEN recent.analysis_status = 'lead_qualified' THEN 1 ELSE 0 END
+            ) AS qualified_lead_count
+     FROM (
+       SELECT i.seller_user_id,
+              i.analysis_status,
+              ROW_NUMBER() OVER (
+                PARTITION BY i.seller_user_id
+                ORDER BY i.created_at DESC, i.id DESC
+              ) AS row_position
+       FROM interactions i
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?
+     GROUP BY recent.seller_user_id`,
+    params,
+  ).catch(() => []);
+
+  return new Map(
+    rows
+      .map((row) => {
+        const sellerUserId = Number(row.seller_user_id || 0);
+        if (!sellerUserId) {
+          return null;
+        }
+        return [
+          sellerUserId,
+          {
+            totalLeadCount: Number(row.total_lead_count || 0),
+            qualifiedLeadCount: Number(row.qualified_lead_count || 0),
+          },
+        ];
+      })
+      .filter(Boolean),
+  );
+}
+
+async function loadLastWonTicketAverageBySeller(user, { maxSales = 10 } = {}) {
+  const scopedOpportunities = await listScopedOpportunities(user);
+  const wonRowsBySeller = new Map();
+
+  scopedOpportunities.forEach((item) => {
+    if (!isRealWonOpportunity(item)) {
+      return;
+    }
+
+    const sellerUserId = Number(item.seller_user_id || 0);
+    if (!sellerUserId) {
+      return;
+    }
+
+    const amountUsd = Number(item.amount_usd || 0);
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      return;
+    }
+
+    const closedAt =
+      item.commercial_closed_at ||
+      item.close_date ||
+      item.updated_at ||
+      item.created_at ||
+      null;
+    const closedAtTs = closedAt ? new Date(closedAt).getTime() : 0;
+
+    const rows = wonRowsBySeller.get(sellerUserId) || [];
+    rows.push({
+      amountUsd,
+      closedAtTs: Number.isFinite(closedAtTs) ? closedAtTs : 0,
+    });
+    wonRowsBySeller.set(sellerUserId, rows);
+  });
+
+  const cappedSalesCount = Math.max(1, Number(maxSales || 10));
+  const averageBySeller = new Map();
+
+  wonRowsBySeller.forEach((rows, sellerUserId) => {
+    const latestRows = [...rows]
+      .sort((left, right) => right.closedAtTs - left.closedAtTs)
+      .slice(0, cappedSalesCount);
+
+    if (!latestRows.length) {
+      averageBySeller.set(sellerUserId, 0);
+      return;
+    }
+
+    const sumAmount = latestRows.reduce(
+      (sum, row) => sum + Number(row.amountUsd || 0),
+      0,
+    );
+    averageBySeller.set(sellerUserId, toAmount(sumAmount / latestRows.length));
+  });
+
+  return averageBySeller;
+}
+
 function buildSellerLeagueRow({
   sellerUserId,
   sellerUserName,
@@ -2620,29 +2755,43 @@ function buildSellerLeagueRow({
   quotaAmountUsd,
   leadActualCount,
   leadQualifiedCount,
+  conversionLeadTotalCount,
+  conversionLeadQualifiedCount,
   opportunityCreatedActualCount,
+  averageSaleTicketLast10,
   sellerParameters,
   quarterComplianceSeries,
 }) {
   const wonAmountUsd = toAmount(
-    quarterWonItems.reduce((sum, item) => sum + Number(item.amount_usd || 0), 0),
+    quarterWonItems.reduce(
+      (sum, item) => sum + Number(item.amount_usd || 0),
+      0,
+    ),
   );
   const openOpportunities = quarterOpenItems.length;
   const pipelineWeightedUsd = toAmount(
     quarterOpenItems.reduce((sum, item) => {
-      return sum + Number(item.amountUsd || 0) * getForecastStageWeight(item.stageCode);
+      return (
+        sum +
+        Number(item.amountUsd || 0) * getForecastStageWeight(item.stageCode)
+      );
     }, 0),
   );
-  const coverageGapUsd = Math.max(Number(quotaAmountUsd || 0) - wonAmountUsd, 1);
+  const coverageGapUsd = Math.max(
+    Number(quotaAmountUsd || 0) - wonAmountUsd,
+    1,
+  );
   const coverageRatio = safeRatio(pipelineWeightedUsd, coverageGapUsd);
 
   const advanced14dCount = quarterOpenItems.reduce((sum, item) => {
-    return advancedOpportunityIds14d.has(Number(item.opportunityId || 0)) ? sum + 1 : sum;
+    return advancedOpportunityIds14d.has(Number(item.opportunityId || 0))
+      ? sum + 1
+      : sum;
   }, 0);
   const advanceRate14d = safeRatio(advanced14dCount, openOpportunities);
 
-  const opportunitiesWithNextStepCount = quarterOpenItems.filter(
-    (item) => Boolean(item.nextStep),
+  const opportunitiesWithNextStepCount = quarterOpenItems.filter((item) =>
+    Boolean(item.nextStep),
   ).length;
   const qualityReadyCount = quarterOpenItems.filter(
     (item) => Boolean(item.nextStep) && Boolean(item.closeDate),
@@ -2657,13 +2806,20 @@ function buildSellerLeagueRow({
   }).length;
   const overdueRate = safeRatio(overdueCount, opportunitiesWithNextStepCount);
 
-  const noNextStepCount = quarterOpenItems.filter((item) => !item.nextStep).length;
+  const noNextStepCount = quarterOpenItems.filter(
+    (item) => !item.nextStep,
+  ).length;
   const noNextStepRate = safeRatio(noNextStepCount, openOpportunities);
 
   const blockedCriticalCount = quarterOpenItems.filter((item) =>
-    ["bloqueada", "sin_conduccion"].includes(String(item.executionStateCode || "")),
+    ["bloqueada", "sin_conduccion"].includes(
+      String(item.executionStateCode || ""),
+    ),
   ).length;
-  const blockedCriticalRate = safeRatio(blockedCriticalCount, openOpportunities);
+  const blockedCriticalRate = safeRatio(
+    blockedCriticalCount,
+    openOpportunities,
+  );
 
   const scoreClosing = quotaAmountUsd
     ? clampScore(100 * safeRatio(wonAmountUsd, quotaAmountUsd))
@@ -2686,48 +2842,65 @@ function buildSellerLeagueRow({
     scoreClosing === null
       ? null
       : toAmount(0.5 * scoreClosing + 0.3 * scoreBuild + 0.2 * scoreDiscipline);
-  const averageSaleTicketAmount = Number(
+  const calculatedAverageSaleTicketAmount = Number(
+    averageSaleTicketLast10 || 0,
+  );
+  const configuredAverageSaleTicketAmount = Number(
     sellerParameters?.averageSaleTicketAmount || 0,
   );
+  const averageSaleTicketAmount =
+    calculatedAverageSaleTicketAmount > 0
+      ? calculatedAverageSaleTicketAmount
+      : configuredAverageSaleTicketAmount > 0
+        ? configuredAverageSaleTicketAmount
+        : 0;
+  const conversionTotalLeads = Number(conversionLeadTotalCount || 0);
+  const conversionQualifiedLeads = Number(conversionLeadQualifiedCount || 0);
+  const leadToOpportunityCurrentRatio =
+    conversionTotalLeads > 0 && conversionQualifiedLeads > 0
+      ? Math.max(0, conversionQualifiedLeads / conversionTotalLeads)
+      : 0;
   const leadsToOpportunitiesRatio = Number(
     sellerParameters?.leadsToOpportunitiesRatio || 0,
   );
   const opportunitiesToWinsRatio = Number(
     sellerParameters?.opportunitiesToWinsRatio || 0,
   );
+  const configuredLeadToOpportunityRatio =
+    leadsToOpportunitiesRatio > 0 ? 1 / leadsToOpportunitiesRatio : 0;
+  const effectiveLeadToOpportunityRatio =
+    leadToOpportunityCurrentRatio > 0
+      ? leadToOpportunityCurrentRatio
+      : configuredLeadToOpportunityRatio > 0
+        ? configuredLeadToOpportunityRatio
+        : 0;
   const leadTargetRaw =
     quotaAmountUsd &&
     quotaAmountUsd > 0 &&
     averageSaleTicketAmount > 0 &&
-    leadsToOpportunitiesRatio >= 0 &&
-    opportunitiesToWinsRatio >= 0
-      ? (Number(quotaAmountUsd || 0) / averageSaleTicketAmount) *
-        leadsToOpportunitiesRatio *
-        opportunitiesToWinsRatio
-      : null;
-  const leadTargetCount =
-    leadTargetRaw === null ? null : Math.max(0, Math.round(leadTargetRaw));
+    effectiveLeadToOpportunityRatio > 0
+      ? Number(quotaAmountUsd || 0) /
+        (averageSaleTicketAmount * effectiveLeadToOpportunityRatio)
+      : 0;
+  const leadTargetCount = Math.max(0, Math.ceil(leadTargetRaw));
   const leadGapCount =
     leadTargetCount === null
       ? null
-      : toAmount(Math.max(Number(leadTargetCount || 0) - Number(leadActualCount || 0), 0));
+      : toAmount(
+          Math.max(
+            Number(leadTargetCount || 0) - Number(leadActualCount || 0),
+            0,
+          ),
+        );
   const leadAttainmentPct =
     leadTargetCount && leadTargetCount > 0
       ? toAmount((Number(leadActualCount || 0) / Number(leadTargetCount)) * 100)
       : null;
-  const leadToOpportunityCurrentRatioRaw =
-    Number(leadQualifiedCount || 0) / Number(leadActualCount || 0);
-  const leadToOpportunityCurrentRatio = Number.isFinite(
-    leadToOpportunityCurrentRatioRaw,
-  )
-    ? Math.max(0, leadToOpportunityCurrentRatioRaw)
-    : 0;
   const leadToOpportunityCurrentPct = toAmount(
     leadToOpportunityCurrentRatio * 100,
   );
-  const leadToOpportunityTargetRatioRaw = Number(
-    sellerParameters?.leadsToOpportunitiesRatio || 0,
-  );
+  const leadToOpportunityTargetRatioRaw =
+    leadsToOpportunitiesRatio > 0 ? 1 / leadsToOpportunitiesRatio : 0;
   const leadToOpportunityTargetRatio = Number.isFinite(
     leadToOpportunityTargetRatioRaw,
   )
@@ -2736,12 +2909,16 @@ function buildSellerLeagueRow({
   const leadToOpportunityTargetPct = toAmount(
     leadToOpportunityTargetRatio * 100,
   );
-  const opportunityCreatedTargetCount = quotaAmountUsd
-    ? toAmount(
-        (Number(quotaAmountUsd || 0) / QUARTERLY_AVG_WON_TICKET_USD) *
-          QUARTERLY_OPPORTUNITIES_TO_WON_RATIO,
-      )
-    : null;
+  const opportunityCreatedTargetCount =
+    quotaAmountUsd &&
+    Number(quotaAmountUsd || 0) > 0 &&
+    averageSaleTicketAmount > 0 &&
+    opportunitiesToWinsRatio >= 0
+      ? toAmount(
+          (Number(quotaAmountUsd || 0) / averageSaleTicketAmount) *
+            opportunitiesToWinsRatio,
+        )
+      : null;
   const opportunityCreatedGapCount =
     opportunityCreatedTargetCount === null
       ? null
@@ -2774,6 +2951,7 @@ function buildSellerLeagueRow({
     leadToOpportunityCurrentPct,
     leadToOpportunityTargetRatio,
     leadToOpportunityTargetPct,
+    averageSaleTicketAmount: toAmount(averageSaleTicketAmount),
     opportunityCreatedTargetCount,
     opportunityCreatedActualCount: Number(opportunityCreatedActualCount || 0),
     opportunityCreatedGapCount,
@@ -2804,7 +2982,7 @@ function buildSellerLeagueRow({
     scoreBuild,
     scoreDiscipline,
     scoreTotal,
-    momentum7d: toAmount(advanced14dCount * 3 + (wonAmountUsd / 25000)),
+    momentum7d: toAmount(advanced14dCount * 3 + wonAmountUsd / 25000),
     isOfficial: Boolean(quotaAmountUsd && quotaAmountUsd > 0),
     quarterComplianceSeries: Array.isArray(quarterComplianceSeries)
       ? quarterComplianceSeries
@@ -2868,7 +3046,8 @@ async function buildSellerQuarterComplianceSeriesMap({
 
   const result = new Map();
   normalizedSellerIds.forEach((sellerUserId) => {
-    const targetByQuarter = targetSummaryBySeller.get(sellerUserId) || new Map();
+    const targetByQuarter =
+      targetSummaryBySeller.get(sellerUserId) || new Map();
     const series = [];
     for (let quarter = 1; quarter <= 4; quarter += 1) {
       const quotaAmountUsd = toAmount(
@@ -3132,7 +3311,9 @@ router.get(
       quarterTargets,
       quarterLeadCountsBySeller,
       quarterQualifiedLeadCountsBySeller,
+      recentLeadConversionBySeller,
       quarterCreatedOpportunityCountsBySeller,
+      lastWonTicketAverageBySeller,
       sellerParametersBySeller,
       visibleSellerRows,
     ] = await Promise.all([
@@ -3157,10 +3338,12 @@ router.get(
         user: req.user,
         quarterSelection,
       }),
+      loadRecentLeadConversionBySeller({ user: req.user, sampleSize: 20 }),
       loadQuarterCreatedOpportunityCountsBySeller({
         user: req.user,
         quarterSelection,
       }),
+      loadLastWonTicketAverageBySeller(req.user, { maxSales: 10 }),
       loadSellerParametersBySeller(),
       query(
         `SELECT DISTINCT u.id, u.full_name AS seller_user_name
@@ -3189,9 +3372,7 @@ router.get(
       endOfDay(new Date()),
     );
     const advancedOpportunityIds14d = new Set(
-      advanced14dRows
-        .map((row) => Number(row.entity_id || 0))
-        .filter(Boolean),
+      advanced14dRows.map((row) => Number(row.entity_id || 0)).filter(Boolean),
     );
 
     const rowsBySeller = new Map();
@@ -3258,6 +3439,8 @@ router.get(
 
     const leaderboard = Array.from(rowsBySeller.values()).map((item) => {
       const target = quarterTargets.targetBySellerId.get(item.sellerUserId);
+      const recentLeadConversion =
+        recentLeadConversionBySeller.get(item.sellerUserId) || null;
       return buildSellerLeagueRow({
         sellerUserId: item.sellerUserId,
         sellerUserName: item.sellerUserName,
@@ -3268,26 +3451,38 @@ router.get(
         leadActualCount: quarterLeadCountsBySeller.get(item.sellerUserId) || 0,
         leadQualifiedCount:
           quarterQualifiedLeadCountsBySeller.get(item.sellerUserId) || 0,
+        conversionLeadTotalCount: recentLeadConversion?.totalLeadCount || 0,
+        conversionLeadQualifiedCount:
+          recentLeadConversion?.qualifiedLeadCount || 0,
         opportunityCreatedActualCount:
           quarterCreatedOpportunityCountsBySeller.get(item.sellerUserId) || 0,
-        sellerParameters: sellerParametersBySeller.get(item.sellerUserId) || null,
+        averageSaleTicketLast10:
+          lastWonTicketAverageBySeller.get(item.sellerUserId) || 0,
+        sellerParameters:
+          sellerParametersBySeller.get(item.sellerUserId) || null,
         quarterComplianceSeries:
           quarterComplianceSeriesBySeller.get(item.sellerUserId) || [],
       });
     });
 
     leaderboard.sort((left, right) => {
-      const scoreDelta = Number(right.scoreTotal || -1) - Number(left.scoreTotal || -1);
+      const scoreDelta =
+        Number(right.scoreTotal || -1) - Number(left.scoreTotal || -1);
       if (scoreDelta !== 0) return scoreDelta;
-      const closingDelta = Number(right.scoreClosing || -1) - Number(left.scoreClosing || -1);
+      const closingDelta =
+        Number(right.scoreClosing || -1) - Number(left.scoreClosing || -1);
       if (closingDelta !== 0) return closingDelta;
-      const wonDelta = Number(right.wonAmountUsd || 0) - Number(left.wonAmountUsd || 0);
+      const wonDelta =
+        Number(right.wonAmountUsd || 0) - Number(left.wonAmountUsd || 0);
       if (wonDelta !== 0) return wonDelta;
-      const buildDelta = Number(right.scoreBuild || 0) - Number(left.scoreBuild || 0);
+      const buildDelta =
+        Number(right.scoreBuild || 0) - Number(left.scoreBuild || 0);
       if (buildDelta !== 0) return buildDelta;
-      const momentumDelta = Number(right.momentum7d || 0) - Number(left.momentum7d || 0);
+      const momentumDelta =
+        Number(right.momentum7d || 0) - Number(left.momentum7d || 0);
       if (momentumDelta !== 0) return momentumDelta;
-      const disciplineDelta = Number(right.scoreDiscipline || 0) - Number(left.scoreDiscipline || 0);
+      const disciplineDelta =
+        Number(right.scoreDiscipline || 0) - Number(left.scoreDiscipline || 0);
       if (disciplineDelta !== 0) return disciplineDelta;
       return String(left.sellerUserName || "").localeCompare(
         String(right.sellerUserName || ""),
@@ -3304,7 +3499,10 @@ router.get(
         .at(-1);
       const rankGapToNext =
         row.isOfficial && previousOfficial
-          ? toAmount(Number(previousOfficial.scoreTotal || 0) - Number(row.scoreTotal || 0))
+          ? toAmount(
+              Number(previousOfficial.scoreTotal || 0) -
+                Number(row.scoreTotal || 0),
+            )
           : null;
       if (row.isOfficial) {
         officialRank += 1;

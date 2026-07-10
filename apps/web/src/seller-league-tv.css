@@ -82,6 +82,52 @@
   gap: clamp(0.5rem, 0.8vw, 0.9rem);
 }
 
+.seller-league-metrics-grid--pipeline {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  row-gap: clamp(0.7rem, 1vw, 1rem);
+}
+
+.seller-league-metrics-grid--pipeline .seller-league-metric-card {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.seller-league-metrics-grid--pipeline .seller-league-metric-card--wide {
+  padding: clamp(0.22rem, 0.3vw, 0.32rem) clamp(0.374rem, 0.518vw, 0.576rem);
+}
+
+.seller-league-metrics-grid--pipeline .seller-league-gauge {
+  width: min(100%, 6.9rem);
+  padding-bottom: 0.78rem;
+}
+
+.seller-league-metrics-grid--pipeline .seller-league-gauge-center {
+  min-width: 5.7rem;
+}
+
+.seller-league-ticket-value-wrap {
+  min-height: 5.85rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  text-align: center;
+}
+
+.seller-league-ticket-value {
+  font-size: clamp(0.76rem, 0.95vw + 0.2rem, 1.1rem);
+  line-height: 1.1;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.seller-league-ticket-meta {
+  font-size: clamp(0.5rem, 0.5vw + 0.22rem, 0.72rem);
+  line-height: 1.15;
+  color: #64748b;
+}
+
 .seller-league-metric-card {
   min-width: 0;
   min-height: 0;
@@ -95,7 +141,11 @@
 }
 
 .seller-league-metric-card--wide {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(241, 245, 249, 0.92));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.94),
+    rgba(241, 245, 249, 0.92)
+  );
   padding: clamp(0.374rem, 0.518vw, 0.576rem);
   gap: 0.259rem;
 }
@@ -238,6 +288,23 @@
   letter-spacing: -0.03em;
 }
 
+.seller-league-gauge--conversion .seller-league-gauge-label {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.seller-league-gauge--conversion .seller-league-gauge-center {
+  bottom: 17%;
+  min-width: 5.25rem;
+}
+
+.seller-league-gauge--conversion .seller-league-gauge-value {
+  font-size: clamp(0.52rem, 0.72vw + 0.16rem, 0.86rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #334155;
+}
+
 .seller-league-gauge-target {
   font-size: clamp(0.62rem, 0.72vw + 0.24rem, 0.95rem);
   color: #6b7280;
@@ -256,7 +323,9 @@
   margin: 0;
   font-size: clamp(
     0.5rem,
-    calc(4.25vmin / max(var(--seller-rows, 1), var(--seller-columns, 1)) + 0.5rem),
+    calc(
+      4.25vmin / max(var(--seller-rows, 1), var(--seller-columns, 1)) + 0.5rem
+    ),
     1.75rem
   );
   line-height: 1.05;
@@ -288,7 +357,9 @@
   .seller-league-seller-name {
     font-size: clamp(
       0.475rem,
-      calc(5vmin / max(var(--seller-rows, 1), var(--seller-columns, 1)) + 0.425rem),
+      calc(
+        5vmin / max(var(--seller-rows, 1), var(--seller-columns, 1)) + 0.425rem
+      ),
       1.25rem
     );
   }
@@ -299,6 +370,15 @@
 
   .seller-league-metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .seller-league-metrics-grid--pipeline {
+    grid-template-columns: 1fr;
+  }
+
+  .seller-league-metrics-grid--pipeline .seller-league-metric-card {
+    min-height: 0;
+    overflow: visible;
   }
 
   .seller-league-metric-card-head {
@@ -345,6 +425,11 @@
 
   .seller-league-gauge-wrap {
     padding: 0;
+  }
+
+  .seller-league-metrics-grid--pipeline .seller-league-gauge {
+    width: min(100%, 6.25rem);
+    padding-bottom: 0.62rem;
   }
 }
 
