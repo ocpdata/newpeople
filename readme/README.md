@@ -11,6 +11,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Crear cuenta](./crear-cuenta.md)
 - [Leads](./leads.md)
+- [Calculos](./calculos.md)
 - [Campanas](./campanas.md)
 - [Landing](./landing.md)
 - [Correos de campana](./correos-campana.md)
@@ -45,6 +46,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Oportunidades: alta/edicion en modal, vendedor unico, preventa opcional,
   auditoria en edicion y acciones por fila;
   paginacion con selector 10 / 50 / 100 registros por pagina.
+- Calculos: documento nuevo con reglas de conversion, ticket promedio y respaldo desde configuracion de planeacion comercial.
 - Contactos: alta/edicion en modal, badge de estado solo lectura en modal de
   edicion, filtro de desactivados, ayuda contextual en encabezado,
   apertura de edicion por clic en fila, bloqueo visual durante guardado y

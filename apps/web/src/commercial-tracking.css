@@ -504,6 +504,12 @@
   gap: 12px;
 }
 
+.tracking-quarter-seller-stack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
 .tracking-quarter-chart-card,
 .tracking-quarter-gap-card,
 .tracking-quarter-stack-card {

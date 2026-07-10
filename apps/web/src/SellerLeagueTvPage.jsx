@@ -160,6 +160,45 @@ function LeadGauge({
   );
 }
 
+function SellerStageFunnel({ stages, totalAmountUsd }) {
+  const normalizedStages = Array.isArray(stages)
+    ? [...stages].sort(
+        (left, right) =>
+          Number(left.stageOrder ?? 9999) - Number(right.stageOrder ?? 9999),
+      )
+    : [];
+
+  if (!normalizedStages.length || Number(totalAmountUsd || 0) <= 0) {
+    return <div className="seller-league-funnel-empty">Sin funnel abierto.</div>;
+  }
+
+  return (
+    <div className="seller-league-funnel-wrap">
+      <div className="seller-league-funnel-track" aria-hidden="true">
+        {normalizedStages.map((stage) => (
+          <div
+            key={stage.stageCode}
+            className="seller-league-funnel-segment"
+            style={{ width: `${Math.max(Number(stage.stageSharePct || 0), 1)}%` }}
+            title={`${stage.stageName}: ${formatCurrencyUsd(stage.openAmountUsd)} (${formatLeadCount(stage.opportunityCount)} opps)`}
+          />
+        ))}
+      </div>
+      <div className="seller-league-funnel-meta">
+        <strong>{formatCurrencyUsd(totalAmountUsd)}</strong>
+        <span>Monto abierto</span>
+      </div>
+      <div className="seller-league-funnel-legend">
+        {normalizedStages.slice(0, 4).map((stage) => (
+          <span key={`legend-${stage.stageCode}`}>
+            {stage.stageName} · {formatLeadCount(stage.opportunityCount)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SellerLeagueTvPage() {
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -288,11 +327,20 @@ export default function SellerLeagueTvPage() {
 
                         <div className="seller-league-gauge-wrap">
                           <LeadGauge
-                            actual={row.leadToOpportunityCurrentRatio}
+                            actual={
+                              Math.ceil(
+                                Number(
+                                  row.leadToOpportunityDisplayRatio ??
+                                    row.leadToOpportunityCurrentRatio ??
+                                    0,
+                                ) *
+                                  100,
+                              ) / 100
+                            }
                             target={0.5}
                             maxValue={1}
                             valueDivisor={0.01}
-                            valueMaxFractionDigits={1}
+                            valueMaxFractionDigits={0}
                             className="seller-league-gauge--conversion"
                           />
                         </div>
@@ -323,7 +371,7 @@ export default function SellerLeagueTvPage() {
                         Cumplimiento Q actual
                       </h3>
                     </div>
-                    <div className="seller-league-metrics-grid">
+                    <div className="seller-league-metrics-grid seller-league-metrics-grid--compliance">
                       <article className="seller-league-metric-card seller-league-metric-card--wide">
                         <div className="seller-league-metric-card-head">
                           <span className="seller-league-metric-card-title">
@@ -339,6 +387,47 @@ export default function SellerLeagueTvPage() {
                             valueMaxFractionDigits={2}
                           />
                         </div>
+                      </article>
+
+                      <article className="seller-league-metric-card seller-league-metric-card--wide">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Conversión O→V %
+                          </span>
+                        </div>
+
+                        <div className="seller-league-gauge-wrap">
+                          <LeadGauge
+                            actual={
+                              Math.ceil(
+                                Number(
+                                  row.opportunityToWinEffectiveRatio ??
+                                    row.opportunityToWinCurrentRatio ??
+                                    0,
+                                ) * 100,
+                              ) / 100
+                            }
+                            target={
+                              Number(row.opportunityToWinConfiguredRatio || 0)
+                            }
+                            maxValue={1}
+                            valueDivisor={0.01}
+                            valueMaxFractionDigits={0}
+                            className="seller-league-gauge--conversion"
+                          />
+                        </div>
+                      </article>
+
+                      <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--full">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Funnel por etapa
+                          </span>
+                        </div>
+                        <SellerStageFunnel
+                          stages={row.funnelByStage}
+                          totalAmountUsd={row.funnelOpenAmountUsd}
+                        />
                       </article>
                     </div>
                   </section>

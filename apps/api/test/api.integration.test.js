@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
 import { config } from "../src/config.js";
 import { ensureCommercialEnablementPermissions } from "../src/commercial-enablement/permissions.js";
+import { ensureCommercialTrackingPermissions } from "../src/commercial-tracking/permissions.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
@@ -57,6 +58,7 @@ describe("API integration baseline", () => {
 
   beforeAll(async () => {
     await ensureCommercialEnablementPermissions();
+    await ensureCommercialTrackingPermissions();
     await ensureCommercialPlanningPermissions();
     await ensureCommercialPlanningSchema();
     await ensureCommercialExecutionSchema();
@@ -11401,6 +11403,135 @@ describe("API integration baseline", () => {
         quotaAmount: 100000,
       }),
     ]);
+  });
+
+  test("ritmo comercial calcula la conversion de oportunidades a ventas con las ultimas 20 oportunidades y cae a la configuracion cuando no hay base suficiente", async () => {
+    const conversionRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_tracking_conversion`,
+      permissionCodes: ["ritmo_comercial.read", "ritmo_comercial.display"],
+    });
+    cleanup.roleIds.push(conversionRoleId);
+
+    const calculatedSellerUserId = await createUser({
+      fullName: "API Seller Conversion Calculated",
+      email: `${TEST_PREFIX}.seller.conversion.calculated@example.com`,
+      roleIds: [conversionRoleId],
+    });
+    cleanup.userIds.push(calculatedSellerUserId);
+
+    const fallbackSellerUserId = await createUser({
+      fullName: "API Seller Conversion Fallback",
+      email: `${TEST_PREFIX}.seller.conversion.fallback@example.com`,
+      roleIds: [conversionRoleId],
+    });
+    cleanup.userIds.push(fallbackSellerUserId);
+
+    const now = new Date();
+    const calculatedAccountId = await createDirectAccount({
+      ownerUserId: calculatedSellerUserId,
+      actorUserId: calculatedSellerUserId,
+      suffix: `${TEST_PREFIX}_seller_conversion_calculated`,
+    });
+    cleanup.accountIds.push(calculatedAccountId);
+
+    const calculatedContactId = await createDirectContact({
+      accountId: calculatedAccountId,
+      actorUserId: calculatedSellerUserId,
+      suffix: `${TEST_PREFIX}_seller_conversion_calculated`,
+    });
+    cleanup.contactIds.push(calculatedContactId);
+
+    const statusSequence = [
+      ...Array(7).fill("ganada"),
+      ...Array(8).fill("perdida"),
+      ...Array(5).fill("en_proceso"),
+      "ganada",
+    ];
+
+    for (const [index, statusCode] of statusSequence.entries()) {
+      const createdAt = new Date(now.getTime() - index * 60_000);
+      await query(
+        `INSERT INTO opportunities
+          (name, amount_usd, account_id, close_date, contact_id,
+           sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
+           commercial_status_id, created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          `Oportunidad conversion ${index + 1} ${TEST_PREFIX}`,
+          10000 + index * 1000,
+          calculatedAccountId,
+          "2026-12-31",
+          calculatedContactId,
+          ctx.catalogIds.salesStageInitialId,
+          ctx.catalogIds.businessLineId,
+          calculatedSellerUserId,
+          null,
+          ctx.catalogIds.opportunityActiveStatusId,
+          ctx.catalogIds[`opportunityCommercial${statusCode === "ganada" ? "Won" : statusCode === "perdida" ? "Lost" : "InProgress"}StatusId`],
+          calculatedSellerUserId,
+          createdAt,
+          calculatedSellerUserId,
+          createdAt,
+        ],
+      );
+    }
+
+    await query(
+      `INSERT INTO commercial_planning_seller_parameters
+        (seller_user_id, average_sale_ticket_amount, leads_to_opportunities_ratio,
+         opportunities_to_wins_ratio, average_opportunity_to_win_days,
+         created_by_user_id, updated_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         average_sale_ticket_amount = VALUES(average_sale_ticket_amount),
+         leads_to_opportunities_ratio = VALUES(leads_to_opportunities_ratio),
+         opportunities_to_wins_ratio = VALUES(opportunities_to_wins_ratio),
+         average_opportunity_to_win_days = VALUES(average_opportunity_to_win_days),
+         updated_by_user_id = VALUES(updated_by_user_id),
+         updated_at = VALUES(updated_at)` ,
+      [
+        fallbackSellerUserId,
+        90000,
+        0,
+        0.42,
+        12,
+        calculatedSellerUserId,
+        calculatedSellerUserId,
+        now,
+        now,
+      ],
+    );
+
+    const conversionLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.seller.conversion.calculated@example.com`,
+    );
+
+    const response = await request(app)
+      .get("/api/commercial-tracking/seller-league-tv")
+      .set("Authorization", `Bearer ${conversionLogin.body.token}`);
+
+    expect(response.status).toBe(200);
+
+    const calculatedRow = response.body.leaderboard.find(
+      (row) => row.sellerUserId === calculatedSellerUserId,
+    );
+    const fallbackRow = response.body.leaderboard.find(
+      (row) => row.sellerUserId === fallbackSellerUserId,
+    );
+
+    expect(calculatedRow).toEqual(
+      expect.objectContaining({
+        opportunityToWinCurrentRatio: 0.35,
+        opportunityToWinEffectiveRatio: 0.35,
+      }),
+    );
+    expect(fallbackRow).toEqual(
+      expect.objectContaining({
+        opportunityToWinCurrentRatio: null,
+        opportunityToWinEffectiveRatio: 0.42,
+      }),
+    );
   });
 
   test("ejecucion comercial prioriza cadencias por score de friccion", async () => {

@@ -221,6 +221,8 @@ export default function AppShell({
     canAccessInteractions;
   const confirmRouteChange = () => confirmQuotationNavigation();
   const isQuotationPrintRoute = location.pathname === "/quotations/print";
+  const isSellerLeagueTvStandaloneRoute =
+    location.pathname === "/seller-league-tv/window";
 
   const appRoutes = (
     <Suspense fallback={<RouteFallback />}>
@@ -428,6 +430,16 @@ export default function AppShell({
           }
         />
         <Route
+          path="/seller-league-tv/window"
+          element={
+            canAccessCommercialRhythm ? (
+              <SellerLeagueTvPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/commercial-planning"
           element={
             canAccessCommercialPlanning ? (
@@ -528,7 +540,7 @@ export default function AppShell({
     </Suspense>
   );
 
-  if (isQuotationPrintRoute) {
+  if (isQuotationPrintRoute || isSellerLeagueTvStandaloneRoute) {
     return appRoutes;
   }
 

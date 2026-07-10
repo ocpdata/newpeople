@@ -2339,6 +2339,75 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
           Number(left.stageOrder || 0) - Number(right.stageOrder || 0),
       );
 
+    const sellerFunnelMap = openFunnelItems.reduce((accumulator, item) => {
+      const sellerUserId = Number(item.seller_user_id || 0) || null;
+      const sellerKey = sellerUserId
+        ? `seller-${sellerUserId}`
+        : `seller-unknown-${String(item.seller_user_name || "Sin vendedor")}`;
+      const currentSeller = accumulator.get(sellerKey) || {
+        sellerUserId,
+        sellerUserName: item.seller_user_name || "Sin vendedor",
+        openAmountUsd: 0,
+        opportunityCount: 0,
+        stageMap: new Map(),
+      };
+
+      currentSeller.openAmountUsd += Number(item.amount_usd || 0);
+      currentSeller.opportunityCount += 1;
+
+      const stageCode = String(item.sales_stage_code || "sin_etapa");
+      const currentStage = currentSeller.stageMap.get(stageCode) || {
+        stageCode,
+        stageName:
+          item.sales_stage_name || stageNameByCode.get(stageCode) || "Sin etapa",
+        stageOrder: Number(item.sales_stage_order ?? 9999),
+        openAmountUsd: 0,
+        opportunityCount: 0,
+      };
+      currentStage.openAmountUsd += Number(item.amount_usd || 0);
+      currentStage.opportunityCount += 1;
+      currentSeller.stageMap.set(stageCode, currentStage);
+
+      accumulator.set(sellerKey, currentSeller);
+      return accumulator;
+    }, new Map());
+
+    const funnelBySeller = Array.from(sellerFunnelMap.values())
+      .map((seller) => {
+        const sellerOpenAmountUsd = toAmount(seller.openAmountUsd || 0);
+        return {
+          sellerUserId: seller.sellerUserId,
+          sellerUserName: seller.sellerUserName,
+          openAmountUsd: sellerOpenAmountUsd,
+          opportunityCount: Number(seller.opportunityCount || 0),
+          funnelByStage: Array.from(seller.stageMap.values())
+            .map((stage) => ({
+              stageCode: stage.stageCode,
+              stageName: stage.stageName,
+              stageOrder: stage.stageOrder,
+              openAmountUsd: toAmount(stage.openAmountUsd),
+              opportunityCount: Number(stage.opportunityCount || 0),
+              stageSharePct: sellerOpenAmountUsd
+                ? toAmount(
+                    (Number(stage.openAmountUsd || 0) / sellerOpenAmountUsd) *
+                      100,
+                  )
+                : 0,
+            }))
+            .sort(
+              (left, right) =>
+                Number(left.stageOrder || 0) - Number(right.stageOrder || 0),
+            ),
+        };
+      })
+      .sort((left, right) =>
+        String(left.sellerUserName || "").localeCompare(
+          String(right.sellerUserName || ""),
+          "es",
+          { sensitivity: "base" },
+        ),
+      );
+
     const targetSummary = targetByQuarter.get(quarter) || {
       quotaSalesAmountUsd: 0,
       quotaContributionAmountUsd: 0,
@@ -2404,6 +2473,7 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
         : null,
       funnelOpenAmountUsd,
       funnelByStage,
+      funnelBySeller,
       opportunitiesMissingCount:
         winsNeeded * QUARTERLY_OPPORTUNITIES_TO_WON_RATIO,
       leadsMissingCount: winsNeeded * QUARTERLY_LEADS_TO_WON_RATIO,
@@ -2688,6 +2758,63 @@ async function loadRecentLeadConversionBySeller({ user, sampleSize = 20 }) {
   );
 }
 
+async function loadRecentOpportunityConversionBySeller({ user, sampleSize = 20 }) {
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  const params = [];
+  const whereClauses = [
+    "o.seller_user_id IS NOT NULL",
+    "oas.code = 'activada'",
+    "ocs.code <> 'anulada'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("o.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  params.push(normalizedSampleSize);
+  const rows = await query(
+    `SELECT recent.seller_user_id,
+            COUNT(*) AS total_opportunity_count,
+            SUM(
+              CASE WHEN recent.commercial_status_code = 'ganada' THEN 1 ELSE 0 END
+            ) AS won_opportunity_count
+     FROM (
+       SELECT o.seller_user_id,
+              ocs.code AS commercial_status_code,
+              ROW_NUMBER() OVER (
+                PARTITION BY o.seller_user_id
+                ORDER BY o.created_at DESC, o.id DESC
+              ) AS row_position
+       FROM opportunities o
+       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+       INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?
+     GROUP BY recent.seller_user_id`,
+    params,
+  ).catch(() => []);
+
+  return new Map(
+    rows
+      .map((row) => {
+        const sellerUserId = Number(row.seller_user_id || 0);
+        if (!sellerUserId) {
+          return null;
+        }
+        return [
+          sellerUserId,
+          {
+            totalOpportunityCount: Number(row.total_opportunity_count || 0),
+            wonOpportunityCount: Number(row.won_opportunity_count || 0),
+          },
+        ];
+      })
+      .filter(Boolean),
+  );
+}
+
 async function loadLastWonTicketAverageBySeller(user, { maxSales = 10 } = {}) {
   const scopedOpportunities = await listScopedOpportunities(user);
   const wonRowsBySeller = new Map();
@@ -2757,6 +2884,8 @@ function buildSellerLeagueRow({
   leadQualifiedCount,
   conversionLeadTotalCount,
   conversionLeadQualifiedCount,
+  conversionOpportunityTotalCount,
+  conversionOpportunityWonCount,
   opportunityCreatedActualCount,
   averageSaleTicketLast10,
   sellerParameters,
@@ -2857,47 +2986,31 @@ function buildSellerLeagueRow({
   const conversionTotalLeads = Number(conversionLeadTotalCount || 0);
   const conversionQualifiedLeads = Number(conversionLeadQualifiedCount || 0);
   const leadToOpportunityCurrentRatio =
-    conversionTotalLeads > 0 && conversionQualifiedLeads > 0
+    conversionTotalLeads > 0
       ? Math.max(0, conversionQualifiedLeads / conversionTotalLeads)
-      : 0;
+      : null;
   const leadsToOpportunitiesRatio = Number(
     sellerParameters?.leadsToOpportunitiesRatio || 0,
   );
   const opportunitiesToWinsRatio = Number(
     sellerParameters?.opportunitiesToWinsRatio || 0,
   );
-  const configuredLeadToOpportunityRatio =
-    leadsToOpportunitiesRatio > 0 ? 1 / leadsToOpportunitiesRatio : 0;
-  const effectiveLeadToOpportunityRatio =
-    leadToOpportunityCurrentRatio > 0
-      ? leadToOpportunityCurrentRatio
-      : configuredLeadToOpportunityRatio > 0
-        ? configuredLeadToOpportunityRatio
-        : 0;
-  const leadTargetRaw =
-    quotaAmountUsd &&
-    quotaAmountUsd > 0 &&
-    averageSaleTicketAmount > 0 &&
-    effectiveLeadToOpportunityRatio > 0
-      ? Number(quotaAmountUsd || 0) /
-        (averageSaleTicketAmount * effectiveLeadToOpportunityRatio)
-      : 0;
-  const leadTargetCount = Math.max(0, Math.ceil(leadTargetRaw));
-  const leadGapCount =
-    leadTargetCount === null
-      ? null
-      : toAmount(
-          Math.max(
-            Number(leadTargetCount || 0) - Number(leadActualCount || 0),
-            0,
-          ),
-        );
-  const leadAttainmentPct =
-    leadTargetCount && leadTargetCount > 0
-      ? toAmount((Number(leadActualCount || 0) / Number(leadTargetCount)) * 100)
+  const opportunityToWinCurrentRatio =
+    conversionOpportunityTotalCount > 0
+      ? Math.max(
+          0,
+          Number(conversionOpportunityWonCount || 0) /
+            Number(conversionOpportunityTotalCount || 0),
+        )
       : null;
+  const opportunityToWinEffectiveRatio =
+    opportunityToWinCurrentRatio !== null && opportunityToWinCurrentRatio > 0
+      ? opportunityToWinCurrentRatio
+      : opportunitiesToWinsRatio;
+  const configuredLeadToOpportunityRatio =
+    leadsToOpportunitiesRatio > 0 ? leadsToOpportunitiesRatio : 0;
   const leadToOpportunityCurrentPct = toAmount(
-    leadToOpportunityCurrentRatio * 100,
+    (leadToOpportunityCurrentRatio ?? 0) * 100,
   );
   const leadToOpportunityTargetRatioRaw =
     leadsToOpportunitiesRatio > 0 ? 1 / leadsToOpportunitiesRatio : 0;
@@ -2913,10 +3026,10 @@ function buildSellerLeagueRow({
     quotaAmountUsd &&
     Number(quotaAmountUsd || 0) > 0 &&
     averageSaleTicketAmount > 0 &&
-    opportunitiesToWinsRatio >= 0
+    opportunityToWinEffectiveRatio > 0
       ? toAmount(
-          (Number(quotaAmountUsd || 0) / averageSaleTicketAmount) *
-            opportunitiesToWinsRatio,
+          Number(quotaAmountUsd || 0) /
+            (averageSaleTicketAmount * opportunityToWinEffectiveRatio),
         )
       : null;
   const opportunityCreatedGapCount =
@@ -2937,6 +3050,68 @@ function buildSellerLeagueRow({
             100,
         )
       : null;
+  const leadToOpportunityEffectiveRatio =
+    leadToOpportunityCurrentRatio !== null && leadToOpportunityCurrentRatio > 0
+      ? leadToOpportunityCurrentRatio
+      : configuredLeadToOpportunityRatio;
+  const leadTargetRaw =
+    Number(opportunityCreatedTargetCount || 0) > 0 &&
+    leadToOpportunityEffectiveRatio > 0
+      ? Number(opportunityCreatedTargetCount || 0) /
+        leadToOpportunityEffectiveRatio
+      : null;
+  const leadTargetCount =
+    leadTargetRaw !== null ? Math.max(0, Math.ceil(leadTargetRaw)) : null;
+  const leadGapCount =
+    leadTargetCount === null
+      ? null
+      : toAmount(
+          Math.max(
+            Number(leadTargetCount || 0) - Number(leadActualCount || 0),
+            0,
+          ),
+        );
+  const leadAttainmentPct =
+    leadTargetCount && leadTargetCount > 0
+      ? toAmount((Number(leadActualCount || 0) / Number(leadTargetCount)) * 100)
+      : null;
+
+  const funnelOpenAmountUsd = toAmount(
+    quarterOpenItems.reduce(
+      (sum, item) => sum + Number(item.amountUsd || 0),
+      0,
+    ),
+  );
+  const funnelByStage = Array.from(
+    quarterOpenItems.reduce((accumulator, item) => {
+      const stageCode = String(item.stageCode || "sin_etapa");
+      const current = accumulator.get(stageCode) || {
+        stageCode,
+        stageName: item.stageName || "Sin etapa",
+        stageOrder: Number(item.stageOrder ?? 9999),
+        openAmountUsd: 0,
+        opportunityCount: 0,
+      };
+      current.openAmountUsd += Number(item.amountUsd || 0);
+      current.opportunityCount += 1;
+      accumulator.set(stageCode, current);
+      return accumulator;
+    }, new Map()).values(),
+  )
+    .map((stage) => ({
+      stageCode: stage.stageCode,
+      stageName: stage.stageName,
+      stageOrder: stage.stageOrder,
+      openAmountUsd: toAmount(stage.openAmountUsd),
+      opportunityCount: Number(stage.opportunityCount || 0),
+      stageSharePct: funnelOpenAmountUsd
+        ? toAmount((Number(stage.openAmountUsd || 0) / funnelOpenAmountUsd) * 100)
+        : 0,
+    }))
+    .sort(
+      (left, right) =>
+        Number(left.stageOrder || 0) - Number(right.stageOrder || 0),
+    );
 
   return {
     sellerUserId,
@@ -2949,9 +3124,29 @@ function buildSellerLeagueRow({
     leadAttainmentPct,
     leadToOpportunityCurrentRatio,
     leadToOpportunityCurrentPct,
+    leadToOpportunityDisplayRatio:
+      leadToOpportunityCurrentRatio !== null
+        ? leadToOpportunityCurrentRatio
+        : configuredLeadToOpportunityRatio,
+    leadToOpportunityDisplayPct: toAmount(
+      ((leadToOpportunityCurrentRatio !== null
+        ? leadToOpportunityCurrentRatio
+        : configuredLeadToOpportunityRatio) || 0) * 100,
+    ),
     leadToOpportunityTargetRatio,
     leadToOpportunityTargetPct,
     averageSaleTicketAmount: toAmount(averageSaleTicketAmount),
+    opportunityToWinCurrentRatio,
+    opportunityToWinCurrentPct:
+      opportunityToWinCurrentRatio !== null
+        ? toAmount(opportunityToWinCurrentRatio * 100)
+        : null,
+    opportunityToWinConfiguredRatio: opportunitiesToWinsRatio,
+    opportunityToWinConfiguredPct: toAmount(opportunitiesToWinsRatio * 100),
+    opportunityToWinEffectiveRatio,
+    opportunityToWinEffectivePct: toAmount(
+      opportunityToWinEffectiveRatio * 100,
+    ),
     opportunityCreatedTargetCount,
     opportunityCreatedActualCount: Number(opportunityCreatedActualCount || 0),
     opportunityCreatedGapCount,
@@ -2978,6 +3173,8 @@ function buildSellerLeagueRow({
     noNextStepRate: toAmount(noNextStepRate * 100),
     blockedCriticalCount,
     blockedCriticalRate: toAmount(blockedCriticalRate * 100),
+    funnelOpenAmountUsd,
+    funnelByStage,
     scoreClosing,
     scoreBuild,
     scoreDiscipline,
@@ -3300,7 +3497,7 @@ router.get(
   "/seller-league-tv",
   requireAnyPermission(["ritmo_comercial.read"]),
   async (req, res) => {
-    const quarterSelection = getPreviousQuarterSelection(new Date());
+    const quarterSelection = getQuarterSelection(new Date());
     const quarterStart = formatIsoDate(quarterSelection.start);
     const quarterEnd = formatIsoDate(quarterSelection.end);
     const weekRange = getWeekRange(new Date());
@@ -3312,6 +3509,7 @@ router.get(
       quarterLeadCountsBySeller,
       quarterQualifiedLeadCountsBySeller,
       recentLeadConversionBySeller,
+      recentOpportunityConversionBySeller,
       quarterCreatedOpportunityCountsBySeller,
       lastWonTicketAverageBySeller,
       sellerParametersBySeller,
@@ -3339,6 +3537,10 @@ router.get(
         quarterSelection,
       }),
       loadRecentLeadConversionBySeller({ user: req.user, sampleSize: 20 }),
+      loadRecentOpportunityConversionBySeller({
+        user: req.user,
+        sampleSize: 20,
+      }),
       loadQuarterCreatedOpportunityCountsBySeller({
         user: req.user,
         quarterSelection,
@@ -3441,6 +3643,8 @@ router.get(
       const target = quarterTargets.targetBySellerId.get(item.sellerUserId);
       const recentLeadConversion =
         recentLeadConversionBySeller.get(item.sellerUserId) || null;
+      const recentOpportunityConversion =
+        recentOpportunityConversionBySeller.get(item.sellerUserId) || null;
       return buildSellerLeagueRow({
         sellerUserId: item.sellerUserId,
         sellerUserName: item.sellerUserName,
@@ -3454,6 +3658,10 @@ router.get(
         conversionLeadTotalCount: recentLeadConversion?.totalLeadCount || 0,
         conversionLeadQualifiedCount:
           recentLeadConversion?.qualifiedLeadCount || 0,
+        conversionOpportunityTotalCount:
+          recentOpportunityConversion?.totalOpportunityCount || 0,
+        conversionOpportunityWonCount:
+          recentOpportunityConversion?.wonOpportunityCount || 0,
         opportunityCreatedActualCount:
           quarterCreatedOpportunityCountsBySeller.get(item.sellerUserId) || 0,
         averageSaleTicketLast10:

@@ -217,6 +217,7 @@ Cobertura automatizada:
 
 - Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
+- Calculos operativos del CRM: [readme/calculos.md](./readme/calculos.md)
 - Uso actual de IA en el proyecto: [readme/ia.md](./readme/ia.md)
 - Administracion de credito y tarifas IA operada desde Configuracion > Credito IA.
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
