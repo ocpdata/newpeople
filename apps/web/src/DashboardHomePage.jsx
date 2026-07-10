@@ -3,6 +3,7 @@ import DashboardHubCard from "./DashboardHubCard";
 
 export default function DashboardHomePage({
   canAccessCommercialTracking = false,
+  canAccessCommercialRhythm = false,
   canAccessCommercialPlanning = false,
   canAccessInteractions = false,
   canReadOpportunities = false,
@@ -32,10 +33,10 @@ export default function DashboardHomePage({
           meta: "Comercial",
         }
       : null,
-    canAccessCommercialTracking
+    canAccessCommercialRhythm
       ? {
           badge: "Dashboard",
-          title: "Liga trimestral TV",
+          title: "Ritmo comercial",
           description: "Marcador diario competitivo para mostrar desempeno del equipo comercial.",
           to: "/seller-league-tv",
           cta: "Abrir liga",

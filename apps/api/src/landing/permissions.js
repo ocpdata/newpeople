@@ -54,7 +54,8 @@ async function assignPermissionToRoles(conn, roleRows, permissionRow, now) {
   }
 }
 
-export async function ensureLandingPermissions() {
+export async function ensureLandingPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -75,6 +76,10 @@ export async function ensureLandingPermissions() {
           permission.code,
         ],
       );
+    }
+
+    if (!autoAssignRoles) {
+      return;
     }
 
     const placeholders = LANDING_PERMISSIONS.map(() => "?").join(", ");

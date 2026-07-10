@@ -87,7 +87,8 @@ const INTERACTION_PERMISSIONS = [
   },
 ];
 
-export async function ensureInteractionPermissions() {
+export async function ensureInteractionPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -110,6 +111,10 @@ export async function ensureInteractionPermissions() {
           permission.code,
         ],
       );
+    }
+
+    if (!autoAssignRoles) {
+      return;
     }
 
     const [adminRoles] = await conn.query(

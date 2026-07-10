@@ -36,7 +36,8 @@ async function assignPermissionToRoles(conn, roleRows, permissionRow, now) {
   }
 }
 
-export async function ensureCampaignPermissions() {
+export async function ensureCampaignPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -57,6 +58,10 @@ export async function ensureCampaignPermissions() {
           permission.code,
         ],
       );
+    }
+
+    if (!autoAssignRoles) {
+      return;
     }
 
     const placeholders = CAMPAIGN_PERMISSIONS.map(() => "?").join(", ");

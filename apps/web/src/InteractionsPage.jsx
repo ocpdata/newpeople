@@ -3671,16 +3671,59 @@ function InteractionDetailModal({
                                 <label>Contacto existente</label>
                                 {isMaterializedContactSuggestion ? (
                                   <div className="interaction-readonly-field interaction-readonly-link-field">
-                                    <span className="interaction-readonly-value-title">
-                                      {getOptionLabel(
-                                        availableContacts,
-                                        resolution.contactId,
-                                        ["full_name", "name"],
-                                      ) || "Contacto vinculado"}
-                                    </span>
-                                    <span className="interaction-readonly-value-subtitle">
-                                      Vinculo materializado desde este lead
-                                    </span>
+                                    {(() => {
+                                      const linkedContact = availableContacts.find(
+                                        (c) =>
+                                          Number(c.id) ===
+                                          Number(resolution.contactId || 0),
+                                      );
+                                      return (
+                                        <>
+                                          <span className="interaction-readonly-value-title">
+                                            {linkedContact?.full_name ||
+                                              "Contacto vinculado"}
+                                          </span>
+                                          {linkedContact && (
+                                            <div
+                                              style={{
+                                                marginTop: "0.25rem",
+                                                fontSize: "0.8rem",
+                                                color: "#666",
+                                                display: "flex",
+                                                flexWrap: "wrap",
+                                                gap: "1rem",
+                                                lineHeight: "1.4",
+                                              }}
+                                            >
+                                              {linkedContact.email && (
+                                                <div style={{ flex: "0 1 auto" }}>
+                                                  <strong>Email:</strong>{" "}
+                                                  {linkedContact.email}
+                                                </div>
+                                              )}
+                                              {linkedContact.mobile && (
+                                                <div style={{ flex: "0 1 auto" }}>
+                                                  <strong>Móvil:</strong>{" "}
+                                                  {linkedContact.mobile}
+                                                </div>
+                                              )}
+                                              {linkedContact.phone && (
+                                                <div style={{ flex: "0 1 auto" }}>
+                                                  <strong>Teléfono:</strong>{" "}
+                                                  {linkedContact.phone}
+                                                </div>
+                                              )}
+                                              {linkedContact.position_title && (
+                                                <div style={{ flex: "0 1 auto" }}>
+                                                  <strong>Cargo:</strong>{" "}
+                                                  {linkedContact.position_title}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
                                   </div>
                                 ) : (
                                   <select

@@ -183,6 +183,7 @@ export default function AppShell({
     canReadOpportunities;
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
+  const canAccessCommercialRhythm = can("ritmo_comercial.read");
   const canAccessCommercialCalendar =
     (can("calendario_comercial.read") ||
       can("calendario_comercial.update") ||
@@ -214,6 +215,7 @@ export default function AppShell({
   const canAccessCampaignEmails = canAccessCampaigns;
   const canAccessAnyDashboard =
     canAccessCommercialTracking ||
+    canAccessCommercialRhythm ||
     canAccessCommercialPlanning ||
     canAccessCommercialDevelopment ||
     canAccessInteractions;
@@ -228,6 +230,7 @@ export default function AppShell({
           element={
             <DashboardHomePage
               canAccessCommercialTracking={canAccessCommercialTracking}
+              canAccessCommercialRhythm={canAccessCommercialRhythm}
               canAccessCommercialPlanning={canAccessCommercialPlanning}
               canAccessInteractions={canAccessInteractions}
               canReadOpportunities={canReadOpportunities}
@@ -241,6 +244,7 @@ export default function AppShell({
           element={
             <DashboardsPage
               canAccessCommercialTracking={canAccessCommercialTracking}
+              canAccessCommercialRhythm={canAccessCommercialRhythm}
               canAccessCommercialPlanning={canAccessCommercialPlanning}
               canAccessCommercialDevelopment={canAccessCommercialDevelopment}
               canAccessInteractions={canAccessInteractions}
@@ -416,7 +420,7 @@ export default function AppShell({
         <Route
           path="/seller-league-tv"
           element={
-            canAccessCommercialTracking ? (
+            canAccessCommercialRhythm ? (
               <SellerLeagueTvPage />
             ) : (
               <Navigate to="/" />
@@ -610,6 +614,7 @@ export default function AppShell({
             {(canAccessCommercialDevelopment ||
               canAccessCommercialCalendar ||
               canAccessCommercialTracking ||
+              canAccessCommercialRhythm ||
               canAccessCommercialPlanning ||
               canAccessCommercialEnablement ||
               canReadContacts) && (
@@ -622,12 +627,12 @@ export default function AppShell({
                     Pipeline
                   </GuardedNavLink>
                 ) : null}
-                {canAccessCommercialTracking ? (
+                {canAccessCommercialRhythm ? (
                   <GuardedNavLink
                     to="/seller-league-tv"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Liga trimestral TV
+                    Ritmo comercial
                   </GuardedNavLink>
                 ) : null}
                 {canAccessCommercialPlanning ? (

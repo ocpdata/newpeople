@@ -185,7 +185,8 @@ function wait(ms) {
   });
 }
 
-export async function ensureCorePermissions() {
+export async function ensureCorePermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   const maxRetries = 5;
 
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
@@ -221,6 +222,10 @@ export async function ensureCorePermissions() {
              WHERE code = ? AND IFNULL(description, '') <> ?`,
             [permission.description, now, permission.code, permission.description],
           );
+        }
+
+        if (!autoAssignRoles) {
+          return;
         }
 
         const [adminRoles] = await conn.query(

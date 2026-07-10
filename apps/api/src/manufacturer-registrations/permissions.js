@@ -68,7 +68,8 @@ async function assignPermissionsToRoles(conn, roleRows, permissionRows, now) {
   }
 }
 
-export async function ensureManufacturerRegistrationPermissions() {
+export async function ensureManufacturerRegistrationPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -133,6 +134,10 @@ export async function ensureManufacturerRegistrationPermissions() {
           permission.code,
         ],
       );
+    }
+
+    if (!autoAssignRoles) {
+      return;
     }
 
     const placeholders = MANUFACTURER_REGISTRATION_PERMISSIONS.map(

@@ -93,6 +93,25 @@ const CREATE_COMMISSION_CONFIGS_TABLE_SQL = `
   )
 `;
 
+const CREATE_SELLER_PARAMETERS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS commercial_planning_seller_parameters (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    seller_user_id BIGINT UNSIGNED NOT NULL,
+    average_sale_ticket_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+    leads_to_opportunities_ratio DECIMAL(9,4) NOT NULL DEFAULT 0,
+    opportunities_to_wins_ratio DECIMAL(9,4) NOT NULL DEFAULT 0,
+    average_opportunity_to_win_days DECIMAL(9,2) NOT NULL DEFAULT 0,
+    created_by_user_id BIGINT UNSIGNED NULL,
+    updated_by_user_id BIGINT UNSIGNED NULL,
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    CONSTRAINT uq_commercial_planning_seller_parameters UNIQUE (seller_user_id),
+    CONSTRAINT fk_commercial_planning_seller_parameters_seller FOREIGN KEY (seller_user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_commercial_planning_seller_parameters_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_commercial_planning_seller_parameters_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  )
+`;
+
 export async function ensureCommercialPlanningSchema() {
   if (!ensureCommercialPlanningSchemaPromise) {
     ensureCommercialPlanningSchemaPromise = (async () => {
@@ -100,6 +119,7 @@ export async function ensureCommercialPlanningSchema() {
       await query(CREATE_VERSIONS_TABLE_SQL);
       await query(CREATE_TARGETS_TABLE_SQL);
       await query(CREATE_COMMISSION_CONFIGS_TABLE_SQL);
+      await query(CREATE_SELLER_PARAMETERS_TABLE_SQL);
     })().finally(() => {
       ensureCommercialPlanningSchemaPromise = undefined;
     });

@@ -49,6 +49,18 @@ const replaceCommissionConfigsSchema = z.object({
   configs: z.array(commissionConfigInputSchema).max(500),
 });
 
+const sellerParameterInputSchema = z.object({
+  sellerUserId: z.number().int().positive(),
+  averageSaleTicketAmount: z.number().min(0),
+  leadsToOpportunitiesRatio: z.number().min(0).max(99999),
+  opportunitiesToWinsRatio: z.number().min(0).max(99999),
+  averageOpportunityToWinDays: z.number().min(0).max(99999),
+});
+
+const replaceSellerParametersSchema = z.object({
+  parameters: z.array(sellerParameterInputSchema).max(500),
+});
+
 const quarterLabel = (year, quarter) => `T${quarter} ${year}`;
 
 function roundMoney(value) {
@@ -157,6 +169,24 @@ function mapCommissionConfigRow(row) {
     serviceCommissionPct: roundPercent(row.service_commission_pct, 4),
     renewalCommissionPct: roundPercent(row.renewal_commission_pct, 4),
     notes: row.notes || "",
+    updatedAt: row.updated_at,
+    updatedByUserName: row.updated_by_name || "",
+  };
+}
+
+function mapSellerParameterRow(row) {
+  return {
+    id: Number(row.id),
+    sellerUserId: Number(row.seller_user_id),
+    sellerUserName: row.seller_user_name || "",
+    sellerUserEmail: row.seller_user_email || "",
+    averageSaleTicketAmount: roundMoney(row.average_sale_ticket_amount),
+    leadsToOpportunitiesRatio: roundPercent(row.leads_to_opportunities_ratio, 4),
+    opportunitiesToWinsRatio: roundPercent(row.opportunities_to_wins_ratio, 4),
+    averageOpportunityToWinDays: roundPercent(
+      row.average_opportunity_to_win_days,
+      2,
+    ),
     updatedAt: row.updated_at,
     updatedByUserName: row.updated_by_name || "",
   };
@@ -722,6 +752,47 @@ async function listEligibleSellers() {
     status: row.status,
     roles: row.roles || "",
   }));
+}
+
+async function getSellerParameters() {
+  const rows = await query(
+    `SELECT p.*, u.full_name AS seller_user_name, u.email AS seller_user_email,
+            updater.full_name AS updated_by_name
+     FROM commercial_planning_seller_parameters p
+     INNER JOIN users u ON u.id = p.seller_user_id
+     LEFT JOIN users updater ON updater.id = p.updated_by_user_id
+     ORDER BY u.full_name`,
+  );
+
+  return rows.map(mapSellerParameterRow);
+}
+
+async function buildSellerParametersPayload() {
+  const [eligibleSellers, parameters] = await Promise.all([
+    listEligibleSellers(),
+    getSellerParameters(),
+  ]);
+  const parameterBySellerId = new Map(
+    parameters.map((item) => [item.sellerUserId, item]),
+  );
+
+  return {
+    sellers: eligibleSellers.map((seller) => {
+      const parameter = parameterBySellerId.get(seller.id);
+      return {
+        sellerUserId: seller.id,
+        sellerUserName: seller.fullName,
+        sellerUserEmail: seller.email,
+        averageSaleTicketAmount: parameter?.averageSaleTicketAmount || 0,
+        leadsToOpportunitiesRatio: parameter?.leadsToOpportunitiesRatio || 0,
+        opportunitiesToWinsRatio: parameter?.opportunitiesToWinsRatio || 0,
+        averageOpportunityToWinDays: parameter?.averageOpportunityToWinDays || 0,
+        updatedAt: parameter?.updatedAt || null,
+        updatedByUserName: parameter?.updatedByUserName || "",
+      };
+    }),
+    parameters,
+  };
 }
 
 async function getPeriodById(periodId) {
@@ -1470,6 +1541,119 @@ router.get(
   requirePermission("planeacion_comercial.read"),
   async (_req, res) => {
     res.json({ sellers: await listEligibleSellers() });
+  },
+);
+
+router.get(
+  "/seller-parameters",
+  requirePermission("planeacion_comercial.read"),
+  async (_req, res) => {
+    try {
+      const payload = await buildSellerParametersPayload();
+      res.json(payload);
+    } catch (error) {
+      res.status(Number(error?.status) || 500).json({
+        message:
+          error.message ||
+          "No fue posible cargar la configuracion de parametros por vendedor",
+      });
+    }
+  },
+);
+
+router.put(
+  "/seller-parameters",
+  requirePermission("planeacion_comercial.update"),
+  async (req, res) => {
+    const parsed = replaceSellerParametersSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
+
+    const normalizedParameters = parsed.data.parameters.map((item) => ({
+      sellerUserId: Number(item.sellerUserId),
+      averageSaleTicketAmount: roundMoney(item.averageSaleTicketAmount),
+      leadsToOpportunitiesRatio: roundPercent(item.leadsToOpportunitiesRatio, 4),
+      opportunitiesToWinsRatio: roundPercent(item.opportunitiesToWinsRatio, 4),
+      averageOpportunityToWinDays: roundPercent(item.averageOpportunityToWinDays, 2),
+    }));
+
+    const duplicateSellerIds = normalizedParameters
+      .map((item) => item.sellerUserId)
+      .filter(
+        (sellerUserId, index, list) => list.indexOf(sellerUserId) !== index,
+      );
+    if (duplicateSellerIds.length) {
+      return res.status(400).json({
+        message: "No se permiten vendedores duplicados en la configuracion",
+      });
+    }
+
+    const [eligibleSellers, beforeParameters] = await Promise.all([
+      listEligibleSellers(),
+      getSellerParameters(),
+    ]);
+    const eligibleSellerIds = new Set(eligibleSellers.map((seller) => seller.id));
+    const nonEligible = normalizedParameters.find(
+      (item) => !eligibleSellerIds.has(item.sellerUserId),
+    );
+    if (nonEligible) {
+      return res.status(400).json({
+        message: "Solo puedes configurar parametros para vendedores elegibles y activos",
+      });
+    }
+
+    const actorUserId = Number(req.user?.id) || null;
+    const now = new Date();
+
+    await withTransaction(async (conn) => {
+      for (const item of normalizedParameters) {
+        await conn.query(
+          `INSERT INTO commercial_planning_seller_parameters
+             (seller_user_id, average_sale_ticket_amount, leads_to_opportunities_ratio,
+              opportunities_to_wins_ratio, average_opportunity_to_win_days,
+              created_by_user_id, updated_by_user_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             average_sale_ticket_amount = VALUES(average_sale_ticket_amount),
+             leads_to_opportunities_ratio = VALUES(leads_to_opportunities_ratio),
+             opportunities_to_wins_ratio = VALUES(opportunities_to_wins_ratio),
+             average_opportunity_to_win_days = VALUES(average_opportunity_to_win_days),
+             updated_by_user_id = VALUES(updated_by_user_id),
+             updated_at = VALUES(updated_at)`,
+          [
+            item.sellerUserId,
+            item.averageSaleTicketAmount,
+            item.leadsToOpportunitiesRatio,
+            item.opportunitiesToWinsRatio,
+            item.averageOpportunityToWinDays,
+            actorUserId,
+            actorUserId,
+            now,
+            now,
+          ],
+        );
+      }
+    });
+
+    const payload = await buildSellerParametersPayload();
+    await logAuditEvent({
+      req,
+      module: "planeacion_comercial",
+      action: "updated_seller_parameters",
+      entityType: "commercial_planning_seller_parameters",
+      entityId: null,
+      detail: "Configuracion atemporal de parametros por vendedor actualizada",
+      before: { parameters: beforeParameters },
+      after: { parameters: payload.parameters },
+    });
+
+    res.json({
+      message: "Parametros por vendedor actualizados correctamente",
+      ...payload,
+    });
   },
 );
 

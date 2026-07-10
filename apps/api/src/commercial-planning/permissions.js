@@ -72,7 +72,8 @@ async function assignPermissionsToRoles(conn, roleRows, permissionRows, now) {
   }
 }
 
-export async function ensureCommercialPlanningPermissions() {
+export async function ensureCommercialPlanningPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -104,6 +105,10 @@ export async function ensureCommercialPlanningPermissions() {
        WHERE code IN (${placeholders})`,
       COMMERCIAL_PLANNING_PERMISSIONS.map((permission) => permission.code),
     );
+
+    if (!autoAssignRoles) {
+      return;
+    }
 
     const [adminRoles] = await conn.query(
       `SELECT id

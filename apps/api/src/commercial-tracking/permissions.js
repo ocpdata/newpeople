@@ -7,6 +7,18 @@ const COMMERCIAL_TRACKING_PERMISSIONS = [
     action: "read",
     description: "Ver el modulo de seguimiento comercial",
   },
+  {
+    code: "ritmo_comercial.read",
+    module: "ritmo_comercial",
+    action: "read",
+    description: "Acceder al modulo de ritmo comercial",
+  },
+  {
+    code: "ritmo_comercial.display",
+    module: "ritmo_comercial",
+    action: "display",
+    description: "Permitir que el usuario aparezca en el modulo de ritmo comercial",
+  },
 ];
 
 async function assignPermissionToRoles(conn, roleRows, permissionRow, now) {
@@ -26,7 +38,8 @@ async function assignPermissionToRoles(conn, roleRows, permissionRow, now) {
   }
 }
 
-export async function ensureCommercialTrackingPermissions() {
+export async function ensureCommercialTrackingPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -62,6 +75,10 @@ export async function ensureCommercialTrackingPermissions() {
       permissionRows.map((permission) => [permission.code, permission]),
     );
 
+    if (!autoAssignRoles) {
+      return;
+    }
+
     const [adminRoles] = await conn.query(
       `SELECT id
        FROM roles
@@ -71,6 +88,18 @@ export async function ensureCommercialTrackingPermissions() {
       conn,
       adminRoles,
       permissionByCode.get("seguimiento_comercial.read"),
+      now,
+    );
+    await assignPermissionToRoles(
+      conn,
+      adminRoles,
+      permissionByCode.get("ritmo_comercial.read"),
+      now,
+    );
+    await assignPermissionToRoles(
+      conn,
+      adminRoles,
+      permissionByCode.get("ritmo_comercial.display"),
       now,
     );
 
@@ -84,6 +113,25 @@ export async function ensureCommercialTrackingPermissions() {
       conn,
       readRoles,
       permissionByCode.get("seguimiento_comercial.read"),
+      now,
+    );
+
+    const [trackingReadRoles] = await conn.query(
+      `SELECT DISTINCT rp.role_id AS id
+       FROM role_permissions rp
+       INNER JOIN permissions p ON p.id = rp.permission_id
+       WHERE p.code = 'seguimiento_comercial.read'`,
+    );
+    await assignPermissionToRoles(
+      conn,
+      trackingReadRoles,
+      permissionByCode.get("ritmo_comercial.read"),
+      now,
+    );
+    await assignPermissionToRoles(
+      conn,
+      trackingReadRoles,
+      permissionByCode.get("ritmo_comercial.display"),
       now,
     );
   });

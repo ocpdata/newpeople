@@ -15,7 +15,8 @@ const PROCESS_COMMERCIAL_CONFIG_PERMISSIONS = [
   },
 ];
 
-export async function ensureProcessCommercialConfigPermissions() {
+export async function ensureProcessCommercialConfigPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -36,6 +37,10 @@ export async function ensureProcessCommercialConfigPermissions() {
           permission.code,
         ],
       );
+    }
+
+    if (!autoAssignRoles) {
+      return;
     }
 
     const placeholders = PROCESS_COMMERCIAL_CONFIG_PERMISSIONS.map(() => "?").join(

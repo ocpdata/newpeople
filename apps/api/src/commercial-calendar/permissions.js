@@ -49,7 +49,8 @@ async function assignPermissionsToRoles(conn, roleRows, permissionRows, now) {
   }
 }
 
-export async function ensureCommercialCalendarPermissions() {
+export async function ensureCommercialCalendarPermissions(options = {}) {
+  const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
 
@@ -84,6 +85,10 @@ export async function ensureCommercialCalendarPermissions() {
     const permissionByCode = new Map(
       permissionRows.map((permission) => [permission.code, permission]),
     );
+
+    if (!autoAssignRoles) {
+      return;
+    }
 
     const [adminRoles] = await conn.query(
       `SELECT id

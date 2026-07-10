@@ -173,6 +173,20 @@ function getQuarterSelection(value = new Date()) {
   };
 }
 
+function getPreviousQuarterSelection(value = new Date()) {
+  const current = getQuarterSelection(value);
+  const previousQuarter = current.quarter === 1 ? 4 : current.quarter - 1;
+  const previousYear = current.quarter === 1 ? current.year - 1 : current.year;
+
+  return {
+    year: previousYear,
+    quarter: previousQuarter,
+    label: `T${previousQuarter} ${previousYear}`,
+    start: startOfDay(new Date(previousYear, (previousQuarter - 1) * 3, 1)),
+    end: endOfDay(new Date(previousYear, previousQuarter * 3, 0)),
+  };
+}
+
 function buildWeeksForRange(start, end) {
   const weeks = [];
   let cursor = getWeekStart(start);
@@ -2460,6 +2474,143 @@ async function loadCurrentQuarterTargetsBySeller({ user, quarterSelection }) {
   };
 }
 
+async function loadQuarterLeadCountsBySeller({ user, quarterSelection }) {
+  const params = [
+    quarterSelection.start,
+    addDays(quarterSelection.end, 1),
+  ];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified', 'lead_disqualified')",
+    "i.created_at >= ?",
+    "i.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT i.seller_user_id, COUNT(*) AS lead_count
+     FROM interactions i
+     WHERE ${whereClauses.join(" AND ")}
+     GROUP BY i.seller_user_id`,
+    params,
+  ).catch(() => []);
+
+  return new Map(
+    rows
+      .map((row) => [Number(row.seller_user_id || 0), Number(row.lead_count || 0)])
+      .filter(([sellerUserId]) => sellerUserId > 0),
+  );
+}
+
+async function loadQuarterQualifiedLeadCountsBySeller({ user, quarterSelection }) {
+  const params = [
+    quarterSelection.start,
+    addDays(quarterSelection.end, 1),
+  ];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status = 'lead_qualified'",
+    "i.created_at >= ?",
+    "i.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT i.seller_user_id, COUNT(*) AS lead_count
+     FROM interactions i
+     WHERE ${whereClauses.join(" AND ")}
+     GROUP BY i.seller_user_id`,
+    params,
+  ).catch(() => []);
+
+  return new Map(
+    rows
+      .map((row) => [
+        Number(row.seller_user_id || 0),
+        Number(row.lead_count || 0),
+      ])
+      .filter(([sellerUserId]) => sellerUserId > 0),
+  );
+}
+
+async function loadSellerParametersBySeller() {
+  const rows = await query(
+    `SELECT seller_user_id,
+            average_sale_ticket_amount,
+            leads_to_opportunities_ratio,
+            opportunities_to_wins_ratio
+     FROM commercial_planning_seller_parameters`,
+  ).catch(() => []);
+
+  return new Map(
+    rows
+      .map((row) => {
+        const sellerUserId = Number(row.seller_user_id || 0);
+        if (!sellerUserId) return null;
+        return [
+          sellerUserId,
+          {
+            averageSaleTicketAmount: Number(row.average_sale_ticket_amount || 0),
+            leadsToOpportunitiesRatio: Number(
+              row.leads_to_opportunities_ratio || 0,
+            ),
+            opportunitiesToWinsRatio: Number(
+              row.opportunities_to_wins_ratio || 0,
+            ),
+          },
+        ];
+      })
+      .filter(Boolean),
+  );
+}
+
+async function loadQuarterCreatedOpportunityCountsBySeller({
+  user,
+  quarterSelection,
+}) {
+  const params = [
+    quarterSelection.start,
+    addDays(quarterSelection.end, 1),
+  ];
+  const whereClauses = [
+    "o.seller_user_id IS NOT NULL",
+    "oas.code = 'activada'",
+    "o.created_at >= ?",
+    "o.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("o.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT o.seller_user_id, COUNT(*) AS opportunity_count
+     FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     WHERE ${whereClauses.join(" AND ")}
+     GROUP BY o.seller_user_id`,
+    params,
+  ).catch(() => []);
+
+  return new Map(
+    rows
+      .map((row) => [
+        Number(row.seller_user_id || 0),
+        Number(row.opportunity_count || 0),
+      ])
+      .filter(([sellerUserId]) => sellerUserId > 0),
+  );
+}
+
 function buildSellerLeagueRow({
   sellerUserId,
   sellerUserName,
@@ -2467,6 +2618,11 @@ function buildSellerLeagueRow({
   quarterOpenItems,
   advancedOpportunityIds14d,
   quotaAmountUsd,
+  leadActualCount,
+  leadQualifiedCount,
+  opportunityCreatedActualCount,
+  sellerParameters,
+  quarterComplianceSeries,
 }) {
   const wonAmountUsd = toAmount(
     quarterWonItems.reduce((sum, item) => sum + Number(item.amount_usd || 0), 0),
@@ -2530,11 +2686,98 @@ function buildSellerLeagueRow({
     scoreClosing === null
       ? null
       : toAmount(0.5 * scoreClosing + 0.3 * scoreBuild + 0.2 * scoreDiscipline);
+  const averageSaleTicketAmount = Number(
+    sellerParameters?.averageSaleTicketAmount || 0,
+  );
+  const leadsToOpportunitiesRatio = Number(
+    sellerParameters?.leadsToOpportunitiesRatio || 0,
+  );
+  const opportunitiesToWinsRatio = Number(
+    sellerParameters?.opportunitiesToWinsRatio || 0,
+  );
+  const leadTargetRaw =
+    quotaAmountUsd &&
+    quotaAmountUsd > 0 &&
+    averageSaleTicketAmount > 0 &&
+    leadsToOpportunitiesRatio >= 0 &&
+    opportunitiesToWinsRatio >= 0
+      ? (Number(quotaAmountUsd || 0) / averageSaleTicketAmount) *
+        leadsToOpportunitiesRatio *
+        opportunitiesToWinsRatio
+      : null;
+  const leadTargetCount =
+    leadTargetRaw === null ? null : Math.max(0, Math.round(leadTargetRaw));
+  const leadGapCount =
+    leadTargetCount === null
+      ? null
+      : toAmount(Math.max(Number(leadTargetCount || 0) - Number(leadActualCount || 0), 0));
+  const leadAttainmentPct =
+    leadTargetCount && leadTargetCount > 0
+      ? toAmount((Number(leadActualCount || 0) / Number(leadTargetCount)) * 100)
+      : null;
+  const leadToOpportunityCurrentRatioRaw =
+    Number(leadQualifiedCount || 0) / Number(leadActualCount || 0);
+  const leadToOpportunityCurrentRatio = Number.isFinite(
+    leadToOpportunityCurrentRatioRaw,
+  )
+    ? Math.max(0, leadToOpportunityCurrentRatioRaw)
+    : 0;
+  const leadToOpportunityCurrentPct = toAmount(
+    leadToOpportunityCurrentRatio * 100,
+  );
+  const leadToOpportunityTargetRatioRaw = Number(
+    sellerParameters?.leadsToOpportunitiesRatio || 0,
+  );
+  const leadToOpportunityTargetRatio = Number.isFinite(
+    leadToOpportunityTargetRatioRaw,
+  )
+    ? Math.max(0, leadToOpportunityTargetRatioRaw)
+    : 0;
+  const leadToOpportunityTargetPct = toAmount(
+    leadToOpportunityTargetRatio * 100,
+  );
+  const opportunityCreatedTargetCount = quotaAmountUsd
+    ? toAmount(
+        (Number(quotaAmountUsd || 0) / QUARTERLY_AVG_WON_TICKET_USD) *
+          QUARTERLY_OPPORTUNITIES_TO_WON_RATIO,
+      )
+    : null;
+  const opportunityCreatedGapCount =
+    opportunityCreatedTargetCount === null
+      ? null
+      : toAmount(
+          Math.max(
+            Number(opportunityCreatedTargetCount || 0) -
+              Number(opportunityCreatedActualCount || 0),
+            0,
+          ),
+        );
+  const opportunityCreatedAttainmentPct =
+    opportunityCreatedTargetCount && opportunityCreatedTargetCount > 0
+      ? toAmount(
+          (Number(opportunityCreatedActualCount || 0) /
+            Number(opportunityCreatedTargetCount)) *
+            100,
+        )
+      : null;
 
   return {
     sellerUserId,
     sellerUserName,
     quotaAmountUsd: quotaAmountUsd ? toAmount(quotaAmountUsd) : null,
+    leadTargetCount,
+    leadActualCount: Number(leadActualCount || 0),
+    leadQualifiedCount: Number(leadQualifiedCount || 0),
+    leadGapCount,
+    leadAttainmentPct,
+    leadToOpportunityCurrentRatio,
+    leadToOpportunityCurrentPct,
+    leadToOpportunityTargetRatio,
+    leadToOpportunityTargetPct,
+    opportunityCreatedTargetCount,
+    opportunityCreatedActualCount: Number(opportunityCreatedActualCount || 0),
+    opportunityCreatedGapCount,
+    opportunityCreatedAttainmentPct,
     wonAmountUsd,
     attainmentPct:
       quotaAmountUsd && quotaAmountUsd > 0
@@ -2563,7 +2806,92 @@ function buildSellerLeagueRow({
     scoreTotal,
     momentum7d: toAmount(advanced14dCount * 3 + (wonAmountUsd / 25000)),
     isOfficial: Boolean(quotaAmountUsd && quotaAmountUsd > 0),
+    quarterComplianceSeries: Array.isArray(quarterComplianceSeries)
+      ? quarterComplianceSeries
+      : [],
   };
+}
+
+function getQuarterNumberFromDate(dateValue) {
+  const date = dateValue ? new Date(dateValue) : null;
+  if (!date || Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return Math.floor(date.getMonth() / 3) + 1;
+}
+
+async function buildSellerQuarterComplianceSeriesMap({
+  user,
+  year,
+  sellerUserIds,
+}) {
+  const normalizedSellerIds = (sellerUserIds || [])
+    .map((id) => Number(id || 0))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!normalizedSellerIds.length) {
+    return new Map();
+  }
+
+  const yearStart = formatIsoDate(startOfDay(new Date(year, 0, 1)));
+  const yearEnd = formatIsoDate(endOfDay(new Date(year, 11, 31)));
+  const scopedYearOpportunities = await listScopedOpportunities(user, {
+    closeDateFrom: yearStart,
+    closeDateTo: yearEnd,
+  });
+
+  const wonAmountBySellerQuarter = scopedYearOpportunities
+    .filter((item) => isRealWonOpportunity(item))
+    .reduce((accumulator, item) => {
+      const sellerUserId = Number(item.seller_user_id || 0);
+      if (!sellerUserId || !normalizedSellerIds.includes(sellerUserId)) {
+        return accumulator;
+      }
+      const quarter = getQuarterNumberFromDate(item.close_date);
+      if (!quarter) {
+        return accumulator;
+      }
+      const key = `${sellerUserId}:${quarter}`;
+      const current = Number(accumulator.get(key) || 0);
+      accumulator.set(key, current + Number(item.amount_usd || 0));
+      return accumulator;
+    }, new Map());
+
+  const targetSummaryBySeller = new Map();
+  for (const sellerUserId of normalizedSellerIds) {
+    const summary = await loadQuarterTargetSummaryByQuarter({
+      user,
+      year,
+      sellerUserId,
+    });
+    targetSummaryBySeller.set(sellerUserId, summary);
+  }
+
+  const result = new Map();
+  normalizedSellerIds.forEach((sellerUserId) => {
+    const targetByQuarter = targetSummaryBySeller.get(sellerUserId) || new Map();
+    const series = [];
+    for (let quarter = 1; quarter <= 4; quarter += 1) {
+      const quotaAmountUsd = toAmount(
+        Number(targetByQuarter.get(quarter)?.quotaSalesAmountUsd || 0),
+      );
+      const wonAmountUsd = toAmount(
+        Number(wonAmountBySellerQuarter.get(`${sellerUserId}:${quarter}`) || 0),
+      );
+      series.push({
+        quarter,
+        label: `T${quarter}`,
+        quotaAmountUsd,
+        wonAmountUsd,
+        attainmentPct:
+          quotaAmountUsd > 0
+            ? toAmount((wonAmountUsd / quotaAmountUsd) * 100)
+            : null,
+      });
+    }
+    result.set(sellerUserId, series);
+  });
+
+  return result;
 }
 
 router.get(
@@ -2791,10 +3119,9 @@ router.get(
 
 router.get(
   "/seller-league-tv",
-  requireAnyPermission(["seguimiento_comercial.read"]),
-  requireAnyPermission(["oportunidades.read", "oportunidades.read_all"]),
+  requireAnyPermission(["ritmo_comercial.read"]),
   async (req, res) => {
-    const quarterSelection = getQuarterSelection(new Date());
+    const quarterSelection = getPreviousQuarterSelection(new Date());
     const quarterStart = formatIsoDate(quarterSelection.start);
     const quarterEnd = formatIsoDate(quarterSelection.end);
     const weekRange = getWeekRange(new Date());
@@ -2803,6 +3130,11 @@ router.get(
       scopedQuarterOpportunities,
       scopedQuarterOpenItems,
       quarterTargets,
+      quarterLeadCountsBySeller,
+      quarterQualifiedLeadCountsBySeller,
+      quarterCreatedOpportunityCountsBySeller,
+      sellerParametersBySeller,
+      visibleSellerRows,
     ] = await Promise.all([
       listScopedOpportunities(req.user, {
         closeDateFrom: quarterStart,
@@ -2817,7 +3149,35 @@ router.get(
         user: req.user,
         quarterSelection,
       }),
+      loadQuarterLeadCountsBySeller({
+        user: req.user,
+        quarterSelection,
+      }),
+      loadQuarterQualifiedLeadCountsBySeller({
+        user: req.user,
+        quarterSelection,
+      }),
+      loadQuarterCreatedOpportunityCountsBySeller({
+        user: req.user,
+        quarterSelection,
+      }),
+      loadSellerParametersBySeller(),
+      query(
+        `SELECT DISTINCT u.id, u.full_name AS seller_user_name
+         FROM users u
+         INNER JOIN user_roles ur ON ur.user_id = u.id
+         INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE u.status = 'active'
+           AND p.code = 'ritmo_comercial.display'`,
+      ),
     ]);
+
+    const visibleSellerIds = new Set(
+      visibleSellerRows
+        .map((row) => Number(row.id || 0))
+        .filter((userId) => Number.isInteger(userId) && userId > 0),
+    );
 
     const openOpportunityIds = scopedQuarterOpenItems
       .map((item) => Number(item.opportunityId || 0))
@@ -2835,9 +3195,20 @@ router.get(
     );
 
     const rowsBySeller = new Map();
+    visibleSellerRows.forEach((row) => {
+      const sellerUserId = Number(row.id || 0);
+      if (!sellerUserId || !visibleSellerIds.has(sellerUserId)) return;
+      rowsBySeller.set(sellerUserId, {
+        sellerUserId,
+        sellerUserName: row.seller_user_name || "Sin vendedor",
+        wonItems: [],
+        openItems: [],
+      });
+    });
+
     scopedQuarterOpportunities.forEach((item) => {
       const sellerUserId = Number(item.seller_user_id || 0);
-      if (!sellerUserId) return;
+      if (!sellerUserId || !visibleSellerIds.has(sellerUserId)) return;
       const current = rowsBySeller.get(sellerUserId) || {
         sellerUserId,
         sellerUserName: item.seller_user_name || "Sin vendedor",
@@ -2852,7 +3223,7 @@ router.get(
 
     scopedQuarterOpenItems.forEach((item) => {
       const sellerUserId = Number(item.sellerUserId || 0);
-      if (!sellerUserId) return;
+      if (!sellerUserId || !visibleSellerIds.has(sellerUserId)) return;
       const current = rowsBySeller.get(sellerUserId) || {
         sellerUserId,
         sellerUserName: item.sellerUserName || "Sin vendedor",
@@ -2864,6 +3235,9 @@ router.get(
     });
 
     quarterTargets.targetBySellerId.forEach((target, sellerUserId) => {
+      if (!visibleSellerIds.has(Number(sellerUserId))) {
+        return;
+      }
       if (rowsBySeller.has(sellerUserId)) {
         return;
       }
@@ -2875,6 +3249,13 @@ router.get(
       });
     });
 
+    const quarterComplianceSeriesBySeller =
+      await buildSellerQuarterComplianceSeriesMap({
+        user: req.user,
+        year: quarterSelection.year,
+        sellerUserIds: Array.from(rowsBySeller.keys()),
+      });
+
     const leaderboard = Array.from(rowsBySeller.values()).map((item) => {
       const target = quarterTargets.targetBySellerId.get(item.sellerUserId);
       return buildSellerLeagueRow({
@@ -2884,6 +3265,14 @@ router.get(
         quarterOpenItems: item.openItems,
         advancedOpportunityIds14d,
         quotaAmountUsd: target?.quotaAmountUsd || null,
+        leadActualCount: quarterLeadCountsBySeller.get(item.sellerUserId) || 0,
+        leadQualifiedCount:
+          quarterQualifiedLeadCountsBySeller.get(item.sellerUserId) || 0,
+        opportunityCreatedActualCount:
+          quarterCreatedOpportunityCountsBySeller.get(item.sellerUserId) || 0,
+        sellerParameters: sellerParametersBySeller.get(item.sellerUserId) || null,
+        quarterComplianceSeries:
+          quarterComplianceSeriesBySeller.get(item.sellerUserId) || [],
       });
     });
 

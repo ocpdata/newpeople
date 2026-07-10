@@ -5980,15 +5980,6 @@ export default function CampaignEmailModulePage() {
                           ? "Iniciando envío..."
                           : "Iniciar envío de correos"}
                       </button>
-                      <button
-                        type="button"
-                        onClick={refreshDispatchStatus}
-                        disabled={isLoadingDispatch || !campaignDispatch?.id}
-                      >
-                        {isLoadingDispatch
-                          ? "Actualizando..."
-                          : "Actualizar estado"}
-                      </button>
                       {campaignDispatch?.status === "running" ? (
                         <button
                           type="button"
@@ -6024,6 +6015,17 @@ export default function CampaignEmailModulePage() {
 
                 {activeTab === "results" ? (
                   <div className="campaign-email-results-grid">
+                    <div className="campaign-email-inline-actions campaign-email-field-wide">
+                      <button
+                        type="button"
+                        onClick={refreshDispatchStatus}
+                        disabled={isLoadingDispatch || !campaignDispatch?.id}
+                      >
+                        {isLoadingDispatch
+                          ? "Actualizando..."
+                          : "Actualizar estado"}
+                      </button>
+                    </div>
                     <article>
                       <strong>
                         {formatDispatchStatus(campaignDispatch?.status)}

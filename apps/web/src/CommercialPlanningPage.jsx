@@ -7,6 +7,7 @@ const TAB_OPTIONS = [
   { id: "periods", label: "Períodos" },
   { id: "targets", label: "Metas trimestrales" },
   { id: "commissionConfigs", label: "Comisiones · Configuración" },
+  { id: "sellerParameters", label: "Parámetros vendedor" },
   { id: "commissionTracking", label: "Comisiones · Seguimiento" },
   { id: "audit", label: "Auditoría" },
 ];
@@ -242,6 +243,71 @@ function buildCommissionConfigPayload(configDrafts) {
   return { configs, errors };
 }
 
+function mergeSellerParameterDrafts(payload) {
+  return (payload?.sellers || []).map((seller) => ({
+    sellerUserId: seller.sellerUserId,
+    sellerUserName: seller.sellerUserName,
+    sellerUserEmail: seller.sellerUserEmail,
+    averageSaleTicketAmount: String(seller.averageSaleTicketAmount ?? 0),
+    leadsToOpportunitiesRatio: String(seller.leadsToOpportunitiesRatio ?? 0),
+    opportunitiesToWinsRatio: String(seller.opportunitiesToWinsRatio ?? 0),
+    averageOpportunityToWinDays: String(seller.averageOpportunityToWinDays ?? 0),
+    updatedAt: seller.updatedAt || null,
+    updatedByUserName: seller.updatedByUserName || "",
+  }));
+}
+
+function buildSellerParameterPayload(parameterDrafts) {
+  const errors = [];
+  const parameters = (parameterDrafts || []).map((draft) => {
+    const averageSaleTicketAmount = Number(
+      normalizeDecimalInput(draft.averageSaleTicketAmount),
+    );
+    const leadsToOpportunitiesRatio = Number(
+      normalizeDecimalInput(draft.leadsToOpportunitiesRatio),
+    );
+    const opportunitiesToWinsRatio = Number(
+      normalizeDecimalInput(draft.opportunitiesToWinsRatio),
+    );
+    const averageOpportunityToWinDays = Number(
+      normalizeDecimalInput(draft.averageOpportunityToWinDays),
+    );
+
+    if (
+      Number.isNaN(averageSaleTicketAmount) ||
+      averageSaleTicketAmount < 0 ||
+      Number.isNaN(leadsToOpportunitiesRatio) ||
+      leadsToOpportunitiesRatio < 0 ||
+      Number.isNaN(opportunitiesToWinsRatio) ||
+      opportunitiesToWinsRatio < 0 ||
+      Number.isNaN(averageOpportunityToWinDays) ||
+      averageOpportunityToWinDays < 0
+    ) {
+      errors.push(
+        `Los parámetros de ${draft.sellerUserName} deben ser numéricos y mayores o iguales a cero.`,
+      );
+    }
+
+    return {
+      sellerUserId: draft.sellerUserId,
+      averageSaleTicketAmount: Number.isNaN(averageSaleTicketAmount)
+        ? 0
+        : averageSaleTicketAmount,
+      leadsToOpportunitiesRatio: Number.isNaN(leadsToOpportunitiesRatio)
+        ? 0
+        : leadsToOpportunitiesRatio,
+      opportunitiesToWinsRatio: Number.isNaN(opportunitiesToWinsRatio)
+        ? 0
+        : opportunitiesToWinsRatio,
+      averageOpportunityToWinDays: Number.isNaN(averageOpportunityToWinDays)
+        ? 0
+        : averageOpportunityToWinDays,
+    };
+  });
+
+  return { parameters, errors };
+}
+
 export default function CommercialPlanningPage({ can }) {
   const [activeTab, setActiveTab] = useState("summary");
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -264,6 +330,10 @@ export default function CommercialPlanningPage({ can }) {
   const [loadingCommissionTracking, setLoadingCommissionTracking] =
     useState(false);
   const [savingCommissionConfigs, setSavingCommissionConfigs] = useState(false);
+  const [sellerParameterDrafts, setSellerParameterDrafts] = useState([]);
+  const [sellerParameterMeta, setSellerParameterMeta] = useState(null);
+  const [loadingSellerParameters, setLoadingSellerParameters] = useState(false);
+  const [savingSellerParameters, setSavingSellerParameters] = useState(false);
   const [savingTargets, setSavingTargets] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [creatingVersion, setCreatingVersion] = useState(false);
@@ -479,6 +549,24 @@ export default function CommercialPlanningPage({ can }) {
     }
   }
 
+  async function loadSellerParameters() {
+    setLoadingSellerParameters(true);
+    try {
+      const response = await api.get("/api/commercial-planning/seller-parameters");
+      setSellerParameterMeta(response.data);
+      setSellerParameterDrafts(mergeSellerParameterDrafts(response.data));
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible cargar los parámetros de vendedor",
+        ),
+      );
+    } finally {
+      setLoadingSellerParameters(false);
+    }
+  }
+
   useEffect(() => {
     // Initial page bootstrap intentionally triggers these data loads.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -508,6 +596,10 @@ export default function CommercialPlanningPage({ can }) {
     if (activeTab === "commissionTracking") {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       loadCommissionTracking();
+    }
+    if (activeTab === "sellerParameters") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      loadSellerParameters();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, periodDetail?.period?.id, selectedVersionId]);
@@ -546,6 +638,14 @@ export default function CommercialPlanningPage({ can }) {
 
   function updateCommissionConfigDraft(sellerUserId, field, value) {
     setCommissionConfigDrafts((current) =>
+      current.map((item) =>
+        item.sellerUserId === sellerUserId ? { ...item, [field]: value } : item,
+      ),
+    );
+  }
+
+  function updateSellerParameterDraft(sellerUserId, field, value) {
+    setSellerParameterDrafts((current) =>
       current.map((item) =>
         item.sellerUserId === sellerUserId ? { ...item, [field]: value } : item,
       ),
@@ -778,6 +878,36 @@ export default function CommercialPlanningPage({ can }) {
       );
     } finally {
       setSavingCommissionConfigs(false);
+    }
+  }
+
+  async function handleSaveSellerParameters() {
+    const payload = buildSellerParameterPayload(sellerParameterDrafts);
+    if (payload.errors.length) {
+      setError(payload.errors[0]);
+      return;
+    }
+
+    setSavingSellerParameters(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.put(
+        "/api/commercial-planning/seller-parameters",
+        payload,
+      );
+      setSuccess(response.data.message);
+      setSellerParameterMeta(response.data);
+      setSellerParameterDrafts(mergeSellerParameterDrafts(response.data));
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible guardar los parámetros de vendedor",
+        ),
+      );
+    } finally {
+      setSavingSellerParameters(false);
     }
   }
 
@@ -1847,6 +1977,147 @@ export default function CommercialPlanningPage({ can }) {
               ))
             : null}
         </div>
+      ) : null}
+
+      {activeTab === "sellerParameters" ? (
+        <section className="commercial-planning-card">
+          <div className="commercial-planning-card-header">
+            <div>
+              <h3>Configuración atemporal de parámetros por vendedor</h3>
+              <p>
+                Define ticket promedio, conversiones y tiempo promedio de
+                conversión por vendedor. Estos parámetros no dependen de un
+                período trimestral.
+              </p>
+            </div>
+            {canUpdate ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSaveSellerParameters}
+                disabled={savingSellerParameters}
+              >
+                {savingSellerParameters ? "Guardando..." : "Guardar parámetros"}
+              </button>
+            ) : null}
+          </div>
+
+          {loadingSellerParameters ? (
+            <div className="field-hint">Cargando parámetros de vendedor...</div>
+          ) : (
+            <div className="commercial-planning-table-wrap">
+              <table className="commercial-planning-table">
+                <thead>
+                  <tr>
+                    <th>Vendedor</th>
+                    <th>Ticket promedio de venta</th>
+                    <th>Relación leads → oportunidades</th>
+                    <th>Relación oportunidades → ventas</th>
+                    <th>Tiempo promedio oportunidad → venta (días)</th>
+                    <th>Última actualización</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sellerParameterDrafts.map((item) => (
+                    <tr key={`seller-parameter-${item.sellerUserId}`}>
+                      <td>
+                        <strong>{item.sellerUserName}</strong>
+                        <div className="field-hint">{item.sellerUserEmail}</div>
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={formatGroupedDecimalInput(
+                            item.averageSaleTicketAmount,
+                          )}
+                          onChange={(event) =>
+                            updateSellerParameterDraft(
+                              item.sellerUserId,
+                              "averageSaleTicketAmount",
+                              normalizeDecimalInput(event.target.value),
+                            )
+                          }
+                          disabled={!canUpdate}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.0001"
+                          value={item.leadsToOpportunitiesRatio}
+                          onChange={(event) =>
+                            updateSellerParameterDraft(
+                              item.sellerUserId,
+                              "leadsToOpportunitiesRatio",
+                              event.target.value,
+                            )
+                          }
+                          disabled={!canUpdate}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.0001"
+                          value={item.opportunitiesToWinsRatio}
+                          onChange={(event) =>
+                            updateSellerParameterDraft(
+                              item.sellerUserId,
+                              "opportunitiesToWinsRatio",
+                              event.target.value,
+                            )
+                          }
+                          disabled={!canUpdate}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.averageOpportunityToWinDays}
+                          onChange={(event) =>
+                            updateSellerParameterDraft(
+                              item.sellerUserId,
+                              "averageOpportunityToWinDays",
+                              event.target.value,
+                            )
+                          }
+                          disabled={!canUpdate}
+                        />
+                      </td>
+                      <td>
+                        {item.updatedAt
+                          ? formatDateTime(item.updatedAt)
+                          : "Sin cambios"}
+                        {item.updatedByUserName ? (
+                          <div className="field-hint">
+                            {item.updatedByUserName}
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                  {!sellerParameterDrafts.length ? (
+                    <tr>
+                      <td colSpan="6" className="centered">
+                        No hay vendedores elegibles para parametrizar.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {sellerParameterMeta?.sellers?.length ? (
+            <p className="field-hint">
+              Vendedores elegibles: {sellerParameterMeta.sellers.length}
+            </p>
+          ) : null}
+        </section>
       ) : null}
 
       {activeTab === "periods" ? (

@@ -1,75 +1,112 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 import "./seller-league-tv.css";
 
-function formatCurrency(value) {
+const leadCountFormatter = new Intl.NumberFormat("es-MX", {
+  maximumFractionDigits: 0,
+});
+
+function formatLeadCount(value) {
+  const numericValue = Math.round(Number(value || 0));
+  return leadCountFormatter.format(numericValue);
+}
+
+function formatGaugeValue(value, { divisor = 1, maxFractionDigits = 0 } = {}) {
+  const numericValue = Number(value || 0);
+  const safeDivisor = Number(divisor) > 0 ? Number(divisor) : 1;
+  const scaledValue = numericValue / safeDivisor;
   return new Intl.NumberFormat("es-MX", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0));
+    maximumFractionDigits: Math.max(0, Number(maxFractionDigits || 0)),
+  }).format(scaledValue);
 }
 
-function formatPercent(value) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) {
-    return "-";
-  }
-  return `${numericValue.toFixed(1)}%`;
-}
-
-function formatNumber(value) {
-  return new Intl.NumberFormat("es-MX", {
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0));
-}
-
-function getTrendMeta(value) {
-  const delta = Number(value || 0);
-  if (delta > 0) {
-    return { icon: "▲", tone: "up", label: `+${delta.toFixed(1)}` };
-  }
-  if (delta < 0) {
-    return { icon: "▼", tone: "down", label: delta.toFixed(1) };
-  }
-  return { icon: "•", tone: "flat", label: "0.0" };
-}
-
-function getScoreTone(score) {
-  const value = Number(score || 0);
-  if (value >= 85) return "elite";
-  if (value >= 70) return "solid";
-  if (value >= 55) return "racing";
-  return "risk";
-}
-
-function TeamStatCard({ label, value, helper, tone = "default" }) {
-  return (
-    <article className={`seller-league-stat-card tone-${tone}`.trim()}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{helper}</small>
-    </article>
-  );
-}
-
-function PodiumCard({ row, place }) {
-  if (!row) {
-    return (
-      <article className="seller-league-podium-card is-empty">
-        <span>Top {place}</span>
-        <strong>Sin dato</strong>
-      </article>
-    );
-  }
+function LeadGauge({
+  actual,
+  target,
+  valueDivisor = 1,
+  valueMaxFractionDigits = 0,
+}) {
+  const numericTarget = Math.max(0, Number(target || 0));
+  const referenceMax = numericTarget > 0 ? numericTarget / 0.75 : 0;
+  const progressRatio = referenceMax > 0 ? Math.max(0, Math.min(Number(actual || 0) / referenceMax, 1)) : 0;
+  const formatValue = (value) =>
+    formatGaugeValue(value, {
+      divisor: valueDivisor,
+      maxFractionDigits: valueMaxFractionDigits,
+    });
+  const formattedActual = formatValue(actual);
+  const formattedTarget = formatValue(target);
+  const formattedMax = formatValue(referenceMax);
+  const needleRotation = -90 + progressRatio * 180;
+  const targetAngle = Math.PI - Math.PI * 0.75;
+  const targetRadius = 80;
+  const targetCx = 120 + targetRadius * Math.cos(targetAngle);
+  const targetCy = 120 - targetRadius * Math.sin(targetAngle);
 
   return (
-    <article className={`seller-league-podium-card place-${place}`.trim()}>
-      <span>#{place}</span>
-      <strong>{row.sellerUserName}</strong>
-      <p>{row.scoreTotal?.toFixed(1) || "0.0"} pts</p>
-      <small>{formatPercent(row.attainmentPct)}</small>
-    </article>
+    <div className="seller-league-gauge" aria-hidden="true">
+      <svg
+        className="seller-league-gauge-svg"
+        viewBox="0 0 240 180"
+        role="presentation"
+        focusable="false"
+      >
+        <defs>
+          <linearGradient id="leadGaugeTrack" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#e5e7eb" />
+            <stop offset="100%" stopColor="#cbd5e1" />
+          </linearGradient>
+          <linearGradient id="leadGaugeValue" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#19b7a8" />
+            <stop offset="100%" stopColor="#22c55e" />
+          </linearGradient>
+        </defs>
+
+        <path
+          d="M 40 120 A 80 80 0 0 1 200 120"
+          pathLength="100"
+          className="seller-league-gauge-track"
+        />
+        <path
+          d="M 40 120 A 80 80 0 0 1 200 120"
+          pathLength="100"
+          className="seller-league-gauge-value-arc"
+          style={{ strokeDasharray: `${progressRatio * 100} 100` }}
+        />
+        <circle cx={targetCx} cy={targetCy} r="5" className="seller-league-gauge-target-dot" />
+        <text x="40" y="153" className="seller-league-gauge-label seller-league-gauge-label--min">0</text>
+        <text
+          x={targetCx}
+          y={targetCy - 10}
+          textAnchor="middle"
+          className="seller-league-gauge-label seller-league-gauge-label--target"
+        >
+          {formattedTarget}
+        </text>
+        <text
+          x="200"
+          y="153"
+          textAnchor="end"
+          className="seller-league-gauge-label seller-league-gauge-label--max"
+        >
+          {formattedMax}
+        </text>
+        <circle cx="120" cy="120" r="10" className="seller-league-gauge-hub" />
+        <line
+          x1="120"
+          y1="120"
+          x2="120"
+          y2="72"
+          className="seller-league-gauge-needle"
+          style={{ transform: `rotate(${needleRotation}deg)`, transformOrigin: "120px 120px" }}
+        />
+        <circle cx="120" cy="120" r="12" className="seller-league-gauge-hub-outline" />
+      </svg>
+
+      <div className="seller-league-gauge-center">
+        <strong className="seller-league-gauge-value">{formattedActual}</strong>
+      </div>
+    </div>
   );
 }
 
@@ -87,7 +124,7 @@ export default function SellerLeagueTvPage() {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cargar la liga comercial trimestral",
+          "No fue posible cargar el ritmo comercial",
         ),
       );
     } finally {
@@ -107,157 +144,145 @@ export default function SellerLeagueTvPage() {
     };
   }, []);
 
-  const topThree = useMemo(() => {
-    const rows = Array.isArray(payload?.leaderboard) ? payload.leaderboard : [];
-    return rows.filter((row) => row.isOfficial).slice(0, 3);
-  }, [payload]);
-
   const leaderboard = Array.isArray(payload?.leaderboard)
     ? payload.leaderboard
     : [];
-  const team = payload?.team || {};
-  const period = payload?.period || {};
+  const sellerCount = Math.max(leaderboard.length, 1);
+  const gridColumns = Math.max(1, Math.ceil(Math.sqrt(sellerCount)));
+  const gridRows = Math.max(1, Math.ceil(sellerCount / gridColumns));
 
   return (
-    <section className="panel seller-league-page">
-      <header className="seller-league-header">
-        <div>
-          <h2>Liga Comercial Trimestral</h2>
-          <p>
-            Tablero competitivo diario para vendedores. Actualizado cada 5
-            minutos.
-          </p>
-        </div>
-        <div className="seller-league-header-meta">
-          <span>{period.label || "Trimestre actual"}</span>
-          <span>
-            Actualizado: {payload?.generatedAt ? new Date(payload.generatedAt).toLocaleTimeString("es-MX") : "-"}
-          </span>
-        </div>
-      </header>
-
+    <section
+      className="seller-league-page seller-league-page--fullscreen"
+      style={{
+        "--seller-count": sellerCount,
+        "--seller-columns": gridColumns,
+        "--seller-rows": gridRows,
+      }}
+    >
       {error ? <p className="form-error">{error}</p> : null}
 
       {loading ? (
-        <div className="seller-league-empty">Cargando liga comercial...</div>
+        <div className="seller-league-empty">Cargando ritmo comercial...</div>
       ) : null}
 
-      {!loading ? (
-        <>
-          <div className="seller-league-stat-grid">
-            <TeamStatCard
-              label="Cumplimiento equipo"
-              value={formatPercent(team.attainmentPct)}
-              helper="Ganado vs cuota trimestral"
-              tone="accent"
-            />
-            <TeamStatCard
-              label="Ganado equipo"
-              value={formatCurrency(team.wonAmountUsd)}
-              helper={`Cuota ${formatCurrency(team.quotaAmountUsd)}`}
-            />
-            <TeamStatCard
-              label="Vendedores oficiales"
-              value={formatNumber(team.sellersOfficial)}
-              helper={`${formatNumber(team.sellersVisible)} visibles`}
-            />
-            <TeamStatCard
-              label="Alertas críticas"
-              value={formatNumber(
-                Number(team.overdueCount || 0) +
-                  Number(team.noNextStepCount || 0) +
-                  Number(team.blockedCriticalCount || 0),
-              )}
-              helper="Vencidos + sin paso + bloqueadas"
-              tone="alert"
-            />
-          </div>
+      {!loading && !leaderboard.length ? (
+        <div className="seller-league-empty">
+          No hay vendedores disponibles para mostrar.
+        </div>
+      ) : null}
 
-          <div className="seller-league-layout">
-            <section className="seller-league-main-table-wrap">
-              <table className="seller-league-main-table">
-                <thead>
-                  <tr>
-                    <th title="Posición en el ranking oficial">Pos</th>
-                    <th title="Nombre del vendedor">Vendedor</th>
-                    <th title="Puntaje final: 50% cierre + 30% construcción + 20% disciplina">Score</th>
-                    <th title="Monto ganado vs cuota trimestral (0–100)">Cierre</th>
-                    <th title="Cobertura de pipeline, avance de etapas y calidad operativa (0–100)">Construcción</th>
-                    <th title="Penalización por vencidos, sin siguiente paso y bloqueadas (0–100)">Disciplina</th>
-                    <th title="Meta trimestral individual publicada en USD">Cuota</th>
-                    <th title="Monto ganado acumulado en el trimestre actual">Ganado</th>
-                    <th title="Indicador de aceleración: avances recientes y cierre acumulado">Tendencia</th>
-                    <th title="Diferencia de score respecto al puesto superior">Gap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leaderboard.map((row) => {
-                    const trend = getTrendMeta(row.momentum7d);
-                    return (
-                      <tr key={row.sellerUserId}>
-                        <td>{row.rankPosition || "-"}</td>
-                        <td>
-                          <div className="seller-league-name-cell">
-                            <strong>{row.sellerUserName}</strong>
-                            {!row.isOfficial ? (
-                              <span>Sin cuota publicada</span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td>
-                          <div className={`seller-league-score-cell tone-${getScoreTone(row.scoreTotal)}`.trim()}>
-                            <div className="seller-league-score-value">
-                              {row.scoreTotal?.toFixed(1) || "-"}
-                            </div>
-                            <div className="seller-league-score-bar" style={{ width: `${Math.min(Number(row.scoreTotal || 0), 100)}%` }} />
-                          </div>
-                        </td>
-                        <td>{row.scoreClosing?.toFixed(1) || "-"}</td>
-                        <td>{row.scoreBuild?.toFixed(1) || "-"}</td>
-                        <td>{row.scoreDiscipline?.toFixed(1) || "-"}</td>
-                        <td>{formatCurrency(row.quotaAmountUsd)}</td>
-                        <td>{formatCurrency(row.wonAmountUsd)}</td>
-                        <td>
-                          <span className={`seller-league-trend tone-${trend.tone}`.trim()}>
-                            {trend.icon} {trend.label}
-                          </span>
-                        </td>
-                        <td>{row.rankGapToNext?.toFixed(1) || "-"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </section>
-
-            <aside className="seller-league-side">
-              <section className="seller-league-podium">
-                <h3>Podio del día</h3>
-                <div className="seller-league-podium-grid">
-                  <PodiumCard row={topThree[0]} place={1} />
-                  <PodiumCard row={topThree[1]} place={2} />
-                  <PodiumCard row={topThree[2]} place={3} />
+      {!loading
+        ? leaderboard.map((row) => (
+            <section
+              key={row.sellerUserId || row.sellerUserName}
+              className="seller-league-seller-section"
+            >
+              <div className="seller-league-seller-card">
+                <div className="seller-league-seller-name-wrap">
+                  <h2 className="seller-league-seller-name">
+                    {row.sellerUserName || "Vendedor sin nombre"}
+                  </h2>
                 </div>
-              </section>
 
-              <section className="seller-league-alerts">
-                <h3>Foco del día</h3>
-                <ul>
-                  <li>
-                    Seguimientos vencidos: {formatNumber(team.overdueCount)}
-                  </li>
-                  <li>
-                    Oportunidades sin siguiente paso: {formatNumber(team.noNextStepCount)}
-                  </li>
-                  <li>
-                    Bloqueadas críticas: {formatNumber(team.blockedCriticalCount)}
-                  </li>
-                </ul>
-              </section>
-            </aside>
-          </div>
-        </>
-      ) : null}
+                <div className="seller-league-seller-panels">
+                  <section className="seller-league-panel">
+                    <div className="seller-league-panel-header">
+                      <h3 className="seller-league-panel-title">
+                        Pipeline siguiente Q
+                      </h3>
+                    </div>
+
+                    <div className="seller-league-metrics-grid">
+                      <article className="seller-league-metric-card seller-league-metric-card--wide">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Leads
+                          </span>
+                        </div>
+
+                        <div
+                          className="seller-league-gauge-wrap"
+                        >
+                          <LeadGauge
+                            actual={row.leadActualCount}
+                            target={row.leadTargetCount}
+                          />
+                        </div>
+
+                      </article>
+
+                      <article className="seller-league-metric-card seller-league-metric-card--wide">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Oportunidades
+                          </span>
+                        </div>
+
+                        <div
+                          className="seller-league-gauge-wrap"
+                        >
+                          <LeadGauge
+                            actual={row.opportunityCreatedActualCount}
+                            target={row.opportunityCreatedTargetCount}
+                          />
+                        </div>
+
+                      </article>
+
+                      <article className="seller-league-metric-card seller-league-metric-card--wide">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Conversión L→O
+                          </span>
+                        </div>
+
+                        <div
+                          className="seller-league-gauge-wrap"
+                        >
+                          <LeadGauge
+                            actual={row.leadToOpportunityCurrentPct}
+                            target={row.leadToOpportunityTargetPct}
+                            valueDivisor={100}
+                            valueMaxFractionDigits={2}
+                          />
+                        </div>
+
+                      </article>
+
+                    </div>
+                  </section>
+
+                  <section className="seller-league-panel">
+                    <div className="seller-league-panel-header">
+                      <h3 className="seller-league-panel-title">
+                        Cumplimiento Q actual
+                      </h3>
+                    </div>
+                    <div className="seller-league-metrics-grid">
+                      <article className="seller-league-metric-card seller-league-metric-card--wide">
+                        <div className="seller-league-metric-card-head">
+                          <span className="seller-league-metric-card-title">
+                            Cuota (M US$)
+                          </span>
+                        </div>
+
+                        <div className="seller-league-gauge-wrap">
+                          <LeadGauge
+                            actual={row.wonAmountUsd}
+                            target={row.quotaAmountUsd}
+                            valueDivisor={1000000}
+                            valueMaxFractionDigits={2}
+                          />
+                        </div>
+                      </article>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </section>
+          ))
+        : null}
     </section>
   );
 }

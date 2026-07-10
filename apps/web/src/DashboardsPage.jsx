@@ -2,6 +2,7 @@ import DashboardHubCard from "./DashboardHubCard";
 
 export default function DashboardsPage({
   canAccessCommercialTracking = false,
+  canAccessCommercialRhythm = false,
   canAccessCommercialPlanning = false,
   canAccessInteractions = false,
   canAccessCommercialDevelopment = false,
@@ -29,10 +30,10 @@ export default function DashboardsPage({
           meta: "Comercial",
         }
       : null,
-    canAccessCommercialTracking
+    canAccessCommercialRhythm
       ? {
           badge: "Disponible ahora",
-          title: "Liga comercial trimestral TV",
+          title: "Ritmo comercial",
           description: "Ranking competitivo diario por vendedor para mostrar en pantallas de equipo.",
           to: "/seller-league-tv",
           cta: "Abrir liga",
