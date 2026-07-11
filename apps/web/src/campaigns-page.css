@@ -920,6 +920,12 @@
   color: #204a80;
 }
 
+.campaigns-mini-badge-owner {
+  border-color: #d1dcd6;
+  background: #f0f4f2;
+  color: #3d5047;
+}
+
 .campaigns-mini-badge-contact-role {
   border-color: #dbe3ef;
   background: #f3f6fb;

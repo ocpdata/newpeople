@@ -2077,6 +2077,7 @@ async function requestClassificationGuideEnrichmentWithAi({
 
 export default function CampaignsPage() {
   const [audienceSortMode, setAudienceSortMode] = useState("name_asc");
+  const [audienceOwnerFilter, setAudienceOwnerFilter] = useState("");
   const [catalogs, setCatalogs] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -2111,11 +2112,24 @@ export default function CampaignsPage() {
   const [pendingAddContactIds, setPendingAddContactIds] = useState([]);
   const [isLoadingAddContacts, setIsLoadingAddContacts] = useState(false);
   const [addContactsError, setAddContactsError] = useState("");
+  const [isConfirmRemoveContactModalOpen, setIsConfirmRemoveContactModalOpen] =
+    useState(false);
+  const [pendingRemoveContact, setPendingRemoveContact] = useState({
+    accountId: null,
+    contactId: null,
+  });
+  const [isConfirmRemoveAccountModalOpen, setIsConfirmRemoveAccountModalOpen] =
+    useState(false);
+  const [pendingRemoveAccountId, setPendingRemoveAccountId] = useState(null);
   const [accountContactsByAccountId, setAccountContactsByAccountId] = useState(
     {},
   );
   const [manuallyAddedContactsByAccount, setManuallyAddedContactsByAccount] =
     useState({});
+  const [
+    suggestedContactsByManualAccount,
+    setSuggestedContactsByManualAccount,
+  ] = useState({});
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
   const [campaignGoalText, setCampaignGoalText] = useState("");
@@ -2175,14 +2189,22 @@ export default function CampaignsPage() {
     const currentType = String(campaignForm.tipo_campana || "").trim();
     const currentSubtype = String(campaignForm.subtipo_campana || "").trim();
 
-    if (isCampaignGuideConsistent(persistedGuide, currentType, currentSubtype)) {
+    if (
+      isCampaignGuideConsistent(persistedGuide, currentType, currentSubtype)
+    ) {
       setClassificationGuideAi(persistedGuide);
       setClassificationGuideAiSource(persistedGuide);
       setClassificationGuideFallbackNote("");
       return;
     }
 
-    if (!isCampaignGuideConsistent(classificationGuideAi, currentType, currentSubtype)) {
+    if (
+      !isCampaignGuideConsistent(
+        classificationGuideAi,
+        currentType,
+        currentSubtype,
+      )
+    ) {
       setClassificationGuideAi(null);
       setClassificationGuideAiSource(null);
       setClassificationGuideFallbackNote("");
@@ -2349,6 +2371,7 @@ export default function CampaignsPage() {
       return accounts.map((account) => ({
         account_id: Number(account.id),
         account_name: account.name || "",
+        owners_display: account.owners_display || "",
         total_opportunities: null,
         open_opportunities: null,
         won_opportunities: null,
@@ -2356,8 +2379,45 @@ export default function CampaignsPage() {
       }));
     }
 
-    return suggestedAccounts;
-  }, [campaignForm.etapa_ciclo_vida, accounts, suggestedAccounts]);
+    // Cuando hay etapa seleccionada, incluir sugeridas + cuentas agregadas manualmente
+    const suggestedAccountIds = new Set(
+      suggestedAccounts
+        .map((acc) => Number(acc.account_id || 0))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    );
+
+    // Agregar cuentas manualmente seleccionadas que no fueron sugeridas
+    const manuallyAddedIds = selectedAudienceAccountIds
+      .map((id) => Number(id || 0))
+      .filter(
+        (id) => Number.isInteger(id) && id > 0 && !suggestedAccountIds.has(id),
+      );
+
+    const manuallyAddedAccounts = manuallyAddedIds
+      .map((accountId) => {
+        const account = accounts.find((acc) => Number(acc.id) === accountId);
+        if (!account) return null;
+        return {
+          account_id: accountId,
+          account_name: String(account.name || "").trim(),
+          owners_display: account.owners_display || "",
+          economic_sector: String(account.economic_sector || "").trim(),
+          total_opportunities: null,
+          open_opportunities: null,
+          won_opportunities: null,
+          contacts: suggestedContactsByManualAccount[accountId] || [],
+        };
+      })
+      .filter(Boolean);
+
+    return [...suggestedAccounts, ...manuallyAddedAccounts];
+  }, [
+    campaignForm.etapa_ciclo_vida,
+    accounts,
+    suggestedAccounts,
+    selectedAudienceAccountIds,
+    suggestedContactsByManualAccount,
+  ]);
   const filteredAudienceAccountsBySector = useMemo(() => {
     if (!selectedSectorFilterSet.size) {
       return filteredAudienceAccounts;
@@ -2517,6 +2577,7 @@ export default function CampaignsPage() {
       .map((account) => ({
         account_id: Number(account.id || 0),
         account_name: String(account.name || "").trim(),
+        owners_display: String(account.owners_display || "").trim(),
       }))
       .filter(
         (account) =>
@@ -2525,12 +2586,31 @@ export default function CampaignsPage() {
           account.account_name &&
           !selectedSet.has(account.account_id),
       )
+      .filter((account) => {
+        if (!selectedSectorFilterSet.size) return true;
+        const accountId = account.account_id;
+        const sector = String(accountSectorById.get(accountId) || "").trim();
+        return selectedSectorFilterSet.has(sector);
+      })
+      .filter((account) => {
+        if (!selectedAccountTypeFilterSet.size) return true;
+        const accountId = account.account_id;
+        const accountType = String(accountTypeById.get(accountId) || "").trim();
+        return selectedAccountTypeFilterSet.has(accountType);
+      })
       .sort((first, second) =>
         first.account_name.localeCompare(second.account_name, "es", {
           sensitivity: "base",
         }),
       );
-  }, [accounts, selectedAudienceAccountIds]);
+  }, [
+    accounts,
+    selectedAudienceAccountIds,
+    accountSectorById,
+    accountTypeById,
+    selectedSectorFilterSet,
+    selectedAccountTypeFilterSet,
+  ]);
   const availableAccountsToAdd = useMemo(() => {
     const query = String(addAccountsSearchText || "")
       .trim()
@@ -2591,8 +2671,27 @@ export default function CampaignsPage() {
       return (visibleContactsByAccountId.get(accountId) || []).length > 0;
     });
   }, [visibleAudienceAccounts, visibleContactsByAccountId]);
+  const uniqueOwnersInAudience = useMemo(() => {
+    const owners = new Set();
+    visibleAudienceAccounts.forEach((account) => {
+      const ownerNames = String(account.owners_display || "").trim();
+      if (ownerNames) {
+        owners.add(ownerNames);
+      }
+    });
+    return Array.from(owners).sort((a, b) =>
+      a.localeCompare(b, "es", { sensitivity: "base" }),
+    );
+  }, [visibleAudienceAccounts]);
+  const filteredByOwnerAudienceAccounts = useMemo(() => {
+    if (!audienceOwnerFilter) return visibleAudienceAccounts;
+    return visibleAudienceAccounts.filter((account) => {
+      const ownerNames = String(account.owners_display || "").trim();
+      return ownerNames === audienceOwnerFilter;
+    });
+  }, [visibleAudienceAccounts, audienceOwnerFilter]);
   const sortedVisibleAudienceAccounts = useMemo(() => {
-    const items = [...visibleAudienceAccounts];
+    const items = [...filteredByOwnerAudienceAccounts];
 
     items.sort((first, second) => {
       if (audienceSortMode === "name_desc") {
@@ -2629,7 +2728,7 @@ export default function CampaignsPage() {
     });
 
     return items;
-  }, [audienceSortMode, visibleAudienceAccounts]);
+  }, [audienceSortMode, filteredByOwnerAudienceAccounts]);
   const addContactsAccount = useMemo(() => {
     const targetId = Number(addContactsAccountId || 0);
     if (!targetId) return null;
@@ -2833,15 +2932,23 @@ export default function CampaignsPage() {
     }
 
     setSelectedAudienceAccountIds(
-      filteredAudienceAccountsBySector
+      filteredAudienceAccountsByClassification
         .map((item) => Number(item.account_id || 0))
         .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
     );
   }, [
-    filteredAudienceAccountsBySector,
+    filteredAudienceAccountsByClassification,
     preferSavedAudienceSelection,
     savedCampaignAccountIds,
   ]);
+
+  useEffect(() => {
+    setSelectedAudienceAccountIds(
+      filteredAudienceAccountsByClassification
+        .map((item) => Number(item.account_id || 0))
+        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
+    );
+  }, [selectedSectorFilters, selectedAccountTypeFilters]);
 
   useEffect(() => {
     setRemovedAudienceContactsByAccount({});
@@ -2964,6 +3071,81 @@ export default function CampaignsPage() {
   }, [campaignForm.etapa_ciclo_vida]);
 
   useEffect(() => {
+    if (!campaignForm.etapa_ciclo_vida) {
+      setSuggestedContactsByManualAccount({});
+      return;
+    }
+
+    let mounted = true;
+
+    async function loadSuggestedContactsForManualAccounts() {
+      const suggestedAccountIds = new Set(
+        suggestedAccounts
+          .map((acc) => Number(acc.account_id || 0))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      );
+
+      const manuallyAddedIds = selectedAudienceAccountIds
+        .map((id) => Number(id || 0))
+        .filter(
+          (id) =>
+            Number.isInteger(id) && id > 0 && !suggestedAccountIds.has(id),
+        );
+
+      if (manuallyAddedIds.length === 0) {
+        if (mounted) {
+          setSuggestedContactsByManualAccount({});
+        }
+        return;
+      }
+
+      try {
+        const accountIdsParam = manuallyAddedIds.join(",");
+        const { data } = await api.get(
+          "/api/campaigns/accounts/suggested-contacts",
+          {
+            params: {
+              etapa_ciclo_vida: campaignForm.etapa_ciclo_vida,
+              account_ids: accountIdsParam,
+            },
+          },
+        );
+
+        if (!mounted) return;
+
+        const contactsMap = {};
+        manuallyAddedIds.forEach((accountId) => {
+          contactsMap[accountId] = Array.isArray(data[accountId])
+            ? data[accountId]
+            : [];
+        });
+
+        if (mounted) {
+          setSuggestedContactsByManualAccount(contactsMap);
+        }
+      } catch (requestError) {
+        if (mounted) {
+          console.error(
+            "Error loading suggested contacts for manual accounts:",
+            requestError,
+          );
+          setSuggestedContactsByManualAccount({});
+        }
+      }
+    }
+
+    loadSuggestedContactsForManualAccounts();
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    campaignForm.etapa_ciclo_vida,
+    selectedAudienceAccountIds,
+    suggestedAccounts,
+  ]);
+
+  useEffect(() => {
     if (!compatibleSubtypeOptions.length) return;
 
     const currentSubtype = String(campaignForm.subtipo_campana || "").trim();
@@ -3047,7 +3229,9 @@ export default function CampaignsPage() {
     setFeedback("");
     setError("");
     setCampaignGoalText(
-      String(campaign?.campaign_goal_text || campaign?.description || "").trim(),
+      String(
+        campaign?.campaign_goal_text || campaign?.description || "",
+      ).trim(),
     );
     setAiSuggestionReason("");
     const persistedGuide = normalizeClassificationGuideFromDb(campaign);
@@ -3378,12 +3562,16 @@ export default function CampaignsPage() {
           estado_interaccion: payload.estado_interaccion,
           contact_ids: (visibleContactsByAccountId.get(accountId) || [])
             .map((contact) => Number(contact?.contact_id || 0))
-            .filter((contactId) => Number.isInteger(contactId) && contactId > 0),
+            .filter(
+              (contactId) => Number.isInteger(contactId) && contactId > 0,
+            ),
           last_interaction_at: payload.last_interaction_at,
         })),
       });
 
-      const { data } = await api.get(`/api/campaigns/${selectedCampaignId}/accounts`);
+      const { data } = await api.get(
+        `/api/campaigns/${selectedCampaignId}/accounts`,
+      );
       const savedItems = Array.isArray(data?.items) ? data.items : [];
       setCampaignAccounts(savedItems);
       setFeedback(
@@ -3675,7 +3863,7 @@ export default function CampaignsPage() {
                     </small>
                   </label>
                   <label>
-                    Etapa ciclo de vida objetivo
+                    Audiencia
                     <select
                       value={campaignForm.etapa_ciclo_vida}
                       onChange={(event) =>
@@ -3913,6 +4101,22 @@ export default function CampaignsPage() {
                     </div>
                     <div className="campaigns-audience-tools">
                       <label className="campaigns-audience-sort">
+                        <span>Filtrar por vendedor</span>
+                        <select
+                          value={audienceOwnerFilter}
+                          onChange={(event) =>
+                            setAudienceOwnerFilter(event.target.value)
+                          }
+                        >
+                          <option value="">Todos los vendedores</option>
+                          {uniqueOwnersInAudience.map((owner) => (
+                            <option key={owner} value={owner}>
+                              {owner}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="campaigns-audience-sort">
                         <span>Ordenar</span>
                         <select
                           value={audienceSortMode}
@@ -3969,7 +4173,7 @@ export default function CampaignsPage() {
                         const visibleContacts =
                           visibleContactsByAccountId.get(accountId) || [];
                         return (
-                          <label
+                          <div
                             key={accountId}
                             className="campaigns-account-check-item"
                           >
@@ -3977,6 +4181,11 @@ export default function CampaignsPage() {
                               <div className="campaigns-account-check-head">
                                 <div className="campaigns-account-title-wrap">
                                   <strong>{item.account_name}</strong>
+                                  {String(item.owners_display || "").trim() ? (
+                                    <span className="campaigns-mini-badge campaigns-mini-badge-owner">
+                                      {String(item.owners_display || "").trim()}
+                                    </span>
+                                  ) : null}
                                   {String(item.economic_sector || "").trim() ? (
                                     <span className="campaigns-mini-badge campaigns-mini-badge-sector">
                                       {String(
@@ -3991,7 +4200,9 @@ export default function CampaignsPage() {
                                     className="campaigns-add-contact-icon"
                                     title="Adicionar contactos"
                                     aria-label="Adicionar contactos"
-                                    onClick={() => {
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
                                       setAddContactsAccountId(accountId);
                                       setIsAddContactsModalOpen(true);
                                     }}
@@ -4019,14 +4230,11 @@ export default function CampaignsPage() {
                                     className="campaigns-remove-icon"
                                     title="Eliminar cuenta de la lista"
                                     aria-label="Eliminar cuenta de la lista"
-                                    onClick={() => {
-                                      setSelectedAudienceAccountIds(
-                                        (previous) =>
-                                          previous.filter(
-                                            (existingId) =>
-                                              Number(existingId) !== accountId,
-                                          ),
-                                      );
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      setPendingRemoveAccountId(accountId);
+                                      setIsConfirmRemoveAccountModalOpen(true);
                                     }}
                                   >
                                     <svg
@@ -4087,25 +4295,15 @@ export default function CampaignsPage() {
                                             className="campaigns-contact-remove-icon"
                                             title="Eliminar contacto de la lista"
                                             aria-label="Eliminar contacto de la lista"
-                                            onClick={() => {
-                                              setRemovedAudienceContactsByAccount(
-                                                (previous) => {
-                                                  const existing =
-                                                    previous[accountId] || [];
-                                                  if (
-                                                    !contactId ||
-                                                    existing.includes(contactId)
-                                                  ) {
-                                                    return previous;
-                                                  }
-                                                  return {
-                                                    ...previous,
-                                                    [accountId]: [
-                                                      ...existing,
-                                                      contactId,
-                                                    ],
-                                                  };
-                                                },
+                                            onClick={(event) => {
+                                              event.preventDefault();
+                                              event.stopPropagation();
+                                              setPendingRemoveContact({
+                                                accountId,
+                                                contactId,
+                                              });
+                                              setIsConfirmRemoveContactModalOpen(
+                                                true,
                                               );
                                             }}
                                           >
@@ -4133,7 +4331,7 @@ export default function CampaignsPage() {
                                 )}
                               </div>
                             </div>
-                          </label>
+                          </div>
                         );
                       })}
                     </div>
@@ -4304,6 +4502,11 @@ export default function CampaignsPage() {
                         }}
                       />
                       <span>{item.account_name}</span>
+                      {String(item.owners_display || "").trim() ? (
+                        <span className="campaigns-mini-badge campaigns-mini-badge-owner">
+                          {String(item.owners_display || "").trim()}
+                        </span>
+                      ) : null}
                     </label>
                   );
                 })
@@ -4540,6 +4743,136 @@ export default function CampaignsPage() {
                 }}
               >
                 Adicionar seleccionados
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isConfirmRemoveContactModalOpen ? (
+        <div
+          className="campaigns-modal-backdrop"
+          role="presentation"
+          onClick={() => setIsConfirmRemoveContactModalOpen(false)}
+        >
+          <div
+            className="campaigns-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirmar eliminacion de contacto"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="campaigns-modal-head">
+              <strong>Confirmar eliminación</strong>
+              <button
+                type="button"
+                className="campaigns-modal-close"
+                onClick={() => setIsConfirmRemoveContactModalOpen(false)}
+                aria-label="Cerrar modal"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="campaigns-modal-body">
+              <p>
+                ¿Estás seguro de que deseas eliminar este contacto de la lista?
+              </p>
+            </div>
+
+            <div className="campaigns-modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setIsConfirmRemoveContactModalOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary btn-danger"
+                onClick={() => {
+                  setRemovedAudienceContactsByAccount((previous) => {
+                    const accountId = pendingRemoveContact.accountId;
+                    const contactId = pendingRemoveContact.contactId;
+                    const existing = previous[accountId] || [];
+                    if (!contactId || existing.includes(contactId)) {
+                      return previous;
+                    }
+                    return {
+                      ...previous,
+                      [accountId]: [...existing, contactId],
+                    };
+                  });
+                  setIsConfirmRemoveContactModalOpen(false);
+                  setPendingRemoveContact({
+                    accountId: null,
+                    contactId: null,
+                  });
+                }}
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isConfirmRemoveAccountModalOpen ? (
+        <div
+          className="campaigns-modal-backdrop"
+          role="presentation"
+          onClick={() => setIsConfirmRemoveAccountModalOpen(false)}
+        >
+          <div
+            className="campaigns-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirmar eliminacion de cuenta"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="campaigns-modal-head">
+              <strong>Confirmar eliminación</strong>
+              <button
+                type="button"
+                className="campaigns-modal-close"
+                onClick={() => setIsConfirmRemoveAccountModalOpen(false)}
+                aria-label="Cerrar modal"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="campaigns-modal-body">
+              <p>
+                ¿Estás seguro de que deseas eliminar esta cuenta de la
+                audiencia?
+              </p>
+            </div>
+
+            <div className="campaigns-modal-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setIsConfirmRemoveAccountModalOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary btn-danger"
+                onClick={() => {
+                  setSelectedAudienceAccountIds((previous) =>
+                    previous.filter(
+                      (existingId) =>
+                        Number(existingId) !== pendingRemoveAccountId,
+                    ),
+                  );
+                  setIsConfirmRemoveAccountModalOpen(false);
+                  setPendingRemoveAccountId(null);
+                }}
+              >
+                Eliminar
               </button>
             </div>
           </div>

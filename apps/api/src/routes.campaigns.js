@@ -164,9 +164,7 @@ function toDateOrNull(value) {
 function parseJsonStringArray(rawValue, maxItems) {
   try {
     const parsed =
-      typeof rawValue === "string"
-        ? JSON.parse(rawValue || "[]")
-        : rawValue;
+      typeof rawValue === "string" ? JSON.parse(rawValue || "[]") : rawValue;
     if (!Array.isArray(parsed)) {
       return [];
     }
@@ -777,7 +775,17 @@ router.get(
 
     const filterSql = stage ? getLifecycleAccountFilterSql(stage) : "1 = 1";
     const rows = await query(
-      `WITH opportunity_metrics AS (
+      `WITH owners_data AS (
+         SELECT ao.account_id,
+                GROUP_CONCAT(
+                  u.full_name
+                  ORDER BY u.full_name SEPARATOR ', '
+                ) AS owner_names
+         FROM account_owners ao
+         INNER JOIN users u ON u.id = ao.user_id
+         GROUP BY ao.account_id
+       ),
+       opportunity_metrics AS (
          SELECT
            a.id AS account_id,
            COUNT(o.id) AS total_opportunities,
@@ -840,8 +848,10 @@ router.get(
          am.won_opportunities,
          am.max_open_stage_order,
          am.last_won_at,
-         am.last_activity_at
+         am.last_activity_at,
+         COALESCE(od.owner_names, '') AS owners_display
        FROM account_metrics am
+       LEFT JOIN owners_data od ON od.account_id = am.account_id
        WHERE ${filterSql}
        ORDER BY am.account_name ASC
        LIMIT 1000`,
@@ -862,6 +872,7 @@ router.get(
       items: rows.map((row) => ({
         account_id: Number(row.account_id),
         account_name: row.account_name || "",
+        owners_display: row.owners_display || "",
         total_opportunities: Number(row.total_opportunities || 0),
         open_opportunities: Number(row.open_opportunities || 0),
         won_opportunities: Number(row.won_opportunities || 0),
@@ -873,6 +884,60 @@ router.get(
         contacts: contactsByAccount.get(Number(row.account_id || 0)) || [],
       })),
     });
+  },
+);
+
+router.get(
+  "/accounts/suggested-contacts",
+  requireAnyPermission(CAMPAIGN_READ_PERMISSIONS),
+  async (req, res) => {
+    const stage = String(req.query.etapa_ciclo_vida || "").trim();
+    const accountIdsParam = String(req.query.account_ids || "").trim();
+
+    if (!stage) {
+      return res.status(400).json({
+        message: "etapa_ciclo_vida es requerido",
+      });
+    }
+
+    if (!ETAPA_CICLO_VIDA_VALUES.includes(stage)) {
+      return res.status(400).json({
+        message: "etapa_ciclo_vida invalida",
+        allowedValues: ETAPA_CICLO_VIDA_VALUES,
+      });
+    }
+
+    if (!accountIdsParam) {
+      return res.json({});
+    }
+
+    const accountIds = accountIdsParam
+      .split(",")
+      .map((id) => Number(String(id).trim()))
+      .filter((id) => Number.isInteger(id) && id > 0);
+
+    if (accountIds.length === 0) {
+      return res.json({});
+    }
+
+    try {
+      const contactsByAccount = await listSuggestedContactsByStage(
+        stage,
+        accountIds,
+      );
+
+      const result = {};
+      accountIds.forEach((accountId) => {
+        result[accountId] = contactsByAccount.get(accountId) || [];
+      });
+
+      return res.json(result);
+    } catch (requestError) {
+      return res.status(500).json({
+        message: "Error loading suggested contacts",
+        error: requestError.message,
+      });
+    }
   },
 );
 

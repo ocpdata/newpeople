@@ -1,0 +1,3 @@
+Nombre de la oportunidad: Oportunidad async api_test_1783205344330_rybouf
+Monto: 88000
+Cuenta: Cuenta fixture api_test_1783205344330_rybouf_opportunity_documents_async
