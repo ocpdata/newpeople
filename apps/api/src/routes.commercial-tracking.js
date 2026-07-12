@@ -85,6 +85,15 @@ function hasGlobalOpportunityScope(user) {
   return userHasPermission(user, "oportunidades.read_all");
 }
 
+function buildGlobalOpportunityScopeUser(user) {
+  const permissionSet = new Set(user?.permissionSet || []);
+  permissionSet.add("oportunidades.read_all");
+  return {
+    ...user,
+    permissionSet,
+  };
+}
+
 function toPositiveInt(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -2359,7 +2368,9 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
       const currentStage = currentSeller.stageMap.get(stageCode) || {
         stageCode,
         stageName:
-          item.sales_stage_name || stageNameByCode.get(stageCode) || "Sin etapa",
+          item.sales_stage_name ||
+          stageNameByCode.get(stageCode) ||
+          "Sin etapa",
         stageOrder: Number(item.sales_stage_order ?? 9999),
         openAmountUsd: 0,
         opportunityCount: 0,
@@ -2704,6 +2715,349 @@ async function loadQuarterCreatedOpportunityCountsBySeller({
   );
 }
 
+async function loadOpportunityCreatedWeeklySeriesBySeller({
+  user,
+  weeks = 10,
+} = {}) {
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const currentWeekRange = getWeekRange(new Date());
+  const seriesStart = startOfDay(
+    addDays(currentWeekRange.start, -(normalizedWeeks - 1) * 7),
+  );
+  const seriesEnd = endOfDay(currentWeekRange.end);
+
+  const params = [seriesStart, addDays(seriesEnd, 1)];
+  const whereClauses = [
+    "o.seller_user_id IS NOT NULL",
+    "oas.code = 'activada'",
+    "o.created_at >= ?",
+    "o.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("o.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT o.seller_user_id,
+            DATE_SUB(DATE(o.created_at), INTERVAL WEEKDAY(o.created_at) DAY) AS week_start,
+            COUNT(*) AS opportunity_count
+     FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     WHERE ${whereClauses.join(" AND ")}
+     GROUP BY o.seller_user_id, week_start`,
+    params,
+  ).catch(() => []);
+
+  if (!rows.length) {
+    return new Map();
+  }
+
+  const weeksBySeller = new Map();
+  rows.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const weekStart = row.week_start
+      ? formatIsoDate(new Date(row.week_start))
+      : null;
+    const opportunityCount = Number(row.opportunity_count || 0);
+
+    if (!sellerId || !weekStart) {
+      return;
+    }
+
+    if (!weeksBySeller.has(sellerId)) {
+      weeksBySeller.set(sellerId, new Map());
+    }
+
+    weeksBySeller.get(sellerId).set(weekStart, opportunityCount);
+  });
+
+  const weekKeys = Array.from({ length: normalizedWeeks }, (_, index) => {
+    const weekStart = new Date(seriesStart);
+    weekStart.setDate(weekStart.getDate() + index * 7);
+    return formatIsoDate(weekStart);
+  });
+
+  return new Map(
+    Array.from(weeksBySeller.entries()).map(([sellerId, sellerWeeks]) => [
+      sellerId,
+      weekKeys.map((weekKey) => Number(sellerWeeks.get(weekKey) || 0)),
+    ]),
+  );
+}
+
+async function loadLeadCreatedWeeklySeriesBySeller({ user, weeks = 10 } = {}) {
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const currentWeekRange = getWeekRange(new Date());
+  const seriesStart = startOfDay(
+    addDays(currentWeekRange.start, -(normalizedWeeks - 1) * 7),
+  );
+  const seriesEnd = endOfDay(currentWeekRange.end);
+
+  const params = [seriesStart, addDays(seriesEnd, 1)];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified', 'lead_disqualified')",
+    "i.created_at >= ?",
+    "i.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT i.seller_user_id,
+            DATE_SUB(DATE(i.created_at), INTERVAL WEEKDAY(i.created_at) DAY) AS week_start,
+            COUNT(*) AS lead_count
+     FROM interactions i
+     WHERE ${whereClauses.join(" AND ")}
+     GROUP BY i.seller_user_id, week_start`,
+    params,
+  ).catch(() => []);
+
+  if (!rows.length) {
+    return new Map();
+  }
+
+  const weeksBySeller = new Map();
+  rows.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const weekStart = row.week_start
+      ? formatIsoDate(new Date(row.week_start))
+      : null;
+    const leadCount = Number(row.lead_count || 0);
+
+    if (!sellerId || !weekStart) {
+      return;
+    }
+
+    if (!weeksBySeller.has(sellerId)) {
+      weeksBySeller.set(sellerId, new Map());
+    }
+
+    weeksBySeller.get(sellerId).set(weekStart, leadCount);
+  });
+
+  const weekKeys = Array.from({ length: normalizedWeeks }, (_, index) => {
+    const weekStart = new Date(seriesStart);
+    weekStart.setDate(weekStart.getDate() + index * 7);
+    return formatIsoDate(weekStart);
+  });
+
+  return new Map(
+    Array.from(weeksBySeller.entries()).map(([sellerId, sellerWeeks]) => [
+      sellerId,
+      weekKeys.map((weekKey) => Number(sellerWeeks.get(weekKey) || 0)),
+    ]),
+  );
+}
+
+async function loadLeadToOpportunityConversionWeeklySeriesBySeller({
+  user,
+  weeks = 10,
+} = {}) {
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const currentWeekRange = getWeekRange(new Date());
+  const seriesStart = startOfDay(
+    addDays(currentWeekRange.start, -(normalizedWeeks - 1) * 7),
+  );
+  const seriesEnd = endOfDay(currentWeekRange.end);
+
+  const params = [seriesStart, addDays(seriesEnd, 1)];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status IN ('created', 'lead_unassigned', 'lead_assigned', 'lead_qualified', 'lead_disqualified')",
+    "i.created_at >= ?",
+    "i.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT i.seller_user_id, i.id, i.created_at, i.analysis_status
+     FROM interactions i
+     WHERE ${whereClauses.join(" AND ")}
+     ORDER BY i.seller_user_id, i.created_at, i.id`,
+    params,
+  ).catch(() => []);
+
+  if (!rows.length) {
+    return new Map();
+  }
+
+  const weekKeys = Array.from({ length: normalizedWeeks }, (_, index) => {
+    const weekStart = new Date(seriesStart);
+    weekStart.setDate(weekStart.getDate() + index * 7);
+    return formatIsoDate(weekStart);
+  });
+
+  const leadsBySeller = new Map();
+  rows.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const createdAt = row.created_at ? new Date(row.created_at) : null;
+    if (!sellerId || !createdAt || Number.isNaN(createdAt.getTime())) {
+      return;
+    }
+
+    if (!leadsBySeller.has(sellerId)) {
+      leadsBySeller.set(sellerId, []);
+    }
+
+    leadsBySeller.get(sellerId).push({
+      id: Number(row.id || 0),
+      createdAt,
+      isQualified: String(row.analysis_status || "") === "lead_qualified",
+    });
+  });
+
+  return new Map(
+    Array.from(leadsBySeller.entries()).map(([sellerId, sellerLeads]) => {
+      const series = weekKeys.map((weekKey, index) => {
+        const snapshotDate = new Date(seriesStart);
+        snapshotDate.setDate(snapshotDate.getDate() + index * 7);
+
+        const valuesAtSnapshot = sellerLeads
+          .filter((lead) => lead.createdAt.getTime() <= snapshotDate.getTime())
+          .sort((left, right) => {
+            const dateDelta =
+              right.createdAt.getTime() - left.createdAt.getTime();
+            if (dateDelta !== 0) return dateDelta;
+            return Number(right.id || 0) - Number(left.id || 0);
+          })
+          .slice(0, 20);
+
+        if (!valuesAtSnapshot.length) {
+          return 0;
+        }
+
+        const qualifiedCount = valuesAtSnapshot.reduce(
+          (sum, lead) => sum + (lead.isQualified ? 1 : 0),
+          0,
+        );
+        return toAmount((qualifiedCount / valuesAtSnapshot.length) * 100);
+      });
+
+      return [sellerId, series];
+    }),
+  );
+}
+
+async function loadOpportunityToWinConversionWeeklySeriesBySeller({
+  user,
+  weeks = 10,
+} = {}) {
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const currentWeekRange = getWeekRange(new Date());
+  const seriesStart = startOfDay(
+    addDays(currentWeekRange.start, -(normalizedWeeks - 1) * 7),
+  );
+  const seriesEnd = endOfDay(currentWeekRange.end);
+
+  const params = [addDays(seriesEnd, 1)];
+  const whereClauses = [
+    "o.seller_user_id IS NOT NULL",
+    "oas.code = 'activada'",
+    "o.created_at < ?",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("o.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const rows = await query(
+    `SELECT o.seller_user_id,
+            o.id,
+            o.created_at,
+            ocs.code AS commercial_status_code,
+            oss.code AS sales_stage_code
+     FROM opportunities o
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+     WHERE ${whereClauses.join(" AND ")}
+     ORDER BY o.seller_user_id, o.created_at DESC, o.id DESC`,
+    params,
+  ).catch(() => []);
+
+  if (!rows.length) {
+    return new Map();
+  }
+
+  const opportunitiesBySeller = new Map();
+  rows.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const createdAt = row.created_at ? new Date(row.created_at) : null;
+
+    if (!sellerId || !createdAt || Number.isNaN(createdAt.getTime())) {
+      return;
+    }
+
+    if (!opportunitiesBySeller.has(sellerId)) {
+      opportunitiesBySeller.set(sellerId, []);
+    }
+
+    opportunitiesBySeller.get(sellerId).push({
+      id: Number(row.id || 0),
+      createdAt,
+      isWon:
+        String(row.commercial_status_code || "") === "ganada" ||
+        String(row.sales_stage_code || "") === "ganada",
+    });
+  });
+
+  const weekKeys = Array.from({ length: normalizedWeeks }, (_, index) => {
+    const weekStart = new Date(seriesStart);
+    weekStart.setDate(weekStart.getDate() + index * 7);
+    return formatIsoDate(weekStart);
+  });
+
+  return new Map(
+    Array.from(opportunitiesBySeller.entries()).map(
+      ([sellerId, sellerOpportunities]) => {
+        const series = Array.from(
+          { length: normalizedWeeks },
+          (_, weekIndex) => {
+            const weeksBack = normalizedWeeks - 1 - weekIndex;
+            const snapshotDate = new Date();
+            snapshotDate.setDate(snapshotDate.getDate() - weeksBack * 7);
+
+            const latestOpportunities = sellerOpportunities
+              .filter(
+                (item) => item.createdAt.getTime() <= snapshotDate.getTime(),
+              )
+              .sort((left, right) => {
+                const dateDelta =
+                  right.createdAt.getTime() - left.createdAt.getTime();
+                if (dateDelta !== 0) return dateDelta;
+                return Number(right.id || 0) - Number(left.id || 0);
+              })
+              .slice(0, 20);
+
+            if (!latestOpportunities.length) {
+              return 0;
+            }
+
+            const wonCount = latestOpportunities.reduce(
+              (sum, item) => sum + (item.isWon ? 1 : 0),
+              0,
+            );
+            return toAmount((wonCount / latestOpportunities.length) * 100);
+          },
+        );
+
+        return [sellerId, series];
+      },
+    ),
+  );
+}
+
 async function loadRecentLeadConversionBySeller({ user, sampleSize = 20 }) {
   const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
   const params = [];
@@ -2758,7 +3112,10 @@ async function loadRecentLeadConversionBySeller({ user, sampleSize = 20 }) {
   );
 }
 
-async function loadRecentOpportunityConversionBySeller({ user, sampleSize = 20 }) {
+async function loadRecentOpportunityConversionBySeller({
+  user,
+  sampleSize = 20,
+}) {
   const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
   const params = [];
   const whereClauses = [
@@ -2889,6 +3246,16 @@ function buildSellerLeagueRow({
   opportunityCreatedActualCount,
   averageSaleTicketLast10,
   sellerParameters,
+  opportunityToWinDays,
+  opportunityToWinWeeklyDays,
+  opportunityToWinWeeklyConversionPct,
+  leadToOpportunityDays,
+  leadToOpportunityWeeklyDays,
+  leadToOpportunityWeeklyConversionPct,
+  leadsAssignedDays,
+  leadsAssignedWeeklyDays,
+  leadsPerWeekWeeklyCounts,
+  opportunitiesPerWeekWeeklyCounts,
   quarterComplianceSeries,
 }) {
   const wonAmountUsd = toAmount(
@@ -3083,20 +3450,22 @@ function buildSellerLeagueRow({
     ),
   );
   const funnelByStage = Array.from(
-    quarterOpenItems.reduce((accumulator, item) => {
-      const stageCode = String(item.stageCode || "sin_etapa");
-      const current = accumulator.get(stageCode) || {
-        stageCode,
-        stageName: item.stageName || "Sin etapa",
-        stageOrder: Number(item.stageOrder ?? 9999),
-        openAmountUsd: 0,
-        opportunityCount: 0,
-      };
-      current.openAmountUsd += Number(item.amountUsd || 0);
-      current.opportunityCount += 1;
-      accumulator.set(stageCode, current);
-      return accumulator;
-    }, new Map()).values(),
+    quarterOpenItems
+      .reduce((accumulator, item) => {
+        const stageCode = String(item.stageCode || "sin_etapa");
+        const current = accumulator.get(stageCode) || {
+          stageCode,
+          stageName: item.stageName || "Sin etapa",
+          stageOrder: Number(item.stageOrder ?? 9999),
+          openAmountUsd: 0,
+          opportunityCount: 0,
+        };
+        current.openAmountUsd += Number(item.amountUsd || 0);
+        current.opportunityCount += 1;
+        accumulator.set(stageCode, current);
+        return accumulator;
+      }, new Map())
+      .values(),
   )
     .map((stage) => ({
       stageCode: stage.stageCode,
@@ -3105,7 +3474,9 @@ function buildSellerLeagueRow({
       openAmountUsd: toAmount(stage.openAmountUsd),
       opportunityCount: Number(stage.opportunityCount || 0),
       stageSharePct: funnelOpenAmountUsd
-        ? toAmount((Number(stage.openAmountUsd || 0) / funnelOpenAmountUsd) * 100)
+        ? toAmount(
+            (Number(stage.openAmountUsd || 0) / funnelOpenAmountUsd) * 100,
+          )
         : 0,
     }))
     .sort(
@@ -3147,6 +3518,36 @@ function buildSellerLeagueRow({
     opportunityToWinEffectivePct: toAmount(
       opportunityToWinEffectiveRatio * 100,
     ),
+    opportunityToWinDays: Number(opportunityToWinDays || 0),
+    opportunityToWinWeeklyDays: Array.isArray(opportunityToWinWeeklyDays)
+      ? opportunityToWinWeeklyDays
+      : [],
+    opportunityToWinWeeklyConversionPct: Array.isArray(
+      opportunityToWinWeeklyConversionPct,
+    )
+      ? opportunityToWinWeeklyConversionPct
+      : [],
+    leadToOpportunityDays: Number(leadToOpportunityDays || 0),
+    leadToOpportunityWeeklyDays: Array.isArray(leadToOpportunityWeeklyDays)
+      ? leadToOpportunityWeeklyDays
+      : [],
+    leadToOpportunityWeeklyConversionPct: Array.isArray(
+      leadToOpportunityWeeklyConversionPct,
+    )
+      ? leadToOpportunityWeeklyConversionPct
+      : [],
+    leadsAssignedDays: Number(leadsAssignedDays || 0),
+    leadsAssignedWeeklyDays: Array.isArray(leadsAssignedWeeklyDays)
+      ? leadsAssignedWeeklyDays
+      : [],
+    leadsPerWeekWeeklyCounts: Array.isArray(leadsPerWeekWeeklyCounts)
+      ? leadsPerWeekWeeklyCounts
+      : [],
+    opportunitiesPerWeekWeeklyCounts: Array.isArray(
+      opportunitiesPerWeekWeeklyCounts,
+    )
+      ? opportunitiesPerWeekWeeklyCounts
+      : [],
     opportunityCreatedTargetCount,
     opportunityCreatedActualCount: Number(opportunityCreatedActualCount || 0),
     opportunityCreatedGapCount,
@@ -3493,10 +3894,550 @@ router.get(
   },
 );
 
+async function loadOpportunityToWinDaysBySeller({
+  user,
+  sampleSize = 20,
+} = {}) {
+  // First, get the development stage ID
+  const developmentStageRows = await query(
+    `SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1`,
+  ).catch(() => []);
+
+  if (!developmentStageRows.length) {
+    return new Map();
+  }
+
+  const developmentStageId = Number(developmentStageRows[0].id || 0);
+  if (!developmentStageId) {
+    return new Map();
+  }
+
+  const params = [];
+  const whereClauses = [
+    "o.seller_user_id IS NOT NULL",
+    "oas.code = 'activada'",
+    "ocs.code = 'ganada'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("o.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  params.push(normalizedSampleSize);
+
+  // Get last won opportunities by seller
+  const wonOpportunities = await query(
+    `SELECT recent.opportunity_id, recent.seller_user_id, recent.commercial_closed_at
+     FROM (
+       SELECT o.id AS opportunity_id, o.seller_user_id, o.commercial_closed_at,
+              ROW_NUMBER() OVER (
+                PARTITION BY o.seller_user_id
+                ORDER BY o.commercial_closed_at DESC, o.id DESC
+              ) AS row_position
+       FROM opportunities o
+       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+       INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?`,
+    params,
+  ).catch(() => []);
+
+  if (!wonOpportunities.length) {
+    return new Map();
+  }
+
+  const opportunityIds = wonOpportunities
+    .map((row) => Number(row.opportunity_id || 0))
+    .filter(Boolean);
+  if (!opportunityIds.length) {
+    return new Map();
+  }
+
+  // Get stage entry dates from audit_log for each opportunity
+  // Look for when stage_id changed to development stage
+  const placeholders = opportunityIds.map(() => "?").join(", ");
+  const stageAuditRows = await query(
+    `SELECT al.entity_id, MIN(al.created_at) AS development_entered_at
+     FROM audit_log al
+     WHERE al.entity_type = 'opportunity'
+       AND al.entity_id IN (${placeholders})
+       AND al.action = 'stage_advanced'
+       AND JSON_EXTRACT(al.changed_fields, '$.sales_stage_id.after') = ?
+     GROUP BY al.entity_id`,
+    [...opportunityIds, developmentStageId],
+  ).catch(() => []);
+
+  const stageEntryByOppId = new Map(
+    stageAuditRows.map((row) => [
+      Number(row.entity_id || 0),
+      row.development_entered_at,
+    ]),
+  );
+
+  const resultBySeller = new Map();
+
+  wonOpportunities.forEach((wonRow) => {
+    const sellerId = Number(wonRow.seller_user_id || 0);
+    const oppId = Number(wonRow.opportunity_id || 0);
+    const closedAt = wonRow.commercial_closed_at;
+
+    if (!sellerId || !oppId || !closedAt) {
+      return;
+    }
+
+    if (!resultBySeller.has(sellerId)) {
+      resultBySeller.set(sellerId, []);
+    }
+
+    const devEnteredAt = stageEntryByOppId.get(oppId);
+    if (devEnteredAt) {
+      const days = Math.max(
+        0,
+        getDiffDays(new Date(devEnteredAt), new Date(closedAt)),
+      );
+      resultBySeller.get(sellerId).push(days);
+    }
+  });
+
+  // Calculate average per seller
+  const averageBySellerId = new Map(
+    Array.from(resultBySeller.entries()).map(([sellerId, daysArray]) => [
+      sellerId,
+      daysArray.length > 0
+        ? Math.round(
+            daysArray.reduce((sum, d) => sum + d, 0) / daysArray.length,
+          )
+        : 0,
+    ]),
+  );
+
+  return averageBySellerId;
+}
+
+async function loadOpportunityToWinWeeklySeriesBySeller({
+  user,
+  weeks = 10,
+  sampleSize = 20,
+} = {}) {
+  const params = [];
+  const whereClauses = [
+    "o.seller_user_id IS NOT NULL",
+    "oas.code = 'activada'",
+    "ocs.code = 'ganada'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("o.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  params.push(normalizedSampleSize);
+
+  const wonOpportunities = await query(
+    `SELECT recent.seller_user_id, recent.commercial_closed_at, recent.days_to_win
+     FROM (
+       SELECT o.seller_user_id, o.commercial_closed_at, o.id,
+              FLOOR(DATEDIFF(o.commercial_closed_at, MIN(al.created_at))) AS days_to_win,
+              ROW_NUMBER() OVER (
+                PARTITION BY o.seller_user_id
+                ORDER BY o.commercial_closed_at DESC, o.id DESC
+              ) AS row_position
+       FROM opportunities o
+       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+       INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+       LEFT JOIN audit_log al
+         ON al.entity_type = 'opportunity'
+        AND al.entity_id = o.id
+        AND al.action = 'stage_advanced'
+        AND JSON_EXTRACT(al.changed_fields, '$.sales_stage_id.after') = (
+          SELECT id FROM opportunity_sales_stages WHERE code = 'desarrollo' LIMIT 1
+        )
+       WHERE ${whereClauses.join(" AND ")}
+       GROUP BY o.id, o.seller_user_id, o.commercial_closed_at
+     ) recent
+     WHERE recent.row_position <= ?`,
+    params,
+  ).catch(() => []);
+
+  if (!wonOpportunities.length) {
+    return new Map();
+  }
+
+  const wonBySeller = new Map();
+  wonOpportunities.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const closedAt = row.commercial_closed_at
+      ? new Date(row.commercial_closed_at)
+      : null;
+    const daysToWin = Math.max(0, Number(row.days_to_win || 0));
+
+    if (!sellerId || !closedAt || Number.isNaN(closedAt.getTime())) {
+      return;
+    }
+
+    if (!wonBySeller.has(sellerId)) {
+      wonBySeller.set(sellerId, []);
+    }
+
+    wonBySeller.get(sellerId).push({
+      closedAt,
+      daysToWin,
+    });
+  });
+
+  return new Map(
+    Array.from(wonBySeller.entries()).map(([sellerId, wonItems]) => {
+      const now = new Date();
+      const series = Array.from({ length: normalizedWeeks }, (_, weekIndex) => {
+        const weeksBack = normalizedWeeks - 1 - weekIndex;
+        const snapshotDate = new Date(now);
+        snapshotDate.setDate(snapshotDate.getDate() - weeksBack * 7);
+
+        const valuesAtSnapshot = wonItems
+          .filter((item) => item.closedAt.getTime() <= snapshotDate.getTime())
+          .map((item) => item.daysToWin);
+
+        if (!valuesAtSnapshot.length) {
+          return null;
+        }
+
+        return Math.round(
+          valuesAtSnapshot.reduce((sum, value) => sum + value, 0) /
+            valuesAtSnapshot.length,
+        );
+      });
+
+      return [sellerId, series];
+    }),
+  );
+}
+
+async function loadLeadAssignedAgeDaysBySeller({ user, sampleSize = 20 } = {}) {
+  const params = [];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status <> 'lead_qualified'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  params.push(normalizedSampleSize);
+
+  // Get last assigned leads by seller with age from creation to today
+  const assignedLeads = await query(
+    `SELECT recent.lead_id, recent.seller_user_id, recent.created_at,
+            FLOOR(DATEDIFF(NOW(), recent.created_at)) AS days_since_creation
+     FROM (
+       SELECT i.id AS lead_id, i.seller_user_id, i.created_at,
+              ROW_NUMBER() OVER (
+                PARTITION BY i.seller_user_id
+                ORDER BY i.created_at DESC, i.id DESC
+              ) AS row_position
+       FROM interactions i
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?`,
+    params,
+  ).catch(() => []);
+
+  if (!assignedLeads.length) {
+    return new Map();
+  }
+
+  // Calculate average days per seller
+  const resultBySeller = new Map();
+
+  assignedLeads.forEach((leadRow) => {
+    const sellerId = Number(leadRow.seller_user_id || 0);
+    const daysSinceCreation = Number(leadRow.days_since_creation || 0);
+
+    if (!sellerId) {
+      return;
+    }
+
+    if (!resultBySeller.has(sellerId)) {
+      resultBySeller.set(sellerId, []);
+    }
+
+    resultBySeller.get(sellerId).push(Math.max(0, daysSinceCreation));
+  });
+
+  // Calculate average per seller
+  const averageBySellerId = new Map(
+    Array.from(resultBySeller.entries()).map(([sellerId, daysArray]) => [
+      sellerId,
+      daysArray.length > 0
+        ? Math.round(
+            daysArray.reduce((sum, d) => sum + d, 0) / daysArray.length,
+          )
+        : 0,
+    ]),
+  );
+
+  return averageBySellerId;
+}
+
+async function loadLeadAssignedAgeWeeklySeriesBySeller({
+  user,
+  weeks = 10,
+  sampleSize = 20,
+} = {}) {
+  const params = [];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status <> 'lead_qualified'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  params.push(normalizedSampleSize);
+
+  const leadRows = await query(
+    `SELECT recent.seller_user_id, recent.created_at
+     FROM (
+       SELECT i.seller_user_id, i.created_at, i.id,
+              ROW_NUMBER() OVER (
+                PARTITION BY i.seller_user_id
+                ORDER BY i.created_at DESC, i.id DESC
+              ) AS row_position
+       FROM interactions i
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?`,
+    params,
+  ).catch(() => []);
+
+  if (!leadRows.length) {
+    return new Map();
+  }
+
+  const leadsBySeller = new Map();
+  leadRows.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const createdAt = row.created_at ? new Date(row.created_at) : null;
+
+    if (!sellerId || !createdAt || Number.isNaN(createdAt.getTime())) {
+      return;
+    }
+
+    if (!leadsBySeller.has(sellerId)) {
+      leadsBySeller.set(sellerId, []);
+    }
+    leadsBySeller.get(sellerId).push(createdAt);
+  });
+
+  return new Map(
+    Array.from(leadsBySeller.entries()).map(([sellerId, sellerLeads]) => {
+      const now = new Date();
+      const series = Array.from({ length: normalizedWeeks }, (_, weekIndex) => {
+        const weeksBack = normalizedWeeks - 1 - weekIndex;
+        const snapshotDate = new Date(now);
+        snapshotDate.setDate(snapshotDate.getDate() - weeksBack * 7);
+
+        const agesAtSnapshot = sellerLeads
+          .filter((createdAt) => createdAt.getTime() <= snapshotDate.getTime())
+          .map((createdAt) => getDiffDays(createdAt, snapshotDate));
+
+        if (!agesAtSnapshot.length) {
+          return null;
+        }
+
+        return Math.round(
+          agesAtSnapshot.reduce((sum, value) => sum + value, 0) /
+            agesAtSnapshot.length,
+        );
+      });
+
+      return [sellerId, series];
+    }),
+  );
+}
+
+async function loadLeadToOpportunityDaysBySeller({
+  user,
+  sampleSize = 20,
+} = {}) {
+  const params = [];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status = 'lead_qualified'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  params.push(normalizedSampleSize);
+
+  // Get last qualified leads by seller with time to qualification
+  const qualifiedLeads = await query(
+    `SELECT recent.lead_id, recent.seller_user_id, recent.created_at, recent.updated_at,
+            FLOOR(DATEDIFF(recent.updated_at, recent.created_at)) AS days_to_qualified
+     FROM (
+       SELECT i.id AS lead_id, i.seller_user_id, i.created_at, i.updated_at,
+              ROW_NUMBER() OVER (
+                PARTITION BY i.seller_user_id
+                ORDER BY i.updated_at DESC, i.id DESC
+              ) AS row_position
+       FROM interactions i
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?`,
+    params,
+  ).catch(() => []);
+
+  if (!qualifiedLeads.length) {
+    return new Map();
+  }
+
+  // Calculate average days per seller
+  const resultBySeller = new Map();
+
+  qualifiedLeads.forEach((leadRow) => {
+    const sellerId = Number(leadRow.seller_user_id || 0);
+    const daysToQualified = Number(leadRow.days_to_qualified || 0);
+
+    if (!sellerId) {
+      return;
+    }
+
+    if (!resultBySeller.has(sellerId)) {
+      resultBySeller.set(sellerId, []);
+    }
+
+    resultBySeller.get(sellerId).push(Math.max(0, daysToQualified));
+  });
+
+  // Calculate average per seller
+  const averageBySellerId = new Map(
+    Array.from(resultBySeller.entries()).map(([sellerId, daysArray]) => [
+      sellerId,
+      daysArray.length > 0
+        ? Math.round(
+            daysArray.reduce((sum, d) => sum + d, 0) / daysArray.length,
+          )
+        : 0,
+    ]),
+  );
+
+  return averageBySellerId;
+}
+
+async function loadLeadToOpportunityWeeklySeriesBySeller({
+  user,
+  weeks = 10,
+  sampleSize = 20,
+} = {}) {
+  const params = [];
+  const whereClauses = [
+    "i.seller_user_id IS NOT NULL",
+    "i.analysis_status = 'lead_qualified'",
+  ];
+
+  if (!hasGlobalOpportunityScope(user)) {
+    whereClauses.push("i.seller_user_id = ?");
+    params.push(Number(user.id) || 0);
+  }
+
+  const normalizedWeeks = Math.max(1, Math.min(10, Number(weeks || 10)));
+  const normalizedSampleSize = Math.max(1, Number(sampleSize || 20));
+  params.push(normalizedSampleSize);
+
+  const leadRows = await query(
+    `SELECT recent.seller_user_id, recent.created_at, recent.qualified_at,
+            FLOOR(DATEDIFF(recent.qualified_at, recent.created_at)) AS days_to_qualified
+     FROM (
+       SELECT i.seller_user_id, i.created_at, i.updated_at AS qualified_at, i.id,
+              ROW_NUMBER() OVER (
+                PARTITION BY i.seller_user_id
+                ORDER BY i.updated_at DESC, i.id DESC
+              ) AS row_position
+       FROM interactions i
+       WHERE ${whereClauses.join(" AND ")}
+     ) recent
+     WHERE recent.row_position <= ?`,
+    params,
+  ).catch(() => []);
+
+  if (!leadRows.length) {
+    return new Map();
+  }
+
+  const qualifiedLeadsBySeller = new Map();
+  leadRows.forEach((row) => {
+    const sellerId = Number(row.seller_user_id || 0);
+    const qualifiedAt = row.qualified_at ? new Date(row.qualified_at) : null;
+    const daysToQualified = Math.max(0, Number(row.days_to_qualified || 0));
+
+    if (!sellerId || !qualifiedAt || Number.isNaN(qualifiedAt.getTime())) {
+      return;
+    }
+
+    if (!qualifiedLeadsBySeller.has(sellerId)) {
+      qualifiedLeadsBySeller.set(sellerId, []);
+    }
+
+    qualifiedLeadsBySeller.get(sellerId).push({
+      qualifiedAt,
+      daysToQualified,
+    });
+  });
+
+  return new Map(
+    Array.from(qualifiedLeadsBySeller.entries()).map(
+      ([sellerId, qualifiedLeads]) => {
+        const now = new Date();
+        const series = Array.from(
+          { length: normalizedWeeks },
+          (_, weekIndex) => {
+            const weeksBack = normalizedWeeks - 1 - weekIndex;
+            const snapshotDate = new Date(now);
+            snapshotDate.setDate(snapshotDate.getDate() - weeksBack * 7);
+
+            const valuesAtSnapshot = qualifiedLeads
+              .filter(
+                (lead) => lead.qualifiedAt.getTime() <= snapshotDate.getTime(),
+              )
+              .map((lead) => lead.daysToQualified);
+
+            if (!valuesAtSnapshot.length) {
+              return null;
+            }
+
+            return Math.round(
+              valuesAtSnapshot.reduce((sum, value) => sum + value, 0) /
+                valuesAtSnapshot.length,
+            );
+          },
+        );
+
+        return [sellerId, series];
+      },
+    ),
+  );
+}
+
 router.get(
   "/seller-league-tv",
   requireAnyPermission(["ritmo_comercial.read"]),
   async (req, res) => {
+    const leagueScopeUser = buildGlobalOpportunityScopeUser(req.user);
     const quarterSelection = getQuarterSelection(new Date());
     const quarterStart = formatIsoDate(quarterSelection.start);
     const quarterEnd = formatIsoDate(quarterSelection.end);
@@ -3513,40 +4454,92 @@ router.get(
       quarterCreatedOpportunityCountsBySeller,
       lastWonTicketAverageBySeller,
       sellerParametersBySeller,
+      opportunityToWinDaysBySeller,
+      opportunityToWinWeeklySeriesBySeller,
+      opportunityToWinConversionWeeklySeriesBySeller,
+      leadToOpportunityDaysBySeller,
+      leadToOpportunityWeeklySeriesBySeller,
+      leadToOpportunityConversionWeeklySeriesBySeller,
+      leadCreatedWeeklySeriesBySeller,
+      leadAssignedAgeDaysBySeller,
+      leadAssignedWeeklySeriesBySeller,
+      opportunityCreatedWeeklySeriesBySeller,
       visibleSellerRows,
     ] = await Promise.all([
-      listScopedOpportunities(req.user, {
+      listScopedOpportunities(leagueScopeUser, {
         closeDateFrom: quarterStart,
         closeDateTo: quarterEnd,
       }),
-      buildOpenOpportunityItems(req.user, {
+      buildOpenOpportunityItems(leagueScopeUser, {
         closeDateFrom: quarterStart,
         closeDateTo: quarterEnd,
         weekRange,
       }),
       loadCurrentQuarterTargetsBySeller({
-        user: req.user,
+        user: leagueScopeUser,
         quarterSelection,
       }),
       loadQuarterLeadCountsBySeller({
-        user: req.user,
+        user: leagueScopeUser,
         quarterSelection,
       }),
       loadQuarterQualifiedLeadCountsBySeller({
-        user: req.user,
+        user: leagueScopeUser,
         quarterSelection,
       }),
-      loadRecentLeadConversionBySeller({ user: req.user, sampleSize: 20 }),
+      loadRecentLeadConversionBySeller({
+        user: leagueScopeUser,
+        sampleSize: 20,
+      }),
       loadRecentOpportunityConversionBySeller({
-        user: req.user,
+        user: leagueScopeUser,
         sampleSize: 20,
       }),
       loadQuarterCreatedOpportunityCountsBySeller({
-        user: req.user,
+        user: leagueScopeUser,
         quarterSelection,
       }),
-      loadLastWonTicketAverageBySeller(req.user, { maxSales: 10 }),
+      loadLastWonTicketAverageBySeller(leagueScopeUser, { maxSales: 10 }),
       loadSellerParametersBySeller(),
+      loadOpportunityToWinDaysBySeller({
+        user: leagueScopeUser,
+        sampleSize: 20,
+      }),
+      loadOpportunityToWinWeeklySeriesBySeller({
+        user: leagueScopeUser,
+        weeks: 10,
+        sampleSize: 20,
+      }),
+      loadOpportunityToWinConversionWeeklySeriesBySeller({
+        user: leagueScopeUser,
+        weeks: 10,
+      }),
+      loadLeadToOpportunityDaysBySeller({
+        user: leagueScopeUser,
+        sampleSize: 20,
+      }),
+      loadLeadToOpportunityWeeklySeriesBySeller({
+        user: leagueScopeUser,
+        weeks: 10,
+        sampleSize: 20,
+      }),
+      loadLeadToOpportunityConversionWeeklySeriesBySeller({
+        user: leagueScopeUser,
+        weeks: 10,
+      }),
+      loadLeadCreatedWeeklySeriesBySeller({ user: leagueScopeUser, weeks: 10 }),
+      loadLeadAssignedAgeDaysBySeller({
+        user: leagueScopeUser,
+        sampleSize: 20,
+      }),
+      loadLeadAssignedAgeWeeklySeriesBySeller({
+        user: leagueScopeUser,
+        weeks: 10,
+      }),
+      loadOpportunityCreatedWeeklySeriesBySeller({
+        user: leagueScopeUser,
+        weeks: 10,
+      }),
       query(
         `SELECT DISTINCT u.id, u.full_name AS seller_user_name
          FROM users u
@@ -3634,7 +4627,7 @@ router.get(
 
     const quarterComplianceSeriesBySeller =
       await buildSellerQuarterComplianceSeriesMap({
-        user: req.user,
+        user: leagueScopeUser,
         year: quarterSelection.year,
         sellerUserIds: Array.from(rowsBySeller.keys()),
       });
@@ -3664,10 +4657,39 @@ router.get(
           recentOpportunityConversion?.wonOpportunityCount || 0,
         opportunityCreatedActualCount:
           quarterCreatedOpportunityCountsBySeller.get(item.sellerUserId) || 0,
+        opportunitiesPerWeekWeeklyCounts:
+          opportunityCreatedWeeklySeriesBySeller.get(item.sellerUserId) ||
+          Array.from({ length: 10 }, () => 0),
         averageSaleTicketLast10:
           lastWonTicketAverageBySeller.get(item.sellerUserId) || 0,
         sellerParameters:
           sellerParametersBySeller.get(item.sellerUserId) || null,
+        opportunityToWinDays:
+          opportunityToWinDaysBySeller.get(item.sellerUserId) || 0,
+        opportunityToWinWeeklyDays:
+          opportunityToWinWeeklySeriesBySeller.get(item.sellerUserId) ||
+          Array.from({ length: 10 }, () => null),
+        opportunityToWinWeeklyConversionPct:
+          opportunityToWinConversionWeeklySeriesBySeller.get(
+            item.sellerUserId,
+          ) || Array.from({ length: 10 }, () => 0),
+        leadToOpportunityDays:
+          leadToOpportunityDaysBySeller.get(item.sellerUserId) || 0,
+        leadToOpportunityWeeklyDays:
+          leadToOpportunityWeeklySeriesBySeller.get(item.sellerUserId) ||
+          Array.from({ length: 10 }, () => null),
+        leadToOpportunityWeeklyConversionPct:
+          leadToOpportunityConversionWeeklySeriesBySeller.get(
+            item.sellerUserId,
+          ) || Array.from({ length: 10 }, () => 0),
+        leadsPerWeekWeeklyCounts:
+          leadCreatedWeeklySeriesBySeller.get(item.sellerUserId) ||
+          Array.from({ length: 10 }, () => 0),
+        leadsAssignedDays:
+          leadAssignedAgeDaysBySeller.get(item.sellerUserId) || 0,
+        leadsAssignedWeeklyDays:
+          leadAssignedWeeklySeriesBySeller.get(item.sellerUserId) ||
+          Array.from({ length: 10 }, () => null),
         quarterComplianceSeries:
           quarterComplianceSeriesBySeller.get(item.sellerUserId) || [],
       });
