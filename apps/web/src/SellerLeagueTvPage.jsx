@@ -452,7 +452,279 @@ function normalizeWeeklyCountSeries(series) {
     : Array.from({ length: 10 }, (_, index) => safeSeries[index] ?? 0);
 }
 
-function SellerDetailPage({ seller, onNavigate }) {
+function clamp(value, minValue, maxValue) {
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+
+function getAverageLastWeeks(series, size = 4) {
+  const values = Array.isArray(series)
+    ? series
+        .slice(-size)
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+    : [];
+
+  if (!values.length) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildCurrentQuarterAttainmentIndicator(seller, quarterContext) {
+  const daysRemaining = Math.max(
+    0,
+    Number(quarterContext?.current?.daysRemaining || 0),
+  );
+  const weeksRemaining = Math.max(
+    0,
+    Number(quarterContext?.current?.weeksRemaining || daysRemaining / 7 || 0),
+  );
+  const quotaAmountUsd = Number(seller.quotaAmountUsd || 0);
+  const wonAmountUsd = Number(seller.wonAmountUsd || 0);
+  const funnelOpenAmountUsd = Number(seller.funnelOpenAmountUsd || 0);
+  const opportunityToWinRatio = clamp(
+    Number(
+      seller.opportunityToWinEffectiveRatio ??
+        seller.opportunityToWinCurrentRatio ??
+        0,
+    ),
+    0,
+    1,
+  );
+  const opportunityToWinDays = Math.max(
+    1,
+    Number(seller.opportunityToWinDays || 1),
+  );
+  const timeFactor = clamp(daysRemaining / opportunityToWinDays, 0, 1);
+  const closablePipelineUsd =
+    funnelOpenAmountUsd * opportunityToWinRatio * timeFactor;
+  const projectedCloseUsd = wonAmountUsd + closablePipelineUsd;
+  const projectedAttainmentRatio =
+    quotaAmountUsd > 0 ? projectedCloseUsd / quotaAmountUsd : 0;
+  const projectedGapUsd = Math.max(0, quotaAmountUsd - projectedCloseUsd);
+  const requiredWeeklyCloseUsd =
+    weeksRemaining > 0 ? projectedGapUsd / weeksRemaining : projectedGapUsd;
+
+  let status = "Comprometido";
+  let tone = "critical";
+  if (projectedAttainmentRatio >= 1) {
+    status = "En ruta";
+    tone = "positive";
+  } else if (projectedAttainmentRatio >= 0.85) {
+    status = "En riesgo";
+    tone = "warning";
+  }
+
+  if (
+    status === "En ruta" &&
+    (Number(seller.overdueRate || 0) > 35 ||
+      Number(seller.noNextStepRate || 0) > 30)
+  ) {
+    status = "En riesgo";
+    tone = "warning";
+  }
+
+  const secondaryLine =
+    projectedGapUsd > 0
+      ? `Brecha: ${formatCurrencyUsd(projectedGapUsd)} · Necesario/semana: ${formatCurrencyUsd(requiredWeeklyCloseUsd)}`
+      : `Proyección: ${formatCurrencyUsd(projectedCloseUsd)} · Superávit: ${formatCurrencyUsd(Math.max(0, projectedCloseUsd - quotaAmountUsd))}`;
+
+  return {
+    title: "Probabilidad de cumplir cuota",
+    subtitle: "Trimestre actual",
+    valuePct: Math.round(projectedAttainmentRatio * 100),
+    status,
+    tone,
+    secondaryLine,
+  };
+}
+
+function buildNextQuarterReadinessIndicator(seller, quarterContext) {
+  const daysRemaining = Math.max(
+    0,
+    Number(quarterContext?.current?.daysRemaining || 0),
+  );
+  const weeksRemaining = Math.max(
+    0,
+    Number(quarterContext?.current?.weeksRemaining || daysRemaining / 7 || 0),
+  );
+  const quotaAmountUsd = Number(seller.quotaAmountUsd || 0);
+  const nextQuarterQuotaAmountUsd = Number(
+    seller.nextQuarterQuotaAmountUsd || 0,
+  );
+  const hasRealNextQuarterTarget = nextQuarterQuotaAmountUsd > 0;
+  const opportunityToWinRatio = clamp(
+    Number(
+      seller.opportunityToWinEffectiveRatio ??
+        seller.opportunityToWinCurrentRatio ??
+        0,
+    ),
+    0,
+    1,
+  );
+  const leadToOpportunityRatio = clamp(
+    Number(
+      seller.leadToOpportunityCurrentRatio ??
+        seller.leadToOpportunityDisplayRatio ??
+        0,
+    ),
+    0,
+    1,
+  );
+  const leadToOpportunityDays = Math.max(
+    1,
+    Number(seller.leadToOpportunityDays || 1),
+  );
+  const timeBuildFactor = clamp(daysRemaining / leadToOpportunityDays, 0, 1);
+  const leadsPerWeek = getAverageLastWeeks(seller.leadsPerWeekWeeklyCounts, 4);
+  const averageSaleTicketAmount = Number(seller.averageSaleTicketAmount || 0);
+  const buildableOpportunities =
+    leadsPerWeek * weeksRemaining * leadToOpportunityRatio * timeBuildFactor;
+  const buildableFunnelUsd = buildableOpportunities * averageSaleTicketAmount;
+  const existingNextQuarterFunnelUsd = hasRealNextQuarterTarget
+    ? Number(seller.nextQuarterOpenPipelineUsd || 0)
+    : Number(seller.funnelOpenAmountUsd || 0);
+  const projectedAvailableFunnelUsd =
+    existingNextQuarterFunnelUsd + buildableFunnelUsd;
+  const requiredFunnelUsd =
+    (hasRealNextQuarterTarget ? nextQuarterQuotaAmountUsd : quotaAmountUsd) /
+    Math.max(opportunityToWinRatio, 0.0001);
+  const readinessRatio =
+    requiredFunnelUsd > 0 ? projectedAvailableFunnelUsd / requiredFunnelUsd : 0;
+  const funnelGapUsd = Math.max(
+    0,
+    requiredFunnelUsd - projectedAvailableFunnelUsd,
+  );
+  const requiredWeeklyBuildUsd =
+    weeksRemaining > 0 ? funnelGapUsd / weeksRemaining : funnelGapUsd;
+
+  let status;
+  let tone;
+  if (hasRealNextQuarterTarget) {
+    if (readinessRatio >= 1) {
+      status = "Listo";
+      tone = "positive";
+    } else if (readinessRatio >= 0.8) {
+      status = "Justo";
+      tone = "warning";
+    } else {
+      status = "Insuficiente";
+      tone = "critical";
+    }
+  } else if (readinessRatio >= 1) {
+    status = "Alta";
+    tone = "positive";
+  } else if (readinessRatio >= 0.75) {
+    status = "Media";
+    tone = "warning";
+  } else {
+    status = "Baja";
+    tone = "critical";
+  }
+
+  const secondaryLine = hasRealNextQuarterTarget
+    ? funnelGapUsd > 0
+      ? `Brecha de funnel: ${formatCurrencyUsd(funnelGapUsd)} · Necesario/semana: ${formatCurrencyUsd(requiredWeeklyBuildUsd)}`
+      : `Funnel proyectado: ${formatCurrencyUsd(projectedAvailableFunnelUsd)} · Requerido: ${formatCurrencyUsd(requiredFunnelUsd)}`
+    : `Funnel construible: ${formatCurrencyUsd(buildableFunnelUsd)} · Capacidad estimada: ${formatCurrencyUsd(projectedAvailableFunnelUsd)}`;
+
+  return {
+    title: hasRealNextQuarterTarget
+      ? "Probabilidad de cumplir funnel siguiente Q"
+      : "Capacidad de construir funnel",
+    subtitle: hasRealNextQuarterTarget
+      ? "Próximo trimestre"
+      : "Hacia el próximo trimestre",
+    valuePct: Math.round(readinessRatio * 100),
+    status,
+    tone,
+    secondaryLine,
+  };
+}
+
+function buildNextQuarterFunnelComparison(seller) {
+  const openPipelineUsd = Number(
+    seller.nextQuarterOpenPipelineUsd || seller.funnelOpenAmountUsd || 0,
+  );
+  const requiredFunnelAmountUsd = calculateRequiredFunnelAmountUsd(
+    seller.gapAmountUsd,
+    seller.opportunityToWinCurrentRatio,
+  );
+
+  return {
+    openPipelineAmountUsd: openPipelineUsd,
+    requiredAmountUsd: requiredFunnelAmountUsd,
+    stages: [
+      {
+        stageCode: "next-quarter-funnel",
+        stageName: "Funnel Q siguiente",
+        stageOrder: 1,
+        opportunityCount: 0,
+        openAmountUsd: openPipelineUsd,
+        stageSharePct: 100,
+      },
+    ],
+    note:
+      requiredFunnelAmountUsd && openPipelineUsd >= requiredFunnelAmountUsd
+        ? "Cobertura suficiente para el siguiente Q."
+        : "Aún falta pipeline para cubrir el siguiente Q.",
+  };
+}
+
+function FunnelComparisonCard({ comparison }) {
+  return (
+    <article className="seller-detail-metric-card seller-detail-funnel-compare-card">
+      <div className="seller-detail-metric-card-head">
+        <span className="seller-detail-metric-card-title">
+          Funnel para Q siguiente
+        </span>
+      </div>
+
+      <SellerStageFunnel
+        stages={comparison.stages}
+        totalAmountUsd={comparison.openPipelineAmountUsd}
+        requiredAmountUsd={comparison.requiredAmountUsd}
+      />
+
+      <p className="seller-detail-funnel-compare-note">{comparison.note}</p>
+    </article>
+  );
+}
+
+function IndicatorCard({ indicator }) {
+  return (
+    <article
+      className={`seller-detail-metric-card seller-detail-indicator-card seller-detail-indicator-card--${indicator.tone}`}
+    >
+      <div className="seller-detail-indicator-card-head">
+        <span className="seller-detail-indicator-card-title">
+          {indicator.title}
+        </span>
+        <span className="seller-detail-indicator-card-subtitle">
+          {indicator.subtitle}
+        </span>
+      </div>
+
+      <div className="seller-detail-indicator-card-body">
+        <strong className="seller-detail-indicator-card-value">
+          {`${indicator.valuePct}%`}
+        </strong>
+        <span
+          className={`seller-detail-indicator-card-status seller-detail-indicator-card-status--${indicator.tone}`}
+        >
+          {indicator.status}
+        </span>
+      </div>
+
+      <p className="seller-detail-indicator-card-secondary">
+        {indicator.secondaryLine}
+      </p>
+    </article>
+  );
+}
+
+function SellerDetailPage({ seller, onNavigate, quarterContext }) {
   if (!seller) {
     return (
       <section className="seller-detail-page seller-league-page--fullscreen">
@@ -508,6 +780,15 @@ function SellerDetailPage({ seller, onNavigate }) {
   const funnelRequiredAmountUsd = calculateRequiredFunnelAmountUsd(
     seller.gapAmountUsd,
     seller.opportunityToWinCurrentRatio,
+  );
+  const nextQuarterFunnelComparison = buildNextQuarterFunnelComparison(seller);
+  const currentQuarterIndicator = buildCurrentQuarterAttainmentIndicator(
+    seller,
+    quarterContext,
+  );
+  const nextQuarterIndicator = buildNextQuarterReadinessIndicator(
+    seller,
+    quarterContext,
   );
   return (
     <section className="seller-detail-page seller-league-page--fullscreen">
@@ -740,18 +1021,27 @@ function SellerDetailPage({ seller, onNavigate }) {
               />
             </article>
 
-            <article className="seller-detail-metric-card seller-detail-metric-card--full">
-              <div className="seller-detail-metric-card-head">
-                <span className="seller-detail-metric-card-title">
-                  Funnel por etapa
-                </span>
-              </div>
-              <SellerStageFunnel
-                stages={seller.funnelByStage}
-                totalAmountUsd={seller.funnelOpenAmountUsd}
-                requiredAmountUsd={funnelRequiredAmountUsd}
-              />
-            </article>
+            <div className="seller-detail-compliance-funnel-row">
+              <article className="seller-detail-metric-card seller-detail-funnel-stage-card">
+                <div className="seller-detail-metric-card-head">
+                  <span className="seller-detail-metric-card-title">
+                    Funnel para Q actual
+                  </span>
+                </div>
+                <SellerStageFunnel
+                  stages={seller.funnelByStage}
+                  totalAmountUsd={seller.funnelOpenAmountUsd}
+                  requiredAmountUsd={funnelRequiredAmountUsd}
+                />
+              </article>
+
+              <FunnelComparisonCard comparison={nextQuarterFunnelComparison} />
+            </div>
+
+            <div className="seller-detail-compliance-indicators-row">
+              <IndicatorCard indicator={currentQuarterIndicator} />
+              <IndicatorCard indicator={nextQuarterIndicator} />
+            </div>
           </div>
         </section>
       </div>
@@ -1067,7 +1357,11 @@ export default function SellerLeagueTvPage() {
             : null}
         </section>
       ) : (
-        <SellerDetailPage seller={currentSeller} onNavigate={handleNavigate} />
+        <SellerDetailPage
+          seller={currentSeller}
+          onNavigate={handleNavigate}
+          quarterContext={payload?.quarterContext}
+        />
       )}
     </>
   );
