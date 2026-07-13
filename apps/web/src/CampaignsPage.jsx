@@ -9,6 +9,7 @@ const EMPTY_FORM = {
   subtipo_campana: "correo_masivo",
   estado_campana: "borrador",
   etapa_ciclo_vida: "",
+  audience_lifecycle_filters: [],
   starts_at: "",
   ends_at: "",
 };
@@ -730,6 +731,9 @@ function normalizeCampaignForm(
   selectedAccountTypeFilters,
   selectedSectorFilters,
 ) {
+  const audienceLifecycleFilters = normalizeLifecycleFilterList(
+    form.audience_lifecycle_filters,
+  );
   return {
     name: String(form.name || "").trim(),
     description: String(form.description || "").trim() || null,
@@ -741,6 +745,7 @@ function normalizeCampaignForm(
           .map((item) => String(item || "").trim())
           .filter(Boolean)
       : [],
+    audience_lifecycle_filters: audienceLifecycleFilters,
     audience_account_type_filters: Array.isArray(selectedAccountTypeFilters)
       ? selectedAccountTypeFilters
           .map((item) => String(item || "").trim())
@@ -754,7 +759,7 @@ function normalizeCampaignForm(
     tipo_campana: String(form.tipo_campana || "").trim(),
     subtipo_campana: String(form.subtipo_campana || "").trim(),
     estado_campana: String(form.estado_campana || "").trim(),
-    etapa_ciclo_vida: String(form.etapa_ciclo_vida || "").trim() || null,
+    etapa_ciclo_vida: audienceLifecycleFilters[0] || null,
     starts_at: toPayloadDate(form.starts_at),
     ends_at: toPayloadDate(form.ends_at),
   };
@@ -764,6 +769,17 @@ function normalizeSavedFilterList(values) {
   return Array.isArray(values)
     ? values.map((item) => String(item || "").trim()).filter(Boolean)
     : [];
+}
+
+function normalizeLifecycleFilterList(values) {
+  const allowed = new Set(Object.keys(CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS));
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((item) => String(item || "").trim())
+        .filter((item) => allowed.has(item)),
+    ),
+  );
 }
 
 function getClassificationGuideStorageKey(
@@ -2099,6 +2115,8 @@ export default function CampaignsPage() {
   const [selectedAudienceAccountIds, setSelectedAudienceAccountIds] = useState(
     [],
   );
+  const [manuallyAddedAudienceAccountIds, setManuallyAddedAudienceAccountIds] =
+    useState([]);
   const [
     removedAudienceContactsByAccount,
     setRemovedAudienceContactsByAccount,
@@ -2258,19 +2276,27 @@ export default function CampaignsPage() {
       .map((item) => Number(item.account_id || 0))
       .filter((accountId) => Number.isInteger(accountId) && accountId > 0);
   }, [campaignAccounts]);
+  const selectedLifecycleFilters = useMemo(
+    () => normalizeLifecycleFilterList(campaignForm.audience_lifecycle_filters),
+    [campaignForm.audience_lifecycle_filters],
+  );
   const selectedStateDescription =
     CAMPAIGN_STATE_DESCRIPTIONS[campaignForm.estado_campana] ||
     "Selecciona el estado operativo actual de la campana.";
-  const selectedLifecycleDescription = campaignForm.etapa_ciclo_vida
-    ? CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS[campaignForm.etapa_ciclo_vida] ||
-      "Selecciona la etapa objetivo que quieres mover con esta campana."
-    : "Selecciona la etapa objetivo que quieres mover con esta campana.";
-  const selectedAudienceLifecycleDescription = campaignForm.etapa_ciclo_vida
-    ? CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS[campaignForm.etapa_ciclo_vida] ||
-      "Filtra cuentas segun la regla de etapa seleccionada."
-    : "Sin definir muestra todas las cuentas activas y sus contactos activos.";
-  const selectedAudienceLifecycleLabel = campaignForm.etapa_ciclo_vida
-    ? formatCampaignTypeLabel(campaignForm.etapa_ciclo_vida)
+  const selectedLifecycleDescription = selectedLifecycleFilters.length
+    ? `${selectedLifecycleFilters.length} etapas seleccionadas para definir la audiencia objetivo.`
+    : "Selecciona una o varias etapas objetivo que quieres mover con esta campana.";
+  const selectedAudienceLifecycleDescription = selectedLifecycleFilters.length
+    ? selectedLifecycleFilters
+        .map(
+          (stage) =>
+            CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS[stage] ||
+            "Filtra cuentas segun la regla de etapa seleccionada.",
+        )
+        .join(" | ")
+    : "Sin filtros de audiencia no se muestran cuentas ni contactos sugeridos.";
+  const selectedAudienceLifecycleLabel = selectedLifecycleFilters.length
+    ? selectedLifecycleFilters.map((stage) => formatCampaignTypeLabel(stage)).join(", ")
     : "Sin definir";
   const accountTypeOptions = useMemo(() => {
     const catalogTypes = Array.isArray(catalogs?.account_types)
@@ -2363,20 +2389,8 @@ export default function CampaignsPage() {
     return map;
   }, [accounts]);
   const filteredAudienceAccounts = useMemo(() => {
-    if (!campaignForm.etapa_ciclo_vida) {
-      if (suggestedAccounts.length > 0) {
-        return suggestedAccounts;
-      }
-
-      return accounts.map((account) => ({
-        account_id: Number(account.id),
-        account_name: account.name || "",
-        owners_display: account.owners_display || "",
-        total_opportunities: null,
-        open_opportunities: null,
-        won_opportunities: null,
-        contacts: [],
-      }));
+    if (!selectedLifecycleFilters.length) {
+      return [];
     }
 
     // Cuando hay etapa seleccionada, incluir sugeridas + cuentas agregadas manualmente
@@ -2387,7 +2401,7 @@ export default function CampaignsPage() {
     );
 
     // Agregar cuentas manualmente seleccionadas que no fueron sugeridas
-    const manuallyAddedIds = selectedAudienceAccountIds
+    const manuallyAddedIds = manuallyAddedAudienceAccountIds
       .map((id) => Number(id || 0))
       .filter(
         (id) => Number.isInteger(id) && id > 0 && !suggestedAccountIds.has(id),
@@ -2412,10 +2426,10 @@ export default function CampaignsPage() {
 
     return [...suggestedAccounts, ...manuallyAddedAccounts];
   }, [
-    campaignForm.etapa_ciclo_vida,
+    selectedLifecycleFilters,
     accounts,
     suggestedAccounts,
-    selectedAudienceAccountIds,
+    manuallyAddedAudienceAccountIds,
     suggestedContactsByManualAccount,
   ]);
   const filteredAudienceAccountsBySector = useMemo(() => {
@@ -2453,17 +2467,32 @@ export default function CampaignsPage() {
       const accountId = Number(item.account_id || 0);
       const removedContactIds =
         removedAudienceContactsByAccount[accountId] || [];
-      const visibleContacts = Array.isArray(item.contacts)
-        ? item.contacts.filter((contact) => {
-            const contactId = Number(contact?.contact_id || 0);
-            return !removedContactIds.includes(contactId);
-          })
-        : [];
+      const mergedById = new Map();
+
+      (Array.isArray(item.contacts) ? item.contacts : []).forEach((contact) => {
+        const normalized = normalizeAudienceContact(contact);
+        if (!normalized) return;
+        mergedById.set(Number(normalized.contact_id), normalized);
+      });
+
+      (Array.isArray(manuallyAddedContactsByAccount[accountId])
+        ? manuallyAddedContactsByAccount[accountId]
+        : []
+      ).forEach((contact) => {
+        const normalized = normalizeAudienceContact(contact);
+        if (!normalized) return;
+        mergedById.set(Number(normalized.contact_id), normalized);
+      });
+
+      const visibleContacts = Array.from(mergedById.values()).filter(
+        (contact) => !removedContactIds.includes(Number(contact.contact_id || 0)),
+      );
 
       return total + visibleContacts.length;
     }, 0);
   }, [
     filteredAudienceAccountsByClassification,
+    manuallyAddedContactsByAccount,
     removedAudienceContactsByAccount,
   ]);
   const filteredAudienceAccountsById = useMemo(() => {
@@ -2844,6 +2873,13 @@ export default function CampaignsPage() {
               visibleStates,
             ),
             etapa_ciclo_vida: campaignsData[0].etapa_ciclo_vida || "",
+            audience_lifecycle_filters: normalizeLifecycleFilterList(
+              campaignsData[0].audience_lifecycle_filters?.length
+                ? campaignsData[0].audience_lifecycle_filters
+                : campaignsData[0].etapa_ciclo_vida
+                  ? [campaignsData[0].etapa_ciclo_vida]
+                  : [],
+            ),
             starts_at: toDateInputValue(campaignsData[0].starts_at),
             ends_at: toDateInputValue(campaignsData[0].ends_at),
           });
@@ -2943,17 +2979,10 @@ export default function CampaignsPage() {
   ]);
 
   useEffect(() => {
-    setSelectedAudienceAccountIds(
-      filteredAudienceAccountsByClassification
-        .map((item) => Number(item.account_id || 0))
-        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
-    );
-  }, [selectedSectorFilters, selectedAccountTypeFilters]);
-
-  useEffect(() => {
     setRemovedAudienceContactsByAccount({});
     setManuallyAddedContactsByAccount({});
-  }, [campaignForm.etapa_ciclo_vida]);
+    setAudienceOwnerFilter("");
+  }, [campaignForm.audience_lifecycle_filters]);
 
   useEffect(() => {
     if (isAddAccountsModalOpen) return;
@@ -3028,24 +3057,93 @@ export default function CampaignsPage() {
     let mounted = true;
 
     async function loadSuggestedAccountsByLifecycle() {
-      const lifecycleStage = String(campaignForm.etapa_ciclo_vida || "").trim();
+      const lifecycleStages = normalizeLifecycleFilterList(
+        campaignForm.audience_lifecycle_filters,
+      );
+
+      if (!lifecycleStages.length) {
+        if (mounted) {
+          setSuggestedAccounts([]);
+          setSuggestedAccountsRuleSummary("");
+          setSuggestedAccountsError("");
+          setIsLoadingSuggestedAccounts(false);
+        }
+        return;
+      }
+
       setIsLoadingSuggestedAccounts(true);
       setSuggestedAccountsError("");
 
       try {
-        const requestConfig = lifecycleStage
-          ? { params: { etapa_ciclo_vida: lifecycleStage } }
-          : undefined;
-        const { data } = await api.get(
-          "/api/campaigns/accounts/suggestions",
-          requestConfig,
+        const responses = await Promise.all(
+          lifecycleStages.map((stage) =>
+            api.get("/api/campaigns/accounts/suggestions", {
+              params: { etapa_ciclo_vida: stage },
+            }),
+          ),
         );
 
         if (!mounted) return;
 
-        const items = Array.isArray(data?.items) ? data.items : [];
-        setSuggestedAccounts(items);
-        setSuggestedAccountsRuleSummary(String(data?.ruleSummary || ""));
+        const mergedByAccountId = new Map();
+        const ruleSummaries = [];
+
+        responses.forEach((response) => {
+          const data = response?.data || {};
+          const items = Array.isArray(data?.items) ? data.items : [];
+          const summary = String(data?.ruleSummary || "").trim();
+          if (summary) {
+            ruleSummaries.push(summary);
+          }
+
+          items.forEach((item) => {
+            const accountId = Number(item?.account_id || 0);
+            if (!Number.isInteger(accountId) || accountId <= 0) {
+              return;
+            }
+
+            const existing = mergedByAccountId.get(accountId);
+            const incomingContacts = Array.isArray(item?.contacts)
+              ? item.contacts
+              : [];
+
+            if (!existing) {
+              const contactMap = new Map();
+              incomingContacts.forEach((contact) => {
+                const contactId = Number(contact?.contact_id || 0);
+                if (!Number.isInteger(contactId) || contactId <= 0) return;
+                contactMap.set(contactId, contact);
+              });
+
+              mergedByAccountId.set(accountId, {
+                ...item,
+                contacts: Array.from(contactMap.values()),
+                _contactMap: contactMap,
+              });
+              return;
+            }
+
+            incomingContacts.forEach((contact) => {
+              const contactId = Number(contact?.contact_id || 0);
+              if (!Number.isInteger(contactId) || contactId <= 0) return;
+              existing._contactMap.set(contactId, contact);
+            });
+
+            existing.contacts = Array.from(existing._contactMap.values());
+          });
+        });
+
+        const mergedItems = Array.from(mergedByAccountId.values()).map(
+          (item) => {
+            const { _contactMap, ...rest } = item;
+            return rest;
+          },
+        );
+
+        setSuggestedAccounts(mergedItems);
+        setSuggestedAccountsRuleSummary(
+          Array.from(new Set(ruleSummaries)).join(" | "),
+        );
       } catch (requestError) {
         if (!mounted) return;
         setSuggestedAccounts([]);
@@ -3068,10 +3166,14 @@ export default function CampaignsPage() {
     return () => {
       mounted = false;
     };
-  }, [campaignForm.etapa_ciclo_vida]);
+  }, [campaignForm.audience_lifecycle_filters]);
 
   useEffect(() => {
-    if (!campaignForm.etapa_ciclo_vida) {
+    const lifecycleStages = normalizeLifecycleFilterList(
+      campaignForm.audience_lifecycle_filters,
+    );
+
+    if (!lifecycleStages.length) {
       setSuggestedContactsByManualAccount({});
       return;
     }
@@ -3101,23 +3203,34 @@ export default function CampaignsPage() {
 
       try {
         const accountIdsParam = manuallyAddedIds.join(",");
-        const { data } = await api.get(
-          "/api/campaigns/accounts/suggested-contacts",
-          {
-            params: {
-              etapa_ciclo_vida: campaignForm.etapa_ciclo_vida,
-              account_ids: accountIdsParam,
-            },
-          },
+        const responses = await Promise.all(
+          lifecycleStages.map((stage) =>
+            api.get("/api/campaigns/accounts/suggested-contacts", {
+              params: {
+                etapa_ciclo_vida: stage,
+                account_ids: accountIdsParam,
+              },
+            }),
+          ),
         );
 
         if (!mounted) return;
 
         const contactsMap = {};
         manuallyAddedIds.forEach((accountId) => {
-          contactsMap[accountId] = Array.isArray(data[accountId])
-            ? data[accountId]
-            : [];
+          const mergedContacts = new Map();
+          responses.forEach((response) => {
+            const data = response?.data || {};
+            const contacts = Array.isArray(data[accountId])
+              ? data[accountId]
+              : [];
+            contacts.forEach((contact) => {
+              const contactId = Number(contact?.contact_id || 0);
+              if (!Number.isInteger(contactId) || contactId <= 0) return;
+              mergedContacts.set(contactId, contact);
+            });
+          });
+          contactsMap[accountId] = Array.from(mergedContacts.values());
         });
 
         if (mounted) {
@@ -3140,7 +3253,7 @@ export default function CampaignsPage() {
       mounted = false;
     };
   }, [
-    campaignForm.etapa_ciclo_vida,
+    campaignForm.audience_lifecycle_filters,
     selectedAudienceAccountIds,
     suggestedAccounts,
   ]);
@@ -3175,6 +3288,7 @@ export default function CampaignsPage() {
 
     setSelectedCampaignId(null);
     setPreferSavedAudienceSelection(true);
+    setManuallyAddedAudienceAccountIds([]);
     setCampaignForm({
       ...EMPTY_FORM,
       tipo_campana: catalogs?.tipo_campana?.[0] || EMPTY_FORM.tipo_campana,
@@ -3184,6 +3298,7 @@ export default function CampaignsPage() {
         EMPTY_FORM.estado_campana,
         visibleCampaignStates,
       ),
+      audience_lifecycle_filters: [],
     });
     setSelectedAccountTypeFilters(
       defaultAccountTypeFilters.length
@@ -3204,6 +3319,7 @@ export default function CampaignsPage() {
 
   function selectCampaign(campaign) {
     setPreferSavedAudienceSelection(true);
+    setManuallyAddedAudienceAccountIds([]);
     setSelectedCampaignId(campaign.id);
     setCampaignForm({
       name: campaign.name || "",
@@ -3215,6 +3331,13 @@ export default function CampaignsPage() {
         visibleCampaignStates,
       ),
       etapa_ciclo_vida: campaign.etapa_ciclo_vida || "",
+      audience_lifecycle_filters: normalizeLifecycleFilterList(
+        campaign.audience_lifecycle_filters?.length
+          ? campaign.audience_lifecycle_filters
+          : campaign.etapa_ciclo_vida
+            ? [campaign.etapa_ciclo_vida]
+            : [],
+      ),
       starts_at: toDateInputValue(campaign.starts_at),
       ends_at: toDateInputValue(campaign.ends_at),
     });
@@ -3416,10 +3539,16 @@ export default function CampaignsPage() {
     }
   }
 
-  function handleLifecycleStageChange(nextValue) {
-    const nextStage = String(nextValue || "").trim();
-    const currentStage = String(campaignForm.etapa_ciclo_vida || "").trim();
-    if (nextStage === currentStage) return;
+  function handleLifecycleStageChange(nextValues) {
+    const nextFilters = normalizeLifecycleFilterList(nextValues);
+    const currentFilters = normalizeLifecycleFilterList(
+      campaignForm.audience_lifecycle_filters,
+    );
+    const unchanged =
+      nextFilters.length === currentFilters.length &&
+      nextFilters.every((value, index) => value === currentFilters[index]);
+
+    if (unchanged) return;
 
     const hasSavedAudience =
       preferSavedAudienceSelection && savedCampaignAccountIds.length > 0;
@@ -3445,7 +3574,8 @@ export default function CampaignsPage() {
 
     setCampaignForm((previous) => ({
       ...previous,
-      etapa_ciclo_vida: nextStage,
+      audience_lifecycle_filters: nextFilters,
+      etapa_ciclo_vida: nextFilters[0] || "",
     }));
   }
 
@@ -3499,6 +3629,13 @@ export default function CampaignsPage() {
           visibleCampaignStates,
         ),
         etapa_ciclo_vida: savedCampaign.etapa_ciclo_vida || "",
+        audience_lifecycle_filters: normalizeLifecycleFilterList(
+          savedCampaign.audience_lifecycle_filters?.length
+            ? savedCampaign.audience_lifecycle_filters
+            : savedCampaign.etapa_ciclo_vida
+              ? [savedCampaign.etapa_ciclo_vida]
+              : [],
+        ),
         starts_at: toDateInputValue(savedCampaign.starts_at),
         ends_at: toDateInputValue(savedCampaign.ends_at),
       });
@@ -3552,7 +3689,8 @@ export default function CampaignsPage() {
 
       const payload = normalizeCampaignAccountForm(
         accountForm,
-        campaignForm.etapa_ciclo_vida,
+        normalizeLifecycleFilterList(campaignForm.audience_lifecycle_filters)[0] ||
+          campaignForm.etapa_ciclo_vida,
       );
 
       await api.put(`/api/campaigns/${selectedCampaignId}/accounts`, {
@@ -3862,25 +4000,47 @@ export default function CampaignsPage() {
                       {selectedStateDescription}
                     </small>
                   </label>
-                  <label>
-                    Audiencia
-                    <select
-                      value={campaignForm.etapa_ciclo_vida}
-                      onChange={(event) =>
-                        handleLifecycleStageChange(event.target.value)
-                      }
-                    >
-                      <option value="">Sin definir</option>
-                      {(catalogs?.etapa_ciclo_vida || []).map((value) => (
-                        <option key={value} value={value}>
-                          {`${formatCampaignTypeLabel(value)} - ${CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS[value] || "Sin descripcion"}`}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="campaigns-grid-wide campaigns-subsection-block">
+                    <div className="campaigns-subsection-title">Audiencia</div>
+                    <div className="campaigns-sector-filter campaigns-lifecycle-filter">
+                      {(catalogs?.etapa_ciclo_vida || []).map((value) => {
+                        const isSelected = selectedLifecycleFilters.includes(value);
+                        return (
+                          <label
+                            key={value}
+                            className={`campaigns-sector-filter-item campaigns-lifecycle-filter-item ${
+                              isSelected ? "is-selected" : ""
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {
+                                const nextValues = isSelected
+                                  ? selectedLifecycleFilters.filter(
+                                      (current) => current !== value,
+                                    )
+                                  : [...selectedLifecycleFilters, value];
+                                handleLifecycleStageChange(nextValues);
+                              }}
+                            />
+                            <span className="campaigns-lifecycle-filter-text">
+                              <span className="campaigns-lifecycle-filter-title">
+                                {formatCampaignTypeLabel(value)}
+                              </span>
+                              <span className="campaigns-lifecycle-filter-description">
+                                {CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS[value] ||
+                                  "Sin descripcion"}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
                     <small className="campaigns-field-help">
                       {selectedLifecycleDescription}
                     </small>
-                  </label>
+                  </div>
                   <div className="campaigns-grid-wide campaigns-subsection-block">
                     <div className="campaigns-subsection-title">
                       Filtro por tipo de cuenta
@@ -4137,7 +4297,7 @@ export default function CampaignsPage() {
                     </div>
                   </div>
 
-                  {campaignForm.etapa_ciclo_vida &&
+                  {selectedLifecycleFilters.length > 0 &&
                   suggestedAccountsRuleSummary ? (
                     <p className="campaigns-field-help campaigns-audience-rule">
                       {suggestedAccountsRuleSummary}
@@ -4525,7 +4685,16 @@ export default function CampaignsPage() {
                 type="button"
                 className="btn-primary"
                 disabled={pendingAddAccountIds.length === 0}
-                onClick={() => {
+                onClick={async () => {
+                  setPreferSavedAudienceSelection(false);
+
+                  const normalizedPendingIds = pendingAddAccountIds
+                    .map((accountId) => Number(accountId || 0))
+                    .filter(
+                      (accountId) =>
+                        Number.isInteger(accountId) && accountId > 0,
+                    );
+
                   setSelectedAudienceAccountIds((previous) => {
                     const merged = new Set(
                       previous
@@ -4535,11 +4704,96 @@ export default function CampaignsPage() {
                             Number.isInteger(accountId) && accountId > 0,
                         ),
                     );
-                    pendingAddAccountIds.forEach((accountId) => {
-                      merged.add(Number(accountId));
+                    normalizedPendingIds.forEach((accountId) => {
+                      merged.add(accountId);
                     });
                     return Array.from(merged.values());
                   });
+                  setManuallyAddedAudienceAccountIds((previous) => {
+                    const merged = new Set(
+                      previous
+                        .map((accountId) => Number(accountId || 0))
+                        .filter(
+                          (accountId) =>
+                            Number.isInteger(accountId) && accountId > 0,
+                        ),
+                    );
+                    normalizedPendingIds.forEach((accountId) => {
+                      merged.add(accountId);
+                    });
+                    return Array.from(merged.values());
+                  });
+
+                  if (normalizedPendingIds.length) {
+                    try {
+                      const responses = await Promise.all(
+                        normalizedPendingIds.map((accountId) =>
+                          api.get("/api/contacts", {
+                            params: { accountId, activeOnly: true },
+                          }),
+                        ),
+                      );
+
+                      setAccountContactsByAccountId((previous) => {
+                        const next = { ...previous };
+                        normalizedPendingIds.forEach((accountId, index) => {
+                          const contacts = Array.isArray(
+                            responses[index]?.data,
+                          )
+                            ? responses[index].data
+                                .map((contact) =>
+                                  normalizeAudienceContact(contact),
+                                )
+                                .filter(Boolean)
+                            : [];
+                          next[accountId] = contacts;
+                        });
+                        return next;
+                      });
+
+                      setManuallyAddedContactsByAccount((previous) => {
+                        const next = { ...previous };
+                        normalizedPendingIds.forEach((accountId, index) => {
+                          const contacts = Array.isArray(
+                            responses[index]?.data,
+                          )
+                            ? responses[index].data
+                                .map((contact) =>
+                                  normalizeAudienceContact(contact),
+                                )
+                                .filter(Boolean)
+                            : [];
+                          next[accountId] = contacts;
+                        });
+                        return next;
+                      });
+
+                      setSuggestedContactsByManualAccount((previous) => {
+                        const next = { ...previous };
+                        normalizedPendingIds.forEach((accountId, index) => {
+                          const contacts = Array.isArray(
+                            responses[index]?.data,
+                          )
+                            ? responses[index].data
+                                .map((contact) =>
+                                  normalizeAudienceContact(contact),
+                                )
+                                .filter(Boolean)
+                            : [];
+                          next[accountId] = contacts;
+                        });
+                        return next;
+                      });
+                    } catch (requestError) {
+                      setError(
+                        getApiErrorMessage(
+                          requestError,
+                          "Se añadieron las cuentas, pero no fue posible cargar sus contactos activos.",
+                        ),
+                      );
+                    }
+                  }
+
                   setIsAddAccountsModalOpen(false);
                 }}
               >
@@ -4866,6 +5120,12 @@ export default function CampaignsPage() {
                     previous.filter(
                       (existingId) =>
                         Number(existingId) !== pendingRemoveAccountId,
+                    ),
+                  );
+                  setManuallyAddedAudienceAccountIds((previous) =>
+                    previous.filter(
+                      (existingId) =>
+                        Number(existingId) !== Number(pendingRemoveAccountId),
                     ),
                   );
                   setIsConfirmRemoveAccountModalOpen(false);

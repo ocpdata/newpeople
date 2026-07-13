@@ -23,6 +23,7 @@ const CAMPAIGNS_SCHEMA_STATEMENTS = [
     campaign_goal_text TEXT NULL,
     classification_guide_context TEXT NULL,
     classification_guide_examples_json JSON NULL,
+    audience_lifecycle_filters_json JSON NULL,
     audience_account_type_filters_json JSON NULL,
     audience_sector_filters_json JSON NULL,
     campaign_email_guide_json JSON NULL,
@@ -120,11 +121,19 @@ export async function ensureCampaignsSchema() {
         );
       }
 
+      if (!(await hasColumn("campaigns", "audience_lifecycle_filters_json"))) {
+        await query(
+          `ALTER TABLE campaigns
+           ADD COLUMN audience_lifecycle_filters_json JSON NULL
+           AFTER classification_guide_examples_json`,
+        );
+      }
+
       if (!(await hasColumn("campaigns", "audience_account_type_filters_json"))) {
         await query(
           `ALTER TABLE campaigns
            ADD COLUMN audience_account_type_filters_json JSON NULL
-           AFTER classification_guide_examples_json`,
+           AFTER audience_lifecycle_filters_json`,
         );
       }
 

@@ -333,6 +333,42 @@
   white-space: nowrap;
 }
 
+.campaigns-lifecycle-filter {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.45rem;
+}
+
+.campaigns-lifecycle-filter-item {
+  align-items: flex-start;
+  border-radius: 0.75rem;
+  padding: 0.45rem 0.6rem;
+}
+
+.campaigns-lifecycle-filter-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  white-space: normal;
+}
+
+.campaigns-lifecycle-filter-title {
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.campaigns-lifecycle-filter-description {
+  font-size: 0.69rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #475569;
+}
+
+.campaigns-lifecycle-filter-item.is-selected .campaigns-lifecycle-filter-description {
+  color: #1e3a8a;
+}
+
 .campaigns-execution-tabs {
   display: inline-flex;
   align-items: center;

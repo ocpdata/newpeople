@@ -1,0 +1,3 @@
+Nombre de la oportunidad: Oportunidad async api_test_1783962907886_z9mtof
+Monto: 88000
+Cuenta: Cuenta fixture api_test_1783962907886_z9mtof_opportunity_documents_async

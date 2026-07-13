@@ -20,6 +20,64 @@ const usdCurrencyFormatter = new Intl.NumberFormat("es-MX", {
   maximumFractionDigits: 0,
 });
 
+const SELLER_LEAGUE_STAGE_ORDER = {
+  contacto_inicial: 1,
+  identificacion_oportunidad: 2,
+  desarrollo: 3,
+  cotizacion: 4,
+  demostracion: 5,
+  negociacion: 6,
+  waiting: 7,
+};
+
+const SELLER_LEAGUE_STAGE_PALETTES = {
+  contacto_inicial: {
+    solid: "#0b6bcb",
+    soft: "rgba(11, 107, 203, 0.16)",
+    border: "rgba(11, 107, 203, 0.32)",
+  },
+  identificacion_oportunidad: {
+    solid: "#2f9e44",
+    soft: "rgba(47, 158, 68, 0.16)",
+    border: "rgba(47, 158, 68, 0.32)",
+  },
+  desarrollo: {
+    solid: "#f08c00",
+    soft: "rgba(240, 140, 0, 0.16)",
+    border: "rgba(240, 140, 0, 0.32)",
+  },
+  cotizacion: {
+    solid: "#a61e4d",
+    soft: "rgba(166, 30, 77, 0.16)",
+    border: "rgba(166, 30, 77, 0.32)",
+  },
+  demostracion: {
+    solid: "#5f3dc4",
+    soft: "rgba(95, 61, 196, 0.16)",
+    border: "rgba(95, 61, 196, 0.32)",
+  },
+  negociacion: {
+    solid: "#0f766e",
+    soft: "rgba(15, 118, 110, 0.16)",
+    border: "rgba(15, 118, 110, 0.32)",
+  },
+  waiting: {
+    solid: "#475569",
+    soft: "rgba(71, 85, 105, 0.16)",
+    border: "rgba(71, 85, 105, 0.32)",
+  },
+};
+
+function getSellerLeagueStagePalette(stageCode) {
+  return (
+    SELLER_LEAGUE_STAGE_PALETTES[String(stageCode || "").trim()] || {
+      solid: "#64748b",
+      soft: "rgba(100, 116, 139, 0.16)",
+      border: "rgba(100, 116, 139, 0.32)",
+    }
+  );
+}
+
 function formatLeadCount(value) {
   const numericValue = Math.round(Number(value || 0));
   return leadCountFormatter.format(numericValue);
@@ -187,7 +245,14 @@ function SellerStageFunnel({
   const normalizedStages = Array.isArray(stages)
     ? [...stages].sort(
         (left, right) =>
-          Number(left.stageOrder ?? 9999) - Number(right.stageOrder ?? 9999),
+          Number(
+            SELLER_LEAGUE_STAGE_ORDER[left.stageCode] ?? left.stageOrder ?? 9999,
+          ) -
+          Number(
+            SELLER_LEAGUE_STAGE_ORDER[right.stageCode] ??
+              right.stageOrder ??
+              9999,
+          ),
       )
     : [];
   const numericRequiredAmountUsd = Number(requiredAmountUsd || 0);
@@ -233,16 +298,20 @@ function SellerStageFunnel({
           className="seller-league-funnel-track"
           style={{ width: `${actualWidthPct}%` }}
         >
-          {normalizedStages.map((stage) => (
-            <div
-              key={stage.stageCode}
-              className="seller-league-funnel-segment"
-              style={{
-                width: `${Math.max(Number(stage.stageSharePct || 0), 1)}%`,
-              }}
-              title={`${stage.stageName}: ${formatCurrencyUsd(stage.openAmountUsd)} (${formatLeadCount(stage.opportunityCount)} opps)`}
-            />
-          ))}
+          {normalizedStages.map((stage) => {
+            const palette = getSellerLeagueStagePalette(stage.stageCode);
+            return (
+              <div
+                key={stage.stageCode}
+                className="seller-league-funnel-segment"
+                style={{
+                  width: `${Math.max(Number(stage.stageSharePct || 0), 1)}%`,
+                  backgroundColor: palette.solid,
+                }}
+                title={`${stage.stageName}: ${formatCurrencyUsd(stage.openAmountUsd)} (${formatLeadCount(stage.opportunityCount)} opps)`}
+              />
+            );
+          })}
         </div>
       </div>
       <div className="seller-league-funnel-meta">
@@ -290,12 +359,9 @@ function LeadsAssignedWeeklyChart({
 
   const points = normalizedSeries.map((value, index) => {
     const x =
-      padding.left +
-      (innerWidth * index) / Math.max(normalizedSeries.length - 1, 1);
+      padding.left + (innerWidth * index) / Math.max(normalizedSeries.length - 1, 1);
     const y =
-      value === null
-        ? null
-        : padding.top + innerHeight - (value / yMax) * innerHeight;
+      value === null ? null : padding.top + innerHeight - (value / yMax) * innerHeight;
     return { x, y, value };
   });
 

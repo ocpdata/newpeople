@@ -101,6 +101,11 @@ const campaignUpsertSchema = z.object({
     .max(10)
     .optional()
     .nullable(),
+  audience_lifecycle_filters: z
+    .array(z.enum(ETAPA_CICLO_VIDA_VALUES))
+    .max(ETAPA_CICLO_VIDA_VALUES.length)
+    .optional()
+    .nullable(),
   audience_account_type_filters: z
     .array(z.string().trim().max(120))
     .max(200)
@@ -190,6 +195,20 @@ function mapCampaignRow(row) {
     row.audience_sector_filters_json,
     200,
   );
+  const audienceLifecycleFilters = Array.from(
+    new Set(
+      parseJsonStringArray(
+        row.audience_lifecycle_filters_json,
+        ETAPA_CICLO_VIDA_VALUES.length,
+      )
+        .filter((item) => ETAPA_CICLO_VIDA_VALUES.includes(item))
+        .concat(
+          row.etapa_ciclo_vida && ETAPA_CICLO_VIDA_VALUES.includes(row.etapa_ciclo_vida)
+            ? [row.etapa_ciclo_vida]
+            : [],
+        ),
+    ),
+  );
 
   let campaignEmailGuide = null;
   try {
@@ -230,6 +249,7 @@ function mapCampaignRow(row) {
     campaign_goal_text: row.campaign_goal_text || "",
     classification_guide_context: row.classification_guide_context || "",
     classification_guide_examples: classificationGuideExamples,
+    audience_lifecycle_filters: audienceLifecycleFilters,
     audience_account_type_filters: audienceAccountTypeFilters,
     audience_sector_filters: audienceSectorFilters,
     campaign_email_guide: campaignEmailGuide,
@@ -997,6 +1017,17 @@ router.post(
     }
 
     const payload = parsed.data;
+    const normalizedAudienceLifecycleFilters = Array.from(
+      new Set(
+        (Array.isArray(payload.audience_lifecycle_filters)
+          ? payload.audience_lifecycle_filters
+          : payload.etapa_ciclo_vida
+            ? [payload.etapa_ciclo_vida]
+            : []
+        ).filter((item) => ETAPA_CICLO_VIDA_VALUES.includes(item)),
+      ),
+    );
+    const primaryLifecycleStage = normalizedAudienceLifecycleFilters[0] || null;
     const resolvedPolicy = await getResolvedCampaignSubtypePolicy();
     const compatibilidad = evaluateCampaignSubtypeCompatibility(
       payload.tipo_campana,
@@ -1018,7 +1049,7 @@ router.post(
     const result = await query(
       `INSERT INTO campaigns
        (name, description, campaign_goal_text, classification_guide_context, classification_guide_examples_json,
-        audience_account_type_filters_json, audience_sector_filters_json,
+        audience_lifecycle_filters_json, audience_account_type_filters_json, audience_sector_filters_json,
         tipo_campana, subtipo_campana,
         compatibilidad_nivel, compatibilidad_aprobada, compatibilidad_justificacion, compatibilidad_evaluada_at,
         estado_campana, etapa_ciclo_vida,
@@ -1030,6 +1061,7 @@ router.post(
         payload.campaign_goal_text || null,
         payload.classification_guide_context || null,
         JSON.stringify(payload.classification_guide_examples || []),
+        JSON.stringify(normalizedAudienceLifecycleFilters),
         JSON.stringify(payload.audience_account_type_filters || []),
         JSON.stringify(payload.audience_sector_filters || []),
         payload.tipo_campana,
@@ -1039,7 +1071,7 @@ router.post(
         approvalDecision.justificacion,
         now,
         payload.estado_campana,
-        payload.etapa_ciclo_vida || null,
+        primaryLifecycleStage,
         toDateOrNull(payload.starts_at),
         toDateOrNull(payload.ends_at),
         Number(req.user.id),
@@ -1215,6 +1247,17 @@ router.patch(
     }
 
     const payload = parsed.data;
+    const normalizedAudienceLifecycleFilters = Array.from(
+      new Set(
+        (Array.isArray(payload.audience_lifecycle_filters)
+          ? payload.audience_lifecycle_filters
+          : payload.etapa_ciclo_vida
+            ? [payload.etapa_ciclo_vida]
+            : []
+        ).filter((item) => ETAPA_CICLO_VIDA_VALUES.includes(item)),
+      ),
+    );
+    const primaryLifecycleStage = normalizedAudienceLifecycleFilters[0] || null;
     const resolvedPolicy = await getResolvedCampaignSubtypePolicy();
     const compatibilidad = evaluateCampaignSubtypeCompatibility(
       payload.tipo_campana,
@@ -1240,6 +1283,7 @@ router.patch(
          campaign_goal_text = ?,
          classification_guide_context = ?,
          classification_guide_examples_json = ?,
+         audience_lifecycle_filters_json = ?,
          audience_account_type_filters_json = ?,
          audience_sector_filters_json = ?,
          tipo_campana = ?,
@@ -1261,6 +1305,7 @@ router.patch(
         payload.campaign_goal_text || null,
         payload.classification_guide_context || null,
         JSON.stringify(payload.classification_guide_examples || []),
+        JSON.stringify(normalizedAudienceLifecycleFilters),
         JSON.stringify(payload.audience_account_type_filters || []),
         JSON.stringify(payload.audience_sector_filters || []),
         payload.tipo_campana,
@@ -1270,7 +1315,7 @@ router.patch(
         approvalDecision.justificacion,
         now,
         payload.estado_campana,
-        payload.etapa_ciclo_vida || null,
+        primaryLifecycleStage,
         toDateOrNull(payload.starts_at),
         toDateOrNull(payload.ends_at),
         Number(req.user.id),
