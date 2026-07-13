@@ -618,6 +618,18 @@ async function listScopedOpportunities(user, filters = {}) {
   );
 }
 
+async function listEligibleSellers() {
+  const rows = await query(
+    `SELECT DISTINCT u.id, u.full_name
+     FROM users u
+     INNER JOIN user_roles ur ON ur.user_id = u.id
+     INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
+     INNER JOIN permissions p ON p.id = rp.permission_id
+     WHERE u.status = 'active'ive' AND p.code = 'seller_eligible'`,
+  );
+  return new Set(rows.map((row) => Number(row.id || 0)));
+}
+
 async function listOpportunityLeadOrigins(opportunityIds) {
   if (!opportunityIds.length) {
     return new Map();
@@ -2295,6 +2307,8 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
     closeDateTo: formatIsoDate(yearEnd),
   });
 
+  const eligibleSellerIds = await listEligibleSellers();
+
   const stageNameByCode = new Map();
   scopedOpportunities.forEach((item) => {
     const code = String(item.sales_stage_code || "").trim();
@@ -2407,6 +2421,7 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
     }, new Map());
 
     const funnelBySeller = Array.from(sellerFunnelMap.values())
+      .filter((seller) => !seller.sellerUserId || eligibleSellerIds.has(seller.sellerUserId))
       .map((seller) => {
         const sellerOpenAmountUsd = toAmount(seller.openAmountUsd || 0);
         return {
