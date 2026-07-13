@@ -1,6 +1,7 @@
 import express from "express";
 import { requireAnyPermission } from "./auth.js";
 import { query } from "./db.js";
+import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import {
   getCommercialSettings,
   STAGE_SLA_DEFAULTS,
@@ -12,6 +13,28 @@ const router = express.Router();
 let _stageSlaCache = null;
 let _stageSlaExpiry = 0;
 let _forecastStageWeightCache = { ...STAGE_WEIGHT_DEFAULTS };
+let _commercialPlanningSchemaReady = false;
+
+async function ensureSellerParameterSchemaReady() {
+  if (_commercialPlanningSchemaReady) {
+    return;
+  }
+  await ensureCommercialPlanningSchema();
+  _commercialPlanningSchemaReady = true;
+}
+
+function toOptionalNonNegativeDayValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+
+  return Math.max(0, Math.round(numericValue));
+}
 
 async function loadStageSlaMap() {
   if (_stageSlaCache && Date.now() < _stageSlaExpiry) {
@@ -2647,11 +2670,18 @@ async function loadQuarterQualifiedLeadCountsBySeller({
 }
 
 async function loadSellerParametersBySeller() {
+  await ensureSellerParameterSchemaReady().catch(() => null);
   const rows = await query(
     `SELECT seller_user_id,
             average_sale_ticket_amount,
             leads_to_opportunities_ratio,
-            opportunities_to_wins_ratio
+          opportunities_to_wins_ratio,
+          average_opportunity_to_win_days,
+          use_hist_avg_ticket_quota_prob,
+          use_hist_l2o_quota_prob,
+          use_hist_o2w_quota_prob,
+          use_hist_avg_o2w_days_quota_prob,
+          use_historical_values_for_quota_probability
      FROM commercial_planning_seller_parameters`,
   ).catch(() => []);
 
@@ -2672,6 +2702,19 @@ async function loadSellerParametersBySeller() {
             opportunitiesToWinsRatio: Number(
               row.opportunities_to_wins_ratio || 0,
             ),
+            averageOpportunityToWinDays: Number(
+              row.average_opportunity_to_win_days || 0,
+            ),
+            useHistoricalAverageSaleTicketForQuotaProbability:
+              Number(row.use_hist_avg_ticket_quota_prob || 0) > 0,
+            useHistoricalLeadsToOpportunitiesForQuotaProbability:
+              Number(row.use_hist_l2o_quota_prob || 0) > 0,
+            useHistoricalOpportunitiesToWinsForQuotaProbability:
+              Number(row.use_hist_o2w_quota_prob || 0) > 0,
+            useHistoricalAverageOpportunityToWinDaysForQuotaProbability:
+              Number(row.use_hist_avg_o2w_days_quota_prob || 0) > 0,
+            useHistoricalValuesForQuotaProbability:
+              Number(row.use_historical_values_for_quota_probability || 0) > 0,
           },
         ];
       })
@@ -3235,6 +3278,8 @@ function buildSellerLeagueRow({
   sellerUserName,
   quarterWonItems,
   quarterOpenItems,
+  nextQuarterQuotaAmountUsd,
+  nextQuarterOpenPipelineUsd,
   advancedOpportunityIds14d,
   quotaAmountUsd,
   leadActualCount,
@@ -3344,9 +3389,16 @@ function buildSellerLeagueRow({
   const configuredAverageSaleTicketAmount = Number(
     sellerParameters?.averageSaleTicketAmount || 0,
   );
+  const useHistoricalAverageSaleTicketForQuotaProbability =
+    sellerParameters?.useHistoricalAverageSaleTicketForQuotaProbability ===
+    true;
   const averageSaleTicketAmount =
-    calculatedAverageSaleTicketAmount > 0
-      ? calculatedAverageSaleTicketAmount
+    useHistoricalAverageSaleTicketForQuotaProbability
+      ? calculatedAverageSaleTicketAmount > 0
+        ? calculatedAverageSaleTicketAmount
+        : configuredAverageSaleTicketAmount > 0
+          ? configuredAverageSaleTicketAmount
+          : 0
       : configuredAverageSaleTicketAmount > 0
         ? configuredAverageSaleTicketAmount
         : 0;
@@ -3362,6 +3414,20 @@ function buildSellerLeagueRow({
   const opportunitiesToWinsRatio = Number(
     sellerParameters?.opportunitiesToWinsRatio || 0,
   );
+  const configuredOpportunityToWinDays = Number(
+    sellerParameters?.averageOpportunityToWinDays || 0,
+  );
+  const useHistoricalLeadsToOpportunitiesForQuotaProbability =
+    sellerParameters?.useHistoricalLeadsToOpportunitiesForQuotaProbability ===
+    true;
+  const useHistoricalOpportunitiesToWinsForQuotaProbability =
+    sellerParameters?.useHistoricalOpportunitiesToWinsForQuotaProbability ===
+    true;
+  const useHistoricalAverageOpportunityToWinDaysForQuotaProbability =
+    sellerParameters?.useHistoricalAverageOpportunityToWinDaysForQuotaProbability ===
+    true;
+  const useHistoricalValuesForQuotaProbability =
+    sellerParameters?.useHistoricalValuesForQuotaProbability === true;
   const opportunityToWinCurrentRatio =
     conversionOpportunityTotalCount > 0
       ? Math.max(
@@ -3370,10 +3436,17 @@ function buildSellerLeagueRow({
             Number(conversionOpportunityTotalCount || 0),
         )
       : null;
-  const opportunityToWinEffectiveRatio =
+  const opportunityToWinHistoricalRatio =
     opportunityToWinCurrentRatio !== null && opportunityToWinCurrentRatio > 0
       ? opportunityToWinCurrentRatio
-      : opportunitiesToWinsRatio;
+      : 0;
+  const opportunityToWinConfiguredRatio = opportunitiesToWinsRatio;
+  const opportunityToWinEffectiveRatio =
+    useHistoricalOpportunitiesToWinsForQuotaProbability
+      ? opportunityToWinHistoricalRatio > 0
+        ? opportunityToWinHistoricalRatio
+        : opportunityToWinConfiguredRatio
+      : opportunityToWinConfiguredRatio;
   const configuredLeadToOpportunityRatio =
     leadsToOpportunitiesRatio > 0 ? leadsToOpportunitiesRatio : 0;
   const leadToOpportunityCurrentPct = toAmount(
@@ -3389,6 +3462,14 @@ function buildSellerLeagueRow({
   const leadToOpportunityTargetPct = toAmount(
     leadToOpportunityTargetRatio * 100,
   );
+  const historicalOpportunityToWinDays = Number(opportunityToWinDays || 0);
+  const opportunityToWinEffectiveDays =
+    useHistoricalAverageOpportunityToWinDaysForQuotaProbability
+      ? historicalOpportunityToWinDays > 0
+        ? historicalOpportunityToWinDays
+        : configuredOpportunityToWinDays
+      : configuredOpportunityToWinDays;
+
   const opportunityCreatedTargetCount =
     quotaAmountUsd &&
     Number(quotaAmountUsd || 0) > 0 &&
@@ -3418,8 +3499,11 @@ function buildSellerLeagueRow({
         )
       : null;
   const leadToOpportunityEffectiveRatio =
-    leadToOpportunityCurrentRatio !== null && leadToOpportunityCurrentRatio > 0
-      ? leadToOpportunityCurrentRatio
+    useHistoricalLeadsToOpportunitiesForQuotaProbability
+      ? leadToOpportunityCurrentRatio !== null &&
+        leadToOpportunityCurrentRatio > 0
+        ? leadToOpportunityCurrentRatio
+        : configuredLeadToOpportunityRatio
       : configuredLeadToOpportunityRatio;
   const leadTargetRaw =
     Number(opportunityCreatedTargetCount || 0) > 0 &&
@@ -3488,6 +3572,10 @@ function buildSellerLeagueRow({
     sellerUserId,
     sellerUserName,
     quotaAmountUsd: quotaAmountUsd ? toAmount(quotaAmountUsd) : null,
+    nextQuarterQuotaAmountUsd:
+      nextQuarterQuotaAmountUsd && Number(nextQuarterQuotaAmountUsd) > 0
+        ? toAmount(nextQuarterQuotaAmountUsd)
+        : null,
     leadTargetCount,
     leadActualCount: Number(leadActualCount || 0),
     leadQualifiedCount: Number(leadQualifiedCount || 0),
@@ -3512,13 +3600,28 @@ function buildSellerLeagueRow({
       opportunityToWinCurrentRatio !== null
         ? toAmount(opportunityToWinCurrentRatio * 100)
         : null,
-    opportunityToWinConfiguredRatio: opportunitiesToWinsRatio,
-    opportunityToWinConfiguredPct: toAmount(opportunitiesToWinsRatio * 100),
+    opportunityToWinConfiguredRatio,
+    opportunityToWinConfiguredPct: toAmount(
+      opportunityToWinConfiguredRatio * 100,
+    ),
+    opportunityToWinHistoricalRatio,
+    opportunityToWinHistoricalPct: toAmount(
+      opportunityToWinHistoricalRatio * 100,
+    ),
     opportunityToWinEffectiveRatio,
     opportunityToWinEffectivePct: toAmount(
       opportunityToWinEffectiveRatio * 100,
     ),
-    opportunityToWinDays: Number(opportunityToWinDays || 0),
+    useHistoricalAverageSaleTicketForQuotaProbability,
+    useHistoricalLeadsToOpportunitiesForQuotaProbability,
+    useHistoricalOpportunitiesToWinsForQuotaProbability,
+    useHistoricalAverageOpportunityToWinDaysForQuotaProbability,
+    useHistoricalValuesForQuotaProbability,
+    opportunityToWinDays: toOptionalNonNegativeDayValue(
+      opportunityToWinEffectiveDays,
+    ),
+    opportunityToWinHistoricalDays: historicalOpportunityToWinDays,
+    opportunityToWinConfiguredDays: configuredOpportunityToWinDays,
     opportunityToWinWeeklyDays: Array.isArray(opportunityToWinWeeklyDays)
       ? opportunityToWinWeeklyDays
       : [],
@@ -3527,7 +3630,7 @@ function buildSellerLeagueRow({
     )
       ? opportunityToWinWeeklyConversionPct
       : [],
-    leadToOpportunityDays: Number(leadToOpportunityDays || 0),
+    leadToOpportunityDays: toOptionalNonNegativeDayValue(leadToOpportunityDays),
     leadToOpportunityWeeklyDays: Array.isArray(leadToOpportunityWeeklyDays)
       ? leadToOpportunityWeeklyDays
       : [],
@@ -3575,6 +3678,7 @@ function buildSellerLeagueRow({
     blockedCriticalCount,
     blockedCriticalRate: toAmount(blockedCriticalRate * 100),
     funnelOpenAmountUsd,
+    nextQuarterOpenPipelineUsd: toAmount(nextQuarterOpenPipelineUsd || 0),
     funnelByStage,
     scoreClosing,
     scoreBuild,
@@ -4438,15 +4542,38 @@ router.get(
   requireAnyPermission(["ritmo_comercial.read"]),
   async (req, res) => {
     const leagueScopeUser = buildGlobalOpportunityScopeUser(req.user);
+    const commercialSettings = await getCommercialSettings().catch(() => null);
     const quarterSelection = getQuarterSelection(new Date());
+    const nextQuarterSelection = getQuarterSelection(
+      addDays(quarterSelection.end, 1),
+    );
     const quarterStart = formatIsoDate(quarterSelection.start);
     const quarterEnd = formatIsoDate(quarterSelection.end);
+    const nextQuarterStart = formatIsoDate(nextQuarterSelection.start);
+    const nextQuarterEnd = formatIsoDate(nextQuarterSelection.end);
     const weekRange = getWeekRange(new Date());
+    const currentQuarterDaysTotal = Math.max(
+      1,
+      getDiffDays(quarterSelection.start, addDays(quarterSelection.end, 1)),
+    );
+    const currentQuarterDaysElapsed = Math.min(
+      currentQuarterDaysTotal,
+      Math.max(1, getDiffDays(quarterSelection.start, addDays(new Date(), 1))),
+    );
+    const currentQuarterDaysRemaining = Math.max(
+      0,
+      currentQuarterDaysTotal - currentQuarterDaysElapsed,
+    );
+    const currentQuarterWeeksRemaining = toAmount(
+      currentQuarterDaysRemaining / 7,
+    );
 
     const [
       scopedQuarterOpportunities,
       scopedQuarterOpenItems,
       quarterTargets,
+      nextQuarterTargets,
+      nextQuarterOpenItems,
       quarterLeadCountsBySeller,
       quarterQualifiedLeadCountsBySeller,
       recentLeadConversionBySeller,
@@ -4478,6 +4605,15 @@ router.get(
       loadCurrentQuarterTargetsBySeller({
         user: leagueScopeUser,
         quarterSelection,
+      }),
+      loadCurrentQuarterTargetsBySeller({
+        user: leagueScopeUser,
+        quarterSelection: nextQuarterSelection,
+      }),
+      buildOpenOpportunityItems(leagueScopeUser, {
+        closeDateFrom: nextQuarterStart,
+        closeDateTo: nextQuarterEnd,
+        weekRange,
       }),
       loadQuarterLeadCountsBySeller({
         user: leagueScopeUser,
@@ -4632,8 +4768,29 @@ router.get(
         sellerUserIds: Array.from(rowsBySeller.keys()),
       });
 
+    const nextQuarterOpenPipelineUsdBySeller = nextQuarterOpenItems.reduce(
+      (accumulator, item) => {
+        const sellerUserId = Number(item.sellerUserId || 0);
+        if (!sellerUserId || !visibleSellerIds.has(sellerUserId)) {
+          return accumulator;
+        }
+        accumulator.set(
+          sellerUserId,
+          toAmount(
+            Number(accumulator.get(sellerUserId) || 0) +
+              Number(item.amountUsd || 0),
+          ),
+        );
+        return accumulator;
+      },
+      new Map(),
+    );
+
     const leaderboard = Array.from(rowsBySeller.values()).map((item) => {
       const target = quarterTargets.targetBySellerId.get(item.sellerUserId);
+      const nextQuarterTarget = nextQuarterTargets.targetBySellerId.get(
+        item.sellerUserId,
+      );
       const recentLeadConversion =
         recentLeadConversionBySeller.get(item.sellerUserId) || null;
       const recentOpportunityConversion =
@@ -4643,6 +4800,9 @@ router.get(
         sellerUserName: item.sellerUserName,
         quarterWonItems: item.wonItems,
         quarterOpenItems: item.openItems,
+        nextQuarterQuotaAmountUsd: nextQuarterTarget?.quotaAmountUsd || null,
+        nextQuarterOpenPipelineUsd:
+          nextQuarterOpenPipelineUsdBySeller.get(item.sellerUserId) || 0,
         advancedOpportunityIds14d,
         quotaAmountUsd: target?.quotaAmountUsd || null,
         leadActualCount: quarterLeadCountsBySeller.get(item.sellerUserId) || 0,
@@ -4664,8 +4824,11 @@ router.get(
           lastWonTicketAverageBySeller.get(item.sellerUserId) || 0,
         sellerParameters:
           sellerParametersBySeller.get(item.sellerUserId) || null,
-        opportunityToWinDays:
-          opportunityToWinDaysBySeller.get(item.sellerUserId) || 0,
+        opportunityToWinDays: opportunityToWinDaysBySeller.has(
+          item.sellerUserId,
+        )
+          ? opportunityToWinDaysBySeller.get(item.sellerUserId)
+          : null,
         opportunityToWinWeeklyDays:
           opportunityToWinWeeklySeriesBySeller.get(item.sellerUserId) ||
           Array.from({ length: 10 }, () => null),
@@ -4673,8 +4836,11 @@ router.get(
           opportunityToWinConversionWeeklySeriesBySeller.get(
             item.sellerUserId,
           ) || Array.from({ length: 10 }, () => 0),
-        leadToOpportunityDays:
-          leadToOpportunityDaysBySeller.get(item.sellerUserId) || 0,
+        leadToOpportunityDays: leadToOpportunityDaysBySeller.has(
+          item.sellerUserId,
+        )
+          ? leadToOpportunityDaysBySeller.get(item.sellerUserId)
+          : null,
         leadToOpportunityWeeklyDays:
           leadToOpportunityWeeklySeriesBySeller.get(item.sellerUserId) ||
           Array.from({ length: 10 }, () => null),
@@ -4756,12 +4922,41 @@ router.get(
         : null;
 
     res.json({
+      screenDisplayMinutes: Number(
+        commercialSettings?.sellerLeagueScreenDisplayMinutes || 1,
+      ),
       period: {
         year: quarterSelection.year,
         quarter: quarterSelection.quarter,
         label: quarterSelection.label,
         startDate: quarterStart,
         endDate: quarterEnd,
+      },
+      quarterContext: {
+        current: {
+          year: quarterSelection.year,
+          quarter: quarterSelection.quarter,
+          label: quarterSelection.label,
+          startDate: quarterStart,
+          endDate: quarterEnd,
+          daysTotal: currentQuarterDaysTotal,
+          daysElapsed: currentQuarterDaysElapsed,
+          daysRemaining: currentQuarterDaysRemaining,
+          weeksRemaining: currentQuarterWeeksRemaining,
+          elapsedRatio: toAmount(
+            currentQuarterDaysElapsed / currentQuarterDaysTotal,
+          ),
+          remainingRatio: toAmount(
+            currentQuarterDaysRemaining / currentQuarterDaysTotal,
+          ),
+        },
+        next: {
+          year: nextQuarterSelection.year,
+          quarter: nextQuarterSelection.quarter,
+          label: nextQuarterSelection.label,
+          startDate: nextQuarterStart,
+          endDate: nextQuarterEnd,
+        },
       },
       generatedAt: new Date().toISOString(),
       weights: {

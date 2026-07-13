@@ -147,6 +147,7 @@ const EMPTY_CAMPAIGN_MATRIX_ROW = {
 
 const EMPTY_COMMERCIAL_SETTINGS = {
   businessTimezone: "America/Mexico_City",
+  sellerLeagueScreenDisplayMinutes: 1,
   stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
   stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
   leadExecutionGuides: { ...DEFAULT_LEAD_EXECUTION_GUIDES },
@@ -768,6 +769,13 @@ function normalizeCommercialSettings(settings) {
     businessTimezone:
       String(settings.businessTimezone || "").trim() ||
       EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
+    sellerLeagueScreenDisplayMinutes: (() => {
+      const parsed = Number(settings.sellerLeagueScreenDisplayMinutes);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 60) {
+        return EMPTY_COMMERCIAL_SETTINGS.sellerLeagueScreenDisplayMinutes;
+      }
+      return parsed;
+    })(),
     stageSlaMap,
     stageWeightMap,
     leadExecutionGuides,
@@ -780,6 +788,9 @@ function normalizeCommercialSettings(settings) {
 function serializeCommercialSettings(settings) {
   return JSON.stringify({
     businessTimezone: String(settings?.businessTimezone || "").trim(),
+    sellerLeagueScreenDisplayMinutes: Number(
+      settings?.sellerLeagueScreenDisplayMinutes || 1,
+    ),
     stageSlaMap: settings?.stageSlaMap || {},
     stageWeightMap: settings?.stageWeightMap || {},
     leadExecutionGuides: settings?.leadExecutionGuides || {},
@@ -1485,6 +1496,17 @@ export function useConfigurationPage() {
     }));
   }
 
+  function updateCommercialScreenDisplayMinutes(value) {
+    const parsed = Number(value);
+    const safeValue = Number.isInteger(parsed)
+      ? Math.max(1, Math.min(parsed, 60))
+      : 1;
+    setCommercialSettings((current) => ({
+      ...current,
+      sellerLeagueScreenDisplayMinutes: safeValue,
+    }));
+  }
+
   function updateCommercialWeightSetting(stageCode, percent) {
     const normalizedPercent = Number(percent);
     const safePercent = Number.isFinite(normalizedPercent)
@@ -1564,6 +1586,9 @@ export function useConfigurationPage() {
           businessTimezone:
             String(commercialSettings.businessTimezone || "").trim() ||
             EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
+          sellerLeagueScreenDisplayMinutes: Number(
+            commercialSettings.sellerLeagueScreenDisplayMinutes || 1,
+          ),
           stageSlaMap: commercialSettings.stageSlaMap,
           stageWeightMap: commercialSettings.stageWeightMap,
           leadExecutionGuides: commercialSettings.leadExecutionGuides,
@@ -2867,6 +2892,7 @@ export function useConfigurationPage() {
     saveChatbotSettings,
     updateCommercialSetting,
     updateCommercialBusinessTimezone,
+    updateCommercialScreenDisplayMinutes,
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
     updateCampaignMatrixRow,

@@ -55,6 +55,13 @@ const sellerParameterInputSchema = z.object({
   leadsToOpportunitiesRatio: z.number().min(0).max(99999),
   opportunitiesToWinsRatio: z.number().min(0).max(99999),
   averageOpportunityToWinDays: z.number().min(0).max(99999),
+  useHistoricalAverageSaleTicketForQuotaProbability: z.boolean().optional(),
+  useHistoricalLeadsToOpportunitiesForQuotaProbability: z.boolean().optional(),
+  useHistoricalOpportunitiesToWinsForQuotaProbability: z.boolean().optional(),
+  useHistoricalAverageOpportunityToWinDaysForQuotaProbability: z
+    .boolean()
+    .optional(),
+  useHistoricalValuesForQuotaProbability: z.boolean().optional(),
 });
 
 const replaceSellerParametersSchema = z.object({
@@ -175,18 +182,45 @@ function mapCommissionConfigRow(row) {
 }
 
 function mapSellerParameterRow(row) {
+  const legacyToggle =
+    Number(row.use_historical_values_for_quota_probability || 0) > 0;
+
   return {
     id: Number(row.id),
     sellerUserId: Number(row.seller_user_id),
     sellerUserName: row.seller_user_name || "",
     sellerUserEmail: row.seller_user_email || "",
     averageSaleTicketAmount: roundMoney(row.average_sale_ticket_amount),
-    leadsToOpportunitiesRatio: roundPercent(row.leads_to_opportunities_ratio, 4),
+    leadsToOpportunitiesRatio: roundPercent(
+      row.leads_to_opportunities_ratio,
+      4,
+    ),
     opportunitiesToWinsRatio: roundPercent(row.opportunities_to_wins_ratio, 4),
     averageOpportunityToWinDays: roundPercent(
       row.average_opportunity_to_win_days,
       2,
     ),
+    useHistoricalAverageSaleTicketForQuotaProbability:
+      row.use_hist_avg_ticket_quota_prob === null ||
+      row.use_hist_avg_ticket_quota_prob === undefined
+        ? false
+        : Number(row.use_hist_avg_ticket_quota_prob || 0) > 0,
+    useHistoricalLeadsToOpportunitiesForQuotaProbability:
+      row.use_hist_l2o_quota_prob === null ||
+      row.use_hist_l2o_quota_prob === undefined
+        ? false
+        : Number(row.use_hist_l2o_quota_prob || 0) > 0,
+    useHistoricalOpportunitiesToWinsForQuotaProbability:
+      row.use_hist_o2w_quota_prob === null ||
+      row.use_hist_o2w_quota_prob === undefined
+        ? false
+        : Number(row.use_hist_o2w_quota_prob || 0) > 0,
+    useHistoricalAverageOpportunityToWinDaysForQuotaProbability:
+      row.use_hist_avg_o2w_days_quota_prob === null ||
+      row.use_hist_avg_o2w_days_quota_prob === undefined
+        ? false
+        : Number(row.use_hist_avg_o2w_days_quota_prob || 0) > 0,
+    useHistoricalValuesForQuotaProbability: legacyToggle,
     updatedAt: row.updated_at,
     updatedByUserName: row.updated_by_name || "",
   };
@@ -786,7 +820,21 @@ async function buildSellerParametersPayload() {
         averageSaleTicketAmount: parameter?.averageSaleTicketAmount || 0,
         leadsToOpportunitiesRatio: parameter?.leadsToOpportunitiesRatio || 0,
         opportunitiesToWinsRatio: parameter?.opportunitiesToWinsRatio || 0,
-        averageOpportunityToWinDays: parameter?.averageOpportunityToWinDays || 0,
+        averageOpportunityToWinDays:
+          parameter?.averageOpportunityToWinDays || 0,
+        useHistoricalAverageSaleTicketForQuotaProbability:
+          parameter?.useHistoricalAverageSaleTicketForQuotaProbability ?? false,
+        useHistoricalLeadsToOpportunitiesForQuotaProbability:
+          parameter?.useHistoricalLeadsToOpportunitiesForQuotaProbability ??
+          false,
+        useHistoricalOpportunitiesToWinsForQuotaProbability:
+          parameter?.useHistoricalOpportunitiesToWinsForQuotaProbability ??
+          false,
+        useHistoricalAverageOpportunityToWinDaysForQuotaProbability:
+          parameter?.useHistoricalAverageOpportunityToWinDaysForQuotaProbability ??
+          false,
+        useHistoricalValuesForQuotaProbability:
+          parameter?.useHistoricalValuesForQuotaProbability ?? false,
         updatedAt: parameter?.updatedAt || null,
         updatedByUserName: parameter?.updatedByUserName || "",
       };
@@ -1575,9 +1623,32 @@ router.put(
     const normalizedParameters = parsed.data.parameters.map((item) => ({
       sellerUserId: Number(item.sellerUserId),
       averageSaleTicketAmount: roundMoney(item.averageSaleTicketAmount),
-      leadsToOpportunitiesRatio: roundPercent(item.leadsToOpportunitiesRatio, 4),
+      leadsToOpportunitiesRatio: roundPercent(
+        item.leadsToOpportunitiesRatio,
+        4,
+      ),
       opportunitiesToWinsRatio: roundPercent(item.opportunitiesToWinsRatio, 4),
-      averageOpportunityToWinDays: roundPercent(item.averageOpportunityToWinDays, 2),
+      averageOpportunityToWinDays: roundPercent(
+        item.averageOpportunityToWinDays,
+        2,
+      ),
+      useHistoricalAverageSaleTicketForQuotaProbability:
+        item.useHistoricalAverageSaleTicketForQuotaProbability === true,
+      useHistoricalLeadsToOpportunitiesForQuotaProbability:
+        item.useHistoricalLeadsToOpportunitiesForQuotaProbability === true,
+      useHistoricalOpportunitiesToWinsForQuotaProbability:
+        item.useHistoricalOpportunitiesToWinsForQuotaProbability === true,
+      useHistoricalAverageOpportunityToWinDaysForQuotaProbability:
+        item.useHistoricalAverageOpportunityToWinDaysForQuotaProbability ===
+        true,
+      useHistoricalValuesForQuotaProbability:
+        (item.useHistoricalValuesForQuotaProbability === true &&
+          item.useHistoricalAverageSaleTicketForQuotaProbability === true &&
+          item.useHistoricalLeadsToOpportunitiesForQuotaProbability === true &&
+          item.useHistoricalOpportunitiesToWinsForQuotaProbability === true &&
+          item.useHistoricalAverageOpportunityToWinDaysForQuotaProbability ===
+            true) ||
+        false,
     }));
 
     const duplicateSellerIds = normalizedParameters
@@ -1595,13 +1666,16 @@ router.put(
       listEligibleSellers(),
       getSellerParameters(),
     ]);
-    const eligibleSellerIds = new Set(eligibleSellers.map((seller) => seller.id));
+    const eligibleSellerIds = new Set(
+      eligibleSellers.map((seller) => seller.id),
+    );
     const nonEligible = normalizedParameters.find(
       (item) => !eligibleSellerIds.has(item.sellerUserId),
     );
     if (nonEligible) {
       return res.status(400).json({
-        message: "Solo puedes configurar parametros para vendedores elegibles y activos",
+        message:
+          "Solo puedes configurar parametros para vendedores elegibles y activos",
       });
     }
 
@@ -1614,13 +1688,23 @@ router.put(
           `INSERT INTO commercial_planning_seller_parameters
              (seller_user_id, average_sale_ticket_amount, leads_to_opportunities_ratio,
               opportunities_to_wins_ratio, average_opportunity_to_win_days,
+              use_hist_avg_ticket_quota_prob,
+              use_hist_l2o_quota_prob,
+              use_hist_o2w_quota_prob,
+              use_hist_avg_o2w_days_quota_prob,
+              use_historical_values_for_quota_probability,
               created_by_user_id, updated_by_user_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE
              average_sale_ticket_amount = VALUES(average_sale_ticket_amount),
              leads_to_opportunities_ratio = VALUES(leads_to_opportunities_ratio),
              opportunities_to_wins_ratio = VALUES(opportunities_to_wins_ratio),
              average_opportunity_to_win_days = VALUES(average_opportunity_to_win_days),
+             use_hist_avg_ticket_quota_prob = VALUES(use_hist_avg_ticket_quota_prob),
+             use_hist_l2o_quota_prob = VALUES(use_hist_l2o_quota_prob),
+             use_hist_o2w_quota_prob = VALUES(use_hist_o2w_quota_prob),
+             use_hist_avg_o2w_days_quota_prob = VALUES(use_hist_avg_o2w_days_quota_prob),
+             use_historical_values_for_quota_probability = VALUES(use_historical_values_for_quota_probability),
              updated_by_user_id = VALUES(updated_by_user_id),
              updated_at = VALUES(updated_at)`,
           [
@@ -1629,6 +1713,13 @@ router.put(
             item.leadsToOpportunitiesRatio,
             item.opportunitiesToWinsRatio,
             item.averageOpportunityToWinDays,
+            item.useHistoricalAverageSaleTicketForQuotaProbability ? 1 : 0,
+            item.useHistoricalLeadsToOpportunitiesForQuotaProbability ? 1 : 0,
+            item.useHistoricalOpportunitiesToWinsForQuotaProbability ? 1 : 0,
+            item.useHistoricalAverageOpportunityToWinDaysForQuotaProbability
+              ? 1
+              : 0,
+            item.useHistoricalValuesForQuotaProbability ? 1 : 0,
             actorUserId,
             actorUserId,
             now,
@@ -1694,11 +1785,9 @@ router.put(
       return res.status(404).json({ message: "Periodo no encontrado" });
     }
     if (period.status === "closed") {
-      return res
-        .status(409)
-        .json({
-          message: "No se puede editar comisiones en un periodo cerrado",
-        });
+      return res.status(409).json({
+        message: "No se puede editar comisiones en un periodo cerrado",
+      });
     }
 
     const actorUserId = Number(req.user?.id) || null;

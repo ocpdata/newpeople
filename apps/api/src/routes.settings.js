@@ -79,6 +79,7 @@ const logoUrlValueSchema = z
 
 const companyProfileSchema = z.object({
   legalName: z.string().trim().min(3).max(190),
+  sellerLeagueScreenDisplayMinutes: z.number().int().min(1).max(60).optional(),
   commercialName: optionalTrimmedString(190),
   taxId: z.string().trim().min(3).max(120),
   logoUrl: z.preprocess((value) => {

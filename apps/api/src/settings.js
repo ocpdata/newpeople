@@ -3039,6 +3039,16 @@ const DEFAULT_BUSINESS_TIMEZONE =
   String(config.app?.businessTimezone || "America/Mexico_City").trim() ||
   "America/Mexico_City";
 
+const DEFAULT_SELLER_LEAGUE_SCREEN_DISPLAY_MINUTES = 1;
+
+function normalizeSellerLeagueScreenDisplayMinutes(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    return DEFAULT_SELLER_LEAGUE_SCREEN_DISPLAY_MINUTES;
+  }
+  return Math.max(1, Math.min(parsed, 60));
+}
+
 export function isValidIanaTimezone(timeZone) {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone });
@@ -3214,6 +3224,8 @@ function buildFallbackCommercialSettings() {
     id: null,
     singletonKey: "default",
     businessTimezone: DEFAULT_BUSINESS_TIMEZONE,
+    sellerLeagueScreenDisplayMinutes:
+      DEFAULT_SELLER_LEAGUE_SCREEN_DISPLAY_MINUTES,
     stageSlaMap: { ...STAGE_SLA_DEFAULTS },
     stageWeightMap: { ...STAGE_WEIGHT_DEFAULTS },
     leadExecutionGuides: { ...LEAD_EXECUTION_GUIDE_DEFAULTS },
@@ -3324,6 +3336,9 @@ function normalizeCommercialSettingsRow(row) {
     id: Number(row.id),
     singletonKey: String(row.singleton_key || "default"),
     businessTimezone: normalizeBusinessTimezone(row.business_timezone),
+    sellerLeagueScreenDisplayMinutes: normalizeSellerLeagueScreenDisplayMinutes(
+      row.seller_league_screen_display_minutes,
+    ),
     stageSlaMap,
     stageWeightMap,
     leadExecutionGuides,
@@ -3348,6 +3363,7 @@ async function ensureCommercialSettingsTable() {
         id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         singleton_key VARCHAR(40) NOT NULL,
         business_timezone VARCHAR(80) NOT NULL,
+        seller_league_screen_display_minutes INT UNSIGNED NOT NULL DEFAULT 1,
         stage_sla_days_json JSON NOT NULL,
         forecast_stage_weights_json JSON NOT NULL,
         lead_execution_guides_json LONGTEXT NULL,
@@ -3374,6 +3390,11 @@ async function ensureCommercialSettingsTable() {
   );
   await ensureTableColumn(
     "commercial_settings",
+    "seller_league_screen_display_minutes",
+    "ADD COLUMN seller_league_screen_display_minutes INT UNSIGNED NOT NULL DEFAULT 1 AFTER business_timezone",
+  );
+  await ensureTableColumn(
+    "commercial_settings",
     "forecast_stage_weights_json",
     "ADD COLUMN forecast_stage_weights_json JSON NOT NULL AFTER stage_sla_days_json",
   );
@@ -3393,16 +3414,18 @@ async function ensureDefaultCommercialSettings() {
   await ensureCommercialSettingsTable();
   await query(
     `INSERT INTO commercial_settings
-      (singleton_key, business_timezone, stage_sla_days_json, forecast_stage_weights_json,
+      (singleton_key, business_timezone, seller_league_screen_display_minutes,
+         stage_sla_days_json, forecast_stage_weights_json,
          lead_execution_guides_json, campaign_matrix_rows_json,
        created_by_user_id, updated_by_user_id,
        created_at, updated_at)
-       SELECT 'default', ?, ?, ?, ?, ?, NULL, NULL, NOW(3), NOW(3)
+       SELECT 'default', ?, ?, ?, ?, ?, ?, NULL, NULL, NOW(3), NOW(3)
      WHERE NOT EXISTS (
        SELECT 1 FROM commercial_settings WHERE singleton_key = 'default'
      )`,
     [
       DEFAULT_BUSINESS_TIMEZONE,
+      DEFAULT_SELLER_LEAGUE_SCREEN_DISPLAY_MINUTES,
       JSON.stringify(STAGE_SLA_DEFAULTS),
       JSON.stringify(STAGE_WEIGHT_DEFAULTS),
       JSON.stringify(LEAD_EXECUTION_GUIDE_DEFAULTS),
@@ -3463,6 +3486,11 @@ export async function saveCommercialSettings(settings, actorUserId) {
   const nextBusinessTimezone = normalizeBusinessTimezone(
     settings?.businessTimezone || current.businessTimezone,
   );
+  const nextSellerLeagueScreenDisplayMinutes =
+    normalizeSellerLeagueScreenDisplayMinutes(
+      settings?.sellerLeagueScreenDisplayMinutes ??
+        current.sellerLeagueScreenDisplayMinutes,
+    );
 
   const nextSlaMap = { ...STAGE_SLA_DEFAULTS };
   const nextStageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
@@ -3521,6 +3549,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
     await query(
       `UPDATE commercial_settings
        SET business_timezone = ?,
+           seller_league_screen_display_minutes = ?,
            stage_sla_days_json = ?, forecast_stage_weights_json = ?,
            lead_execution_guides_json = ?,
            campaign_matrix_rows_json = ?,
@@ -3528,6 +3557,7 @@ export async function saveCommercialSettings(settings, actorUserId) {
        WHERE id = ?`,
       [
         nextBusinessTimezone,
+        nextSellerLeagueScreenDisplayMinutes,
         JSON.stringify(nextSlaMap),
         JSON.stringify(nextStageWeightMap),
         JSON.stringify(nextLeadExecutionGuides),
@@ -3540,13 +3570,15 @@ export async function saveCommercialSettings(settings, actorUserId) {
   } else {
     await query(
       `INSERT INTO commercial_settings
-        (singleton_key, business_timezone, stage_sla_days_json, forecast_stage_weights_json,
+        (singleton_key, business_timezone, seller_league_screen_display_minutes,
+         stage_sla_days_json, forecast_stage_weights_json,
          lead_execution_guides_json, campaign_matrix_rows_json,
          created_by_user_id, updated_by_user_id,
          created_at, updated_at)
-       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nextBusinessTimezone,
+        nextSellerLeagueScreenDisplayMinutes,
         JSON.stringify(nextSlaMap),
         JSON.stringify(nextStageWeightMap),
         JSON.stringify(nextLeadExecutionGuides),

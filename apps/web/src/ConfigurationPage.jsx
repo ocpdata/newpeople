@@ -1520,6 +1520,7 @@ function CommercialSettingsCard({
   isDirty,
   onChange,
   onTimezoneChange,
+  onScreenDisplayMinutesChange,
   onWeightChange,
   onGuideChange,
   onMatrixRowChange,
@@ -1573,6 +1574,23 @@ function CommercialSettingsCard({
           </datalist>
           <p className="field-hint">
             Usa formato IANA (por ejemplo: America/Mexico_City).
+          </p>
+        </div>
+
+        <div className="field-group">
+          <label>Minutos por pantalla (Ritmo comercial TV)</label>
+          <input
+            type="number"
+            min="1"
+            max="60"
+            step="1"
+            value={settings.sellerLeagueScreenDisplayMinutes ?? 1}
+            onChange={(event) =>
+              onScreenDisplayMinutesChange(Number(event.target.value || 1))
+            }
+          />
+          <p className="field-hint">
+            Define cuántos minutos se muestra cada pantalla antes de rotar.
           </p>
         </div>
 
@@ -4447,6 +4465,7 @@ export default function ConfigurationPage() {
     saveChatbotSettings,
     updateCommercialSetting,
     updateCommercialBusinessTimezone,
+    updateCommercialScreenDisplayMinutes,
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
     updateCampaignMatrixRow,
@@ -5175,6 +5194,9 @@ export default function ConfigurationPage() {
                 isDirty={commercialSettingsDirty}
                 onChange={updateCommercialSetting}
                 onTimezoneChange={updateCommercialBusinessTimezone}
+                onScreenDisplayMinutesChange={
+                  updateCommercialScreenDisplayMinutes
+                }
                 onWeightChange={updateCommercialWeightSetting}
                 onGuideChange={updateCommercialGuideSetting}
                 onMatrixRowChange={updateCampaignMatrixRow}

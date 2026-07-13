@@ -382,6 +382,11 @@ por lideres comerciales, administradores funcionales y responsables de operacion
 - El preventa se registra solo cuando realmente participa en el ciclo comercial.
 - No deben crearse oportunidades aisladas sin cuenta o con contactos cruzados de otra organizacion.
 
+### Politica de ritmo comercial (Seller League TV)
+
+- En el indicador "Probabilidad de cumplir funnel siguiente Q", si el vendedor no tiene valor calculado de tiempo Lead a Oportunidad (`leadToOpportunityDays`), el sistema usa `20` dias como fallback.
+- Este fallback aplica solo a ese indicador para estimar el `timeBuildFactor` y evitar sesgos por valores nulos.
+
 ### Politica de auditoria
 
 - Cambios sensibles de acceso, estado o configuracion deben quedar en auditoria.

@@ -101,6 +101,39 @@
   min-height: 0;
 }
 
+.seller-detail-section--pipeline {
+  grid-row: 1 / span 2;
+}
+
+.seller-detail-section--advance {
+  grid-column: 2;
+}
+
+.seller-detail-section--advance .seller-detail-metrics-grid--compliance {
+  grid-template-rows: minmax(0, 0.78fr) minmax(0, 1.22fr);
+  grid-auto-rows: unset;
+  align-content: stretch;
+}
+
+.seller-detail-section--advance .seller-detail-compliance-funnel-row {
+  min-height: 0;
+}
+
+.seller-detail-section--advance .seller-detail-funnel-stage-card,
+.seller-detail-section--advance .seller-detail-funnel-compare-card {
+  min-height: 0;
+  height: 100%;
+}
+
+.seller-detail-section--advance .seller-league-funnel-legend,
+.seller-detail-section--advance .seller-detail-funnel-compare-note {
+  display: none;
+}
+
+.seller-detail-section--advance .seller-detail-compliance-indicators-row {
+  align-items: stretch;
+}
+
 .seller-detail-section-header {
   border-bottom: 2px solid #e2e8f0;
   padding-bottom: 0.75rem;
@@ -149,20 +182,28 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
   min-height: 0;
+  align-items: start;
 }
 
-.seller-detail-indicator-card {
-  min-height: clamp(9.6rem, 11vh, 10.8rem);
-  justify-content: space-between;
+.seller-detail-metric-card.seller-detail-indicator-card {
+  min-height: 0;
+  height: clamp(7.84rem, 9.6vh, 9.2rem);
+  min-height: clamp(7.84rem, 9.6vh, 9.2rem);
+  max-height: clamp(7.84rem, 9.6vh, 9.2rem);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  padding: 0.3rem;
+  gap: 0.06rem;
 }
 
 .seller-detail-indicator-card-head {
   display: grid;
-  gap: 0.16rem;
+  gap: 0.08rem;
 }
 
 .seller-detail-indicator-card-title {
-  font-size: 0.67rem;
+  font-size: 0.62rem;
   font-weight: 700;
   color: #334155;
   text-transform: uppercase;
@@ -170,7 +211,7 @@
 }
 
 .seller-detail-indicator-card-subtitle {
-  font-size: 0.58rem;
+  font-size: 0.5rem;
   color: #64748b;
   font-weight: 600;
 }
@@ -178,23 +219,24 @@
 .seller-detail-indicator-card-body {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
+  align-self: center;
   gap: 0.5rem;
 }
 
 .seller-detail-indicator-card-value {
-  font-size: clamp(1.15rem, 2.4vw, 1.55rem);
+  font-size: clamp(1.04rem, 2.3vw, 1.36rem);
   font-weight: 800;
   color: #0f172a;
   line-height: 1;
 }
 
 .seller-detail-indicator-card-status {
-  font-size: 0.62rem;
+  font-size: 0.52rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.35px;
-  padding: 0.16rem 0.42rem;
+  padding: 0.1rem 0.3rem;
   border-radius: 999px;
   border: 1px solid transparent;
 }
@@ -219,9 +261,13 @@
 
 .seller-detail-indicator-card-secondary {
   margin: 0;
-  font-size: 0.56rem;
-  line-height: 1.35;
+  align-self: end;
+  font-size: 0.44rem;
+  line-height: 1.05;
   color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .seller-detail-metrics-grid--compliance .seller-detail-line-chart-wrap {
@@ -1206,6 +1252,46 @@
   color: #0f172a;
   letter-spacing: -0.03em;
   text-wrap: balance;
+}
+
+.seller-league-panel-header--with-value {
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.seller-league-panel-title-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.25em;
+  padding: 0.3em 0.6em;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: clamp(0.6rem, 0.8vw + 0.32rem, 1rem);
+  font-weight: 800;
+  line-height: 1;
+  color: #334155;
+  background: #e2e8f0;
+  letter-spacing: -0.01em;
+}
+
+.seller-league-panel-title-value--positive {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.seller-league-panel-title-value--warning {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.seller-league-panel-title-value--critical {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
 }
 
 .seller-league-empty {

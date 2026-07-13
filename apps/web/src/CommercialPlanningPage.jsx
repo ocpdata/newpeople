@@ -12,6 +12,20 @@ const TAB_OPTIONS = [
   { id: "audit", label: "Auditoría" },
 ];
 
+const OPP_TO_WIN_STAGE_WEIGHTS = [
+  { code: "contacto_inicial", label: "Contacto inicial", factor: 1 },
+  {
+    code: "identificacion_oportunidad",
+    label: "Identificación de oportunidad",
+    factor: 0.8,
+  },
+  { code: "desarrollo", label: "Desarrollo", factor: 0.6 },
+  { code: "cotizacion", label: "Cotización", factor: 0.4 },
+  { code: "demostracion", label: "Demostración", factor: 0.3 },
+  { code: "negociacion", label: "Negociación", factor: 0.2 },
+  { code: "waiting", label: "Waiting", factor: 0.1 },
+];
+
 function formatCurrency(value, currencyCode = "USD") {
   return new Intl.NumberFormat("es-MX", {
     style: "currency",
@@ -29,6 +43,22 @@ function normalizeDecimalInput(value) {
   return String(value || "")
     .replace(/,/g, "")
     .trim();
+}
+
+function formatDayValue(value) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) return "0";
+  return Number.isInteger(numericValue)
+    ? String(numericValue)
+    : numericValue.toFixed(2);
+}
+
+function buildOpportunityToWinStageBreakdown(totalDays) {
+  const normalizedDays = Math.max(0, Number(normalizeDecimalInput(totalDays)));
+  return OPP_TO_WIN_STAGE_WEIGHTS.map((stage) => ({
+    ...stage,
+    days: normalizedDays * stage.factor,
+  }));
 }
 
 function formatGroupedDecimalInput(value) {
@@ -251,7 +281,18 @@ function mergeSellerParameterDrafts(payload) {
     averageSaleTicketAmount: String(seller.averageSaleTicketAmount ?? 0),
     leadsToOpportunitiesRatio: String(seller.leadsToOpportunitiesRatio ?? 0),
     opportunitiesToWinsRatio: String(seller.opportunitiesToWinsRatio ?? 0),
-    averageOpportunityToWinDays: String(seller.averageOpportunityToWinDays ?? 0),
+    averageOpportunityToWinDays: String(
+      seller.averageOpportunityToWinDays ?? 0,
+    ),
+    useHistoricalAverageSaleTicketForQuotaProbability:
+      seller.useHistoricalAverageSaleTicketForQuotaProbability === true,
+    useHistoricalLeadsToOpportunitiesForQuotaProbability:
+      seller.useHistoricalLeadsToOpportunitiesForQuotaProbability === true,
+    useHistoricalOpportunitiesToWinsForQuotaProbability:
+      seller.useHistoricalOpportunitiesToWinsForQuotaProbability === true,
+    useHistoricalAverageOpportunityToWinDaysForQuotaProbability:
+      seller.useHistoricalAverageOpportunityToWinDaysForQuotaProbability ===
+      true,
     updatedAt: seller.updatedAt || null,
     updatedByUserName: seller.updatedByUserName || "",
   }));
@@ -302,6 +343,15 @@ function buildSellerParameterPayload(parameterDrafts) {
       averageOpportunityToWinDays: Number.isNaN(averageOpportunityToWinDays)
         ? 0
         : averageOpportunityToWinDays,
+      useHistoricalAverageSaleTicketForQuotaProbability:
+        draft.useHistoricalAverageSaleTicketForQuotaProbability === true,
+      useHistoricalLeadsToOpportunitiesForQuotaProbability:
+        draft.useHistoricalLeadsToOpportunitiesForQuotaProbability === true,
+      useHistoricalOpportunitiesToWinsForQuotaProbability:
+        draft.useHistoricalOpportunitiesToWinsForQuotaProbability === true,
+      useHistoricalAverageOpportunityToWinDaysForQuotaProbability:
+        draft.useHistoricalAverageOpportunityToWinDaysForQuotaProbability ===
+        true,
     };
   });
 
@@ -552,7 +602,9 @@ export default function CommercialPlanningPage({ can }) {
   async function loadSellerParameters() {
     setLoadingSellerParameters(true);
     try {
-      const response = await api.get("/api/commercial-planning/seller-parameters");
+      const response = await api.get(
+        "/api/commercial-planning/seller-parameters",
+      );
       setSellerParameterMeta(response.data);
       setSellerParameterDrafts(mergeSellerParameterDrafts(response.data));
     } catch (requestError) {
@@ -1114,10 +1166,7 @@ export default function CommercialPlanningPage({ can }) {
               type="button"
               className="btn-primary commercial-planning-action-button is-primary is-compact"
               onClick={handlePublishVersion}
-              disabled={
-                !versionDetail?.version ||
-                publishing
-              }
+              disabled={!versionDetail?.version || publishing}
             >
               <span className="commercial-planning-action-button-label">
                 {publishing ? "Publicando..." : "Publicar versión"}
@@ -2014,6 +2063,8 @@ export default function CommercialPlanningPage({ can }) {
                     <th>Relación leads → oportunidades</th>
                     <th>Relación oportunidades → ventas</th>
                     <th>Tiempo promedio oportunidad → venta (días)</th>
+                    <th>Tiempo promedio desde etapa (días)</th>
+                    <th>Fuente para probabilidad cuota</th>
                     <th>Última actualización</th>
                   </tr>
                 </thead>
@@ -2090,6 +2141,125 @@ export default function CommercialPlanningPage({ can }) {
                         />
                       </td>
                       <td>
+                        <div className="seller-parameter-stage-breakdown">
+                          {buildOpportunityToWinStageBreakdown(
+                            item.averageOpportunityToWinDays,
+                          ).map((stage) => (
+                            <div
+                              key={`seller-stage-${item.sellerUserId}-${stage.code}`}
+                              className="seller-parameter-stage-breakdown-item"
+                            >
+                              <span>{stage.label}</span>
+                              <strong>{formatDayValue(stage.days)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="seller-parameter-source-grid">
+                          <label className="seller-parameter-toggle">
+                            <input
+                              type="checkbox"
+                              checked={
+                                item.useHistoricalAverageSaleTicketForQuotaProbability !==
+                                false
+                              }
+                              onChange={(event) =>
+                                updateSellerParameterDraft(
+                                  item.sellerUserId,
+                                  "useHistoricalAverageSaleTicketForQuotaProbability",
+                                  event.target.checked,
+                                )
+                              }
+                              disabled={!canUpdate}
+                            />
+                            <span>Ticket promedio</span>
+                            <strong>
+                              {item.useHistoricalAverageSaleTicketForQuotaProbability !==
+                              false
+                                ? "Históricos"
+                                : "Configuración"}
+                            </strong>
+                          </label>
+                          <label className="seller-parameter-toggle">
+                            <input
+                              type="checkbox"
+                              checked={
+                                item.useHistoricalLeadsToOpportunitiesForQuotaProbability !==
+                                false
+                              }
+                              onChange={(event) =>
+                                updateSellerParameterDraft(
+                                  item.sellerUserId,
+                                  "useHistoricalLeadsToOpportunitiesForQuotaProbability",
+                                  event.target.checked,
+                                )
+                              }
+                              disabled={!canUpdate}
+                            />
+                            <span>Leads → oportunidades</span>
+                            <strong>
+                              {item.useHistoricalLeadsToOpportunitiesForQuotaProbability !==
+                              false
+                                ? "Históricos"
+                                : "Configuración"}
+                            </strong>
+                          </label>
+                          <label className="seller-parameter-toggle">
+                            <input
+                              type="checkbox"
+                              checked={
+                                item.useHistoricalOpportunitiesToWinsForQuotaProbability !==
+                                false
+                              }
+                              onChange={(event) =>
+                                updateSellerParameterDraft(
+                                  item.sellerUserId,
+                                  "useHistoricalOpportunitiesToWinsForQuotaProbability",
+                                  event.target.checked,
+                                )
+                              }
+                              disabled={!canUpdate}
+                            />
+                            <span>Oportunidades → ventas</span>
+                            <strong>
+                              {item.useHistoricalOpportunitiesToWinsForQuotaProbability !==
+                              false
+                                ? "Históricos"
+                                : "Configuración"}
+                            </strong>
+                          </label>
+                          <label className="seller-parameter-toggle">
+                            <input
+                              type="checkbox"
+                              checked={
+                                item.useHistoricalAverageOpportunityToWinDaysForQuotaProbability !==
+                                false
+                              }
+                              onChange={(event) =>
+                                updateSellerParameterDraft(
+                                  item.sellerUserId,
+                                  "useHistoricalAverageOpportunityToWinDaysForQuotaProbability",
+                                  event.target.checked,
+                                )
+                              }
+                              disabled={!canUpdate}
+                            />
+                            <span>Tiempo oportunidad → venta</span>
+                            <strong>
+                              {item.useHistoricalAverageOpportunityToWinDaysForQuotaProbability !==
+                              false
+                                ? "Históricos"
+                                : "Configuración"}
+                            </strong>
+                          </label>
+                        </div>
+                        <div className="field-hint">
+                          Cada switch define si usar históricos (con fallback a
+                          configuración) o solo el valor configurado.
+                        </div>
+                      </td>
+                      <td>
                         {item.updatedAt
                           ? formatDateTime(item.updatedAt)
                           : "Sin cambios"}
@@ -2103,7 +2273,7 @@ export default function CommercialPlanningPage({ can }) {
                   ))}
                   {!sellerParameterDrafts.length ? (
                     <tr>
-                      <td colSpan="6" className="centered">
+                      <td colSpan="8" className="centered">
                         No hay vendedores elegibles para parametrizar.
                       </td>
                     </tr>

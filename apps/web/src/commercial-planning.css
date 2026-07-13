@@ -83,7 +83,8 @@
   opacity: 0.8;
 }
 
-.commercial-planning-action-button.is-primary .commercial-planning-action-button-hint {
+.commercial-planning-action-button.is-primary
+  .commercial-planning-action-button-hint {
   opacity: 0.92;
 }
 
@@ -93,11 +94,13 @@
   gap: 1px;
 }
 
-.commercial-planning-action-button.is-compact .commercial-planning-action-button-label {
+.commercial-planning-action-button.is-compact
+  .commercial-planning-action-button-label {
   font-size: 14px;
 }
 
-.commercial-planning-action-button.is-compact .commercial-planning-action-button-hint {
+.commercial-planning-action-button.is-compact
+  .commercial-planning-action-button-hint {
   font-size: 11px;
 }
 
@@ -300,7 +303,11 @@
   border: 1px solid #d6dce8;
   border-radius: 20px;
   background:
-    radial-gradient(circle at top right, rgba(103, 162, 255, 0.18), transparent 32%),
+    radial-gradient(
+      circle at top right,
+      rgba(103, 162, 255, 0.18),
+      transparent 32%
+    ),
     linear-gradient(180deg, #ffffff 0%, #f6faff 100%);
   box-shadow: 0 12px 28px rgba(15, 37, 63, 0.08);
   padding: 20px;
@@ -369,7 +376,9 @@
   opacity: 0;
   pointer-events: none;
   transform: translateY(-4px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
   z-index: 6;
 }
 
@@ -589,7 +598,11 @@
 
 .commercial-planning-period-create-card {
   background:
-    radial-gradient(circle at top right, rgba(103, 162, 255, 0.12), transparent 30%),
+    radial-gradient(
+      circle at top right,
+      rgba(103, 162, 255, 0.12),
+      transparent 30%
+    ),
     linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
@@ -609,7 +622,10 @@
 
 .commercial-planning-period-form-top {
   display: grid;
-  grid-template-columns: minmax(88px, 0.8fr) minmax(96px, 0.85fr) minmax(0, 1.35fr);
+  grid-template-columns: minmax(88px, 0.8fr) minmax(96px, 0.85fr) minmax(
+      0,
+      1.35fr
+    );
   gap: 12px;
   align-items: end;
 }
@@ -695,6 +711,55 @@
 
 .commercial-planning-table textarea {
   min-height: 76px;
+}
+
+.seller-parameter-stage-breakdown {
+  display: grid;
+  gap: 4px;
+  min-width: 230px;
+}
+
+.seller-parameter-stage-breakdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #40546d;
+}
+
+.seller-parameter-stage-breakdown-item strong {
+  color: #1f2f44;
+  font-weight: 700;
+}
+
+.seller-parameter-source-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 300px;
+}
+
+.seller-parameter-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #1f2f44;
+  font-weight: 600;
+}
+
+.seller-parameter-toggle strong {
+  color: #3f536e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.seller-parameter-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
 }
 
 .commercial-planning-justification-box textarea {

@@ -76,6 +76,250 @@ Formula base:
 ticket_promedio = promedio de los ultimos 10 cierres ganados
 ```
 
+## Tiempo de Oportunidad a Venta (O→V)
+
+Este metrica mide el promedio de dias que tarda una oportunidad desde que entra en etapa "desarrollo" hasta que se cierra como venta ganada.
+
+Regla operativa:
+
+- se toman las ultimas 20 oportunidades ganadas del vendedor;
+- si tiene menos de 20, se usan todas las que tenga;
+- se considera solo oportunidades con estatus `activada` y comercial `ganada`;
+- para cada oportunidad:
+  - si tiene registro en `audit_log` de cuando entro a etapa "desarrollo": se calcula como `DATEDIFF(commercial_closed_at, fecha_entrada_desarrollo)`;
+  - si NO tiene registro en auditoría: se usa `120 días` como valor por defecto;
+- se calcula el promedio de todos los valores (reales + por defecto).
+
+Formula base:
+
+```text
+tiempo_promedio_O_V = promedio(días en desarrollo para cada oportunidad ganada)
+
+Donde:
+  - Si hay auditoría: días = DATEDIFF(commercial_closed_at, audit_log.created_at)
+  - Si NO hay auditoría: días = 120 (valor por defecto)
+```
+
+Ejemplo práctico:
+
+- Vendedor A: 2 oportunidades ganadas
+  - Opp 1: Entró en desarrollo 4/6, cerrada 2/7 = 28 días (con auditoría)
+  - Opp 2: Sin registro en auditoría = 120 días (por defecto)
+  - Promedio: (28 + 120) / 2 = **74 días**
+
+- Vendedor B: 3 oportunidades ganadas, todas sin auditoría
+  - Promedio: (120 + 120 + 120) / 3 = **120 días**
+
+Justificación del valor por defecto:
+
+- El valor de `120 días` representa aproximadamente 4 meses de ciclo de venta;
+- se usa como valor conservador cuando no hay datos auditables;
+- refleja un ciclo comercial típico en la industria de soluciones empresariales.
+
+## Probabilidad de cumplir cuota (Seller League TV)
+
+Este indicador proyecta que tanto de la cuota actual podria cerrar el vendedor con lo ya ganado y con el funnel abierto que aun es cerrable en el tiempo restante del trimestre.
+
+Formula base:
+
+```text
+timeFactor = clamp(daysRemaining / opportunityToWinDays, 0, 1)
+
+closablePipelineUsd = funnelOpenAmountUsd * opportunityToWinEffectiveRatio * timeFactor
+
+projectedCloseUsd = wonAmountUsd + closablePipelineUsd
+
+projectedAttainmentRatio = projectedCloseUsd / quotaAmountUsd
+
+probabilidad_pct = round(projectedAttainmentRatio * 100)
+
+brecha_usd = max(0, quotaAmountUsd - projectedCloseUsd)
+```
+
+Notas operativas:
+
+- `opportunityToWinEffectiveRatio` usa la conversion actual (`ganadas / total ultimas 20 oportunidades`) cuando existe y es mayor a `0`; si no, usa la configurada (`opportunities_to_wins_ratio`).
+- `opportunityToWinDays` es el promedio O→V del vendedor.
+- `timeFactor` nunca pasa de `1`, aunque `daysRemaining` sea mayor a `opportunityToWinDays`.
+
+### Ejemplo real (Jacob Hernandez, corte observado)
+
+Valores de entrada:
+
+- `quotaAmountUsd`: `1,000,000`
+- `wonAmountUsd`: `0`
+- `funnelOpenAmountUsd`: `1,707,011.17`
+- `opportunityToWinEffectiveRatio`: `0.3684210526`
+- `daysRemaining`: `80`
+- `opportunityToWinDays`: `1`
+
+Paso 1: factor de tiempo
+
+```text
+timeFactor = clamp(80 / 1, 0, 1) = 1
+```
+
+Paso 2: pipeline cerrable
+
+```text
+closablePipelineUsd = 1,707,011.17 * 0.3684210526 * 1
+                   = 628,898.8521
+```
+
+Paso 3: cierre proyectado
+
+```text
+projectedCloseUsd = 0 + 628,898.8521
+                  = 628,898.8521
+```
+
+Paso 4: ratio proyectado
+
+```text
+projectedAttainmentRatio = 628,898.8521 / 1,000,000
+                         = 0.6288988521
+```
+
+Paso 5: probabilidad mostrada
+
+```text
+probabilidad_pct = round(0.6288988521 * 100)
+                = round(62.88988521)
+                = 63
+```
+
+Paso 6: brecha
+
+```text
+brecha_usd = max(0, 1,000,000 - 628,898.8521)
+           = 371,101.1479
+           = 371,101 (mostrado en UI)
+```
+
+Resultado del ejemplo:
+
+- Probabilidad de cumplir cuota: `63%`
+- Brecha: `USD 371,101`
+
+## Probabilidad de cumplir funnel siguiente Q (Seller League TV)
+
+Este indicador estima que tan factible es cubrir el funnel requerido para la cuota del siguiente trimestre.
+
+Formula base:
+
+```text
+weeksRemaining = max(0, (fin_trimestre_actual_23_59_59 - ahora) / (7 * 24 * 60 * 60 * 1000))
+
+timeBuildFactor = clamp(daysRemaining / leadToOpportunityDays, 0, 1)
+
+leadsPerWeek = promedio(ultimas 4 semanas de leadsPerWeekWeeklyCounts)
+
+buildableOpportunities = leadsPerWeek * weeksRemaining * leadToOpportunityRatio * timeBuildFactor
+
+buildableFunnelUsd = buildableOpportunities * averageSaleTicketAmount
+
+projectedAvailableFunnelUsd = existingNextQuarterFunnelUsd + buildableFunnelUsd
+
+requiredFunnelUsd = nextQuarterQuotaAmountUsd / max(opportunityToWinRatio, 0.0001)
+
+readinessRatio = projectedAvailableFunnelUsd / requiredFunnelUsd
+
+probabilidad_pct = round(readinessRatio * 100)
+
+funnelGapUsd = max(0, requiredFunnelUsd - projectedAvailableFunnelUsd)
+```
+
+Notas operativas:
+
+- Si existe cuota real de siguiente trimestre (`nextQuarterQuotaAmountUsd > 0`), se usa esa cuota y el funnel abierto de siguiente trimestre (`nextQuarterOpenPipelineUsd`).
+- Si no existe cuota real de siguiente trimestre, se usa como respaldo la cuota actual y el funnel actual.
+- `opportunityToWinRatio` usa la tasa efectiva del vendedor (`opportunityToWinEffectiveRatio`).
+- Si `leadToOpportunityDays` no existe para el vendedor, se usa fallback de `20` dias.
+- `weeksRemaining` se calcula con tiempo real desde `ahora` hasta el fin del trimestre actual (no solo con `daysRemaining/7`), por eso puede incluir decimales finos.
+
+### Ejemplo real (Jacob Hernandez, corte observado)
+
+Valores de entrada:
+
+- `daysRemaining`: `80`
+- `weeksRemaining`: `11.4525408614`
+- `nextQuarterQuotaAmountUsd`: `500,000`
+- `opportunityToWinRatio`: `0.3684210526`
+- `leadToOpportunityRatio`: `0.0769230769`
+- `leadToOpportunityDays`: `20`
+- `leadsPerWeekWeeklyCounts`: `[0, 0, 0, 1, 0, 2, 3, 7, 0, 0]`
+- `averageSaleTicketAmount`: `354,739.58`
+- `existingNextQuarterFunnelUsd`: `2,000`
+
+Paso 1: factor de construccion
+
+```text
+timeBuildFactor = clamp(80 / 20, 0, 1) = 1
+```
+
+Paso 2: leads por semana (ultimas 4 semanas)
+
+```text
+ultimas4 = [3, 7, 0, 0]
+leadsPerWeek = (3 + 7 + 0 + 0) / 4 = 2.5
+```
+
+Paso 3: oportunidades construibles
+
+```text
+buildableOpportunities = 2.5 * 11.4525408614 * 0.0769230769 * 1
+                      = 2.2024117041
+```
+
+Paso 4: funnel construible (USD)
+
+```text
+buildableFunnelUsd = 2.2024117041 * 354,739.58
+                   = 781,282.6029
+```
+
+Paso 5: funnel total proyectado disponible
+
+```text
+projectedAvailableFunnelUsd = 2,000 + 781,282.6029
+                            = 783,282.6029
+```
+
+Paso 6: funnel requerido para cubrir siguiente Q
+
+```text
+requiredFunnelUsd = 500,000 / 0.3684210526
+                  = 1,357,142.8571
+```
+
+Paso 7: ratio de preparacion
+
+```text
+readinessRatio = 783,282.6029 / 1,357,142.8571
+               = 0.5771556021
+```
+
+Paso 8: probabilidad mostrada
+
+```text
+probabilidad_pct = round(0.5771556021 * 100)
+                = round(57.71556021)
+                = 58
+```
+
+Paso 9: brecha de funnel
+
+```text
+funnelGapUsd = 1,357,142.8571 - 783,282.6029
+             = 573,860.2542
+             = 573,860 (aprox)
+```
+
+Resultado del ejemplo:
+
+- Probabilidad de cumplir funnel siguiente Q: `58%`
+- Brecha de funnel: `USD 573,860` (aprox)
+
 ## Objetivo de oportunidades creadas
 
 El tablero estima cuantas oportunidades nuevas deberia crear un vendedor para cubrir su cuota.

@@ -101,6 +101,11 @@ const CREATE_SELLER_PARAMETERS_TABLE_SQL = `
     leads_to_opportunities_ratio DECIMAL(9,4) NOT NULL DEFAULT 0,
     opportunities_to_wins_ratio DECIMAL(9,4) NOT NULL DEFAULT 0,
     average_opportunity_to_win_days DECIMAL(9,2) NOT NULL DEFAULT 0,
+    use_hist_avg_ticket_quota_prob TINYINT(1) NOT NULL DEFAULT 0,
+    use_hist_l2o_quota_prob TINYINT(1) NOT NULL DEFAULT 0,
+    use_hist_o2w_quota_prob TINYINT(1) NOT NULL DEFAULT 0,
+    use_hist_avg_o2w_days_quota_prob TINYINT(1) NOT NULL DEFAULT 0,
+    use_historical_values_for_quota_probability TINYINT(1) NOT NULL DEFAULT 0,
     created_by_user_id BIGINT UNSIGNED NULL,
     updated_by_user_id BIGINT UNSIGNED NULL,
     created_at DATETIME(3) NOT NULL,
@@ -112,6 +117,31 @@ const CREATE_SELLER_PARAMETERS_TABLE_SQL = `
   )
 `;
 
+const ADD_SELLER_PARAMETERS_TOGGLE_COLUMN_SQL = `
+  ALTER TABLE commercial_planning_seller_parameters
+  ADD COLUMN use_historical_values_for_quota_probability TINYINT(1) NOT NULL DEFAULT 0
+`;
+
+const ADD_SELLER_PARAMETERS_TICKET_TOGGLE_COLUMN_SQL = `
+  ALTER TABLE commercial_planning_seller_parameters
+  ADD COLUMN use_hist_avg_ticket_quota_prob TINYINT(1) NOT NULL DEFAULT 0
+`;
+
+const ADD_SELLER_PARAMETERS_L2O_TOGGLE_COLUMN_SQL = `
+  ALTER TABLE commercial_planning_seller_parameters
+  ADD COLUMN use_hist_l2o_quota_prob TINYINT(1) NOT NULL DEFAULT 0
+`;
+
+const ADD_SELLER_PARAMETERS_O2W_TOGGLE_COLUMN_SQL = `
+  ALTER TABLE commercial_planning_seller_parameters
+  ADD COLUMN use_hist_o2w_quota_prob TINYINT(1) NOT NULL DEFAULT 0
+`;
+
+const ADD_SELLER_PARAMETERS_O2W_DAYS_TOGGLE_COLUMN_SQL = `
+  ALTER TABLE commercial_planning_seller_parameters
+  ADD COLUMN use_hist_avg_o2w_days_quota_prob TINYINT(1) NOT NULL DEFAULT 0
+`;
+
 export async function ensureCommercialPlanningSchema() {
   if (!ensureCommercialPlanningSchemaPromise) {
     ensureCommercialPlanningSchemaPromise = (async () => {
@@ -120,6 +150,27 @@ export async function ensureCommercialPlanningSchema() {
       await query(CREATE_TARGETS_TABLE_SQL);
       await query(CREATE_COMMISSION_CONFIGS_TABLE_SQL);
       await query(CREATE_SELLER_PARAMETERS_TABLE_SQL);
+      try {
+        await query(ADD_SELLER_PARAMETERS_TOGGLE_COLUMN_SQL);
+      } catch (error) {
+        if (String(error?.code || "") !== "ER_DUP_FIELDNAME") {
+          throw error;
+        }
+      }
+      for (const alterSql of [
+        ADD_SELLER_PARAMETERS_TICKET_TOGGLE_COLUMN_SQL,
+        ADD_SELLER_PARAMETERS_L2O_TOGGLE_COLUMN_SQL,
+        ADD_SELLER_PARAMETERS_O2W_TOGGLE_COLUMN_SQL,
+        ADD_SELLER_PARAMETERS_O2W_DAYS_TOGGLE_COLUMN_SQL,
+      ]) {
+        try {
+          await query(alterSql);
+        } catch (error) {
+          if (String(error?.code || "") !== "ER_DUP_FIELDNAME") {
+            throw error;
+          }
+        }
+      }
     })().finally(() => {
       ensureCommercialPlanningSchemaPromise = undefined;
     });
