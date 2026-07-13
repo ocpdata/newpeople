@@ -3569,7 +3569,7 @@ router.post(
 
 router.post(
   "/:id/stage-bypass",
-  requirePermission("oportunidades.update"),
+  requirePermission("oportunidades.bypass_stage_validation"),
   async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {

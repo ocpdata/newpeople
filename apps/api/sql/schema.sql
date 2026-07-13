@@ -2692,6 +2692,7 @@ VALUES
   ('oportunidades.read_all', 'oportunidades', 'read_all', 'Ver todas las oportunidades', NOW(3), NOW(3)),
   ('oportunidades.create', 'oportunidades', 'create', 'Crear oportunidades', NOW(3), NOW(3)),
   ('oportunidades.request', 'oportunidades', 'request', 'Solicitar creacion de oportunidades', NOW(3), NOW(3)),
+  ('oportunidades.bypass_stage_validation', 'oportunidades', 'bypass_stage_validation', 'Bypasear la validacion de etapa en el proceso comercial', NOW(3), NOW(3)),
   ('oportunidades.update', 'oportunidades', 'update', 'Actualizar oportunidades', NOW(3), NOW(3)),
   ('desarrollo_comercial.read', 'desarrollo_comercial', 'read', 'Ver el modulo de desarrollo comercial', NOW(3), NOW(3)),
   ('desarrollo_comercial.update', 'desarrollo_comercial', 'update', 'Operar el modulo de desarrollo comercial', NOW(3), NOW(3)),

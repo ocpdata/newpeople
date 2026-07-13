@@ -67,6 +67,7 @@ function OpportunityFormModal({
   handleStageTransition,
   handleCommercialClose,
   canBypassCurrentStage,
+  canBypassCommercialStageValidation,
   canRetreatToSelectedStage,
   hasImmediatePreviousStage,
   savingCommercialAction,
@@ -867,7 +868,8 @@ function OpportunityFormModal({
                               !commercialContext.isSelectedStageCurrent ||
                               hasPendingStageChange ||
                               hasPendingCommercialClose ||
-                              !canBypassCurrentStage,
+                              !canBypassCurrentStage ||
+                              !canBypassCommercialStageValidation,
                           },
                           {
                             key: "retreat",

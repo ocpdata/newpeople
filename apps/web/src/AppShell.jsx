@@ -423,7 +423,7 @@ export default function AppShell({
           path="/seller-league-tv"
           element={
             canAccessCommercialRhythm ? (
-              <SellerLeagueTvPage />
+              <SellerLeagueTvPage showPageControls />
             ) : (
               <Navigate to="/" />
             )
@@ -433,7 +433,7 @@ export default function AppShell({
           path="/seller-league-tv/window"
           element={
             canAccessCommercialRhythm ? (
-              <SellerLeagueTvPage />
+              <SellerLeagueTvPage showPageControls={false} />
             ) : (
               <Navigate to="/" />
             )

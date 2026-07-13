@@ -38,6 +38,12 @@ const CORE_PERMISSIONS = [
     description: "Solicitar creacion de oportunidades",
   },
   {
+    code: "oportunidades.bypass_stage_validation",
+    module: "oportunidades",
+    action: "bypass_stage_validation",
+    description: "Bypasear la validacion de etapa en el proceso comercial",
+  },
+  {
     code: "herramientas.read",
     module: "herramientas",
     action: "read",

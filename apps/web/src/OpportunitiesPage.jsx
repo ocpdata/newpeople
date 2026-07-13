@@ -135,6 +135,9 @@ function OpportunitiesPage({ currentUser, can }) {
     linkOpportunityDocumentToAnswer,
     commercialAnswerSuggestionsByStageId,
   } = useOpportunitiesPage({ currentUser, searchParams, setSearchParams });
+  const canBypassCommercialStageValidation = can(
+    "oportunidades.bypass_stage_validation",
+  );
 
   const activeOpportunityChatbotContext = useMemo(() => {
     if (!showOpportunityModal || !editingOpportunityId) {
@@ -301,6 +304,9 @@ function OpportunitiesPage({ currentUser, can }) {
         handleStageTransition={handleStageTransition}
         handleCommercialClose={handleCommercialClose}
         canBypassCurrentStage={canBypassCurrentStage}
+        canBypassCommercialStageValidation={
+          canBypassCommercialStageValidation
+        }
         canRetreatToSelectedStage={canRetreatToSelectedStage}
         hasImmediatePreviousStage={hasImmediatePreviousStage}
         savingCommercialAction={savingCommercialAction}

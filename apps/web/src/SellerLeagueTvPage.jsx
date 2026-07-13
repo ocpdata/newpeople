@@ -1133,7 +1133,7 @@ function SellerDetailPage({ seller, onNavigate, quarterContext }) {
   );
 }
 
-export default function SellerLeagueTvPage() {
+export default function SellerLeagueTvPage({ showPageControls = true }) {
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1237,23 +1237,25 @@ export default function SellerLeagueTvPage() {
 
   return (
     <>
-      <div className="seller-league-debug-navbar">
-        <button
-          className="seller-league-debug-btn"
-          onClick={() => handleNavigate(-1)}
-        >
-          ← Anterior
-        </button>
-        <div className="seller-league-debug-info">
-          Página {currentPage}/{maxPage}
+      {showPageControls ? (
+        <div className="seller-league-debug-navbar">
+          <button
+            className="seller-league-debug-btn"
+            onClick={() => handleNavigate(-1)}
+          >
+            ← Anterior
+          </button>
+          <div className="seller-league-debug-info">
+            Página {currentPage}/{maxPage}
+          </div>
+          <button
+            className="seller-league-debug-btn"
+            onClick={() => handleNavigate(1)}
+          >
+            Siguiente →
+          </button>
         </div>
-        <button
-          className="seller-league-debug-btn"
-          onClick={() => handleNavigate(1)}
-        >
-          Siguiente →
-        </button>
-      </div>
+      ) : null}
 
       {currentPage === 1 ? (
         <section
