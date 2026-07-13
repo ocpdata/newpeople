@@ -625,7 +625,7 @@ async function listEligibleSellers() {
      INNER JOIN user_roles ur ON ur.user_id = u.id
      INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
      INNER JOIN permissions p ON p.id = rp.permission_id
-     WHERE u.status = 'active'ive' AND p.code = 'seller_eligible'`,
+     WHERE u.status = 'active' AND p.code = 'seller_eligible'`,
   );
   return new Set(rows.map((row) => Number(row.id || 0)));
 }
