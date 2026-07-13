@@ -643,14 +643,18 @@ function QuarterlyFunnelStackChart({ quarters }) {
 }
 
 function QuarterlySellerFunnelStackChart({ quarters }) {
-  const sellerQuarterFunnelRows = useMemo(
+  const sellerQuarterGroups = useMemo(
     () =>
-      (quarters || []).flatMap((quarter) =>
-        (Array.isArray(quarter?.funnelBySeller) ? quarter.funnelBySeller : [])
+      (quarters || [])
+        .map((quarter) => ({
+          quarterLabel: quarter?.label || "Sin trimestre",
+          sellers: (Array.isArray(quarter?.funnelBySeller)
+            ? quarter.funnelBySeller
+            : []
+          )
           .filter((seller) => Number(seller?.openAmountUsd || 0) > 0)
           .map((seller) => ({
             key: `${quarter.label}-${seller.sellerUserId || seller.sellerUserName}`,
-            quarterLabel: quarter.label,
             sellerUserName: seller.sellerUserName || "Sin vendedor",
             openAmountUsd: Number(seller.openAmountUsd || 0),
             opportunityCount: Number(seller.opportunityCount || 0),
@@ -658,76 +662,92 @@ function QuarterlySellerFunnelStackChart({ quarters }) {
               ? seller.funnelByStage
               : [],
           })),
-      ),
+        }))
+        .filter((group) => group.sellers.length > 0),
     [quarters],
   );
 
   const stageColorMap = useMemo(() => {
     const map = new Map();
-    sellerQuarterFunnelRows.forEach((row) => {
-      row.funnelByStage.forEach((stage) => {
-        if (!map.has(stage.stageCode)) {
-          map.set(
-            stage.stageCode,
-            FUNNEL_STAGE_COLOR_PALETTE[
-              map.size % FUNNEL_STAGE_COLOR_PALETTE.length
-            ],
-          );
-        }
+    sellerQuarterGroups.forEach((group) => {
+      group.sellers.forEach((row) => {
+        row.funnelByStage.forEach((stage) => {
+          if (!map.has(stage.stageCode)) {
+            map.set(
+              stage.stageCode,
+              FUNNEL_STAGE_COLOR_PALETTE[
+                map.size % FUNNEL_STAGE_COLOR_PALETTE.length
+              ],
+            );
+          }
+        });
       });
     });
     return map;
-  }, [sellerQuarterFunnelRows]);
+  }, [sellerQuarterGroups]);
 
-  if (!sellerQuarterFunnelRows.length) {
+  if (!sellerQuarterGroups.length) {
     return <div className="tracking-empty-state">Sin funnel abierto por vendedor.</div>;
   }
 
   return (
-    <div className="tracking-quarter-seller-stack-grid">
-      {sellerQuarterFunnelRows.map((row) => {
-        const stages = [...row.funnelByStage].sort(
-          (a, b) => Number(a.stageOrder ?? 9999) - Number(b.stageOrder ?? 9999),
-        );
-        return (
-          <article key={row.key} className="tracking-quarter-stack-card">
-            <div className="tracking-quarter-stack-head">
-              <div>
-                <h4>{row.sellerUserName}</h4>
-                <span className="tracking-summary-helper">
-                  {row.quarterLabel} · {formatNumber(row.opportunityCount)} oportunidades
-                </span>
-              </div>
-              <strong>{formatCurrency(row.openAmountUsd)}</strong>
-            </div>
-            <div className="tracking-quarter-stack-track">
-              {stages.length ? (
-                stages.map((stage) => (
-                  <div
-                    key={`${row.key}-${stage.stageCode}`}
-                    className="tracking-quarter-stack-segment"
-                    style={{
-                      width: `${Math.max(Number(stage.stageSharePct || 0), 1)}%`,
-                      backgroundColor: stageColorMap.get(stage.stageCode),
-                    }}
-                    title={`${stage.stageName}: ${formatCurrency(stage.openAmountUsd)} (${formatPercent(stage.stageSharePct)})`}
-                  />
-                ))
-              ) : (
-                <div className="tracking-quarter-stack-empty">Sin funnel abierto</div>
-              )}
-            </div>
-            <div className="tracking-quarter-stack-legend">
-              {stages.slice(0, 4).map((stage) => (
-                <span key={`${row.key}-legend-${stage.stageCode}`}>
-                  <i style={{ backgroundColor: stageColorMap.get(stage.stageCode) }} />
-                  {stage.stageName}
-                </span>
-              ))}
-            </div>
-          </article>
-        );
-      })}
+    <div className="tracking-quarter-seller-groups">
+      {sellerQuarterGroups.map((group) => (
+        <section
+          key={`quarter-seller-group-${group.quarterLabel}`}
+          className="tracking-quarter-seller-group"
+        >
+          <div className="tracking-quarter-seller-group-head">
+            <strong>{group.quarterLabel}</strong>
+            <span>{formatNumber(group.sellers.length)} vendedores con funnel</span>
+          </div>
+          <div className="tracking-quarter-seller-stack-grid">
+            {group.sellers.map((row) => {
+              const stages = [...row.funnelByStage].sort(
+                (a, b) => Number(a.stageOrder ?? 9999) - Number(b.stageOrder ?? 9999),
+              );
+              return (
+                <article key={row.key} className="tracking-quarter-stack-card">
+                  <div className="tracking-quarter-stack-head">
+                    <div>
+                      <h4>{row.sellerUserName}</h4>
+                      <span className="tracking-summary-helper">
+                        {formatNumber(row.opportunityCount)} oportunidades
+                      </span>
+                    </div>
+                    <strong>{formatCurrency(row.openAmountUsd)}</strong>
+                  </div>
+                  <div className="tracking-quarter-stack-track">
+                    {stages.length ? (
+                      stages.map((stage) => (
+                        <div
+                          key={`${row.key}-${stage.stageCode}`}
+                          className="tracking-quarter-stack-segment"
+                          style={{
+                            width: `${Math.max(Number(stage.stageSharePct || 0), 1)}%`,
+                            backgroundColor: stageColorMap.get(stage.stageCode),
+                          }}
+                          title={`${stage.stageName}: ${formatCurrency(stage.openAmountUsd)} (${formatPercent(stage.stageSharePct)})`}
+                        />
+                      ))
+                    ) : (
+                      <div className="tracking-quarter-stack-empty">Sin funnel abierto</div>
+                    )}
+                  </div>
+                  <div className="tracking-quarter-stack-legend">
+                    {stages.slice(0, 4).map((stage) => (
+                      <span key={`${row.key}-legend-${stage.stageCode}`}>
+                        <i style={{ backgroundColor: stageColorMap.get(stage.stageCode) }} />
+                        {stage.stageName}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

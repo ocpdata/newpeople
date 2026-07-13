@@ -99,6 +99,7 @@ const QUARTERLY_AVG_WON_TICKET_USD = 50000;
 const QUARTERLY_OPPORTUNITIES_TO_WON_RATIO = 4;
 const QUARTERLY_LEADS_TO_WON_RATIO = 10;
 const DEFAULT_QUOTATION_VAT_PCT = 16;
+const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
 function userHasPermission(user, permission) {
   return user?.permissionSet?.has(permission);
@@ -623,9 +624,13 @@ async function listEligibleSellers() {
     `SELECT DISTINCT u.id, u.full_name
      FROM users u
      INNER JOIN user_roles ur ON ur.user_id = u.id
+     INNER JOIN roles r ON r.id = ur.role_id
      INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
      INNER JOIN permissions p ON p.id = rp.permission_id
-     WHERE u.status = 'active' AND p.code = 'seller_eligible'`,
+     WHERE u.status = 'active'
+       AND r.is_active = 1
+       AND p.code = ?`,
+    [commercialSellerEligibilityPermission],
   );
   return new Set(rows.map((row) => Number(row.id || 0)));
 }
@@ -2421,7 +2426,11 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
     }, new Map());
 
     const funnelBySeller = Array.from(sellerFunnelMap.values())
-      .filter((seller) => !seller.sellerUserId || eligibleSellerIds.has(seller.sellerUserId))
+      .filter(
+        (seller) =>
+          Boolean(seller.sellerUserId) &&
+          eligibleSellerIds.has(Number(seller.sellerUserId)),
+      )
       .map((seller) => {
         const sellerOpenAmountUsd = toAmount(seller.openAmountUsd || 0);
         return {

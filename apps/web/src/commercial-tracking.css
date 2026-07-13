@@ -506,8 +506,35 @@
 
 .tracking-quarter-seller-stack-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.tracking-quarter-seller-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.tracking-quarter-seller-group {
+  display: grid;
+  gap: 10px;
+}
+
+.tracking-quarter-seller-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: #17324d;
+}
+
+.tracking-quarter-seller-group-head strong {
+  font-size: 13px;
+}
+
+.tracking-quarter-seller-group-head span {
+  font-size: 12px;
+  color: #5f7288;
 }
 
 .tracking-quarter-chart-card,
@@ -749,6 +776,16 @@
   .tracking-inline-filters-compact {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .tracking-quarter-seller-stack-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .tracking-quarter-seller-stack-grid {
+    grid-template-columns: 1fr;
   }
 }
 
