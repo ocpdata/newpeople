@@ -593,6 +593,13 @@ function formatCampaignTypeLabel(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatAudienceStageBadgeLabel(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "Sin definir";
+  if (normalized === "manual") return "Manual";
+  return formatCampaignTypeLabel(normalized);
+}
+
 function buildClassificationUsageGuide(tipoCampana, subtipoCampana) {
   const tipo = String(tipoCampana || "").trim();
   const subtipo = String(subtipoCampana || "").trim();
@@ -2425,6 +2432,7 @@ export default function CampaignsPage() {
           total_opportunities: null,
           open_opportunities: null,
           won_opportunities: null,
+          audience_stage_codes: ["manual"],
           contacts: suggestedContactsByManualAccount[accountId] || [],
         };
       })
@@ -3098,6 +3106,7 @@ export default function CampaignsPage() {
           const data = response?.data || {};
           const items = Array.isArray(data?.items) ? data.items : [];
           const summary = String(data?.ruleSummary || "").trim();
+          const stageCode = String(data?.etapa_ciclo_vida || "").trim();
           if (summary) {
             ruleSummaries.push(summary);
           }
@@ -3124,6 +3133,7 @@ export default function CampaignsPage() {
               mergedByAccountId.set(accountId, {
                 ...item,
                 contacts: Array.from(contactMap.values()),
+                audience_stage_codes: stageCode ? [stageCode] : [],
                 _contactMap: contactMap,
               });
               return;
@@ -3134,6 +3144,17 @@ export default function CampaignsPage() {
               if (!Number.isInteger(contactId) || contactId <= 0) return;
               existing._contactMap.set(contactId, contact);
             });
+
+            if (stageCode) {
+              const currentStageCodes = Array.isArray(
+                existing.audience_stage_codes,
+              )
+                ? existing.audience_stage_codes
+                : [];
+              existing.audience_stage_codes = Array.from(
+                new Set([...currentStageCodes, stageCode]),
+              );
+            }
 
             existing.contacts = Array.from(existing._contactMap.values());
           });
@@ -4338,6 +4359,16 @@ export default function CampaignsPage() {
                         const accountId = Number(item.account_id);
                         const visibleContacts =
                           visibleContactsByAccountId.get(accountId) || [];
+                        const audienceStageCodes = Array.from(
+                          new Set(
+                            (Array.isArray(item.audience_stage_codes)
+                              ? item.audience_stage_codes
+                              : []
+                            )
+                              .map((value) => String(value || "").trim())
+                              .filter(Boolean),
+                          ),
+                        );
                         return (
                           <div
                             key={accountId}
@@ -4359,6 +4390,18 @@ export default function CampaignsPage() {
                                       ).trim()}
                                     </span>
                                   ) : null}
+                                  {audienceStageCodes.map((stageCode) => (
+                                    <span
+                                      key={`${accountId}-${stageCode}`}
+                                      className={`campaigns-mini-badge ${
+                                        stageCode === "manual"
+                                          ? "campaigns-mini-badge-manual"
+                                          : "campaigns-mini-badge-audience"
+                                      }`}
+                                    >
+                                      {formatAudienceStageBadgeLabel(stageCode)}
+                                    </span>
+                                  ))}
                                 </div>
                                 <div className="campaigns-account-check-actions">
                                   <button

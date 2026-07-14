@@ -973,6 +973,18 @@
   color: #334155;
 }
 
+.campaigns-mini-badge-audience {
+  border-color: #d7d0f5;
+  background: #f4f0ff;
+  color: #4b2c85;
+}
+
+.campaigns-mini-badge-manual {
+  border-color: #d4c8b6;
+  background: #fff8eb;
+  color: #6f4b18;
+}
+
 .campaigns-contact-remove-icon {
   border: 1px solid #9f2835;
   background: linear-gradient(180deg, #d24358, #9f2835);
