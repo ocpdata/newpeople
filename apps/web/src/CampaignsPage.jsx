@@ -2107,6 +2107,10 @@ async function requestClassificationGuideEnrichmentWithAi({
 export default function CampaignsPage() {
   const [audienceSortMode, setAudienceSortMode] = useState("name_asc");
   const [audienceOwnerFilter, setAudienceOwnerFilter] = useState("");
+  const [audienceAccountNameFilter, setAudienceAccountNameFilter] =
+    useState("");
+  const [audienceAccountTypeFilter, setAudienceAccountTypeFilter] =
+    useState("");
   const [catalogs, setCatalogs] = useState(null);
   const [campaigns, setCampaigns] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -2620,6 +2624,7 @@ export default function CampaignsPage() {
       .map((account) => ({
         account_id: Number(account.id || 0),
         account_name: String(account.name || "").trim(),
+        account_type: String(account.account_type || "").trim(),
         owners_display: String(account.owners_display || "").trim(),
       }))
       .filter(
@@ -2726,6 +2731,23 @@ export default function CampaignsPage() {
       a.localeCompare(b, "es", { sensitivity: "base" }),
     );
   }, [visibleAudienceAccounts]);
+  const uniqueAccountTypesInAudience = useMemo(() => {
+    const accountTypes = new Set();
+
+    visibleAudienceAccounts.forEach((account) => {
+      const accountId = Number(account.account_id || 0);
+      const accountType = String(
+        account.account_type || accountTypeById.get(accountId) || "",
+      ).trim();
+      if (accountType) {
+        accountTypes.add(accountType);
+      }
+    });
+
+    return Array.from(accountTypes).sort((a, b) =>
+      a.localeCompare(b, "es", { sensitivity: "base" }),
+    );
+  }, [accountTypeById, visibleAudienceAccounts]);
   const filteredByOwnerAudienceAccounts = useMemo(() => {
     if (!audienceOwnerFilter) return visibleAudienceAccounts;
     return visibleAudienceAccounts.filter((account) => {
@@ -2733,8 +2755,36 @@ export default function CampaignsPage() {
       return ownerNames === audienceOwnerFilter;
     });
   }, [visibleAudienceAccounts, audienceOwnerFilter]);
+  const filteredByNameAudienceAccounts = useMemo(() => {
+    const query = String(audienceAccountNameFilter || "")
+      .trim()
+      .toLowerCase();
+    if (!query) return filteredByOwnerAudienceAccounts;
+
+    return filteredByOwnerAudienceAccounts.filter((account) =>
+      String(account.account_name || "")
+        .trim()
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [audienceAccountNameFilter, filteredByOwnerAudienceAccounts]);
+  const filteredByTypeAudienceAccounts = useMemo(() => {
+    if (!audienceAccountTypeFilter) return filteredByNameAudienceAccounts;
+
+    return filteredByNameAudienceAccounts.filter((account) => {
+      const accountId = Number(account.account_id || 0);
+      const accountType = String(
+        account.account_type || accountTypeById.get(accountId) || "",
+      ).trim();
+      return accountType === audienceAccountTypeFilter;
+    });
+  }, [
+    accountTypeById,
+    audienceAccountTypeFilter,
+    filteredByNameAudienceAccounts,
+  ]);
   const sortedVisibleAudienceAccounts = useMemo(() => {
-    const items = [...filteredByOwnerAudienceAccounts];
+    const items = [...filteredByTypeAudienceAccounts];
 
     items.sort((first, second) => {
       if (audienceSortMode === "name_desc") {
@@ -2771,7 +2821,7 @@ export default function CampaignsPage() {
     });
 
     return items;
-  }, [audienceSortMode, filteredByOwnerAudienceAccounts]);
+  }, [audienceSortMode, filteredByTypeAudienceAccounts]);
   const addContactsAccount = useMemo(() => {
     const targetId = Number(addContactsAccountId || 0);
     if (!targetId) return null;
@@ -2996,6 +3046,8 @@ export default function CampaignsPage() {
     setRemovedAudienceContactsByAccount({});
     setManuallyAddedContactsByAccount({});
     setAudienceOwnerFilter("");
+    setAudienceAccountNameFilter("");
+    setAudienceAccountTypeFilter("");
   }, [campaignForm.audience_lifecycle_filters]);
 
   useEffect(() => {
@@ -3702,13 +3754,31 @@ export default function CampaignsPage() {
     setFeedback("");
 
     try {
-      const selectedIds = selectedAudienceAccountIds
-        .map((value) => Number(value))
-        .filter((value) => Number.isInteger(value) && value > 0)
-        .filter((accountId) => {
-          return (visibleContactsByAccountId.get(accountId) || []).length > 0;
-        });
-      if (!selectedIds.length) {
+      const payloadItems = visibleAudienceAccounts
+        .map((item) => {
+          const accountId = Number(item?.account_id || 0);
+          if (!Number.isInteger(accountId) || accountId <= 0) return null;
+
+          const contactIds = Array.from(
+            new Set(
+              (visibleContactsByAccountId.get(accountId) || [])
+                .map((contact) => Number(contact?.contact_id || 0))
+                .filter(
+                  (contactId) => Number.isInteger(contactId) && contactId > 0,
+                ),
+            ),
+          );
+
+          if (!contactIds.length) return null;
+
+          return {
+            account_id: accountId,
+            contact_ids: contactIds,
+          };
+        })
+        .filter(Boolean);
+
+      if (!payloadItems.length) {
         throw new Error(
           "Selecciona al menos una cuenta que tenga por lo menos un contacto",
         );
@@ -3721,15 +3791,11 @@ export default function CampaignsPage() {
       );
 
       await api.put(`/api/campaigns/${selectedCampaignId}/accounts`, {
-        items: selectedIds.map((accountId) => ({
-          account_id: accountId,
+        items: payloadItems.map((item) => ({
+          account_id: item.account_id,
           etapa_ciclo_vida: payload.etapa_ciclo_vida,
           estado_interaccion: payload.estado_interaccion,
-          contact_ids: (visibleContactsByAccountId.get(accountId) || [])
-            .map((contact) => Number(contact?.contact_id || 0))
-            .filter(
-              (contactId) => Number.isInteger(contactId) && contactId > 0,
-            ),
+          contact_ids: item.contact_ids,
           last_interaction_at: payload.last_interaction_at,
         })),
       });
@@ -3739,6 +3805,13 @@ export default function CampaignsPage() {
       );
       const savedItems = Array.isArray(data?.items) ? data.items : [];
       setCampaignAccounts(savedItems);
+      setPreferSavedAudienceSelection(true);
+      setSelectedAudienceAccountIds(
+        savedItems
+          .map((item) => Number(item.account_id || 0))
+          .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
+      );
+      setManuallyAddedAudienceAccountIds([]);
       setFeedback(
         `${savedItems.length} cuentas incluidas/actualizadas en la campaña`,
       );
@@ -4287,6 +4360,17 @@ export default function CampaignsPage() {
                       </button>
                     </div>
                     <div className="campaigns-audience-tools">
+                      <label className="campaigns-audience-search">
+                        <span>Nombre de cuenta</span>
+                        <input
+                          type="search"
+                          value={audienceAccountNameFilter}
+                          onChange={(event) =>
+                            setAudienceAccountNameFilter(event.target.value)
+                          }
+                          placeholder="Buscar cuenta..."
+                        />
+                      </label>
                       <label className="campaigns-audience-sort">
                         <span>Filtrar por vendedor</span>
                         <select
@@ -4299,6 +4383,22 @@ export default function CampaignsPage() {
                           {uniqueOwnersInAudience.map((owner) => (
                             <option key={owner} value={owner}>
                               {owner}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="campaigns-audience-sort">
+                        <span>Tipo de cuenta</span>
+                        <select
+                          value={audienceAccountTypeFilter}
+                          onChange={(event) =>
+                            setAudienceAccountTypeFilter(event.target.value)
+                          }
+                        >
+                          <option value="">Todos los tipos</option>
+                          {uniqueAccountTypesInAudience.map((accountType) => (
+                            <option key={accountType} value={accountType}>
+                              {accountType}
                             </option>
                           ))}
                         </select>
@@ -4357,6 +4457,9 @@ export default function CampaignsPage() {
                     <div className="campaigns-account-checklist">
                       {sortedVisibleAudienceAccounts.map((item) => {
                         const accountId = Number(item.account_id);
+                        const accountTypeLabel = String(
+                          item.account_type || accountTypeById.get(accountId) || "",
+                        ).trim();
                         const visibleContacts =
                           visibleContactsByAccountId.get(accountId) || [];
                         const audienceStageCodes = Array.from(
@@ -4381,6 +4484,11 @@ export default function CampaignsPage() {
                                   {String(item.owners_display || "").trim() ? (
                                     <span className="campaigns-mini-badge campaigns-mini-badge-owner">
                                       {String(item.owners_display || "").trim()}
+                                    </span>
+                                  ) : null}
+                                  {accountTypeLabel ? (
+                                    <span className="campaigns-mini-badge campaigns-mini-badge-account-type">
+                                      {`Tipo: ${accountTypeLabel}`}
                                     </span>
                                   ) : null}
                                   {String(item.economic_sector || "").trim() ? (
@@ -4689,6 +4797,7 @@ export default function CampaignsPage() {
               ) : (
                 availableAccountsToAdd.map((item) => {
                   const accountId = Number(item.account_id || 0);
+                  const accountTypeLabel = String(item.account_type || "").trim();
                   const isChecked = pendingAddAccountIds.includes(accountId);
                   return (
                     <label
@@ -4714,6 +4823,11 @@ export default function CampaignsPage() {
                       {String(item.owners_display || "").trim() ? (
                         <span className="campaigns-mini-badge campaigns-mini-badge-owner">
                           {String(item.owners_display || "").trim()}
+                        </span>
+                      ) : null}
+                      {accountTypeLabel ? (
+                        <span className="campaigns-mini-badge campaigns-mini-badge-account-type">
+                          {`Tipo: ${accountTypeLabel}`}
                         </span>
                       ) : null}
                     </label>

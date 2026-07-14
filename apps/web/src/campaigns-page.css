@@ -709,6 +709,25 @@
   color: #0f172a;
 }
 
+.campaigns-audience-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.campaigns-audience-search input {
+  min-width: 11rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  padding: 0.38rem 0.48rem;
+  background: #ffffff;
+  font: inherit;
+  color: #0f172a;
+}
+
 .campaigns-audience-add-icon {
   width: 1.6rem;
   min-width: 1.6rem;
@@ -965,6 +984,12 @@
   border-color: #d1dcd6;
   background: #f0f4f2;
   color: #3d5047;
+}
+
+.campaigns-mini-badge-account-type {
+  border-color: #c9dacc;
+  background: #edf7ef;
+  color: #2f5d3b;
 }
 
 .campaigns-mini-badge-contact-role {

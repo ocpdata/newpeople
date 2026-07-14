@@ -33,11 +33,10 @@ async function ensureEconomicSectorsDefaults() {
       await query(
         `INSERT INTO economic_sectors (code, name, is_active)
          VALUES
-           ('proveedor', 'Proveedor', 1),
-           ('integrador', 'Integrador', 1)
+           ('proveedor', 'Proveedor', 0),
+           ('integrador', 'Integrador', 0)
          ON DUPLICATE KEY UPDATE
-           name = VALUES(name),
-           is_active = VALUES(is_active)`,
+           name = VALUES(name)`,
       );
     })().catch((error) => {
       ensureEconomicSectorsDefaultsPromise = undefined;

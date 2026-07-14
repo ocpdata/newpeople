@@ -1243,13 +1243,15 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
   // Initialize from URL parameters
   useEffect(() => {
     const { page, debug } = getUrlParams();
-    setCurrentPage(page);
+    setCurrentPage(showPageControls ? page : 1);
     setIsDebugMode(debug);
-  }, []);
+  }, [showPageControls]);
 
   // Auto-rotation timer
   useEffect(() => {
-    if (isDebugMode || !payload?.leaderboard?.length) return;
+    if (!showPageControls || isDebugMode || !payload?.leaderboard?.length) {
+      return;
+    }
 
     const maxPage = Math.max(1, (payload?.leaderboard?.length || 1) + 1);
     const configuredMinutes = Number(payload?.screenDisplayMinutes || 1);
@@ -1271,12 +1273,17 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
       window.clearInterval(rotationId);
     };
   }, [
+    showPageControls,
     isDebugMode,
     payload?.leaderboard?.length,
     payload?.screenDisplayMinutes,
   ]);
 
   function handleNavigate(direction) {
+    if (!showPageControls) {
+      return;
+    }
+
     const maxPage = Math.max(1, (leaderboard?.length || 1) + 1);
     let nextPage = currentPage + direction;
     if (nextPage < 1) nextPage = maxPage;
@@ -1292,8 +1299,9 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
   const gridColumns = Math.max(1, Math.ceil(Math.sqrt(sellerCount)));
   const gridRows = Math.max(1, Math.ceil(sellerCount / gridColumns));
 
+  const activePage = showPageControls ? currentPage : 1;
   const maxPage = Math.max(1, (leaderboard?.length || 0) + 1);
-  const sellerIndex = currentPage > 1 ? currentPage - 2 : -1;
+  const sellerIndex = activePage > 1 ? activePage - 2 : -1;
   const currentSeller = sellerIndex >= 0 ? leaderboard[sellerIndex] : null;
   const sellerRequiredFunnelAmountUsd = (row) =>
     calculateRequiredFunnelAmountUsd(
@@ -1323,7 +1331,7 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
         </div>
       ) : null}
 
-      {currentPage === 1 ? (
+      {activePage === 1 ? (
         <section
           className="seller-league-page seller-league-page--fullscreen"
           style={{

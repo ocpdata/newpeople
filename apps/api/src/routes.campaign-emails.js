@@ -46,6 +46,12 @@ let campaignEmailWorkerStarted = false;
 let campaignEmailWorkerTimer = null;
 let campaignEmailWorkerRunning = false;
 
+function hasCampaignEmailAdminAccess(user) {
+  return (Array.isArray(user?.roles) ? user.roles : []).some(
+    (role) => Boolean(role?.is_system) || String(role?.name || "") === "Administrador",
+  );
+}
+
 const campaignRecipientSchema = z.object({
   email: z.string().trim().email().max(190),
   contactId: z.number().int().positive().optional().nullable(),
@@ -892,16 +898,31 @@ async function createDispatch({
   return dispatch;
 }
 
-async function getDispatchRowByPublicId(publicId, requestedByUserId) {
+async function getDispatchRowByPublicId(
+  publicId,
+  { requestedByUserId, allowAnyRequester = false } = {},
+) {
   await ensureCampaignEmailDispatchSchema();
-  const rows = await query(
-    `SELECT *
-     FROM campaign_email_dispatches
-     WHERE public_id = ?
-       AND requested_by_user_id = ?
-     LIMIT 1`,
-    [String(publicId || "").trim(), Number(requestedByUserId)],
-  );
+  const normalizedPublicId = String(publicId || "").trim();
+  let rows;
+  if (allowAnyRequester) {
+    rows = await query(
+      `SELECT *
+       FROM campaign_email_dispatches
+       WHERE public_id = ?
+       LIMIT 1`,
+      [normalizedPublicId],
+    );
+  } else {
+    rows = await query(
+      `SELECT *
+       FROM campaign_email_dispatches
+       WHERE public_id = ?
+         AND requested_by_user_id = ?
+       LIMIT 1`,
+      [normalizedPublicId, Number(requestedByUserId)],
+    );
+  }
   return rows[0] || null;
 }
 
@@ -1792,9 +1813,13 @@ router.get(
   "/runs/:runId",
   requireAnyPermission(CAMPAIGN_EMAIL_SEND_PERMISSIONS),
   async (req, res) => {
+    const canViewAllDispatches = hasCampaignEmailAdminAccess(req.user);
     const dispatch = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      {
+        requestedByUserId: req.user.id,
+        allowAnyRequester: canViewAllDispatches,
+      },
     );
     if (!dispatch) {
       return res
@@ -1821,15 +1846,25 @@ router.get(
     }
 
     await ensureCampaignEmailDispatchSchema();
-    const rows = await query(
-      `SELECT *
-       FROM campaign_email_dispatches
-       WHERE campaign_id = ?
-         AND requested_by_user_id = ?
-       ORDER BY created_at DESC, id DESC
-       LIMIT 1`,
-      [campaignId, Number(req.user.id)],
-    );
+    const canViewAllDispatches = hasCampaignEmailAdminAccess(req.user);
+    const rows = canViewAllDispatches
+      ? await query(
+          `SELECT *
+           FROM campaign_email_dispatches
+           WHERE campaign_id = ?
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+          [campaignId],
+        )
+      : await query(
+          `SELECT *
+           FROM campaign_email_dispatches
+           WHERE campaign_id = ?
+             AND requested_by_user_id = ?
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+          [campaignId, Number(req.user.id)],
+        );
 
     const dispatch = rows[0] || null;
     if (!dispatch) {
@@ -1851,7 +1886,7 @@ router.post(
   async (req, res) => {
     const dispatch = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      { requestedByUserId: req.user.id },
     );
     if (!dispatch) {
       return res
@@ -1871,7 +1906,7 @@ router.post(
 
     const updated = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      { requestedByUserId: req.user.id },
     );
     const summary = await getDispatchSummary(dispatch.id);
     return res.json({ dispatch: buildDispatchPayload(updated, summary) });
@@ -1884,7 +1919,7 @@ router.post(
   async (req, res) => {
     const dispatch = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      { requestedByUserId: req.user.id },
     );
     if (!dispatch) {
       return res
@@ -1907,7 +1942,7 @@ router.post(
 
     const updated = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      { requestedByUserId: req.user.id },
     );
     const summary = await getDispatchSummary(dispatch.id);
     return res.json({ dispatch: buildDispatchPayload(updated, summary) });
@@ -1920,7 +1955,7 @@ router.post(
   async (req, res) => {
     const dispatch = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      { requestedByUserId: req.user.id },
     );
     if (!dispatch) {
       return res
@@ -1957,7 +1992,7 @@ router.post(
 
     const updated = await getDispatchRowByPublicId(
       req.params.runId,
-      req.user.id,
+      { requestedByUserId: req.user.id },
     );
     const summary = await getDispatchSummary(dispatch.id);
     return res.json({ dispatch: buildDispatchPayload(updated, summary) });
