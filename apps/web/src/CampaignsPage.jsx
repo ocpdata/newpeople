@@ -551,20 +551,26 @@ const CAMPAIGN_STATE_DESCRIPTIONS = {
 };
 
 const CAMPAIGN_LIFECYCLE_STAGE_DESCRIPTIONS = {
-  visitante: "Cuenta sin interes explicito; aun en etapa de descubrimiento.",
-  lead_nuevo:
-    "Cuenta con leads creados o asignados activos/no cerrados, sin leads calificados.",
-  lead_calificado:
-    "Cuenta con leads calificados y sin leads activos en estado creado o asignado.",
-  oportunidad:
-    "Cuenta con oportunidades abiertas desde la etapa Desarrollo en adelante.",
+  cliente_inactivo:
+    "Cuenta sin actividad comercial reciente o sin traccion tras oportunidades previas.",
+  cliente_en_riesgo:
+    "Cuenta ganada anteriormente con inactividad entre 120 y 270 dias.",
   cliente_nuevo:
     "Cuenta con 1+ oportunidades ganadas en los ultimos 90 dias y sin ganadas anteriores.",
-  cliente_activo: "Cliente vigente con relacion comercial activa y en curso.",
-  cliente_en_riesgo:
-    "Cliente con señales de posible perdida o baja de actividad.",
-  cliente_inactivo:
-    "Cliente sin actividad comercial reciente ni compras en curso.",
+  cliente_activo:
+    "Cuenta con oportunidades ganadas y actividad en los ultimos 120 dias, excluyendo cliente nuevo.",
+  oportunidad:
+    "Cuenta con oportunidades abiertas desde etapa Desarrollo en adelante.",
+  oportunidad_temprana:
+    "Cuenta con oportunidades abiertas en etapas tempranas antes de Desarrollo.",
+  lead_calificado:
+    "Cuenta con leads calificados, sin oportunidades abiertas y sin ganadas.",
+  lead_nuevo:
+    "Cuenta con leads activos creados/asignados, sin leads calificados y sin oportunidades.",
+  visitante:
+    "Cuenta sin oportunidades y sin señales de lead; etapa de descubrimiento inicial.",
+  historial_sin_traccion:
+    "Cuenta con historial de oportunidades, sin abiertas y sin ganadas.",
 };
 
 function isActiveAccount(account) {

@@ -52,14 +52,16 @@ const ESTADO_CAMPANA_VALUES = [
 ];
 
 const ETAPA_CICLO_VIDA_VALUES = [
-  "visitante",
-  "lead_nuevo",
-  "lead_calificado",
-  "oportunidad",
+  "cliente_inactivo",
+  "cliente_en_riesgo",
   "cliente_nuevo",
   "cliente_activo",
-  "cliente_en_riesgo",
-  "cliente_inactivo",
+  "oportunidad",
+  "oportunidad_temprana",
+  "lead_calificado",
+  "lead_nuevo",
+  "visitante",
+  "historial_sin_traccion",
 ];
 
 const ESTADO_INTERACCION_VALUES = [
@@ -470,32 +472,53 @@ async function validateCampaignAudienceAccountIds(accountIds) {
   return normalizedIds;
 }
 
+const LIFECYCLE_RULES_BY_STAGE = {
+  cliente_inactivo:
+    "((am.won_opportunities > 0 AND COALESCE(am.last_activity_at, am.last_won_at) < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 270 DAY)) OR (am.won_opportunities = 0 AND am.total_opportunities > 0 AND am.open_opportunities = 0 AND COALESCE(am.last_activity_at, '1970-01-01') < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 180 DAY)))",
+  cliente_en_riesgo:
+    "am.won_opportunities > 0 AND COALESCE(am.last_activity_at, am.last_won_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 270 DAY) AND COALESCE(am.last_activity_at, am.last_won_at) < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 120 DAY)",
+  cliente_nuevo:
+    "am.won_opportunities_last_90_days > 0 AND am.won_opportunities_before_90_days = 0",
+  cliente_activo:
+    "am.won_opportunities > 0 AND COALESCE(am.last_activity_at, am.last_won_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 120 DAY)",
+  oportunidad: "am.open_opportunities_from_desarrollo > 0",
+  oportunidad_temprana:
+    "am.open_opportunities > 0 AND am.open_opportunities_from_desarrollo = 0",
+  lead_calificado:
+    "am.qualified_leads > 0 AND am.open_opportunities = 0 AND am.won_opportunities = 0",
+  lead_nuevo:
+    "am.created_or_assigned_active_leads > 0 AND am.qualified_leads = 0 AND am.total_opportunities = 0",
+  visitante:
+    "am.total_opportunities = 0 AND am.created_or_assigned_active_leads = 0 AND am.qualified_leads = 0",
+  historial_sin_traccion:
+    "am.total_opportunities > 0 AND am.open_opportunities = 0 AND am.won_opportunities = 0",
+};
+
 function getLifecycleAccountFilterSql(stage) {
-  if (stage === "visitante") {
-    return "am.total_opportunities = 0";
+  const stageKey = String(stage || "").trim();
+  const orderedStages = ETAPA_CICLO_VIDA_VALUES;
+  const targetIndex = orderedStages.indexOf(stageKey);
+  if (targetIndex < 0) {
+    return "1 = 0";
   }
-  if (stage === "lead_nuevo") {
-    return "am.created_or_assigned_active_leads > 0 AND am.qualified_leads = 0";
+
+  const ownRule = LIFECYCLE_RULES_BY_STAGE[stageKey];
+  if (!ownRule) {
+    return "1 = 0";
   }
-  if (stage === "lead_calificado") {
-    return "am.qualified_leads > 0 AND am.created_or_assigned_active_leads = 0";
+
+  const higherPriorityRules = orderedStages
+    .slice(0, targetIndex)
+    .map((code) => LIFECYCLE_RULES_BY_STAGE[code])
+    .filter(Boolean);
+
+  if (!higherPriorityRules.length) {
+    return `(${ownRule})`;
   }
-  if (stage === "oportunidad") {
-    return "am.open_opportunities_from_desarrollo > 0";
-  }
-  if (stage === "cliente_nuevo") {
-    return "am.won_opportunities_last_90_days > 0 AND am.won_opportunities_before_90_days = 0";
-  }
-  if (stage === "cliente_activo") {
-    return "am.won_opportunities > 0 AND COALESCE(am.last_activity_at, am.last_won_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 120 DAY)";
-  }
-  if (stage === "cliente_en_riesgo") {
-    return "am.won_opportunities > 0 AND COALESCE(am.last_activity_at, am.last_won_at) < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 120 DAY) AND COALESCE(am.last_activity_at, am.last_won_at) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 270 DAY)";
-  }
-  if (stage === "cliente_inactivo") {
-    return "((am.won_opportunities = 0 AND am.total_opportunities > 0 AND COALESCE(am.last_activity_at, '1970-01-01') < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 180 DAY)) OR (am.won_opportunities > 0 AND COALESCE(am.last_activity_at, am.last_won_at) < DATE_SUB(UTC_TIMESTAMP(), INTERVAL 270 DAY)))";
-  }
-  return "1 = 0";
+
+  return `(${ownRule}) AND NOT (${higherPriorityRules
+    .map((rule) => `(${rule})`)
+    .join(" OR ")})`;
 }
 
 function getLifecycleRuleSummary(stage) {
@@ -503,28 +526,34 @@ function getLifecycleRuleSummary(stage) {
     return "Todas las cuentas activas y todos sus contactos activos";
   }
   if (stage === "visitante") {
-    return "Cuentas sin oportunidades registradas";
+    return "Cuentas sin oportunidades y sin señales de lead";
   }
   if (stage === "lead_nuevo") {
-    return "Cuentas con leads creados o asignados activos/no cerrados y sin leads calificados";
+    return "Cuentas con leads activos creados/asignados, sin leads calificados y sin oportunidades";
   }
   if (stage === "lead_calificado") {
-    return "Cuentas con leads calificados y sin leads creados/asignados activos";
+    return "Cuentas con leads calificados, sin oportunidades abiertas y sin ganadas";
+  }
+  if (stage === "oportunidad_temprana") {
+    return "Cuentas con oportunidades abiertas en etapas tempranas (antes de Desarrollo)";
   }
   if (stage === "oportunidad") {
-    return "Cuentas con oportunidades abiertas/activas desde etapa Desarrollo en adelante";
+    return "Cuentas con oportunidades abiertas desde la etapa Desarrollo en adelante";
   }
   if (stage === "cliente_nuevo") {
     return "Cuentas con oportunidades ganadas en los ultimos 90 dias y sin ganadas previas";
   }
   if (stage === "cliente_activo") {
-    return "Cuentas con oportunidades ganadas y actividad en los ultimos 120 dias";
+    return "Cuentas con oportunidades ganadas y actividad en los ultimos 120 dias, excluyendo cliente nuevo";
   }
   if (stage === "cliente_en_riesgo") {
     return "Cuentas con oportunidades ganadas pero sin actividad entre 120 y 270 dias";
   }
   if (stage === "cliente_inactivo") {
-    return "Cuentas sin actividad comercial reciente segun umbrales de inactividad";
+    return "Cuentas sin actividad comercial reciente segun umbrales de inactividad o sin traccion tras oportunidades";
+  }
+  if (stage === "historial_sin_traccion") {
+    return "Cuentas con historial de oportunidades, sin abiertas y sin ganadas";
   }
   return "Sin regla";
 }
@@ -650,6 +679,30 @@ async function listSuggestedContactsByStage(stage, accountIds) {
     return mapContactsByAccount(rows);
   }
 
+  if (stageKey === "oportunidad_temprana") {
+    const rows = await query(
+      `SELECT DISTINCT o.account_id,
+              c.id AS contact_id,
+              c.first_name,
+              c.last_name,
+              c.email,
+              c.position_title
+       FROM opportunities o
+       INNER JOIN contacts c ON c.id = o.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+       INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+       WHERE o.account_id IN (${placeholders})
+         AND cas.code = 'activado'
+         AND ocs.code = 'en_proceso'
+         AND COALESCE(oss.stage_order, 0) > 0
+         AND COALESCE(oss.stage_order, 0) < 3
+       ORDER BY o.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
+      accountIds,
+    );
+    return mapContactsByAccount(rows);
+  }
+
   if (stageKey === "cliente_nuevo") {
     const rows = await query(
       `SELECT DISTINCT o.account_id,
@@ -734,6 +787,35 @@ async function listSuggestedContactsByStage(stage, accountIds) {
         AND cas.code = 'activado'
        ORDER BY contact_source.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
       [...accountIds, ...accountIds],
+    );
+    return mapContactsByAccount(rows);
+  }
+
+  if (stageKey === "historial_sin_traccion") {
+    const rows = await query(
+      `WITH last_opportunity_contact AS (
+         SELECT o.account_id,
+                o.contact_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY o.account_id
+                  ORDER BY COALESCE(o.updated_at, o.created_at, o.commercial_closed_at) DESC, o.id DESC
+                ) AS row_num
+         FROM opportunities o
+         WHERE o.account_id IN (${placeholders})
+       )
+       SELECT loc.account_id,
+              c.id AS contact_id,
+              c.first_name,
+              c.last_name,
+              c.email,
+              c.position_title
+       FROM last_opportunity_contact loc
+       INNER JOIN contacts c ON c.id = loc.contact_id
+       INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+       WHERE loc.row_num = 1
+         AND cas.code = 'activado'
+       ORDER BY loc.account_id ASC, c.first_name ASC, c.last_name ASC, c.id ASC`,
+      accountIds,
     );
     return mapContactsByAccount(rows);
   }
