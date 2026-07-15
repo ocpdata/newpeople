@@ -26,6 +26,7 @@ let ensureQuotationPaymentTermsCatalogPromise;
 let ensureQuotationStatusesCatalogPromise;
 let ensureEconomicSectorsDefaultsPromise;
 let ensureCatalogDescriptionsSchemaPromise;
+const deprecatedEconomicSectorCodes = new Set(["proveedor", "integrador"]);
 
 async function ensureEconomicSectorsDefaults() {
   if (!ensureEconomicSectorsDefaultsPromise) {
@@ -33,8 +34,7 @@ async function ensureEconomicSectorsDefaults() {
       await query(
         `INSERT INTO economic_sectors (code, name, is_active)
          VALUES
-           ('proveedor', 'Proveedor', 0),
-           ('integrador', 'Integrador', 0)
+           ('otros', 'Otros', 1)
          ON DUPLICATE KEY UPDATE
            name = VALUES(name)`,
       );
@@ -949,7 +949,14 @@ router.get(
   async (_req, res) => {
     await ensureEconomicSectorsDefaults();
     const rows = await query(
-      "SELECT id, code, name FROM economic_sectors WHERE is_active = 1 ORDER BY name",
+      `SELECT id, code, name
+       FROM economic_sectors
+       WHERE is_active = 1
+         AND code NOT IN (${Array.from(deprecatedEconomicSectorCodes)
+           .map(() => "?")
+           .join(", ")})
+       ORDER BY name`,
+      Array.from(deprecatedEconomicSectorCodes),
     );
     res.json(rows);
   },
@@ -964,7 +971,11 @@ router.get(
     const rows = await query(
       `SELECT id, code, name, description, is_active
        FROM economic_sectors
+       WHERE code NOT IN (${Array.from(deprecatedEconomicSectorCodes)
+         .map(() => "?")
+         .join(", ")})
        ORDER BY name ASC, id ASC`,
+      Array.from(deprecatedEconomicSectorCodes),
     );
     res.json({
       items: rows.map((row) => ({
@@ -1001,6 +1012,12 @@ router.post(
       return res
         .status(400)
         .json({ message: "El codigo del sector es invalido" });
+    }
+
+    if (deprecatedEconomicSectorCodes.has(code)) {
+      return res.status(400).json({
+        message: "Ese sector ya no esta disponible en el catalogo",
+      });
     }
 
     try {
@@ -1116,6 +1133,12 @@ router.patch(
       return res
         .status(400)
         .json({ message: "El codigo del sector es invalido" });
+    }
+
+    if (deprecatedEconomicSectorCodes.has(nextCode)) {
+      return res.status(400).json({
+        message: "Ese sector ya no esta disponible en el catalogo",
+      });
     }
 
     try {

@@ -2492,7 +2492,6 @@ export default function CampaignsPage() {
         if (!normalized) return;
         mergedById.set(Number(normalized.contact_id), normalized);
       });
-
       (Array.isArray(manuallyAddedContactsByAccount[accountId])
         ? manuallyAddedContactsByAccount[accountId]
         : []
@@ -2560,9 +2559,11 @@ export default function CampaignsPage() {
       ),
     );
 
-    const filteredSelectedIds = selectedUniqueIds.filter((accountId) =>
-      filteredAudienceAccountsById.has(accountId),
-    );
+    const filteredSelectedIds = preferSavedAudienceSelection
+      ? selectedUniqueIds
+      : selectedUniqueIds.filter((accountId) =>
+          filteredAudienceAccountsById.has(accountId),
+        );
 
     return filteredSelectedIds
       .map((accountId) => {
@@ -3002,6 +3003,9 @@ export default function CampaignsPage() {
         if (!mounted) return;
 
         setCampaignAccounts(Array.isArray(data?.items) ? data.items : []);
+        setPreferSavedAudienceSelection(
+          Array.isArray(data?.items) && data.items.length > 0,
+        );
       } catch (requestError) {
         if (mounted) {
           setError(
