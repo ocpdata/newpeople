@@ -1578,7 +1578,7 @@ function CommercialSettingsCard({
         </div>
 
         <div className="field-group">
-          <label>Minutos por pantalla (Ritmo comercial TV)</label>
+          <label>Minutos de refresco (Ritmo comercial TV)</label>
           <input
             type="number"
             min="1"
@@ -1590,7 +1590,7 @@ function CommercialSettingsCard({
             }
           />
           <p className="field-hint">
-            Define cuántos minutos se muestra cada pantalla antes de rotar.
+            Define cada cuántos minutos se recargan automáticamente los datos en la pantalla de Liga TV.
           </p>
         </div>
 

@@ -1230,18 +1230,22 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
 
   useEffect(() => {
     loadDashboard();
+  }, []);
 
-    const refreshId = window.setInterval(
-      () => {
-        loadDashboard();
-      },
-      5 * 60 * 1000,
-    );
+  useEffect(() => {
+    const configuredMinutes = Number(payload?.screenDisplayMinutes || 1);
+    const refreshMinutes = Number.isInteger(configuredMinutes)
+      ? Math.max(1, Math.min(configuredMinutes, 60))
+      : 1;
+
+    const refreshId = window.setInterval(() => {
+      loadDashboard();
+    }, refreshMinutes * 60 * 1000);
 
     return () => {
       window.clearInterval(refreshId);
     };
-  }, []);
+  }, [payload?.screenDisplayMinutes]);
 
   // Initialize from URL parameters
   useEffect(() => {
