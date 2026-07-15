@@ -2748,6 +2748,7 @@ export default function CampaignEmailModulePage() {
   const [testSendNotice, setTestSendNotice] = useState(null);
   const [campaignDispatch, setCampaignDispatch] = useState(null);
   const [campaignDispatchResults, setCampaignDispatchResults] = useState([]);
+  const [resultsSellerFilter, setResultsSellerFilter] = useState("");
   const [isLoadingDispatch, setIsLoadingDispatch] = useState(false);
   const [isUpdatingDispatch, setIsUpdatingDispatch] = useState(false);
   const [campaignGuideAnalysis, setCampaignGuideAnalysis] = useState(null);
@@ -2792,6 +2793,28 @@ export default function CampaignEmailModulePage() {
     }
     return normalizeCampaignGuideAnalysis(selectedCampaign.campaign_email_guide);
   }, [selectedCampaign]);
+  const resultSellerOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        campaignDispatchResults
+          .map((item) => String(item?.sellerName || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort((first, second) =>
+      first.localeCompare(second, "es", { sensitivity: "base" }),
+    );
+  }, [campaignDispatchResults]);
+  const filteredCampaignDispatchResults = useMemo(() => {
+    const seller = String(resultsSellerFilter || "").trim();
+    if (!seller) return campaignDispatchResults;
+    return campaignDispatchResults.filter(
+      (item) => String(item?.sellerName || "").trim() === seller,
+    );
+  }, [campaignDispatchResults, resultsSellerFilter]);
+
+  useEffect(() => {
+    setResultsSellerFilter("");
+  }, [selectedCampaignId]);
 
   const normalizedCurrentCampaignGuideAnalysis = useMemo(() => {
     if (!hasCampaignGuideContent(campaignGuideAnalysis)) {
@@ -6133,11 +6156,31 @@ export default function CampaignEmailModulePage() {
                     ) : null}
                     {campaignDispatchResults.length > 0 ? (
                       <div className="campaign-email-test-send-table-wrap campaign-email-field-wide">
+                        <div className="campaign-email-field-inline-row campaign-email-results-filter-row">
+                          <label className="campaign-email-results-filter-label">
+                            Vendedor
+                            <select
+                              className="campaign-email-results-filter-select"
+                              value={resultsSellerFilter}
+                              onChange={(event) =>
+                                setResultsSellerFilter(event.target.value)
+                              }
+                            >
+                              <option value="">Todos los vendedores</option>
+                              {resultSellerOptions.map((sellerName) => (
+                                <option key={sellerName} value={sellerName}>
+                                  {sellerName}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
                         <table className="campaign-email-test-send-table">
                           <thead>
                             <tr>
                               <th>Contacto</th>
                               <th>Cuenta</th>
+                              <th>Vendedor</th>
                               <th>Correo</th>
                               <th>Estado</th>
                               <th>Accesos</th>
@@ -6147,7 +6190,7 @@ export default function CampaignEmailModulePage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {campaignDispatchResults
+                            {filteredCampaignDispatchResults
                               .slice(0, 80)
                               .map((item) => (
                                 <tr
@@ -6155,6 +6198,7 @@ export default function CampaignEmailModulePage() {
                                 >
                                   <td>{item.contactName || "-"}</td>
                                   <td>{item.accountName || "-"}</td>
+                                  <td>{item.sellerName || "-"}</td>
                                   <td>{item.email}</td>
                                   <td>{item.status}</td>
                                   <td>{Number(item.accessCount || 0)}</td>

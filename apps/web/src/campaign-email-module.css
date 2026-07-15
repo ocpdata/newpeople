@@ -670,6 +670,24 @@
   overflow: auto;
 }
 
+.campaign-email-results-filter-row {
+  margin-bottom: 12px;
+}
+
+.campaign-email-results-filter-label {
+  display: inline-grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #345b88;
+}
+
+.campaign-email-results-filter-select {
+  min-width: 170px;
+  max-width: 220px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .campaign-email-test-send-table {
   width: 100%;
   border-collapse: collapse;

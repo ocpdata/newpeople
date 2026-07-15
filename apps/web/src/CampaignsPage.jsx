@@ -2134,6 +2134,9 @@ export default function CampaignsPage() {
   );
   const [manuallyAddedAudienceAccountIds, setManuallyAddedAudienceAccountIds] =
     useState([]);
+  const [removedAudienceAccountIds, setRemovedAudienceAccountIds] = useState(
+    [],
+  );
   const [
     removedAudienceContactsByAccount,
     setRemovedAudienceContactsByAccount,
@@ -2405,23 +2408,39 @@ export default function CampaignsPage() {
     });
     return map;
   }, [accounts]);
+  const removedAudienceAccountIdSet = useMemo(() => {
+    return new Set(
+      removedAudienceAccountIds
+        .map((accountId) => Number(accountId || 0))
+        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
+    );
+  }, [removedAudienceAccountIds]);
   const filteredAudienceAccounts = useMemo(() => {
-    if (!selectedLifecycleFilters.length) {
-      return [];
-    }
+    // Incluir cuentas agregadas manualmente siempre; las sugeridas dependen de etapa.
+    const baseSuggestedAccounts = selectedLifecycleFilters.length
+      ? suggestedAccounts
+      : [];
 
-    // Cuando hay etapa seleccionada, incluir sugeridas + cuentas agregadas manualmente
     const suggestedAccountIds = new Set(
-      suggestedAccounts
+      baseSuggestedAccounts
         .map((acc) => Number(acc.account_id || 0))
-        .filter((id) => Number.isInteger(id) && id > 0),
+        .filter(
+          (id) =>
+            Number.isInteger(id) &&
+            id > 0 &&
+            !removedAudienceAccountIdSet.has(id),
+        ),
     );
 
     // Agregar cuentas manualmente seleccionadas que no fueron sugeridas
     const manuallyAddedIds = manuallyAddedAudienceAccountIds
       .map((id) => Number(id || 0))
       .filter(
-        (id) => Number.isInteger(id) && id > 0 && !suggestedAccountIds.has(id),
+        (id) =>
+          Number.isInteger(id) &&
+          id > 0 &&
+          !removedAudienceAccountIdSet.has(id) &&
+          !suggestedAccountIds.has(id),
       );
 
     const manuallyAddedAccounts = manuallyAddedIds
@@ -2442,13 +2461,20 @@ export default function CampaignsPage() {
       })
       .filter(Boolean);
 
-    return [...suggestedAccounts, ...manuallyAddedAccounts];
+    return [
+      ...baseSuggestedAccounts.filter((account) => {
+        const accountId = Number(account?.account_id || 0);
+        return !removedAudienceAccountIdSet.has(accountId);
+      }),
+      ...manuallyAddedAccounts,
+    ];
   }, [
     selectedLifecycleFilters,
     accounts,
     suggestedAccounts,
     manuallyAddedAudienceAccountIds,
     suggestedContactsByManualAccount,
+    removedAudienceAccountIdSet,
   ]);
   const filteredAudienceAccountsBySector = useMemo(() => {
     if (!selectedSectorFilterSet.size) {
@@ -2480,38 +2506,6 @@ export default function CampaignsPage() {
     filteredAudienceAccountsBySector,
     selectedAccountTypeFilterSet,
   ]);
-  const suggestedContactsCount = useMemo(() => {
-    return filteredAudienceAccountsByClassification.reduce((total, item) => {
-      const accountId = Number(item.account_id || 0);
-      const removedContactIds =
-        removedAudienceContactsByAccount[accountId] || [];
-      const mergedById = new Map();
-
-      (Array.isArray(item.contacts) ? item.contacts : []).forEach((contact) => {
-        const normalized = normalizeAudienceContact(contact);
-        if (!normalized) return;
-        mergedById.set(Number(normalized.contact_id), normalized);
-      });
-      (Array.isArray(manuallyAddedContactsByAccount[accountId])
-        ? manuallyAddedContactsByAccount[accountId]
-        : []
-      ).forEach((contact) => {
-        const normalized = normalizeAudienceContact(contact);
-        if (!normalized) return;
-        mergedById.set(Number(normalized.contact_id), normalized);
-      });
-
-      const visibleContacts = Array.from(mergedById.values()).filter(
-        (contact) => !removedContactIds.includes(Number(contact.contact_id || 0)),
-      );
-
-      return total + visibleContacts.length;
-    }, 0);
-  }, [
-    filteredAudienceAccountsByClassification,
-    manuallyAddedContactsByAccount,
-    removedAudienceContactsByAccount,
-  ]);
   const filteredAudienceAccountsById = useMemo(() => {
     const map = new Map();
     filteredAudienceAccountsByClassification.forEach((item) => {
@@ -2522,6 +2516,54 @@ export default function CampaignsPage() {
     });
     return map;
   }, [filteredAudienceAccountsByClassification]);
+  const activeAudienceAccountIds = useMemo(() => {
+    const normalizeIds = (items) =>
+      items
+        .map((accountId) => Number(accountId || 0))
+        .filter(
+          (accountId) =>
+            Number.isInteger(accountId) &&
+            accountId > 0 &&
+            !removedAudienceAccountIdSet.has(accountId),
+        );
+
+    if (preferSavedAudienceSelection && savedCampaignAccountIds.length > 0) {
+      return Array.from(new Set(normalizeIds(savedCampaignAccountIds)));
+    }
+
+    const ids = new Set(normalizeIds(selectedAudienceAccountIds));
+
+    filteredAudienceAccountsByClassification.forEach((item) => {
+      const accountId = Number(item?.account_id || 0);
+      if (
+        Number.isInteger(accountId) &&
+        accountId > 0 &&
+        !removedAudienceAccountIdSet.has(accountId)
+      ) {
+        ids.add(accountId);
+      }
+    });
+
+    manuallyAddedAudienceAccountIds.forEach((accountId) => {
+      const normalized = Number(accountId || 0);
+      if (
+        Number.isInteger(normalized) &&
+        normalized > 0 &&
+        !removedAudienceAccountIdSet.has(normalized)
+      ) {
+        ids.add(normalized);
+      }
+    });
+
+    return Array.from(ids.values());
+  }, [
+    preferSavedAudienceSelection,
+    selectedAudienceAccountIds,
+    savedCampaignAccountIds,
+    filteredAudienceAccountsByClassification,
+    manuallyAddedAudienceAccountIds,
+    removedAudienceAccountIdSet,
+  ]);
   const accountsById = useMemo(() => {
     const map = new Map();
     accounts.forEach((account) => {
@@ -2551,21 +2593,7 @@ export default function CampaignsPage() {
     return map;
   }, [campaignAccounts]);
   const visibleAudienceAccounts = useMemo(() => {
-    const selectedUniqueIds = Array.from(
-      new Set(
-        selectedAudienceAccountIds
-          .map((accountId) => Number(accountId || 0))
-          .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
-      ),
-    );
-
-    const filteredSelectedIds = preferSavedAudienceSelection
-      ? selectedUniqueIds
-      : selectedUniqueIds.filter((accountId) =>
-          filteredAudienceAccountsById.has(accountId),
-        );
-
-    return filteredSelectedIds
+    return activeAudienceAccountIds
       .map((accountId) => {
         const savedAccount = campaignAccountsById.get(accountId);
         const suggestedAccount = filteredAudienceAccountsById.get(accountId);
@@ -2608,16 +2636,21 @@ export default function CampaignsPage() {
       })
       .filter(Boolean);
   }, [
-    selectedAudienceAccountIds,
+    activeAudienceAccountIds,
     campaignAccountsById,
     filteredAudienceAccountsById,
     accountsById,
   ]);
   const availableAccountsBase = useMemo(() => {
     const selectedSet = new Set(
-      selectedAudienceAccountIds
+      activeAudienceAccountIds
         .map((accountId) => Number(accountId || 0))
-        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
+        .filter(
+          (accountId) =>
+            Number.isInteger(accountId) &&
+            accountId > 0 &&
+            !removedAudienceAccountIdSet.has(accountId),
+        ),
     );
 
     return accounts
@@ -2654,11 +2687,12 @@ export default function CampaignsPage() {
       );
   }, [
     accounts,
-    selectedAudienceAccountIds,
+    activeAudienceAccountIds,
     accountSectorById,
     accountTypeById,
     selectedSectorFilterSet,
     selectedAccountTypeFilterSet,
+    removedAudienceAccountIdSet,
   ]);
   const availableAccountsToAdd = useMemo(() => {
     const query = String(addAccountsSearchText || "")
@@ -2713,13 +2747,6 @@ export default function CampaignsPage() {
     removedAudienceContactsByAccount,
     visibleAudienceAccounts,
   ]);
-  const visibleAudienceAccountsWithContacts = useMemo(() => {
-    return visibleAudienceAccounts.filter((item) => {
-      const accountId = Number(item.account_id || 0);
-      if (!Number.isInteger(accountId) || accountId <= 0) return false;
-      return (visibleContactsByAccountId.get(accountId) || []).length > 0;
-    });
-  }, [visibleAudienceAccounts, visibleContactsByAccountId]);
   const uniqueOwnersInAudience = useMemo(() => {
     const owners = new Set();
     visibleAudienceAccounts.forEach((account) => {
@@ -2823,6 +2850,23 @@ export default function CampaignsPage() {
 
     return items;
   }, [audienceSortMode, filteredByTypeAudienceAccounts]);
+  const visibleAudienceContactsCount = useMemo(() => {
+    return visibleAudienceAccounts.reduce((total, account) => {
+      const accountId = Number(account.account_id || 0);
+      if (!Number.isInteger(accountId) || accountId <= 0) return total;
+      return total + (visibleContactsByAccountId.get(accountId) || []).length;
+    }, 0);
+  }, [visibleAudienceAccounts, visibleContactsByAccountId]);
+  const visibleAudienceAccountsWithContactsCount = useMemo(() => {
+    return visibleAudienceAccounts.reduce((total, account) => {
+      const accountId = Number(account.account_id || 0);
+      if (!Number.isInteger(accountId) || accountId <= 0) return total;
+      return (
+        total +
+        ((visibleContactsByAccountId.get(accountId) || []).length > 0 ? 1 : 0)
+      );
+    }, 0);
+  }, [visibleAudienceAccounts, visibleContactsByAccountId]);
   const addContactsAccount = useMemo(() => {
     const targetId = Number(addContactsAccountId || 0);
     if (!targetId) return null;
@@ -3030,19 +3074,49 @@ export default function CampaignsPage() {
   }, [selectedCampaignId]);
 
   useEffect(() => {
+    const removedSet = new Set(
+      removedAudienceAccountIds
+        .map((accountId) => Number(accountId || 0))
+        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
+    );
+
     if (preferSavedAudienceSelection && savedCampaignAccountIds.length > 0) {
-      setSelectedAudienceAccountIds(savedCampaignAccountIds);
+      setSelectedAudienceAccountIds(
+        savedCampaignAccountIds.filter((accountId) => !removedSet.has(accountId)),
+      );
       return;
     }
 
-    setSelectedAudienceAccountIds(
+    setSelectedAudienceAccountIds((previous) => {
+      const merged = new Set(
+        previous
+          .map((accountId) => Number(accountId || 0))
+          .filter(
+            (accountId) =>
+              Number.isInteger(accountId) &&
+              accountId > 0 &&
+              !removedSet.has(accountId),
+          ),
+      );
+
       filteredAudienceAccountsByClassification
         .map((item) => Number(item.account_id || 0))
-        .filter((accountId) => Number.isInteger(accountId) && accountId > 0),
-    );
+        .filter(
+          (accountId) =>
+            Number.isInteger(accountId) &&
+            accountId > 0 &&
+            !removedSet.has(accountId),
+        )
+        .forEach((accountId) => {
+          merged.add(accountId);
+        });
+
+      return Array.from(merged.values());
+    });
   }, [
     filteredAudienceAccountsByClassification,
     preferSavedAudienceSelection,
+    removedAudienceAccountIds,
     savedCampaignAccountIds,
   ]);
 
@@ -3270,7 +3344,7 @@ export default function CampaignsPage() {
           .filter((id) => Number.isInteger(id) && id > 0),
       );
 
-      const manuallyAddedIds = selectedAudienceAccountIds
+      const manuallyAddedIds = activeAudienceAccountIds
         .map((id) => Number(id || 0))
         .filter(
           (id) =>
@@ -3337,7 +3411,7 @@ export default function CampaignsPage() {
     };
   }, [
     campaignForm.audience_lifecycle_filters,
-    selectedAudienceAccountIds,
+    activeAudienceAccountIds,
     suggestedAccounts,
   ]);
 
@@ -3372,6 +3446,7 @@ export default function CampaignsPage() {
     setSelectedCampaignId(null);
     setPreferSavedAudienceSelection(true);
     setManuallyAddedAudienceAccountIds([]);
+    setRemovedAudienceAccountIds([]);
     setCampaignForm({
       ...EMPTY_FORM,
       tipo_campana: catalogs?.tipo_campana?.[0] || EMPTY_FORM.tipo_campana,
@@ -3403,6 +3478,7 @@ export default function CampaignsPage() {
   function selectCampaign(campaign) {
     setPreferSavedAudienceSelection(true);
     setManuallyAddedAudienceAccountIds([]);
+    setRemovedAudienceAccountIds([]);
     setSelectedCampaignId(campaign.id);
     setCampaignForm({
       name: campaign.name || "",
@@ -3647,6 +3723,7 @@ export default function CampaignsPage() {
       setPreferSavedAudienceSelection(false);
       setCampaignAccounts([]);
       setSelectedAudienceAccountIds([]);
+      setRemovedAudienceAccountIds([]);
       setRemovedAudienceContactsByAccount({});
       setManuallyAddedContactsByAccount({});
       setFeedback(
@@ -3810,6 +3887,7 @@ export default function CampaignsPage() {
       const savedItems = Array.isArray(data?.items) ? data.items : [];
       setCampaignAccounts(savedItems);
       setPreferSavedAudienceSelection(true);
+      setRemovedAudienceAccountIds([]);
       setSelectedAudienceAccountIds(
         savedItems
           .map((item) => Number(item.account_id || 0))
@@ -4334,9 +4412,8 @@ export default function CampaignsPage() {
                   <div className="campaigns-audience-list-head">
                     <div className="campaigns-audience-title-row">
                       <strong>
-                        Cuentas sugeridas:{" "}
-                        {filteredAudienceAccountsByClassification.length} ·
-                        Contactos sugeridos: {suggestedContactsCount}
+                        Cuentas en audiencia: {visibleAudienceAccounts.length} ·
+                        Contactos en audiencia: {visibleAudienceContactsCount}
                       </strong>
                       <button
                         type="button"
@@ -4423,7 +4500,7 @@ export default function CampaignsPage() {
                       </label>
                       <small>
                         Seleccionadas con contacto:{" "}
-                        {visibleAudienceAccountsWithContacts.length}
+                        {visibleAudienceAccountsWithContactsCount}
                       </small>
                     </div>
                   </div>
@@ -4708,7 +4785,7 @@ export default function CampaignsPage() {
 
               <div className="campaigns-sidebar-meta">
                 <small className="campaigns-chip">
-                  Cuentas objetivo: {sortedVisibleAudienceAccounts.length}
+                  Cuentas objetivo: {visibleAudienceAccounts.length}
                 </small>
                 <small className="campaigns-chip">
                   Estado: {formatCampaignTypeLabel(campaignForm.estado_campana)}
@@ -4875,6 +4952,20 @@ export default function CampaignsPage() {
                       merged.add(accountId);
                     });
                     return Array.from(merged.values());
+                  });
+                  setRemovedAudienceAccountIds((previous) => {
+                    const removedSet = new Set(
+                      previous
+                        .map((accountId) => Number(accountId || 0))
+                        .filter(
+                          (accountId) =>
+                            Number.isInteger(accountId) && accountId > 0,
+                        ),
+                    );
+                    normalizedPendingIds.forEach((accountId) => {
+                      removedSet.delete(accountId);
+                    });
+                    return Array.from(removedSet.values());
                   });
                   setManuallyAddedAudienceAccountIds((previous) => {
                     const merged = new Set(
@@ -5283,18 +5374,50 @@ export default function CampaignsPage() {
                 type="button"
                 className="btn-primary btn-danger"
                 onClick={() => {
+                  const accountIdToRemove = Number(pendingRemoveAccountId || 0);
+                  if (!Number.isInteger(accountIdToRemove) || accountIdToRemove <= 0) {
+                    setIsConfirmRemoveAccountModalOpen(false);
+                    setPendingRemoveAccountId(null);
+                    return;
+                  }
+
                   setSelectedAudienceAccountIds((previous) =>
                     previous.filter(
-                      (existingId) =>
-                        Number(existingId) !== pendingRemoveAccountId,
+                      (existingId) => Number(existingId) !== accountIdToRemove,
                     ),
                   );
                   setManuallyAddedAudienceAccountIds((previous) =>
                     previous.filter(
-                      (existingId) =>
-                        Number(existingId) !== Number(pendingRemoveAccountId),
+                      (existingId) => Number(existingId) !== accountIdToRemove,
                     ),
                   );
+                  setRemovedAudienceAccountIds((previous) => {
+                    const removedSet = new Set(
+                      previous
+                        .map((accountId) => Number(accountId || 0))
+                        .filter(
+                          (accountId) =>
+                            Number.isInteger(accountId) && accountId > 0,
+                        ),
+                    );
+                    removedSet.add(accountIdToRemove);
+                    return Array.from(removedSet.values());
+                  });
+                  setRemovedAudienceContactsByAccount((previous) => {
+                    const nextState = { ...previous };
+                    delete nextState[accountIdToRemove];
+                    return nextState;
+                  });
+                  setManuallyAddedContactsByAccount((previous) => {
+                    const nextState = { ...previous };
+                    delete nextState[accountIdToRemove];
+                    return nextState;
+                  });
+                  setSuggestedContactsByManualAccount((previous) => {
+                    const nextState = { ...previous };
+                    delete nextState[accountIdToRemove];
+                    return nextState;
+                  });
                   setIsConfirmRemoveAccountModalOpen(false);
                   setPendingRemoveAccountId(null);
                 }}

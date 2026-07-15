@@ -1009,12 +1009,21 @@ async function getDispatchSummary(dispatchId) {
 
 async function getDispatchResults(dispatchId, limit = 100) {
   const rows = await query(
-    `SELECT r.email, r.contact_name, r.account_name, r.status,
+    `SELECT r.email, r.contact_name, r.account_name,
+            COALESCE(owners.owner_names, '') AS seller_name,
+            r.status,
             r.last_error_message, r.sent_at, r.updated_at,
             link_stats.first_accessed_at, link_stats.last_accessed_at,
             COALESCE(link_stats.access_count, 0) AS access_count,
             COALESCE(link_stats.download_count, 0) AS download_count
      FROM campaign_email_dispatch_recipients r
+     LEFT JOIN (
+       SELECT ao.account_id,
+              GROUP_CONCAT(DISTINCT u.full_name ORDER BY u.full_name SEPARATOR ', ') AS owner_names
+       FROM account_owners ao
+       INNER JOIN users u ON u.id = ao.user_id
+       GROUP BY ao.account_id
+     ) owners ON owners.account_id = r.account_id
      LEFT JOIN (
        SELECT dispatch_recipient_id,
               MIN(first_accessed_at) AS first_accessed_at,
@@ -1046,6 +1055,7 @@ async function getDispatchResults(dispatchId, limit = 100) {
     email: String(row.email || ""),
     contactName: String(row.contact_name || "").trim() || null,
     accountName: String(row.account_name || "").trim() || null,
+    sellerName: String(row.seller_name || "").trim() || null,
     status: String(row.status || "pending"),
     message:
       String(row.last_error_message || "").trim() ||
