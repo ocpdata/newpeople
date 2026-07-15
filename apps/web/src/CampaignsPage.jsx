@@ -2517,6 +2517,10 @@ export default function CampaignsPage() {
     return map;
   }, [filteredAudienceAccountsByClassification]);
   const activeAudienceAccountIds = useMemo(() => {
+    const hasPersistedAudience =
+      Number.isInteger(Number(selectedCampaignId || 0)) &&
+      Number(selectedCampaignId || 0) > 0 &&
+      savedCampaignAccountIds.length > 0;
     const normalizeIds = (items) =>
       items
         .map((accountId) => Number(accountId || 0))
@@ -2527,22 +2531,25 @@ export default function CampaignsPage() {
             !removedAudienceAccountIdSet.has(accountId),
         );
 
-    if (preferSavedAudienceSelection && savedCampaignAccountIds.length > 0) {
-      return Array.from(new Set(normalizeIds(savedCampaignAccountIds)));
+    const baseIds =
+      preferSavedAudienceSelection && savedCampaignAccountIds.length > 0
+        ? savedCampaignAccountIds
+        : selectedAudienceAccountIds;
+
+    const ids = new Set(normalizeIds(baseIds));
+
+    if (!hasPersistedAudience) {
+      filteredAudienceAccountsByClassification.forEach((item) => {
+        const accountId = Number(item?.account_id || 0);
+        if (
+          Number.isInteger(accountId) &&
+          accountId > 0 &&
+          !removedAudienceAccountIdSet.has(accountId)
+        ) {
+          ids.add(accountId);
+        }
+      });
     }
-
-    const ids = new Set(normalizeIds(selectedAudienceAccountIds));
-
-    filteredAudienceAccountsByClassification.forEach((item) => {
-      const accountId = Number(item?.account_id || 0);
-      if (
-        Number.isInteger(accountId) &&
-        accountId > 0 &&
-        !removedAudienceAccountIdSet.has(accountId)
-      ) {
-        ids.add(accountId);
-      }
-    });
 
     manuallyAddedAudienceAccountIds.forEach((accountId) => {
       const normalized = Number(accountId || 0);
@@ -2557,6 +2564,7 @@ export default function CampaignsPage() {
 
     return Array.from(ids.values());
   }, [
+    selectedCampaignId,
     preferSavedAudienceSelection,
     selectedAudienceAccountIds,
     savedCampaignAccountIds,
@@ -3074,6 +3082,7 @@ export default function CampaignsPage() {
   }, [selectedCampaignId]);
 
   useEffect(() => {
+    const hasPersistedAudience = savedCampaignAccountIds.length > 0;
     const removedSet = new Set(
       removedAudienceAccountIds
         .map((accountId) => Number(accountId || 0))
@@ -3083,6 +3092,20 @@ export default function CampaignsPage() {
     if (preferSavedAudienceSelection && savedCampaignAccountIds.length > 0) {
       setSelectedAudienceAccountIds(
         savedCampaignAccountIds.filter((accountId) => !removedSet.has(accountId)),
+      );
+      return;
+    }
+
+    if (hasPersistedAudience) {
+      setSelectedAudienceAccountIds((previous) =>
+        previous
+          .map((accountId) => Number(accountId || 0))
+          .filter(
+            (accountId) =>
+              Number.isInteger(accountId) &&
+              accountId > 0 &&
+              !removedSet.has(accountId),
+          ),
       );
       return;
     }

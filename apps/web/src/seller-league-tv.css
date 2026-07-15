@@ -993,6 +993,68 @@
   color: #475569;
 }
 
+.seller-league-required-quarter-note {
+  display: block;
+  text-align: center;
+  font-size: clamp(0.56rem, 0.62vw + 0.24rem, 0.82rem);
+  line-height: 1.2;
+  color: #334155;
+  font-weight: 600;
+}
+
+.seller-league-metric-card--leads-weekly {
+  position: relative;
+  padding-bottom: clamp(0.5rem, 0.7vw, 0.72rem);
+}
+
+.seller-league-metric-card--opps-weekly {
+  position: relative;
+  padding-bottom: clamp(0.5rem, 0.7vw, 0.72rem);
+}
+
+.seller-league-metric-card--leads-weekly .seller-league-gauge-wrap {
+  padding-bottom: 0.08rem;
+}
+
+.seller-league-metric-card--opps-weekly .seller-league-gauge-wrap {
+  padding-bottom: 0.08rem;
+}
+
+.seller-league-metric-card--leads-weekly .seller-league-required-quarter-note {
+  position: absolute;
+  left: 0.24rem;
+  right: 0.24rem;
+  bottom: 0.18rem;
+  font-size: clamp(0.46rem, 0.42vw + 0.2rem, 0.64rem);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.92;
+}
+
+.seller-league-metric-card--opps-weekly .seller-league-required-quarter-note {
+  position: absolute;
+  left: 0.24rem;
+  right: 0.24rem;
+  bottom: 0.18rem;
+  font-size: clamp(0.46rem, 0.42vw + 0.2rem, 0.64rem);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.92;
+}
+
+.seller-detail-required-quarter-note {
+  display: block;
+  text-align: center;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  color: #475569;
+  font-weight: 600;
+}
+
 .seller-league-gauge-wrap {
   width: 100%;
   display: grid;

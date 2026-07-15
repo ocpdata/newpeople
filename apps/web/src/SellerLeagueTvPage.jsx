@@ -1013,6 +1013,9 @@ function SellerDetailPage({ seller, onNavigate, quarterContext }) {
                   target={Math.round((seller.leadTargetCount || 0) / 13)}
                 />
               </div>
+              <span className="seller-detail-required-quarter-note">
+                Requeridos trimestre: {Number(seller.leadTargetCount || 0)} leads
+              </span>
               <LeadsAssignedWeeklyChart
                 variantClassName="seller-detail-line-chart-wrap--opportunities"
                 yAxisLabel="Leads"
@@ -1242,36 +1245,19 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
 
   // Initialize from URL parameters
   useEffect(() => {
-    const { page, debug } = getUrlParams();
-    setCurrentPage(showPageControls ? page : 1);
+    const { debug } = getUrlParams();
+    // TV view stays pinned to summary page only.
+    setCurrentPage(1);
     setIsDebugMode(debug);
   }, [showPageControls]);
 
   // Auto-rotation timer
   useEffect(() => {
+    // Summary-only TV mode: no page rotation to seller detail screens.
     if (!showPageControls || isDebugMode || !payload?.leaderboard?.length) {
       return;
     }
-
-    const maxPage = Math.max(1, (payload?.leaderboard?.length || 1) + 1);
-    const configuredMinutes = Number(payload?.screenDisplayMinutes || 1);
-    const rotationMinutes = Number.isInteger(configuredMinutes)
-      ? Math.max(1, Math.min(configuredMinutes, 60))
-      : 1;
-    const rotationId = window.setInterval(
-      () => {
-        setCurrentPage((prev) => {
-          const next = prev >= maxPage ? 1 : prev + 1;
-          window.history.replaceState(null, "", `?page=${next}`);
-          return next;
-        });
-      },
-      rotationMinutes * 60 * 1000,
-    );
-
-    return () => {
-      window.clearInterval(rotationId);
-    };
+    return;
   }, [
     showPageControls,
     isDebugMode,
@@ -1280,16 +1266,13 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
   ]);
 
   function handleNavigate(direction) {
+    void direction;
     if (!showPageControls) {
       return;
     }
 
-    const maxPage = Math.max(1, (leaderboard?.length || 1) + 1);
-    let nextPage = currentPage + direction;
-    if (nextPage < 1) nextPage = maxPage;
-    if (nextPage > maxPage) nextPage = 1;
-    setCurrentPage(nextPage);
-    window.history.replaceState(null, "", `?page=${nextPage}&debug=true`);
+    setCurrentPage(1);
+    window.history.replaceState(null, "", "?page=1&debug=true");
   }
 
   const leaderboard = Array.isArray(payload?.leaderboard)
@@ -1299,10 +1282,8 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
   const gridColumns = Math.max(1, Math.ceil(Math.sqrt(sellerCount)));
   const gridRows = Math.max(1, Math.ceil(sellerCount / gridColumns));
 
-  const activePage = showPageControls ? currentPage : 1;
-  const maxPage = Math.max(1, (leaderboard?.length || 0) + 1);
-  const sellerIndex = activePage > 1 ? activePage - 2 : -1;
-  const currentSeller = sellerIndex >= 0 ? leaderboard[sellerIndex] : null;
+  const activePage = 1;
+  const maxPage = 1;
   const sellerRequiredFunnelAmountUsd = (row) =>
     calculateRequiredFunnelAmountUsd(
       row?.gapAmountUsd,
@@ -1331,31 +1312,28 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
         </div>
       ) : null}
 
-      {activePage === 1 ? (
-        <section
-          className="seller-league-page seller-league-page--fullscreen"
-          style={{
-            "--seller-count": sellerCount,
-            "--seller-columns": gridColumns,
-            "--seller-rows": gridRows,
-          }}
-        >
-          {error ? <p className="form-error">{error}</p> : null}
+      <section
+        className="seller-league-page seller-league-page--fullscreen"
+        style={{
+          "--seller-count": sellerCount,
+          "--seller-columns": gridColumns,
+          "--seller-rows": gridRows,
+        }}
+      >
+        {error ? <p className="form-error">{error}</p> : null}
 
-          {loading ? (
-            <div className="seller-league-empty">
-              Cargando ritmo comercial...
-            </div>
-          ) : null}
+        {loading ? (
+          <div className="seller-league-empty">Cargando ritmo comercial...</div>
+        ) : null}
 
-          {!loading && !leaderboard.length ? (
-            <div className="seller-league-empty">
-              No hay vendedores disponibles para mostrar.
-            </div>
-          ) : null}
+        {!loading && !leaderboard.length ? (
+          <div className="seller-league-empty">
+            No hay vendedores disponibles para mostrar.
+          </div>
+        ) : null}
 
-          {!loading
-            ? leaderboard.map((row) => {
+        {!loading
+          ? leaderboard.map((row) => {
                 const nextQuarterReadiness = buildNextQuarterReadinessIndicator(
                   row,
                   payload?.quarterContext,
@@ -1392,34 +1370,50 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
                           </div>
 
                           <div className="seller-league-metrics-grid seller-league-metrics-grid--pipeline">
-                            <article className="seller-league-metric-card seller-league-metric-card--wide">
+                            <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--leads-weekly">
                               <div className="seller-league-metric-card-head">
                                 <span className="seller-league-metric-card-title">
-                                  Leads
+                                  Leads/Semana
                                 </span>
                               </div>
 
                               <div className="seller-league-gauge-wrap">
                                 <LeadGauge
-                                  actual={row.leadActualCount}
-                                  target={row.leadTargetCount}
+                                  actual={getCurrentWeekCount(
+                                    row.leadsPerWeekWeeklyCounts,
+                                  )}
+                                  target={Math.round(
+                                    Number(row.leadTargetCount || 0) / 13,
+                                  )}
                                 />
                               </div>
+                              <span className="seller-league-required-quarter-note">
+                                Req. trim: {Number(row.leadTargetCount || 0)} leads
+                              </span>
                             </article>
 
-                            <article className="seller-league-metric-card seller-league-metric-card--wide">
+                            <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--opps-weekly">
                               <div className="seller-league-metric-card-head">
                                 <span className="seller-league-metric-card-title">
-                                  Oportunidades
+                                  Ops/Semana
                                 </span>
                               </div>
 
                               <div className="seller-league-gauge-wrap">
                                 <LeadGauge
-                                  actual={row.opportunityCreatedActualCount}
-                                  target={row.opportunityCreatedTargetCount}
+                                  actual={getCurrentWeekCount(
+                                    row.opportunitiesPerWeekWeeklyCounts,
+                                  )}
+                                  target={Math.ceil(
+                                    Number(
+                                      row.opportunityCreatedTargetCount || 0,
+                                    ) / 13,
+                                  )}
                                 />
                               </div>
+                              <span className="seller-league-required-quarter-note">
+                                Req. trim: {Math.ceil(Number(row.opportunityCreatedTargetCount || 0))} opps
+                              </span>
                             </article>
 
                             <article className="seller-league-metric-card seller-league-metric-card--wide">
@@ -1549,15 +1543,8 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
                   </section>
                 );
               })
-            : null}
-        </section>
-      ) : (
-        <SellerDetailPage
-          seller={currentSeller}
-          onNavigate={handleNavigate}
-          quarterContext={payload?.quarterContext}
-        />
-      )}
+          : null}
+      </section>
     </>
   );
 }
