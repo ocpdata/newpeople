@@ -10,6 +10,8 @@ function getUrlParams() {
   };
 }
 
+const SELLERS_PER_PAGE = 4;
+
 const leadCountFormatter = new Intl.NumberFormat("es-MX", {
   maximumFractionDigits: 0,
 });
@@ -1233,6 +1235,9 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
   }, []);
 
   useEffect(() => {
+    if (showPageControls) {
+      return;
+    }
     const configuredMinutes = Number(payload?.screenDisplayMinutes || 1);
     const refreshMinutes = Number.isInteger(configuredMinutes)
       ? Math.max(1, Math.min(configuredMinutes, 60))
@@ -1245,49 +1250,96 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
     return () => {
       window.clearInterval(refreshId);
     };
-  }, [payload?.screenDisplayMinutes]);
+  }, [payload?.screenDisplayMinutes, showPageControls]);
 
   // Initialize from URL parameters
   useEffect(() => {
-    const { debug } = getUrlParams();
-    // TV view stays pinned to summary page only.
-    setCurrentPage(1);
+    const { page, debug } = getUrlParams();
+    setCurrentPage(showPageControls ? page : 1);
     setIsDebugMode(debug);
   }, [showPageControls]);
 
   // Auto-rotation timer
   useEffect(() => {
-    // Summary-only TV mode: no page rotation to seller detail screens.
-    if (!showPageControls || isDebugMode || !payload?.leaderboard?.length) {
+    if (showPageControls || isDebugMode) {
       return;
     }
-    return;
+    const sellerCount = Array.isArray(payload?.leaderboard)
+      ? payload.leaderboard.length
+      : 0;
+    const maxPage = Math.max(1, Math.ceil(sellerCount / SELLERS_PER_PAGE));
+    if (maxPage <= 1) {
+      return;
+    }
+
+    const configuredMinutes = Number(payload?.screenRotationMinutes || 1);
+    const rotationMinutes = Number.isInteger(configuredMinutes)
+      ? Math.max(1, Math.min(configuredMinutes, 60))
+      : 1;
+
+    const rotationId = window.setInterval(() => {
+      setCurrentPage((previous) => (previous >= maxPage ? 1 : previous + 1));
+    }, rotationMinutes * 60 * 1000);
+
+    return () => {
+      window.clearInterval(rotationId);
+    };
   }, [
     showPageControls,
     isDebugMode,
     payload?.leaderboard?.length,
-    payload?.screenDisplayMinutes,
+    payload?.screenRotationMinutes,
   ]);
-
-  function handleNavigate(direction) {
-    void direction;
-    if (!showPageControls) {
-      return;
-    }
-
-    setCurrentPage(1);
-    window.history.replaceState(null, "", "?page=1&debug=true");
-  }
 
   const leaderboard = Array.isArray(payload?.leaderboard)
     ? payload.leaderboard
     : [];
-  const sellerCount = Math.max(leaderboard.length, 1);
+  const maxPage = Math.max(1, Math.ceil(leaderboard.length / SELLERS_PER_PAGE));
+
+  useEffect(() => {
+    setCurrentPage((previous) => {
+      if (previous < 1) {
+        return 1;
+      }
+      if (previous > maxPage) {
+        return maxPage;
+      }
+      return previous;
+    });
+  }, [maxPage]);
+
+  function handleNavigate(direction) {
+    if (!showPageControls) {
+      return;
+    }
+
+    setCurrentPage((previous) => {
+      const nextPage =
+        direction < 0
+          ? previous <= 1
+            ? maxPage
+            : previous - 1
+          : previous >= maxPage
+            ? 1
+            : previous + 1;
+      window.history.replaceState(
+        null,
+        "",
+        `?page=${nextPage}&debug=true`,
+      );
+      return nextPage;
+    });
+  }
+
+  const activePage = Math.max(1, Math.min(currentPage, maxPage));
+  const pageStart = (activePage - 1) * SELLERS_PER_PAGE;
+  const pagedLeaderboard = leaderboard.slice(
+    pageStart,
+    pageStart + SELLERS_PER_PAGE,
+  );
+  const sellerCount = Math.max(pagedLeaderboard.length, 1);
   const gridColumns = Math.max(1, Math.ceil(Math.sqrt(sellerCount)));
   const gridRows = Math.max(1, Math.ceil(sellerCount / gridColumns));
-
-  const activePage = 1;
-  const maxPage = 1;
   const sellerRequiredFunnelAmountUsd = (row) =>
     calculateRequiredFunnelAmountUsd(
       row?.gapAmountUsd,
@@ -1305,7 +1357,7 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
             ← Anterior
           </button>
           <div className="seller-league-debug-info">
-            Página {currentPage}/{maxPage}
+            Página {activePage}/{maxPage}
           </div>
           <button
             className="seller-league-debug-btn"
@@ -1337,7 +1389,7 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
         ) : null}
 
         {!loading
-          ? leaderboard.map((row) => {
+          ? pagedLeaderboard.map((row) => {
                 const nextQuarterReadiness = buildNextQuarterReadinessIndicator(
                   row,
                   payload?.quarterContext,

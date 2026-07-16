@@ -4949,6 +4949,9 @@ router.get(
       screenDisplayMinutes: Number(
         commercialSettings?.sellerLeagueScreenDisplayMinutes || 1,
       ),
+      screenRotationMinutes: Number(
+        commercialSettings?.sellerLeagueScreenRotationMinutes || 1,
+      ),
       period: {
         year: quarterSelection.year,
         quarter: quarterSelection.quarter,

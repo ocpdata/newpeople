@@ -148,6 +148,7 @@ const EMPTY_CAMPAIGN_MATRIX_ROW = {
 const EMPTY_COMMERCIAL_SETTINGS = {
   businessTimezone: "America/Mexico_City",
   sellerLeagueScreenDisplayMinutes: 1,
+  sellerLeagueScreenRotationMinutes: 1,
   stageSlaMap: { ...DEFAULT_STAGE_SLA_MAP },
   stageWeightMap: { ...DEFAULT_STAGE_WEIGHT_MAP },
   leadExecutionGuides: { ...DEFAULT_LEAD_EXECUTION_GUIDES },
@@ -776,6 +777,13 @@ function normalizeCommercialSettings(settings) {
       }
       return parsed;
     })(),
+    sellerLeagueScreenRotationMinutes: (() => {
+      const parsed = Number(settings.sellerLeagueScreenRotationMinutes);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 60) {
+        return EMPTY_COMMERCIAL_SETTINGS.sellerLeagueScreenRotationMinutes;
+      }
+      return parsed;
+    })(),
     stageSlaMap,
     stageWeightMap,
     leadExecutionGuides,
@@ -790,6 +798,9 @@ function serializeCommercialSettings(settings) {
     businessTimezone: String(settings?.businessTimezone || "").trim(),
     sellerLeagueScreenDisplayMinutes: Number(
       settings?.sellerLeagueScreenDisplayMinutes || 1,
+    ),
+    sellerLeagueScreenRotationMinutes: Number(
+      settings?.sellerLeagueScreenRotationMinutes || 1,
     ),
     stageSlaMap: settings?.stageSlaMap || {},
     stageWeightMap: settings?.stageWeightMap || {},
@@ -1507,6 +1518,17 @@ export function useConfigurationPage() {
     }));
   }
 
+  function updateCommercialScreenRotationMinutes(value) {
+    const parsed = Number(value);
+    const safeValue = Number.isInteger(parsed)
+      ? Math.max(1, Math.min(parsed, 60))
+      : 1;
+    setCommercialSettings((current) => ({
+      ...current,
+      sellerLeagueScreenRotationMinutes: safeValue,
+    }));
+  }
+
   function updateCommercialWeightSetting(stageCode, percent) {
     const normalizedPercent = Number(percent);
     const safePercent = Number.isFinite(normalizedPercent)
@@ -1588,6 +1610,9 @@ export function useConfigurationPage() {
             EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
           sellerLeagueScreenDisplayMinutes: Number(
             commercialSettings.sellerLeagueScreenDisplayMinutes || 1,
+          ),
+          sellerLeagueScreenRotationMinutes: Number(
+            commercialSettings.sellerLeagueScreenRotationMinutes || 1,
           ),
           stageSlaMap: commercialSettings.stageSlaMap,
           stageWeightMap: commercialSettings.stageWeightMap,
@@ -2893,6 +2918,7 @@ export function useConfigurationPage() {
     updateCommercialSetting,
     updateCommercialBusinessTimezone,
     updateCommercialScreenDisplayMinutes,
+    updateCommercialScreenRotationMinutes,
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
     updateCampaignMatrixRow,

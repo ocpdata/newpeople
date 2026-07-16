@@ -1429,6 +1429,12 @@ const commercialSettingsSchema = z.object({
     .min(1)
     .max(60)
     .optional(),
+  sellerLeagueScreenRotationMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(60)
+    .optional(),
   stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)),
   stageWeightMap: z.record(z.string(), z.number().min(0).max(1)).optional(),
   leadExecutionGuides: z

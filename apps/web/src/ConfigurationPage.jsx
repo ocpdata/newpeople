@@ -1521,6 +1521,7 @@ function CommercialSettingsCard({
   onChange,
   onTimezoneChange,
   onScreenDisplayMinutesChange,
+  onScreenRotationMinutesChange,
   onWeightChange,
   onGuideChange,
   onMatrixRowChange,
@@ -1591,6 +1592,23 @@ function CommercialSettingsCard({
           />
           <p className="field-hint">
             Define cada cuántos minutos se recargan automáticamente los datos en la pantalla de Liga TV.
+          </p>
+        </div>
+
+        <div className="field-group">
+          <label>Minutos por pantalla (Rotación Liga TV)</label>
+          <input
+            type="number"
+            min="1"
+            max="60"
+            step="1"
+            value={settings.sellerLeagueScreenRotationMinutes ?? 1}
+            onChange={(event) =>
+              onScreenRotationMinutesChange(Number(event.target.value || 1))
+            }
+          />
+          <p className="field-hint">
+            Define cuántos minutos permanece visible cada pantalla antes de pasar a la siguiente en la Liga TV.
           </p>
         </div>
 
@@ -4466,6 +4484,7 @@ export default function ConfigurationPage() {
     updateCommercialSetting,
     updateCommercialBusinessTimezone,
     updateCommercialScreenDisplayMinutes,
+    updateCommercialScreenRotationMinutes,
     updateCommercialWeightSetting,
     updateCommercialGuideSetting,
     updateCampaignMatrixRow,
@@ -5196,6 +5215,9 @@ export default function ConfigurationPage() {
                 onTimezoneChange={updateCommercialBusinessTimezone}
                 onScreenDisplayMinutesChange={
                   updateCommercialScreenDisplayMinutes
+                }
+                onScreenRotationMinutesChange={
+                  updateCommercialScreenRotationMinutes
                 }
                 onWeightChange={updateCommercialWeightSetting}
                 onGuideChange={updateCommercialGuideSetting}
