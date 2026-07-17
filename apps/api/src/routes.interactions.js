@@ -2077,7 +2077,7 @@ async function loadSellerUsers() {
          WHERE ur.user_id = u.id
            AND p.code = ?
        )
-     ORDER BY u.full_name`,
+     ORDER BY u.id`,
     [commercialSellerEligibilityPermission],
   );
 }

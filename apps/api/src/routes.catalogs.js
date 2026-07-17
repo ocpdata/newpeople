@@ -1467,7 +1467,7 @@ router.get(
                AND p.code = ?
          )
          ${restrictToCurrentSeller ? "AND u.id = ?" : ""}
-       ORDER BY u.full_name`,
+       ORDER BY u.id`,
       restrictToCurrentSeller
         ? [commercialSellerEligibilityPermission, Number(req.user.id)]
         : [commercialSellerEligibilityPermission],

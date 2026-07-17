@@ -775,7 +775,7 @@ async function listEligibleSellers() {
        AND r.is_active = 1
        AND p.code = ?
      GROUP BY u.id, u.full_name, u.email, u.status
-     ORDER BY u.full_name`,
+     ORDER BY u.id`,
     [commercialSellerEligibilityPermission],
   );
 
