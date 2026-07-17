@@ -1292,7 +1292,26 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
   ]);
 
   const leaderboard = Array.isArray(payload?.leaderboard)
-    ? payload.leaderboard
+    ? [...payload.leaderboard].sort((left, right) => {
+        const leftId = Number(left?.sellerUserId || 0);
+        const rightId = Number(right?.sellerUserId || 0);
+
+        if (leftId && rightId && leftId !== rightId) {
+          return leftId - rightId;
+        }
+        if (leftId && !rightId) {
+          return -1;
+        }
+        if (!leftId && rightId) {
+          return 1;
+        }
+
+        return String(left?.sellerUserName || "").localeCompare(
+          String(right?.sellerUserName || ""),
+          "es",
+          { sensitivity: "base" },
+        );
+      })
     : [];
   const maxPage = Math.max(1, Math.ceil(leaderboard.length / SELLERS_PER_PAGE));
 

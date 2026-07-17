@@ -296,6 +296,26 @@ function normalizeOptions(data) {
   return [];
 }
 
+function toSortableSellerId(seller) {
+  const candidate = Number(seller?.id ?? seller?.value ?? seller?.sellerUserId);
+  return Number.isFinite(candidate) ? candidate : Number.MAX_SAFE_INTEGER;
+}
+
+function sortSellersById(sellers) {
+  return [...(sellers || [])].sort((left, right) => {
+    const leftId = toSortableSellerId(left);
+    const rightId = toSortableSellerId(right);
+    if (leftId !== rightId) {
+      return leftId - rightId;
+    }
+    return String(left?.full_name || left?.fullName || left?.name || "").localeCompare(
+      String(right?.full_name || right?.fullName || right?.name || ""),
+      "es",
+      { sensitivity: "base" },
+    );
+  });
+}
+
 function compareForecastOpportunityValues(left, right, field) {
   if (
     field === "hasNextStep" ||
@@ -655,13 +675,32 @@ function QuarterlySellerFunnelStackChart({ quarters }) {
           .filter((seller) => Number(seller?.openAmountUsd || 0) > 0)
           .map((seller) => ({
             key: `${quarter.label}-${seller.sellerUserId || seller.sellerUserName}`,
+            sellerUserId: Number(seller.sellerUserId || 0) || null,
             sellerUserName: seller.sellerUserName || "Sin vendedor",
             openAmountUsd: Number(seller.openAmountUsd || 0),
             opportunityCount: Number(seller.opportunityCount || 0),
             funnelByStage: Array.isArray(seller.funnelByStage)
               ? seller.funnelByStage
               : [],
-          })),
+          }))
+          .sort((left, right) => {
+            const leftId = Number(left?.sellerUserId || 0);
+            const rightId = Number(right?.sellerUserId || 0);
+            if (leftId && rightId && leftId !== rightId) {
+              return leftId - rightId;
+            }
+            if (leftId && !rightId) {
+              return -1;
+            }
+            if (!leftId && rightId) {
+              return 1;
+            }
+            return String(left?.sellerUserName || "").localeCompare(
+              String(right?.sellerUserName || ""),
+              "es",
+              { sensitivity: "base" },
+            );
+          }),
         }))
         .filter((group) => group.sellers.length > 0),
     [quarters],
@@ -1039,7 +1078,7 @@ export default function CommercialTrackingPage() {
         api.get("/api/catalogs/opportunity-seller-users"),
         api.get("/api/catalogs/opportunity-business-lines"),
       ]);
-      setSellers(normalizeOptions(sellerResponse.data));
+      setSellers(sortSellersById(normalizeOptions(sellerResponse.data)));
       setBusinessLines(normalizeOptions(businessLineResponse.data));
     } catch {
       setSellers([]);
