@@ -51,6 +51,7 @@ import {
   exchangeGoogleRefreshToken,
   GOOGLE_GMAIL_SEND_SCOPE,
   hasGoogleMailSendScope,
+  sendCommercialActionEmail,
   sendGoogleMailMessage,
 } from "./utils.js";
 
@@ -258,6 +259,10 @@ const transitionSchema = z.object({
         .default([]),
     })
     .optional(),
+});
+
+const quotationSellerNotificationSchema = z.object({
+  note: z.string().trim().min(1).max(2000),
 });
 
 const quotationPdfRowSchema = z.object({
@@ -1270,6 +1275,58 @@ function buildQuotationVersionBaseSaleTotalJoin(versionAlias = "lv") {
                  )
                END
              ) AS base_cost_total
+             ,SUM(
+               CASE
+                 WHEN qsi.item_type = 'servicio_propio' THEN 0
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   (
+                     qsi.list_price_unit *
+                     (1 - (qsi.manufacturer_discount_pct / 100)) *
+                     (1 + (qsi.import_cost_pct / 100))
+                   ) /
+                   (1 - (qsi.profit_margin_pct / 100)) *
+                   (1 - (qsi.final_discount_pct / 100))
+                 )
+               END
+             ) AS product_sale_total,
+             SUM(
+               CASE
+                 WHEN qsi.item_type = 'servicio_propio' THEN 0
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   qsi.list_price_unit *
+                   (1 - (qsi.manufacturer_discount_pct / 100)) *
+                   (1 + (qsi.import_cost_pct / 100))
+                 )
+               END
+             ) AS product_cost_total,
+             SUM(
+               CASE
+                 WHEN qsi.item_type <> 'servicio_propio' THEN 0
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   (
+                     qsi.list_price_unit *
+                     (1 - (qsi.manufacturer_discount_pct / 100)) *
+                     (1 + (qsi.import_cost_pct / 100))
+                   ) /
+                   (1 - (qsi.profit_margin_pct / 100)) *
+                   (1 - (qsi.final_discount_pct / 100))
+                 )
+               END
+             ) AS service_sale_total,
+             SUM(
+               CASE
+                 WHEN qsi.item_type <> 'servicio_propio' THEN 0
+                 WHEN qsi.profit_margin_pct >= 100 THEN 0
+                 ELSE qsi.quantity * (
+                   qsi.list_price_unit *
+                   (1 - (qsi.manufacturer_discount_pct / 100)) *
+                   (1 + (qsi.import_cost_pct / 100))
+                 )
+               END
+             ) AS service_cost_total
       FROM quotation_sections qs
       INNER JOIN quotation_section_items qsi ON qsi.quotation_section_id = qs.id
       LEFT JOIN quotation_section_items child
@@ -1340,6 +1397,39 @@ function buildQuotationVersionContributionSql({
     END`;
 }
 
+function buildQuotationVersionComponentContributionSql({
+  componentSaleSql,
+  componentCostSql,
+  versionAlias = "lv",
+  totalsAlias = "latest_total",
+} = {}) {
+  const baseSaleSql = `COALESCE(${totalsAlias}.base_sale_total, 0)`;
+  const componentSale = `COALESCE(${componentSaleSql}, 0)`;
+  const componentCost = `COALESCE(${componentCostSql}, 0)`;
+  const adjustedComponentSaleSql = `CASE
+      WHEN ${baseSaleSql} <= 0 THEN 0
+      WHEN ${versionAlias}.summary_distribution_mode = 'per_item'
+        THEN ${componentSale}
+      WHEN ${versionAlias}.summary_discount_mode = 'amount'
+        THEN GREATEST(
+          ${componentSale} - (
+            LEAST(COALESCE(${versionAlias}.summary_discount_value, 0), ${baseSaleSql}) *
+            (${componentSale} / NULLIF(${baseSaleSql}, 0))
+          ),
+          0
+        )
+      WHEN ${versionAlias}.summary_discount_mode = 'percentage'
+        THEN ${componentSale} *
+          (1 - (LEAST(GREATEST(COALESCE(${versionAlias}.summary_discount_value, 0), 0), 100) / 100))
+      ELSE ${componentSale}
+    END`;
+
+  return `CASE
+      WHEN ${versionAlias}.id IS NULL THEN NULL
+      ELSE ${adjustedComponentSaleSql} - ${componentCost}
+    END`;
+}
+
 let ensureQuotationSectionItemsSchemaPromise;
 let ensureQuotationVersionsSchemaPromise;
 let ensureQuotationStatusesSchemaPromise;
@@ -1347,11 +1437,41 @@ let ensureQuotationVersionDocumentsSchemaPromise;
 let ensureQuotationDocumentImportsSchemaPromise;
 let ensureQuotationProviderDocumentImportPreviewJobSchemaPromise;
 let ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise;
+let ensureQuotationAcceptanceNotificationsPromise;
 let ensureProposalSchemaPromise;
 let quotationProviderDocumentImportPreviewWorkerQueued = false;
 let quotationProviderDocumentImportPreviewWorkerStarted = false;
 let quotationCreateProviderDocumentImportPreviewWorkerQueued = false;
 const tableColumnPresenceCache = new Map();
+
+async function ensureQuotationAcceptanceNotificationsTable() {
+  if (!ensureQuotationAcceptanceNotificationsPromise) {
+    ensureQuotationAcceptanceNotificationsPromise = query(`
+      CREATE TABLE IF NOT EXISTS quotation_acceptance_notifications (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        quotation_id BIGINT UNSIGNED NOT NULL,
+        status_code VARCHAR(40) NOT NULL DEFAULT 'pendiente',
+        note TEXT NOT NULL,
+        sent_to_email VARCHAR(190) NOT NULL,
+        sent_to_name VARCHAR(190) NULL,
+        sent_by_user_id BIGINT UNSIGNED NULL,
+        sent_at DATETIME NOT NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_quotation_acceptance_notifications_quotation (quotation_id),
+        KEY idx_quotation_acceptance_notifications_status (status_code),
+        CONSTRAINT fk_quotation_acceptance_notifications_quotation
+          FOREIGN KEY (quotation_id) REFERENCES quotations(id)
+          ON DELETE CASCADE,
+        CONSTRAINT fk_quotation_acceptance_notifications_user
+          FOREIGN KEY (sent_by_user_id) REFERENCES users(id)
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+  }
+  await ensureQuotationAcceptanceNotificationsPromise;
+}
 
 const defaultProposalTemplateSeedRows = [
   {
@@ -10852,12 +10972,20 @@ router.get(
   requireAnyPermission(quotationPermissionCodes),
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
+    await ensureQuotationAcceptanceNotificationsTable();
 
     const params = [];
     const accountId = req.query.accountId ? Number(req.query.accountId) : null;
     const opportunityId = req.query.opportunityId
       ? Number(req.query.opportunityId)
       : null;
+    const latestStatusCodesFilter = String(req.query.latestStatusCodes || "")
+      .split(",")
+      .map((code) => code.trim().toLowerCase())
+      .filter(Boolean);
+    if (latestStatusCodesFilter.some((code) => !/^[a-z0-9_]+$/.test(code))) {
+      return res.status(400).json({ message: "latestStatusCodes invalido" });
+    }
 
     const ownershipJoin = applyOwnedAccountScope({
       user: req.user,
@@ -10865,13 +10993,19 @@ router.get(
       params,
     });
 
-    let whereClause = "";
+    const whereClauses = [];
     if (opportunityId && opportunityId > 0) {
-      whereClause = "WHERE q.opportunity_id = ?";
+      whereClauses.push("q.opportunity_id = ?");
       params.push(opportunityId);
     } else if (accountId && accountId > 0) {
-      whereClause = "WHERE a.id = ?";
+      whereClauses.push("a.id = ?");
       params.push(accountId);
+    }
+    if (latestStatusCodesFilter.length) {
+      whereClauses.push(
+        `qs.code IN (${latestStatusCodesFilter.map(() => "?").join(", ")})`,
+      );
+      params.push(...latestStatusCodesFilter);
     }
 
     const rows = await query(
@@ -10897,8 +11031,22 @@ router.get(
               qs.ui_key AS latest_status_ui_key,
               lv.proposal_name AS latest_proposal_name,
           lv.quotation_date AS latest_quotation_date,
+              qan.status_code AS acceptance_notification_status_code,
+              qan.sent_at AS acceptance_notification_sent_at,
           ${buildQuotationVersionEffectiveTotalSql()} AS latest_total_sale_amount,
-          ${buildQuotationVersionContributionSql()} AS latest_contribution_amount
+          ${buildQuotationVersionContributionSql()} AS latest_contribution_amount,
+          COALESCE(latest_total.product_sale_total, 0) AS latest_product_sale_amount,
+          COALESCE(latest_total.product_cost_total, 0) AS latest_product_cost_amount,
+          ${buildQuotationVersionComponentContributionSql({
+            componentSaleSql: "latest_total.product_sale_total",
+            componentCostSql: "latest_total.product_cost_total",
+          })} AS latest_product_contribution_amount,
+          COALESCE(latest_total.service_sale_total, 0) AS latest_service_sale_amount,
+          COALESCE(latest_total.service_cost_total, 0) AS latest_service_cost_amount,
+          ${buildQuotationVersionComponentContributionSql({
+            componentSaleSql: "latest_total.service_sale_total",
+            componentCostSql: "latest_total.service_cost_total",
+          })} AS latest_service_contribution_amount
        FROM quotations q
        INNER JOIN opportunities o ON o.id = q.opportunity_id
       INNER JOIN accounts a ON a.id = o.account_id
@@ -10909,7 +11057,8 @@ router.get(
        LEFT JOIN quotation_versions lv ON lv.id = q.latest_version_id
         ${buildQuotationVersionBaseSaleTotalJoin()}
        LEFT JOIN quotation_statuses qs ON qs.id = lv.status_id
-       ${whereClause}
+      LEFT JOIN quotation_acceptance_notifications qan ON qan.quotation_id = q.id
+      ${whereClauses.length ? `WHERE ${whereClauses.join(" AND ")}` : ""}
        ORDER BY q.id DESC`,
       params,
     );
@@ -10944,6 +11093,10 @@ router.get(
         latestStatusUiKey: row.latest_status_ui_key || null,
         latestProposalName: row.latest_proposal_name || null,
         latestQuotationDate: row.latest_quotation_date || null,
+        acceptanceNotificationStatusCode:
+          row.acceptance_notification_status_code || null,
+        acceptanceNotificationSentAt:
+          row.acceptance_notification_sent_at || null,
         latestTotalSaleAmount:
           row.latest_total_sale_amount === null ||
           row.latest_total_sale_amount === undefined
@@ -10954,6 +11107,36 @@ router.get(
           row.latest_contribution_amount === undefined
             ? null
             : Number(row.latest_contribution_amount),
+        latestProductSaleAmount:
+          row.latest_product_sale_amount === null ||
+          row.latest_product_sale_amount === undefined
+            ? null
+            : Number(row.latest_product_sale_amount),
+        latestProductCostAmount:
+          row.latest_product_cost_amount === null ||
+          row.latest_product_cost_amount === undefined
+            ? null
+            : Number(row.latest_product_cost_amount),
+        latestProductContributionAmount:
+          row.latest_product_contribution_amount === null ||
+          row.latest_product_contribution_amount === undefined
+            ? null
+            : Number(row.latest_product_contribution_amount),
+        latestServiceSaleAmount:
+          row.latest_service_sale_amount === null ||
+          row.latest_service_sale_amount === undefined
+            ? null
+            : Number(row.latest_service_sale_amount),
+        latestServiceCostAmount:
+          row.latest_service_cost_amount === null ||
+          row.latest_service_cost_amount === undefined
+            ? null
+            : Number(row.latest_service_cost_amount),
+        latestServiceContributionAmount:
+          row.latest_service_contribution_amount === null ||
+          row.latest_service_contribution_amount === undefined
+            ? null
+            : Number(row.latest_service_contribution_amount),
         activationStatusId: Number(row.activation_status_id),
         activationStatusCode: row.activation_status_code,
         activationStatusName: row.activation_status_name,
@@ -10961,6 +11144,158 @@ router.get(
         updatedAt: row.updated_at,
       })),
     );
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/seller-notification",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    await ensureQuotationAcceptanceNotificationsTable();
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const parsed = quotationSellerNotificationSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos de notificacion invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const accessibleQuotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!accessibleQuotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const rows = await query(
+      `SELECT q.id, q.latest_version_id,
+              qv.version_number, qv.proposal_name, qv.currency_code,
+              a.name AS account_name,
+              o.name AS opportunity_name,
+              su.full_name AS seller_user_name,
+              su.email AS seller_user_email,
+              qs.name AS status_name,
+              ${buildQuotationVersionEffectiveTotalSql({
+                versionAlias: "qv",
+                totalsAlias: "notification_total",
+              })} AS total_sale_amount
+       FROM quotations q
+       INNER JOIN opportunities o ON o.id = q.opportunity_id
+       INNER JOIN accounts a ON a.id = o.account_id
+       LEFT JOIN users su ON su.id = o.seller_user_id
+       LEFT JOIN quotation_versions qv ON qv.id = q.latest_version_id
+       ${buildQuotationVersionBaseSaleTotalJoin("qv").replaceAll("latest_total", "notification_total")}
+       LEFT JOIN quotation_statuses qs ON qs.id = qv.status_id
+       WHERE q.id = ?
+       LIMIT 1`,
+      [quotationId],
+    );
+    const quotation = rows[0] || null;
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const sellerEmail = String(quotation.seller_user_email || "").trim();
+    if (!sellerEmail) {
+      return res.status(409).json({
+        message: "La cotizacion no tiene correo de vendedor asignado",
+      });
+    }
+
+    const quotationUrl = config.app.baseUrl
+      ? `${String(config.app.baseUrl).replace(/\/$/, "")}/quotations?quotationId=${quotationId}`
+      : "";
+    const currencyCode = quotation.currency_code || "USD";
+    const totalAmount = Number(quotation.total_sale_amount || 0).toLocaleString(
+      "en-US",
+      { style: "currency", currency: currencyCode },
+    );
+    const note = parsed.data.note;
+    const subject = `Pedido pendiente - Cotizacion #${quotationId}`;
+    const metadataLines = [
+      `Cotizacion: #${quotationId} v${quotation.version_number || "-"}`,
+      `Cuenta: ${quotation.account_name || "-"}`,
+      `Oportunidad: ${quotation.opportunity_name || "-"}`,
+      `Propuesta: ${quotation.proposal_name || "-"}`,
+      `Estado: ${quotation.status_name || "-"}`,
+      `Importe: ${totalAmount}`,
+      quotationUrl ? `Abrir cotizacion: ${quotationUrl}` : "",
+    ];
+
+    const result = await sendCommercialActionEmail({
+      to: sellerEmail,
+      replyTo: req.user?.email || "",
+      subject,
+      messageBody: [
+        `Hola ${quotation.seller_user_name || ""}`.trim() + ",",
+        "",
+        "Se requiere tu atencion para una cotizacion pendiente en Aceptar Pedido.",
+        "",
+        "Nota:",
+        note,
+      ].join("\n"),
+      metadataLines,
+    });
+
+    if (!result.sent) {
+      return res.status(502).json({
+        message: result.detail || "No fue posible enviar la notificacion",
+        reason: result.reason || "send_failed",
+      });
+    }
+
+    const now = new Date();
+    await query(
+      `INSERT INTO quotation_acceptance_notifications
+        (quotation_id, status_code, note, sent_to_email, sent_to_name, sent_by_user_id, sent_at, created_at, updated_at)
+       VALUES (?, 'pendiente', ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        status_code = VALUES(status_code),
+        note = VALUES(note),
+        sent_to_email = VALUES(sent_to_email),
+        sent_to_name = VALUES(sent_to_name),
+        sent_by_user_id = VALUES(sent_by_user_id),
+        sent_at = VALUES(sent_at),
+        updated_at = VALUES(updated_at)`,
+      [
+        quotationId,
+        note,
+        sellerEmail,
+        quotation.seller_user_name || null,
+        req.user?.id ? Number(req.user.id) : null,
+        now,
+        now,
+        now,
+      ],
+    );
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "seller_acceptance_notification_sent",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Notificacion de aceptacion enviada al vendedor",
+      after: {
+        seller_email: sellerEmail,
+        status_code: "pendiente",
+      },
+    });
+
+    return res.json({
+      message: "Notificacion enviada",
+      statusCode: "pendiente",
+      sentAt: now,
+      sellerEmail,
+    });
   },
 );
 

@@ -51,6 +51,7 @@ const ProposalPrintPage = lazy(() => import("./ProposalPrintPage"));
 const LandingModulePage = lazy(() => import("./LandingModulePage"));
 const CampaignsPage = lazy(() => import("./CampaignsPage"));
 const CampaignEmailModulePage = lazy(() => import("./CampaignEmailModulePage"));
+const AcceptOrderPage = lazy(() => import("./AcceptOrderPage"));
 
 function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
   return (
@@ -172,6 +173,7 @@ export default function AppShell({
     "cotizaciones.administracion",
     "cotizaciones.externo",
   ].some(can);
+  const canAccessAcceptOrder = can("cotizaciones.administracion");
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
   const canReadAccounts = can("cuentas.read") || can("cuentas.read_all");
@@ -497,6 +499,12 @@ export default function AppShell({
           }
         />
         <Route
+          path="/accept-order"
+          element={
+            canAccessAcceptOrder ? <AcceptOrderPage /> : <Navigate to="/" />
+          }
+        />
+        <Route
           path="/landing"
           element={
             canAccessLandingModule ? <LandingModulePage /> : <Navigate to="/" />
@@ -641,7 +649,7 @@ export default function AppShell({
               canAccessCommercialPlanning ||
               canAccessCommercialEnablement ||
               canReadContacts) && (
-              <SidebarNavGroup title="Desarrollo">
+              <SidebarNavGroup title="Gestión Comercial">
                 {canAccessCommercialTracking ? (
                   <GuardedNavLink
                     to="/commercial-tracking"
@@ -726,7 +734,7 @@ export default function AppShell({
 
             {(can("proveedores.read") ||
               (canAccessManufacturerRegistrations && canReadOpportunities)) && (
-              <SidebarNavGroup title="Operacion comercial">
+              <SidebarNavGroup title="Externos">
                 {can("proveedores.read") && (
                   <GuardedNavLink
                     to="/providers"
@@ -746,12 +754,23 @@ export default function AppShell({
               </SidebarNavGroup>
             )}
 
+            {canAccessAcceptOrder && (
+              <SidebarNavGroup title="Administracion">
+                <GuardedNavLink
+                  to="/accept-order"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Aceptar Pedido
+                </GuardedNavLink>
+              </SidebarNavGroup>
+            )}
+
             {(can("usuarios.read") ||
               can("roles.read") ||
               canAccessProcessCommercialConfig ||
               can("configuracion.read") ||
               can("herramientas.read")) && (
-              <SidebarNavGroup title="Administracion">
+              <SidebarNavGroup title="Sistema">
                 {can("usuarios.read") && (
                   <GuardedNavLink
                     to="/users"
