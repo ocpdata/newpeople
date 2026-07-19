@@ -1036,17 +1036,13 @@ describe("API integration baseline", () => {
       expect(validateResponse.body.valid).toBe(true);
 
       const saveResponse = await request(app)
-        .put(
-          "/api/settings/ai-parameters/entries/proposal.executive_summary",
-        )
+        .put("/api/settings/ai-parameters/entries/proposal.executive_summary")
         .set("Authorization", `Bearer ${token}`)
         .send(updatedPayload);
 
       expect(saveResponse.status).toBe(200);
       expect(saveResponse.body.config.status).toBe("draft");
-      expect(saveResponse.body.entry.systemPrompt).toContain(
-        "tono consultivo",
-      );
+      expect(saveResponse.body.entry.systemPrompt).toContain("tono consultivo");
       expect(saveResponse.body.entry.published.systemPrompt).toBe(
         originalEntry.published.systemPrompt,
       );
@@ -1101,7 +1097,9 @@ describe("API integration baseline", () => {
       const restoredEntry = republishResponse.body.config.entries.find(
         (entry) => entry.capabilityKey === "proposal.executive_summary",
       );
-      expect(restoredEntry.systemPrompt).toBe(originalEntry.published.systemPrompt);
+      expect(restoredEntry.systemPrompt).toBe(
+        originalEntry.published.systemPrompt,
+      );
     } finally {
       await request(app)
         .put("/api/settings/ai-parameters/entries/proposal.executive_summary")
@@ -10838,42 +10836,42 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}.interactions.manager@example.com`,
     );
 
-  test("desarrollo comercial evita duplicar un lead con varios eventos en el mismo dia", async () => {
-    const fixture = await createOwnedOpportunityFlowFixture(
-      `${TEST_PREFIX}_commercial_development_calendar_lead_dedup`,
-    );
-
-    const interactionsLoginResponse = await login(
-      request(app),
-      `${TEST_PREFIX}.interactions.manager@example.com`,
-    );
-
-    const createInteractionResponse = await request(app)
-      .post("/api/interactions")
-      .set("Authorization", `Bearer ${interactionsLoginResponse.body.token}`)
-      .field("title", `Lead calendario duplicado ${TEST_PREFIX}`)
-      .attach(
-        "files",
-        Buffer.from(
-          [
-            "Cuenta: Prospecto Calendario Duplicado",
-            "Contacto: Laura Repetida",
-            "Correo: laura.repetida@example.com",
-          ].join("\n"),
-          "utf8",
-        ),
-        {
-          filename: `interaction_calendar_dedup_${TEST_PREFIX}.txt`,
-          contentType: "text/plain",
-        },
+    test("desarrollo comercial evita duplicar un lead con varios eventos en el mismo dia", async () => {
+      const fixture = await createOwnedOpportunityFlowFixture(
+        `${TEST_PREFIX}_commercial_development_calendar_lead_dedup`,
       );
 
-    expect(createInteractionResponse.status).toBe(201);
+      const interactionsLoginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.interactions.manager@example.com`,
+      );
 
-    const interactionId = Number(createInteractionResponse.body.id);
+      const createInteractionResponse = await request(app)
+        .post("/api/interactions")
+        .set("Authorization", `Bearer ${interactionsLoginResponse.body.token}`)
+        .field("title", `Lead calendario duplicado ${TEST_PREFIX}`)
+        .attach(
+          "files",
+          Buffer.from(
+            [
+              "Cuenta: Prospecto Calendario Duplicado",
+              "Contacto: Laura Repetida",
+              "Correo: laura.repetida@example.com",
+            ].join("\n"),
+            "utf8",
+          ),
+          {
+            filename: `interaction_calendar_dedup_${TEST_PREFIX}.txt`,
+            contentType: "text/plain",
+          },
+        );
 
-    await query(
-      `UPDATE interactions
+      expect(createInteractionResponse.status).toBe(201);
+
+      const interactionId = Number(createInteractionResponse.body.id);
+
+      await query(
+        `UPDATE interactions
        SET account_id = ?,
            primary_opportunity_id = ?,
            seller_user_id = NULL,
@@ -10884,78 +10882,78 @@ describe("API integration baseline", () => {
            lead_next_action_due_at = ?,
            summary = ?
        WHERE id = ?`,
-      [
-        fixture.accountId,
-        fixture.opportunityId,
-        "2026-06-30 00:00:00",
-        "Valor no alineado con este contacto.",
-        interactionId,
-      ],
-    );
+        [
+          fixture.accountId,
+          fixture.opportunityId,
+          "2026-06-30 00:00:00",
+          "Valor no alineado con este contacto.",
+          interactionId,
+        ],
+      );
 
-    await query(
-      `INSERT INTO interaction_lead_outcome_events
+      await query(
+        `INSERT INTO interaction_lead_outcome_events
         (public_id, interaction_id, event_type, from_status_code, to_status_code,
          substatus_code, reason_code, required_action_code, commercial_comment,
          effective_at, created_at, created_by)
        VALUES (?, ?, 'activity_update', 'lead_assigned', 'lead_assigned', ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        `${TEST_PREFIX}_calendar_dedup_1`,
-        interactionId,
-        'value_misaligned_current_contact',
-        'offer_not_relevant_current_area',
-        'explore_other_area',
-        'Valor no alineado con este contacto',
-        '2026-06-30 10:00:00',
-        '2026-06-30 10:00:00',
-        ctx.interactionsManagerUserId,
-      ],
-    );
+        [
+          `${TEST_PREFIX}_calendar_dedup_1`,
+          interactionId,
+          "value_misaligned_current_contact",
+          "offer_not_relevant_current_area",
+          "explore_other_area",
+          "Valor no alineado con este contacto",
+          "2026-06-30 10:00:00",
+          "2026-06-30 10:00:00",
+          ctx.interactionsManagerUserId,
+        ],
+      );
 
-    await query(
-      `INSERT INTO interaction_lead_outcome_events
+      await query(
+        `INSERT INTO interaction_lead_outcome_events
         (public_id, interaction_id, event_type, from_status_code, to_status_code,
          substatus_code, reason_code, required_action_code, commercial_comment,
          effective_at, created_at, created_by)
        VALUES (?, ?, 'activity_update', 'lead_assigned', 'lead_assigned', ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        `${TEST_PREFIX}_calendar_dedup_2`,
-        interactionId,
-        'meeting_confirmed',
-        'meeting_accepted',
-        'schedule_meeting',
-        'Reunión confirmada',
-        '2026-06-30 12:00:00',
-        '2026-06-30 12:00:00',
-        ctx.interactionsManagerUserId,
-      ],
-    );
+        [
+          `${TEST_PREFIX}_calendar_dedup_2`,
+          interactionId,
+          "meeting_confirmed",
+          "meeting_accepted",
+          "schedule_meeting",
+          "Reunión confirmada",
+          "2026-06-30 12:00:00",
+          "2026-06-30 12:00:00",
+          ctx.interactionsManagerUserId,
+        ],
+      );
 
-    const calendarResponse = await request(app)
-      .get(
-        "/api/commercial-development/calendar?view=week&date=2026-06-30&includeCompleted=true",
-      )
-      .set("Authorization", `Bearer ${fixture.token}`);
+      const calendarResponse = await request(app)
+        .get(
+          "/api/commercial-development/calendar?view=week&date=2026-06-30&includeCompleted=true",
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
 
-    expect(calendarResponse.status).toBe(200);
+      expect(calendarResponse.status).toBe(200);
 
-    const targetDay = calendarResponse.body.days.find(
-      (day) => day.date === "2026-06-30",
-    );
+      const targetDay = calendarResponse.body.days.find(
+        (day) => day.date === "2026-06-30",
+      );
 
-    expect(targetDay).toBeDefined();
-    expect(targetDay.items).toHaveLength(1);
-    expect(targetDay.items[0]).toEqual(
-      expect.objectContaining({
-        calendarSource: "interaction",
-        activityType: "lead_follow_up",
-        interactionId,
-        status: "pending",
-        title: `Lead calendario duplicado ${TEST_PREFIX}`,
-        scheduledDate: "2026-06-30",
-      }),
-    );
-  });
+      expect(targetDay).toBeDefined();
+      expect(targetDay.items).toHaveLength(1);
+      expect(targetDay.items[0]).toEqual(
+        expect.objectContaining({
+          calendarSource: "interaction",
+          activityType: "lead_follow_up",
+          interactionId,
+          status: "pending",
+          title: `Lead calendario duplicado ${TEST_PREFIX}`,
+          scheduledDate: "2026-06-30",
+        }),
+      );
+    });
 
     const createInteractionResponse = await request(app)
       .post("/api/interactions")
@@ -11408,7 +11406,11 @@ describe("API integration baseline", () => {
   test("ritmo comercial calcula la conversion de oportunidades a ventas con las ultimas 20 oportunidades y cae a la configuracion cuando no hay base suficiente", async () => {
     const conversionRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_tracking_conversion`,
-      permissionCodes: ["ritmo_comercial.read", "ritmo_comercial.display"],
+      permissionCodes: [
+        "ritmo_comercial.read",
+        "ritmo_comercial.read_all",
+        "ritmo_comercial.display",
+      ],
     });
     cleanup.roleIds.push(conversionRoleId);
 
@@ -11425,6 +11427,19 @@ describe("API integration baseline", () => {
       roleIds: [conversionRoleId],
     });
     cleanup.userIds.push(fallbackSellerUserId);
+
+    const restrictedRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_tracking_restricted`,
+      permissionCodes: ["ritmo_comercial.read", "ritmo_comercial.display"],
+    });
+    cleanup.roleIds.push(restrictedRoleId);
+
+    const restrictedSellerUserId = await createUser({
+      fullName: "API Seller Conversion Restricted",
+      email: `${TEST_PREFIX}.seller.conversion.restricted@example.com`,
+      roleIds: [restrictedRoleId],
+    });
+    cleanup.userIds.push(restrictedSellerUserId);
 
     const now = new Date();
     const calculatedAccountId = await createDirectAccount({
@@ -11467,7 +11482,9 @@ describe("API integration baseline", () => {
           calculatedSellerUserId,
           null,
           ctx.catalogIds.opportunityActiveStatusId,
-          ctx.catalogIds[`opportunityCommercial${statusCode === "ganada" ? "Won" : statusCode === "perdida" ? "Lost" : "InProgress"}StatusId`],
+          ctx.catalogIds[
+            `opportunityCommercial${statusCode === "ganada" ? "Won" : statusCode === "perdida" ? "Lost" : "InProgress"}StatusId`
+          ],
           calculatedSellerUserId,
           createdAt,
           calculatedSellerUserId,
@@ -11488,7 +11505,7 @@ describe("API integration baseline", () => {
          opportunities_to_wins_ratio = VALUES(opportunities_to_wins_ratio),
          average_opportunity_to_win_days = VALUES(average_opportunity_to_win_days),
          updated_by_user_id = VALUES(updated_by_user_id),
-         updated_at = VALUES(updated_at)` ,
+         updated_at = VALUES(updated_at)`,
       [
         fallbackSellerUserId,
         90000,
@@ -11532,6 +11549,31 @@ describe("API integration baseline", () => {
         opportunityToWinEffectiveRatio: 0.42,
       }),
     );
+
+    const restrictedLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.seller.conversion.restricted@example.com`,
+    );
+
+    const restrictedListResponse = await request(app)
+      .get("/api/commercial-tracking/seller-league-tv")
+      .set("Authorization", `Bearer ${restrictedLogin.body.token}`);
+
+    expect(restrictedListResponse.status).toBe(200);
+    expect(restrictedListResponse.body.permissions).toEqual(
+      expect.objectContaining({ canReadAllSellers: false }),
+    );
+    expect(
+      restrictedListResponse.body.leaderboard.map((row) => row.sellerUserId),
+    ).toEqual([restrictedSellerUserId]);
+
+    const forbiddenDetailResponse = await request(app)
+      .get(
+        `/api/commercial-tracking/seller-league-tv?sellerUserId=${calculatedSellerUserId}`,
+      )
+      .set("Authorization", `Bearer ${restrictedLogin.body.token}`);
+
+    expect(forbiddenDetailResponse.status).toBe(403);
   });
 
   test("ejecucion comercial prioriza cadencias por score de friccion", async () => {
@@ -16689,7 +16731,9 @@ describe("API integration baseline", () => {
                   type: "output_text",
                   text: JSON.stringify({
                     title: "Resumen ejecutivo sugerido",
-                    paragraphs: ["Parrafo generado desde configuracion publicada."],
+                    paragraphs: [
+                      "Parrafo generado desde configuracion publicada.",
+                    ],
                     warnings: [],
                   }),
                 },
@@ -16778,7 +16822,8 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${enablementLogin.body.token}`)
       .send({
         title: `${TEST_PREFIX}_proposal_ai_source_text_asset`,
-        summary: "Resumen comercial corto del activo para continuidad operativa.",
+        summary:
+          "Resumen comercial corto del activo para continuidad operativa.",
         assetTypeCode: "solution_brief",
         status: "draft",
         sourceType: "url",
@@ -17209,7 +17254,9 @@ describe("API integration baseline", () => {
     );
 
     const detailResponse = await request(app)
-      .get(`/api/commercial-enablement/assets/${createAssetResponse.body.publicId}`)
+      .get(
+        `/api/commercial-enablement/assets/${createAssetResponse.body.publicId}`,
+      )
       .set("Authorization", `Bearer ${enablementLogin.body.token}`);
 
     expect(detailResponse.status).toBe(200);
@@ -17248,9 +17295,7 @@ describe("API integration baseline", () => {
         expect.objectContaining({
           assetPublicId: createAssetResponse.body.publicId,
           summarySuggestion: expect.objectContaining({
-            text: expect.stringContaining(
-              "seguridad perimetral administrada",
-            ),
+            text: expect.stringContaining("seguridad perimetral administrada"),
             languageCode: "es",
             sourceKind: "item_source_content",
             sourceFileName: "secure-edge-overview.pdf",
@@ -17345,7 +17390,9 @@ describe("API integration baseline", () => {
       });
 
       const response = await request(app)
-        .post(`/api/commercial-enablement/intake-sessions/${intakePublicId}/analyze`)
+        .post(
+          `/api/commercial-enablement/intake-sessions/${intakePublicId}/analyze`,
+        )
         .set("Authorization", `Bearer ${enablementLogin.body.token}`)
         .send({ forceRegenerate: true });
 

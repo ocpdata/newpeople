@@ -109,9 +109,26 @@ function hasGlobalOpportunityScope(user) {
   return userHasPermission(user, "oportunidades.read_all");
 }
 
+function hasSellerLeagueGlobalScope(user) {
+  return userHasPermission(user, "ritmo_comercial.read_all");
+}
+
 function buildGlobalOpportunityScopeUser(user) {
   const permissionSet = new Set(user?.permissionSet || []);
   permissionSet.add("oportunidades.read_all");
+  return {
+    ...user,
+    permissionSet,
+  };
+}
+
+function buildSellerLeagueOpportunityScopeUser(user, canReadAllSellerLeague) {
+  const permissionSet = new Set(user?.permissionSet || []);
+  if (canReadAllSellerLeague) {
+    permissionSet.add("oportunidades.read_all");
+  } else {
+    permissionSet.delete("oportunidades.read_all");
+  }
   return {
     ...user,
     permissionSet,
@@ -4565,7 +4582,25 @@ router.get(
   "/seller-league-tv",
   requireAnyPermission(["ritmo_comercial.read"]),
   async (req, res) => {
-    const leagueScopeUser = buildGlobalOpportunityScopeUser(req.user);
+    const canReadAllSellerLeague = hasSellerLeagueGlobalScope(req.user);
+    const currentUserId = Number(req.user?.id || 0);
+    const requestedSellerUserId = toPositiveInt(req.query?.sellerUserId);
+    if (
+      requestedSellerUserId &&
+      requestedSellerUserId !== currentUserId &&
+      !canReadAllSellerLeague
+    ) {
+      return res.status(403).json({
+        error: "No tienes permiso para ver el detalle de este vendedor",
+      });
+    }
+
+    const leagueScopeUser = buildSellerLeagueOpportunityScopeUser(
+      req.user,
+      canReadAllSellerLeague,
+    );
+    const selectedSellerUserId =
+      requestedSellerUserId || (!canReadAllSellerLeague ? currentUserId : null);
     const commercialSettings = await getCommercialSettings().catch(() => null);
     const quarterSelection = getQuarterSelection(new Date());
     const nextQuarterSelection = getQuarterSelection(
@@ -4620,10 +4655,12 @@ router.get(
       listScopedOpportunities(leagueScopeUser, {
         closeDateFrom: quarterStart,
         closeDateTo: quarterEnd,
+        sellerUserId: selectedSellerUserId,
       }),
       buildOpenOpportunityItems(leagueScopeUser, {
         closeDateFrom: quarterStart,
         closeDateTo: quarterEnd,
+        sellerUserId: selectedSellerUserId,
         weekRange,
       }),
       loadCurrentQuarterTargetsBySeller({
@@ -4637,6 +4674,7 @@ router.get(
       buildOpenOpportunityItems(leagueScopeUser, {
         closeDateFrom: nextQuarterStart,
         closeDateTo: nextQuarterEnd,
+        sellerUserId: selectedSellerUserId,
         weekRange,
       }),
       loadQuarterLeadCountsBySeller({
@@ -4707,7 +4745,15 @@ router.get(
          INNER JOIN role_permissions rp ON rp.role_id = ur.role_id
          INNER JOIN permissions p ON p.id = rp.permission_id
          WHERE u.status = 'active'
-           AND p.code = 'ritmo_comercial.display'`,
+           AND p.code = 'ritmo_comercial.display'
+           AND (? = 1 OR u.id = ?)
+           AND (? IS NULL OR u.id = ?)`,
+        [
+          canReadAllSellerLeague ? 1 : 0,
+          currentUserId,
+          selectedSellerUserId,
+          selectedSellerUserId,
+        ],
       ),
     ]);
 
@@ -4996,6 +5042,9 @@ router.get(
         hasPublishedVersion: quarterTargets.hasPublishedVersion,
         versionLabel: quarterTargets.versionLabel,
         currencyCode: quarterTargets.currencyCode,
+      },
+      permissions: {
+        canReadAllSellers: canReadAllSellerLeague,
       },
       team: {
         sellersVisible: withRank.length,

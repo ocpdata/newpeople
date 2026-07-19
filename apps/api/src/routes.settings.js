@@ -1423,24 +1423,11 @@ const commercialSettingsSchema = z.object({
       message: "Zona horaria invalida",
     })
     .optional(),
-  sellerLeagueScreenDisplayMinutes: z
-    .number()
-    .int()
-    .min(1)
-    .max(60)
-    .optional(),
-  sellerLeagueScreenRotationMinutes: z
-    .number()
-    .int()
-    .min(1)
-    .max(60)
-    .optional(),
-  stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)),
+  sellerLeagueScreenDisplayMinutes: z.number().int().min(1).max(60).optional(),
+  sellerLeagueScreenRotationMinutes: z.number().int().min(1).max(60).optional(),
+  stageSlaMap: z.record(z.string(), z.number().int().min(1).max(90)).optional(),
   stageWeightMap: z.record(z.string(), z.number().min(0).max(1)).optional(),
-  leadExecutionGuides: z
-    .record(z.string(), z.string().max(5000))
-    .optional()
-    .default({}),
+  leadExecutionGuides: z.record(z.string(), z.string().max(5000)).optional(),
   campaignMatrixRows: z
     .array(
       z.object({
@@ -1469,8 +1456,7 @@ const commercialSettingsSchema = z.object({
         seen.add(key);
       });
     })
-    .optional()
-    .default([]),
+    .optional(),
 });
 
 router.get(

@@ -184,6 +184,7 @@ export default function AppShell({
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
   const canAccessCommercialRhythm = can("ritmo_comercial.read");
+  const canAccessCommercialRhythmAll = can("ritmo_comercial.read_all");
   const canAccessCommercialCalendar =
     (can("calendario_comercial.read") ||
       can("calendario_comercial.update") ||
@@ -430,9 +431,19 @@ export default function AppShell({
           }
         />
         <Route
-          path="/seller-league-tv/window"
+          path="/seller-league-tv/sellers/:sellerUserId"
           element={
             canAccessCommercialRhythm ? (
+              <SellerLeagueTvPage showPageControls detailMode />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/seller-league-tv/window"
+          element={
+            canAccessCommercialRhythm && canAccessCommercialRhythmAll ? (
               <SellerLeagueTvPage showPageControls={false} />
             ) : (
               <Navigate to="/" />

@@ -3520,15 +3520,22 @@ export async function saveCommercialSettings(settings, actorUserId) {
         current.sellerLeagueScreenRotationMinutes,
     );
 
-  const nextSlaMap = { ...STAGE_SLA_DEFAULTS };
-  const nextStageWeightMap = { ...STAGE_WEIGHT_DEFAULTS };
-  const nextLeadExecutionGuides = { ...LEAD_EXECUTION_GUIDE_DEFAULTS };
-  const nextCampaignMatrixRows = normalizeCampaignMatrixRows(
-    settings?.campaignMatrixRows,
-    {
-      fallbackToDefaults: true,
-    },
-  );
+  const nextSlaMap = settings?.stageSlaMap
+    ? { ...STAGE_SLA_DEFAULTS }
+    : { ...(current.stageSlaMap || STAGE_SLA_DEFAULTS) };
+  const nextStageWeightMap = settings?.stageWeightMap
+    ? { ...STAGE_WEIGHT_DEFAULTS }
+    : { ...(current.stageWeightMap || STAGE_WEIGHT_DEFAULTS) };
+  const nextLeadExecutionGuides = settings?.leadExecutionGuides
+    ? { ...LEAD_EXECUTION_GUIDE_DEFAULTS }
+    : { ...(current.leadExecutionGuides || LEAD_EXECUTION_GUIDE_DEFAULTS) };
+  const nextCampaignMatrixRows = Array.isArray(settings?.campaignMatrixRows)
+    ? normalizeCampaignMatrixRows(settings.campaignMatrixRows, {
+        fallbackToDefaults: true,
+      })
+    : normalizeCampaignMatrixRows(current.campaignMatrixRows, {
+        fallbackToDefaults: true,
+      });
   if (settings.stageSlaMap && typeof settings.stageSlaMap === "object") {
     Object.entries(settings.stageSlaMap).forEach(([code, days]) => {
       const parsed = Number(days);

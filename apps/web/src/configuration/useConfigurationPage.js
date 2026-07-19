@@ -811,6 +811,144 @@ function serializeCommercialSettings(settings) {
   });
 }
 
+function serializeCommercialSettingsSection(settings, sectionKey) {
+  const normalized = normalizeCommercialSettings(settings);
+  switch (sectionKey) {
+    case "timezone":
+      return JSON.stringify({
+        businessTimezone: String(normalized.businessTimezone || "").trim(),
+      });
+    case "rhythm":
+      return JSON.stringify({
+        sellerLeagueScreenDisplayMinutes: Number(
+          normalized.sellerLeagueScreenDisplayMinutes || 1,
+        ),
+        sellerLeagueScreenRotationMinutes: Number(
+          normalized.sellerLeagueScreenRotationMinutes || 1,
+        ),
+      });
+    case "sla":
+      return JSON.stringify({ stageSlaMap: normalized.stageSlaMap || {} });
+    case "weights":
+      return JSON.stringify({
+        stageWeightMap: normalized.stageWeightMap || {},
+      });
+    case "guides":
+      return JSON.stringify({
+        leadExecutionGuides: normalized.leadExecutionGuides || {},
+      });
+    case "campaignMatrix":
+      return JSON.stringify({
+        campaignMatrixRows: normalizeCampaignMatrixRows(
+          normalized.campaignMatrixRows,
+        ),
+      });
+    default:
+      return serializeCommercialSettings(normalized);
+  }
+}
+
+function buildCommercialSettingsSectionPayload(settings, sectionKey) {
+  const normalized = normalizeCommercialSettings(settings);
+  switch (sectionKey) {
+    case "timezone":
+      return {
+        businessTimezone:
+          String(normalized.businessTimezone || "").trim() ||
+          EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
+      };
+    case "rhythm":
+      return {
+        sellerLeagueScreenDisplayMinutes: Number(
+          normalized.sellerLeagueScreenDisplayMinutes || 1,
+        ),
+        sellerLeagueScreenRotationMinutes: Number(
+          normalized.sellerLeagueScreenRotationMinutes || 1,
+        ),
+      };
+    case "sla":
+      return { stageSlaMap: normalized.stageSlaMap };
+    case "weights":
+      return { stageWeightMap: normalized.stageWeightMap };
+    case "guides":
+      return { leadExecutionGuides: normalized.leadExecutionGuides };
+    case "campaignMatrix":
+      return {
+        campaignMatrixRows: normalizeCampaignMatrixRows(
+          normalized.campaignMatrixRows,
+        ),
+      };
+    default:
+      return {
+        businessTimezone:
+          String(normalized.businessTimezone || "").trim() ||
+          EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
+        sellerLeagueScreenDisplayMinutes: Number(
+          normalized.sellerLeagueScreenDisplayMinutes || 1,
+        ),
+        sellerLeagueScreenRotationMinutes: Number(
+          normalized.sellerLeagueScreenRotationMinutes || 1,
+        ),
+        stageSlaMap: normalized.stageSlaMap,
+        stageWeightMap: normalized.stageWeightMap,
+        leadExecutionGuides: normalized.leadExecutionGuides,
+        campaignMatrixRows: normalized.campaignMatrixRows,
+      };
+  }
+}
+
+function mergeCommercialSettingsSection(
+  baseSettings,
+  savedSettings,
+  sectionKey,
+) {
+  const base = normalizeCommercialSettings(baseSettings);
+  const saved = normalizeCommercialSettings(savedSettings);
+  const nextSettings = {
+    ...base,
+    updatedAt: saved.updatedAt,
+    updatedByUserName: saved.updatedByUserName,
+  };
+
+  switch (sectionKey) {
+    case "timezone":
+      return {
+        ...nextSettings,
+        businessTimezone: saved.businessTimezone,
+      };
+    case "rhythm":
+      return {
+        ...nextSettings,
+        sellerLeagueScreenDisplayMinutes:
+          saved.sellerLeagueScreenDisplayMinutes,
+        sellerLeagueScreenRotationMinutes:
+          saved.sellerLeagueScreenRotationMinutes,
+      };
+    case "sla":
+      return {
+        ...nextSettings,
+        stageSlaMap: saved.stageSlaMap,
+      };
+    case "weights":
+      return {
+        ...nextSettings,
+        stageWeightMap: saved.stageWeightMap,
+      };
+    case "guides":
+      return {
+        ...nextSettings,
+        leadExecutionGuides: saved.leadExecutionGuides,
+      };
+    case "campaignMatrix":
+      return {
+        ...nextSettings,
+        campaignMatrixRows: saved.campaignMatrixRows,
+      };
+    default:
+      return saved;
+  }
+}
+
 function deserializeCommercialSettingsSnapshot(snapshot) {
   try {
     const parsed = JSON.parse(snapshot || "null");
@@ -907,6 +1045,8 @@ export function useConfigurationPage() {
   );
   const [savingCommercialSettings, setSavingCommercialSettings] =
     useState(false);
+  const [savingCommercialSettingsSection, setSavingCommercialSettingsSection] =
+    useState("");
   const [
     initialCommercialSettingsSnapshot,
     setInitialCommercialSettingsSnapshot,
@@ -1207,6 +1347,46 @@ export function useConfigurationPage() {
       serializeCommercialSettings(commercialSettings) !==
       initialCommercialSettingsSnapshot,
     [commercialSettings, initialCommercialSettingsSnapshot],
+  );
+  const initialCommercialSettings = useMemo(
+    () =>
+      deserializeCommercialSettingsSnapshot(initialCommercialSettingsSnapshot),
+    [initialCommercialSettingsSnapshot],
+  );
+  const commercialSettingsSectionDirty = useMemo(
+    () => ({
+      timezone:
+        serializeCommercialSettingsSection(commercialSettings, "timezone") !==
+        serializeCommercialSettingsSection(
+          initialCommercialSettings,
+          "timezone",
+        ),
+      rhythm:
+        serializeCommercialSettingsSection(commercialSettings, "rhythm") !==
+        serializeCommercialSettingsSection(initialCommercialSettings, "rhythm"),
+      sla:
+        serializeCommercialSettingsSection(commercialSettings, "sla") !==
+        serializeCommercialSettingsSection(initialCommercialSettings, "sla"),
+      weights:
+        serializeCommercialSettingsSection(commercialSettings, "weights") !==
+        serializeCommercialSettingsSection(
+          initialCommercialSettings,
+          "weights",
+        ),
+      guides:
+        serializeCommercialSettingsSection(commercialSettings, "guides") !==
+        serializeCommercialSettingsSection(initialCommercialSettings, "guides"),
+      campaignMatrix:
+        serializeCommercialSettingsSection(
+          commercialSettings,
+          "campaignMatrix",
+        ) !==
+        serializeCommercialSettingsSection(
+          initialCommercialSettings,
+          "campaignMatrix",
+        ),
+    }),
+    [commercialSettings, initialCommercialSettings],
   );
   const aiParametersDirty = useMemo(
     () =>
@@ -1598,27 +1778,21 @@ export function useConfigurationPage() {
     }));
   }
 
-  async function saveCommercialSettings() {
+  async function saveCommercialSettingsSection(sectionKey = "all") {
+    const normalizedSectionKey = String(sectionKey || "all");
     setSavingCommercialSettings(true);
+    setSavingCommercialSettingsSection(normalizedSectionKey);
     setError("");
     setSuccess("");
     try {
       const [saveResponse, auditResponse] = await Promise.all([
-        api.put("/api/settings/commercial", {
-          businessTimezone:
-            String(commercialSettings.businessTimezone || "").trim() ||
-            EMPTY_COMMERCIAL_SETTINGS.businessTimezone,
-          sellerLeagueScreenDisplayMinutes: Number(
-            commercialSettings.sellerLeagueScreenDisplayMinutes || 1,
+        api.put(
+          "/api/settings/commercial",
+          buildCommercialSettingsSectionPayload(
+            commercialSettings,
+            normalizedSectionKey,
           ),
-          sellerLeagueScreenRotationMinutes: Number(
-            commercialSettings.sellerLeagueScreenRotationMinutes || 1,
-          ),
-          stageSlaMap: commercialSettings.stageSlaMap,
-          stageWeightMap: commercialSettings.stageWeightMap,
-          leadExecutionGuides: commercialSettings.leadExecutionGuides,
-          campaignMatrixRows: commercialSettings.campaignMatrixRows,
-        }),
+        ),
         api.get("/api/settings/audit?limit=25"),
       ]);
 
@@ -1628,17 +1802,38 @@ export function useConfigurationPage() {
       setCampaignMatrixCatalogs(
         normalizeCampaignMatrixCatalogs(saveResponse.data?.matrixCatalogs),
       );
-      setCommercialSettings(nextSettings);
-      window.dispatchEvent(
-        new CustomEvent("business-timezone-updated", {
-          detail: {
-            businessTimezone: nextSettings.businessTimezone,
-          },
-        }),
-      );
-      setInitialCommercialSettingsSnapshot(
-        serializeCommercialSettings(nextSettings),
-      );
+      if (normalizedSectionKey === "all") {
+        setCommercialSettings(nextSettings);
+        setInitialCommercialSettingsSnapshot(
+          serializeCommercialSettings(nextSettings),
+        );
+      } else {
+        setCommercialSettings((current) =>
+          mergeCommercialSettingsSection(
+            current,
+            nextSettings,
+            normalizedSectionKey,
+          ),
+        );
+        setInitialCommercialSettingsSnapshot((currentSnapshot) =>
+          serializeCommercialSettings(
+            mergeCommercialSettingsSection(
+              deserializeCommercialSettingsSnapshot(currentSnapshot),
+              nextSettings,
+              normalizedSectionKey,
+            ),
+          ),
+        );
+      }
+      if (["all", "timezone"].includes(normalizedSectionKey)) {
+        window.dispatchEvent(
+          new CustomEvent("business-timezone-updated", {
+            detail: {
+              businessTimezone: nextSettings.businessTimezone,
+            },
+          }),
+        );
+      }
       setAuditEntries(
         Array.isArray(auditResponse.data) ? auditResponse.data : [],
       );
@@ -1655,7 +1850,12 @@ export function useConfigurationPage() {
       );
     } finally {
       setSavingCommercialSettings(false);
+      setSavingCommercialSettingsSection("");
     }
+  }
+
+  async function saveCommercialSettings() {
+    return saveCommercialSettingsSection("all");
   }
 
   async function activateWorkspacePlaybook(versionId) {
@@ -2884,10 +3084,12 @@ export function useConfigurationPage() {
     savingTemporaryFeatures,
     savingChatbotSettings,
     savingCommercialSettings,
+    savingCommercialSettingsSection,
     temporaryFeaturesDirty,
     temporaryFeaturesCanSave,
     chatbotSettingsDirty,
     commercialSettingsDirty,
+    commercialSettingsSectionDirty,
     aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
@@ -2925,6 +3127,7 @@ export function useConfigurationPage() {
     addCampaignMatrixRow,
     removeCampaignMatrixRow,
     saveCommercialSettings,
+    saveCommercialSettingsSection,
     reloadAccountTypes,
     createAccountType,
     renameAccountType,

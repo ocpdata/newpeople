@@ -14,10 +14,17 @@ const COMMERCIAL_TRACKING_PERMISSIONS = [
     description: "Acceder al modulo de ritmo comercial",
   },
   {
+    code: "ritmo_comercial.read_all",
+    module: "ritmo_comercial",
+    action: "read_all",
+    description: "Ver todos los vendedores en el modulo de ritmo comercial",
+  },
+  {
     code: "ritmo_comercial.display",
     module: "ritmo_comercial",
     action: "display",
-    description: "Permitir que el usuario aparezca en el modulo de ritmo comercial",
+    description:
+      "Permitir que el usuario aparezca en el modulo de ritmo comercial",
   },
 ];
 
@@ -94,6 +101,12 @@ export async function ensureCommercialTrackingPermissions(options = {}) {
       conn,
       adminRoles,
       permissionByCode.get("ritmo_comercial.read"),
+      now,
+    );
+    await assignPermissionToRoles(
+      conn,
+      adminRoles,
+      permissionByCode.get("ritmo_comercial.read_all"),
       now,
     );
     await assignPermissionToRoles(

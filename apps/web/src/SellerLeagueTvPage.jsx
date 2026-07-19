@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import "./seller-league-tv.css";
 
@@ -8,6 +9,10 @@ function getUrlParams() {
     page: Math.max(1, Number(params.get("page")) || 1),
     debug: params.get("debug") === "true",
   };
+}
+
+function getSellerDetailPath(sellerUserId) {
+  return `/seller-league-tv/sellers/${encodeURIComponent(String(sellerUserId || ""))}`;
 }
 
 const SELLERS_PER_PAGE = 4;
@@ -248,7 +253,9 @@ function SellerStageFunnel({
     ? [...stages].sort(
         (left, right) =>
           Number(
-            SELLER_LEAGUE_STAGE_ORDER[left.stageCode] ?? left.stageOrder ?? 9999,
+            SELLER_LEAGUE_STAGE_ORDER[left.stageCode] ??
+              left.stageOrder ??
+              9999,
           ) -
           Number(
             SELLER_LEAGUE_STAGE_ORDER[right.stageCode] ??
@@ -361,9 +368,12 @@ function LeadsAssignedWeeklyChart({
 
   const points = normalizedSeries.map((value, index) => {
     const x =
-      padding.left + (innerWidth * index) / Math.max(normalizedSeries.length - 1, 1);
+      padding.left +
+      (innerWidth * index) / Math.max(normalizedSeries.length - 1, 1);
     const y =
-      value === null ? null : padding.top + innerHeight - (value / yMax) * innerHeight;
+      value === null
+        ? null
+        : padding.top + innerHeight - (value / yMax) * innerHeight;
     return { x, y, value };
   });
 
@@ -854,11 +864,21 @@ function IndicatorCard({ indicator }) {
   );
 }
 
-function SellerDetailPage({ seller, onNavigate, quarterContext }) {
+function SellerDetailPage({ seller, quarterContext, variant = "tv" }) {
+  const isAppVariant = variant === "app";
+  const detailPageClassName = isAppVariant
+    ? "seller-detail-page seller-detail-page--app"
+    : "seller-detail-page seller-league-page--fullscreen";
+
   if (!seller) {
     return (
-      <section className="seller-detail-page seller-league-page--fullscreen">
+      <section className={detailPageClassName}>
         <div className="seller-detail-content">
+          {isAppVariant ? (
+            <Link className="seller-detail-back-link" to="/seller-league-tv">
+              Volver a ritmo comercial
+            </Link>
+          ) : null}
           <p style={{ textAlign: "center", color: "#888", marginTop: "2rem" }}>
             Vendedor no encontrado
           </p>
@@ -921,8 +941,13 @@ function SellerDetailPage({ seller, onNavigate, quarterContext }) {
     quarterContext,
   );
   return (
-    <section className="seller-detail-page seller-league-page--fullscreen">
+    <section className={detailPageClassName}>
       <div className="seller-detail-header">
+        {isAppVariant ? (
+          <Link className="seller-detail-back-link" to="/seller-league-tv">
+            Volver a ritmo comercial
+          </Link>
+        ) : null}
         <h1 className="seller-detail-name">{seller.sellerUserName}</h1>
       </div>
 
@@ -1016,7 +1041,8 @@ function SellerDetailPage({ seller, onNavigate, quarterContext }) {
                 />
               </div>
               <span className="seller-detail-required-quarter-note">
-                Requeridos trimestre: {Number(seller.leadTargetCount || 0)} leads
+                Requeridos trimestre: {Number(seller.leadTargetCount || 0)}{" "}
+                leads
               </span>
               <LeadsAssignedWeeklyChart
                 variantClassName="seller-detail-line-chart-wrap--opportunities"
@@ -1204,7 +1230,11 @@ function SellerDetailPage({ seller, onNavigate, quarterContext }) {
   );
 }
 
-export default function SellerLeagueTvPage({ showPageControls = true }) {
+export default function SellerLeagueTvPage({
+  showPageControls = true,
+  detailMode = false,
+}) {
+  const { sellerUserId: routeSellerUserId } = useParams();
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1213,9 +1243,11 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
 
   async function loadDashboard() {
     try {
-      const { data } = await api.get(
-        "/api/commercial-tracking/seller-league-tv",
-      );
+      const requestUrl =
+        detailMode && routeSellerUserId
+          ? `/api/commercial-tracking/seller-league-tv?sellerUserId=${encodeURIComponent(routeSellerUserId)}`
+          : "/api/commercial-tracking/seller-league-tv";
+      const { data } = await api.get(requestUrl);
       setPayload(data || null);
       setError("");
     } catch (requestError) {
@@ -1232,7 +1264,7 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
 
   useEffect(() => {
     loadDashboard();
-  }, []);
+  }, [detailMode, routeSellerUserId]);
 
   useEffect(() => {
     if (showPageControls) {
@@ -1243,9 +1275,12 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
       ? Math.max(1, Math.min(configuredMinutes, 60))
       : 1;
 
-    const refreshId = window.setInterval(() => {
-      loadDashboard();
-    }, refreshMinutes * 60 * 1000);
+    const refreshId = window.setInterval(
+      () => {
+        loadDashboard();
+      },
+      refreshMinutes * 60 * 1000,
+    );
 
     return () => {
       window.clearInterval(refreshId);
@@ -1277,9 +1312,12 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
       ? Math.max(1, Math.min(configuredMinutes, 60))
       : 1;
 
-    const rotationId = window.setInterval(() => {
-      setCurrentPage((previous) => (previous >= maxPage ? 1 : previous + 1));
-    }, rotationMinutes * 60 * 1000);
+    const rotationId = window.setInterval(
+      () => {
+        setCurrentPage((previous) => (previous >= maxPage ? 1 : previous + 1));
+      },
+      rotationMinutes * 60 * 1000,
+    );
 
     return () => {
       window.clearInterval(rotationId);
@@ -1341,11 +1379,7 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
           : previous >= maxPage
             ? 1
             : previous + 1;
-      window.history.replaceState(
-        null,
-        "",
-        `?page=${nextPage}&debug=true`,
-      );
+      window.history.replaceState(null, "", `?page=${nextPage}&debug=true`);
       return nextPage;
     });
   }
@@ -1364,6 +1398,31 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
       row?.gapAmountUsd,
       row?.opportunityToWinCurrentRatio,
     );
+
+  if (detailMode) {
+    const normalizedRouteSellerUserId = String(routeSellerUserId || "");
+    const selectedSeller = leaderboard.find(
+      (row) => String(row?.sellerUserId || "") === normalizedRouteSellerUserId,
+    );
+
+    return (
+      <>
+        {error ? <p className="form-error">{error}</p> : null}
+
+        {loading ? (
+          <div className="seller-league-empty">Cargando ritmo comercial...</div>
+        ) : null}
+
+        {!loading ? (
+          <SellerDetailPage
+            seller={selectedSeller}
+            quarterContext={payload?.quarterContext}
+            variant="app"
+          />
+        ) : null}
+      </>
+    );
+  }
 
   return (
     <>
@@ -1409,215 +1468,227 @@ export default function SellerLeagueTvPage({ showPageControls = true }) {
 
         {!loading
           ? pagedLeaderboard.map((row) => {
-                const nextQuarterReadiness = buildNextQuarterReadinessIndicator(
+              const nextQuarterReadiness = buildNextQuarterReadinessIndicator(
+                row,
+                payload?.quarterContext,
+              );
+              const currentQuarterIndicator =
+                buildCurrentQuarterAttainmentIndicator(
                   row,
                   payload?.quarterContext,
                 );
-                const currentQuarterIndicator =
-                  buildCurrentQuarterAttainmentIndicator(
-                    row,
-                    payload?.quarterContext,
-                  );
 
-                return (
-                  <section
-                    key={row.sellerUserId || row.sellerUserName}
-                    className="seller-league-seller-section"
-                  >
-                    <div className="seller-league-seller-card">
-                      <div className="seller-league-seller-name-wrap">
-                        <h2 className="seller-league-seller-name">
-                          {row.sellerUserName || "Vendedor sin nombre"}
-                        </h2>
-                      </div>
+              return (
+                <section
+                  key={row.sellerUserId || row.sellerUserName}
+                  className="seller-league-seller-section"
+                >
+                  <div className="seller-league-seller-card">
+                    <div className="seller-league-seller-name-wrap">
+                      <h2 className="seller-league-seller-name">
+                        {showPageControls ? (
+                          <Link
+                            className="seller-league-seller-name-link"
+                            to={getSellerDetailPath(row.sellerUserId)}
+                          >
+                            {row.sellerUserName || "Vendedor sin nombre"}
+                          </Link>
+                        ) : (
+                          row.sellerUserName || "Vendedor sin nombre"
+                        )}
+                      </h2>
+                    </div>
 
-                      <div className="seller-league-seller-panels">
-                        <section className="seller-league-panel">
-                          <div className="seller-league-panel-header seller-league-panel-header--with-value">
-                            <h3 className="seller-league-panel-title">
-                              Pipeline siguiente Q
-                            </h3>
-                            <span
-                              className={`seller-league-panel-title-value seller-league-panel-title-value--${nextQuarterReadiness?.tone || "critical"}`}
-                            >
-                              {Number(nextQuarterReadiness?.valuePct || 0)}%
-                            </span>
-                          </div>
+                    <div className="seller-league-seller-panels">
+                      <section className="seller-league-panel">
+                        <div className="seller-league-panel-header seller-league-panel-header--with-value">
+                          <h3 className="seller-league-panel-title">
+                            Pipeline siguiente Q
+                          </h3>
+                          <span
+                            className={`seller-league-panel-title-value seller-league-panel-title-value--${nextQuarterReadiness?.tone || "critical"}`}
+                          >
+                            {Number(nextQuarterReadiness?.valuePct || 0)}%
+                          </span>
+                        </div>
 
-                          <div className="seller-league-metrics-grid seller-league-metrics-grid--pipeline">
-                            <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--leads-weekly">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Leads/Semana
-                                </span>
-                              </div>
-
-                              <div className="seller-league-gauge-wrap">
-                                <LeadGauge
-                                  actual={getCurrentWeekCount(
-                                    row.leadsPerWeekWeeklyCounts,
-                                  )}
-                                  target={Math.round(
-                                    Number(row.leadTargetCount || 0) / 13,
-                                  )}
-                                />
-                              </div>
-                              <span className="seller-league-required-quarter-note">
-                                Req. trim: {Number(row.leadTargetCount || 0)} leads
+                        <div className="seller-league-metrics-grid seller-league-metrics-grid--pipeline">
+                          <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--leads-weekly">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Leads/Semana
                               </span>
-                            </article>
+                            </div>
 
-                            <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--opps-weekly">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Ops/Semana
-                                </span>
-                              </div>
-
-                              <div className="seller-league-gauge-wrap">
-                                <LeadGauge
-                                  actual={getCurrentWeekCount(
-                                    row.opportunitiesPerWeekWeeklyCounts,
-                                  )}
-                                  target={Math.ceil(
-                                    Number(
-                                      row.opportunityCreatedTargetCount || 0,
-                                    ) / 13,
-                                  )}
-                                />
-                              </div>
-                              <span className="seller-league-required-quarter-note">
-                                Req. trim: {Math.ceil(Number(row.opportunityCreatedTargetCount || 0))} opps
-                              </span>
-                            </article>
-
-                            <article className="seller-league-metric-card seller-league-metric-card--wide">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Conversión L→O %
-                                </span>
-                              </div>
-
-                              <div className="seller-league-gauge-wrap">
-                                <LeadGauge
-                                  actual={
-                                    Math.ceil(
-                                      Number(
-                                        row.leadToOpportunityDisplayRatio ??
-                                          row.leadToOpportunityCurrentRatio ??
-                                          0,
-                                      ) * 100,
-                                    ) / 100
-                                  }
-                                  target={0.5}
-                                  maxValue={1}
-                                  valueDivisor={0.01}
-                                  valueMaxFractionDigits={0}
-                                  className="seller-league-gauge--conversion"
-                                />
-                              </div>
-                            </article>
-
-                            <article className="seller-league-metric-card seller-league-metric-card--wide">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Ticket promedio venta
-                                </span>
-                              </div>
-
-                              <div className="seller-league-ticket-value-wrap">
-                                <strong className="seller-league-ticket-value">
-                                  {formatCurrencyUsd(
-                                    row.averageSaleTicketAmount,
-                                  )}
-                                </strong>
-                                <span className="seller-league-ticket-meta">
-                                  US$ por venta
-                                </span>
-                              </div>
-                            </article>
-                          </div>
-                        </section>
-
-                        <section className="seller-league-panel">
-                          <div className="seller-league-panel-header seller-league-panel-header--with-value">
-                            <h3 className="seller-league-panel-title">
-                              Cumplimiento Q actual
-                            </h3>
-                            <span
-                              className={`seller-league-panel-title-value seller-league-panel-title-value--${currentQuarterIndicator?.tone || "critical"}`}
-                            >
-                              {Number(currentQuarterIndicator?.valuePct || 0)}%
-                            </span>
-                          </div>
-                          <div className="seller-league-metrics-grid seller-league-metrics-grid--compliance">
-                            <article className="seller-league-metric-card seller-league-metric-card--wide">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Cuota (M US$)
-                                </span>
-                              </div>
-
-                              <div className="seller-league-gauge-wrap">
-                                <LeadGauge
-                                  actual={row.wonAmountUsd}
-                                  target={row.quotaAmountUsd}
-                                  valueDivisor={1000000}
-                                  valueMaxFractionDigits={2}
-                                />
-                              </div>
-                            </article>
-
-                            <article className="seller-league-metric-card seller-league-metric-card--wide">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Conversión O→V %
-                                </span>
-                              </div>
-
-                              <div className="seller-league-gauge-wrap">
-                                <LeadGauge
-                                  actual={
-                                    Math.ceil(
-                                      Number(
-                                        row.opportunityToWinEffectiveRatio ??
-                                          row.opportunityToWinCurrentRatio ??
-                                          0,
-                                      ) * 100,
-                                    ) / 100
-                                  }
-                                  target={Number(
-                                    row.opportunityToWinConfiguredRatio || 0,
-                                  )}
-                                  maxValue={1}
-                                  valueDivisor={0.01}
-                                  valueMaxFractionDigits={0}
-                                  className="seller-league-gauge--conversion"
-                                />
-                              </div>
-                            </article>
-
-                            <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--full">
-                              <div className="seller-league-metric-card-head">
-                                <span className="seller-league-metric-card-title">
-                                  Funnel por etapa
-                                </span>
-                              </div>
-                              <SellerStageFunnel
-                                stages={row.funnelByStage}
-                                totalAmountUsd={row.funnelOpenAmountUsd}
-                                requiredAmountUsd={sellerRequiredFunnelAmountUsd(
-                                  row,
+                            <div className="seller-league-gauge-wrap">
+                              <LeadGauge
+                                actual={getCurrentWeekCount(
+                                  row.leadsPerWeekWeeklyCounts,
+                                )}
+                                target={Math.round(
+                                  Number(row.leadTargetCount || 0) / 13,
                                 )}
                               />
-                            </article>
-                          </div>
-                        </section>
-                      </div>
+                            </div>
+                            <span className="seller-league-required-quarter-note">
+                              Req. trim: {Number(row.leadTargetCount || 0)}{" "}
+                              leads
+                            </span>
+                          </article>
+
+                          <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--opps-weekly">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Ops/Semana
+                              </span>
+                            </div>
+
+                            <div className="seller-league-gauge-wrap">
+                              <LeadGauge
+                                actual={getCurrentWeekCount(
+                                  row.opportunitiesPerWeekWeeklyCounts,
+                                )}
+                                target={Math.ceil(
+                                  Number(
+                                    row.opportunityCreatedTargetCount || 0,
+                                  ) / 13,
+                                )}
+                              />
+                            </div>
+                            <span className="seller-league-required-quarter-note">
+                              Req. trim:{" "}
+                              {Math.ceil(
+                                Number(row.opportunityCreatedTargetCount || 0),
+                              )}{" "}
+                              opps
+                            </span>
+                          </article>
+
+                          <article className="seller-league-metric-card seller-league-metric-card--wide">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Conversión L→O %
+                              </span>
+                            </div>
+
+                            <div className="seller-league-gauge-wrap">
+                              <LeadGauge
+                                actual={
+                                  Math.ceil(
+                                    Number(
+                                      row.leadToOpportunityDisplayRatio ??
+                                        row.leadToOpportunityCurrentRatio ??
+                                        0,
+                                    ) * 100,
+                                  ) / 100
+                                }
+                                target={0.5}
+                                maxValue={1}
+                                valueDivisor={0.01}
+                                valueMaxFractionDigits={0}
+                                className="seller-league-gauge--conversion"
+                              />
+                            </div>
+                          </article>
+
+                          <article className="seller-league-metric-card seller-league-metric-card--wide">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Ticket promedio venta
+                              </span>
+                            </div>
+
+                            <div className="seller-league-ticket-value-wrap">
+                              <strong className="seller-league-ticket-value">
+                                {formatCurrencyUsd(row.averageSaleTicketAmount)}
+                              </strong>
+                              <span className="seller-league-ticket-meta">
+                                US$ por venta
+                              </span>
+                            </div>
+                          </article>
+                        </div>
+                      </section>
+
+                      <section className="seller-league-panel">
+                        <div className="seller-league-panel-header seller-league-panel-header--with-value">
+                          <h3 className="seller-league-panel-title">
+                            Cumplimiento Q actual
+                          </h3>
+                          <span
+                            className={`seller-league-panel-title-value seller-league-panel-title-value--${currentQuarterIndicator?.tone || "critical"}`}
+                          >
+                            {Number(currentQuarterIndicator?.valuePct || 0)}%
+                          </span>
+                        </div>
+                        <div className="seller-league-metrics-grid seller-league-metrics-grid--compliance">
+                          <article className="seller-league-metric-card seller-league-metric-card--wide">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Cuota (M US$)
+                              </span>
+                            </div>
+
+                            <div className="seller-league-gauge-wrap">
+                              <LeadGauge
+                                actual={row.wonAmountUsd}
+                                target={row.quotaAmountUsd}
+                                valueDivisor={1000000}
+                                valueMaxFractionDigits={2}
+                              />
+                            </div>
+                          </article>
+
+                          <article className="seller-league-metric-card seller-league-metric-card--wide">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Conversión O→V %
+                              </span>
+                            </div>
+
+                            <div className="seller-league-gauge-wrap">
+                              <LeadGauge
+                                actual={
+                                  Math.ceil(
+                                    Number(
+                                      row.opportunityToWinEffectiveRatio ??
+                                        row.opportunityToWinCurrentRatio ??
+                                        0,
+                                    ) * 100,
+                                  ) / 100
+                                }
+                                target={Number(
+                                  row.opportunityToWinConfiguredRatio || 0,
+                                )}
+                                maxValue={1}
+                                valueDivisor={0.01}
+                                valueMaxFractionDigits={0}
+                                className="seller-league-gauge--conversion"
+                              />
+                            </div>
+                          </article>
+
+                          <article className="seller-league-metric-card seller-league-metric-card--wide seller-league-metric-card--full">
+                            <div className="seller-league-metric-card-head">
+                              <span className="seller-league-metric-card-title">
+                                Funnel por etapa
+                              </span>
+                            </div>
+                            <SellerStageFunnel
+                              stages={row.funnelByStage}
+                              totalAmountUsd={row.funnelOpenAmountUsd}
+                              requiredAmountUsd={sellerRequiredFunnelAmountUsd(
+                                row,
+                              )}
+                            />
+                          </article>
+                        </div>
+                      </section>
                     </div>
-                  </section>
-                );
-              })
+                  </div>
+                </section>
+              );
+            })
           : null}
       </section>
     </>

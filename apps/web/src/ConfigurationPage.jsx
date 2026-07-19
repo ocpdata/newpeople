@@ -1508,25 +1508,12 @@ function ChatbotSettingsCard({
   );
 }
 
-function CommercialSettingsCard({
+function TimezoneSettingsCard({
   settings,
-  stageSlaEntries,
-  stageWeightEntries,
-  leadExecutionGuideEntries,
-  campaignMatrixCatalogs,
-  latestUpdateText,
+  isDirty,
   saving,
   canSave,
-  isDirty,
-  onChange,
   onTimezoneChange,
-  onScreenDisplayMinutesChange,
-  onScreenRotationMinutesChange,
-  onWeightChange,
-  onGuideChange,
-  onMatrixRowChange,
-  onAddMatrixRow,
-  onRemoveMatrixRow,
   onSave,
 }) {
   const commonTimezones = [
@@ -1538,19 +1525,15 @@ function CommercialSettingsCard({
     "America/New_York",
     "UTC",
   ];
-  const formatOptionLabel = (value) =>
-    String(value || "")
-      .replaceAll("_", " ")
-      .replace(/\b\w/g, (char) => char.toUpperCase());
 
   return (
     <section className="configuration-card">
       <div className="configuration-card-heading">
         <div>
-          <h4>SLA por etapa comercial</h4>
+          <h4>Zona horaria</h4>
           <p>
-            Define el máximo de días sin actividad registrada por etapa antes de
-            que una oportunidad sea marcada como rezagada.
+            Define la zona horaria oficial usada por los procesos comerciales y
+            la operación diaria.
           </p>
         </div>
         <span className="configuration-inline-pill">
@@ -1577,7 +1560,50 @@ function CommercialSettingsCard({
             Usa formato IANA (por ejemplo: America/Mexico_City).
           </p>
         </div>
+      </div>
 
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          {isDirty ? "Cambios pendientes" : "Sin cambios pendientes"}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar zona horaria"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CommercialRhythmSettingsCard({
+  settings,
+  isDirty,
+  saving,
+  canSave,
+  onScreenDisplayMinutesChange,
+  onScreenRotationMinutesChange,
+  onSave,
+}) {
+  return (
+    <section className="configuration-card">
+      <div className="configuration-card-heading">
+        <div>
+          <h4>Ritmo comercial</h4>
+          <p>
+            Configura los tiempos operativos usados por la pantalla de ritmo
+            comercial.
+          </p>
+        </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
+      </div>
+
+      <div className="configuration-form-grid">
         <div className="field-group">
           <label>Minutos de refresco (Ritmo comercial TV)</label>
           <input
@@ -1591,7 +1617,8 @@ function CommercialSettingsCard({
             }
           />
           <p className="field-hint">
-            Define cada cuántos minutos se recargan automáticamente los datos en la pantalla de Liga TV.
+            Define cada cuántos minutos se recargan automáticamente los datos en
+            la pantalla de Liga TV.
           </p>
         </div>
 
@@ -1608,35 +1635,51 @@ function CommercialSettingsCard({
             }
           />
           <p className="field-hint">
-            Define cuántos minutos permanece visible cada pantalla antes de pasar a la siguiente en la Liga TV.
+            Define cuántos minutos permanece visible cada pantalla antes de
+            pasar a la siguiente en la Liga TV.
           </p>
         </div>
-
-        {stageSlaEntries.map((entry) => (
-          <div key={entry.code} className="field-group">
-            <label>{entry.label}</label>
-            <input
-              type="number"
-              min="1"
-              max="90"
-              step="1"
-              value={settings.stageSlaMap?.[entry.code] ?? 5}
-              onChange={(event) =>
-                onChange(entry.code, Number(event.target.value || 1))
-              }
-            />
-          </div>
-        ))}
       </div>
 
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          {isDirty ? "Cambios pendientes" : "Sin cambios pendientes"}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar ritmo comercial"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function FunnelStageWeightsCard({
+  settings,
+  stageWeightEntries,
+  isDirty,
+  saving,
+  canSave,
+  onWeightChange,
+  onSave,
+}) {
+  return (
+    <section className="configuration-card">
       <div className="configuration-card-heading">
         <div>
-          <h4>Pesos de forecast por etapa (%)</h4>
+          <h4>Pesos de Funnel por etapa</h4>
           <p>
-            Ajusta el porcentaje base de ponderación usado para estimar forecast
-            mensual por etapa comercial.
+            Ajusta el porcentaje base de ponderación usado para estimar el
+            funnel por etapa comercial.
           </p>
         </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
       </div>
 
       <div className="configuration-form-grid">
@@ -1659,6 +1702,34 @@ function CommercialSettingsCard({
         ))}
       </div>
 
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          {isDirty ? "Cambios pendientes" : "Sin cambios pendientes"}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar pesos de Funnel"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function LeadExecutionGuidesCard({
+  settings,
+  leadExecutionGuideEntries,
+  isDirty,
+  saving,
+  canSave,
+  onGuideChange,
+  onSave,
+}) {
+  return (
+    <section className="configuration-card">
       <div className="configuration-card-heading">
         <div>
           <h4>Guías de ejecución para leads</h4>
@@ -1667,6 +1738,9 @@ function CommercialSettingsCard({
             la secuencia comercial.
           </p>
         </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
       </div>
 
       <div className="configuration-form-grid">
@@ -1686,6 +1760,42 @@ function CommercialSettingsCard({
         ))}
       </div>
 
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          {isDirty ? "Cambios pendientes" : "Sin cambios pendientes"}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar guías de leads"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CampaignMatrixSettingsCard({
+  settings,
+  campaignMatrixCatalogs,
+  latestUpdateText,
+  saving,
+  canSave,
+  isDirty,
+  onMatrixRowChange,
+  onAddMatrixRow,
+  onRemoveMatrixRow,
+  onSave,
+}) {
+  const formatOptionLabel = (value) =>
+    String(value || "")
+      .replaceAll("_", " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  return (
+    <section className="configuration-card">
       <div className="configuration-card-heading">
         <div>
           <h4>Matriz de campañas</h4>
@@ -1694,13 +1804,18 @@ function CommercialSettingsCard({
             Puedes agregar filas nuevas o eliminar las existentes.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={onAddMatrixRow}
-        >
-          Agregar fila
-        </button>
+        <div className="configuration-inline-actions">
+          <span className="configuration-inline-pill">
+            {isDirty ? "Cambios pendientes" : "Sincronizado"}
+          </span>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onAddMatrixRow}
+          >
+            Agregar fila
+          </button>
+        </div>
       </div>
 
       <div className="configuration-table-wrapper">
@@ -1836,7 +1951,66 @@ function CommercialSettingsCard({
           onClick={onSave}
           disabled={saving || !canSave}
         >
-          {saving ? "Guardando..." : "Guardar configuracion comercial"}
+          {saving ? "Guardando..." : "Guardar matriz de campañas"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function CommercialSettingsCard({
+  settings,
+  stageSlaEntries,
+  isDirty,
+  saving,
+  canSave,
+  onChange,
+  onSave,
+}) {
+  return (
+    <section className="configuration-card">
+      <div className="configuration-card-heading">
+        <div>
+          <h4>SLA por etapa comercial</h4>
+          <p>
+            Define el máximo de días sin actividad registrada por etapa antes de
+            que una oportunidad sea marcada como rezagada.
+          </p>
+        </div>
+        <span className="configuration-inline-pill">
+          {isDirty ? "Cambios pendientes" : "Sincronizado"}
+        </span>
+      </div>
+
+      <div className="configuration-form-grid">
+        {stageSlaEntries.map((entry) => (
+          <div key={entry.code} className="field-group">
+            <label>{entry.label}</label>
+            <input
+              type="number"
+              min="1"
+              max="90"
+              step="1"
+              value={settings.stageSlaMap?.[entry.code] ?? 5}
+              onChange={(event) =>
+                onChange(entry.code, Number(event.target.value || 1))
+              }
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="configuration-temporary-footer">
+        <span className="field-hint">
+          {isDirty ? "Cambios pendientes" : "Sin cambios pendientes"}
+        </span>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onSave}
+          disabled={saving || !canSave}
+        >
+          {saving ? "Guardando..." : "Guardar SLA comercial"}
         </button>
       </div>
     </section>
@@ -4450,10 +4624,12 @@ export default function ConfigurationPage() {
     savingTemporaryFeatures,
     savingChatbotSettings,
     savingCommercialSettings,
+    savingCommercialSettingsSection,
     temporaryFeaturesDirty,
     temporaryFeaturesCanSave,
     chatbotSettingsDirty,
     commercialSettingsDirty,
+    commercialSettingsSectionDirty,
     aiParametersDirty,
     latestUpdateText,
     latestTemporaryFeaturesUpdateText,
@@ -4491,6 +4667,7 @@ export default function ConfigurationPage() {
     addCampaignMatrixRow,
     removeCampaignMatrixRow,
     saveCommercialSettings,
+    saveCommercialSettingsSection,
     createAccountType,
     renameAccountType,
     setAccountTypeStatus,
@@ -5201,30 +5378,70 @@ export default function ConfigurationPage() {
                 onSave={saveChatbotSettings}
               />
 
-              <CommercialSettingsCard
+              <TimezoneSettingsCard
                 settings={commercialSettings}
-                stageSlaEntries={stageSlaEntries}
-                stageWeightEntries={stageWeightEntries}
-                leadExecutionGuideEntries={leadExecutionGuideEntries}
-                campaignMatrixCatalogs={campaignMatrixCatalogs}
-                latestUpdateText={latestCommercialSettingsUpdateText}
-                saving={savingCommercialSettings}
-                canSave={commercialSettingsDirty}
-                isDirty={commercialSettingsDirty}
-                onChange={updateCommercialSetting}
+                isDirty={commercialSettingsSectionDirty.timezone}
+                saving={savingCommercialSettingsSection === "timezone"}
+                canSave={commercialSettingsSectionDirty.timezone}
                 onTimezoneChange={updateCommercialBusinessTimezone}
+                onSave={() => saveCommercialSettingsSection("timezone")}
+              />
+
+              <CommercialRhythmSettingsCard
+                settings={commercialSettings}
+                isDirty={commercialSettingsSectionDirty.rhythm}
+                saving={savingCommercialSettingsSection === "rhythm"}
+                canSave={commercialSettingsSectionDirty.rhythm}
                 onScreenDisplayMinutesChange={
                   updateCommercialScreenDisplayMinutes
                 }
                 onScreenRotationMinutesChange={
                   updateCommercialScreenRotationMinutes
                 }
-                onWeightChange={updateCommercialWeightSetting}
+                onSave={() => saveCommercialSettingsSection("rhythm")}
+              />
+
+              <CommercialSettingsCard
+                settings={commercialSettings}
+                stageSlaEntries={stageSlaEntries}
+                isDirty={commercialSettingsSectionDirty.sla}
+                saving={savingCommercialSettingsSection === "sla"}
+                canSave={commercialSettingsSectionDirty.sla}
+                onChange={updateCommercialSetting}
+                onSave={() => saveCommercialSettingsSection("sla")}
+              />
+
+              <LeadExecutionGuidesCard
+                settings={commercialSettings}
+                leadExecutionGuideEntries={leadExecutionGuideEntries}
+                isDirty={commercialSettingsSectionDirty.guides}
+                saving={savingCommercialSettingsSection === "guides"}
+                canSave={commercialSettingsSectionDirty.guides}
                 onGuideChange={updateCommercialGuideSetting}
+                onSave={() => saveCommercialSettingsSection("guides")}
+              />
+
+              <FunnelStageWeightsCard
+                settings={commercialSettings}
+                stageWeightEntries={stageWeightEntries}
+                isDirty={commercialSettingsSectionDirty.weights}
+                saving={savingCommercialSettingsSection === "weights"}
+                canSave={commercialSettingsSectionDirty.weights}
+                onWeightChange={updateCommercialWeightSetting}
+                onSave={() => saveCommercialSettingsSection("weights")}
+              />
+
+              <CampaignMatrixSettingsCard
+                settings={commercialSettings}
+                campaignMatrixCatalogs={campaignMatrixCatalogs}
+                latestUpdateText={latestCommercialSettingsUpdateText}
+                saving={savingCommercialSettingsSection === "campaignMatrix"}
+                canSave={commercialSettingsSectionDirty.campaignMatrix}
+                isDirty={commercialSettingsSectionDirty.campaignMatrix}
                 onMatrixRowChange={updateCampaignMatrixRow}
                 onAddMatrixRow={addCampaignMatrixRow}
                 onRemoveMatrixRow={removeCampaignMatrixRow}
-                onSave={saveCommercialSettings}
+                onSave={() => saveCommercialSettingsSection("campaignMatrix")}
               />
 
               <TemporaryFeaturesCard
