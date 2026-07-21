@@ -1009,6 +1009,7 @@ function QuotationEditorContent({
     saving: "",
     error: "",
     message: "",
+    pendingWonDeclaration: false,
     quotationDocuments: [],
     opportunityDocuments: [],
     purchaseOrderSelectionKey: "",
@@ -1428,6 +1429,7 @@ function QuotationEditorContent({
       saving: "",
       error: "",
       message: "",
+      pendingWonDeclaration: false,
     }));
   }, []);
 
@@ -1464,7 +1466,8 @@ function QuotationEditorContent({
     }));
   }, []);
 
-  const openWonDocumentsModal = useCallback(async () => {
+  const openWonDocumentsModal = useCallback(
+    async ({ pendingWonDeclaration = false } = {}) => {
     if (!selectedVersion?.id) {
       return;
     }
@@ -1476,6 +1479,7 @@ function QuotationEditorContent({
       saving: "",
       error: "",
       message: "",
+      pendingWonDeclaration: Boolean(pendingWonDeclaration),
       accepted: false,
     }));
 
@@ -1498,7 +1502,9 @@ function QuotationEditorContent({
         loading: false,
       }));
     }
-  }, [applyWonDocumentsPayloadToState, selectedVersion?.id]);
+    },
+    [applyWonDocumentsPayloadToState, selectedVersion?.id],
+  );
 
   const toggleWonProviderQuoteSelection = useCallback((selectionKey) => {
     setWonDocumentsModalState((prev) => {
@@ -1561,6 +1567,34 @@ function QuotationEditorContent({
       }
 
       const normalizedAccept = Boolean(accept);
+      if (wonDocumentsModalState.pendingWonDeclaration && !normalizedAccept) {
+        setWonDocumentsModalState((prev) => ({
+          ...prev,
+          error:
+            "Para continuar debes aceptar los documentos de cierre o cancelar.",
+        }));
+        return false;
+      }
+
+      if (wonDocumentsModalState.pendingWonDeclaration && normalizedAccept) {
+        const transitionResult = await handleAction("declarar_ganada");
+        if (!transitionResult?.ok) {
+          setWonDocumentsModalState((prev) => ({
+            ...prev,
+            error: String(
+              transitionResult?.message ||
+                "No fue posible marcar la cotizacion como ganada",
+            ).trim(),
+          }));
+          return false;
+        }
+
+        setWonDocumentsModalState((prev) => ({
+          ...prev,
+          pendingWonDeclaration: false,
+        }));
+      }
+
       setWonDocumentsModalState((prev) => ({
         ...prev,
         saving: normalizedAccept ? "accept" : "save",
@@ -1610,7 +1644,9 @@ function QuotationEditorContent({
       applyWonDocumentsPayloadToState,
       buildWonDocumentSelectionsPayload,
       closeWonDocumentsModal,
+      handleAction,
       selectedVersion?.id,
+      wonDocumentsModalState.pendingWonDeclaration,
     ],
   );
 
@@ -1629,58 +1665,23 @@ function QuotationEditorContent({
       }));
 
       try {
-        const uploadResult = await handleUploadQuotationDocuments(
-          selectedVersion.id,
-          fileList,
-          { syncSelectedVersion: true, clearMessages: false },
+        const uploaded = await handleUploadQuotationDocuments(fileList);
+        if (!uploaded) {
+          throw new Error("No fue posible cargar los archivos");
+        }
+
+        const { data } = await api.get(
+          `/api/quotation-versions/${selectedVersion.id}/won-documents`,
         );
-        if (!uploadResult?.ok) {
-          throw new Error(uploadResult?.message || "No fue posible cargar");
-        }
+        applyWonDocumentsPayloadToState(data || {});
 
-        const uploadedDocuments = Array.isArray(uploadResult?.data?.documents)
-          ? uploadResult.data.documents
-          : [];
-        const updatedQuotationDocuments = Array.isArray(
-          uploadResult?.data?.allDocuments,
-        )
-          ? uploadResult.data.allDocuments
-          : uploadedDocuments;
-
-        if (updatedQuotationDocuments.length) {
-          setWonDocumentsModalState((prev) => ({
-            ...prev,
-            quotationDocuments: updatedQuotationDocuments,
-          }));
-        }
-
-        if (uploadedDocuments.length) {
-          const latestUploaded = uploadedDocuments[0];
-          const selectionKey = buildWonDocumentSelectionKey(
-            "quotation",
-            latestUploaded?.documentId,
-          );
-
-          setWonDocumentsModalState((prev) => {
-            if (role === "purchase_order") {
-              return {
-                ...prev,
-                purchaseOrderSelectionKey: selectionKey,
-                message:
-                  "Documento cargado y seleccionado como orden de compra",
-              };
-            }
-
-            const selectionSet = new Set(prev.providerQuoteSelectionKeys || []);
-            selectionSet.add(selectionKey);
-            return {
-              ...prev,
-              providerQuoteSelectionKeys: Array.from(selectionSet),
-              message:
-                "Documento cargado y agregado como cotizacion de proveedor",
-            };
-          });
-        }
+        setWonDocumentsModalState((prev) => ({
+          ...prev,
+          message:
+            role === "purchase_order"
+              ? "Documento cargado. Selecciona la orden de compra en la lista."
+              : "Documento cargado. Selecciona la cotizacion de proveedor en la lista.",
+        }));
       } catch (err) {
         setWonDocumentsModalState((prev) => ({
           ...prev,
@@ -3324,11 +3325,8 @@ function QuotationEditorContent({
       }
 
       if (actionCode === "declarar_ganada") {
-        const transitionResult = await handleAction(actionCode, actionOptions);
-        if (transitionResult?.ok) {
-          await openWonDocumentsModal();
-        }
-        return transitionResult;
+        await openWonDocumentsModal({ pendingWonDeclaration: true });
+        return { ok: true, message: "Selecciona y acepta los documentos" };
       }
 
       return handleAction(actionCode, actionOptions);
@@ -5682,7 +5680,7 @@ function QuotationEditorContent({
                     <div className="section-header-actions">
                       <h4>1) Orden de compra</h4>
                       <label className="btn-secondary quotation-won-documents-upload-button">
-                        + Subir archivo
+                        Subir archivo
                         <input
                           type="file"
                           hidden
@@ -5756,7 +5754,7 @@ function QuotationEditorContent({
                     <div className="section-header-actions">
                       <h4>2) Cotizaciones de proveedores</h4>
                       <label className="btn-secondary quotation-won-documents-upload-button">
-                        + Subir archivo
+                        Subir archivo
                         <input
                           type="file"
                           hidden
@@ -5838,7 +5836,10 @@ function QuotationEditorContent({
                   <button
                     type="button"
                     className="btn-secondary"
-                    disabled={Boolean(wonDocumentsModalState.saving)}
+                    disabled={
+                      Boolean(wonDocumentsModalState.saving) ||
+                      Boolean(wonDocumentsModalState.pendingWonDeclaration)
+                    }
                     onClick={() => {
                       void saveWonDocumentsSelection({ accept: false });
                     }}

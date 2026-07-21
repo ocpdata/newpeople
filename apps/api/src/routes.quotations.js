@@ -14379,18 +14379,25 @@ router.post(
       });
     }
 
+    const normalizedStatusCode = String(version.status_code || "").trim();
+
     const canModify = await canExecuteQuotationAction({
       user: req.user,
       versionRow: version,
       actionCode: "modificar",
     });
-    if (!canModify && !hasQuotationAdministration(req.user)) {
+    const canManageClosedLatestVersion =
+      ["ganada", "aceptada"].includes(normalizedStatusCode);
+    if (
+      !canModify &&
+      !canManageClosedLatestVersion &&
+      !hasQuotationAdministration(req.user)
+    ) {
       return res.status(403).json({
         message: "No autorizado para registrar documentos de cierre",
       });
     }
 
-    const normalizedStatusCode = String(version.status_code || "").trim();
     if (!["ganada", "aceptada"].includes(normalizedStatusCode)) {
       return res.status(400).json({
         message:
@@ -14478,11 +14485,20 @@ router.post(
       versionRow: version,
       actionCode: "modificar",
     });
+    const canDeclareWon =
+      Number(version.id) === Number(version.latest_version_id)
+        ? await canExecuteQuotationAction({
+            user: req.user,
+            versionRow: version,
+            actionCode: "declarar_ganada",
+          })
+        : false;
     const canAttachClosedLatestVersion =
       Number(version.id) === Number(version.latest_version_id) &&
       ["ganada", "aceptada"].includes(normalizedStatusCode);
     if (
       !canModify &&
+      !canDeclareWon &&
       !canAttachClosedLatestVersion &&
       !hasQuotationAdministration(req.user)
     ) {
@@ -15858,6 +15874,72 @@ router.get(
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="${encodeURIComponent(document.original_file_name || link.original_file_name || "documento")}"`,
+    );
+    stream.on("error", (error) => {
+      res.destroy(error);
+    });
+    stream.pipe(res);
+  },
+);
+
+router.get(
+  "/quotation-versions/:versionId/won-documents/:source/:documentId/download",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+
+    const versionId = Number(req.params.versionId);
+    const documentId = Number(req.params.documentId);
+    const source = String(req.params.source || "").trim();
+
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+    if (!Number.isInteger(documentId) || documentId <= 0) {
+      return res.status(400).json({ message: "Id de documento invalido" });
+    }
+    if (!["quotation", "opportunity"].includes(source)) {
+      return res.status(400).json({ message: "Fuente de documento invalida" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const rows = await query(
+      `SELECT d.public_id AS document_public_id,
+              d.original_file_name,
+              d.mime_type
+       FROM quotation_won_documents qwd
+       INNER JOIN documents d ON d.id = qwd.document_id
+       WHERE qwd.quotation_version_id = ?
+         AND qwd.document_source = ?
+         AND qwd.document_id = ?
+         AND COALESCE(d.is_deleted, 0) = 0
+       LIMIT 1`,
+      [Number(versionId), source, Number(documentId)],
+    );
+
+    const row = rows[0] || null;
+    if (!row?.document_public_id) {
+      return res.status(404).json({ message: "Documento no encontrado" });
+    }
+
+    const { document, stream } = await getDocumentContentStream({
+      documentPublicId: row.document_public_id,
+    });
+
+    res.setHeader(
+      "Content-Type",
+      document.mime_type || row.mime_type || "application/octet-stream",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${encodeURIComponent(document.original_file_name || row.original_file_name || "documento")}"`,
     );
     stream.on("error", (error) => {
       res.destroy(error);

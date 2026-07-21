@@ -6,6 +6,20 @@ import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation
 
 const ACCEPT_ORDER_STATUS_CODES = ["ganada", "aceptada"];
 
+const WON_DOCUMENT_SOURCE_LABELS = {
+  quotation: "Cotizacion",
+  opportunity: "Oportunidad",
+};
+
+function buildAcceptOrderWonDocumentsState() {
+  return {
+    loading: false,
+    error: "",
+    purchaseOrder: null,
+    providerQuotes: [],
+  };
+}
+
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
@@ -125,6 +139,11 @@ function getQuotationActivationBadgeClass(quotation) {
   return "user-status-badge inactive";
 }
 
+function formatWonDocumentSourceLabel(source) {
+  const normalizedSource = String(source || "").trim();
+  return WON_DOCUMENT_SOURCE_LABELS[normalizedSource] || "Documento";
+}
+
 export default function AcceptOrderPage() {
   const navigate = useNavigate();
   const [quotations, setQuotations] = useState([]);
@@ -143,6 +162,11 @@ export default function AcceptOrderPage() {
   const [sellerNotificationNote, setSellerNotificationNote] = useState("");
   const [sendingNotificationQuotationId, setSendingNotificationQuotationId] =
     useState(null);
+  const [acceptOrderWonDocuments, setAcceptOrderWonDocuments] = useState(() =>
+    buildAcceptOrderWonDocumentsState(),
+  );
+  const [downloadingWonDocumentKey, setDownloadingWonDocumentKey] =
+    useState("");
 
   useEffect(() => {
     let ignore = false;
@@ -205,22 +229,96 @@ export default function AcceptOrderPage() {
     );
   }
 
-  function openAcceptQuotationModal(quotation) {
+  async function openAcceptQuotationModal(quotation) {
     if (
       isAcceptedQuotation(quotation) ||
       !Number(quotation?.latestVersionId || 0)
     ) {
       return;
     }
+
+    const versionId = Number(quotation?.latestVersionId || 0);
     setOpenQuotationMenuId(null);
     setQuotationToAccept(quotation);
+    setAcceptOrderWonDocuments({
+      loading: true,
+      error: "",
+      purchaseOrder: null,
+      providerQuotes: [],
+    });
     setError("");
     setSuccess("");
+
+    try {
+      const { data } = await api.get(
+        `/api/quotation-versions/${versionId}/won-documents`,
+      );
+
+      setAcceptOrderWonDocuments({
+        loading: false,
+        error: "",
+        purchaseOrder: data?.savedSelections?.purchaseOrder || null,
+        providerQuotes: Array.isArray(data?.savedSelections?.providerQuotes)
+          ? data.savedSelections.providerQuotes
+          : [],
+      });
+    } catch (loadError) {
+      setAcceptOrderWonDocuments({
+        loading: false,
+        error: getApiErrorMessage(
+          loadError,
+          "No fue posible cargar los documentos de cierre registrados",
+        ),
+        purchaseOrder: null,
+        providerQuotes: [],
+      });
+    }
   }
 
   function closeAcceptQuotationModal() {
     if (acceptingVersionId) return;
     setQuotationToAccept(null);
+    setAcceptOrderWonDocuments(buildAcceptOrderWonDocumentsState());
+    setDownloadingWonDocumentKey("");
+  }
+
+  async function handleDownloadWonDocument(documentItem) {
+    const versionId = Number(quotationToAccept?.latestVersionId || 0);
+    const source = String(documentItem?.source || "").trim();
+    const documentId = Number(documentItem?.documentId || 0);
+    if (!versionId || !source || !documentId) {
+      return;
+    }
+
+    const downloadKey = `${source}:${documentId}`;
+    try {
+      setDownloadingWonDocumentKey(downloadKey);
+      setError("");
+
+      const response = await api.get(
+        `/api/quotation-versions/${versionId}/won-documents/${encodeURIComponent(source)}/${documentId}/download`,
+        { responseType: "blob" },
+      );
+
+      const blob = response?.data;
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = window.document.createElement("a");
+      link.href = objectUrl;
+      link.download = documentItem?.originalFileName || "documento";
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (downloadError) {
+      setError(
+        getApiErrorMessage(
+          downloadError,
+          "No fue posible descargar el documento de cierre",
+        ),
+      );
+    } finally {
+      setDownloadingWonDocumentKey("");
+    }
   }
 
   function openSellerNotificationModal(quotation) {
@@ -594,7 +692,9 @@ export default function AcceptOrderPage() {
                             acceptingVersionId === quotation.latestVersionId ||
                             !Number(quotation.latestVersionId || 0)
                           }
-                          onClick={() => openAcceptQuotationModal(quotation)}
+                          onClick={() => {
+                            void openAcceptQuotationModal(quotation);
+                          }}
                         >
                           {acceptingVersionId === quotation.latestVersionId
                             ? "Aceptando..."
@@ -834,6 +934,113 @@ export default function AcceptOrderPage() {
                 </dl>
               </div>
             </div>
+
+            <section className="accept-order-won-documents-card">
+              <header className="accept-order-won-documents-header">
+                <h4>Documentos de cierre registrados</h4>
+                <p>
+                  Archivos seleccionados al declarar la cotizacion como ganada.
+                </p>
+              </header>
+
+              {acceptOrderWonDocuments.loading ? (
+                <p className="field-hint">Cargando documentos de cierre...</p>
+              ) : null}
+
+              {!acceptOrderWonDocuments.loading && acceptOrderWonDocuments.error ? (
+                <p className="field-hint opportunity-documents-preview-error">
+                  {acceptOrderWonDocuments.error}
+                </p>
+              ) : null}
+
+              {!acceptOrderWonDocuments.loading && !acceptOrderWonDocuments.error ? (
+                <div className="accept-order-won-documents-grid">
+                  <section className="accept-order-won-documents-section">
+                    <h5>1) Orden de compra</h5>
+                    {acceptOrderWonDocuments.purchaseOrder ? (
+                      <article className="accept-order-won-document-item">
+                        <div className="accept-order-won-document-item-main">
+                          <strong>
+                            {acceptOrderWonDocuments.purchaseOrder
+                              .originalFileName || "Documento"}
+                          </strong>
+                          <span className="field-hint">
+                            {formatWonDocumentSourceLabel(
+                              acceptOrderWonDocuments.purchaseOrder.source,
+                            )}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-secondary accept-order-won-document-download-btn"
+                          onClick={() => {
+                            void handleDownloadWonDocument(
+                              acceptOrderWonDocuments.purchaseOrder,
+                            );
+                          }}
+                          disabled={
+                            downloadingWonDocumentKey ===
+                            `${acceptOrderWonDocuments.purchaseOrder.source}:${acceptOrderWonDocuments.purchaseOrder.documentId}`
+                          }
+                          title="Descargar documento"
+                          aria-label="Descargar documento"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                          </svg>
+                        </button>
+                      </article>
+                    ) : (
+                      <p className="field-hint">
+                        No hay orden de compra registrada.
+                      </p>
+                    )}
+                  </section>
+
+                  <section className="accept-order-won-documents-section">
+                    <h5>2) Cotizaciones de proveedores</h5>
+                    {acceptOrderWonDocuments.providerQuotes.length ? (
+                      <div className="accept-order-won-documents-list">
+                        {acceptOrderWonDocuments.providerQuotes.map((item) => (
+                          <article
+                            key={`provider-quote-${item.source}-${item.documentId}`}
+                            className="accept-order-won-document-item"
+                          >
+                            <div className="accept-order-won-document-item-main">
+                              <strong>{item.originalFileName || "Documento"}</strong>
+                              <span className="field-hint">
+                                {formatWonDocumentSourceLabel(item.source)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn-secondary accept-order-won-document-download-btn"
+                              onClick={() => {
+                                void handleDownloadWonDocument(item);
+                              }}
+                              disabled={
+                                downloadingWonDocumentKey ===
+                                `${item.source}:${item.documentId}`
+                              }
+                              title="Descargar documento"
+                              aria-label="Descargar documento"
+                            >
+                              <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                              </svg>
+                            </button>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="field-hint">
+                        No hay cotizaciones de proveedores registradas.
+                      </p>
+                    )}
+                  </section>
+                </div>
+              ) : null}
+            </section>
 
             <div className="accept-order-modal-actions">
               <button
