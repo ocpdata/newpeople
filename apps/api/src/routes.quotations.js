@@ -14472,12 +14472,20 @@ router.post(
       return res.status(404).json({ message: "Version no encontrada" });
     }
 
+    const normalizedStatusCode = String(version.status_code || "").trim();
     const canModify = await canExecuteQuotationAction({
       user: req.user,
       versionRow: version,
       actionCode: "modificar",
     });
-    if (!canModify && !hasQuotationAdministration(req.user)) {
+    const canAttachClosedLatestVersion =
+      Number(version.id) === Number(version.latest_version_id) &&
+      ["ganada", "aceptada"].includes(normalizedStatusCode);
+    if (
+      !canModify &&
+      !canAttachClosedLatestVersion &&
+      !hasQuotationAdministration(req.user)
+    ) {
       return res.status(403).json({
         message: "No autorizado para adjuntar documentos en la version",
       });

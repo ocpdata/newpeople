@@ -6179,6 +6179,7 @@ export default function CampaignEmailModulePage() {
                           <thead>
                             <tr>
                               <th>Contacto</th>
+                              <th>Móvil</th>
                               <th>Cuenta</th>
                               <th>Vendedor</th>
                               <th>Correo</th>
@@ -6197,6 +6198,7 @@ export default function CampaignEmailModulePage() {
                                   key={`${item.email}-${item.status}-${item.updatedAt || ""}`}
                                 >
                                   <td>{item.contactName || "-"}</td>
+                                  <td>{item.contactMobile || "-"}</td>
                                   <td>{item.accountName || "-"}</td>
                                   <td>{item.sellerName || "-"}</td>
                                   <td>{item.email}</td>

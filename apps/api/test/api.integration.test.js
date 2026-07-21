@@ -15984,6 +15984,29 @@ describe("API integration baseline", () => {
       }),
     );
 
+    await query(
+      `UPDATE quotation_versions
+       SET status_id = ?
+       WHERE id = ?`,
+      [await getCatalogId("quotation_statuses", "ganada"), fixture.latestVersionId],
+    );
+
+    const wonUploadResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/documents`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .attach(
+        "files",
+        Buffer.from("Documento de orden de compra", "utf8"),
+        {
+          filename: "orden-compra.txt",
+          contentType: "text/plain",
+        },
+      );
+
+    expect(wonUploadResponse.status).toBe(201);
+    expect(wonUploadResponse.body.documents).toHaveLength(2);
+    expect(wonUploadResponse.body.allDocuments).toHaveLength(2);
+
     const versionResponse = await request(app)
       .get(`/api/quotation-versions/${fixture.latestVersionId}`)
       .set("Authorization", `Bearer ${fixture.token}`);

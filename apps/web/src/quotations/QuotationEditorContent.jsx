@@ -1638,14 +1638,22 @@ function QuotationEditorContent({
           throw new Error(uploadResult?.message || "No fue posible cargar");
         }
 
-        const { data } = await api.get(
-          `/api/quotation-versions/${selectedVersion.id}/won-documents`,
-        );
-        applyWonDocumentsPayloadToState(data || {});
-
         const uploadedDocuments = Array.isArray(uploadResult?.data?.documents)
           ? uploadResult.data.documents
           : [];
+        const updatedQuotationDocuments = Array.isArray(
+          uploadResult?.data?.allDocuments,
+        )
+          ? uploadResult.data.allDocuments
+          : uploadedDocuments;
+
+        if (updatedQuotationDocuments.length) {
+          setWonDocumentsModalState((prev) => ({
+            ...prev,
+            quotationDocuments: updatedQuotationDocuments,
+          }));
+        }
+
         if (uploadedDocuments.length) {
           const latestUploaded = uploadedDocuments[0];
           const selectionKey = buildWonDocumentSelectionKey(
