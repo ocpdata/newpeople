@@ -848,6 +848,151 @@
   margin-top: 0;
 }
 
+.quotation-won-documents-modal {
+  max-width: 1120px;
+  width: min(96vw, 1120px);
+  max-height: min(90vh, 900px);
+  overflow: auto;
+  padding: 0 0 12px;
+}
+
+.quotation-won-documents-modal .modal-header {
+  padding: 20px 22px 12px;
+  border-bottom: 1px solid #dbe6f4;
+}
+
+.quotation-won-documents-modal .opportunity-modal-subtitle {
+  margin-top: 6px;
+  max-width: 68ch;
+}
+
+.quotation-won-documents-grid {
+  padding: 16px 22px 8px;
+  align-items: start;
+  gap: 14px;
+}
+
+.quotation-won-documents-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7e3f3;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.quotation-won-documents-section h4 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.15;
+  color: #173450;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.quotation-won-documents-upload-button {
+  cursor: pointer;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid #b9d3f4;
+  background: linear-gradient(180deg, #f7fbff 0%, #eaf3ff 100%);
+  color: #1d4f89;
+  font-weight: 700;
+  font-size: 14px;
+  transition: background 0.18s ease, border-color 0.18s ease,
+    box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.quotation-won-documents-upload-button::before {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d6e7ff;
+  color: #134a86;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.quotation-won-documents-upload-button:hover {
+  border-color: #98c0ef;
+  background: linear-gradient(180deg, #eef6ff 0%, #dcecff 100%);
+  box-shadow: 0 8px 16px rgba(30, 78, 135, 0.15);
+  transform: translateY(-1px);
+}
+
+.quotation-provider-import-documents-list {
+  display: grid;
+  gap: 10px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 2px 6px 4px 2px;
+}
+
+.quotation-provider-import-document-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  border: 1px solid #cad9ee;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+  box-shadow: 0 1px 0 rgba(17, 42, 76, 0.03);
+}
+
+.quotation-provider-import-document-option input {
+  margin-top: 5px;
+  width: 19px;
+  height: 19px;
+  transform: scale(1.18);
+  accent-color: #1c5fcc;
+  flex-shrink: 0;
+}
+
+.quotation-won-documents-item-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.quotation-won-documents-item-copy strong {
+  font-size: 15px;
+  line-height: 1.25;
+  color: #173450;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.quotation-won-documents-item-copy .field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #5c7694;
+}
+
+.quotation-won-documents-actions {
+  padding: 6px 22px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quotation-won-documents-actions > button {
+  min-height: 50px;
+  font-size: 16px;
+  line-height: 1.1;
+  font-weight: 600;
+}
+
 .quotation-provider-import-blocking-overlay {
   position: absolute;
   inset: 0;
@@ -857,6 +1002,57 @@
   padding: 20px;
   background: rgba(15, 23, 42, 0.36);
   backdrop-filter: blur(1.5px);
+}
+
+@media (max-width: 900px) {
+  .quotation-won-documents-modal {
+    width: min(96vw, 840px);
+  }
+
+  .quotation-won-documents-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px 16px 6px;
+  }
+
+  .quotation-won-documents-section h4 {
+    font-size: 18px;
+  }
+
+  .quotation-won-documents-actions {
+    padding: 4px 16px 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .quotation-won-documents-modal {
+    width: calc(100vw - 16px);
+    border-radius: 14px;
+  }
+
+  .quotation-won-documents-grid {
+    padding: 12px 12px 4px;
+  }
+
+  .quotation-won-documents-section h4 {
+    font-size: 17px;
+  }
+
+  .quotation-won-documents-actions {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 2px 12px 8px;
+  }
+
+  .quotation-won-documents-actions > button {
+    min-height: 50px;
+    font-size: 15px;
+  }
+
+  .quotation-won-documents-upload-button {
+    min-height: 36px;
+    font-size: 13px;
+    padding: 0 12px;
+  }
 }
 
 .quotation-provider-import-blocking-dialog {

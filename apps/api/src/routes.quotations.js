@@ -261,6 +261,20 @@ const transitionSchema = z.object({
     .optional(),
 });
 
+const quotationWonDocumentRoleCodes = ["purchase_order", "provider_quote"];
+const quotationWonDocumentSourceCodes = ["quotation", "opportunity"];
+
+const quotationWonDocumentSelectionSchema = z.object({
+  role: z.enum(quotationWonDocumentRoleCodes),
+  source: z.enum(quotationWonDocumentSourceCodes),
+  documentId: z.number().int().positive(),
+});
+
+const quotationWonDocumentsSaveSchema = z.object({
+  selections: z.array(quotationWonDocumentSelectionSchema).max(500),
+  accept: z.boolean().optional().default(false),
+});
+
 const quotationSellerNotificationSchema = z.object({
   note: z.string().trim().min(1).max(2000),
 });
@@ -1434,6 +1448,7 @@ let ensureQuotationSectionItemsSchemaPromise;
 let ensureQuotationVersionsSchemaPromise;
 let ensureQuotationStatusesSchemaPromise;
 let ensureQuotationVersionDocumentsSchemaPromise;
+let ensureQuotationWonDocumentsSchemaPromise;
 let ensureQuotationDocumentImportsSchemaPromise;
 let ensureQuotationProviderDocumentImportPreviewJobSchemaPromise;
 let ensureQuotationCreateProviderDocumentImportPreviewJobSchemaPromise;
@@ -1900,6 +1915,42 @@ async function ensureQuotationVersionDocumentsSchema() {
   }
 
   await ensureQuotationVersionDocumentsSchemaPromise;
+}
+
+async function ensureQuotationWonDocumentsSchema() {
+  if (!ensureQuotationWonDocumentsSchemaPromise) {
+    ensureQuotationWonDocumentsSchemaPromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS quotation_won_documents (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          quotation_id BIGINT UNSIGNED NOT NULL,
+          quotation_version_id BIGINT UNSIGNED NOT NULL,
+          opportunity_id BIGINT UNSIGNED NOT NULL,
+          document_id BIGINT UNSIGNED NOT NULL,
+          document_source VARCHAR(40) NOT NULL,
+          document_role VARCHAR(40) NOT NULL,
+          created_by_user_id BIGINT UNSIGNED NOT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          accepted_at DATETIME(3) NULL,
+          accepted_by_user_id BIGINT UNSIGNED NULL,
+          CONSTRAINT fk_qwd_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qwd_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qwd_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qwd_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qwd_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          CONSTRAINT fk_qwd_accepted_by FOREIGN KEY (accepted_by_user_id) REFERENCES users(id),
+          CONSTRAINT uq_qwd_version_role_document UNIQUE (quotation_version_id, document_role, document_id),
+          INDEX idx_qwd_version_role (quotation_version_id, document_role, created_at),
+          INDEX idx_qwd_version_source (quotation_version_id, document_source)
+        )`,
+      );
+    })().catch((error) => {
+      ensureQuotationWonDocumentsSchemaPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureQuotationWonDocumentsSchemaPromise;
 }
 
 async function ensureQuotationDocumentImportsSchema() {
@@ -2386,6 +2437,259 @@ async function listQuotationDocuments({ quotationId }) {
   );
 
   return rows.map(buildQuotationVersionDocumentPayload);
+}
+
+async function listOpportunityDocumentsForQuotation({ opportunityId }) {
+  const rows = await query(
+    `SELECT d.id AS document_id,
+            d.public_id AS document_public_id,
+            d.original_file_name,
+            d.stored_file_name,
+            d.mime_type,
+            d.file_extension,
+            d.byte_size,
+            d.created_at AS uploaded_at,
+            d.uploaded_by_user_id,
+            uploader.full_name AS uploaded_by_user_name
+     FROM opportunity_document_links odl
+     INNER JOIN documents d ON d.id = odl.document_id
+     LEFT JOIN users uploader ON uploader.id = d.uploaded_by_user_id
+     WHERE odl.opportunity_id = ?
+       AND COALESCE(d.is_deleted, 0) = 0
+     ORDER BY d.created_at DESC, d.id DESC`,
+    [Number(opportunityId)],
+  );
+
+  return rows.map((row) => ({
+    documentId: Number(row.document_id),
+    publicId: String(row.document_public_id || ""),
+    originalFileName: row.original_file_name || "documento",
+    storedFileName: row.stored_file_name || null,
+    mimeType: row.mime_type || "application/octet-stream",
+    fileExtension: row.file_extension || null,
+    byteSize: Number(row.byte_size || 0),
+    uploadedAt: row.uploaded_at,
+    uploadedByUserId: row.uploaded_by_user_id
+      ? Number(row.uploaded_by_user_id)
+      : null,
+    uploadedByUserName: row.uploaded_by_user_name || null,
+  }));
+}
+
+async function listQuotationWonDocumentsSelections({ versionId }) {
+  await ensureQuotationWonDocumentsSchema();
+  return query(
+    `SELECT qwd.document_id,
+            qwd.document_source,
+            qwd.document_role,
+            qwd.accepted_at,
+            qwd.accepted_by_user_id,
+            d.public_id AS document_public_id,
+            d.original_file_name
+     FROM quotation_won_documents qwd
+     INNER JOIN documents d ON d.id = qwd.document_id
+     WHERE qwd.quotation_version_id = ?
+       AND COALESCE(d.is_deleted, 0) = 0
+     ORDER BY qwd.document_role, qwd.created_at, qwd.id`,
+    [Number(versionId)],
+  );
+}
+
+function buildQuotationWonDocumentsPayload({
+  quotationDocuments,
+  opportunityDocuments,
+  savedSelectionRows,
+}) {
+  const selectionRows = Array.isArray(savedSelectionRows)
+    ? savedSelectionRows
+    : [];
+  const savedSelections = {
+    purchaseOrder: null,
+    providerQuotes: [],
+  };
+
+  let acceptedAt = null;
+  let acceptedByUserId = null;
+
+  selectionRows.forEach((row) => {
+    const role = String(row.document_role || "").trim();
+    const source = String(row.document_source || "").trim();
+    const documentId = Number(row.document_id || 0);
+    if (!documentId) {
+      return;
+    }
+
+    const selectionItem = {
+      role,
+      source,
+      documentId,
+      publicId: String(row.document_public_id || "").trim(),
+      originalFileName: String(row.original_file_name || "documento").trim(),
+    };
+
+    if (role === "purchase_order") {
+      savedSelections.purchaseOrder = selectionItem;
+    } else if (role === "provider_quote") {
+      savedSelections.providerQuotes.push(selectionItem);
+    }
+
+    if (row.accepted_at && !acceptedAt) {
+      acceptedAt = row.accepted_at;
+      acceptedByUserId = row.accepted_by_user_id
+        ? Number(row.accepted_by_user_id)
+        : null;
+    }
+  });
+
+  return {
+    quotationDocuments,
+    opportunityDocuments,
+    savedSelections,
+    acceptance: {
+      accepted: Boolean(acceptedAt),
+      acceptedAt,
+      acceptedByUserId,
+    },
+  };
+}
+
+async function saveQuotationWonDocumentsSelections({
+  version,
+  selections,
+  accept,
+  userId,
+}) {
+  await ensureQuotationWonDocumentsSchema();
+
+  const normalizedSelections = Array.isArray(selections)
+    ? selections
+        .map((entry) => ({
+          role: String(entry?.role || "").trim(),
+          source: String(entry?.source || "").trim(),
+          documentId: Number(entry?.documentId || 0),
+        }))
+        .filter(
+          (entry) =>
+            quotationWonDocumentRoleCodes.includes(entry.role) &&
+            quotationWonDocumentSourceCodes.includes(entry.source) &&
+            Number.isInteger(entry.documentId) &&
+            entry.documentId > 0,
+        )
+    : [];
+
+  const dedupedSelections = Array.from(
+    new Map(
+      normalizedSelections.map((entry) => [
+        `${entry.role}:${entry.source}:${entry.documentId}`,
+        entry,
+      ]),
+    ).values(),
+  );
+
+  const purchaseOrderSelections = dedupedSelections.filter(
+    (entry) => entry.role === "purchase_order",
+  );
+  const providerQuoteSelections = dedupedSelections.filter(
+    (entry) => entry.role === "provider_quote",
+  );
+
+  if (purchaseOrderSelections.length > 1) {
+    const error = new Error(
+      "Solo puedes seleccionar un documento como orden de compra",
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  if (accept) {
+    if (!purchaseOrderSelections.length) {
+      const error = new Error(
+        "Debes seleccionar una orden de compra para aceptar",
+      );
+      error.status = 400;
+      throw error;
+    }
+    if (!providerQuoteSelections.length) {
+      const error = new Error(
+        "Debes seleccionar al menos una cotizacion de proveedor para aceptar",
+      );
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  const [quotationDocumentRows, opportunityDocumentRows] = await Promise.all([
+    query(
+      `SELECT d.id AS document_id
+       FROM quotation_version_documents qvd
+       INNER JOIN quotation_versions qv ON qv.id = qvd.quotation_version_id
+       INNER JOIN documents d ON d.id = qvd.document_id
+       WHERE qv.quotation_id = ?
+         AND COALESCE(d.is_deleted, 0) = 0`,
+      [Number(version.quotation_id)],
+    ),
+    query(
+      `SELECT d.id AS document_id
+       FROM opportunity_document_links odl
+       INNER JOIN documents d ON d.id = odl.document_id
+       WHERE odl.opportunity_id = ?
+         AND COALESCE(d.is_deleted, 0) = 0`,
+      [Number(version.opportunity_id)],
+    ),
+  ]);
+
+  const quotationDocumentIds = new Set(
+    quotationDocumentRows.map((row) => Number(row.document_id || 0)),
+  );
+  const opportunityDocumentIds = new Set(
+    opportunityDocumentRows.map((row) => Number(row.document_id || 0)),
+  );
+
+  const hasInvalidSelection = dedupedSelections.some((entry) => {
+    if (entry.source === "quotation") {
+      return !quotationDocumentIds.has(entry.documentId);
+    }
+    return !opportunityDocumentIds.has(entry.documentId);
+  });
+
+  if (hasInvalidSelection) {
+    const error = new Error(
+      "Uno o mas documentos seleccionados ya no estan disponibles",
+    );
+    error.status = 400;
+    throw error;
+  }
+
+  const now = new Date();
+  await withTransaction(async (conn) => {
+    await conn.query(
+      `DELETE FROM quotation_won_documents
+       WHERE quotation_version_id = ?`,
+      [Number(version.id)],
+    );
+
+    for (const entry of dedupedSelections) {
+      await conn.query(
+        `INSERT INTO quotation_won_documents
+           (quotation_id, quotation_version_id, opportunity_id, document_id,
+            document_source, document_role, created_by_user_id, created_at,
+            accepted_at, accepted_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          Number(version.quotation_id),
+          Number(version.id),
+          Number(version.opportunity_id),
+          Number(entry.documentId),
+          entry.source,
+          entry.role,
+          Number(userId),
+          now,
+          accept ? now : null,
+          accept ? Number(userId) : null,
+        ],
+      );
+    }
+  });
 }
 
 function roundProviderDocumentImportMoney(value) {
@@ -14004,6 +14308,149 @@ router.get(
     }
 
     return res.json(await listQuotationDocuments({ quotationId }));
+  },
+);
+
+router.get(
+  "/quotation-versions/:versionId/won-documents",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const [quotationDocuments, opportunityDocuments, savedSelectionRows] =
+      await Promise.all([
+        listQuotationDocuments({ quotationId: Number(version.quotation_id) }),
+        listOpportunityDocumentsForQuotation({
+          opportunityId: Number(version.opportunity_id),
+        }),
+        listQuotationWonDocumentsSelections({ versionId }),
+      ]);
+
+    return res.json(
+      buildQuotationWonDocumentsPayload({
+        quotationDocuments,
+        opportunityDocuments,
+        savedSelectionRows,
+      }),
+    );
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/won-documents",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
+    }
+
+    const parsed = quotationWonDocumentsSaveSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const version = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId,
+    });
+    if (!version) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+    if (Number(version.id) !== Number(version.latest_version_id)) {
+      return res.status(400).json({
+        message: "Solo la version mayor puede registrar documentos de cierre",
+      });
+    }
+
+    const canModify = await canExecuteQuotationAction({
+      user: req.user,
+      versionRow: version,
+      actionCode: "modificar",
+    });
+    if (!canModify && !hasQuotationAdministration(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para registrar documentos de cierre",
+      });
+    }
+
+    const normalizedStatusCode = String(version.status_code || "").trim();
+    if (!["ganada", "aceptada"].includes(normalizedStatusCode)) {
+      return res.status(400).json({
+        message:
+          "Solo puedes registrar documentos de cierre cuando la cotizacion esta ganada o aceptada",
+      });
+    }
+
+    try {
+      await saveQuotationWonDocumentsSelections({
+        version,
+        selections: parsed.data.selections,
+        accept: Boolean(parsed.data.accept),
+        userId: Number(req.user.id),
+      });
+    } catch (error) {
+      return res.status(Number(error?.status || 500)).json({
+        message:
+          Number(error?.status || 500) < 500
+            ? String(error?.message || "No fue posible guardar la seleccion")
+            : "No fue posible guardar la seleccion documental",
+      });
+    }
+
+    const [quotationDocuments, opportunityDocuments, savedSelectionRows] =
+      await Promise.all([
+        listQuotationDocuments({ quotationId: Number(version.quotation_id) }),
+        listOpportunityDocumentsForQuotation({
+          opportunityId: Number(version.opportunity_id),
+        }),
+        listQuotationWonDocumentsSelections({ versionId }),
+      ]);
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: parsed.data.accept
+        ? "quotation_won_documents_accepted"
+        : "quotation_won_documents_saved",
+      entityType: "quotation_version",
+      entityId: Number(version.id),
+      detail: parsed.data.accept
+        ? "Documentos de cierre aceptados"
+        : "Documentos de cierre guardados sin aceptar",
+      after: {
+        selectionsCount: Array.isArray(parsed.data.selections)
+          ? parsed.data.selections.length
+          : 0,
+      },
+    });
+
+    return res.json({
+      message: parsed.data.accept
+        ? "Documentos de cierre aceptados"
+        : "Documentos de cierre guardados",
+      ...buildQuotationWonDocumentsPayload({
+        quotationDocuments,
+        opportunityDocuments,
+        savedSelectionRows,
+      }),
+    });
   },
 );
 

@@ -143,6 +143,19 @@ describe("API integration baseline", () => {
         "proceso_comercial_config.update",
       ],
     });
+    ctx.opportunityDemoBypassRoleId = await createRole({
+      name: `${TEST_PREFIX}_opps_demo_bypass`,
+      permissionCodes: [
+        "desarrollo_comercial.read",
+        "desarrollo_comercial.update",
+        "oportunidades.read",
+        "oportunidades.create",
+        "oportunidades.update",
+        "oportunidades.bypass_demostracion_validation",
+        "proceso_comercial_config.read",
+        "proceso_comercial_config.update",
+      ],
+    });
     ctx.commercialDevelopmentReadOnlyRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_development_readonly`,
       permissionCodes: [
@@ -274,6 +287,7 @@ describe("API integration baseline", () => {
       ctx.providerManagerRoleId,
       ctx.opportunityRequestRoleId,
       ctx.opportunityFlowRoleId,
+      ctx.opportunityDemoBypassRoleId,
       ctx.opportunityGlobalScopeRoleId,
       ctx.quotationOperationRoleId,
       ctx.quotationRevisionRoleId,
@@ -353,6 +367,10 @@ describe("API integration baseline", () => {
       salesStageWaitingId: await getCatalogId(
         "opportunity_sales_stages",
         "waiting",
+      ),
+      salesStageDemonstrationId: await getCatalogId(
+        "opportunity_sales_stages",
+        "demostracion",
       ),
       businessLineId: await getFirstId("opportunity_business_lines"),
       opportunityActiveStatusId: await getCatalogId(
@@ -459,6 +477,11 @@ describe("API integration baseline", () => {
         ctx.manufacturerRegistrationManagerRoleId,
       ],
     });
+    ctx.opportunityDemoBypassUserId = await createUser({
+      fullName: "API Opportunity Demo Bypass",
+      email: `${TEST_PREFIX}.opps.demo.bypass@example.com`,
+      roleIds: [ctx.opportunityDemoBypassRoleId],
+    });
     ctx.opportunityGlobalScopeUserId = await createUser({
       fullName: "API Opportunity Global Scope",
       email: `${TEST_PREFIX}.opps.global.scope@example.com`,
@@ -552,6 +575,7 @@ describe("API integration baseline", () => {
       ctx.providerManagerUserId,
       ctx.opportunityRequestUserId,
       ctx.opportunityFlowUserId,
+      ctx.opportunityDemoBypassUserId,
       ctx.opportunityGlobalScopeUserId,
       ctx.sellerUserId,
       ctx.roleManagerUserId,
@@ -717,25 +741,28 @@ describe("API integration baseline", () => {
     res.on("error", callback);
   }
 
-  async function createOwnedOpportunityFlowFixture(suffix) {
+  async function createOwnedOpportunityFlowFixture(suffix, options = {}) {
+    const ownerUserId = Number(options.ownerUserId || ctx.opportunityFlowUserId);
+    const actorUserId = Number(options.actorUserId || ownerUserId);
+    const loginEmail = String(
+      options.loginEmail || `${TEST_PREFIX}.opps.flow@example.com`,
+    );
+
     const accountId = await createDirectAccount({
-      ownerUserId: ctx.opportunityFlowUserId,
-      actorUserId: ctx.opportunityFlowUserId,
+      ownerUserId,
+      actorUserId,
       suffix,
     });
     cleanup.accountIds.push(accountId);
 
     const contactId = await createDirectContact({
       accountId,
-      actorUserId: ctx.opportunityFlowUserId,
+      actorUserId,
       suffix,
     });
     cleanup.contactIds.push(contactId);
 
-    const loginResponse = await login(
-      request(app),
-      `${TEST_PREFIX}.opps.flow@example.com`,
-    );
+    const loginResponse = await login(request(app), loginEmail);
 
     const createResponse = await request(app)
       .post("/api/opportunities")
@@ -14477,6 +14504,59 @@ describe("API integration baseline", () => {
       "stage_bypassed",
     );
     expect(auditRows.length).toBe(1);
+  });
+
+  test("oportunidades.stage-bypass permite bypass de demostracion con permiso dedicado", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_bypass_demo_only_allowed`,
+      {
+        ownerUserId: ctx.opportunityDemoBypassUserId,
+        actorUserId: ctx.opportunityDemoBypassUserId,
+        loginEmail: `${TEST_PREFIX}.opps.demo.bypass@example.com`,
+      },
+    );
+
+    await query(
+      `UPDATE opportunities
+       SET sales_stage_id = ?, updated_by = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        ctx.catalogIds.salesStageDemonstrationId,
+        ctx.opportunityDemoBypassUserId,
+        fixture.opportunityId,
+      ],
+    );
+
+    const bypassResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/stage-bypass`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ reason: "Demo completada, se omite validacion" });
+
+    expect(bypassResponse.status).toBe(200);
+    expect(String(bypassResponse.body.salesStageCode || "").trim()).not.toBe(
+      "demostracion",
+    );
+  });
+
+  test("oportunidades.stage-bypass bloquea permiso dedicado fuera de demostracion", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_commercial_bypass_demo_only_blocked`,
+      {
+        ownerUserId: ctx.opportunityDemoBypassUserId,
+        actorUserId: ctx.opportunityDemoBypassUserId,
+        loginEmail: `${TEST_PREFIX}.opps.demo.bypass@example.com`,
+      },
+    );
+
+    const bypassResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/stage-bypass`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ reason: "Intento fuera de demostracion" });
+
+    expect(bypassResponse.status).toBe(403);
+    expect(String(bypassResponse.body.message || "")).toContain(
+      "solo permite bypasear la etapa de Demostracion",
+    );
   });
 
   test("oportunidades.commercial-close exige motivo para perdida y anulada, y solo permite ganada desde Waiting", async () => {

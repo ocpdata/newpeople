@@ -284,6 +284,10 @@ const opportunityCreatePermissions = [
   "oportunidades.create",
   "oportunidades.request",
 ];
+const opportunityBypassStageValidationPermission =
+  "oportunidades.bypass_stage_validation";
+const opportunityBypassDemonstrationValidationPermission =
+  "oportunidades.bypass_demostracion_validation";
 const opportunityGlobalReadPermission = "oportunidades.read_all";
 const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
@@ -331,6 +335,22 @@ async function requireAccessibleOpportunityOr404({
 
 function hasExplicitOpportunityPermission(user, permission) {
   return user?.permissionSet?.has(permission);
+}
+
+function canBypassCurrentOpportunityStage({ user, currentStageCode }) {
+  if (
+    hasExplicitOpportunityPermission(user, opportunityBypassStageValidationPermission)
+  ) {
+    return true;
+  }
+
+  return (
+    normalizeText(currentStageCode) === "demostracion" &&
+    hasExplicitOpportunityPermission(
+      user,
+      opportunityBypassDemonstrationValidationPermission,
+    )
+  );
 }
 
 function canChangeOpportunityActivationStatus(user) {
@@ -3569,7 +3589,10 @@ router.post(
 
 router.post(
   "/:id/stage-bypass",
-  requirePermission("oportunidades.bypass_stage_validation"),
+  requireAnyPermission([
+    opportunityBypassStageValidationPermission,
+    opportunityBypassDemonstrationValidationPermission,
+  ]),
   async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -3602,6 +3625,20 @@ router.post(
     if (isClosedCommercialStatus(opportunityState.commercial_status_code)) {
       return res.status(400).json({
         message: "No puedes bypasear la etapa de una oportunidad cerrada",
+      });
+    }
+
+    if (
+      !canBypassCurrentOpportunityStage({
+        user: req.user,
+        currentStageCode: opportunityState.sales_stage_code,
+      })
+    ) {
+      return res.status(403).json({
+        message:
+          "No autorizado: este permiso solo permite bypasear la etapa de Demostracion",
+        requiredPermission:
+          opportunityBypassDemonstrationValidationPermission,
       });
     }
 

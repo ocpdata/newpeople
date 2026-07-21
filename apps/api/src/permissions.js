@@ -44,6 +44,12 @@ const CORE_PERMISSIONS = [
     description: "Bypasear la validacion de etapa en el proceso comercial",
   },
   {
+    code: "oportunidades.bypass_demostracion_validation",
+    module: "oportunidades",
+    action: "bypass_demostracion_validation",
+    description: "Bypasear la validacion de etapa solo en Demostracion",
+  },
+  {
     code: "herramientas.read",
     module: "herramientas",
     action: "read",

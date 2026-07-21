@@ -135,9 +135,17 @@ function OpportunitiesPage({ currentUser, can }) {
     linkOpportunityDocumentToAnswer,
     commercialAnswerSuggestionsByStageId,
   } = useOpportunitiesPage({ currentUser, searchParams, setSearchParams });
-  const canBypassCommercialStageValidation = can(
+  const canBypassAnyStageValidation = can(
     "oportunidades.bypass_stage_validation",
   );
+  const canBypassDemonstrationValidation = can(
+    "oportunidades.bypass_demostracion_validation",
+  );
+  const isCurrentStageDemonstration =
+    String(currentCommercialStage?.code || "").trim() === "demostracion";
+  const canBypassCommercialStageValidation =
+    canBypassAnyStageValidation ||
+    (canBypassDemonstrationValidation && isCurrentStageDemonstration);
 
   const activeOpportunityChatbotContext = useMemo(() => {
     if (!showOpportunityModal || !editingOpportunityId) {
