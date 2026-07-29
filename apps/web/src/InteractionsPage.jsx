@@ -2039,6 +2039,15 @@ function getDocumentStageLabel(status, labels = {}) {
   }
 }
 
+function isAudioDocument(document) {
+  const extension = String(document?.fileExtension || "").toLowerCase();
+  const mimeType = String(document?.mimeType || "").toLowerCase();
+  return (
+    [".mp3", ".wav", ".m4a"].includes(extension) ||
+    mimeType.startsWith("audio/")
+  );
+}
+
 function documentNeedsTranscription(document) {
   const extension = String(document?.fileExtension || "").toLowerCase();
   const mimeType = String(document?.mimeType || "").toLowerCase();
@@ -2885,6 +2894,11 @@ function InteractionDetailModal({
   onOpenLeadEmailModal,
   canOpenLeadEmailModal,
   leadEmailDisabledHint,
+  onPlayAudioDocument,
+  playingAudioLoading,
+  playingAudioError,
+  playingAudioUrl,
+  playingAudioDocumentPublicId,
 }) {
   const [uploadInputKey, setUploadInputKey] = useState(0);
 
@@ -3205,6 +3219,24 @@ function InteractionDetailModal({
                         </div>
                         {canDeleteDocuments ? (
                           <div className="interaction-document-actions">
+                            {isAudioDocument(document) ? (
+                              <button
+                                type="button"
+                                className="interaction-detail-icon-btn interaction-document-play-btn"
+                                onClick={() => void onPlayAudioDocument(document)}
+                                disabled={playingAudioLoading && playingAudioDocumentPublicId === document.publicId}
+                                aria-label="Reproducir audio"
+                                title="Reproducir audio"
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M8 6v12l10-6z" />
+                                </svg>
+                              </button>
+                            ) : null}
                             {onDownloadDocument ? (
                               <button
                                 type="button"
@@ -3271,37 +3303,76 @@ function InteractionDetailModal({
                               </svg>
                             </button>
                           </div>
-                        ) : onDownloadDocument ? (
-                          <button
-                            type="button"
-                            className="interaction-detail-icon-btn interaction-document-download-btn"
-                            onClick={() => onDownloadDocument(document)}
-                            disabled={
-                              downloadingDocumentPublicId === document.publicId
-                            }
-                            aria-label={
-                              downloadingDocumentPublicId === document.publicId
-                                ? "Descargando archivo"
-                                : "Descargar archivo"
-                            }
-                            title={
-                              downloadingDocumentPublicId === document.publicId
-                                ? "Descargando..."
-                                : "Descargar archivo"
-                            }
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              focusable="false"
-                              aria-hidden="true"
-                            >
-                              <path d="M12 4v10" />
-                              <path d="M8.5 10.5 12 14l3.5-3.5" />
-                              <path d="M5 19h14" />
-                            </svg>
-                          </button>
-                        ) : null}
+                        ) : (
+                          <div className="interaction-document-actions">
+                            {isAudioDocument(document) ? (
+                              <button
+                                type="button"
+                                className="interaction-detail-icon-btn interaction-document-play-btn"
+                                onClick={() => void onPlayAudioDocument(document)}
+                                disabled={playingAudioLoading && playingAudioDocumentPublicId === document.publicId}
+                                aria-label="Reproducir audio"
+                                title="Reproducir audio"
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M8 6v12l10-6z" />
+                                </svg>
+                              </button>
+                            ) : null}
+                            {onDownloadDocument ? (
+                              <button
+                                type="button"
+                                className="interaction-detail-icon-btn interaction-document-download-btn"
+                                onClick={() => onDownloadDocument(document)}
+                                disabled={
+                                  downloadingDocumentPublicId === document.publicId
+                                }
+                                aria-label={
+                                  downloadingDocumentPublicId === document.publicId
+                                    ? "Descargando archivo"
+                                    : "Descargar archivo"
+                                }
+                                title={
+                                  downloadingDocumentPublicId === document.publicId
+                                    ? "Descargando..."
+                                    : "Descargar archivo"
+                                }
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M12 4v10" />
+                                  <path d="M8.5 10.5 12 14l3.5-3.5" />
+                                  <path d="M5 19h14" />
+                                </svg>
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
+                      {playingAudioDocumentPublicId === document.publicId ? (
+                        <div className="interaction-document-audio-player">
+                          {playingAudioLoading && !playingAudioUrl ? (
+                            <p className="field-hint">
+                              Cargando audio...
+                            </p>
+                          ) : null}
+                          {playingAudioError ? (
+                            <p className="field-hint interaction-document-audio-error">
+                              {playingAudioError}
+                            </p>
+                          ) : null}
+                          {playingAudioUrl ? (
+                            <audio controls preload="metadata" src={playingAudioUrl} />
+                          ) : null}
+                        </div>
+                      ) : null}
                     </article>
                   ))}
                 </div>
@@ -5375,6 +5446,11 @@ function InteractionsPage({ can, currentUser }) {
   const [deletingDocumentPublicId, setDeletingDocumentPublicId] = useState("");
   const [downloadingDocumentPublicId, setDownloadingDocumentPublicId] =
     useState("");
+  const [playingAudioDocumentPublicId, setPlayingAudioDocumentPublicId] =
+    useState("");
+  const [playingAudioUrl, setPlayingAudioUrl] = useState("");
+  const [playingAudioLoading, setPlayingAudioLoading] = useState(false);
+  const [playingAudioError, setPlayingAudioError] = useState("");
   const [deletingInteractionId, setDeletingInteractionId] = useState(null);
   const [openInteractionMenuId, setOpenInteractionMenuId] = useState(null);
   const [showLeadCallOutcomeModal, setShowLeadCallOutcomeModal] =
@@ -5382,6 +5458,7 @@ function InteractionsPage({ can, currentUser }) {
   const [showResolveConfirmation, setShowResolveConfirmation] = useState(false);
   const [resolveDuplicateReview, setResolveDuplicateReview] = useState(null);
   const interactionAnalysisPollingTokenRef = useRef(0);
+  const audioPreviewUrlRef = useRef("");
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const operationsSituationTotalPages = Math.max(
@@ -5472,7 +5549,27 @@ function InteractionsPage({ can, currentUser }) {
       .filter(Boolean);
   }, [leadEmailDraft?.attachments, leadEmailSelectedLibraryAttachmentIds]);
 
+  const resetAudioPreview = useCallback(() => {
+    if (audioPreviewUrlRef.current) {
+      window.URL.revokeObjectURL(audioPreviewUrlRef.current);
+      audioPreviewUrlRef.current = "";
+    }
+    setPlayingAudioUrl("");
+    setPlayingAudioDocumentPublicId("");
+    setPlayingAudioLoading(false);
+    setPlayingAudioError("");
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (audioPreviewUrlRef.current) {
+        window.URL.revokeObjectURL(audioPreviewUrlRef.current);
+      }
+    };
+  }, []);
+
   function closeDetailModal() {
+    resetAudioPreview();
     setIsLeadEmailModalOpen(false);
     setShowResolveConfirmation(false);
     setShowLeadCallOutcomeModal(false);
@@ -6796,6 +6893,51 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
+  async function handlePlayAudioDocument(documentItem) {
+    if (!detail?.id || !documentItem?.publicId) return;
+
+    if (playingAudioDocumentPublicId === documentItem.publicId) {
+      return;
+    }
+
+    setPlayingAudioLoading(true);
+    setPlayingAudioError("");
+    setPlayingAudioDocumentPublicId(String(documentItem.publicId));
+
+    if (audioPreviewUrlRef.current) {
+      window.URL.revokeObjectURL(audioPreviewUrlRef.current);
+      audioPreviewUrlRef.current = "";
+    }
+
+    try {
+      const response = await api.get(
+        `/api/interactions/${detail.id}/documents/${documentItem.publicId}/download`,
+        {
+          responseType: "blob",
+          timeout: 60000,
+        },
+      );
+
+      const blob = new Blob([response.data], {
+        type:
+          String(response?.headers?.["content-type"] || "").trim() ||
+          documentItem.mimeType ||
+          "audio/mpeg",
+      });
+      const objectUrl = window.URL.createObjectURL(blob);
+      audioPreviewUrlRef.current = objectUrl;
+      setPlayingAudioUrl(objectUrl);
+    } catch (err) {
+      setPlayingAudioUrl("");
+      setPlayingAudioError(
+        getApiErrorMessage(err, "No fue posible reproducir el audio"),
+      );
+      setPlayingAudioDocumentPublicId("");
+    } finally {
+      setPlayingAudioLoading(false);
+    }
+  }
+
   async function handleAddDocuments(files) {
     if (!detail?.id || !files?.length) return false;
     setAddingDocuments(true);
@@ -7786,6 +7928,11 @@ function InteractionsPage({ can, currentUser }) {
         onOpenLeadEmailModal={handleOpenLeadEmailModal}
         canOpenLeadEmailModal={canOpenLeadEmailModal}
         leadEmailDisabledHint={leadEmailDisabledHint}
+        onPlayAudioDocument={handlePlayAudioDocument}
+        playingAudioLoading={playingAudioLoading}
+        playingAudioError={playingAudioError}
+        playingAudioUrl={playingAudioUrl}
+        playingAudioDocumentPublicId={playingAudioDocumentPublicId}
         canAnalyze={Boolean(
           canAnalyze &&
           detail &&

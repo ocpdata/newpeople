@@ -10267,6 +10267,29 @@ button:disabled {
   line-height: 1.4;
 }
 
+.interaction-document-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.interaction-document-audio-player {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.interaction-document-audio-player audio {
+  width: 100%;
+  max-width: 100%;
+}
+
+.interaction-document-audio-error {
+  color: #b42318;
+}
+
 .interaction-documents-toolbar {
   display: grid;
   gap: 12px;

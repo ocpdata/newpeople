@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import {
+  getCompatibleSubtypeOptions,
+  resolveCompatibleSubtypeValue,
+} from "./campaignCompatibility";
 import "./campaigns-page.css";
 
 const EMPTY_FORM = {
@@ -1002,58 +1006,6 @@ function DismissibleAlert({ message, variant = "error" }) {
       </button>
     </div>
   );
-}
-
-function getSubtypeCompatibilityLevel(
-  policyByType,
-  tipoCampana,
-  subtipoCampana,
-) {
-  const tipo = String(tipoCampana || "").trim();
-  const subtipo = String(subtipoCampana || "").trim();
-  const policy = policyByType?.[tipo] || null;
-  if (!policy || !subtipo) {
-    return "bloqueado";
-  }
-
-  const allowed = Array.isArray(policy.permitido) ? policy.permitido : [];
-  const requiresApproval = Array.isArray(policy.permitido_con_aprobacion)
-    ? policy.permitido_con_aprobacion
-    : [];
-
-  if (allowed.includes(subtipo)) {
-    return "permitido";
-  }
-
-  if (requiresApproval.includes(subtipo)) {
-    return "permitido_con_aprobacion";
-  }
-
-  return "bloqueado";
-}
-
-function getCompatibleSubtypeOptions(
-  policyByType,
-  allSubtypeValues,
-  tipoCampana,
-) {
-  const tipo = String(tipoCampana || "").trim();
-  const policy = policyByType?.[tipo] || null;
-  const catalogValues = Array.isArray(allSubtypeValues) ? allSubtypeValues : [];
-
-  if (!policy) {
-    return catalogValues.map((value) => ({
-      value,
-      nivel: "permitido",
-    }));
-  }
-
-  return catalogValues
-    .map((value) => ({
-      value,
-      nivel: getSubtypeCompatibilityLevel(policyByType, tipo, value),
-    }))
-    .filter((entry) => entry.nivel !== "bloqueado");
 }
 
 function normalizeCampaignAccountForm(form, lifecycleStage) {
@@ -3442,17 +3394,22 @@ export default function CampaignsPage() {
     if (!compatibleSubtypeOptions.length) return;
 
     const currentSubtype = String(campaignForm.subtipo_campana || "").trim();
-    if (
-      compatibleSubtypeOptions.some((entry) => entry.value === currentSubtype)
-    ) {
+    const nextSubtype = resolveCompatibleSubtypeValue(
+      compatibilityPolicyByType,
+      catalogs?.subtipo_campana,
+      campaignForm.tipo_campana,
+      currentSubtype,
+    );
+
+    if (currentSubtype === nextSubtype) {
       return;
     }
 
     setCampaignForm((previous) => ({
       ...previous,
-      subtipo_campana: compatibleSubtypeOptions[0].value,
+      subtipo_campana: nextSubtype,
     }));
-  }, [campaignForm.subtipo_campana, compatibleSubtypeOptions]);
+  }, [campaignForm.subtipo_campana, campaignForm.tipo_campana, compatibilityPolicyByType, catalogs?.subtipo_campana, compatibleSubtypeOptions.length]);
 
   function startNewCampaign() {
     const preferredTypes = new Set([
@@ -3770,8 +3727,17 @@ export default function CampaignsPage() {
     setFeedback("");
 
     try {
+      const compatibleSubtype = resolveCompatibleSubtypeValue(
+        compatibilityPolicyByType,
+        catalogs?.subtipo_campana,
+        campaignForm.tipo_campana,
+        campaignForm.subtipo_campana,
+      );
       const payload = normalizeCampaignForm(
-        campaignForm,
+        {
+          ...campaignForm,
+          subtipo_campana: compatibleSubtype,
+        },
         campaignGoalText,
         selectedClassificationUsageGuide.context,
         selectedClassificationUsageGuide.examples,

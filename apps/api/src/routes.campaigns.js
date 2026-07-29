@@ -319,11 +319,18 @@ async function getResolvedCampaignSubtypePolicy() {
 
 function resolveCompatibilityApproval({ payload, compatibilidad }) {
   const nivel = String(compatibilidad?.nivel || "permitido").trim();
+  const requiresApproval = nivel === "permitido_con_aprobacion";
 
-  if (nivel === "bloqueado") {
+  if (requiresApproval) {
     return {
-      ok: false,
-      message: "La combinacion tipo/subtipo esta bloqueada por politica",
+      ok: Boolean(payload?.aprobacion_compatibilidad),
+      aprobado: Boolean(payload?.aprobacion_compatibilidad),
+      justificacion: Boolean(payload?.aprobacion_compatibilidad)
+        ? String(payload?.justificacion_aprobacion_compatibilidad || "").trim() || null
+        : null,
+      message: Boolean(payload?.aprobacion_compatibilidad)
+        ? null
+        : "La combinacion tipo/subtipo requiere aprobacion manual",
     };
   }
 
@@ -1136,7 +1143,7 @@ router.post(
         compatibilidad_nivel, compatibilidad_aprobada, compatibilidad_justificacion, compatibilidad_evaluada_at,
         estado_campana, etapa_ciclo_vida,
         starts_at, ends_at, created_by, updated_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         payload.name,
         payload.description || null,
