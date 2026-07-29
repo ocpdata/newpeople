@@ -12,17 +12,32 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Crear cuenta](./crear-cuenta.md)
 - [Leads](./leads.md)
 - [Calculos](./calculos.md)
+- [Dashboards](./dashboards.md)
 - [Campanas](./campanas.md)
 - [Landing](./landing.md)
 - [Correos de campana](./correos-campana.md)
 - [Tableros de leads v1](./tableros-leads-v1.md)
 - [Oportunidades](./oportunidades.md)
+- [Configuracion del proceso comercial](./configuracion-proceso-comercial.md)
 - [Contactos](./contactos.md)
+- [Mapeo de contactos](./mapeo-contactos.md)
 - [Cotizaciones](./cotizaciones.md)
 - [Cotizaciones - Validacion con IA](./cotizaciones-validacion-ia.md)
+- [Aceptar pedido](./aceptar-pedido.md)
+- [Propuestas](./propuestas.md)
 - [Comisiones](./comisiones.md)
+- [Planeacion comercial](./planeacion-comercial.md)
+- [Seguimiento comercial](./seguimiento-comercial.md)
+- [Ritmo comercial](./ritmo-comercial.md)
+- [Desarrollo comercial](./desarrollo-comercial.md)
+- [Biblioteca comercial](./biblioteca-comercial.md)
 - [Proveedores](./proveedores.md)
+- [Registros de fabricantes](./registros-fabricantes.md)
 - [Auditoria](./auditoria.md)
+- [Herramientas](./herramientas.md)
+- [Configuracion del sistema](./configuracion-sistema.md)
+- [Cuenta de usuario](./cuenta-usuario.md)
+- [Chatbot](./chatbot.md)
 - [Pruebas](./pruebas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)
@@ -66,6 +81,11 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Cotizaciones IA: politicas actualizadas para validacion en linea por documentos adjuntos con costo directo por codigo (sin referencia historica), exclusion de items Access Quality y bloqueo de descuadre solo con evidencia de alta confianza.
 - IA/Configuracion: documentada la administracion de tarifas por modelo desde
   Credito IA (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
+- Documentacion por modulo completada: se agregaron README dedicados para dashboards,
+  propuestas, biblioteca comercial, desarrollo comercial, seguimiento comercial,
+  ritmo comercial, planeacion comercial, mapeo de contactos, herramientas,
+  registros de fabricantes, aceptar pedido, configuracion del proceso comercial,
+  configuracion del sistema, cuenta de usuario y chatbot.
 - Landing: documento nuevo con flujo por evento, versionado/publicacion, submissions, permisos y endpoints clave.
 - Campanas: documento nuevo con catalogos, reglas de compatibilidad tipo/subtipo, audiencia por cuenta/contacto, permisos y endpoints del modulo.
 - Correos de campana: documento actualizado a V1 operativa, con envio de prueba, corridas backend con worker automatico (50/h y 300/d), controles de pausa/reanudar/cancelar y tablero basico de estado.
