@@ -24,6 +24,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cotizaciones](./cotizaciones.md)
 - [Cotizaciones - Validacion con IA](./cotizaciones-validacion-ia.md)
 - [Aceptar pedido](./aceptar-pedido.md)
+- [Aceptar pedido - Especificacion de procesamiento](./aceptar-pedido-procesamiento-especificacion.md)
 - [Propuestas](./propuestas.md)
 - [Comisiones](./comisiones.md)
 - [Planeacion comercial](./planeacion-comercial.md)

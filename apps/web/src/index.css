@@ -16152,6 +16152,214 @@ td {
   gap: 10px;
 }
 
+.processing-modal {
+  display: grid;
+  gap: 14px;
+  max-width: 980px;
+  width: min(96vw, 980px);
+  max-height: calc(100dvh - 28px);
+  padding: 0;
+  overflow: hidden;
+  background: #f4f8fc;
+}
+
+.processing-modal-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px 22px 16px;
+  background:
+    radial-gradient(circle at top right, rgba(14, 116, 144, 0.16), transparent 40%),
+    linear-gradient(135deg, #fafdff, #eaf2fb);
+  border-bottom: 1px solid #d7e6f7;
+}
+
+.processing-modal-kicker {
+  display: inline-flex;
+  margin-bottom: 6px;
+  color: #4e6784;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.processing-modal-hero h3 {
+  margin: 0;
+  color: #122845;
+  font-size: 23px;
+}
+
+.processing-modal-hero p {
+  margin: 7px 0 0;
+  color: #4e6784;
+}
+
+.processing-stage-flow {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(150px, 1fr));
+  gap: 10px;
+  margin-inline: 22px;
+  padding: 2px;
+  overflow-x: auto;
+}
+
+.processing-stage-pill {
+  display: grid;
+  gap: 4px;
+  min-height: 64px;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid #d8e4f1;
+  border-radius: 10px;
+  background: #fff;
+  color: #112742;
+  cursor: pointer;
+}
+
+.processing-stage-pill.is-active {
+  border-color: #2a6fb5;
+  box-shadow: 0 10px 20px rgba(26, 77, 129, 0.15);
+}
+
+.processing-stage-pill span {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.processing-stage-pill small {
+  color: #4e6784;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.processing-inline-message {
+  margin-inline: 22px;
+}
+
+.processing-stage-content {
+  margin-inline: 22px;
+  margin-bottom: 20px;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+}
+
+.processing-stage-box {
+  border: 1px solid #d8e4f1;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.processing-stage-box > header {
+  display: grid;
+  gap: 4px;
+}
+
+.processing-stage-box h4,
+.processing-stage-box h5,
+.processing-stage-box h6 {
+  margin: 0;
+  color: #122845;
+}
+
+.processing-stage-box p {
+  margin: 0;
+  color: #4e6784;
+}
+
+.processing-stage-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.processing-stage-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.processing-stage-field.full {
+  grid-column: 1 / -1;
+}
+
+.processing-stage-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.processing-stage-actions.split {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.processing-upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.processing-stage-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.processing-stage-log-item {
+  border: 1px solid #dbe6f3;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.processing-stage-log-item > div,
+.processing-stage-log-item > strong {
+  min-width: 0;
+}
+
+.processing-stage-log-item strong {
+  display: block;
+  color: #122845;
+  overflow-wrap: anywhere;
+}
+
+.processing-ai-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.processing-ai-summary-grid article {
+  border: 1px solid #dde8f5;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.processing-ai-summary-grid p {
+  margin: 0;
+  color: #173450;
+  font-size: 13px;
+}
+
+.processing-invite-modal {
+  max-width: 760px;
+  width: min(96vw, 760px);
+  background: #f4f8fc;
+  display: grid;
+  gap: 14px;
+}
+
 @media (max-width: 680px) {
   .accept-order-modal-summary,
   .accept-order-total-card,
@@ -16192,6 +16400,26 @@ td {
 
   .accept-order-notification-actions {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .processing-stage-grid.two,
+  .processing-ai-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .processing-modal,
+  .processing-invite-modal {
+    width: min(96vw, 96vw);
+  }
+
+  .processing-stage-flow,
+  .processing-stage-content,
+  .processing-inline-message {
+    margin-inline: 14px;
+  }
+
+  .processing-modal-hero {
+    padding: 16px 14px 14px;
   }
 }
 

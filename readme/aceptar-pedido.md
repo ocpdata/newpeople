@@ -18,6 +18,10 @@ Formalizar la aceptacion administrativa de cotizaciones ganadas y cerrar el cicl
 
 - `/accept-order`
 
+## Especificacion funcional de procesamiento
+
+- Ver documento: `aceptar-pedido-procesamiento-especificacion.md`
+
 ## Endpoints principales
 
 - `GET /api/quotations?latestStatusCodes=ganada,aceptada`
