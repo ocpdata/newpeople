@@ -3862,17 +3862,17 @@ export default function LandingModulePage() {
                                   isSendingSubmission
                                     ? "Enviando registro a Leads..."
                                     : isSentToLeads
-                                      ? "Reenviar a Leads"
+                                      ? "Registro ya enviado a Leads"
                                       : "Enviar a Leads"
                                 }
                                 aria-label={
                                   isSendingSubmission
                                     ? "Enviando registro a Leads"
                                     : isSentToLeads
-                                      ? "Reenviar a Leads"
+                                      ? "Registro ya enviado a Leads"
                                       : "Enviar a Leads"
                                 }
-                                disabled={isSendingSubmission}
+                                disabled={isSentToLeads || isSendingSubmission}
                               >
                                 <svg
                                   viewBox="0 0 24 24"
