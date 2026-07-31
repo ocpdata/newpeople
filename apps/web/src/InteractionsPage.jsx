@@ -1158,6 +1158,33 @@ function buildResolveConfirmationPreview(
   };
 }
 
+function shouldSkipResolveConfirmation(preview, detail) {
+  if (!preview || !detail) return false;
+
+  const hasRecordsToCreate = Boolean(
+    preview.accountToCreate ||
+      preview.contactsToCreate.length ||
+      preview.opportunitiesToCreate.length,
+  );
+  const hasLinks = Boolean(
+    preview.accountToLink ||
+      preview.contactsToLink.length ||
+      preview.opportunitiesToLink.length,
+  );
+  const currentStatusLabel = getInteractionStatusMeta(detail.analysisStatus)
+    .label;
+  const hasStatusChange =
+    normalizeText(preview.targetStatus) !== normalizeText(currentStatusLabel);
+  const hasSellerAssignmentChange = Boolean(preview.sellerToAssign);
+
+  return (
+    !hasRecordsToCreate &&
+    !hasLinks &&
+    !hasStatusChange &&
+    !hasSellerAssignmentChange
+  );
+}
+
 function isQualifiedLeadStatus(status) {
   return status === "lead_qualified";
 }
@@ -2877,7 +2904,7 @@ function InteractionDetailModal({
   resolving,
   reanalyzing,
   canAnalyze,
-  canResolve,
+  canSaveLead,
   addingDocuments,
   canAddDocuments,
   deletingDocumentPublicId,
@@ -4680,7 +4707,7 @@ function InteractionDetailModal({
             </div>
 
             <div className="modal-buttons interaction-detail-modal-buttons">
-              {canResolve ? (
+              {canSaveLead ? (
                 <button
                   type="button"
                   className="btn-primary"
@@ -5483,6 +5510,7 @@ function InteractionsPage({ can, currentUser }) {
   const canUpdate = can("interacciones.update");
   const canAnalyze = can("interacciones.analyze");
   const canResolve = can("interacciones.resolve");
+  const canSaveLead = Boolean(canUpdate || canResolve);
   const availableViews = useMemo(
     () => [
       { id: "inbox", label: "Bandeja" },
@@ -6322,6 +6350,10 @@ function InteractionsPage({ can, currentUser }) {
 
   function openResolveConfirmation() {
     if (!detail || !editForm || !resolutionForm || resolving) return;
+    if (shouldSkipResolveConfirmation(resolveConfirmationPreview, detail)) {
+      void handleResolve();
+      return;
+    }
     setShowResolveConfirmation(true);
   }
 
@@ -7114,6 +7146,44 @@ function InteractionsPage({ can, currentUser }) {
 
   async function handleResolve() {
     if (!detail || !editForm || !resolutionForm) return;
+
+      if (!canResolve) {
+        setShowResolveConfirmation(false);
+        setResolving(true);
+        setError("");
+        setResolveDuplicateReview(null);
+        try {
+          const payload = {
+            title: editForm.title,
+            leadSource: editForm.leadSource,
+            sourceNotes: editForm.sourceNotes,
+            summary: editForm.summary,
+            topics: editForm.topics,
+            actionsTaken: editForm.actionsTaken,
+            nextSteps: editForm.nextSteps,
+            suggestedAccount: editForm.suggestedAccount,
+            suggestedContacts: editForm.suggestedContacts,
+            suggestedOpportunities: editForm.suggestedOpportunities,
+          };
+
+          const response = await api.put(`/api/interactions/${detail.id}`, payload);
+          const refreshedDetail = response.data;
+          setDetail(refreshedDetail);
+          setEditForm(buildEditableForm(refreshedDetail));
+          setResolutionForm(
+            buildInitialResolutionForm(refreshedDetail, options, currentUser),
+          );
+          closeDetailModal();
+          setSuccess("Lead actualizado");
+          await loadInteractions();
+        } catch (err) {
+          setError(getApiErrorMessage(err, "No fue posible guardar el lead"));
+        } finally {
+          setResolving(false);
+        }
+        return;
+      }
+
     const effectiveResolutionForm = buildEffectiveResolutionForm(
       resolutionForm,
       currentUser,
@@ -7940,6 +8010,11 @@ function InteractionsPage({ can, currentUser }) {
         )}
         canResolve={Boolean(
           canResolve &&
+          detail &&
+          !isDisqualifiedLeadStatus(detail.analysisStatus),
+        )}
+        canSaveLead={Boolean(
+          canSaveLead &&
           detail &&
           !isDisqualifiedLeadStatus(detail.analysisStatus),
         )}
