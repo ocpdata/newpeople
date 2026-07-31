@@ -1330,22 +1330,53 @@ async function resolveOrCreateLead({
   leadSynopsis,
   actorUserId,
 }) {
-  const dedupRows = await query(
+  const existingSubmissionLeadRows = await query(
     `SELECT i.id
      FROM interactions i
-     LEFT JOIN interaction_contact_links icl ON icl.interaction_id = i.id
-     WHERE i.account_id <=> ?
-       AND icl.contact_id <=> ?
-       AND i.created_at >= (NOW(3) - INTERVAL 90 DAY)
-       AND i.source_notes LIKE ?
+     WHERE i.landing_submission_id = ?
      ORDER BY i.id DESC
      LIMIT 1`,
-    [
-      accountId || null,
-      contactId || null,
-      `%landing:event_id=${Number(eventId)};%`,
-    ],
+    [Number(submissionId)],
   );
+
+  if (existingSubmissionLeadRows[0]) {
+    const leadId = Number(existingSubmissionLeadRows[0].id);
+    await query(
+      `UPDATE interactions
+       SET title = ?,
+           summary = ?,
+           updated_by = ?,
+           updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        normalizeGenericText(leadTitle || `Registro landing ${slug}`, 180),
+        leadSynopsis || null,
+        Number(actorUserId),
+        leadId,
+      ],
+    ).catch(() => undefined);
+    return { leadId, action: "submission_update" };
+  }
+
+  const canDeduplicateByOwnership = Boolean(accountId || contactId);
+  const dedupRows = canDeduplicateByOwnership
+    ? await query(
+        `SELECT i.id
+         FROM interactions i
+         LEFT JOIN interaction_contact_links icl ON icl.interaction_id = i.id
+         WHERE i.account_id <=> ?
+           AND icl.contact_id <=> ?
+           AND i.created_at >= (NOW(3) - INTERVAL 90 DAY)
+           AND i.source_notes LIKE ?
+         ORDER BY i.id DESC
+         LIMIT 1`,
+        [
+          accountId || null,
+          contactId || null,
+          `%landing:event_id=${Number(eventId)};%`,
+        ],
+      )
+    : [];
 
   if (dedupRows[0]) {
     const leadId = Number(dedupRows[0].id);
@@ -3001,6 +3032,27 @@ privateRouter.post(
       [CRM_STATUS_PENDING, Number(req.user?.id || 0) || null, submissionId],
     );
 
+    const workerRunId = `lnd_manual_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    try {
+      await processSubmissionIntoCrm(submissionId, workerRunId);
+    } catch (error) {
+      await query(
+        `UPDATE landing_submissions
+         SET crm_processing_status = ?,
+             crm_error_message = ?,
+             crm_processed_at = NOW(3)
+         WHERE id = ?`,
+        [
+          CRM_STATUS_FAILED,
+          String(
+            error?.message || "No fue posible procesar envio de landing",
+          ).slice(0, 1000),
+          submissionId,
+        ],
+      ).catch(() => undefined);
+    }
+
+    // Continue draining backlog in case there are more pending submissions.
     await processPendingLandingSubmissions();
 
     return res.status(202).json({
