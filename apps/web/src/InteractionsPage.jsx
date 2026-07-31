@@ -3715,9 +3715,7 @@ function InteractionDetailModal({
                         >
                           <div className="interaction-resolution-card-head">
                             <strong>
-                              {contact.fullName ||
-                                `${contact.firstName} ${contact.lastName}`.trim() ||
-                                "Contacto"}
+                              {formatContactName(contact, "Contacto")}
                             </strong>
                             <span className="field-hint">
                               {contact.reason || "Sugerido por análisis"}
@@ -7147,49 +7145,115 @@ function InteractionsPage({ can, currentUser }) {
   async function handleResolve() {
     if (!detail || !editForm || !resolutionForm) return;
 
-      if (!canResolve) {
-        setShowResolveConfirmation(false);
-        setResolving(true);
-        setError("");
-        setResolveDuplicateReview(null);
-        try {
-          const payload = {
-            title: editForm.title,
-            leadSource: editForm.leadSource,
-            sourceNotes: editForm.sourceNotes,
-            summary: editForm.summary,
-            topics: editForm.topics,
-            actionsTaken: editForm.actionsTaken,
-            nextSteps: editForm.nextSteps,
-            suggestedAccount: editForm.suggestedAccount,
-            suggestedContacts: editForm.suggestedContacts,
-            suggestedOpportunities: editForm.suggestedOpportunities,
-          };
-
-          const response = await api.put(`/api/interactions/${detail.id}`, payload);
-          const refreshedDetail = response.data;
-          setDetail(refreshedDetail);
-          setEditForm(buildEditableForm(refreshedDetail));
-          setResolutionForm(
-            buildInitialResolutionForm(refreshedDetail, options, currentUser),
-          );
-          closeDetailModal();
-          setSuccess("Lead actualizado");
-          await loadInteractions();
-        } catch (err) {
-          setError(getApiErrorMessage(err, "No fue posible guardar el lead"));
-        } finally {
-          setResolving(false);
-        }
-        return;
-      }
-
     const effectiveResolutionForm = buildEffectiveResolutionForm(
       resolutionForm,
       currentUser,
       detail?.commercialAssignmentPolicy,
       detail,
     );
+
+    if (!canResolve) {
+      setShowResolveConfirmation(false);
+      setResolving(true);
+      setError("");
+      setResolveDuplicateReview(null);
+      try {
+        const suggestedContactsBase = Array.isArray(editForm.suggestedContacts)
+          ? editForm.suggestedContacts
+          : [];
+        const suggestedOpportunitiesBase = Array.isArray(
+          editForm.suggestedOpportunities,
+        )
+          ? editForm.suggestedOpportunities
+          : [];
+        const payload = {
+          title: editForm.title,
+          leadSource: editForm.leadSource,
+          sourceNotes: editForm.sourceNotes,
+          summary: editForm.summary,
+          topics: editForm.topics,
+          actionsTaken: editForm.actionsTaken,
+          nextSteps: editForm.nextSteps,
+          suggestedAccount: {
+            ...(editForm.suggestedAccount || {}),
+            ...(effectiveResolutionForm.accountResolution.mode === "create_new"
+              ? effectiveResolutionForm.accountResolution.draft
+              : {}),
+            resolutionMode: effectiveResolutionForm.accountResolution.mode,
+            selectedAccountId:
+              effectiveResolutionForm.accountResolution.mode ===
+                "link_existing" &&
+              effectiveResolutionForm.accountResolution.accountId
+                ? Number(effectiveResolutionForm.accountResolution.accountId)
+                : null,
+          },
+          suggestedContacts: (effectiveResolutionForm.contactResolutions || [])
+            .map((resolution, index) => {
+              const contactBase = suggestedContactsBase[index] || {
+                suggestionId: resolution.suggestionId,
+              };
+              return {
+                ...contactBase,
+                ...(resolution.mode === "create_new" ? resolution.draft : {}),
+                suggestionId:
+                  contactBase.suggestionId || resolution.suggestionId || "",
+                resolutionMode: resolution.mode,
+                selectedContactId:
+                  resolution.mode === "link_existing" && resolution.contactId
+                    ? Number(resolution.contactId)
+                    : null,
+              };
+            })
+            .filter((contact) => String(contact?.suggestionId || "").trim()),
+          suggestedOpportunities: (
+            effectiveResolutionForm.opportunityResolutions || []
+          )
+            .map((resolution, index) => {
+              const opportunityBase = suggestedOpportunitiesBase[index] || {
+                suggestionId: resolution.suggestionId,
+              };
+              return {
+                ...opportunityBase,
+                ...(resolution.mode === "create_new" ? resolution.draft : {}),
+                suggestionId:
+                  opportunityBase.suggestionId ||
+                  resolution.suggestionId ||
+                  "",
+                resolutionMode: resolution.mode,
+                selectedOpportunityId:
+                  resolution.mode === "link_existing" &&
+                  resolution.opportunityId
+                    ? Number(resolution.opportunityId)
+                    : null,
+                selectedSellerUserId:
+                  effectiveResolutionForm.sellerUserId &&
+                  resolution.mode !== "ignore"
+                    ? Number(effectiveResolutionForm.sellerUserId)
+                    : null,
+              };
+            })
+            .filter((opportunity) =>
+              String(opportunity?.suggestionId || "").trim(),
+            ),
+        };
+
+        const response = await api.put(`/api/interactions/${detail.id}`, payload);
+        const refreshedDetail = response.data;
+        setDetail(refreshedDetail);
+        setEditForm(buildEditableForm(refreshedDetail));
+        setResolutionForm(
+          buildInitialResolutionForm(refreshedDetail, options, currentUser),
+        );
+        closeDetailModal();
+        setSuccess("Lead actualizado");
+        await loadInteractions();
+      } catch (err) {
+        setError(getApiErrorMessage(err, "No fue posible guardar el lead"));
+      } finally {
+        setResolving(false);
+      }
+      return;
+    }
     const canSubmitCommercialAssignment =
       detail?.commercialAssignmentPolicy?.mode !== "none";
     const requiresSellerOwnerForLinkedAccount =

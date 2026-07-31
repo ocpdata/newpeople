@@ -1784,6 +1784,14 @@ function buildInteractionFilterContext(req, alias = "i") {
 }
 
 function mapInteractionListRow(row) {
+  const suggestedAccountRaw = parseJsonField(row.suggested_account_json, null);
+  const suggestedAccountName = String(suggestedAccountRaw?.name || "").trim();
+  const suggestedContactName = String(row.suggested_contact_name || "").trim();
+  const suggestedContactEmail = String(row.suggested_contact_email || "").trim();
+  const suggestedContactsRaw = parseJsonField(
+    row.suggested_contacts_json,
+    [],
+  );
   const reasonCode = row.lead_reason_code || "";
   const requiredActionCode = row.lead_required_action_code || "";
   let contacts = [];
@@ -1799,6 +1807,48 @@ function mapInteractionListRow(row) {
   } catch (error) {
     contacts = [];
   }
+
+  if (!contacts.length && (suggestedContactName || suggestedContactEmail)) {
+    contacts = [
+      {
+        id: row.suggested_contact_id ? Number(row.suggested_contact_id) : null,
+        fullName: suggestedContactName,
+        email: suggestedContactEmail,
+        phone: String(row.suggested_contact_phone || "").trim(),
+        mobile: String(row.suggested_contact_mobile || "").trim(),
+        positionTitle: String(row.suggested_contact_position_title || "").trim(),
+      },
+    ];
+  }
+
+  if (!contacts.length) {
+    contacts = (Array.isArray(suggestedContactsRaw) ? suggestedContactsRaw : [])
+      .filter((contact) => {
+        const mode = String(contact?.resolutionMode || "").trim();
+        return mode && mode !== "ignore";
+      })
+      .map((contact) => {
+        const fullName = String(
+          contact?.fullName ||
+            [contact?.firstName, contact?.lastName]
+              .filter(Boolean)
+              .join(" ") ||
+            "",
+        ).trim();
+        return {
+          id: contact?.selectedContactId
+            ? Number(contact.selectedContactId)
+            : null,
+          fullName,
+          email: String(contact?.email || "").trim(),
+          phone: String(contact?.phone || "").trim(),
+          mobile: String(contact?.mobile || "").trim(),
+          positionTitle: String(contact?.positionTitle || "").trim(),
+        };
+      })
+      .filter((contact) => contact.fullName || contact.email);
+  }
+
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -1807,7 +1857,8 @@ function mapInteractionListRow(row) {
     summary: row.summary || "",
     analysisStatus: row.analysis_status,
     accountId: row.account_id === null ? null : Number(row.account_id),
-    accountName: row.account_name || "",
+    accountName:
+      row.account_name || row.suggested_account_name || suggestedAccountName || "",
     primaryOpportunityId:
       row.primary_opportunity_id === null
         ? null
@@ -1851,13 +1902,24 @@ async function loadDashboardQueueRows({
     `SELECT i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status,
             i.account_id, i.primary_opportunity_id, i.seller_user_id, i.created_at,
             i.updated_at, i.lead_next_action_due_at, i.lead_substatus_code,
+            i.suggested_account_json,
+          i.suggested_contacts_json,
             a.name AS account_name,
+         sa.name AS suggested_account_name,
+           CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(i.suggested_contacts_json, '$[0].selectedContactId')), '') AS UNSIGNED) AS suggested_contact_id,
+           CONCAT(COALESCE(sc0.first_name, ''), ' ', COALESCE(sc0.last_name, '')) AS suggested_contact_name,
+           sc0.email AS suggested_contact_email,
+           sc0.phone AS suggested_contact_phone,
+           sc0.mobile AS suggested_contact_mobile,
+           sc0.position_title AS suggested_contact_position_title,
             po.name AS primary_opportunity_name,
             su.full_name AS seller_user_name,
             su.email AS seller_user_email,
             COUNT(DISTINCT d.id) AS document_count
      FROM interactions i
      LEFT JOIN accounts a ON a.id = i.account_id
+       LEFT JOIN accounts sa ON sa.id = CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(i.suggested_account_json, '$.selectedAccountId')), '') AS UNSIGNED)
+         LEFT JOIN contacts sc0 ON sc0.id = CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(i.suggested_contacts_json, '$[0].selectedContactId')), '') AS UNSIGNED)
      LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
      LEFT JOIN users su ON su.id = i.seller_user_id
      LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
@@ -1866,7 +1928,9 @@ async function loadDashboardQueueRows({
      GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status,
               i.account_id, i.primary_opportunity_id, i.seller_user_id, i.created_at,
               i.updated_at, i.lead_next_action_due_at, i.lead_substatus_code,
-              a.name, po.name, su.full_name, su.email
+              i.suggested_account_json,
+              i.suggested_contacts_json,
+              a.name, sa.name, sc0.first_name, sc0.last_name, sc0.email, sc0.phone, sc0.mobile, sc0.position_title, po.name, su.full_name, su.email
      ORDER BY ${orderBy}
      LIMIT ?`,
     [...filterContext.params, Math.max(1, Number(limit) || 5)],
@@ -1892,9 +1956,25 @@ function buildInteractionListAccessCondition(user, alias = "i") {
     sql: `(
       (${alias}.seller_user_id IS NOT NULL AND ${alias}.seller_user_id = ?)
       OR
-      (${alias}.seller_user_id IS NULL AND (ao_scope.user_id IS NOT NULL OR ${alias}.created_by = ?))
+      (${alias}.seller_user_id IS NULL AND (
+        ao_scope.user_id IS NOT NULL
+        OR ${alias}.created_by = ?
+        OR EXISTS (
+          SELECT 1
+          FROM landing_submissions ls
+          WHERE ls.id = ${alias}.landing_submission_id
+            AND ls.sent_to_leads_by = ?
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM landing_submission_crm_links lscl
+          INNER JOIN landing_submissions ls ON ls.id = lscl.submission_id
+          WHERE lscl.lead_id = ${alias}.id
+            AND ls.sent_to_leads_by = ?
+        )
+      ))
     )`,
-    params: [userId, userId],
+    params: [userId, userId, userId, userId],
   };
 }
 
@@ -2198,7 +2278,12 @@ async function requireAccessibleInteractionOr404({ user, interactionId }) {
   }
   params.push(Number(interactionId));
   if (!hasGlobalReadScope(user)) {
-    params.push(Number(user.id), Number(user.id));
+    params.push(
+      Number(user.id),
+      Number(user.id),
+      Number(user.id),
+      Number(user.id),
+    );
   }
 
   const rows = await query(
@@ -2207,7 +2292,7 @@ async function requireAccessibleInteractionOr404({ user, interactionId }) {
      ${accessJoin}
      WHERE i.id = ?
        AND (
-         ${hasGlobalReadScope(user) ? "1 = 1" : "i.seller_user_id = ? OR ao_scope.user_id IS NOT NULL OR i.created_by = ?"}
+         ${hasGlobalReadScope(user) ? "1 = 1" : "i.seller_user_id = ? OR ao_scope.user_id IS NOT NULL OR i.created_by = ? OR EXISTS (SELECT 1 FROM landing_submissions ls WHERE ls.id = i.landing_submission_id AND ls.sent_to_leads_by = ?) OR EXISTS (SELECT 1 FROM landing_submission_crm_links lscl INNER JOIN landing_submissions ls ON ls.id = lscl.submission_id WHERE lscl.lead_id = i.id AND ls.sent_to_leads_by = ?)"}
        )
      LIMIT 1`,
     params,
@@ -4539,8 +4624,15 @@ router.get(
       `SELECT i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
               i.primary_opportunity_id, i.seller_user_id, i.created_at, i.updated_at,
               i.lead_next_action_due_at, i.lead_substatus_code, i.lead_reason_code,
-              i.lead_required_action_code,
+              i.lead_required_action_code, i.suggested_account_json, i.suggested_contacts_json,
               a.name AS account_name,
+              sa.name AS suggested_account_name,
+              CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(i.suggested_contacts_json, '$[0].selectedContactId')), '') AS UNSIGNED) AS suggested_contact_id,
+              CONCAT(COALESCE(sc0.first_name, ''), ' ', COALESCE(sc0.last_name, '')) AS suggested_contact_name,
+              sc0.email AS suggested_contact_email,
+              sc0.phone AS suggested_contact_phone,
+              sc0.mobile AS suggested_contact_mobile,
+              sc0.position_title AS suggested_contact_position_title,
               po.name AS primary_opportunity_name,
               su.full_name AS seller_user_name,
               su.email AS seller_user_email,
@@ -4560,6 +4652,8 @@ router.get(
               ) AS contacts
        FROM interactions i
        LEFT JOIN accounts a ON a.id = i.account_id
+      LEFT JOIN accounts sa ON sa.id = CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(i.suggested_account_json, '$.selectedAccountId')), '') AS UNSIGNED)
+      LEFT JOIN contacts sc0 ON sc0.id = CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(i.suggested_contacts_json, '$[0].selectedContactId')), '') AS UNSIGNED)
        LEFT JOIN opportunities po ON po.id = i.primary_opportunity_id
        LEFT JOIN users su ON su.id = i.seller_user_id
        LEFT JOIN documents d ON d.entity_type = 'interaction' AND d.entity_id = i.id AND d.is_deleted = 0
@@ -4570,7 +4664,8 @@ router.get(
       GROUP BY i.id, i.public_id, i.title, i.lead_source, i.summary, i.analysis_status, i.account_id,
                 i.primary_opportunity_id, i.seller_user_id, i.created_at, i.updated_at,
                 i.lead_next_action_due_at, i.lead_substatus_code, i.lead_reason_code,
-                i.lead_required_action_code, a.name, po.name,
+                i.lead_required_action_code, i.suggested_account_json, i.suggested_contacts_json, a.name, sa.name, po.name,
+                sc0.first_name, sc0.last_name, sc0.email, sc0.phone, sc0.mobile, sc0.position_title,
                 su.full_name, su.email
        ORDER BY ${orderByClause}
        LIMIT ? OFFSET ?`,

@@ -979,6 +979,18 @@ function hasPermission(user, permission) {
   return Boolean(user?.permissionSet?.has(permission));
 }
 
+function hasGlobalLandingSubmissionsScope(user) {
+  if (!user) return false;
+  if (hasPermission(user, "interacciones.read_all")) return true;
+
+  return Boolean(
+    Array.isArray(user.roles) &&
+      user.roles.some(
+        (role) => role?.is_system || String(role?.name || "") === "Administrador",
+      ),
+  );
+}
+
 async function loadLandingPageById(landingPageId) {
   const rows = await query(
     `SELECT lp.id, lp.event_id, lp.event_name, lp.slug, lp.status, lp.current_version_id,
@@ -1412,9 +1424,10 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
             s.payload_normalized_json,
             s.user_notes,
             s.crm_processing_status,
+            s.sent_to_leads_by,
             s.landing_page_id,
             lp.slug,
-            lp.created_by,
+            lp.created_by AS landing_page_created_by,
             lp.event_name,
             lp.confirmation_config_json,
             lv.form_schema_json
@@ -1463,7 +1476,10 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
     userNotes: submission.user_notes,
   });
 
-  const actorUserId = Number(submission.created_by || 0) || 1;
+  const actorUserId =
+    Number(submission.sent_to_leads_by || 0) ||
+    Number(submission.landing_page_created_by || 0) ||
+    1;
 
   const leadResolution = await resolveOrCreateLead({
     submissionId,
@@ -2792,9 +2808,32 @@ privateRouter.get(
     const crmStatus = String(req.query.crm_status || "").trim();
     const from = String(req.query.from || "").trim();
     const to = String(req.query.to || "").trim();
+    const userId = Number(req.user?.id || 0) || 0;
+    const hasGlobalScope = hasGlobalLandingSubmissionsScope(req.user);
 
     const where = ["s.event_id = ?"];
     const params = [eventId];
+    const accessJoins = hasGlobalScope
+      ? ""
+      : `LEFT JOIN landing_submission_crm_links lscl_scope ON lscl_scope.submission_id = s.id
+       LEFT JOIN interactions i_scope ON i_scope.id = lscl_scope.lead_id
+       LEFT JOIN account_owners ao_scope ON ao_scope.account_id = i_scope.account_id AND ao_scope.user_id = ?`;
+
+    if (!hasGlobalScope) {
+      params.push(userId);
+      where.push(`(
+        s.sent_to_leads_by = ?
+        OR (
+          lscl_scope.submission_id IS NOT NULL
+          AND (
+            i_scope.seller_user_id = ?
+            OR ao_scope.user_id IS NOT NULL
+            OR i_scope.created_by = ?
+          )
+        )
+      )`);
+      params.push(userId, userId, userId);
+    }
 
     if (crmStatus) {
       where.push("s.crm_processing_status = ?");
@@ -2829,6 +2868,7 @@ privateRouter.get(
        LEFT JOIN landing_page_versions lv ON lv.id = s.landing_version_id
        LEFT JOIN landing_submission_crm_links scl ON scl.submission_id = s.id
        LEFT JOIN contacts c ON c.id = scl.contact_id
+       ${accessJoins}
        WHERE ${where.join(" AND ")}
        ORDER BY s.submitted_at DESC, s.id DESC
        LIMIT ? OFFSET ?`,
@@ -2838,6 +2878,7 @@ privateRouter.get(
     const totalRows = await query(
       `SELECT COUNT(*) AS total
        FROM landing_submissions s
+       ${accessJoins}
        WHERE ${where.join(" AND ")}`,
       params,
     );
