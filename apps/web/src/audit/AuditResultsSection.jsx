@@ -1,6 +1,10 @@
 import {
+  formatAuditActionLabel,
+  formatAuditAiUsage,
   formatAuditDateTime,
+  formatAuditEntityLabel,
   formatAuditModuleLabel,
+  summarizeAuditAiContext,
   summarizeAuditChanges,
 } from "./useSystemAuditPage";
 
@@ -26,6 +30,7 @@ export default function AuditResultsSection({
             <th>Entidad</th>
             <th>Actor</th>
             <th>Estado</th>
+            <th>IA</th>
             <th>Cambios</th>
             <th>Detalle</th>
           </tr>
@@ -34,18 +39,15 @@ export default function AuditResultsSection({
           {items.length > 0 ? (
             items.map((entry) => (
               <tr key={entry.id}>
-                <td className="audit-date">{formatAuditDateTime(entry.created_at)}</td>
-                <td>{formatAuditModuleLabel(entry.module)}</td>
-                <td>{entry.action}</td>
-                <td>
-                  {entry.entity_type}
-                  {entry.entity_name
-                    ? `: ${entry.entity_name}`
-                    : entry.entity_id
-                      ? ` #${entry.entity_id}`
-                      : ""}
+                <td className="audit-date">
+                  {formatAuditDateTime(entry.created_at)}
                 </td>
-                <td>{entry.performed_by_name || entry.performed_by_email || "-"}</td>
+                <td>{formatAuditModuleLabel(entry.module)}</td>
+                <td>{formatAuditActionLabel(entry.action)}</td>
+                <td>{formatAuditEntityLabel(entry)}</td>
+                <td>
+                  {entry.performed_by_name || entry.performed_by_email || "-"}
+                </td>
                 <td>
                   <span
                     className={
@@ -57,14 +59,24 @@ export default function AuditResultsSection({
                     {entry.status === "error" ? "Error" : "Exito"}
                   </span>
                 </td>
+                <td className="audit-detail">
+                  <span>{formatAuditAiUsage(entry)}</span>
+                  {summarizeAuditAiContext(entry) ? (
+                    <small className="audit-ai-context">
+                      {summarizeAuditAiContext(entry)}
+                    </small>
+                  ) : null}
+                </td>
                 <td className="audit-detail">{summarizeAuditChanges(entry)}</td>
                 <td className="audit-detail">{entry.detail || "-"}</td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={8} className="empty-state">
-                {loading ? "Cargando eventos..." : "No hay eventos para estos filtros"}
+              <td colSpan={9} className="empty-state">
+                {loading
+                  ? "Cargando eventos..."
+                  : "No hay eventos para estos filtros"}
               </td>
             </tr>
           )}

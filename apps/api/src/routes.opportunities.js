@@ -75,6 +75,24 @@ function getSanitizedInternalErrorDetail(error) {
   return message.slice(0, 500);
 }
 
+async function loadAiUsageRequestIdsForSuggestionJob(jobId) {
+  const safeJobId = Number(jobId || 0);
+  if (!safeJobId) return [];
+
+  const rows = await query(
+    `SELECT internal_request_id
+     FROM ai_usage_ledger
+     WHERE job_type = 'opportunity_stage_answer_suggestion_job'
+       AND job_id = ?
+     ORDER BY id ASC`,
+    [safeJobId],
+  );
+
+  return rows
+    .map((row) => String(row.internal_request_id || "").trim())
+    .filter(Boolean);
+}
+
 const opportunityBaseSchema = z.object({
   name: z.string().min(2).max(180),
   amountUsd: z.number().nonnegative(),
@@ -339,7 +357,10 @@ function hasExplicitOpportunityPermission(user, permission) {
 
 function canBypassCurrentOpportunityStage({ user, currentStageCode }) {
   if (
-    hasExplicitOpportunityPermission(user, opportunityBypassStageValidationPermission)
+    hasExplicitOpportunityPermission(
+      user,
+      opportunityBypassStageValidationPermission,
+    )
   ) {
     return true;
   }
@@ -2483,6 +2504,19 @@ router.post(
 
       if (!result.wasReused) {
         queueOpportunityStageAnswerSuggestionProcessing();
+      } else if (result.response?.result) {
+        const aiUsageRequestIds = await loadAiUsageRequestIdsForSuggestionJob(
+          result.row?.id,
+        );
+        await logAuditEvent({
+          req,
+          module: "oportunidades",
+          action: "stage_answer_suggestions_reused",
+          entityType: "opportunity",
+          entityId: id,
+          detail: `Sugerencias IA reutilizadas para etapa ${String(result.response.result.salesStageName || salesStageId)}`,
+          aiUsageRequestIds,
+        });
       }
 
       return res
@@ -2595,6 +2629,7 @@ router.post(
     }
 
     try {
+      const aiUsageRequestIds = [];
       const [existingAnswers, documents] = await Promise.all([
         getLatestOpportunityStageAnswers({
           opportunityId: id,
@@ -2613,7 +2648,18 @@ router.post(
           featureCode: "opportunities.stage_suggestions",
           jobType: "opportunity_stage_answers_sync",
           jobId: null,
+          aiUsageRequestIds,
         },
+      });
+
+      await logAuditEvent({
+        req,
+        module: "oportunidades",
+        action: "stage_answer_suggestions_generated",
+        entityType: "opportunity",
+        entityId: id,
+        detail: `Sugerencias IA generadas para etapa ${String(salesStage.name || salesStageId)}`,
+        aiUsageRequestIds,
       });
 
       return res.json({
@@ -3637,8 +3683,7 @@ router.post(
       return res.status(403).json({
         message:
           "No autorizado: este permiso solo permite bypasear la etapa de Demostracion",
-        requiredPermission:
-          opportunityBypassDemonstrationValidationPermission,
+        requiredPermission: opportunityBypassDemonstrationValidationPermission,
       });
     }
 

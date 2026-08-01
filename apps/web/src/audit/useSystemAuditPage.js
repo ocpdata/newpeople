@@ -1,6 +1,39 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 
+const AUDIT_ACTION_LABELS = {
+  created: "Creación",
+  updated: "Actualización",
+  status_changed: "Cambio de estado",
+  permissions_updated: "Permisos actualizados",
+  roles_assigned: "Roles asignados",
+  password_reset_sent: "Reset enviado",
+  password_reset_failed: "Reset fallido",
+  invitation_email_failed: "Invitación fallida",
+  register_first: "Registro inicial",
+  login_success: "Login exitoso",
+  login_failed: "Login fallido",
+  password_set: "Contraseña configurada",
+  set_password_failed: "Contraseña fallida",
+  analyzed: "Análisis IA de lead",
+  stage_answer_suggestions_generated: "Sugerencias IA generadas",
+  stage_answer_suggestions_reused: "Sugerencias IA reutilizadas",
+};
+
+const AUDIT_ENTITY_LABELS = {
+  user: "Usuario",
+  role: "Rol",
+  account: "Cuenta",
+  contact: "Contacto",
+  opportunity: "Oportunidad",
+  interaction: "Lead",
+};
+
+const AUDIT_AI_FEATURE_LABELS = {
+  "interactions.analysis": "Análisis de lead",
+  "opportunities.stage_suggestions": "Sugerencias de proceso comercial",
+};
+
 function buildQuery(params) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -22,6 +55,15 @@ export function formatAuditDateTime(value) {
 }
 
 export function summarizeAuditChanges(entry) {
+  if (
+    [
+      "stage_answer_suggestions_generated",
+      "stage_answer_suggestions_reused",
+    ].includes(String(entry?.action || ""))
+  ) {
+    return "No modificó datos";
+  }
+
   const changed = entry.changed_fields;
   if (!changed || typeof changed !== "object") return "-";
   const fields = Object.keys(changed);
@@ -29,11 +71,57 @@ export function summarizeAuditChanges(entry) {
   return fields.slice(0, 4).join(", ") + (fields.length > 4 ? "..." : "");
 }
 
+export function formatAuditAiUsage(entry) {
+  if (!entry?.ai_used) return "-";
+  const tokens = Number(entry.ai_total_tokens || 0);
+  const tokenText =
+    tokens > 0 ? `${tokens.toLocaleString("es-MX")} tokens` : "Usó IA";
+  if (!entry.ai_cost_visible) return tokenText;
+  const cost = Number(entry.ai_total_cost_usd || 0);
+  return `${cost.toLocaleString("es-MX", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 6,
+  })} · ${tokenText}`;
+}
+
+export function summarizeAuditAiContext(entry) {
+  if (!entry?.ai_used) return "";
+  const featureCodes = Array.isArray(entry.ai_feature_codes)
+    ? entry.ai_feature_codes.map(
+        (featureCode) =>
+          AUDIT_AI_FEATURE_LABELS[featureCode] || String(featureCode || ""),
+      )
+    : [];
+  const models = Array.isArray(entry.ai_models) ? entry.ai_models : [];
+  return [...featureCodes, ...models].slice(0, 3).join(" · ");
+}
+
 export function formatAuditModuleLabel(value) {
   if (value === "interacciones") {
     return "Leads";
   }
+  if (value === "oportunidades") {
+    return "Oportunidades";
+  }
   return value || "-";
+}
+
+export function formatAuditActionLabel(value) {
+  return AUDIT_ACTION_LABELS[value] || value || "-";
+}
+
+export function formatAuditEntityLabel(entry) {
+  const entityType = String(entry?.entity_type || "");
+  const label = AUDIT_ENTITY_LABELS[entityType] || entityType || "Entidad";
+  if (entry?.entity_name) {
+    return `${label}: ${entry.entity_name}`;
+  }
+  if (entry?.entity_id) {
+    return `${label} #${entry.entity_id}`;
+  }
+  return label;
 }
 
 const DEFAULT_FILTERS = {
@@ -45,6 +133,7 @@ const DEFAULT_FILTERS = {
   action: "",
   entityType: "",
   status: "",
+  aiUsage: "",
   q: "",
 };
 
@@ -61,19 +150,43 @@ const AUDIT_MODULE_OPTIONS = [
 
 const AUDIT_ACTION_OPTIONS = [
   { value: "", label: "Todas las acciones" },
-  { value: "created", label: "Creación" },
-  { value: "updated", label: "Actualización" },
-  { value: "status_changed", label: "Cambio de estado" },
-  { value: "permissions_updated", label: "Permisos actualizados" },
-  { value: "roles_assigned", label: "Roles asignados" },
-  { value: "password_reset_sent", label: "Reset enviado" },
-  { value: "password_reset_failed", label: "Reset fallido" },
-  { value: "invitation_email_failed", label: "Invitación fallida" },
-  { value: "register_first", label: "Registro inicial" },
-  { value: "login_success", label: "Login exitoso" },
-  { value: "login_failed", label: "Login fallido" },
-  { value: "password_set", label: "Contraseña configurada" },
-  { value: "set_password_failed", label: "Contraseña fallida" },
+  { value: "created", label: AUDIT_ACTION_LABELS.created },
+  { value: "updated", label: AUDIT_ACTION_LABELS.updated },
+  { value: "status_changed", label: AUDIT_ACTION_LABELS.status_changed },
+  {
+    value: "stage_answer_suggestions_generated",
+    label: AUDIT_ACTION_LABELS.stage_answer_suggestions_generated,
+  },
+  {
+    value: "stage_answer_suggestions_reused",
+    label: AUDIT_ACTION_LABELS.stage_answer_suggestions_reused,
+  },
+  { value: "analyzed", label: AUDIT_ACTION_LABELS.analyzed },
+  {
+    value: "permissions_updated",
+    label: AUDIT_ACTION_LABELS.permissions_updated,
+  },
+  { value: "roles_assigned", label: AUDIT_ACTION_LABELS.roles_assigned },
+  {
+    value: "password_reset_sent",
+    label: AUDIT_ACTION_LABELS.password_reset_sent,
+  },
+  {
+    value: "password_reset_failed",
+    label: AUDIT_ACTION_LABELS.password_reset_failed,
+  },
+  {
+    value: "invitation_email_failed",
+    label: AUDIT_ACTION_LABELS.invitation_email_failed,
+  },
+  { value: "register_first", label: AUDIT_ACTION_LABELS.register_first },
+  { value: "login_success", label: AUDIT_ACTION_LABELS.login_success },
+  { value: "login_failed", label: AUDIT_ACTION_LABELS.login_failed },
+  { value: "password_set", label: AUDIT_ACTION_LABELS.password_set },
+  {
+    value: "set_password_failed",
+    label: AUDIT_ACTION_LABELS.set_password_failed,
+  },
 ];
 
 const AUDIT_ENTITY_OPTIONS = [
@@ -89,6 +202,12 @@ const AUDIT_STATUS_OPTIONS = [
   { value: "", label: "Todos", tone: "all" },
   { value: "success", label: "Exito", tone: "success" },
   { value: "error", label: "Error", tone: "error" },
+];
+
+const AUDIT_AI_USAGE_OPTIONS = [
+  { value: "", label: "Todo uso IA" },
+  { value: "with_ai", label: "Con IA" },
+  { value: "without_ai", label: "Sin IA" },
 ];
 
 export function useSystemAuditPage() {
@@ -118,6 +237,7 @@ export function useSystemAuditPage() {
       action: filters.action,
       entityType: filters.entityType,
       status: filters.status,
+      aiUsage: filters.aiUsage,
       q: debouncedQuery,
     }),
     [
@@ -129,6 +249,7 @@ export function useSystemAuditPage() {
       filters.action,
       filters.entityType,
       filters.status,
+      filters.aiUsage,
       debouncedQuery,
     ],
   );
@@ -190,6 +311,7 @@ export function useSystemAuditPage() {
     filters.action,
     filters.entityType,
     filters.status,
+    filters.aiUsage,
     filters.from,
     filters.to,
   ].filter((value) => String(value || "").trim() !== "").length;
@@ -208,6 +330,7 @@ export function useSystemAuditPage() {
     auditActionOptions: AUDIT_ACTION_OPTIONS,
     auditEntityOptions: AUDIT_ENTITY_OPTIONS,
     auditStatusOptions: AUDIT_STATUS_OPTIONS,
+    auditAiUsageOptions: AUDIT_AI_USAGE_OPTIONS,
     updateFilter,
     changePage,
     changePageSize,

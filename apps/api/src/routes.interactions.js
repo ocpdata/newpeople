@@ -1787,11 +1787,10 @@ function mapInteractionListRow(row) {
   const suggestedAccountRaw = parseJsonField(row.suggested_account_json, null);
   const suggestedAccountName = String(suggestedAccountRaw?.name || "").trim();
   const suggestedContactName = String(row.suggested_contact_name || "").trim();
-  const suggestedContactEmail = String(row.suggested_contact_email || "").trim();
-  const suggestedContactsRaw = parseJsonField(
-    row.suggested_contacts_json,
-    [],
-  );
+  const suggestedContactEmail = String(
+    row.suggested_contact_email || "",
+  ).trim();
+  const suggestedContactsRaw = parseJsonField(row.suggested_contacts_json, []);
   const reasonCode = row.lead_reason_code || "";
   const requiredActionCode = row.lead_required_action_code || "";
   let contacts = [];
@@ -1816,7 +1815,9 @@ function mapInteractionListRow(row) {
         email: suggestedContactEmail,
         phone: String(row.suggested_contact_phone || "").trim(),
         mobile: String(row.suggested_contact_mobile || "").trim(),
-        positionTitle: String(row.suggested_contact_position_title || "").trim(),
+        positionTitle: String(
+          row.suggested_contact_position_title || "",
+        ).trim(),
       },
     ];
   }
@@ -1830,9 +1831,7 @@ function mapInteractionListRow(row) {
       .map((contact) => {
         const fullName = String(
           contact?.fullName ||
-            [contact?.firstName, contact?.lastName]
-              .filter(Boolean)
-              .join(" ") ||
+            [contact?.firstName, contact?.lastName].filter(Boolean).join(" ") ||
             "",
         ).trim();
         return {
@@ -1858,7 +1857,10 @@ function mapInteractionListRow(row) {
     analysisStatus: row.analysis_status,
     accountId: row.account_id === null ? null : Number(row.account_id),
     accountName:
-      row.account_name || row.suggested_account_name || suggestedAccountName || "",
+      row.account_name ||
+      row.suggested_account_name ||
+      suggestedAccountName ||
+      "",
     primaryOpportunityId:
       row.primary_opportunity_id === null
         ? null
@@ -3011,7 +3013,8 @@ async function buildInteractionAnalysis({
   extractedDocuments = [],
 }) {
   const accessibleContext = await loadAccessibleContext(user);
-  return analyzeInteractionEvidence({
+  const aiUsageRequestId = user?.id ? randomUUID() : null;
+  const analysis = await analyzeInteractionEvidence({
     title,
     sourceNotes,
     documentExtractions: [
@@ -3023,10 +3026,14 @@ async function buildInteractionAnalysis({
       ? {
           userId: Number(user.id),
           featureCode: "interactions.analysis",
-          internalRequestId: `interaction_analysis:${Number(user.id)}:${Date.now()}`,
+          internalRequestId: aiUsageRequestId,
         }
       : null,
   });
+  return {
+    ...analysis,
+    aiUsageRequestIds: aiUsageRequestId ? [aiUsageRequestId] : [],
+  };
 }
 
 function buildInteractionAnalysisJobPublicId() {
@@ -3171,6 +3178,7 @@ async function executeInteractionAnalysis({ interactionId, user, req }) {
     entityType: "interaction",
     entityId: interactionId,
     detail: "Lead reanalizado",
+    aiUsageRequestIds: analysis.aiUsageRequestIds,
   });
 
   return {

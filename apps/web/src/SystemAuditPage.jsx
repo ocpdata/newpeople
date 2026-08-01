@@ -17,6 +17,7 @@ export default function SystemAuditPage() {
     auditActionOptions,
     auditEntityOptions,
     auditStatusOptions,
+    auditAiUsageOptions,
     updateFilter,
     changePage,
     changePageSize,
@@ -32,6 +33,7 @@ export default function SystemAuditPage() {
         auditActionOptions={auditActionOptions}
         auditEntityOptions={auditEntityOptions}
         auditStatusOptions={auditStatusOptions}
+        auditAiUsageOptions={auditAiUsageOptions}
         updateFilter={updateFilter}
       />
 

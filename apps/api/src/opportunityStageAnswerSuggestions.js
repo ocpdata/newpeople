@@ -986,6 +986,16 @@ function canRunAnotherPass(runtimeBudget) {
   );
 }
 
+function trackAiUsageRequestId(aiUsageContext, requestId) {
+  if (!aiUsageContext || !Array.isArray(aiUsageContext.aiUsageRequestIds)) {
+    return;
+  }
+  const safeRequestId = String(requestId || "").trim();
+  if (safeRequestId) {
+    aiUsageContext.aiUsageRequestIds.push(safeRequestId);
+  }
+}
+
 async function requestOpenAiSuggestions(payload, options = {}) {
   const timeoutMs = Number(options.timeoutMs || 0);
   const aiUsageContext =
@@ -1039,8 +1049,9 @@ async function requestOpenAiSuggestions(payload, options = {}) {
 
   const data = await response.json();
   if (aiUsageUserId) {
+    const aiUsageRequestId = randomUUID();
     await recordAiUsageFromOpenAiResponse({
-      internalRequestId: randomUUID(),
+      internalRequestId: aiUsageRequestId,
       userId: aiUsageUserId,
       featureCode:
         String(
@@ -1052,6 +1063,7 @@ async function requestOpenAiSuggestions(payload, options = {}) {
       jobId: aiUsageContext?.jobId || null,
       startedAt,
     });
+    trackAiUsageRequestId(aiUsageContext, aiUsageRequestId);
   }
 
   return {

@@ -10,6 +10,7 @@ export default function AuditFiltersSection({
   auditActionOptions,
   auditEntityOptions,
   auditStatusOptions,
+  auditAiUsageOptions,
   updateFilter,
 }) {
   const fromDate = parseDateFilterValue(filters.from);
@@ -74,7 +75,10 @@ export default function AuditFiltersSection({
               onChange={(event) => updateFilter("module", event.target.value)}
             >
               {auditModuleOptions.map((option) => (
-                <option key={option.value || "all-modules"} value={option.value}>
+                <option
+                  key={option.value || "all-modules"}
+                  value={option.value}
+                >
                   {option.label}
                 </option>
               ))}
@@ -88,7 +92,10 @@ export default function AuditFiltersSection({
               onChange={(event) => updateFilter("action", event.target.value)}
             >
               {auditActionOptions.map((option) => (
-                <option key={option.value || "all-actions"} value={option.value}>
+                <option
+                  key={option.value || "all-actions"}
+                  value={option.value}
+                >
                   {option.label}
                 </option>
               ))}
@@ -99,10 +106,32 @@ export default function AuditFiltersSection({
             <span className="audit-filter-label">Entidad</span>
             <select
               value={filters.entityType}
-              onChange={(event) => updateFilter("entityType", event.target.value)}
+              onChange={(event) =>
+                updateFilter("entityType", event.target.value)
+              }
             >
               {auditEntityOptions.map((option) => (
-                <option key={option.value || "all-entities"} value={option.value}>
+                <option
+                  key={option.value || "all-entities"}
+                  value={option.value}
+                >
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="audit-filter-card">
+            <span className="audit-filter-label">Uso IA</span>
+            <select
+              value={filters.aiUsage}
+              onChange={(event) => updateFilter("aiUsage", event.target.value)}
+            >
+              {auditAiUsageOptions.map((option) => (
+                <option
+                  key={option.value || "all-ai-usage"}
+                  value={option.value}
+                >
                   {option.label}
                 </option>
               ))}
@@ -137,7 +166,9 @@ export default function AuditFiltersSection({
                 <span>Desde</span>
                 <DatePicker
                   selected={fromDate}
-                  onChange={(date) => updateFilter("from", formatDateFilterValue(date))}
+                  onChange={(date) =>
+                    updateFilter("from", formatDateFilterValue(date))
+                  }
                   selectsStart
                   startDate={fromDate}
                   endDate={toDate}
@@ -162,7 +193,9 @@ export default function AuditFiltersSection({
                 <span>Hasta</span>
                 <DatePicker
                   selected={toDate}
-                  onChange={(date) => updateFilter("to", formatDateFilterValue(date))}
+                  onChange={(date) =>
+                    updateFilter("to", formatDateFilterValue(date))
+                  }
                   selectsEnd
                   startDate={fromDate}
                   endDate={toDate}

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { logAuditEvent } from "../audit.js";
 import { query, withTransaction } from "../db.js";
 import { listOpportunityDocuments } from "../opportunity-documents/service.js";
 import {
@@ -157,7 +158,11 @@ function buildPollAfterMs(row) {
   const leaseExpiresAt = row?.lease_expires_at
     ? new Date(row.lease_expires_at)
     : null;
-  if (status === "pending" && leaseExpiresAt && !Number.isNaN(leaseExpiresAt.getTime())) {
+  if (
+    status === "pending" &&
+    leaseExpiresAt &&
+    !Number.isNaN(leaseExpiresAt.getTime())
+  ) {
     const waitMs = Math.max(leaseExpiresAt.getTime() - Date.now(), 0);
     return Math.max(JOB_POLL_AFTER_MS, waitMs);
   }
@@ -210,7 +215,10 @@ function getTimeoutRetryDelaySeconds(attemptCount) {
   return (
     JOB_TIMEOUT_RETRY_DELAYS_SECONDS[
       Math.min(index, JOB_TIMEOUT_RETRY_DELAYS_SECONDS.length - 1)
-    ] || JOB_TIMEOUT_RETRY_DELAYS_SECONDS[JOB_TIMEOUT_RETRY_DELAYS_SECONDS.length - 1]
+    ] ||
+    JOB_TIMEOUT_RETRY_DELAYS_SECONDS[
+      JOB_TIMEOUT_RETRY_DELAYS_SECONDS.length - 1
+    ]
   );
 }
 
@@ -234,7 +242,7 @@ async function requeueJobAfterTimeout({
     [
       delaySeconds,
       errorMessage ||
-        'La generación excedió el tiempo de espera con OpenAI. Reintentando automáticamente.',
+        "La generación excedió el tiempo de espera con OpenAI. Reintentando automáticamente.",
       Number(jobId),
       String(leaseToken || ""),
     ],
@@ -684,6 +692,7 @@ async function processSingleJob(row) {
   }
 
   try {
+    const aiUsageRequestIds = [];
     const result = await suggestOpportunityStageAnswers({
       salesStage: context.salesStage,
       questions: context.questions,
@@ -694,6 +703,7 @@ async function processSingleJob(row) {
         featureCode: "opportunities.stage_suggestions",
         jobType: "opportunity_stage_answer_suggestion_job",
         jobId,
+        aiUsageRequestIds,
       },
     });
 
@@ -734,9 +744,21 @@ async function processSingleJob(row) {
       summary: payload.summary,
       meta: payload.meta,
     });
+    await logAuditEvent({
+      actor: { id: Number(row.requested_by_user_id || 0) || null },
+      module: "oportunidades",
+      action: "stage_answer_suggestions_generated",
+      entityType: "opportunity",
+      entityId: opportunityId,
+      detail: `Sugerencias IA generadas para etapa ${String(context.salesStage?.name || salesStageId)}`,
+      aiUsageRequestIds,
+    });
     return true;
   } catch (error) {
-    if (isOpenAiTimeoutError(error) && attemptCount < JOB_TIMEOUT_MAX_ATTEMPTS) {
+    if (
+      isOpenAiTimeoutError(error) &&
+      attemptCount < JOB_TIMEOUT_MAX_ATTEMPTS
+    ) {
       await requeueJobAfterTimeout({
         jobId,
         leaseToken,

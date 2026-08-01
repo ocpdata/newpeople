@@ -1,8 +1,10 @@
 import { query } from "./db.js";
+import { ensureAiUsageSchema } from "./ai-usage/service.js";
 
 const RETENTION_MONTHS = 12;
 const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastPurgeAt = 0;
+let ensureAuditAiUsageSchemaPromise;
 
 function stableStringify(value) {
   if (value === null || value === undefined) return String(value);
@@ -67,6 +69,65 @@ function shorten(text, maxLength = 255) {
     : value;
 }
 
+function normalizeAiUsageRequestIds(value) {
+  const rawValues = Array.isArray(value) ? value : value ? [value] : [];
+  return Array.from(
+    new Set(rawValues.map((item) => String(item || "").trim()).filter(Boolean)),
+  );
+}
+
+export async function ensureAuditAiUsageSchema() {
+  if (!ensureAuditAiUsageSchemaPromise) {
+    ensureAuditAiUsageSchemaPromise = (async () => {
+      await ensureAiUsageSchema();
+      await query(
+        `CREATE TABLE IF NOT EXISTS audit_log_ai_usage (
+          audit_log_id BIGINT UNSIGNED NOT NULL,
+          ai_usage_ledger_id BIGINT UNSIGNED NOT NULL,
+          created_at_utc DATETIME(3) NOT NULL,
+          PRIMARY KEY (audit_log_id, ai_usage_ledger_id),
+          KEY idx_audit_log_ai_usage_ledger (ai_usage_ledger_id),
+          CONSTRAINT fk_audit_log_ai_usage_audit FOREIGN KEY (audit_log_id) REFERENCES audit_log(id) ON DELETE CASCADE,
+          CONSTRAINT fk_audit_log_ai_usage_ledger FOREIGN KEY (ai_usage_ledger_id) REFERENCES ai_usage_ledger(id) ON DELETE CASCADE
+        )`,
+      );
+    })().catch((error) => {
+      ensureAuditAiUsageSchemaPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureAuditAiUsageSchemaPromise;
+}
+
+export async function linkAuditEventAiUsage({ auditLogId, aiUsageRequestIds }) {
+  const safeAuditLogId = Number(auditLogId || 0);
+  const requestIds = normalizeAiUsageRequestIds(aiUsageRequestIds);
+  if (!safeAuditLogId || !requestIds.length) return;
+
+  try {
+    await ensureAuditAiUsageSchema();
+    const placeholders = requestIds.map(() => "?").join(", ");
+    const rows = await query(
+      `SELECT id
+       FROM ai_usage_ledger
+       WHERE internal_request_id IN (${placeholders})`,
+      requestIds,
+    );
+    const ledgerIds = rows.map((row) => Number(row.id || 0)).filter(Boolean);
+    if (!ledgerIds.length) return;
+
+    await query(
+      `INSERT IGNORE INTO audit_log_ai_usage
+         (audit_log_id, ai_usage_ledger_id, created_at_utc)
+       VALUES ${ledgerIds.map(() => "(?, ?, ?)").join(", ")}`,
+      ledgerIds.flatMap((ledgerId) => [safeAuditLogId, ledgerId, new Date()]),
+    );
+  } catch (error) {
+    console.error("Audit AI usage link error:", error?.message || error);
+  }
+}
+
 async function purgeExpiredAuditLogs() {
   await query(
     `DELETE FROM audit_log
@@ -107,8 +168,9 @@ export async function logAuditEvent({
   before = null,
   after = null,
   status = "success",
+  aiUsageRequestIds = [],
 }) {
-  if (!module || !action || !entityType) return;
+  if (!module || !action || !entityType) return null;
 
   const actorData = resolveActor(req, actor);
   const changedFields = buildChangedFields(before, after);
@@ -120,7 +182,7 @@ export async function logAuditEvent({
   await maybePurgeExpiredAuditLogs();
 
   try {
-    await query(
+    const result = await query(
       `INSERT INTO audit_log
          (module, action, entity_type, entity_id, status, detail, changed_fields,
           performed_by_user_id, performed_by_name, performed_by_email,
@@ -142,8 +204,12 @@ export async function logAuditEvent({
         new Date(),
       ],
     );
+    const auditLogId = Number(result?.insertId || 0) || null;
+    await linkAuditEventAiUsage({ auditLogId, aiUsageRequestIds });
+    return auditLogId;
   } catch (error) {
     console.error("Audit log insert error:", error?.message || error);
+    return null;
   }
 }
 
