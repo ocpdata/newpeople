@@ -18,6 +18,7 @@ const AUDIT_ACTION_LABELS = {
   analyzed: "Análisis IA de lead",
   stage_answer_suggestions_generated: "Sugerencias IA generadas",
   stage_answer_suggestions_reused: "Sugerencias IA reutilizadas",
+  ai_usage_recorded: "Interacción IA registrada",
 };
 
 const AUDIT_ENTITY_LABELS = {
@@ -27,11 +28,29 @@ const AUDIT_ENTITY_LABELS = {
   contact: "Contacto",
   opportunity: "Oportunidad",
   interaction: "Lead",
+  ai_usage: "Uso IA",
 };
 
 const AUDIT_AI_FEATURE_LABELS = {
+  "accounts.draft_analysis": "Análisis de cuenta",
+  "chatbot.assistant": "Chatbot",
+  "chatbot.planner": "Chatbot: planeación",
+  "chatbot.resolver": "Chatbot: resolución",
+  "chatbot.answerer": "Chatbot: respuesta",
+  "commercial_enablement.intake_prefill": "Biblioteca comercial: prellenado",
+  "commercial_enablement.intake_summary": "Biblioteca comercial: resumen",
+  "commercial_enablement.intake_structured_analysis":
+    "Biblioteca comercial: análisis",
+  "contacts.duplicate_review": "Revisión de duplicados de contacto",
   "interactions.analysis": "Análisis de lead",
+  "interactions.email_suggestion": "Sugerencia de correo para lead",
+  "opportunities.documents.analysis": "Análisis de documento de oportunidad",
+  "opportunities.documents.ocr": "OCR de documento de oportunidad",
+  "opportunities.documents.transcription":
+    "Transcripción de documento de oportunidad",
   "opportunities.stage_suggestions": "Sugerencias de proceso comercial",
+  "quotations.documents.provider_import_preview":
+    "Importación asistida de cotización",
 };
 
 function buildQuery(params) {
@@ -59,6 +78,7 @@ export function summarizeAuditChanges(entry) {
     [
       "stage_answer_suggestions_generated",
       "stage_answer_suggestions_reused",
+      "ai_usage_recorded",
     ].includes(String(entry?.action || ""))
   ) {
     return "No modificó datos";
@@ -104,6 +124,20 @@ export function formatAuditModuleLabel(value) {
   }
   if (value === "oportunidades") {
     return "Oportunidades";
+  }
+  const moduleLabels = {
+    biblioteca_comercial: "Biblioteca comercial",
+    chatbot: "Chatbot",
+    contactos: "Contactos",
+    cotizaciones: "Cotizaciones",
+    cuentas: "Cuentas",
+    ejecucion_comercial: "Ejecución comercial",
+    ia: "IA",
+    landing: "Landing",
+    propuestas: "Propuestas",
+  };
+  if (moduleLabels[value]) {
+    return moduleLabels[value];
   }
   return value || "-";
 }
@@ -161,6 +195,7 @@ const AUDIT_ACTION_OPTIONS = [
     value: "stage_answer_suggestions_reused",
     label: AUDIT_ACTION_LABELS.stage_answer_suggestions_reused,
   },
+  { value: "ai_usage_recorded", label: AUDIT_ACTION_LABELS.ai_usage_recorded },
   { value: "analyzed", label: AUDIT_ACTION_LABELS.analyzed },
   {
     value: "permissions_updated",
