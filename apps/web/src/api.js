@@ -18,21 +18,16 @@ function resolveBaseURL() {
     const configuredURL = new URL(configuredBaseURL, pageOrigin);
     const pageURL = new URL(pageOrigin);
 
-    if (import.meta.env.PROD) {
-      const configuredTargetsLoopback = isLoopbackHostname(
-        configuredURL.hostname,
-      );
-      const pageTargetsLoopback = isLoopbackHostname(pageURL.hostname);
-      if (configuredTargetsLoopback && !pageTargetsLoopback) {
-        return pageOrigin;
-      }
+    const configuredTargetsLoopback = isLoopbackHostname(
+      configuredURL.hostname,
+    );
+    const pageTargetsLoopback = isLoopbackHostname(pageURL.hostname);
+    if (configuredTargetsLoopback && !pageTargetsLoopback) {
+      return pageOrigin;
+    }
 
-      if (
-        pageURL.protocol === "https:" &&
-        configuredURL.protocol !== "https:"
-      ) {
-        return pageOrigin;
-      }
+    if (pageURL.protocol === "https:" && configuredURL.protocol !== "https:") {
+      return pageOrigin;
     }
 
     return configuredURL.origin;

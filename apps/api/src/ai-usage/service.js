@@ -5,6 +5,10 @@ import { config } from "../config.js";
 const PROVIDER_OPENAI = "openai";
 const DEFAULT_CURRENCY_CODE = "USD";
 const MICROS_PER_USD = 1_000_000;
+const OPENAI_PRICING_URL = "https://platform.openai.com/docs/pricing";
+const OPENAI_PRICING_TIMEOUT_MS = Number(
+  process.env.OPENAI_PRICING_TIMEOUT_MS || 10_000,
+);
 const DEFAULT_INITIAL_CREDIT_USD = Number(
   process.env.AI_DEFAULT_INITIAL_CREDIT_USD || 5,
 );
@@ -28,6 +32,56 @@ function toMicrosFromUsd(value) {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric)) return 0;
   return Math.round(numeric * MICROS_PER_USD);
+}
+
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeBasicHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function normalizeNumericPricingValue(value) {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim().replace(/^"|"$/g, "");
+  if (!raw || raw === "-") return null;
+  const numeric = Number(raw.replace(/[$,\s]/g, ""));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildLivePricingFetchError(message) {
+  const error = new Error(
+    message || "No fue posible consultar precios oficiales de OpenAI.",
+  );
+  error.code = "OPENAI_PRICING_FETCH_FAILED";
+  error.status = 502;
+  return error;
+}
+
+function buildUnsupportedLivePricingError(model, detail) {
+  const error = new Error(
+    detail
+      ? `OpenAI no publica una tarifa por token compatible para ${model}: ${detail}`
+      : `OpenAI no publica una tarifa por token compatible para ${model}.`,
+  );
+  error.code = "OPENAI_PRICING_UNSUPPORTED_MODEL";
+  error.status = 422;
+  return error;
+}
+
+function buildLivePricingNotFoundError(model) {
+  const error = new Error(
+    `No se encontro el precio oficial vigente de OpenAI para el modelo ${model}.`,
+  );
+  error.code = "OPENAI_PRICING_MODEL_NOT_FOUND";
+  error.status = 502;
+  return error;
 }
 
 function toUsdFromMicros(value) {
@@ -169,6 +223,130 @@ function calculateCostMicros({ usage, rate }) {
   );
 
   return Math.max(0, promptCost + completionCost + cachedCost);
+}
+
+async function fetchOpenAiPricingPage() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENAI_PRICING_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(OPENAI_PRICING_URL, {
+      method: "GET",
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        "accept-language": "es-419,es;q=0.9,en;q=0.8",
+        "cache-control": "no-cache",
+        pragma: "no-cache",
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw buildLivePricingFetchError(
+        `OpenAI respondio ${response.status} al consultar precios oficiales.`,
+      );
+    }
+
+    return decodeBasicHtmlEntities(await response.text());
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw buildLivePricingFetchError(
+        "La consulta de precios oficiales de OpenAI excedio el tiempo limite.",
+      );
+    }
+    if (error?.code && error?.status) {
+      throw error;
+    }
+    throw buildLivePricingFetchError(
+      error?.message || "Fallo la consulta de precios oficiales de OpenAI.",
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function extractTokenModelLivePricing(pageContent, model) {
+  const safeModel = escapeRegex(model);
+  const datedModelPattern = `${safeModel}(?:-[0-9]{4}-[0-9]{2}-[0-9]{2})?`;
+  const rowPattern = new RegExp(
+    `\\[0,"(${datedModelPattern})"\\],\\[0,[0-9.]+\\],\\[0,([0-9.]+)\\],\\[0,([0-9.]+)\\],\\[0,([0-9.]+)\\]`,
+  );
+  const match = pageContent.match(rowPattern);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    matchedModel: match[1],
+    inputUsdPerMillionMicros: toMicrosFromUsd(match[2]),
+    cachedInputUsdPerMillionMicros: toMicrosFromUsd(match[3]),
+    outputUsdPerMillionMicros: toMicrosFromUsd(match[4]),
+    pricingUnit: "per_million_tokens",
+  };
+}
+
+function extractAudioModelLivePricing(pageContent, model) {
+  const safeModel = escapeRegex(model);
+  const rowPattern = new RegExp(
+    `"model":\\[0,"${safeModel}"\\][\\s\\S]{0,220}?"rows":\\[1,\\[\\[1,\\[\\[0,"[^"]+"\\],\\[0,([^\\]]+)\\],\\[0,([^\\]]+)\\],\\[0,"([^"]+)"\\]`,
+  );
+  const match = pageContent.match(rowPattern);
+  if (!match) {
+    return null;
+  }
+
+  const inputUsd = normalizeNumericPricingValue(match[1]);
+  const outputUsd = normalizeNumericPricingValue(match[2]);
+  const estimatedCost = String(match[3] || "").trim();
+
+  if (inputUsd === null || outputUsd === null) {
+    throw buildUnsupportedLivePricingError(model, estimatedCost || null);
+  }
+
+  return {
+    matchedModel: model,
+    inputUsdPerMillionMicros: toMicrosFromUsd(inputUsd),
+    cachedInputUsdPerMillionMicros: 0,
+    outputUsdPerMillionMicros: toMicrosFromUsd(outputUsd),
+    pricingUnit: "per_million_tokens",
+    estimatedCost,
+  };
+}
+
+function resolveLiveOpenAiPricingForModel(pageContent, model) {
+  const audioPricing = extractAudioModelLivePricing(pageContent, model);
+  if (audioPricing) {
+    return audioPricing;
+  }
+
+  const tokenPricing = extractTokenModelLivePricing(pageContent, model);
+  if (tokenPricing) {
+    return tokenPricing;
+  }
+
+  throw buildLivePricingNotFoundError(model);
+}
+
+async function loadLiveOpenAiPricingRates(models) {
+  const pageContent = await fetchOpenAiPricingPage();
+
+  return models.map((model) => {
+    const pricing = resolveLiveOpenAiPricingForModel(pageContent, model);
+    return {
+      provider: PROVIDER_OPENAI,
+      model,
+      matchedModel: pricing.matchedModel,
+      inputUsdPerMillionMicros: pricing.inputUsdPerMillionMicros,
+      outputUsdPerMillionMicros: pricing.outputUsdPerMillionMicros,
+      cachedInputUsdPerMillionMicros: pricing.cachedInputUsdPerMillionMicros,
+      pricingUnit: pricing.pricingUnit,
+      estimatedCost: pricing.estimatedCost || null,
+      source: "openai_live_pricing",
+      sourceReference: `${OPENAI_PRICING_URL}#${pricing.matchedModel}`,
+    };
+  });
 }
 
 async function ensureWalletRow(conn, userId) {
@@ -1318,26 +1496,20 @@ export async function syncOpenAiPricingRates({ dryRun = true, actorUserId }) {
       ].filter(Boolean),
     ),
   );
-
-  const desiredRate = {
-    inputUsdPerMillionMicros: Math.max(
-      0,
-      Math.round(DEFAULT_INPUT_USD_PER_MILLION_MICROS),
-    ),
-    outputUsdPerMillionMicros: Math.max(
-      0,
-      Math.round(DEFAULT_OUTPUT_USD_PER_MILLION_MICROS),
-    ),
-    cachedInputUsdPerMillionMicros: Math.max(
-      0,
-      Math.round(DEFAULT_CACHED_USD_PER_MILLION_MICROS),
-    ),
-  };
+  const desiredRates = await loadLiveOpenAiPricingRates(modelsToSync);
+  const desiredRateByModel = new Map(
+    desiredRates.map((item) => [item.model, item]),
+  );
 
   const preview = [];
   const applied = [];
 
   for (const model of modelsToSync) {
+    const desiredRate = desiredRateByModel.get(model);
+    if (!desiredRate) {
+      throw buildLivePricingNotFoundError(model);
+    }
+
     const activeRows = await query(
       `SELECT *
        FROM ai_pricing_rates
@@ -1368,7 +1540,15 @@ export async function syncOpenAiPricingRates({ dryRun = true, actorUserId }) {
       desired: {
         provider: PROVIDER_OPENAI,
         model,
-        ...desiredRate,
+        inputUsdPerMillionMicros: desiredRate.inputUsdPerMillionMicros,
+        outputUsdPerMillionMicros: desiredRate.outputUsdPerMillionMicros,
+        cachedInputUsdPerMillionMicros:
+          desiredRate.cachedInputUsdPerMillionMicros,
+        source: desiredRate.source,
+        sourceReference: desiredRate.sourceReference,
+        pricingUnit: desiredRate.pricingUnit,
+        estimatedCost: desiredRate.estimatedCost,
+        matchedModel: desiredRate.matchedModel,
       },
     });
 
@@ -1397,7 +1577,7 @@ export async function syncOpenAiPricingRates({ dryRun = true, actorUserId }) {
             source, source_reference,
             created_by_user_id,
             created_at_utc, updated_at_utc)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, 'sync_openai_defaults', 'env_defaults', ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
         [
           PROVIDER_OPENAI,
           model,
@@ -1405,6 +1585,8 @@ export async function syncOpenAiPricingRates({ dryRun = true, actorUserId }) {
           desiredRate.outputUsdPerMillionMicros,
           desiredRate.cachedInputUsdPerMillionMicros,
           now,
+          desiredRate.source,
+          desiredRate.sourceReference,
           Number(actorUserId || 0) || null,
           now,
           now,
@@ -1427,7 +1609,7 @@ export async function syncOpenAiPricingRates({ dryRun = true, actorUserId }) {
 
   return {
     dryRun: Boolean(dryRun),
-    source: "openai_env_defaults",
+    source: "openai_live_pricing",
     generatedAtUtc: now.toISOString(),
     preview,
     applied,

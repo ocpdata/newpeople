@@ -277,7 +277,7 @@ const quotationProcessingStageCodes = [
   "provider_payment",
 ];
 const quotationProcessingStageCatalog = [
-  { code: "quotation_accepted", name: "Cotizacion Aceptada" },
+  { code: "quotation_accepted", name: "Aceptar Cotizacion" },
   { code: "kickoff_internal", name: "Kick Off interno" },
   { code: "kickoff_external", name: "Kick Off externo" },
   {
@@ -314,6 +314,11 @@ const quotationWonDocumentSelectionSchema = z.object({
 const quotationWonDocumentsSaveSchema = z.object({
   selections: z.array(quotationWonDocumentSelectionSchema).max(500),
   accept: z.boolean().optional().default(false),
+  acceptedAt: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
 });
 
 const quotationSellerNotificationSchema = z.object({
@@ -2174,6 +2179,7 @@ function hasQuotationProcessingIaPermission(user) {
   return (
     hasQuotationAdministration(user) ||
     user?.permissionSet?.has("aceptar_pedido.procesamiento.ia") ||
+    user?.permissionSet?.has("cotizaciones.operacion") ||
     hasQuotationAiApprovalPermission(user)
   );
 }
@@ -2227,7 +2233,7 @@ function normalizeProcessingSearchText(value) {
 
 function buildQuotationAcceptedStageData({ latestVersion, acceptedSnapshot }) {
   return {
-    acceptedAt: acceptedSnapshot?.acceptedAt || latestVersion?.updated_at || null,
+    acceptedAt: acceptedSnapshot?.acceptedAt || null,
     acceptedByUserId: acceptedSnapshot?.acceptedByUserId || null,
     acceptedVersionId: latestVersion?.id ? Number(latestVersion.id) : null,
     initialScopeSummary:
@@ -2313,17 +2319,29 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
   const acceptedSnapshot = await getQuotationAcceptedSnapshot({
     versionId: Number(latestVersion.id),
   });
+  const latestVersionStatusCode = String(latestVersion.status_code || "").trim();
+  const isQuotationAccepted = latestVersionStatusCode === "aceptada";
 
   return quotationProcessingStageCatalog.map((stage) => {
     const found = byCode.get(stage.code);
     if (found) {
       if (stage.code === "quotation_accepted") {
+        const foundAcceptedAt =
+          found.stageData?.acceptedAt || found.completedAt || null;
+        const acceptedStageCompleted =
+          String(found.status || "").trim() === "completed" || isQuotationAccepted;
+        const effectiveAcceptedAt = acceptedStageCompleted
+          ? foundAcceptedAt || acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+          : null;
         return {
           ...found,
           stageName: stage.name,
+          status: acceptedStageCompleted ? "completed" : "not_started",
+          completedAt: effectiveAcceptedAt,
           stageData: {
             ...buildQuotationAcceptedStageData({ latestVersion, acceptedSnapshot }),
             ...(found.stageData || {}),
+            acceptedAt: effectiveAcceptedAt,
           },
         };
       }
@@ -2333,13 +2351,20 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
     return {
       stageCode: stage.code,
       stageName: stage.name,
-      status: stage.code === "quotation_accepted" ? "completed" : "not_started",
+      status:
+        stage.code === "quotation_accepted"
+          ? isQuotationAccepted
+            ? "completed"
+            : "not_started"
+          : "not_started",
       ownerUserId: null,
       ownerUserName: null,
       targetDate: null,
       completedAt:
         stage.code === "quotation_accepted"
-          ? acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+          ? isQuotationAccepted
+            ? acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+            : null
           : null,
       blockedReason: null,
       notes: null,
@@ -2358,6 +2383,7 @@ async function listProcessingAssignableUsers() {
   const rows = await query(
     `SELECT id, full_name, email
      FROM users
+     WHERE COALESCE(status, 'active') = 'active'
      ORDER BY full_name ASC, id ASC
      LIMIT 1000`,
   );
@@ -2369,12 +2395,120 @@ async function listProcessingAssignableUsers() {
   }));
 }
 
+async function tryExtractEvidenceContentText({
+  buffer,
+  mimeType,
+  fileName,
+  extension,
+}) {
+  try {
+    const extracted = await extractContentFromBuffer({
+      buffer,
+      mimeType,
+      fileName,
+      extension,
+    });
+    const contentText = String(
+      extracted?.normalizedText || extracted?.rawText || "",
+    ).trim();
+    return contentText || null;
+  } catch {
+    return null;
+  }
+}
+
+async function hydrateEvidenceContentTextForAiSummary(evidences = []) {
+  const normalizedEvidences = Array.isArray(evidences) ? evidences : [];
+  const missingContentEvidences = normalizedEvidences.filter((item) => {
+    const contentText = String(item?.contentText || "").trim();
+    return !contentText && Number(item?.documentId || 0) > 0;
+  });
+  if (!missingContentEvidences.length) {
+    return normalizedEvidences;
+  }
+
+  const documentIds = Array.from(
+    new Set(
+      missingContentEvidences
+        .map((item) => Number(item.documentId || 0))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  );
+  if (!documentIds.length) {
+    return normalizedEvidences;
+  }
+
+  const documentRows = await query(
+    `SELECT id,
+            original_file_name,
+            stored_file_name,
+            mime_type,
+            file_extension,
+            storage_provider,
+            storage_bucket,
+            storage_key
+     FROM documents
+     WHERE id IN (${documentIds.map(() => "?").join(",")})
+       AND COALESCE(is_deleted, 0) = 0`,
+    documentIds,
+  );
+  const documentsById = new Map(
+    documentRows.map((row) => [Number(row.id), row]),
+  );
+
+  for (const evidence of missingContentEvidences) {
+    const documentId = Number(evidence.documentId || 0);
+    const document = documentsById.get(documentId);
+    if (!document) continue;
+
+    try {
+      const streamResult = await getDocumentContentStream({
+        storageProvider: document.storage_provider,
+        storageBucket: document.storage_bucket,
+        storageKey: document.storage_key,
+        storedFileName: document.stored_file_name,
+      });
+      const buffer = streamResult?.buffer
+        ? streamResult.buffer
+        : streamResult?.stream
+          ? await streamToBuffer(streamResult.stream)
+          : null;
+      if (!buffer) {
+        continue;
+      }
+
+      const extractedContent = await tryExtractEvidenceContentText({
+        buffer,
+        mimeType: document.mime_type,
+        fileName: document.original_file_name,
+        extension: document.file_extension,
+      });
+      if (!extractedContent) {
+        continue;
+      }
+
+      evidence.contentText = extractedContent;
+      await query(
+        `UPDATE quotation_processing_evidences
+         SET content_text = ?
+         WHERE id = ?`,
+        [extractedContent, Number(evidence.id)],
+      );
+    } catch {
+      continue;
+    }
+  }
+
+  return normalizedEvidences;
+}
+
 function buildAiSummaryFromEvidence(evidenceRows = []) {
   const normalizedRows = Array.isArray(evidenceRows) ? evidenceRows : [];
   const fragments = normalizedRows
     .map((row) => {
-      if (row.evidence_type === "manual_note") {
-        return String(row.content_text || "").trim();
+      const contentText = String(row.content_text || "").trim();
+      if (contentText) {
+        return contentText;
       }
       return String(row.original_file_name || row.evidence_type || "").trim();
     })
@@ -2392,7 +2526,7 @@ function buildAiSummaryFromEvidence(evidenceRows = []) {
   const summaryLines = lineCandidates.slice(0, 6);
   const summaryText = summaryLines.length
     ? summaryLines.join(". ")
-    : "Se registro evidencia de kick off externo y se requiere validacion comercial del vendedor.";
+    : "Se registro evidencia de kick off y se requiere validacion comercial del vendedor.";
 
   const pickLines = (pattern, fallbackText) => {
     const matches = lineCandidates.filter((line) =>
@@ -2419,6 +2553,167 @@ function buildAiSummaryFromEvidence(evidenceRows = []) {
       "Aclarar con cliente alcance operativo, tiempos y condiciones de cobranza.",
     ),
   };
+}
+
+const KICKOFF_AI_SUMMARY_OPENAI_TIMEOUT_MS = 60_000;
+
+function normalizeKickoffSummaryList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeKickoffAiSummaryPayload(payload, fallbackSummary) {
+  const fallback = fallbackSummary || {};
+  const summaryText = String(payload?.summary || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const conflictPoints = normalizeKickoffSummaryList(payload?.conflictPoints);
+  const riskPoints = normalizeKickoffSummaryList(payload?.riskPoints);
+  const clarificationPoints = normalizeKickoffSummaryList(
+    payload?.clarificationPoints,
+  );
+
+  return {
+    summary: summaryText || String(fallback.summary || "").trim(),
+    conflictPoints:
+      conflictPoints.length > 0
+        ? conflictPoints
+        : Array.isArray(fallback.conflictPoints)
+          ? fallback.conflictPoints
+          : [],
+    riskPoints:
+      riskPoints.length > 0
+        ? riskPoints
+        : Array.isArray(fallback.riskPoints)
+          ? fallback.riskPoints
+          : [],
+    clarificationPoints:
+      clarificationPoints.length > 0
+        ? clarificationPoints
+        : Array.isArray(fallback.clarificationPoints)
+          ? fallback.clarificationPoints
+          : [],
+  };
+}
+
+function buildKickoffEvidenceSourceText(evidenceRows = []) {
+  const normalizedRows = Array.isArray(evidenceRows) ? evidenceRows : [];
+  const sections = normalizedRows
+    .map((row, index) => {
+      const fileName = String(row?.original_file_name || "archivo").trim() || "archivo";
+      const contentText = String(row?.content_text || "").trim();
+      if (!contentText) return "";
+      return [
+        `EVIDENCIA ${index + 1}: ${fileName}`,
+        contentText,
+      ].join("\n");
+    })
+    .filter(Boolean);
+  return sections.join("\n\n").slice(0, 30_000);
+}
+
+async function buildKickoffAiSummaryFromEvidence({
+  evidenceRows = [],
+  user,
+  stageCode,
+}) {
+  const fallbackSummary = buildAiSummaryFromEvidence(evidenceRows);
+  const sourceText = buildKickoffEvidenceSourceText(evidenceRows);
+  if (!sourceText) {
+    return fallbackSummary;
+  }
+
+  if (!config.openai.apiKey) {
+    return fallbackSummary;
+  }
+
+  const aiUsageUserId = Number(user?.id || 0);
+  if (aiUsageUserId) {
+    try {
+      await assertAiBudgetAvailable({ userId: aiUsageUserId });
+    } catch {
+      return fallbackSummary;
+    }
+  }
+
+  const requestPayload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Eres un asistente comercial B2B. Analiza la evidencia de una minuta de kick off y responde solo JSON valido con las llaves: summary (string), conflictPoints (array de strings), riskPoints (array de strings), clarificationPoints (array de strings). Responde en espanol y no inventes datos.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            stageCode: String(stageCode || "kickoff_internal").trim(),
+            instructions:
+              "Resume acuerdos y proximos pasos. Incluye riesgos y puntos por aclarar accionables.",
+            sourceText,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    KICKOFF_AI_SUMMARY_OPENAI_TIMEOUT_MS,
+  );
+
+  const startedAt = new Date();
+  const internalRequestId = randomUUID();
+  try {
+    const response = await fetch(
+      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.openai.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestPayload),
+        signal: controller.signal,
+      },
+    );
+
+    const responseData = await response.json().catch(() => null);
+    if (!response.ok || !responseData) {
+      return fallbackSummary;
+    }
+
+    if (aiUsageUserId) {
+      await recordAiUsageFromOpenAiResponse({
+        userId: aiUsageUserId,
+        featureCode: "quotation_processing_kickoff_ai_summary",
+        model: String(requestPayload.model || config.openai.model || "").trim(),
+        openAiResponse: responseData,
+        startedAt,
+        endedAt: new Date(),
+        internalRequestId,
+        jobType: `quotation_processing_${String(stageCode || "kickoff").trim()}_ai_summary`,
+      });
+    }
+
+    const parsed = extractJsonObject(getOpenAiOutputText(responseData));
+    if (!parsed || typeof parsed !== "object") {
+      return fallbackSummary;
+    }
+
+    return normalizeKickoffAiSummaryPayload(parsed, fallbackSummary);
+  } catch {
+    return fallbackSummary;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function listQuotationProcessingKickoffInvitations({ quotationId }) {
@@ -3270,9 +3565,14 @@ async function saveQuotationWonDocumentsSelections({
   version,
   selections,
   accept,
+  acceptedAt,
   userId,
 }) {
   await ensureQuotationWonDocumentsSchema();
+
+  const existingAcceptedSnapshot = await getQuotationAcceptedSnapshot({
+    versionId: Number(version.id),
+  });
 
   const normalizedSelections = Array.isArray(selections)
     ? selections
@@ -3374,6 +3674,37 @@ async function saveQuotationWonDocumentsSelections({
   }
 
   const now = new Date();
+  const requestedAcceptedDate = String(acceptedAt || "").trim();
+  const existingAcceptedAt = parseDateOrNull(existingAcceptedSnapshot?.acceptedAt);
+  const existingAcceptedDateText = existingAcceptedAt
+    ? toUtcIso(existingAcceptedAt)?.slice(0, 10) || ""
+    : "";
+  const shouldKeepAccepted = Boolean(existingAcceptedAt);
+  const effectiveAccepted = Boolean(accept) || shouldKeepAccepted;
+  let effectiveAcceptedAt = null;
+
+  if (effectiveAccepted) {
+    if (requestedAcceptedDate) {
+      if (
+        existingAcceptedAt &&
+        requestedAcceptedDate === existingAcceptedDateText
+      ) {
+        effectiveAcceptedAt = existingAcceptedAt;
+      } else {
+        effectiveAcceptedAt =
+          parseDateOrNull(`${requestedAcceptedDate}T12:00:00.000Z`) || now;
+      }
+    } else {
+      effectiveAcceptedAt = existingAcceptedAt || now;
+    }
+  }
+
+  const effectiveAcceptedByUserId = effectiveAccepted
+    ? Boolean(accept)
+      ? Number(userId)
+      : existingAcceptedSnapshot?.acceptedByUserId || Number(userId)
+    : null;
+
   await withTransaction(async (conn) => {
     await conn.query(
       `DELETE FROM quotation_won_documents
@@ -3397,8 +3728,8 @@ async function saveQuotationWonDocumentsSelections({
           entry.role,
           Number(userId),
           now,
-          accept ? now : null,
-          accept ? Number(userId) : null,
+          effectiveAcceptedAt,
+          effectiveAcceptedByUserId,
         ],
       );
     }
@@ -12357,17 +12688,37 @@ router.get(
       });
     }
 
-    if (String(latestVersion.status_code || "").trim() !== "aceptada") {
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
       return res.status(400).json({
-        message: "El procesamiento solo aplica para cotizaciones aceptadas",
+        message: "El procesamiento solo aplica para cotizaciones ganadas o aceptadas",
       });
     }
 
-    const [stages, assignableUsers, kickoffInvitations, kickoffEvidences, aiHistory] =
+    const [
+      stages,
+      assignableUsers,
+      kickoffInvitations,
+      kickoffInternalEvidences,
+      kickoffInternalAiHistory,
+      kickoffEvidences,
+      aiHistory,
+    ] =
       await Promise.all([
         listQuotationProcessingStages({ quotation, latestVersion }),
         listProcessingAssignableUsers(),
         listQuotationProcessingKickoffInvitations({ quotationId }),
+        listQuotationProcessingEvidences({
+          quotationId,
+          stageCode: "kickoff_internal",
+        }),
+        listQuotationProcessingAiSummaries({
+          quotationId,
+          stageCode: "kickoff_internal",
+        }),
         listQuotationProcessingEvidences({
           quotationId,
           stageCode: "kickoff_external",
@@ -12396,6 +12747,9 @@ router.get(
       kickoffInternal: {
         latestInvitation: kickoffInvitations[0] || null,
         invitations: kickoffInvitations,
+        evidences: kickoffInternalEvidences,
+        aiSummaryCurrent: kickoffInternalAiHistory[0] || null,
+        aiSummaryHistory: kickoffInternalAiHistory,
       },
       kickoffExternal: {
         evidences: kickoffEvidences,
@@ -12455,9 +12809,13 @@ router.patch(
     if (!latestVersion) {
       return res.status(404).json({ message: "Version no encontrada" });
     }
-    if (String(latestVersion.status_code || "").trim() !== "aceptada") {
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
       return res.status(400).json({
-        message: "Solo se puede procesar una cotizacion aceptada",
+        message: "Solo se puede procesar una cotizacion ganada o aceptada",
       });
     }
 
@@ -12542,9 +12900,13 @@ router.post(
     if (!latestVersion) {
       return res.status(404).json({ message: "Version no encontrada" });
     }
-    if (String(latestVersion.status_code || "").trim() !== "aceptada") {
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
       return res.status(400).json({
-        message: "Solo se puede procesar una cotizacion aceptada",
+        message: "Solo se puede procesar una cotizacion ganada o aceptada",
       });
     }
 
@@ -12574,11 +12936,7 @@ router.post(
           message: "La ubicacion es obligatoria para reuniones presenciales",
         });
       }
-      if (payload.meetingMode === "virtual" && !payload.meetingLink) {
-        return res.status(400).json({
-          message: "El link es obligatorio para reuniones virtuales",
-        });
-      }
+      // The kickoff internal UI no longer captures a virtual link.
     }
 
     await ensureQuotationProcessingSchema();
@@ -12666,6 +13024,278 @@ router.post(
           : "Borrador guardado",
       latestInvitation: invitations[0] || null,
       invitations,
+    });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/kickoff-internal/evidences/files",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para registrar minuta",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const { files } = await parseMultipartFiles(req);
+    if (!files.length) {
+      return res
+        .status(400)
+        .json({ message: "Selecciona al menos un archivo" });
+    }
+
+    const allowedMimeTypes = new Set(config.documents.storage.allowedMimeTypes);
+    const invalidFile = files.find((file) => {
+      const mimeType = String(file.mimetype || "").trim();
+      return !mimeType || !allowedMimeTypes.has(mimeType);
+    });
+    if (invalidFile) {
+      await cleanupTempFiles(files);
+      return res.status(400).json({
+        message: `Tipo de archivo no permitido: ${invalidFile.originalFilename || invalidFile.newFilename || "archivo"}`,
+      });
+    }
+
+    try {
+      await ensureQuotationProcessingSchema();
+      await withTransaction(async (conn) => {
+        const now = new Date();
+        for (const file of files) {
+          const originalFileName =
+            String(file.originalFilename || file.newFilename || "minuta").trim() ||
+            "minuta";
+          const mimeType =
+            String(file.mimetype || "application/octet-stream").trim() ||
+            "application/octet-stream";
+          const extension = path.extname(originalFileName || "").slice(1) || null;
+          const buffer = await readFile(file.filepath);
+          const extractedContentText = await tryExtractEvidenceContentText({
+            buffer,
+            mimeType,
+            fileName: originalFileName,
+            extension,
+          });
+          const sha256 = createHash("sha256").update(buffer).digest("hex");
+          const storageKey = buildQuotationProcessingEvidenceStorageKey({
+            quotationId,
+            versionId: Number(latestVersion.id),
+            sha256,
+            fileName: originalFileName,
+          });
+          const stored = await documentStorage.save({ buffer, storageKey });
+          const publicId = `doc_${randomUUID().replace(/-/g, "")}`;
+          const [insertResult] = await conn.query(
+            `INSERT INTO documents
+               (public_id, upload_session_id, entity_type, entity_id, storage_provider,
+                storage_bucket, storage_key, original_file_name, stored_file_name,
+                mime_type, file_extension, byte_size, sha256, document_kind, source_label,
+                processing_status, processing_error, duration_seconds, is_deleted,
+                uploaded_by_user_id, created_at, updated_at)
+             VALUES (?, NULL, 'quotation_processing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, 0, ?, ?, ?)`,
+            [
+              publicId,
+              Number(latestVersion.id),
+              stored.storageProvider,
+              stored.storageBucket,
+              stored.storageKey,
+              originalFileName,
+              stored.storedFileName,
+              mimeType,
+              extension,
+              Number(file.size || buffer.length || 0),
+              sha256,
+              "quotation_processing_evidence",
+              "Minuta kick off interno",
+              Number(req.user.id),
+              now,
+              now,
+            ],
+          );
+
+          const evidenceType = mimeType.startsWith("audio/")
+            ? "audio_file"
+            : "text_file";
+          await conn.query(
+            `INSERT INTO quotation_processing_evidences
+              (quotation_id, quotation_version_id, opportunity_id, stage_code,
+               evidence_type, document_id, content_text, created_by_user_id, created_at)
+             VALUES (?, ?, ?, 'kickoff_internal', ?, ?, ?, ?, ?)`,
+            [
+              Number(quotation.id),
+              Number(latestVersion.id),
+              Number(quotation.opportunity_id),
+              evidenceType,
+              Number(insertResult.insertId),
+              extractedContentText,
+              Number(req.user.id),
+              now,
+            ],
+          );
+        }
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
+
+    await upsertQuotationProcessingStage({
+      quotation,
+      latestVersion,
+      stageCode: "kickoff_internal",
+      userId: Number(req.user.id),
+      status: "in_progress",
+      ownerUserId: null,
+      targetDate: null,
+      completedAt: null,
+      blockedReason: null,
+      notes: null,
+      stageData: {},
+    });
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_kickoff_internal_minutes_uploaded",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Archivo de minuta cargado en kick off interno",
+      after: { filesCount: files.length },
+    });
+
+    return res.status(201).json({
+      message: "Minuta cargada",
+      evidences: await listQuotationProcessingEvidences({
+        quotationId,
+        stageCode: "kickoff_internal",
+      }),
+    });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/kickoff-internal/ai-summary",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    if (!hasQuotationProcessingIaPermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para generar resumen IA",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const evidences = await listQuotationProcessingEvidences({
+      quotationId,
+      stageCode: "kickoff_internal",
+    });
+    if (!evidences.length) {
+      return res.status(400).json({
+        message:
+          "Debes registrar al menos una minuta antes de generar el resumen IA",
+      });
+    }
+
+    const hydratedEvidences = await hydrateEvidenceContentTextForAiSummary(
+      evidences,
+    );
+
+    const summaryData = await buildKickoffAiSummaryFromEvidence({
+      evidenceRows: hydratedEvidences.map((item) => ({
+        evidence_type: item.evidenceType,
+        content_text: item.contentText,
+        original_file_name: item.document?.originalFileName || null,
+      })),
+      user: req.user,
+      stageCode: "kickoff_internal",
+    });
+
+    await ensureQuotationProcessingSchema();
+    await query(
+      `INSERT INTO quotation_processing_ai_summaries
+        (quotation_id, quotation_version_id, opportunity_id, stage_code,
+         summary_json, source_evidence_json, generated_by_user_id, created_at)
+       VALUES (?, ?, ?, 'kickoff_internal', ?, ?, ?, NOW(3))`,
+      [
+        Number(quotation.id),
+        Number(latestVersion.id),
+        Number(quotation.opportunity_id),
+        JSON.stringify(summaryData),
+        JSON.stringify(evidences.map((item) => item.id)),
+        Number(req.user.id),
+      ],
+    );
+
+    await upsertQuotationProcessingStage({
+      quotation,
+      latestVersion,
+      stageCode: "kickoff_internal",
+      userId: Number(req.user.id),
+      status: "in_progress",
+      ownerUserId: null,
+      targetDate: null,
+      completedAt: null,
+      blockedReason: null,
+      notes: null,
+      stageData: {
+        aiSummaryCurrent: {
+          ...summaryData,
+          generatedAt: new Date().toISOString(),
+          generatedByUserId: Number(req.user.id),
+        },
+      },
+    });
+
+    const history = await listQuotationProcessingAiSummaries({
+      quotationId,
+      stageCode: "kickoff_internal",
+    });
+
+    return res.json({
+      message: "Resumen IA generado",
+      aiSummaryCurrent: history[0] || null,
+      aiSummaryHistory: history,
     });
   },
 );
@@ -12824,6 +13454,12 @@ router.post(
             "application/octet-stream";
           const extension = path.extname(originalFileName || "").slice(1) || null;
           const buffer = await readFile(file.filepath);
+          const extractedContentText = await tryExtractEvidenceContentText({
+            buffer,
+            mimeType,
+            fileName: originalFileName,
+            extension,
+          });
           const sha256 = createHash("sha256").update(buffer).digest("hex");
           const storageKey = buildQuotationProcessingEvidenceStorageKey({
             quotationId,
@@ -12868,13 +13504,14 @@ router.post(
             `INSERT INTO quotation_processing_evidences
               (quotation_id, quotation_version_id, opportunity_id, stage_code,
                evidence_type, document_id, content_text, created_by_user_id, created_at)
-             VALUES (?, ?, ?, 'kickoff_external', ?, ?, NULL, ?, ?)`,
+             VALUES (?, ?, ?, 'kickoff_external', ?, ?, ?, ?, ?)`,
             [
               Number(quotation.id),
               Number(latestVersion.id),
               Number(quotation.opportunity_id),
               evidenceType,
               Number(insertResult.insertId),
+              extractedContentText,
               Number(req.user.id),
               now,
             ],
@@ -12962,13 +13599,19 @@ router.post(
       });
     }
 
-    const summaryData = buildAiSummaryFromEvidence(
-      evidences.map((item) => ({
+    const hydratedEvidences = await hydrateEvidenceContentTextForAiSummary(
+      evidences,
+    );
+
+    const summaryData = await buildKickoffAiSummaryFromEvidence({
+      evidenceRows: hydratedEvidences.map((item) => ({
         evidence_type: item.evidenceType,
         content_text: item.contentText,
         original_file_name: item.document?.originalFileName || null,
       })),
-    );
+      user: req.user,
+      stageCode: "kickoff_external",
+    });
 
     await ensureQuotationProcessingSchema();
     await query(
@@ -13027,6 +13670,106 @@ router.post(
       message: "Resumen IA generado",
       aiSummaryCurrent: history[0] || null,
       aiSummaryHistory: history,
+    });
+  },
+);
+
+router.delete(
+  "/quotations/:quotationId/processing/evidences/:evidenceId",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para eliminar evidencias",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    const evidenceId = Number(req.params.evidenceId);
+    if (
+      !Number.isInteger(quotationId) ||
+      quotationId <= 0 ||
+      !Number.isInteger(evidenceId) ||
+      evidenceId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    await ensureQuotationProcessingSchema();
+    const evidenceRows = await query(
+      `SELECT id, stage_code, document_id
+       FROM quotation_processing_evidences
+       WHERE id = ?
+         AND quotation_id = ?
+       LIMIT 1`,
+      [evidenceId, quotationId],
+    );
+    const evidenceRow = evidenceRows[0] || null;
+    if (!evidenceRow) {
+      return res.status(404).json({ message: "Evidencia no encontrada" });
+    }
+
+    const stageCode = String(evidenceRow.stage_code || "").trim() || null;
+    const documentId = Number(evidenceRow.document_id || 0) || null;
+
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `DELETE FROM quotation_processing_evidences
+         WHERE id = ?
+           AND quotation_id = ?
+         LIMIT 1`,
+        [evidenceId, quotationId],
+      );
+
+      if (documentId) {
+        const [linkedRows] = await conn.query(
+          `SELECT COUNT(*) AS count
+           FROM quotation_processing_evidences
+           WHERE document_id = ?`,
+          [documentId],
+        );
+        const linkedCount = Number(linkedRows?.[0]?.count || 0);
+        if (linkedCount === 0) {
+          await conn.query(
+            `UPDATE documents
+             SET is_deleted = 1,
+                 updated_at = NOW(3)
+             WHERE id = ?`,
+            [documentId],
+          );
+        }
+      }
+    });
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_evidence_deleted",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Evidencia eliminada del procesamiento de cotizacion",
+      after: {
+        evidenceId,
+        stageCode,
+      },
+    });
+
+    return res.json({
+      message: "Evidencia eliminada",
+      stageCode,
+      evidences: await listQuotationProcessingEvidences({
+        quotationId,
+        stageCode: stageCode || "kickoff_internal",
+      }),
     });
   },
 );
@@ -15934,6 +16677,7 @@ router.post(
         version,
         selections: parsed.data.selections,
         accept: Boolean(parsed.data.accept),
+        acceptedAt: parsed.data.acceptedAt || null,
         userId: Number(req.user.id),
       });
     } catch (error) {

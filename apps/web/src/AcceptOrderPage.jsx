@@ -12,7 +12,7 @@ const WON_DOCUMENT_SOURCE_LABELS = {
 };
 
 const PROCESSING_STAGE_DEFINITIONS = [
-  { code: "quotation_accepted", name: "Cotizacion Aceptada" },
+  { code: "quotation_accepted", name: "Aceptar Cotización" },
   { code: "kickoff_internal", name: "Kick Off interno" },
   { code: "kickoff_external", name: "Kick Off externo" },
   { code: "provider_purchase_order", name: "Orden de compra a proveedores" },
@@ -165,6 +165,9 @@ function buildEmptyProcessingData() {
     kickoffInternal: {
       latestInvitation: null,
       invitations: [],
+      evidences: [],
+      aiSummaryCurrent: null,
+      aiSummaryHistory: [],
     },
     kickoffExternal: {
       evidences: [],
@@ -182,11 +185,12 @@ function buildEmptyProcessingData() {
 
 function buildEmptyKickoffInvitationDraft() {
   return {
-    meetingDate: "",
-    meetingTime: "",
+    meetingDateOptionOne: "",
+    meetingDateOptionTwo: "",
+    meetingTimeOptionOne: "",
+    meetingTimeOptionTwo: "",
     meetingMode: "virtual",
     meetingLocation: "",
-    meetingLink: "",
     inviteSubject: "",
     inviteBodyTemplate: "",
     internalAttendeesUserIds: [],
@@ -194,21 +198,28 @@ function buildEmptyKickoffInvitationDraft() {
   };
 }
 
+function formatInvitationDateOption(dateText) {
+  const normalized = String(dateText || "").trim();
+  if (!normalized) return "[pendiente]";
+  const parts = normalized.split("-");
+  if (parts.length !== 3) return normalized;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
 function buildKickoffInvitePrefill(quotation) {
   const opportunity = quotation?.opportunityName || "Oportunidad";
-  const account = quotation?.accountName || "Cliente";
   const subject = `Kick Off interno - ${opportunity}`;
   const body = [
     `Hola equipo,`,
     "",
-    `Se convoca Kick Off interno para la oportunidad ${opportunity} (${account}).`,
+    `Se convoca Kick Off interno para la oportunidad ${opportunity}.`,
     "",
-    "Fecha: [definir]",
+    "Fecha opcion 1: [definir]",
+    "Fecha opcion 2: [definir]",
     "Hora: [definir]",
     "Modalidad: [presencial/virtual]",
-    "Ubicacion o link: [definir]",
     "",
-    "Objetivo: alinear alcance operativo, tiempos y responsabilidades previas a la ejecucion.",
+    "Por favor confirmar disponibilidad para cualquiera de las dos fechas propuestas.",
     "",
     "Gracias.",
   ].join("\n");
@@ -218,6 +229,95 @@ function buildKickoffInvitePrefill(quotation) {
     inviteSubject: subject,
     inviteBodyTemplate: body,
   };
+}
+
+function buildKickoffInternalEmailPreview({ quotation, draft }) {
+  const opportunity =
+    String(quotation?.opportunityName || "Oportunidad").trim() || "Oportunidad";
+  const optionOne = formatInvitationDateOption(draft?.meetingDateOptionOne);
+  const optionTwo = formatInvitationDateOption(draft?.meetingDateOptionTwo);
+  const timeOptionOne =
+    String(draft?.meetingTimeOptionOne || "").trim() || "[pendiente]";
+  const timeOptionTwo =
+    String(draft?.meetingTimeOptionTwo || "").trim() || "[pendiente]";
+  const modeText =
+    String(draft?.meetingMode || "virtual").trim() === "presencial"
+      ? "Presencial"
+      : "Virtual";
+  const locationText =
+    modeText === "Presencial"
+      ? String(draft?.meetingLocation || "").trim() || "[pendiente]"
+      : "Se compartira en la convocatoria interna";
+
+  const sellerName = String(quotation?.sellerUserName || "").trim();
+  const usersById = new Map(
+    (Array.isArray(draft?.assignableUsers) ? draft.assignableUsers : []).map((user) => [
+      Number(user.id),
+      String(user.fullName || "").trim(),
+    ]),
+  );
+  const selectedNames = (Array.isArray(draft?.internalAttendeesUserIds)
+    ? draft.internalAttendeesUserIds
+    : []
+  )
+    .map((id) => usersById.get(Number(id)) || "")
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  const normalizedSeller = sellerName.toLowerCase();
+  const sellerInSelection =
+    selectedNames.find((name) => name.toLowerCase() === normalizedSeller) ||
+    sellerName ||
+    "No identificado";
+  const preSalesInSelection =
+    selectedNames.find((name) => name.toLowerCase() !== normalizedSeller) ||
+    "No identificado";
+
+  const subject = `Kick Off interno - ${opportunity}`;
+  const body = [
+    "Hola equipo,",
+    "",
+    `Se convoca reunion de Kick Off interno para la oportunidad ${opportunity}.`,
+    "",
+    `Fecha opcion 1: ${optionOne} ${timeOptionOne !== "[pendiente]" ? `a las ${timeOptionOne}` : ""}`,
+    `Fecha opcion 2: ${optionTwo} ${timeOptionTwo !== "[pendiente]" ? `a las ${timeOptionTwo}` : ""}`,
+    `Modalidad: ${modeText}`,
+    `${modeText === "Presencial" ? "Ubicacion" : "Referencia"}: ${locationText}`,
+    "",
+    `Vendedor (convocados): ${sellerInSelection}`,
+    `Preventa (convocados): ${preSalesInSelection}`,
+    "",
+    "Por favor confirmar su disponibilidad para asistir en cualquiera de las dos fechas propuestas.",
+    "",
+    "Gracias.",
+  ].join("\n");
+
+  return { subject, body };
+}
+
+function buildSellerNotificationPrefill(quotation) {
+  const sellerName = String(quotation?.sellerUserName || "Vendedor").trim();
+  const quotationId = Number(quotation?.id || 0);
+  const proposalName =
+    String(quotation?.latestProposalName || "Sin propuesta").trim() ||
+    "Sin propuesta";
+  const opportunityName =
+    String(quotation?.opportunityName || "Sin oportunidad").trim() ||
+    "Sin oportunidad";
+  const accountName =
+    String(quotation?.accountName || "Sin cuenta").trim() || "Sin cuenta";
+
+  return [
+    `Hola ${sellerName},`,
+    "",
+    `Por favor da seguimiento a la cotizacion #${quotationId || "-"}.`,
+    `Propuesta: ${proposalName}.`,
+    `Oportunidad: ${opportunityName}.`,
+    `Cuenta: ${accountName}.`,
+    "",
+    "Accion solicitada: revisar el flujo de procesamiento operativo y confirmar la etapa Aceptar Cotizacion.",
+    "",
+    "Gracias.",
+  ].join("\n");
 }
 
 function parseEmailDraft(value) {
@@ -375,7 +475,6 @@ export default function AcceptOrderPage() {
   const [sortDirection, setSortDirection] = useState("desc");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
-  const [openQuotationMenuId, setOpenQuotationMenuId] = useState(null);
   const [acceptingVersionId, setAcceptingVersionId] = useState(null);
   const [quotationToAccept, setQuotationToAccept] = useState(null);
   const [quotationToNotify, setQuotationToNotify] = useState(null);
@@ -387,6 +486,9 @@ export default function AcceptOrderPage() {
   );
   const [downloadingWonDocumentKey, setDownloadingWonDocumentKey] =
     useState("");
+  const [processingWonDocuments, setProcessingWonDocuments] = useState(() =>
+    buildAcceptOrderWonDocumentsState(),
+  );
   const [quotationToProcess, setQuotationToProcess] = useState(null);
   const [processingData, setProcessingData] = useState(() =>
     buildEmptyProcessingData(),
@@ -413,6 +515,12 @@ export default function AcceptOrderPage() {
     useState(false);
   const [generatingKickoffExternalAi, setGeneratingKickoffExternalAi] =
     useState(false);
+  const [uploadingKickoffInternalEvidence, setUploadingKickoffInternalEvidence] =
+    useState(false);
+  const [generatingKickoffInternalAi, setGeneratingKickoffInternalAi] =
+    useState(false);
+  const [deletingProcessingEvidenceIds, setDeletingProcessingEvidenceIds] =
+    useState(() => new Set());
 
   useEffect(() => {
     let ignore = false;
@@ -469,10 +577,41 @@ export default function AcceptOrderPage() {
     return sortDirection === "asc" ? "↑" : "↓";
   }
 
-  function toggleQuotationMenu(quotationId) {
-    setOpenQuotationMenuId((current) =>
-      current === quotationId ? null : quotationId,
-    );
+  async function loadWonDocumentsForVersion(versionId, setState, fallbackMessage) {
+    const safeVersionId = Number(versionId || 0);
+    if (!safeVersionId) {
+      setState(buildAcceptOrderWonDocumentsState());
+      return;
+    }
+
+    setState({
+      loading: true,
+      error: "",
+      purchaseOrder: null,
+      providerQuotes: [],
+    });
+
+    try {
+      const { data } = await api.get(
+        `/api/quotation-versions/${safeVersionId}/won-documents`,
+      );
+
+      setState({
+        loading: false,
+        error: "",
+        purchaseOrder: data?.savedSelections?.purchaseOrder || null,
+        providerQuotes: Array.isArray(data?.savedSelections?.providerQuotes)
+          ? data.savedSelections.providerQuotes
+          : [],
+      });
+    } catch (loadError) {
+      setState({
+        loading: false,
+        error: getApiErrorMessage(loadError, fallbackMessage),
+        purchaseOrder: null,
+        providerQuotes: [],
+      });
+    }
   }
 
   async function openAcceptQuotationModal(quotation) {
@@ -484,41 +623,14 @@ export default function AcceptOrderPage() {
     }
 
     const versionId = Number(quotation?.latestVersionId || 0);
-    setOpenQuotationMenuId(null);
     setQuotationToAccept(quotation);
-    setAcceptOrderWonDocuments({
-      loading: true,
-      error: "",
-      purchaseOrder: null,
-      providerQuotes: [],
-    });
     setError("");
     setSuccess("");
-
-    try {
-      const { data } = await api.get(
-        `/api/quotation-versions/${versionId}/won-documents`,
-      );
-
-      setAcceptOrderWonDocuments({
-        loading: false,
-        error: "",
-        purchaseOrder: data?.savedSelections?.purchaseOrder || null,
-        providerQuotes: Array.isArray(data?.savedSelections?.providerQuotes)
-          ? data.savedSelections.providerQuotes
-          : [],
-      });
-    } catch (loadError) {
-      setAcceptOrderWonDocuments({
-        loading: false,
-        error: getApiErrorMessage(
-          loadError,
-          "No fue posible cargar los documentos de cierre registrados",
-        ),
-        purchaseOrder: null,
-        providerQuotes: [],
-      });
-    }
+    await loadWonDocumentsForVersion(
+      versionId,
+      setAcceptOrderWonDocuments,
+      "No fue posible cargar los documentos de cierre registrados",
+    );
   }
 
   function closeAcceptQuotationModal() {
@@ -529,7 +641,9 @@ export default function AcceptOrderPage() {
   }
 
   async function handleDownloadWonDocument(documentItem) {
-    const versionId = Number(quotationToAccept?.latestVersionId || 0);
+    const versionId = Number(
+      quotationToAccept?.latestVersionId || quotationToProcess?.latestVersionId || 0,
+    );
     const source = String(documentItem?.source || "").trim();
     const documentId = Number(documentItem?.documentId || 0);
     if (!versionId || !source || !documentId) {
@@ -570,7 +684,7 @@ export default function AcceptOrderPage() {
   function openSellerNotificationModal(quotation) {
     if (!quotation) return;
     setQuotationToNotify(quotation);
-    setSellerNotificationNote("");
+    setSellerNotificationNote(buildSellerNotificationPrefill(quotation));
     setError("");
     setSuccess("");
   }
@@ -592,7 +706,6 @@ export default function AcceptOrderPage() {
     if (!versionId || isAcceptedQuotation(quotation)) return;
 
     setAcceptingVersionId(versionId);
-    setOpenQuotationMenuId(null);
     setError("");
     setSuccess("");
     try {
@@ -689,8 +802,10 @@ export default function AcceptOrderPage() {
       const latestInvitation = data?.kickoffInternal?.latestInvitation;
       if (latestInvitation) {
         setKickoffInvitationDraft({
-          meetingDate: latestInvitation.meetingDate || "",
-          meetingTime: latestInvitation.meetingTime || "",
+          ...buildEmptyKickoffInvitationDraft(),
+          meetingDateOptionOne: latestInvitation.meetingDate || "",
+          meetingTimeOptionOne: latestInvitation.meetingTime || "",
+          meetingTimeOptionTwo: latestInvitation.meetingTime || "",
           meetingMode: latestInvitation.meetingMode || "virtual",
           meetingLocation: latestInvitation.meetingLocation || "",
           meetingLink: latestInvitation.meetingLink || "",
@@ -725,14 +840,17 @@ export default function AcceptOrderPage() {
   }
 
   async function openProcessingModal(quotation) {
-    if (!isAcceptedQuotation(quotation)) {
-      return;
-    }
-    setOpenQuotationMenuId(null);
     setQuotationToProcess(quotation);
     setError("");
     setSuccess("");
-    await loadQuotationProcessing(quotation);
+    await Promise.all([
+      loadQuotationProcessing(quotation),
+      loadWonDocumentsForVersion(
+        quotation?.latestVersionId,
+        setProcessingWonDocuments,
+        "No fue posible cargar los documentos de cierre registrados",
+      ),
+    ]);
   }
 
   function closeProcessingModal() {
@@ -751,6 +869,8 @@ export default function AcceptOrderPage() {
     setProcessingDirty(false);
     setKickoffInvitationModalOpen(false);
     setKickoffExternalManualNote("");
+    setProcessingWonDocuments(buildAcceptOrderWonDocumentsState());
+    setDownloadingWonDocumentKey("");
   }
 
   function patchProcessingStage(stageCode, patch) {
@@ -776,7 +896,7 @@ export default function AcceptOrderPage() {
     setProcessingDirty(true);
   }
 
-  async function saveProcessingStage(stageCode) {
+  async function saveProcessingStage(stageCode, options = {}) {
     const quotationId = Number(quotationToProcess?.id || 0);
     const stage = (processingData.stages || []).find(
       (item) => item.stageCode === stageCode,
@@ -787,14 +907,24 @@ export default function AcceptOrderPage() {
     setError("");
     setSuccess("");
     try {
+      const nextStageData = {
+        ...(stage.stageData || {}),
+        ...(options.stageDataPatch && typeof options.stageDataPatch === "object"
+          ? options.stageDataPatch
+          : {}),
+      };
+
       const payload = {
-        status: stage.status || "not_started",
+        status: options.forceStatus || stage.status || "not_started",
         ownerUserId: stage.ownerUserId || null,
         targetDate: stage.targetDate || null,
-        completedAt: stage.completedAt || null,
+        completedAt:
+          options.forceCompletedAt !== undefined
+            ? options.forceCompletedAt
+            : stage.completedAt || null,
         blockedReason: stage.blockedReason || null,
         notes: stage.notes || null,
-        stageData: stage.stageData || {},
+        stageData: nextStageData,
       };
       const { data } = await api.patch(
         `/api/quotations/${quotationId}/processing/stages/${encodeURIComponent(stageCode)}`,
@@ -819,18 +949,34 @@ export default function AcceptOrderPage() {
     const quotationId = Number(quotationToProcess?.id || 0);
     if (!quotationId) return;
 
+    const optionOne = String(kickoffInvitationDraft.meetingDateOptionOne || "").trim();
+    const optionTwo = String(kickoffInvitationDraft.meetingDateOptionTwo || "").trim();
+    if (statusCode === "sent" && (!optionOne || !optionTwo)) {
+      setError("Selecciona las dos fechas propuestas antes de enviar la convocatoria");
+      return;
+    }
+
+    const preparedEmail = buildKickoffInternalEmailPreview({
+      quotation: quotationToProcess,
+      draft: {
+        ...kickoffInvitationDraft,
+        assignableUsers: processingUsers,
+      },
+    });
+
     setSavingKickoffInvitation(true);
     setError("");
     setSuccess("");
     try {
       const payload = {
-        meetingDate: kickoffInvitationDraft.meetingDate || null,
-        meetingTime: kickoffInvitationDraft.meetingTime || null,
+        meetingDate: optionOne || null,
+        meetingTime:
+          String(kickoffInvitationDraft.meetingTimeOptionOne || "").trim() || null,
         meetingMode: kickoffInvitationDraft.meetingMode || null,
         meetingLocation: kickoffInvitationDraft.meetingLocation || null,
-        meetingLink: kickoffInvitationDraft.meetingLink || null,
-        inviteSubject: kickoffInvitationDraft.inviteSubject,
-        inviteBodyTemplate: kickoffInvitationDraft.inviteBodyTemplate,
+        meetingLink: null,
+        inviteSubject: preparedEmail.subject,
+        inviteBodyTemplate: preparedEmail.body,
         internalAttendeesUserIds: kickoffInvitationDraft.internalAttendeesUserIds,
         externalAttendeesEmails: parseEmailDraft(
           kickoffInvitationDraft.externalAttendeesEmails,
@@ -858,6 +1004,22 @@ export default function AcceptOrderPage() {
     } finally {
       setSavingKickoffInvitation(false);
     }
+  }
+
+  function openKickoffInvitationPreviewModal() {
+    const preparedEmail = buildKickoffInternalEmailPreview({
+      quotation: quotationToProcess,
+      draft: {
+        ...kickoffInvitationDraft,
+        assignableUsers: processingUsers,
+      },
+    });
+    setKickoffInvitationDraft((current) => ({
+      ...current,
+      inviteSubject: preparedEmail.subject,
+      inviteBodyTemplate: preparedEmail.body,
+    }));
+    setKickoffInvitationModalOpen(true);
   }
 
   async function uploadKickoffExternalEvidence(files) {
@@ -892,6 +1054,72 @@ export default function AcceptOrderPage() {
       );
     } finally {
       setUploadingKickoffExternalEvidence(false);
+    }
+  }
+
+  async function uploadKickoffInternalEvidence(files) {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId || !files?.length) return;
+
+    setUploadingKickoffInternalEvidence(true);
+    setError("");
+    setSuccess("");
+    try {
+      const formData = new FormData();
+      Array.from(files).forEach((file) => {
+        formData.append("files", file);
+      });
+      await api.post(
+        `/api/quotations/${quotationId}/processing/kickoff-internal/evidences/files`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          timeout: 120000,
+        },
+      );
+      await loadQuotationProcessing(quotationToProcess, "kickoff_internal");
+      setSuccess("Minuta cargada en Kick Off interno");
+    } catch (uploadError) {
+      setError(
+        getApiErrorMessage(
+          uploadError,
+          "No fue posible cargar la minuta en Kick Off interno",
+        ),
+      );
+    } finally {
+      setUploadingKickoffInternalEvidence(false);
+    }
+  }
+
+  async function generateKickoffInternalAiSummary() {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId) return;
+
+    setGeneratingKickoffInternalAi(true);
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.post(
+        `/api/quotations/${quotationId}/processing/kickoff-internal/ai-summary`,
+        null,
+        {
+          timeout: 120000,
+        },
+      );
+      await loadQuotationProcessing(quotationToProcess, "kickoff_internal");
+      const summaryText = String(data?.aiSummaryCurrent?.summary?.summary || "").trim();
+      if (summaryText) {
+        updateActiveStageDataField("minutesSummary", summaryText);
+      }
+      setSuccess("Resumen IA generado para Minuta de Kick Off interno");
+    } catch (aiError) {
+      setError(
+        getApiErrorMessage(aiError, "No fue posible generar el resumen IA"),
+      );
+    } finally {
+      setGeneratingKickoffInternalAi(false);
     }
   }
 
@@ -936,6 +1164,10 @@ export default function AcceptOrderPage() {
     try {
       await api.post(
         `/api/quotations/${quotationId}/processing/kickoff-external/ai-summary`,
+        null,
+        {
+          timeout: 120000,
+        },
       );
       await loadQuotationProcessing(quotationToProcess, "kickoff_external");
       setSuccess("Resumen IA generado para Kick Off externo");
@@ -972,6 +1204,49 @@ export default function AcceptOrderPage() {
       setError(
         getApiErrorMessage(downloadError, "No fue posible descargar la evidencia"),
       );
+    }
+  }
+
+  async function deleteKickoffEvidence(evidence) {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    const evidenceId = Number(evidence?.id || 0);
+    const stageCode = String(evidence?.stageCode || activeProcessingStageCode || "").trim();
+    if (!quotationId || !evidenceId || !stageCode) return;
+
+    const evidenceLabel =
+      evidence?.document?.originalFileName ||
+      (evidence?.evidenceType === "manual_note" ? "minuta manual" : "evidencia");
+    const shouldDelete = window.confirm(
+      `Se eliminara \"${evidenceLabel}\". Esta accion no se puede deshacer.`,
+    );
+    if (!shouldDelete) return;
+
+    setDeletingProcessingEvidenceIds((current) => {
+      const next = new Set(current);
+      next.add(evidenceId);
+      return next;
+    });
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.delete(
+        `/api/quotations/${quotationId}/processing/evidences/${evidenceId}`,
+      );
+      await loadQuotationProcessing(
+        quotationToProcess,
+        stageCode || String(data?.stageCode || "").trim(),
+      );
+      setSuccess("Evidencia eliminada");
+    } catch (deleteError) {
+      setError(
+        getApiErrorMessage(deleteError, "No fue posible eliminar la evidencia"),
+      );
+    } finally {
+      setDeletingProcessingEvidenceIds((current) => {
+        const next = new Set(current);
+        next.delete(evidenceId);
+        return next;
+      });
     }
   }
 
@@ -1118,9 +1393,30 @@ export default function AcceptOrderPage() {
     processingStages.find((stage) => stage.stageCode === activeProcessingStageCode) ||
     processingStages[0] ||
     null;
+  const isQuotationAcceptedStage =
+    activeProcessingStage?.stageCode === "quotation_accepted";
+  const isKickoffInternalStage =
+    activeProcessingStage?.stageCode === "kickoff_internal";
+  const processingFinancials = quotationToProcess
+    ? getQuotationFinancials(quotationToProcess)
+    : getQuotationFinancials({});
+  const processingCurrencyCode = quotationToProcess?.latestCurrencyCode || "USD";
   const processingUsers = Array.isArray(processingData?.assignableUsers)
     ? processingData.assignableUsers
     : [];
+  const kickoffInternalEvidences = Array.isArray(processingData?.kickoffInternal?.evidences)
+    ? processingData.kickoffInternal.evidences
+    : [];
+  const kickoffInternalGeneratedSummary = String(
+    processingData?.kickoffInternal?.aiSummaryCurrent?.summary?.summary || "",
+  ).trim();
+  const kickoffInternalStageMinutesSummary =
+    activeProcessingStage?.stageData?.minutesSummary;
+  const kickoffInternalSummaryText = String(
+    kickoffInternalStageMinutesSummary == null
+      ? kickoffInternalGeneratedSummary
+      : kickoffInternalStageMinutesSummary,
+  );
 
   return (
     <section className="panel">
@@ -1251,13 +1547,18 @@ export default function AcceptOrderPage() {
               </button>
             </th>
             <th>Estado</th>
-            <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {!loading && pagedQuotations.length > 0 ? (
             pagedQuotations.map((quotation) => (
-              <tr key={quotation.id}>
+              <tr
+                key={quotation.id}
+                className="accounts-row-clickable"
+                onClick={() => {
+                  void openProcessingModal(quotation);
+                }}
+              >
                 <td>{quotation.id}</td>
                 <td>{quotation.latestVersionNumber || "-"}</td>
                 <td>{quotation.accountName || "-"}</td>
@@ -1300,52 +1601,11 @@ export default function AcceptOrderPage() {
                     </span>
                   ) : null}
                 </td>
-                <td className="accounts-actions-cell">
-                  <div className="user-kebab-wrap opportunities-kebab-wrap">
-                    <button
-                      type="button"
-                      className="kebab-btn"
-                      onClick={() => toggleQuotationMenu(quotation.id)}
-                      aria-label="Abrir acciones"
-                    >
-                      ⋮
-                    </button>
-                    {openQuotationMenuId === quotation.id ? (
-                      <div className="user-kebab-menu quotation-actions-menu">
-                        <button
-                          type="button"
-                          disabled={
-                            isAcceptedQuotation(quotation) ||
-                            acceptingVersionId === quotation.latestVersionId ||
-                            !Number(quotation.latestVersionId || 0)
-                          }
-                          onClick={() => {
-                            void openAcceptQuotationModal(quotation);
-                          }}
-                        >
-                          {acceptingVersionId === quotation.latestVersionId
-                            ? "Aceptando..."
-                            : "Aceptar"}
-                        </button>
-                        {isAcceptedQuotation(quotation) ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void openProcessingModal(quotation);
-                            }}
-                          >
-                            Procesar
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={12} className="empty-state">
+              <td colSpan={11} className="empty-state">
                 {loading
                   ? "Cargando cotizaciones..."
                   : "No hay cotizaciones ganadas o aceptadas para mostrar"}
@@ -1812,23 +2072,34 @@ export default function AcceptOrderPage() {
             </div>
 
             <div className="processing-stage-flow" role="tablist" aria-label="Etapas">
-              {PROCESSING_STAGE_DEFINITIONS.map((stageDef) => {
+              {PROCESSING_STAGE_DEFINITIONS.map((stageDef, index) => {
                 const stage = processingStages.find(
                   (item) => item.stageCode === stageDef.code,
                 );
                 const isActive = activeProcessingStageCode === stageDef.code;
                 const status = stage?.status || "not_started";
+                const isCompleted = status === "completed";
+                const isBlocked = status === "blocked";
+                const isNotApplicable = status === "not_applicable";
                 return (
                   <button
                     key={stageDef.code}
                     type="button"
-                    className={`processing-stage-pill${isActive ? " is-active" : ""}`}
+                    className={`processing-stage-step${isActive ? " is-active" : ""}${isCompleted ? " is-completed" : ""}${isBlocked ? " is-blocked" : ""}${isNotApplicable ? " is-not-applicable" : ""}`}
                     onClick={() => setActiveProcessingStageCode(stageDef.code)}
                     role="tab"
                     aria-selected={isActive}
+                    aria-current={isActive ? "step" : undefined}
                   >
-                    <span>{stageDef.name}</span>
-                    <small>{PROCESSING_STAGE_STATUS_LABELS[status] || "No iniciada"}</small>
+                    <span className="processing-stage-step-circle" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <span className="processing-stage-step-copy">
+                      <strong>{stageDef.name}</strong>
+                      <small>
+                        {PROCESSING_STAGE_STATUS_LABELS[status] || "No iniciada"}
+                      </small>
+                    </span>
                   </button>
                 );
               })}
@@ -1848,127 +2119,462 @@ export default function AcceptOrderPage() {
 
             {!processingLoading && !processingModalError && activeProcessingStage ? (
               <div className="processing-stage-content">
+                {!isKickoffInternalStage ? (
                 <section className="processing-stage-box">
                   <header>
                     <h4>{activeProcessingStage.stageName}</h4>
                     <p>
-                      Edita esta etapa de forma independiente. El flujo no requiere
-                      secuencia estricta.
+                      {isQuotationAcceptedStage
+                        ? activeProcessingStage.status === "completed"
+                          ? "La cotizacion ya fue aceptada. Aqui puedes revisar la evidencia y los datos registrados."
+                          : "La cotizacion aun no esta aceptada. Revisa la informacion y confirma esta etapa con el boton Aceptar."
+                        : "Edita esta etapa de forma independiente. El flujo no requiere secuencia estricta."}
                     </p>
                   </header>
 
-                  <div className="processing-stage-grid two">
-                    <label className="field-group processing-stage-field">
-                      <span>Estado</span>
-                      <select
-                        value={activeProcessingStage.status || "not_started"}
-                        onChange={(event) =>
-                          updateActiveStageCommonField("status", event.target.value)
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
+                  {isQuotationAcceptedStage ? (
+                    <div className="processing-accepted-scroll-area">
+                      <div className="processing-accepted-status-row">
+                        <span
+                          className={`processing-accepted-status-indicator${
+                            activeProcessingStage.status === "completed"
+                              ? " is-completed"
+                              : ""
+                          }`}
+                        >
+                          <span className="processing-accepted-status-icon" aria-hidden="true">
+                            {activeProcessingStage.status === "completed" ? "✓" : "○"}
+                          </span>
+                          <span>
+                            {activeProcessingStage.status === "completed"
+                              ? "Aceptada"
+                              : "Pendiente de aceptar"}
+                          </span>
+                        </span>
+                      </div>
+
+                      <div className="accept-order-modal-summary">
+                        <div>
+                          <span>Oportunidad</span>
+                          <strong>{quotationToProcess?.opportunityName || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>Vendedor</span>
+                          <strong>{quotationToProcess?.sellerUserName || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>Cierre</span>
+                          <strong>{formatDate(quotationToProcess?.opportunityCloseDate)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="accept-order-total-card">
+                        <div>
+                          <span>Importe total</span>
+                          <strong>
+                            {formatCurrency(
+                              processingFinancials.totalSale,
+                              processingCurrencyCode,
+                            )}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Costo total</span>
+                          <strong>
+                            {formatCurrency(
+                              processingFinancials.totalCost,
+                              processingCurrencyCode,
+                            )}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Contribucion total</span>
+                          <strong>
+                            {formatCurrency(
+                              processingFinancials.totalContribution,
+                              processingCurrencyCode,
+                            )}
+                          </strong>
+                          <small>
+                            {formatPercent(processingFinancials.totalContributionPct)}
+                          </small>
+                        </div>
+                      </div>
+
+                      <div className="accept-order-financial-grid">
+                        <div className="accept-order-financial-card">
+                          <div className="accept-order-financial-card-header">
+                            <span>Productos</span>
+                            <strong>
+                              {formatPercent(
+                                processingFinancials.productContributionPct,
+                              )}
+                            </strong>
+                          </div>
+                          <dl>
+                            <div>
+                              <dt>Venta</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.productSale,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Costo</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.productCost,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Contribucion</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.productContribution,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <div className="accept-order-financial-card">
+                          <div className="accept-order-financial-card-header">
+                            <span>Servicios</span>
+                            <strong>
+                              {formatPercent(
+                                processingFinancials.serviceContributionPct,
+                              )}
+                            </strong>
+                          </div>
+                          <dl>
+                            <div>
+                              <dt>Venta</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.serviceSale,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Costo</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.serviceCost,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Contribucion</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.serviceContribution,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                      </div>
+
+                      <section className="accept-order-won-documents-card processing-accepted-won-documents-card">
+                        <header className="accept-order-won-documents-header">
+                          <h4>Documentos de cierre</h4>
+                          <p>
+                            Archivos seleccionados cuando la cotizacion fue declarada como ganada.
+                          </p>
+                        </header>
+
+                        {processingWonDocuments.loading ? (
+                          <p className="field-hint">Cargando documentos de cierre...</p>
+                        ) : null}
+
+                        {!processingWonDocuments.loading && processingWonDocuments.error ? (
+                          <p className="field-hint opportunity-documents-preview-error">
+                            {processingWonDocuments.error}
+                          </p>
+                        ) : null}
+
+                        {!processingWonDocuments.loading &&
+                        !processingWonDocuments.error ? (
+                          <div className="accept-order-won-documents-grid">
+                            <section className="accept-order-won-documents-section">
+                              <h5>1) Orden de compra</h5>
+                              {processingWonDocuments.purchaseOrder ? (
+                                <article className="accept-order-won-document-item">
+                                  <div className="accept-order-won-document-item-main">
+                                    <strong>
+                                      {processingWonDocuments.purchaseOrder
+                                        .originalFileName || "Documento"}
+                                    </strong>
+                                    <span className="field-hint">
+                                      {formatWonDocumentSourceLabel(
+                                        processingWonDocuments.purchaseOrder.source,
+                                      )}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary accept-order-won-document-download-btn"
+                                    onClick={() => {
+                                      void handleDownloadWonDocument(
+                                        processingWonDocuments.purchaseOrder,
+                                      );
+                                    }}
+                                    disabled={
+                                      downloadingWonDocumentKey ===
+                                      `${processingWonDocuments.purchaseOrder.source}:${processingWonDocuments.purchaseOrder.documentId}`
+                                    }
+                                    title="Descargar documento"
+                                    aria-label="Descargar documento"
+                                  >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                    </svg>
+                                  </button>
+                                </article>
+                              ) : (
+                                <p className="field-hint">
+                                  No hay orden de compra registrada.
+                                </p>
+                              )}
+                            </section>
+
+                            <section className="accept-order-won-documents-section">
+                              <h5>2) Cotizaciones de proveedores</h5>
+                              {processingWonDocuments.providerQuotes.length ? (
+                                <div className="accept-order-won-documents-list">
+                                  {processingWonDocuments.providerQuotes.map((item) => (
+                                    <article
+                                      key={`provider-quote-${item.source}-${item.documentId}`}
+                                      className="accept-order-won-document-item"
+                                    >
+                                      <div className="accept-order-won-document-item-main">
+                                        <strong>{item.originalFileName || "Documento"}</strong>
+                                        <span className="field-hint">
+                                          {formatWonDocumentSourceLabel(item.source)}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="btn-secondary accept-order-won-document-download-btn"
+                                        onClick={() => {
+                                          void handleDownloadWonDocument(item);
+                                        }}
+                                        disabled={
+                                          downloadingWonDocumentKey ===
+                                          `${item.source}:${item.documentId}`
+                                        }
+                                        title="Descargar documento"
+                                        aria-label="Descargar documento"
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                        </svg>
+                                      </button>
+                                    </article>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="field-hint">
+                                  No hay cotizaciones de proveedores registradas.
+                                </p>
+                              )}
+                            </section>
+                          </div>
+                        ) : null}
+                      </section>
+
+                      <div className="processing-stage-grid two">
+                        <label className="field-group processing-stage-field">
+                          <span>Fecha de aceptacion</span>
+                          <input
+                            type="date"
+                            value={
+                              activeProcessingStage.stageData?.acceptedAt
+                                ? String(activeProcessingStage.stageData.acceptedAt).slice(
+                                    0,
+                                    10,
+                                  )
+                                : ""
+                            }
+                            onChange={(event) =>
+                              updateActiveStageDataField(
+                                "acceptedAt",
+                                event.target.value
+                                  ? new Date(
+                                      `${event.target.value}T12:00:00.000Z`,
+                                    ).toISOString()
+                                  : null,
+                              )
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+
+                        <label className="field-group processing-stage-field full">
+                          <span>Notas</span>
+                          <textarea
+                            rows={4}
+                            value={activeProcessingStage.notes || ""}
+                            onChange={(event) =>
+                              updateActiveStageCommonField("notes", event.target.value)
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+                      </div>
+
+                    </div>
+                  ) : !isKickoffInternalStage ? (
+                    <div className="processing-stage-grid two">
+                      <label className="field-group processing-stage-field">
+                        <span>Estado</span>
+                        <select
+                          value={activeProcessingStage.status || "not_started"}
+                          onChange={(event) =>
+                            updateActiveStageCommonField("status", event.target.value)
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        >
+                          {PROCESSING_STAGE_STATUS_OPTIONS.map((statusOption) => (
+                            <option key={statusOption.value} value={statusOption.value}>
+                              {statusOption.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="field-group processing-stage-field">
+                        <span>Responsable</span>
+                        <select
+                          value={activeProcessingStage.ownerUserId || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "ownerUserId",
+                              event.target.value
+                                ? Number(event.target.value)
+                                : null,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        >
+                          <option value="">Sin responsable</option>
+                          {processingUsers.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.fullName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="field-group processing-stage-field">
+                        <span>Fecha objetivo</span>
+                        <input
+                          type="date"
+                          value={activeProcessingStage.targetDate || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "targetDate",
+                              event.target.value || null,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+
+                      <label className="field-group processing-stage-field">
+                        <span>Fecha completada</span>
+                        <input
+                          type="datetime-local"
+                          value={
+                            activeProcessingStage.completedAt
+                              ? String(activeProcessingStage.completedAt).slice(0, 16)
+                              : ""
+                          }
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "completedAt",
+                              event.target.value
+                                ? new Date(event.target.value).toISOString()
+                                : null,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+
+                      <label className="field-group processing-stage-field full">
+                        <span>Razon de bloqueo</span>
+                        <textarea
+                          rows={3}
+                          value={activeProcessingStage.blockedReason || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "blockedReason",
+                              event.target.value,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+
+                      <label className="field-group processing-stage-field full">
+                        <span>Notas</span>
+                        <textarea
+                          rows={4}
+                          value={activeProcessingStage.notes || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField("notes", event.target.value)
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+
+                  <div
+                    className={`processing-stage-actions${
+                      isQuotationAcceptedStage
+                        ? " processing-stage-actions-sticky"
+                        : ""
+                    }`}
+                  >
+                    {isQuotationAcceptedStage ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => openSellerNotificationModal(quotationToProcess)}
+                        disabled={Boolean(sendingNotificationQuotationId)}
                       >
-                        {PROCESSING_STAGE_STATUS_OPTIONS.map((statusOption) => (
-                          <option key={statusOption.value} value={statusOption.value}>
-                            {statusOption.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field-group processing-stage-field">
-                      <span>Responsable</span>
-                      <select
-                        value={activeProcessingStage.ownerUserId || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "ownerUserId",
-                            event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      >
-                        <option value="">Sin responsable</option>
-                        {processingUsers.map((user) => (
-                          <option key={user.id} value={user.id}>
-                            {user.fullName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field-group processing-stage-field">
-                      <span>Fecha objetivo</span>
-                      <input
-                        type="date"
-                        value={activeProcessingStage.targetDate || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "targetDate",
-                            event.target.value || null,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-
-                    <label className="field-group processing-stage-field">
-                      <span>Fecha completada</span>
-                      <input
-                        type="datetime-local"
-                        value={
-                          activeProcessingStage.completedAt
-                            ? String(activeProcessingStage.completedAt).slice(0, 16)
-                            : ""
-                        }
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "completedAt",
-                            event.target.value
-                              ? new Date(event.target.value).toISOString()
-                              : null,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-
-                    <label className="field-group processing-stage-field full">
-                      <span>Razon de bloqueo</span>
-                      <textarea
-                        rows={3}
-                        value={activeProcessingStage.blockedReason || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "blockedReason",
-                            event.target.value,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-
-                    <label className="field-group processing-stage-field full">
-                      <span>Notas</span>
-                      <textarea
-                        rows={4}
-                        value={activeProcessingStage.notes || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField("notes", event.target.value)
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="processing-stage-actions">
+                        Correo vendedor
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={() =>
-                        void saveProcessingStage(activeProcessingStage.stageCode)
-                      }
+                      onClick={() => {
+                        if (isQuotationAcceptedStage) {
+                          const acceptedAtIso =
+                            activeProcessingStage.stageData?.acceptedAt ||
+                            activeProcessingStage.completedAt ||
+                            new Date().toISOString();
+                          void saveProcessingStage(activeProcessingStage.stageCode, {
+                            forceStatus: "completed",
+                            forceCompletedAt: acceptedAtIso,
+                            stageDataPatch: {
+                              acceptedAt: acceptedAtIso,
+                            },
+                          });
+                          return;
+                        }
+                        void saveProcessingStage(activeProcessingStage.stageCode);
+                      }}
                       disabled={
                         !processingData.permissions?.canUpdate ||
                         processingSavingStageCode === activeProcessingStage.stageCode
@@ -1976,65 +2582,342 @@ export default function AcceptOrderPage() {
                     >
                       {processingSavingStageCode === activeProcessingStage.stageCode
                         ? "Guardando..."
-                        : "Guardar etapa"}
+                        : isQuotationAcceptedStage
+                          ? "Aceptar"
+                          : "Guardar etapa"}
                     </button>
                   </div>
                 </section>
+                ) : null}
 
                 {activeProcessingStage.stageCode === "kickoff_internal" ? (
-                  <section className="processing-stage-box">
-                    <header>
-                      <h5>Convocatoria Kick Off interno</h5>
-                      <p>
-                        Convoca usuarios internos y correos externos con mensaje
-                        prellenado.
-                      </p>
-                    </header>
+                  <>
+                    <section className="processing-stage-box">
+                      <header>
+                        <h5>Convocatoria Kick Off interno</h5>
+                        <p>
+                          Selecciona convocados internos y dos fechas propuestas.
+                        </p>
+                      </header>
 
-                    <div className="processing-stage-actions split">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => setKickoffInvitationModalOpen(true)}
-                        disabled={!processingData.permissions?.canConvoke}
-                      >
-                        Convocar kick off interno
-                      </button>
-                      <span className="field-hint">
-                        {processingData?.kickoffInternal?.latestInvitation?.statusCode ===
-                        "sent"
-                          ? "Ultima convocatoria enviada"
-                          : "Sin convocatoria enviada"}
-                      </span>
-                    </div>
+                      <div className="processing-stage-grid two">
+                        <label className="field-group processing-stage-field kickoff-internal-users-field">
+                          <span>Convocados internos</span>
+                          <div className="kickoff-internal-users-picker">
+                            {processingUsers.map((user) => {
+                              const isSelected =
+                                kickoffInvitationDraft.internalAttendeesUserIds.includes(
+                                  Number(user.id),
+                                );
+                              return (
+                                <label
+                                  key={user.id}
+                                  className="kickoff-internal-user-choice"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(event) => {
+                                      setKickoffInvitationDraft((current) => {
+                                        const currentIds = Array.isArray(
+                                          current.internalAttendeesUserIds,
+                                        )
+                                          ? current.internalAttendeesUserIds
+                                          : [];
+                                        const nextIds = event.target.checked
+                                          ? Array.from(
+                                              new Set([
+                                                ...currentIds,
+                                                Number(user.id),
+                                              ]),
+                                            )
+                                          : currentIds.filter(
+                                              (id) =>
+                                                Number(id) !== Number(user.id),
+                                            );
+                                        return {
+                                          ...current,
+                                          internalAttendeesUserIds: nextIds,
+                                        };
+                                      });
+                                    }}
+                                  />
+                                  <span>
+                                    {user.fullName} {user.email ? `(${user.email})` : ""}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <span className="field-hint">
+                            Seleccionados: {kickoffInvitationDraft.internalAttendeesUserIds.length}
+                          </span>
+                        </label>
 
-                    {Array.isArray(processingData?.kickoffInternal?.invitations) &&
-                    processingData.kickoffInternal.invitations.length ? (
-                      <div className="processing-stage-log-list">
-                        {processingData.kickoffInternal.invitations
-                          .slice(0, 5)
-                          .map((invitation) => (
-                            <article
-                              key={invitation.id}
-                              className="processing-stage-log-item"
-                            >
-                              <strong>{invitation.inviteSubject}</strong>
-                              <span className="field-hint">
-                                {invitation.statusCode === "sent"
-                                  ? "Enviada"
-                                  : "Borrador"}
-                                {" · "}
-                                {formatDate(invitation.createdAt)}
-                              </span>
-                            </article>
-                          ))}
+                        <label className="field-group processing-stage-field kickoff-internal-right-field">
+                          <span>Opcion 1 (fecha y hora)</span>
+                          <div className="kickoff-internal-date-time-row">
+                            <input
+                              type="date"
+                              value={kickoffInvitationDraft.meetingDateOptionOne}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingDateOptionOne: event.target.value,
+                                }))
+                              }
+                            />
+                            <input
+                              type="time"
+                              value={kickoffInvitationDraft.meetingTimeOptionOne}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingTimeOptionOne: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </label>
+
+                        <label className="field-group processing-stage-field kickoff-internal-right-field">
+                          <span>Opcion 2 (fecha y hora)</span>
+                          <div className="kickoff-internal-date-time-row">
+                            <input
+                              type="date"
+                              value={kickoffInvitationDraft.meetingDateOptionTwo}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingDateOptionTwo: event.target.value,
+                                }))
+                              }
+                            />
+                            <input
+                              type="time"
+                              value={kickoffInvitationDraft.meetingTimeOptionTwo}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingTimeOptionTwo: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </label>
+
+                        <label className="field-group processing-stage-field kickoff-internal-right-field">
+                          <span>Modalidad</span>
+                          <select
+                            value={kickoffInvitationDraft.meetingMode || "virtual"}
+                            onChange={(event) =>
+                              setKickoffInvitationDraft((current) => ({
+                                ...current,
+                                meetingMode: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="virtual">Virtual</option>
+                            <option value="presencial">Presencial</option>
+                          </select>
+                        </label>
+
+                        {kickoffInvitationDraft.meetingMode === "presencial" ? (
+                          <label className="field-group processing-stage-field kickoff-internal-right-field">
+                            <span>Ubicacion</span>
+                            <input
+                              type="text"
+                              value={kickoffInvitationDraft.meetingLocation}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingLocation: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                        ) : null}
                       </div>
-                    ) : (
-                      <p className="field-hint">
-                        Aun no se registra convocatoria de Kick Off interno.
-                      </p>
-                    )}
-                  </section>
+
+                      <div className="processing-stage-actions split">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={openKickoffInvitationPreviewModal}
+                          disabled={!processingData.permissions?.canConvoke}
+                        >
+                          Abrir vista previa de correo
+                        </button>
+                        <span className="field-hint">
+                          {processingData?.kickoffInternal?.latestInvitation?.statusCode ===
+                          "sent"
+                            ? "Ultima convocatoria enviada"
+                            : "Sin convocatoria enviada"}
+                        </span>
+                      </div>
+
+                      {Array.isArray(processingData?.kickoffInternal?.invitations) &&
+                      processingData.kickoffInternal.invitations.length ? (
+                        <div className="processing-stage-log-list">
+                          {processingData.kickoffInternal.invitations
+                            .slice(0, 5)
+                            .map((invitation) => (
+                              <article
+                                key={invitation.id}
+                                className="processing-stage-log-item"
+                              >
+                                <strong>{invitation.inviteSubject}</strong>
+                                <span className="field-hint">
+                                  {invitation.statusCode === "sent"
+                                    ? "Enviada"
+                                    : "Borrador"}
+                                  {" · "}
+                                  {formatDate(invitation.createdAt)}
+                                </span>
+                              </article>
+                            ))}
+                        </div>
+                      ) : (
+                        <p className="field-hint">
+                          Aun no se registra convocatoria de Kick Off interno.
+                        </p>
+                      )}
+                    </section>
+
+                    <section className="processing-stage-box">
+                      <header>
+                        <h5>Minuta</h5>
+                        <p>
+                          Carga archivo de texto o audio, genera resumen IA y culmina el step.
+                        </p>
+                      </header>
+
+                      <div className="processing-stage-grid two">
+                        <label className="field-group processing-stage-field full">
+                          <span>Archivo de minuta (texto/audio)</span>
+                          <input
+                            type="file"
+                            accept=".txt,.md,.csv,.pdf,.doc,.docx,audio/*"
+                            onChange={(event) => {
+                              const selectedFiles = event.target.files;
+                              void uploadKickoffInternalEvidence(selectedFiles);
+                              event.target.value = "";
+                            }}
+                            disabled={
+                              uploadingKickoffInternalEvidence ||
+                              !processingData.permissions?.canUpdate
+                            }
+                          />
+                        </label>
+
+                        <div className="processing-stage-field full">
+                          {kickoffInternalEvidences.length ? (
+                            <div className="processing-stage-log-list">
+                              {kickoffInternalEvidences.slice(0, 8).map((evidence) => {
+                                const evidenceId = Number(evidence.id || 0);
+                                const deletingEvidence = deletingProcessingEvidenceIds.has(
+                                  evidenceId,
+                                );
+                                return (
+                                  <article key={evidence.id} className="processing-stage-log-item">
+                                    <div>
+                                      <strong>
+                                        {evidence.document?.originalFileName || "Evidencia de minuta"}
+                                      </strong>
+                                      <span className="field-hint">
+                                        {evidence.createdByUserName || "Usuario"}
+                                        {" · "}
+                                        {formatDate(evidence.createdAt)}
+                                      </span>
+                                    </div>
+                                    <div className="processing-stage-actions split">
+                                      {evidence.document ? (
+                                        <button
+                                          type="button"
+                                          className="btn-ghost processing-evidence-icon-button"
+                                          onClick={() => void downloadKickoffEvidence(evidence)}
+                                          disabled={deletingEvidence}
+                                          title="Descargar evidencia"
+                                          aria-label="Descargar evidencia"
+                                        >
+                                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                          </svg>
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
+                                        onClick={() => void deleteKickoffEvidence(evidence)}
+                                        disabled={deletingEvidence || !processingData.permissions?.canUpdate}
+                                        title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                        aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="field-hint">
+                              Aun no se registran archivos en la minuta de Kick Off interno.
+                            </p>
+                          )}
+                        </div>
+
+                        <label className="field-group processing-stage-field full">
+                          <span>Resumen de minuta</span>
+                          <textarea
+                            rows={6}
+                            value={kickoffInternalSummaryText}
+                            onChange={(event) =>
+                              updateActiveStageDataField(
+                                "minutesSummary",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Resumen de acuerdos, responsables y proximos pasos"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="processing-stage-actions split">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => void generateKickoffInternalAiSummary()}
+                          disabled={
+                            generatingKickoffInternalAi ||
+                            !processingData.permissions?.canGenerateIa
+                          }
+                        >
+                          {generatingKickoffInternalAi ? "Generando resumen..." : "IA resumir"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() =>
+                            void saveProcessingStage(activeProcessingStage.stageCode, {
+                              forceStatus: "completed",
+                              forceCompletedAt: new Date().toISOString(),
+                            })
+                          }
+                          disabled={
+                            !processingData.permissions?.canUpdate ||
+                            processingSavingStageCode === activeProcessingStage.stageCode
+                          }
+                        >
+                          Culminar Kick Off Interno
+                        </button>
+                      </div>
+
+                    </section>
+                  </>
                 ) : null}
 
                 {activeProcessingStage.stageCode === "kickoff_external" ? (
@@ -2099,33 +2982,60 @@ export default function AcceptOrderPage() {
                       {Array.isArray(processingData?.kickoffExternal?.evidences) &&
                       processingData.kickoffExternal.evidences.length ? (
                         <div className="processing-stage-log-list">
-                          {processingData.kickoffExternal.evidences.map((evidence) => (
-                            <article
-                              key={evidence.id}
-                              className="processing-stage-log-item"
-                            >
-                              <div>
-                                <strong>
-                                  {evidence.document?.originalFileName ||
-                                    (evidence.evidenceType === "manual_note"
-                                      ? "Minuta manual"
-                                      : "Evidencia")}
-                                </strong>
-                                <span className="field-hint">
-                                  {evidence.evidenceType} · {formatDate(evidence.createdAt)}
-                                </span>
-                              </div>
-                              {evidence.document ? (
-                                <button
-                                  type="button"
-                                  className="btn-secondary"
-                                  onClick={() => void downloadKickoffEvidence(evidence)}
-                                >
-                                  Descargar
-                                </button>
-                              ) : null}
-                            </article>
-                          ))}
+                          {processingData.kickoffExternal.evidences.map((evidence) => {
+                            const evidenceId = Number(evidence.id || 0);
+                            const deletingEvidence = deletingProcessingEvidenceIds.has(
+                              evidenceId,
+                            );
+                            return (
+                              <article
+                                key={evidence.id}
+                                className="processing-stage-log-item"
+                              >
+                                <div>
+                                  <strong>
+                                    {evidence.document?.originalFileName ||
+                                      (evidence.evidenceType === "manual_note"
+                                        ? "Minuta manual"
+                                        : "Evidencia")}
+                                  </strong>
+                                  <span className="field-hint">
+                                    {evidence.evidenceType} · {formatDate(evidence.createdAt)}
+                                  </span>
+                                </div>
+                                <div className="processing-stage-actions split">
+                                  {evidence.document ? (
+                                    <button
+                                      type="button"
+                                      className="btn-secondary processing-evidence-icon-button"
+                                      onClick={() => void downloadKickoffEvidence(evidence)}
+                                      disabled={deletingEvidence}
+                                      title="Descargar evidencia"
+                                      aria-label="Descargar evidencia"
+                                    >
+                                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                      </svg>
+                                    </button>
+                                  ) : null}
+                                  {evidence.document ? (
+                                    <button
+                                      type="button"
+                                      className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
+                                      onClick={() => void deleteKickoffEvidence(evidence)}
+                                      disabled={deletingEvidence || !processingData.permissions?.canUpdate}
+                                      title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                      aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                    >
+                                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
+                                      </svg>
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </article>
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="field-hint">
@@ -2316,7 +3226,8 @@ export default function AcceptOrderPage() {
                   </>
                 ) : null}
 
-                {activeProcessingStage.stageCode !== "kickoff_external" &&
+                {activeProcessingStage.stageCode !== "quotation_accepted" &&
+                activeProcessingStage.stageCode !== "kickoff_external" &&
                 activeProcessingStage.stageCode !== "kickoff_internal" ? (
                   renderStageBaseSpecificFields(activeProcessingStage)
                 ) : null}
@@ -2343,127 +3254,17 @@ export default function AcceptOrderPage() {
               <span>Kick Off interno</span>
               <h3 id="kickoff-internal-invite-title">Convocatoria interna</h3>
               <p>
-                Define invitados, fecha y mensaje para la coordinacion vendedor -
-                preventa.
+                Revisa el correo que se enviara a los convocados y confirma el envio.
               </p>
             </div>
 
             <div className="processing-stage-grid two">
-              <label className="field-group processing-stage-field">
-                <span>Fecha</span>
-                <input
-                  type="date"
-                  value={kickoffInvitationDraft.meetingDate}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingDate: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field">
-                <span>Hora</span>
-                <input
-                  type="time"
-                  value={kickoffInvitationDraft.meetingTime}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingTime: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field">
-                <span>Modalidad</span>
-                <select
-                  value={kickoffInvitationDraft.meetingMode || "virtual"}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingMode: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="virtual">Virtual</option>
-                  <option value="presencial">Presencial</option>
-                </select>
-              </label>
-              <label className="field-group processing-stage-field">
-                <span>Ubicacion (si presencial)</span>
-                <input
-                  type="text"
-                  value={kickoffInvitationDraft.meetingLocation}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingLocation: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field full">
-                <span>Link (si virtual)</span>
-                <input
-                  type="url"
-                  value={kickoffInvitationDraft.meetingLink}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingLink: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field full">
-                <span>Invitados internos</span>
-                <select
-                  multiple
-                  value={kickoffInvitationDraft.internalAttendeesUserIds.map(String)}
-                  onChange={(event) => {
-                    const values = Array.from(event.target.selectedOptions).map(
-                      (option) => Number(option.value),
-                    );
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      internalAttendeesUserIds: values,
-                    }));
-                  }}
-                  size={6}
-                >
-                  {processingUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.fullName} {user.email ? `(${user.email})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-group processing-stage-field full">
-                <span>Correos externos</span>
-                <textarea
-                  rows={3}
-                  value={kickoffInvitationDraft.externalAttendeesEmails}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      externalAttendeesEmails: event.target.value,
-                    }))
-                  }
-                  placeholder="correo1@empresa.com, correo2@empresa.com"
-                />
-              </label>
               <label className="field-group processing-stage-field full">
                 <span>Asunto</span>
                 <input
                   type="text"
                   value={kickoffInvitationDraft.inviteSubject}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      inviteSubject: event.target.value,
-                    }))
-                  }
+                  readOnly
                   maxLength={240}
                 />
               </label>
@@ -2472,17 +3273,20 @@ export default function AcceptOrderPage() {
                 <textarea
                   rows={8}
                   value={kickoffInvitationDraft.inviteBodyTemplate}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      inviteBodyTemplate: event.target.value,
-                    }))
-                  }
+                  readOnly
                 />
               </label>
             </div>
 
             <div className="processing-stage-actions split">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setKickoffInvitationModalOpen(false)}
+                disabled={savingKickoffInvitation}
+              >
+                Cancelar
+              </button>
               <button
                 type="button"
                 className="btn-secondary"
