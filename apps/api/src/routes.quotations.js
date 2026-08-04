@@ -2615,6 +2615,59 @@ function buildKickoffEvidenceSourceText(evidenceRows = []) {
   return sections.join("\n\n").slice(0, 30_000);
 }
 
+function resolveKickoffOpenAiTextCandidates(responseData) {
+  const candidates = [];
+  const primaryOutput = String(getOpenAiOutputText(responseData) || "").trim();
+  if (primaryOutput) {
+    candidates.push(primaryOutput);
+  }
+
+  const directOutputText = String(responseData?.output_text || "").trim();
+  if (directOutputText) {
+    candidates.push(directOutputText);
+  }
+
+  const outputItems = Array.isArray(responseData?.output) ? responseData.output : [];
+  for (const item of outputItems) {
+    const contentItems = Array.isArray(item?.content) ? item.content : [];
+    for (const part of contentItems) {
+      const partText = String(part?.text || part?.output_text || "").trim();
+      if (partText) {
+        candidates.push(partText);
+      }
+    }
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+function resolveKickoffAiSummaryFromOpenAiResponse(responseData, fallbackSummary) {
+  const candidates = resolveKickoffOpenAiTextCandidates(responseData);
+  for (const candidate of candidates) {
+    const parsed = extractJsonObject(candidate);
+    if (parsed && typeof parsed === "object") {
+      return normalizeKickoffAiSummaryPayload(parsed, fallbackSummary);
+    }
+  }
+
+  const plainText = String(candidates[0] || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (plainText) {
+    return normalizeKickoffAiSummaryPayload(
+      {
+        summary: plainText,
+        conflictPoints: [],
+        riskPoints: [],
+        clarificationPoints: [],
+      },
+      fallbackSummary,
+    );
+  }
+
+  return fallbackSummary;
+}
+
 async function buildKickoffAiSummaryFromEvidence({
   evidenceRows = [],
   user,
@@ -2631,13 +2684,6 @@ async function buildKickoffAiSummaryFromEvidence({
   }
 
   const aiUsageUserId = Number(user?.id || 0);
-  if (aiUsageUserId) {
-    try {
-      await assertAiBudgetAvailable({ userId: aiUsageUserId });
-    } catch {
-      return fallbackSummary;
-    }
-  }
 
   const requestPayload = {
     model: config.openai.model,
@@ -2687,30 +2733,44 @@ async function buildKickoffAiSummaryFromEvidence({
 
     const responseData = await response.json().catch(() => null);
     if (!response.ok || !responseData) {
-      return fallbackSummary;
+      const message = String(
+        responseData?.error?.message ||
+          responseData?.error?.code ||
+          `OpenAI request failed: ${response.status}`,
+      ).trim();
+      const error = new Error(
+        message || "No fue posible generar el resumen IA de la minuta",
+      );
+      error.status = Number(response.status || 502) || 502;
+      throw error;
     }
 
     if (aiUsageUserId) {
-      await recordAiUsageFromOpenAiResponse({
-        userId: aiUsageUserId,
-        featureCode: "quotation_processing_kickoff_ai_summary",
-        model: String(requestPayload.model || config.openai.model || "").trim(),
-        openAiResponse: responseData,
-        startedAt,
-        endedAt: new Date(),
-        internalRequestId,
-        jobType: `quotation_processing_${String(stageCode || "kickoff").trim()}_ai_summary`,
-      });
+      try {
+        await recordAiUsageFromOpenAiResponse({
+          userId: aiUsageUserId,
+          featureCode: "quotation_processing_kickoff_ai_summary",
+          model: String(requestPayload.model || config.openai.model || "").trim(),
+          openAiResponse: responseData,
+          startedAt,
+          endedAt: new Date(),
+          internalRequestId,
+          jobType: `quotation_processing_${String(stageCode || "kickoff").trim()}_ai_summary`,
+        });
+      } catch {
+        // Do not block summary delivery if usage accounting fails.
+      }
     }
 
-    const parsed = extractJsonObject(getOpenAiOutputText(responseData));
-    if (!parsed || typeof parsed !== "object") {
-      return fallbackSummary;
+    return resolveKickoffAiSummaryFromOpenAiResponse(
+      responseData,
+      fallbackSummary,
+    );
+  } catch (error) {
+    if (!error?.status) {
+      error.status = 502;
     }
-
-    return normalizeKickoffAiSummaryPayload(parsed, fallbackSummary);
-  } catch {
-    return fallbackSummary;
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -13241,15 +13301,25 @@ router.post(
       evidences,
     );
 
-    const summaryData = await buildKickoffAiSummaryFromEvidence({
-      evidenceRows: hydratedEvidences.map((item) => ({
-        evidence_type: item.evidenceType,
-        content_text: item.contentText,
-        original_file_name: item.document?.originalFileName || null,
-      })),
-      user: req.user,
-      stageCode: "kickoff_internal",
-    });
+    let summaryData = null;
+    try {
+      summaryData = await buildKickoffAiSummaryFromEvidence({
+        evidenceRows: hydratedEvidences.map((item) => ({
+          evidence_type: item.evidenceType,
+          content_text: item.contentText,
+          original_file_name: item.document?.originalFileName || null,
+        })),
+        user: req.user,
+        stageCode: "kickoff_internal",
+      });
+    } catch (error) {
+      const status = Number(error?.status || 502);
+      return res.status(status >= 400 && status < 600 ? status : 502).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible generar el resumen IA de la minuta",
+      });
+    }
 
     await ensureQuotationProcessingSchema();
     await query(
@@ -13603,15 +13673,25 @@ router.post(
       evidences,
     );
 
-    const summaryData = await buildKickoffAiSummaryFromEvidence({
-      evidenceRows: hydratedEvidences.map((item) => ({
-        evidence_type: item.evidenceType,
-        content_text: item.contentText,
-        original_file_name: item.document?.originalFileName || null,
-      })),
-      user: req.user,
-      stageCode: "kickoff_external",
-    });
+    let summaryData = null;
+    try {
+      summaryData = await buildKickoffAiSummaryFromEvidence({
+        evidenceRows: hydratedEvidences.map((item) => ({
+          evidence_type: item.evidenceType,
+          content_text: item.contentText,
+          original_file_name: item.document?.originalFileName || null,
+        })),
+        user: req.user,
+        stageCode: "kickoff_external",
+      });
+    } catch (error) {
+      const status = Number(error?.status || 502);
+      return res.status(status >= 400 && status < 600 ? status : 502).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible generar el resumen IA de la minuta",
+      });
+    }
 
     await ensureQuotationProcessingSchema();
     await query(

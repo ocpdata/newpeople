@@ -1162,7 +1162,7 @@ export default function AcceptOrderPage() {
     setError("");
     setSuccess("");
     try {
-      await api.post(
+      const { data } = await api.post(
         `/api/quotations/${quotationId}/processing/kickoff-external/ai-summary`,
         null,
         {
@@ -1170,6 +1170,10 @@ export default function AcceptOrderPage() {
         },
       );
       await loadQuotationProcessing(quotationToProcess, "kickoff_external");
+      const summaryText = String(data?.aiSummaryCurrent?.summary?.summary || "").trim();
+      if (summaryText) {
+        updateActiveStageDataField("minutesSummary", summaryText);
+      }
       setSuccess("Resumen IA generado para Kick Off externo");
     } catch (aiError) {
       setError(
@@ -1397,6 +1401,8 @@ export default function AcceptOrderPage() {
     activeProcessingStage?.stageCode === "quotation_accepted";
   const isKickoffInternalStage =
     activeProcessingStage?.stageCode === "kickoff_internal";
+  const isKickoffExternalStage =
+    activeProcessingStage?.stageCode === "kickoff_external";
   const processingFinancials = quotationToProcess
     ? getQuotationFinancials(quotationToProcess)
     : getQuotationFinancials({});
@@ -1416,6 +1422,19 @@ export default function AcceptOrderPage() {
     kickoffInternalStageMinutesSummary == null
       ? kickoffInternalGeneratedSummary
       : kickoffInternalStageMinutesSummary,
+  );
+  const kickoffExternalEvidences = Array.isArray(processingData?.kickoffExternal?.evidences)
+    ? processingData.kickoffExternal.evidences
+    : [];
+  const kickoffExternalGeneratedSummary = String(
+    processingData?.kickoffExternal?.aiSummaryCurrent?.summary?.summary || "",
+  ).trim();
+  const kickoffExternalStageMinutesSummary =
+    activeProcessingStage?.stageData?.minutesSummary;
+  const kickoffExternalSummaryText = String(
+    kickoffExternalStageMinutesSummary == null
+      ? kickoffExternalGeneratedSummary
+      : kickoffExternalStageMinutesSummary,
   );
 
   return (
@@ -2119,7 +2138,7 @@ export default function AcceptOrderPage() {
 
             {!processingLoading && !processingModalError && activeProcessingStage ? (
               <div className="processing-stage-content">
-                {!isKickoffInternalStage ? (
+                {!isKickoffInternalStage && !isKickoffExternalStage ? (
                 <section className="processing-stage-box">
                   <header>
                     <h4>{activeProcessingStage.stageName}</h4>
@@ -2921,309 +2940,146 @@ export default function AcceptOrderPage() {
                 ) : null}
 
                 {activeProcessingStage.stageCode === "kickoff_external" ? (
-                  <>
-                    <section className="processing-stage-box">
-                      <header>
-                        <h5>Evidencias Kick Off externo</h5>
-                        <p>
-                          Adjunta archivos de texto/audio o registra minuta manual.
-                        </p>
-                      </header>
+                  <section className="processing-stage-box">
+                    <header>
+                      <h5>Minuta</h5>
+                      <p>
+                        Carga archivo de texto o audio, genera resumen IA y culmina el step.
+                      </p>
+                    </header>
 
-                      <div className="processing-stage-grid two">
-                        <label className="field-group processing-stage-field full">
-                          <span>Minuta / acuerdos manuales</span>
-                          <textarea
-                            rows={4}
-                            value={kickoffExternalManualNote}
-                            onChange={(event) =>
-                              setKickoffExternalManualNote(event.target.value)
+                    <div className="processing-stage-grid two">
+                      <label className="field-group processing-stage-field full">
+                        <span>Archivo de minuta (texto/audio)</span>
+                        <input
+                          type="file"
+                          accept=".txt,.md,.csv,.pdf,.doc,.docx,audio/*"
+                          onChange={(event) => {
+                            const selectedFiles = event.target.files;
+                            if (selectedFiles?.length) {
+                              void uploadKickoffExternalEvidence(selectedFiles);
                             }
-                            placeholder="Escribe acuerdos, riesgos y pendientes del kick off externo"
-                          />
-                        </label>
-                      </div>
-
-                      <div className="processing-stage-actions split">
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => void saveKickoffExternalManualEvidence()}
+                            event.target.value = "";
+                          }}
                           disabled={
-                            !kickoffExternalManualNote.trim() ||
-                            savingKickoffExternalManualNote
+                            uploadingKickoffExternalEvidence ||
+                            !processingData.permissions?.canUpdate
                           }
-                        >
-                          {savingKickoffExternalManualNote
-                            ? "Guardando minuta..."
-                            : "Guardar minuta"}
-                        </button>
+                        />
+                      </label>
 
-                        <label className="btn-secondary processing-upload-button">
-                          {uploadingKickoffExternalEvidence
-                            ? "Subiendo evidencia..."
-                            : "Subir evidencia"}
-                          <input
-                            type="file"
-                            multiple
-                            onChange={(event) => {
-                              const selectedFiles = event.target.files;
-                              if (selectedFiles?.length) {
-                                void uploadKickoffExternalEvidence(selectedFiles);
-                              }
-                              event.target.value = "";
-                            }}
-                            disabled={uploadingKickoffExternalEvidence}
-                            hidden
-                          />
-                        </label>
+                      <div className="processing-stage-field full">
+                        {kickoffExternalEvidences.length ? (
+                          <div className="processing-stage-log-list">
+                            {kickoffExternalEvidences.map((evidence) => {
+                              const evidenceId = Number(evidence.id || 0);
+                              const deletingEvidence = deletingProcessingEvidenceIds.has(
+                                evidenceId,
+                              );
+                              return (
+                                <article
+                                  key={evidence.id}
+                                  className="processing-stage-log-item"
+                                >
+                                  <div>
+                                    <strong>
+                                      {evidence.document?.originalFileName ||
+                                        (evidence.evidenceType === "manual_note"
+                                          ? "Minuta manual"
+                                          : "Evidencia")}
+                                    </strong>
+                                    <span className="field-hint">
+                                      {evidence.evidenceType} · {formatDate(evidence.createdAt)}
+                                    </span>
+                                  </div>
+                                  <div className="processing-stage-actions split">
+                                    {evidence.document ? (
+                                      <button
+                                        type="button"
+                                        className="btn-secondary processing-evidence-icon-button"
+                                        onClick={() => void downloadKickoffEvidence(evidence)}
+                                        disabled={deletingEvidence}
+                                        title="Descargar evidencia"
+                                        aria-label="Descargar evidencia"
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                        </svg>
+                                      </button>
+                                    ) : null}
+                                    {evidence.document ? (
+                                      <button
+                                        type="button"
+                                        className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
+                                        onClick={() => void deleteKickoffEvidence(evidence)}
+                                        disabled={deletingEvidence || !processingData.permissions?.canUpdate}
+                                        title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                        aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
+                                        </svg>
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="field-hint">
+                            Aun no existen evidencias en Kick Off externo.
+                          </p>
+                        )}
                       </div>
 
-                      {Array.isArray(processingData?.kickoffExternal?.evidences) &&
-                      processingData.kickoffExternal.evidences.length ? (
-                        <div className="processing-stage-log-list">
-                          {processingData.kickoffExternal.evidences.map((evidence) => {
-                            const evidenceId = Number(evidence.id || 0);
-                            const deletingEvidence = deletingProcessingEvidenceIds.has(
-                              evidenceId,
-                            );
-                            return (
-                              <article
-                                key={evidence.id}
-                                className="processing-stage-log-item"
-                              >
-                                <div>
-                                  <strong>
-                                    {evidence.document?.originalFileName ||
-                                      (evidence.evidenceType === "manual_note"
-                                        ? "Minuta manual"
-                                        : "Evidencia")}
-                                  </strong>
-                                  <span className="field-hint">
-                                    {evidence.evidenceType} · {formatDate(evidence.createdAt)}
-                                  </span>
-                                </div>
-                                <div className="processing-stage-actions split">
-                                  {evidence.document ? (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary processing-evidence-icon-button"
-                                      onClick={() => void downloadKickoffEvidence(evidence)}
-                                      disabled={deletingEvidence}
-                                      title="Descargar evidencia"
-                                      aria-label="Descargar evidencia"
-                                    >
-                                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                                        <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
-                                      </svg>
-                                    </button>
-                                  ) : null}
-                                  {evidence.document ? (
-                                    <button
-                                      type="button"
-                                      className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
-                                      onClick={() => void deleteKickoffEvidence(evidence)}
-                                      disabled={deletingEvidence || !processingData.permissions?.canUpdate}
-                                      title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
-                                      aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
-                                    >
-                                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                                        <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
-                                      </svg>
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </article>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="field-hint">
-                          Aun no existen evidencias en Kick Off externo.
-                        </p>
-                      )}
-                    </section>
-
-                    <section className="processing-stage-box">
-                      <header>
-                        <h5>Resumen IA y validacion comercial</h5>
-                        <p>
-                          Genera resumen IA y captura validaciones para completar la etapa.
-                        </p>
-                      </header>
-
-                      <div className="processing-stage-actions split">
-                        <button
-                          type="button"
-                          className="btn-primary"
-                          onClick={() => void generateKickoffExternalAiSummary()}
-                          disabled={
-                            !processingData.permissions?.canGenerateIa ||
-                            generatingKickoffExternalAi ||
-                            !processingData?.kickoffExternal?.evidences?.length
+                      <label className="field-group processing-stage-field full">
+                        <span>Resumen de minuta</span>
+                        <textarea
+                          rows={6}
+                          value={kickoffExternalSummaryText}
+                          onChange={(event) =>
+                            updateActiveStageDataField(
+                              "minutesSummary",
+                              event.target.value,
+                            )
                           }
-                        >
-                          {generatingKickoffExternalAi
-                            ? "Generando resumen IA..."
-                            : "Generar resumen IA"}
-                        </button>
-                      </div>
+                          placeholder="Resumen de acuerdos, responsables y proximos pasos"
+                        />
+                      </label>
+                    </div>
 
-                      {processingData?.kickoffExternal?.aiSummaryCurrent?.summary ? (
-                        <div className="processing-ai-summary-grid">
-                          <article>
-                            <h6>Resumen ejecutivo</h6>
-                            <p>
-                              {processingData.kickoffExternal.aiSummaryCurrent.summary
-                                .summary || "-"}
-                            </p>
-                          </article>
-                          <article>
-                            <h6>Puntos de conflicto</h6>
-                            <p>
-                              {(
-                                processingData.kickoffExternal.aiSummaryCurrent.summary
-                                  .conflictPoints || []
-                              ).join(" | ") || "-"}
-                            </p>
-                          </article>
-                          <article>
-                            <h6>Riesgos</h6>
-                            <p>
-                              {(
-                                processingData.kickoffExternal.aiSummaryCurrent.summary
-                                  .riskPoints || []
-                              ).join(" | ") || "-"}
-                            </p>
-                          </article>
-                          <article>
-                            <h6>Puntos por aclarar</h6>
-                            <p>
-                              {(
-                                processingData.kickoffExternal.aiSummaryCurrent.summary
-                                  .clarificationPoints || []
-                              ).join(" | ") || "-"}
-                            </p>
-                          </article>
-                        </div>
-                      ) : (
-                        <p className="field-hint">Aun no se genero resumen IA.</p>
-                      )}
+                    <div className="processing-stage-actions split">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => void generateKickoffExternalAiSummary()}
+                        disabled={
+                          generatingKickoffExternalAi ||
+                          !processingData.permissions?.canGenerateIa
+                        }
+                      >
+                        {generatingKickoffExternalAi ? "Generando resumen..." : "IA resumir"}
+                      </button>
 
-                      <div className="processing-stage-grid two">
-                        <label className="field-group processing-stage-field">
-                          <span>Fecha estimada facturacion</span>
-                          <input
-                            type="date"
-                            value={
-                              activeProcessingStage.stageData?.estimatedInvoicingDate || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "estimatedInvoicingDate",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field">
-                          <span>Fecha estimada entrega productos</span>
-                          <input
-                            type="date"
-                            value={
-                              activeProcessingStage.stageData?.estimatedDeliveryDate || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "estimatedDeliveryDate",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field">
-                          <span>Dias de credito cobranza</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={
-                              activeProcessingStage.stageData?.collectionsCreditDays || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "collectionsCreditDays",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field">
-                          <span>Responsable operativo</span>
-                          <input
-                            type="text"
-                            value={activeProcessingStage.stageData?.operationalOwner || ""}
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "operationalOwner",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field full">
-                          <span>Alcance operativo</span>
-                          <textarea
-                            rows={3}
-                            value={activeProcessingStage.stageData?.operationalScope || ""}
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "operationalScope",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field full">
-                          <span>Timeline operativo</span>
-                          <textarea
-                            rows={3}
-                            value={
-                              activeProcessingStage.stageData?.operationalTimeline || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "operationalTimeline",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field full">
-                          <span>Otros puntos relevantes</span>
-                          <textarea
-                            rows={3}
-                            value={
-                              activeProcessingStage.stageData?.relevantAdditionalPoints ||
-                              ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "relevantAdditionalPoints",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                      </div>
-                    </section>
-                  </>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() =>
+                          void saveProcessingStage(activeProcessingStage.stageCode, {
+                            forceStatus: "completed",
+                            forceCompletedAt: new Date().toISOString(),
+                          })
+                        }
+                        disabled={
+                          !processingData.permissions?.canUpdate ||
+                          processingSavingStageCode === activeProcessingStage.stageCode
+                        }
+                      >
+                        Culminar Kick Off Externo
+                      </button>
+                    </div>
+                  </section>
                 ) : null}
 
                 {activeProcessingStage.stageCode !== "quotation_accepted" &&
