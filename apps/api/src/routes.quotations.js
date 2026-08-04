@@ -2906,28 +2906,41 @@ async function listQuotationProcessingAiSummaries({ quotationId, stageCode }) {
   }));
 }
 
-function validateKickoffExternalCompletionPayload(stageData = {}) {
-  const requiredFields = [
-    "estimatedInvoicingDate",
-    "estimatedDeliveryDate",
-    "collectionsCreditDays",
-    "operationalScope",
-    "operationalOwner",
-    "operationalTimeline",
-  ];
+async function listQuotationProcessingProducts({ versionId, currencyCode }) {
+  const sections = await getQuotationVersionSections(Number(versionId));
+  const items = [];
 
-  const missing = requiredFields.filter((fieldName) => {
-    const value = stageData?.[fieldName];
-    if (fieldName === "collectionsCreditDays") {
-      return !Number.isFinite(Number(value));
+  for (const section of sections) {
+    const sectionItems = Array.isArray(section?.items) ? section.items : [];
+    for (const item of sectionItems) {
+      if (String(item?.itemType || "").trim() === "grupo_productos") {
+        continue;
+      }
+
+      const quantity = Number(item?.quantity || 0);
+      const pricing = calculateProposalSalePrice(item);
+      const unitCostWithDiscount = Number(
+        Number(pricing?.discountedListPriceUnit || 0).toFixed(6),
+      );
+      const totalCost = Number((unitCostWithDiscount * quantity).toFixed(6));
+
+      items.push({
+        id: Number(item?.id || 0),
+        code: String(item?.productCode || "").trim() || "-",
+        description:
+          String(item?.productDescription || "").trim() || "Sin descripcion",
+        quantity,
+        unitCostWithDiscount,
+        totalCost,
+        providerId: Number(item?.providerId || 0) || null,
+        providerName: String(item?.providerName || "").trim() || null,
+        currencyCode: String(item?.originalCurrencyCode || currencyCode || "USD").trim() ||
+          "USD",
+      });
     }
-    return !String(value || "").trim();
-  });
+  }
 
-  return {
-    valid: missing.length === 0,
-    missing,
-  };
+  return items;
 }
 
 async function upsertQuotationProcessingStage({
@@ -2958,17 +2971,6 @@ async function upsertQuotationProcessingStage({
     ...existingStageData,
     ...(stageData && typeof stageData === "object" ? stageData : {}),
   };
-
-  if (status === "completed" && stageCode === "kickoff_external") {
-    const validation = validateKickoffExternalCompletionPayload(mergedStageData);
-    if (!validation.valid) {
-      const error = new Error(
-        `Faltan campos requeridos para completar Kick Off externo: ${validation.missing.join(", ")}`,
-      );
-      error.status = 400;
-      throw error;
-    }
-  }
 
   const normalizedBlockedReason =
     blockedReason == null ? null : String(blockedReason || "").trim() || null;
@@ -12723,106 +12725,128 @@ router.get(
       return res.status(400).json({ message: "Id de cotizacion invalido" });
     }
 
-    const quotation = await getAccessibleQuotation({
-      user: req.user,
-      quotationId,
-    });
-    if (!quotation) {
-      return res.status(404).json({ message: "Cotizacion no encontrada" });
-    }
+    try {
+      const quotation = await getAccessibleQuotation({
+        user: req.user,
+        quotationId,
+      });
+      if (!quotation) {
+        return res.status(404).json({ message: "Cotizacion no encontrada" });
+      }
 
-    const latestVersionId = Number(quotation.latest_version_id || 0);
-    if (!latestVersionId) {
-      return res.status(404).json({
-        message: "La cotizacion no tiene version activa para procesamiento",
+      const latestVersionId = Number(quotation.latest_version_id || 0);
+      if (!latestVersionId) {
+        return res.status(404).json({
+          message: "La cotizacion no tiene version activa para procesamiento",
+        });
+      }
+
+      const latestVersion = await getAccessibleQuotationVersion({
+        user: req.user,
+        versionId: latestVersionId,
+      });
+      if (!latestVersion) {
+        return res.status(404).json({
+          message: "Version de cotizacion no encontrada",
+        });
+      }
+
+      if (
+        !["aceptada", "ganada"].includes(
+          String(latestVersion.status_code || "").trim(),
+        )
+      ) {
+        return res.status(400).json({
+          message: "El procesamiento solo aplica para cotizaciones ganadas o aceptadas",
+        });
+      }
+
+      const [
+        stages,
+        assignableUsers,
+        providers,
+        kickoffInvitations,
+        kickoffInternalEvidences,
+        kickoffInternalAiHistory,
+        kickoffEvidences,
+        aiHistory,
+        processingProducts,
+      ] =
+        await Promise.all([
+          listQuotationProcessingStages({ quotation, latestVersion }),
+          listProcessingAssignableUsers(),
+          listActiveProvidersForImport(),
+          listQuotationProcessingKickoffInvitations({ quotationId }),
+          listQuotationProcessingEvidences({
+            quotationId,
+            stageCode: "kickoff_internal",
+          }),
+          listQuotationProcessingAiSummaries({
+            quotationId,
+            stageCode: "kickoff_internal",
+          }),
+          listQuotationProcessingEvidences({
+            quotationId,
+            stageCode: "kickoff_external",
+          }),
+          listQuotationProcessingAiSummaries({
+            quotationId,
+            stageCode: "kickoff_external",
+          }),
+          listQuotationProcessingProducts({
+            versionId: Number(latestVersion.id),
+            currencyCode: latestVersion.currency_code || "USD",
+          }),
+        ]);
+
+      return res.json({
+        quotation: {
+          id: Number(quotation.id),
+          opportunityId: Number(quotation.opportunity_id),
+          latestVersionId: Number(latestVersion.id),
+          latestVersionNumber: Number(latestVersion.version_number || 0),
+          proposalName: latestVersion.proposal_name || "",
+          accountName: latestVersion.account_name || "",
+          opportunityName: latestVersion.opportunity_name || "",
+          sellerUserName: latestVersion.seller_user_name || "",
+          sellerUserEmail: latestVersion.seller_user_email || "",
+          statusCode: latestVersion.status_code || "",
+          products: processingProducts,
+        },
+        stages,
+        assignableUsers,
+        providers,
+        kickoffInternal: {
+          latestInvitation: kickoffInvitations[0] || null,
+          invitations: kickoffInvitations,
+          evidences: kickoffInternalEvidences,
+          aiSummaryCurrent: kickoffInternalAiHistory[0] || null,
+          aiSummaryHistory: kickoffInternalAiHistory,
+        },
+        kickoffExternal: {
+          evidences: kickoffEvidences,
+          aiSummaryCurrent: aiHistory[0] || null,
+          aiSummaryHistory: aiHistory,
+        },
+        permissions: {
+          canRead: hasQuotationProcessingReadPermission(req.user),
+          canUpdate: hasQuotationProcessingUpdatePermission(req.user),
+          canGenerateIa: hasQuotationProcessingIaPermission(req.user),
+          canConvoke: hasQuotationProcessingConvokePermission(req.user),
+        },
+      });
+    } catch (error) {
+      if (String(error?.code || "").trim() === "ER_CON_COUNT_ERROR") {
+        return res.status(503).json({
+          message:
+            "La base de datos esta temporalmente saturada. Intenta nuevamente en unos segundos.",
+        });
+      }
+
+      return res.status(500).json({
+        message: "No fue posible cargar el flujo de procesamiento operativo",
       });
     }
-
-    const latestVersion = await getAccessibleQuotationVersion({
-      user: req.user,
-      versionId: latestVersionId,
-    });
-    if (!latestVersion) {
-      return res.status(404).json({
-        message: "Version de cotizacion no encontrada",
-      });
-    }
-
-    if (
-      !["aceptada", "ganada"].includes(
-        String(latestVersion.status_code || "").trim(),
-      )
-    ) {
-      return res.status(400).json({
-        message: "El procesamiento solo aplica para cotizaciones ganadas o aceptadas",
-      });
-    }
-
-    const [
-      stages,
-      assignableUsers,
-      kickoffInvitations,
-      kickoffInternalEvidences,
-      kickoffInternalAiHistory,
-      kickoffEvidences,
-      aiHistory,
-    ] =
-      await Promise.all([
-        listQuotationProcessingStages({ quotation, latestVersion }),
-        listProcessingAssignableUsers(),
-        listQuotationProcessingKickoffInvitations({ quotationId }),
-        listQuotationProcessingEvidences({
-          quotationId,
-          stageCode: "kickoff_internal",
-        }),
-        listQuotationProcessingAiSummaries({
-          quotationId,
-          stageCode: "kickoff_internal",
-        }),
-        listQuotationProcessingEvidences({
-          quotationId,
-          stageCode: "kickoff_external",
-        }),
-        listQuotationProcessingAiSummaries({
-          quotationId,
-          stageCode: "kickoff_external",
-        }),
-      ]);
-
-    return res.json({
-      quotation: {
-        id: Number(quotation.id),
-        opportunityId: Number(quotation.opportunity_id),
-        latestVersionId: Number(latestVersion.id),
-        latestVersionNumber: Number(latestVersion.version_number || 0),
-        proposalName: latestVersion.proposal_name || "",
-        accountName: latestVersion.account_name || "",
-        opportunityName: latestVersion.opportunity_name || "",
-        sellerUserName: latestVersion.seller_user_name || "",
-        sellerUserEmail: latestVersion.seller_user_email || "",
-        statusCode: latestVersion.status_code || "",
-      },
-      stages,
-      assignableUsers,
-      kickoffInternal: {
-        latestInvitation: kickoffInvitations[0] || null,
-        invitations: kickoffInvitations,
-        evidences: kickoffInternalEvidences,
-        aiSummaryCurrent: kickoffInternalAiHistory[0] || null,
-        aiSummaryHistory: kickoffInternalAiHistory,
-      },
-      kickoffExternal: {
-        evidences: kickoffEvidences,
-        aiSummaryCurrent: aiHistory[0] || null,
-        aiSummaryHistory: aiHistory,
-      },
-      permissions: {
-        canRead: hasQuotationProcessingReadPermission(req.user),
-        canUpdate: hasQuotationProcessingUpdatePermission(req.user),
-        canGenerateIa: hasQuotationProcessingIaPermission(req.user),
-        canConvoke: hasQuotationProcessingConvokePermission(req.user),
-      },
-    });
   },
 );
 

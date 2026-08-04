@@ -162,6 +162,7 @@ function buildEmptyProcessingData() {
     quotation: null,
     stages: [],
     assignableUsers: [],
+    providers: [],
     kickoffInternal: {
       latestInvitation: null,
       invitations: [],
@@ -338,6 +339,89 @@ function buildAcceptOrderWonDocumentsState() {
     purchaseOrder: null,
     providerQuotes: [],
   };
+}
+
+function toDateInputValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizePositiveNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
+function buildPurchaseOrderLines({
+  products = [],
+  productAssignments = {},
+  providers = [],
+}) {
+  const providersById = new Map(
+    (Array.isArray(providers) ? providers : []).map((provider) => [
+      Number(provider.id),
+      String(provider.name || "").trim(),
+    ]),
+  );
+
+  const normalizedProducts = Array.isArray(products) ? products : [];
+  const normalizedAssignments =
+    productAssignments && typeof productAssignments === "object"
+      ? productAssignments
+      : {};
+
+  const selectedOnly = normalizedProducts.filter((product) => {
+    const assignment = normalizedAssignments[String(product.id || "")] || {};
+    return Boolean(assignment?.selected);
+  });
+  const source = selectedOnly.length ? selectedOnly : normalizedProducts;
+
+  return source.map((product) => {
+    const itemKey = String(product.id || "");
+    const assignment = normalizedAssignments[itemKey] || {};
+    const quantity = normalizePositiveNumber(
+      assignment?.quantity,
+      normalizePositiveNumber(product.quantity, 0),
+    );
+    const unitCost = normalizePositiveNumber(
+      assignment?.unitCostWithDiscount,
+      normalizePositiveNumber(product.unitCostWithDiscount, 0),
+    );
+    const discountPct = Math.min(
+      100,
+      normalizePositiveNumber(assignment?.discountPct, 0),
+    );
+    const providerId =
+      assignment?.providerId == null || assignment?.providerId === ""
+        ? Number(product.providerId || 0) || null
+        : Number(assignment.providerId || 0) || null;
+    const providerName =
+      (providerId ? providersById.get(Number(providerId)) : "") ||
+      String(product.providerName || "").trim() ||
+      "";
+
+    return {
+      lineId: itemKey || `${Math.random()}`,
+      productId: Number(product.id || 0) || null,
+      code: String(product.code || "").trim() || "-",
+      description: String(product.description || "").trim() || "Sin descripcion",
+      quantity,
+      unitCost,
+      discountPct,
+      providerId,
+      providerName,
+      currencyCode: String(product.currencyCode || "USD").trim() || "USD",
+    };
+  });
+}
+
+function calculatePurchaseOrderLineAmount(line) {
+  const quantity = normalizePositiveNumber(line?.quantity, 0);
+  const unitCost = normalizePositiveNumber(line?.unitCost, 0);
+  const discountPct = Math.min(100, normalizePositiveNumber(line?.discountPct, 0));
+  return quantity * unitCost * (1 - discountPct / 100);
 }
 
 function normalizeText(value) {
@@ -521,6 +605,9 @@ export default function AcceptOrderPage() {
     useState(false);
   const [deletingProcessingEvidenceIds, setDeletingProcessingEvidenceIds] =
     useState(() => new Set());
+  const [editingProductCell, setEditingProductCell] = useState(null);
+  const [purchaseOrderModalOpen, setPurchaseOrderModalOpen] = useState(false);
+  const [purchaseOrderDraft, setPurchaseOrderDraft] = useState(null);
 
   useEffect(() => {
     let ignore = false;
@@ -871,6 +958,211 @@ export default function AcceptOrderPage() {
     setKickoffExternalManualNote("");
     setProcessingWonDocuments(buildAcceptOrderWonDocumentsState());
     setDownloadingWonDocumentKey("");
+    closePurchaseOrderModal();
+  }
+
+  function closePurchaseOrderModal() {
+    setPurchaseOrderModalOpen(false);
+    setPurchaseOrderDraft(null);
+  }
+
+  function openPurchaseOrderModal({ stage, productAssignments }) {
+    const selectedProductIds = new Set(
+      Object.entries(
+        productAssignments && typeof productAssignments === "object"
+          ? productAssignments
+          : {},
+      )
+        .filter(([, value]) => Boolean(value?.selected))
+        .map(([key]) => String(key)),
+    );
+
+    if (!selectedProductIds.size) {
+      setError("Selecciona al menos un item para generar orden.");
+      return;
+    }
+
+    const candidateLines = buildPurchaseOrderLines({
+      products: processingQuotationProducts,
+      productAssignments,
+      providers: processingProviders,
+    });
+    const selectedLines = candidateLines.filter((line) =>
+      selectedProductIds.has(String(line.productId || "")),
+    );
+
+    const missingProviderLine = selectedLines.find(
+      (line) => !Number(line?.providerId || 0),
+    );
+    if (missingProviderLine) {
+      setError(
+        `Selecciona proveedor para el item ${missingProviderLine.code || "sin codigo"}.`,
+      );
+      return;
+    }
+
+    const today = toDateInputValue(new Date());
+    const groupedByProvider = selectedLines.reduce((map, line) => {
+      const providerId = Number(line.providerId || 0);
+      const current = map.get(providerId) || {
+        draftId: `provider-${providerId}`,
+        providerId,
+        providerName: line.providerName || `Proveedor #${providerId}`,
+        orderNumber: "",
+        orderDate: today,
+        lines: [],
+      };
+      current.lines.push({
+        ...line,
+        selectionDate: today,
+      });
+      map.set(providerId, current);
+      return map;
+    }, new Map());
+
+    const draft = {
+      currencyCode: processingCurrencyCode || "USD",
+      orders: Array.from(groupedByProvider.values()),
+    };
+
+    setPurchaseOrderDraft(draft);
+    setPurchaseOrderModalOpen(true);
+  }
+
+  function updatePurchaseOrderDraftOrderField(orderDraftId, field, value) {
+    setPurchaseOrderDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) =>
+          String(order.draftId) === String(orderDraftId)
+            ? {
+                ...order,
+                [field]: value,
+              }
+            : order,
+        ),
+      };
+    });
+  }
+
+  function updatePurchaseOrderDraftLine(orderDraftId, lineId, patch) {
+    setPurchaseOrderDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) => {
+          if (String(order.draftId) !== String(orderDraftId)) return order;
+          return {
+            ...order,
+            lines: (Array.isArray(order.lines) ? order.lines : []).map((line) =>
+              String(line.lineId) === String(lineId)
+                ? {
+                    ...line,
+                    ...patch,
+                  }
+                : line,
+            ),
+          };
+        }),
+      };
+    });
+  }
+
+  function duplicatePurchaseOrderDraftLine(orderDraftId, lineId) {
+    setPurchaseOrderDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) => {
+          if (String(order.draftId) !== String(orderDraftId)) return order;
+          const lines = Array.isArray(order.lines) ? order.lines : [];
+          const sourceLine = lines.find(
+            (line) => String(line.lineId) === String(lineId),
+          );
+          if (!sourceLine) return order;
+          const duplicatedLine = {
+            ...sourceLine,
+            lineId: `${sourceLine.lineId}-copy-${Date.now()}`,
+          };
+          const sourceIndex = lines.findIndex(
+            (line) => String(line.lineId) === String(lineId),
+          );
+          if (sourceIndex < 0) return order;
+          return {
+            ...order,
+            lines: [
+              ...lines.slice(0, sourceIndex + 1),
+              duplicatedLine,
+              ...lines.slice(sourceIndex + 1),
+            ],
+          };
+        }),
+      };
+    });
+  }
+
+  function generatePurchaseOrdersFromModal(stage) {
+    if (!stage || !purchaseOrderDraft) return;
+
+    const orders = Array.isArray(purchaseOrderDraft.orders)
+      ? purchaseOrderDraft.orders
+      : [];
+    if (!orders.length) {
+      setError("No hay ordenes para generar.");
+      return;
+    }
+
+    const invalidLine = orders
+      .flatMap((order) =>
+        (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
+          order,
+          line,
+        })),
+      )
+      .find(({ line }) => normalizePositiveNumber(line?.quantity, 0) <= 0);
+    if (invalidLine) {
+      setError(
+        `La cantidad debe ser mayor a 0 para el item ${invalidLine.line.code || "sin codigo"}.`,
+      );
+      return;
+    }
+
+    const generatedOrders = orders.map((order, index) => ({
+      orderId: `po-${Date.now()}-${index + 1}`,
+      providerId: Number(order.providerId || 0),
+      providerName: String(order.providerName || "").trim() || "Proveedor",
+      orderNumber: String(order.orderNumber || "").trim() || null,
+      orderDate: order.orderDate || toDateInputValue(new Date()),
+      currencyCode: purchaseOrderDraft.currencyCode || processingCurrencyCode || "USD",
+      generatedAt: new Date().toISOString(),
+      lines: (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
+        productId: Number(line.productId || 0) || null,
+        code: line.code || "-",
+        description: String(line.description || "").trim() || "Sin descripcion",
+        quantity: normalizePositiveNumber(line.quantity, 0),
+        unitCost: normalizePositiveNumber(line.unitCost, 0),
+        discountPct: Math.min(100, normalizePositiveNumber(line.discountPct, 0)),
+        selectionDate: line.selectionDate || toDateInputValue(new Date()),
+        amount: calculatePurchaseOrderLineAmount(line),
+      })),
+    }));
+
+    const previousGeneratedOrders = Array.isArray(
+      stage?.stageData?.generatedPurchaseOrders,
+    )
+      ? stage.stageData.generatedPurchaseOrders
+      : [];
+
+    updateActiveStageDataField("generatedPurchaseOrders", [
+      ...previousGeneratedOrders,
+      ...generatedOrders,
+    ]);
+
+    setSuccess(
+      `Se generaron ${generatedOrders.length} orden(es) de compra.`,
+    );
+    closePurchaseOrderModal();
   }
 
   function patchProcessingStage(stageCode, patch) {
@@ -1273,6 +1565,22 @@ export default function AcceptOrderPage() {
   function renderStageBaseSpecificFields(stage) {
     const fieldList = BASE_STAGE_SPECIFIC_FIELDS[stage.stageCode] || [];
     if (!fieldList.length) return null;
+    const rawProductAssignments =
+      stage?.stageData && typeof stage.stageData.productAssignments === "object"
+        ? stage.stageData.productAssignments
+        : {};
+    const generatedPurchaseOrders = Array.isArray(
+      stage?.stageData?.generatedPurchaseOrders,
+    )
+      ? stage.stageData.generatedPurchaseOrders
+      : [];
+    const generatedItemIds = new Set(
+      generatedPurchaseOrders.flatMap((order) =>
+        (Array.isArray(order?.lines) ? order.lines : [])
+          .map((line) => Number(line?.productId || 0))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    );
 
     return (
       <section className="processing-stage-box">
@@ -1315,6 +1623,324 @@ export default function AcceptOrderPage() {
             );
           })}
         </div>
+
+        {stage.stageCode === "provider_purchase_order" ? (
+          <section className="processing-products-box">
+            <header>
+              <h6>Productos</h6>
+              <p>
+                Items de la cotizacion con costo unitario considerando descuentos.
+              </p>
+            </header>
+
+            {processingQuotationProducts.length ? (
+              <div className="processing-products-table-wrap">
+                <table className="processing-products-table">
+                  <thead>
+                    <tr>
+                      <th>Sel.</th>
+                      <th>Codigo</th>
+                      <th>Descripcion</th>
+                      <th>Proveedor</th>
+                      <th className="is-right">Cantidad</th>
+                      <th className="is-right">Costo unitario</th>
+                      <th className="is-right">Costo total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {processingQuotationProducts.map((item) => {
+                      const itemKey = String(item.id || "");
+                      const assignment =
+                        (itemKey && rawProductAssignments[itemKey]) || {};
+                      const selected = Boolean(assignment?.selected);
+                      const quantityInputValue =
+                        assignment?.quantity == null || assignment?.quantity === ""
+                          ? String(Number(item.quantity || 0))
+                          : String(assignment.quantity);
+                      const unitCostInputValue =
+                        assignment?.unitCostWithDiscount == null ||
+                        assignment?.unitCostWithDiscount === ""
+                          ? String(Number(item.unitCostWithDiscount || 0))
+                          : String(assignment.unitCostWithDiscount);
+                      const effectiveQuantity = Number(quantityInputValue || 0);
+                      const effectiveUnitCost = Number(unitCostInputValue || 0);
+                      const effectiveTotalCost =
+                        Number.isFinite(effectiveQuantity) &&
+                        Number.isFinite(effectiveUnitCost)
+                          ? effectiveQuantity * effectiveUnitCost
+                          : 0;
+                      const selectedProviderId =
+                        assignment?.providerId == null || assignment?.providerId === ""
+                          ? item.providerId || ""
+                          : Number(assignment.providerId || 0) || "";
+                      const isEditingQuantity =
+                        editingProductCell?.itemKey === itemKey &&
+                        editingProductCell?.field === "quantity";
+                      const isEditingUnitCost =
+                        editingProductCell?.itemKey === itemKey &&
+                        editingProductCell?.field === "unitCostWithDiscount";
+
+                      return (
+                        <tr
+                          key={item.id}
+                          className={
+                            generatedItemIds.has(Number(item.id || 0))
+                              ? "processing-product-row-generated"
+                              : ""
+                          }
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={(event) => {
+                                const nextAssignments = {
+                                  ...rawProductAssignments,
+                                  [itemKey]: {
+                                    ...assignment,
+                                    selected: event.target.checked,
+                                    providerId:
+                                      selectedProviderId === ""
+                                        ? null
+                                        : Number(selectedProviderId),
+                                  },
+                                };
+                                updateActiveStageDataField(
+                                  "productAssignments",
+                                  nextAssignments,
+                                );
+                              }}
+                              disabled={!processingData.permissions?.canUpdate}
+                            />
+                          </td>
+                          <td>{item.code || "-"}</td>
+                          <td>{item.description || "Sin descripcion"}</td>
+                          <td>
+                            <select
+                              value={selectedProviderId}
+                              onChange={(event) => {
+                                const providerValue = event.target.value;
+                                const nextAssignments = {
+                                  ...rawProductAssignments,
+                                  [itemKey]: {
+                                    ...assignment,
+                                    selected,
+                                    providerId: providerValue
+                                      ? Number(providerValue)
+                                      : null,
+                                  },
+                                };
+                                updateActiveStageDataField(
+                                  "productAssignments",
+                                  nextAssignments,
+                                );
+                              }}
+                              disabled={!processingData.permissions?.canUpdate}
+                            >
+                              <option value="">Sin proveedor</option>
+                              {processingProviders.map((provider) => (
+                                <option key={provider.id} value={provider.id}>
+                                  {provider.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="is-right">
+                            {isEditingQuantity ? (
+                              <input
+                                type="number"
+                                step="0.0001"
+                                min="0"
+                                value={quantityInputValue}
+                                onChange={(event) => {
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      quantity: event.target.value,
+                                    },
+                                  };
+                                  updateActiveStageDataField(
+                                    "productAssignments",
+                                    nextAssignments,
+                                  );
+                                }}
+                                onBlur={() => {
+                                  const normalized = Math.max(
+                                    0,
+                                    Number(quantityInputValue || 0),
+                                  );
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      quantity: Number.isFinite(normalized)
+                                        ? String(Number(normalized.toFixed(4)))
+                                        : "0",
+                                    },
+                                  };
+                                  updateActiveStageDataField(
+                                    "productAssignments",
+                                    nextAssignments,
+                                  );
+                                  setEditingProductCell(null);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.currentTarget.blur();
+                                  }
+                                  if (event.key === "Escape") {
+                                    setEditingProductCell(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="processing-inline-edit-input"
+                                disabled={!processingData.permissions?.canUpdate}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="processing-inline-edit-trigger"
+                                onClick={() =>
+                                  setEditingProductCell({
+                                    itemKey,
+                                    field: "quantity",
+                                  })
+                                }
+                                disabled={!processingData.permissions?.canUpdate}
+                              >
+                                {Number(effectiveQuantity || 0).toLocaleString("es-MX", {
+                                  maximumFractionDigits: 4,
+                                })}
+                              </button>
+                            )}
+                          </td>
+                          <td className="is-right">
+                            {isEditingUnitCost ? (
+                              <input
+                                type="number"
+                                step="0.0001"
+                                min="0"
+                                value={unitCostInputValue}
+                                onChange={(event) => {
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      unitCostWithDiscount: event.target.value,
+                                    },
+                                  };
+                                  updateActiveStageDataField(
+                                    "productAssignments",
+                                    nextAssignments,
+                                  );
+                                }}
+                                onBlur={() => {
+                                  const normalized = Math.max(
+                                    0,
+                                    Number(unitCostInputValue || 0),
+                                  );
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      unitCostWithDiscount: Number.isFinite(normalized)
+                                        ? String(Number(normalized.toFixed(4)))
+                                        : "0",
+                                    },
+                                  };
+                                  updateActiveStageDataField(
+                                    "productAssignments",
+                                    nextAssignments,
+                                  );
+                                  setEditingProductCell(null);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.currentTarget.blur();
+                                  }
+                                  if (event.key === "Escape") {
+                                    setEditingProductCell(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="processing-inline-edit-input"
+                                disabled={!processingData.permissions?.canUpdate}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="processing-inline-edit-trigger"
+                                onClick={() =>
+                                  setEditingProductCell({
+                                    itemKey,
+                                    field: "unitCostWithDiscount",
+                                  })
+                                }
+                                disabled={!processingData.permissions?.canUpdate}
+                              >
+                                {formatCurrency(
+                                  Number(effectiveUnitCost || 0),
+                                  item.currencyCode || processingCurrencyCode,
+                                )}
+                              </button>
+                            )}
+                          </td>
+                          <td className="is-right">
+                            {formatCurrency(
+                              Number(effectiveTotalCost || 0),
+                              item.currencyCode || processingCurrencyCode,
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="field-hint">
+                No hay items disponibles en la cotizacion para mostrar en este step.
+              </p>
+            )}
+
+            <div className="processing-stage-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  openPurchaseOrderModal({
+                    stage,
+                    productAssignments: rawProductAssignments,
+                  })
+                }
+                disabled={!processingData.permissions?.canUpdate}
+              >
+                Generar orden
+              </button>
+            </div>
+          </section>
+        ) : null}
       </section>
     );
   }
@@ -1403,12 +2029,17 @@ export default function AcceptOrderPage() {
     activeProcessingStage?.stageCode === "kickoff_internal";
   const isKickoffExternalStage =
     activeProcessingStage?.stageCode === "kickoff_external";
+  const isProviderPurchaseOrderStage =
+    activeProcessingStage?.stageCode === "provider_purchase_order";
   const processingFinancials = quotationToProcess
     ? getQuotationFinancials(quotationToProcess)
     : getQuotationFinancials({});
   const processingCurrencyCode = quotationToProcess?.latestCurrencyCode || "USD";
   const processingUsers = Array.isArray(processingData?.assignableUsers)
     ? processingData.assignableUsers
+    : [];
+  const processingProviders = Array.isArray(processingData?.providers)
+    ? processingData.providers
     : [];
   const kickoffInternalEvidences = Array.isArray(processingData?.kickoffInternal?.evidences)
     ? processingData.kickoffInternal.evidences
@@ -1426,6 +2057,29 @@ export default function AcceptOrderPage() {
   const kickoffExternalEvidences = Array.isArray(processingData?.kickoffExternal?.evidences)
     ? processingData.kickoffExternal.evidences
     : [];
+  const processingQuotationProducts = Array.isArray(processingData?.quotation?.products)
+    ? processingData.quotation.products
+    : [];
+  const purchaseOrderDraftOrders = Array.isArray(purchaseOrderDraft?.orders)
+    ? purchaseOrderDraft.orders
+    : [];
+  const purchaseOrderDraftTotals = purchaseOrderDraftOrders.reduce(
+    (acc, order) => {
+      const lines = Array.isArray(order?.lines) ? order.lines : [];
+      const subtotal = lines.reduce(
+        (sum, line) => sum + calculatePurchaseOrderLineAmount(line),
+        0,
+      );
+      const ivaPct = normalizePositiveNumber(order?.ivaPct, 16);
+      const ivaAmount = subtotal * (ivaPct / 100);
+      return {
+        subtotal: acc.subtotal + subtotal,
+        ivaAmount: acc.ivaAmount + ivaAmount,
+        total: acc.total + subtotal + ivaAmount,
+      };
+    },
+    { subtotal: 0, ivaAmount: 0, total: 0 },
+  );
   const kickoffExternalGeneratedSummary = String(
     processingData?.kickoffExternal?.aiSummaryCurrent?.summary?.summary || "",
   ).trim();
@@ -2138,7 +2792,9 @@ export default function AcceptOrderPage() {
 
             {!processingLoading && !processingModalError && activeProcessingStage ? (
               <div className="processing-stage-content">
-                {!isKickoffInternalStage && !isKickoffExternalStage ? (
+                {!isKickoffInternalStage &&
+                !isKickoffExternalStage &&
+                !isProviderPurchaseOrderStage ? (
                 <section className="processing-stage-box">
                   <header>
                     <h4>{activeProcessingStage.stageName}</h4>
@@ -3089,6 +3745,282 @@ export default function AcceptOrderPage() {
                 ) : null}
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {purchaseOrderModalOpen && purchaseOrderDraft ? (
+        <div
+          className="modal-overlay modal-overlay-elevated"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="purchase-order-modal-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closePurchaseOrderModal();
+            }
+          }}
+        >
+          <div className="modal-dialog processing-purchase-order-modal">
+            <div className="accept-order-notification-header">
+              <span>Orden de compra</span>
+              <h3 id="purchase-order-modal-title">Generar orden</h3>
+              <p>
+                Se generara una orden por proveedor con los items seleccionados.
+              </p>
+            </div>
+
+            {purchaseOrderDraftOrders.map((order) => {
+              const orderLines = Array.isArray(order?.lines) ? order.lines : [];
+              const subtotal = orderLines.reduce(
+                (sum, line) => sum + calculatePurchaseOrderLineAmount(line),
+                0,
+              );
+              const ivaPct = normalizePositiveNumber(order?.ivaPct, 16);
+              const ivaAmount = subtotal * (ivaPct / 100);
+              const total = subtotal + ivaAmount;
+
+              return (
+                <section key={order.draftId} className="processing-purchase-order-lines">
+                  <header className="processing-purchase-order-lines-header">
+                    <h4>{order.providerName || "Proveedor"}</h4>
+                    <span>{orderLines.length} item(s)</span>
+                  </header>
+
+                  <div className="processing-stage-grid two">
+                    <label className="field-group processing-stage-field">
+                      <span>Orden #</span>
+                      <input
+                        type="text"
+                        value={order.orderNumber || ""}
+                        onChange={(event) =>
+                          updatePurchaseOrderDraftOrderField(
+                            order.draftId,
+                            "orderNumber",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="field-group processing-stage-field">
+                      <span>Fecha</span>
+                      <input
+                        type="date"
+                        value={order.orderDate || ""}
+                        onChange={(event) =>
+                          updatePurchaseOrderDraftOrderField(
+                            order.draftId,
+                            "orderDate",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="field-group processing-stage-field">
+                      <span>Moneda</span>
+                      <input
+                        type="text"
+                        value={order.currencyCode || purchaseOrderDraft.currencyCode || "USD"}
+                        onChange={(event) =>
+                          updatePurchaseOrderDraftOrderField(
+                            order.draftId,
+                            "currencyCode",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="field-group processing-stage-field">
+                      <span>I.V.A. (%)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={order.ivaPct == null ? 16 : order.ivaPct}
+                        onChange={(event) =>
+                          updatePurchaseOrderDraftOrderField(
+                            order.draftId,
+                            "ivaPct",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="processing-products-table-wrap">
+                    <table className="processing-products-table">
+                      <thead>
+                        <tr>
+                          <th>Codigo</th>
+                          <th>Descripcion</th>
+                          <th className="is-right">Cantidad</th>
+                          <th className="is-right">Costo unitario</th>
+                          <th>Fecha seleccion</th>
+                          <th className="is-right">Importe</th>
+                          <th>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderLines.map((line) => (
+                          <tr key={`${order.draftId}-${line.lineId}`}>
+                            <td>{line.code || "-"}</td>
+                            <td>
+                              <input
+                                type="text"
+                                value={line.description || ""}
+                                onChange={(event) =>
+                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
+                                    description: event.target.value,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="is-right">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={line.quantity}
+                                onChange={(event) =>
+                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
+                                    quantity: event.target.value,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="is-right">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={line.unitCost}
+                                onChange={(event) =>
+                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
+                                    unitCost: event.target.value,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="date"
+                                value={line.selectionDate || ""}
+                                onChange={(event) =>
+                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
+                                    selectionDate: event.target.value,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td className="is-right">
+                              {formatCurrency(
+                                calculatePurchaseOrderLineAmount(line),
+                                order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                              )}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() =>
+                                  duplicatePurchaseOrderDraftLine(
+                                    order.draftId,
+                                    line.lineId,
+                                  )
+                                }
+                              >
+                                Duplicar
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="purchase-order-preview-totals">
+                    <div>
+                      <span>Subtotal</span>
+                      <strong>
+                        {formatCurrency(
+                          subtotal,
+                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>I.V.A.</span>
+                      <strong>
+                        {formatCurrency(
+                          ivaAmount,
+                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Total</span>
+                      <strong>
+                        {formatCurrency(
+                          total,
+                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+
+            <section className="purchase-order-preview-card">
+              <div className="purchase-order-preview-totals">
+                <div>
+                  <span>Subtotal global</span>
+                  <strong>
+                    {formatCurrency(
+                      purchaseOrderDraftTotals.subtotal,
+                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                    )}
+                  </strong>
+                </div>
+                <div>
+                  <span>I.V.A. global</span>
+                  <strong>
+                    {formatCurrency(
+                      purchaseOrderDraftTotals.ivaAmount,
+                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                    )}
+                  </strong>
+                </div>
+                <div>
+                  <span>Total global</span>
+                  <strong>
+                    {formatCurrency(
+                      purchaseOrderDraftTotals.total,
+                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                    )}
+                  </strong>
+                </div>
+              </div>
+            </section>
+
+            <div className="processing-stage-actions split">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closePurchaseOrderModal}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => generatePurchaseOrdersFromModal(activeProcessingStage)}
+              >
+                Generar orden
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
