@@ -4,6 +4,16 @@ import { usePersistedStatusFilter } from "../appFilters";
 import { useProviderPricing } from "./useProviderPricing";
 
 export function useProvidersPage({ currentUser }) {
+  function buildEmptyProviderContactDraft() {
+    return {
+      firstName: "",
+      lastName: "",
+      email: "",
+      mobile: "",
+      role: "",
+    };
+  }
+
   const [providers, setProviders] = useState([]);
   const [providerStatusFilter, setProviderStatusFilterState] =
     usePersistedStatusFilter("crm.providers.statusFilter");
@@ -38,6 +48,12 @@ export function useProvidersPage({ currentUser }) {
     stateRegion: "",
     activationStatusId: "",
   });
+  const [providerContactsDraft, setProviderContactsDraft] = useState([]);
+  const [providerContactDraft, setProviderContactDraft] = useState(
+    buildEmptyProviderContactDraft,
+  );
+  const [editingProviderContactIndex, setEditingProviderContactIndex] =
+    useState(-1);
 
   const explicitProviderPermissions = useMemo(
     () => new Set(currentUser?.permissions || []),
@@ -220,6 +236,9 @@ export function useProvidersPage({ currentUser }) {
     setEditingProviderId(null);
     setEditProviderAudit(null);
     setForm(buildDefaultProviderForm());
+    setProviderContactsDraft([]);
+    setProviderContactDraft(buildEmptyProviderContactDraft());
+    setEditingProviderContactIndex(-1);
     setShowProviderModal(true);
   }
 
@@ -238,6 +257,38 @@ export function useProvidersPage({ currentUser }) {
         stateRegion: data.state_region || "",
         activationStatusId: String(data.activation_status_id || ""),
       });
+      const fetchedContacts = Array.isArray(data.contacts)
+        ? data.contacts
+        : [];
+      const fallbackContact =
+        fetchedContacts.length === 0 &&
+        (data.contact_first_name ||
+          data.contact_last_name ||
+          data.contact_email ||
+          data.contact_mobile ||
+          data.contact_role)
+          ? [
+              {
+                firstName: data.contact_first_name || "",
+                lastName: data.contact_last_name || "",
+                email: data.contact_email || "",
+                mobile: data.contact_mobile || "",
+                role: data.contact_role || "",
+              },
+            ]
+          : [];
+
+      setProviderContactsDraft(
+        (fetchedContacts.length ? fetchedContacts : fallbackContact).map((contact) => ({
+          firstName: contact.firstName || "",
+          lastName: contact.lastName || "",
+          email: contact.email || "",
+          mobile: contact.mobile || "",
+          role: contact.role || "",
+        })),
+      );
+      setProviderContactDraft(buildEmptyProviderContactDraft());
+      setEditingProviderContactIndex(-1);
       setEditProviderAudit({
         createdByName: data.created_by_name || "",
         createdAt: data.created_at || "",
@@ -256,6 +307,89 @@ export function useProvidersPage({ currentUser }) {
     setShowProviderModal(false);
     setEditingProviderId(null);
     setEditProviderAudit(null);
+    setProviderContactsDraft([]);
+    setProviderContactDraft(buildEmptyProviderContactDraft());
+    setEditingProviderContactIndex(-1);
+  }
+
+  function updateProviderContactDraftField(field, value) {
+    setProviderContactDraft((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  }
+
+  function upsertProviderContactDraft() {
+    const nextContact = {
+      firstName: String(providerContactDraft.firstName || "").trim(),
+      lastName: String(providerContactDraft.lastName || "").trim(),
+      email: String(providerContactDraft.email || "").trim(),
+      mobile: String(providerContactDraft.mobile || "").trim(),
+      role: String(providerContactDraft.role || "").trim(),
+    };
+
+    const hasSomeValue = Boolean(
+      nextContact.firstName ||
+        nextContact.lastName ||
+        nextContact.email ||
+        nextContact.mobile ||
+        nextContact.role,
+    );
+    if (!hasSomeValue) {
+      setError("Completa al menos un dato del contacto antes de guardarlo.");
+      return;
+    }
+
+    setProviderContactsDraft((current) => {
+      if (
+        Number.isInteger(editingProviderContactIndex) &&
+        editingProviderContactIndex >= 0 &&
+        editingProviderContactIndex < current.length
+      ) {
+        return current.map((contact, index) =>
+          index === editingProviderContactIndex ? nextContact : contact,
+        );
+      }
+      return [...current, nextContact];
+    });
+
+    setProviderContactDraft(buildEmptyProviderContactDraft());
+    setEditingProviderContactIndex(-1);
+    setError("");
+  }
+
+  function editProviderContact(index) {
+    const contact = providerContactsDraft[index];
+    if (!contact) return;
+    setProviderContactDraft({
+      firstName: contact.firstName || "",
+      lastName: contact.lastName || "",
+      email: contact.email || "",
+      mobile: contact.mobile || "",
+      role: contact.role || "",
+    });
+    setEditingProviderContactIndex(index);
+  }
+
+  function removeProviderContact(index) {
+    setProviderContactsDraft((current) =>
+      current.filter((_, contactIndex) => contactIndex !== index),
+    );
+
+    if (editingProviderContactIndex === index) {
+      setProviderContactDraft(buildEmptyProviderContactDraft());
+      setEditingProviderContactIndex(-1);
+      return;
+    }
+
+    if (editingProviderContactIndex > index) {
+      setEditingProviderContactIndex((current) => current - 1);
+    }
+  }
+
+  function cancelProviderContactEdit() {
+    setProviderContactDraft(buildEmptyProviderContactDraft());
+    setEditingProviderContactIndex(-1);
   }
 
   const isProviderActive = useCallback((provider) => {
@@ -512,9 +646,33 @@ export function useProvidersPage({ currentUser }) {
     setSavingProvider(true);
 
     try {
+      const normalizedContacts = providerContactsDraft
+        .map((contact) => ({
+          firstName: String(contact.firstName || "").trim(),
+          lastName: String(contact.lastName || "").trim(),
+          email: String(contact.email || "").trim(),
+          mobile: String(contact.mobile || "").trim(),
+          role: String(contact.role || "").trim(),
+        }))
+        .filter(
+          (contact) =>
+            contact.firstName ||
+            contact.lastName ||
+            contact.email ||
+            contact.mobile ||
+            contact.role,
+        );
+
+      const firstContact = normalizedContacts[0] || null;
       const payload = {
         name: form.name,
         registrationCode: String(form.registrationCode || "").trim() || null,
+        contactFirstName: firstContact?.firstName || null,
+        contactLastName: firstContact?.lastName || null,
+        contactEmail: firstContact?.email || null,
+        contactMobile: firstContact?.mobile || null,
+        contactRole: firstContact?.role || null,
+        contacts: normalizedContacts,
         addressLine: form.addressLine || undefined,
         countryId: Number(form.countryId),
         city: form.city || undefined,
@@ -585,6 +743,9 @@ export function useProvidersPage({ currentUser }) {
     canCreateProviderPrices,
     canUpdateProviderPrices,
     form,
+    providerContactsDraft,
+    providerContactDraft,
+    editingProviderContactIndex,
     providerStatusCounts,
     totalProvidersCount,
     visibleProviders,
@@ -610,6 +771,11 @@ export function useProvidersPage({ currentUser }) {
     getProviderStatusConfirmationMeta,
     saveProvider,
     updateProviderFormField,
+    updateProviderContactDraftField,
+    upsertProviderContactDraft,
+    editProviderContact,
+    removeProviderContact,
+    cancelProviderContactEdit,
     ...pricing,
   };
 }

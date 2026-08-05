@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
+import PurchaseOrderPrintPreviewModal from "./quotations/PurchaseOrderPrintPreviewModal";
+import { buildPurchaseOrderPrintModel } from "./quotations/buildPurchaseOrderPrintModel";
 import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation";
 
 const ACCEPT_ORDER_STATUS_CODES = ["ganada", "aceptada"];
@@ -43,19 +45,6 @@ const PROCESSING_STAGE_STATUS_LABELS = Object.fromEntries(
 const BASE_STAGE_SPECIFIC_FIELDS = {
   provider_purchase_order: [
     { key: "poRequestedAt", label: "Fecha solicitud OC", type: "date" },
-    { key: "poConfirmedAt", label: "Fecha confirmacion OC", type: "date" },
-    {
-      key: "providersInvolved",
-      label: "Proveedores involucrados",
-      type: "text",
-      placeholder: "Ej. Provider A, Provider B",
-    },
-    {
-      key: "purchaseOrderReferences",
-      label: "Referencias OC",
-      type: "text",
-      placeholder: "Ej. OC-2025-004, OC-2025-009",
-    },
   ],
   products_reception: [
     {
@@ -373,14 +362,19 @@ function buildPurchaseOrderLines({
       : {};
 
   const selectedOnly = normalizedProducts.filter((product) => {
-    const assignment = normalizedAssignments[String(product.id || "")] || {};
+    const assignment =
+      normalizedAssignments[String(product.assignmentKey || product.id || "")] || {};
     return Boolean(assignment?.selected);
   });
   const source = selectedOnly.length ? selectedOnly : normalizedProducts;
 
   return source.map((product) => {
-    const itemKey = String(product.id || "");
+    const itemKey = String(product.assignmentKey || product.id || "");
     const assignment = normalizedAssignments[itemKey] || {};
+    const selectionDate =
+      toDateInputValue(assignment?.selectionDate) ||
+      toDateInputValue(product.selectionDate) ||
+      toDateInputValue(new Date());
     const quantity = normalizePositiveNumber(
       assignment?.quantity,
       normalizePositiveNumber(product.quantity, 0),
@@ -404,17 +398,100 @@ function buildPurchaseOrderLines({
 
     return {
       lineId: itemKey || `${Math.random()}`,
-      productId: Number(product.id || 0) || null,
+      productId: Number(product.sourceProductId || product.id || 0) || null,
       code: String(product.code || "").trim() || "-",
       description: String(product.description || "").trim() || "Sin descripcion",
       quantity,
       unitCost,
       discountPct,
+      selectionDate,
       providerId,
       providerName,
       currencyCode: String(product.currencyCode || "USD").trim() || "USD",
     };
   });
+}
+
+function buildProviderPurchaseOrderRows({
+  products = [],
+  productAssignmentDuplicates = {},
+  productAssignmentExtras = {},
+}) {
+  const normalizedProducts = Array.isArray(products) ? products : [];
+  const normalizedDuplicates =
+    productAssignmentDuplicates && typeof productAssignmentDuplicates === "object"
+      ? productAssignmentDuplicates
+      : {};
+  const normalizedExtras =
+    productAssignmentExtras && typeof productAssignmentExtras === "object"
+      ? productAssignmentExtras
+      : {};
+
+  const productsById = new Map(
+    normalizedProducts
+      .map((product) => [Number(product.id || 0), product])
+      .filter(([id]) => Number.isInteger(id) && id > 0),
+  );
+
+  const baseRows = normalizedProducts.map((product) => {
+    const productId = Number(product.id || 0) || null;
+    return {
+      ...product,
+      id: String(product.id || ""),
+      assignmentKey: String(product.id || ""),
+      sourceProductId: productId,
+      isDuplicate: false,
+    };
+  });
+
+  const duplicatesBySource = Object.entries(normalizedDuplicates).reduce(
+    (map, [duplicateKey, duplicateMeta]) => {
+      const sourceProductId = Number(duplicateMeta?.sourceProductId || 0);
+      const sourceProduct = productsById.get(sourceProductId);
+      if (!sourceProduct) return map;
+      const duplicateRow = {
+        ...sourceProduct,
+        id: String(duplicateKey),
+        assignmentKey: String(duplicateKey),
+        sourceProductId,
+        isDuplicate: true,
+        createdAt: Number(duplicateMeta?.createdAt || 0),
+      };
+      const current = map.get(sourceProductId) || [];
+      current.push(duplicateRow);
+      map.set(sourceProductId, current);
+      return map;
+    },
+    new Map(),
+  );
+
+  const groupedRows = baseRows.flatMap((baseRow) => {
+    const sourceProductId = Number(baseRow.sourceProductId || 0);
+    const duplicates = duplicatesBySource.get(sourceProductId) || [];
+    return [baseRow, ...duplicates];
+  });
+
+  const extraRows = Object.entries(normalizedExtras)
+    .map(([extraKey, extraMeta]) => ({
+      id: String(extraKey),
+      assignmentKey: String(extraKey),
+      sourceProductId: Number(extraMeta?.sourceProductId || 0) || null,
+      isDuplicate: false,
+      isCustom: true,
+      code: String(extraMeta?.code || "").trim() || "ITEM-MANUAL",
+      description:
+        String(extraMeta?.description || "").trim() || "Item agregado manualmente",
+      providerId: Number(extraMeta?.providerId || 0) || null,
+      providerName: "",
+      quantity: normalizePositiveNumber(extraMeta?.quantity, 1),
+      unitCostWithDiscount: normalizePositiveNumber(extraMeta?.unitCostWithDiscount, 0),
+      selectionDate: toDateInputValue(extraMeta?.selectionDate) || toDateInputValue(new Date()),
+      currencyCode: String(extraMeta?.currencyCode || "USD").trim() || "USD",
+      createdAt: Number(extraMeta?.createdAt || 0),
+    }))
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  return [...groupedRows, ...extraRows];
 }
 
 function calculatePurchaseOrderLineAmount(line) {
@@ -448,6 +525,17 @@ function formatDate(value) {
     month: "short",
     year: "numeric",
   }).format(date);
+}
+
+function formatPurchaseOrderNumber(quotationId, orderDate) {
+  const dateValue = String(orderDate || "").trim();
+  const [year, month, day] = dateValue.split("-");
+  if (!year || !month || !day) {
+    return `OC-${Number(quotationId || 0)}`;
+  }
+
+  const yearSuffix = String(year).slice(-2);
+  return `OC-${Number(quotationId || 0)}-${day}-${month}-${yearSuffix}`;
 }
 
 function formatPercent(value) {
@@ -608,6 +696,24 @@ export default function AcceptOrderPage() {
   const [editingProductCell, setEditingProductCell] = useState(null);
   const [purchaseOrderModalOpen, setPurchaseOrderModalOpen] = useState(false);
   const [purchaseOrderDraft, setPurchaseOrderDraft] = useState(null);
+  const [purchaseOrderFinalPreviewOpen, setPurchaseOrderFinalPreviewOpen] =
+    useState(false);
+  const [purchaseOrderPendingGeneratedOrders, setPurchaseOrderPendingGeneratedOrders] =
+    useState([]);
+  const [customStepItemPicker, setCustomStepItemPicker] = useState({
+    isOpen: false,
+    stageCode: "",
+    itemKey: "",
+    providerId: "",
+    priceListId: "",
+    activeLists: [],
+    unavailableListMessage: "",
+    loadingLists: false,
+    loading: false,
+    error: "",
+    query: "",
+    results: [],
+  });
 
   useEffect(() => {
     let ignore = false;
@@ -649,6 +755,129 @@ export default function AcceptOrderPage() {
   useEffect(() => {
     setPage(1);
   }, [query, perPage]);
+
+  useEffect(() => {
+    if (!customStepItemPicker.isOpen) return undefined;
+
+    if (!customStepItemPicker.providerId) {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        activeLists: [],
+        priceListId: "",
+        loadingLists: false,
+        unavailableListMessage: "",
+        loading: false,
+        error: "",
+        results: [],
+      }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        loadingLists: true,
+        error: "",
+      }));
+
+      try {
+        const { data } = await api.get("/api/quotation-product-lists", {
+          params: {
+            providerId: customStepItemPicker.providerId,
+          },
+        });
+
+        if (cancelled) return;
+        const nextActiveLists = Array.isArray(data) ? data : [];
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loadingLists: false,
+          activeLists: nextActiveLists,
+          unavailableListMessage: nextActiveLists.length
+            ? ""
+            : "El proveedor seleccionado no tiene una lista activa disponible.",
+          priceListId: nextActiveLists.length ? String(nextActiveLists[0].id) : "",
+          results: nextActiveLists.length ? prev.results : [],
+        }));
+      } catch (pickerError) {
+        if (cancelled) return;
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loadingLists: false,
+          error: getApiErrorMessage(
+            pickerError,
+            "No fue posible cargar las listas activas del proveedor",
+          ),
+        }));
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [customStepItemPicker.isOpen, customStepItemPicker.providerId]);
+
+  useEffect(() => {
+    if (!customStepItemPicker.isOpen) return undefined;
+
+    if (!customStepItemPicker.providerId || !customStepItemPicker.priceListId) {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        loading: false,
+        results: [],
+      }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        loading: true,
+        error: "",
+      }));
+
+      try {
+        const { data } = await api.get("/api/quotation-products/search", {
+          params: {
+            providerId: customStepItemPicker.providerId,
+            priceListId: customStepItemPicker.priceListId,
+            q: customStepItemPicker.query,
+            limit: 25,
+          },
+        });
+
+        if (cancelled) return;
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loading: false,
+          results: Array.isArray(data) ? data : [],
+        }));
+      } catch (pickerError) {
+        if (cancelled) return;
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loading: false,
+          error: getApiErrorMessage(
+            pickerError,
+            "No fue posible cargar los productos disponibles",
+          ),
+        }));
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    customStepItemPicker.isOpen,
+    customStepItemPicker.providerId,
+    customStepItemPicker.priceListId,
+    customStepItemPicker.query,
+  ]);
 
   function toggleSort(field) {
     if (sortField === field) {
@@ -959,14 +1188,128 @@ export default function AcceptOrderPage() {
     setProcessingWonDocuments(buildAcceptOrderWonDocumentsState());
     setDownloadingWonDocumentKey("");
     closePurchaseOrderModal();
+    closeCustomStepItemPicker();
   }
 
   function closePurchaseOrderModal() {
     setPurchaseOrderModalOpen(false);
     setPurchaseOrderDraft(null);
+    setPurchaseOrderFinalPreviewOpen(false);
+    setPurchaseOrderPendingGeneratedOrders([]);
   }
 
-  function openPurchaseOrderModal({ stage, productAssignments }) {
+  function openCustomStepItemPicker(stageCode, itemKey, providerId = "") {
+    setCustomStepItemPicker({
+      isOpen: true,
+      stageCode: String(stageCode || ""),
+      itemKey: String(itemKey || ""),
+      providerId: providerId ? String(providerId) : "",
+      priceListId: "",
+      activeLists: [],
+      unavailableListMessage: "",
+      loadingLists: false,
+      loading: false,
+      error: "",
+      query: "",
+      results: [],
+    });
+  }
+
+  function closeCustomStepItemPicker() {
+    setCustomStepItemPicker({
+      isOpen: false,
+      stageCode: "",
+      itemKey: "",
+      providerId: "",
+      priceListId: "",
+      activeLists: [],
+      unavailableListMessage: "",
+      loadingLists: false,
+      loading: false,
+      error: "",
+      query: "",
+      results: [],
+    });
+  }
+
+  function applyCatalogProductToCustomStepItem(product) {
+    const stageCode = String(customStepItemPicker.stageCode || "");
+    const itemKey = String(customStepItemPicker.itemKey || "");
+    if (!stageCode || !itemKey || !product) return;
+
+    const providerId = Number(product.providerId || 0) || null;
+    const unitCost = normalizePositiveNumber(
+      product.unitCostWithDiscount,
+      normalizePositiveNumber(product.price, 0),
+    );
+    const normalizedCode = String(product.code || "").trim() || "ITEM-MANUAL";
+    const normalizedDescription =
+      String(product.description || "").trim() || "Item agregado manualmente";
+    const normalizedCurrency =
+      String(product.currencyCode || processingCurrencyCode || "USD").trim() || "USD";
+
+    setProcessingData((current) => {
+      const nextStages = (Array.isArray(current.stages) ? current.stages : []).map(
+        (stage) => {
+          if (stage.stageCode !== stageCode) return stage;
+          const stageData = stage.stageData || {};
+          const currentAssignments =
+            stageData.productAssignments &&
+            typeof stageData.productAssignments === "object"
+              ? stageData.productAssignments
+              : {};
+          const currentExtras =
+            stageData.productAssignmentExtras &&
+            typeof stageData.productAssignmentExtras === "object"
+              ? stageData.productAssignmentExtras
+              : {};
+          const previousAssignment = currentAssignments[itemKey] || {};
+          const previousExtra = currentExtras[itemKey] || {};
+
+          return {
+            ...stage,
+            stageData: {
+              ...stageData,
+              productAssignments: {
+                ...currentAssignments,
+                [itemKey]: {
+                  ...previousAssignment,
+                  selected: true,
+                  providerId,
+                  unitCostWithDiscount: String(unitCost),
+                },
+              },
+              productAssignmentExtras: {
+                ...currentExtras,
+                [itemKey]: {
+                  ...previousExtra,
+                  sourceProductId: Number(product.id || 0) || null,
+                  providerId,
+                  code: normalizedCode,
+                  description: normalizedDescription,
+                  currencyCode: normalizedCurrency,
+                  unitCostWithDiscount: unitCost,
+                },
+              },
+            },
+          };
+        },
+      );
+      return {
+        ...current,
+        stages: nextStages,
+      };
+    });
+    setProcessingDirty(true);
+    closeCustomStepItemPicker();
+  }
+
+  function openPurchaseOrderModal({
+    stage,
+    productAssignments,
+    productAssignmentDuplicates,
+    productAssignmentExtras,
+  }) {
     const selectedProductIds = new Set(
       Object.entries(
         productAssignments && typeof productAssignments === "object"
@@ -982,13 +1325,19 @@ export default function AcceptOrderPage() {
       return;
     }
 
-    const candidateLines = buildPurchaseOrderLines({
+    const providerPurchaseOrderRows = buildProviderPurchaseOrderRows({
       products: processingQuotationProducts,
+      productAssignmentDuplicates,
+      productAssignmentExtras,
+    });
+
+    const candidateLines = buildPurchaseOrderLines({
+      products: providerPurchaseOrderRows,
       productAssignments,
       providers: processingProviders,
     });
     const selectedLines = candidateLines.filter((line) =>
-      selectedProductIds.has(String(line.productId || "")),
+      selectedProductIds.has(String(line.lineId || "")),
     );
 
     const missingProviderLine = selectedLines.find(
@@ -1002,19 +1351,20 @@ export default function AcceptOrderPage() {
     }
 
     const today = toDateInputValue(new Date());
+    const quotationNumber = Number(quotationToProcess?.id || 0);
     const groupedByProvider = selectedLines.reduce((map, line) => {
       const providerId = Number(line.providerId || 0);
       const current = map.get(providerId) || {
         draftId: `provider-${providerId}`,
         providerId,
         providerName: line.providerName || `Proveedor #${providerId}`,
-        orderNumber: "",
+        orderNumber: formatPurchaseOrderNumber(quotationNumber, today),
         orderDate: today,
         lines: [],
       };
       current.lines.push({
         ...line,
-        selectionDate: today,
+        selectionDate: toDateInputValue(line.selectionDate) || today,
       });
       map.set(providerId, current);
       return map;
@@ -1069,48 +1419,16 @@ export default function AcceptOrderPage() {
     });
   }
 
-  function duplicatePurchaseOrderDraftLine(orderDraftId, lineId) {
-    setPurchaseOrderDraft((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) => {
-          if (String(order.draftId) !== String(orderDraftId)) return order;
-          const lines = Array.isArray(order.lines) ? order.lines : [];
-          const sourceLine = lines.find(
-            (line) => String(line.lineId) === String(lineId),
-          );
-          if (!sourceLine) return order;
-          const duplicatedLine = {
-            ...sourceLine,
-            lineId: `${sourceLine.lineId}-copy-${Date.now()}`,
-          };
-          const sourceIndex = lines.findIndex(
-            (line) => String(line.lineId) === String(lineId),
-          );
-          if (sourceIndex < 0) return order;
-          return {
-            ...order,
-            lines: [
-              ...lines.slice(0, sourceIndex + 1),
-              duplicatedLine,
-              ...lines.slice(sourceIndex + 1),
-            ],
-          };
-        }),
-      };
-    });
-  }
-
-  function generatePurchaseOrdersFromModal(stage) {
-    if (!stage || !purchaseOrderDraft) return;
+  function buildGeneratedPurchaseOrdersFromDraft() {
+    if (!purchaseOrderDraft) {
+      return { orders: [], errorMessage: "No hay ordenes para generar." };
+    }
 
     const orders = Array.isArray(purchaseOrderDraft.orders)
       ? purchaseOrderDraft.orders
       : [];
     if (!orders.length) {
-      setError("No hay ordenes para generar.");
-      return;
+      return { orders: [], errorMessage: "No hay ordenes para generar." };
     }
 
     const invalidLine = orders
@@ -1122,19 +1440,25 @@ export default function AcceptOrderPage() {
       )
       .find(({ line }) => normalizePositiveNumber(line?.quantity, 0) <= 0);
     if (invalidLine) {
-      setError(
-        `La cantidad debe ser mayor a 0 para el item ${invalidLine.line.code || "sin codigo"}.`,
-      );
-      return;
+      return {
+        orders: [],
+        errorMessage: `La cantidad debe ser mayor a 0 para el item ${invalidLine.line.code || "sin codigo"}.`,
+      };
     }
 
     const generatedOrders = orders.map((order, index) => ({
       orderId: `po-${Date.now()}-${index + 1}`,
       providerId: Number(order.providerId || 0),
       providerName: String(order.providerName || "").trim() || "Proveedor",
-      orderNumber: String(order.orderNumber || "").trim() || null,
+      orderNumber:
+        String(order.orderNumber || "").trim() ||
+        formatPurchaseOrderNumber(
+          quotationToProcess?.id,
+          order.orderDate || purchaseOrderDraft.orders?.[index]?.orderDate,
+        ),
       orderDate: order.orderDate || toDateInputValue(new Date()),
       currencyCode: purchaseOrderDraft.currencyCode || processingCurrencyCode || "USD",
+      ivaPct: normalizePositiveNumber(order.ivaPct, 16),
       generatedAt: new Date().toISOString(),
       lines: (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
         productId: Number(line.productId || 0) || null,
@@ -1148,21 +1472,58 @@ export default function AcceptOrderPage() {
       })),
     }));
 
-    const previousGeneratedOrders = Array.isArray(
-      stage?.stageData?.generatedPurchaseOrders,
-    )
-      ? stage.stageData.generatedPurchaseOrders
+    return { orders: generatedOrders, errorMessage: "" };
+  }
+
+  function openPurchaseOrderFinalPreview() {
+    const { orders, errorMessage } = buildGeneratedPurchaseOrdersFromDraft();
+    if (errorMessage) {
+      setError(errorMessage);
+      return;
+    }
+    setError("");
+    setPurchaseOrderPendingGeneratedOrders(orders);
+    setPurchaseOrderFinalPreviewOpen(true);
+  }
+
+  async function confirmGeneratePurchaseOrdersFromPreview() {
+    const generatedOrders = Array.isArray(purchaseOrderPendingGeneratedOrders)
+      ? purchaseOrderPendingGeneratedOrders
       : [];
+    if (!generatedOrders.length) {
+      setError("No hay ordenes para generar.");
+      return;
+    }
 
-    updateActiveStageDataField("generatedPurchaseOrders", [
-      ...previousGeneratedOrders,
-      ...generatedOrders,
-    ]);
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId) return;
 
-    setSuccess(
-      `Se generaron ${generatedOrders.length} orden(es) de compra.`,
-    );
-    closePurchaseOrderModal();
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/quotations/${quotationId}/processing/provider-purchase-orders`,
+        {
+          orders: generatedOrders,
+        },
+      );
+      if (Array.isArray(data?.stages)) {
+        setProcessingData((current) => ({
+          ...current,
+          stages: data.stages,
+        }));
+      }
+      setSuccess(
+        `Se generaron ${generatedOrders.length} orden(es) de compra.`,
+      );
+      closePurchaseOrderModal();
+    } catch (generationError) {
+      setError(
+        getApiErrorMessage(
+          generationError,
+          "No fue posible guardar las ordenes de compra",
+        ),
+      );
+    }
   }
 
   function patchProcessingStage(stageCode, patch) {
@@ -1562,6 +1923,21 @@ export default function AcceptOrderPage() {
     });
   }
 
+  function updateStageProductAssignmentState(
+    stageCode,
+    productAssignments,
+    productAssignmentDuplicates,
+    productAssignmentExtras,
+  ) {
+    patchProcessingStage(stageCode, {
+      stageData: {
+        productAssignments,
+        productAssignmentDuplicates,
+        productAssignmentExtras,
+      },
+    });
+  }
+
   function renderStageBaseSpecificFields(stage) {
     const fieldList = BASE_STAGE_SPECIFIC_FIELDS[stage.stageCode] || [];
     if (!fieldList.length) return null;
@@ -1569,6 +1945,21 @@ export default function AcceptOrderPage() {
       stage?.stageData && typeof stage.stageData.productAssignments === "object"
         ? stage.stageData.productAssignments
         : {};
+    const rawProductAssignmentDuplicates =
+      stage?.stageData &&
+      typeof stage.stageData.productAssignmentDuplicates === "object"
+        ? stage.stageData.productAssignmentDuplicates
+        : {};
+    const rawProductAssignmentExtras =
+      stage?.stageData &&
+      typeof stage.stageData.productAssignmentExtras === "object"
+        ? stage.stageData.productAssignmentExtras
+        : {};
+    const providerPurchaseOrderRows = buildProviderPurchaseOrderRows({
+      products: processingQuotationProducts,
+      productAssignmentDuplicates: rawProductAssignmentDuplicates,
+      productAssignmentExtras: rawProductAssignmentExtras,
+    });
     const generatedPurchaseOrders = Array.isArray(
       stage?.stageData?.generatedPurchaseOrders,
     )
@@ -1581,6 +1972,33 @@ export default function AcceptOrderPage() {
           .filter((value) => Number.isInteger(value) && value > 0),
       ),
     );
+    const quotationCommercialFields = [
+      {
+        key: "commercialDeliveryTime",
+        label: "Tiempo de entrega",
+        value: quotationToProcess?.latestDeliveryTime || "",
+      },
+      {
+        key: "commercialValidity",
+        label: "Validez",
+        value: quotationToProcess?.latestQuotationValidity || "",
+      },
+      {
+        key: "commercialWarranty",
+        label: "Garantia",
+        value: quotationToProcess?.latestWarranty || "",
+      },
+      {
+        key: "commercialPaymentTerms",
+        label: "Forma de pago",
+        value: quotationToProcess?.latestPaymentTerms || "",
+      },
+      {
+        key: "commercialCurrency",
+        label: "Moneda",
+        value: quotationToProcess?.latestCurrencyCode || "",
+      },
+    ];
 
     return (
       <section className="processing-stage-box">
@@ -1622,6 +2040,14 @@ export default function AcceptOrderPage() {
               </label>
             );
           })}
+          {stage.stageCode === "provider_purchase_order"
+            ? quotationCommercialFields.map((field) => (
+                <label key={field.key} className="field-group processing-stage-field">
+                  <span>{field.label}</span>
+                  <input type="text" value={field.value || "-"} readOnly disabled />
+                </label>
+              ))
+            : null}
         </div>
 
         {stage.stageCode === "provider_purchase_order" ? (
@@ -1633,7 +2059,7 @@ export default function AcceptOrderPage() {
               </p>
             </header>
 
-            {processingQuotationProducts.length ? (
+            {providerPurchaseOrderRows.length ? (
               <div className="processing-products-table-wrap">
                 <table className="processing-products-table">
                   <thead>
@@ -1644,12 +2070,14 @@ export default function AcceptOrderPage() {
                       <th>Proveedor</th>
                       <th className="is-right">Cantidad</th>
                       <th className="is-right">Costo unitario</th>
+                      <th>Fecha</th>
                       <th className="is-right">Costo total</th>
+                      <th>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {processingQuotationProducts.map((item) => {
-                      const itemKey = String(item.id || "");
+                    {providerPurchaseOrderRows.map((item) => {
+                      const itemKey = String(item.assignmentKey || item.id || "");
                       const assignment =
                         (itemKey && rawProductAssignments[itemKey]) || {};
                       const selected = Boolean(assignment?.selected);
@@ -1662,6 +2090,10 @@ export default function AcceptOrderPage() {
                         assignment?.unitCostWithDiscount === ""
                           ? String(Number(item.unitCostWithDiscount || 0))
                           : String(assignment.unitCostWithDiscount);
+                      const selectionDateInputValue =
+                        toDateInputValue(assignment?.selectionDate) ||
+                        toDateInputValue(item.selectionDate) ||
+                        toDateInputValue(new Date());
                       const effectiveQuantity = Number(quantityInputValue || 0);
                       const effectiveUnitCost = Number(unitCostInputValue || 0);
                       const effectiveTotalCost =
@@ -1682,9 +2114,9 @@ export default function AcceptOrderPage() {
 
                       return (
                         <tr
-                          key={item.id}
+                          key={itemKey}
                           className={
-                            generatedItemIds.has(Number(item.id || 0))
+                            generatedItemIds.has(Number(item.sourceProductId || item.id || 0))
                               ? "processing-product-row-generated"
                               : ""
                           }
@@ -1705,16 +2137,43 @@ export default function AcceptOrderPage() {
                                         : Number(selectedProviderId),
                                   },
                                 };
-                                updateActiveStageDataField(
-                                  "productAssignments",
+                                updateStageProductAssignmentState(
+                                  stage.stageCode,
                                   nextAssignments,
+                                  rawProductAssignmentDuplicates,
+                                  rawProductAssignmentExtras,
                                 );
                               }}
                               disabled={!processingData.permissions?.canUpdate}
                             />
                           </td>
-                          <td>{item.code || "-"}</td>
-                          <td>{item.description || "Sin descripcion"}</td>
+                          <td>
+                            {item.isCustom ? (
+                              <input
+                                type="text"
+                                className="processing-custom-code-trigger"
+                                value={item.code || ""}
+                                readOnly
+                                title="Doble clic para seleccionar item del catalogo"
+                                onDoubleClick={(event) => {
+                                  event.stopPropagation();
+                                  openCustomStepItemPicker(
+                                    stage.stageCode,
+                                    itemKey,
+                                    selectedProviderId,
+                                  );
+                                }}
+                              />
+                            ) : (
+                              item.code || "-"
+                            )}
+                          </td>
+                          <td>
+                            {item.description || "Sin descripcion"}
+                            {item.isDuplicate ? (
+                              <span className="processing-item-copy-badge">Copia</span>
+                            ) : null}
+                          </td>
                           <td>
                             <select
                               value={selectedProviderId}
@@ -1730,9 +2189,11 @@ export default function AcceptOrderPage() {
                                       : null,
                                   },
                                 };
-                                updateActiveStageDataField(
-                                  "productAssignments",
+                                updateStageProductAssignmentState(
+                                  stage.stageCode,
                                   nextAssignments,
+                                  rawProductAssignmentDuplicates,
+                                  rawProductAssignmentExtras,
                                 );
                               }}
                               disabled={!processingData.permissions?.canUpdate}
@@ -1765,9 +2226,11 @@ export default function AcceptOrderPage() {
                                       quantity: event.target.value,
                                     },
                                   };
-                                  updateActiveStageDataField(
-                                    "productAssignments",
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
                                     nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
                                   );
                                 }}
                                 onBlur={() => {
@@ -1789,9 +2252,11 @@ export default function AcceptOrderPage() {
                                         : "0",
                                     },
                                   };
-                                  updateActiveStageDataField(
-                                    "productAssignments",
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
                                     nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
                                   );
                                   setEditingProductCell(null);
                                 }}
@@ -1845,9 +2310,11 @@ export default function AcceptOrderPage() {
                                       unitCostWithDiscount: event.target.value,
                                     },
                                   };
-                                  updateActiveStageDataField(
-                                    "productAssignments",
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
                                     nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
                                   );
                                 }}
                                 onBlur={() => {
@@ -1869,9 +2336,11 @@ export default function AcceptOrderPage() {
                                         : "0",
                                     },
                                   };
-                                  updateActiveStageDataField(
-                                    "productAssignments",
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
                                     nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
                                   );
                                   setEditingProductCell(null);
                                 }}
@@ -1906,11 +2375,128 @@ export default function AcceptOrderPage() {
                               </button>
                             )}
                           </td>
+                          <td>
+                            <input
+                              type="date"
+                              value={selectionDateInputValue}
+                              onChange={(event) => {
+                                const nextAssignments = {
+                                  ...rawProductAssignments,
+                                  [itemKey]: {
+                                    ...assignment,
+                                    selected,
+                                    providerId:
+                                      selectedProviderId === ""
+                                        ? null
+                                        : Number(selectedProviderId),
+                                    selectionDate: event.target.value,
+                                  },
+                                };
+                                updateStageProductAssignmentState(
+                                  stage.stageCode,
+                                  nextAssignments,
+                                  rawProductAssignmentDuplicates,
+                                  rawProductAssignmentExtras,
+                                );
+                              }}
+                              disabled={!processingData.permissions?.canUpdate}
+                            />
+                          </td>
                           <td className="is-right">
                             {formatCurrency(
                               Number(effectiveTotalCost || 0),
                               item.currencyCode || processingCurrencyCode,
                             )}
+                          </td>
+                          <td>
+                            <div className="processing-product-actions">
+                              <button
+                                type="button"
+                                className="btn-secondary processing-product-action-icon"
+                                aria-label="Duplicar item"
+                                title="Duplicar item"
+                                onClick={() => {
+                                  const sourceProductId = Number(
+                                    item.sourceProductId || item.id || 0,
+                                  );
+                                  if (!Number.isInteger(sourceProductId) || sourceProductId <= 0) {
+                                    return;
+                                  }
+                                  const duplicateKey = `dup-${sourceProductId}-${Date.now()}`;
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [duplicateKey]: {
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      quantity: quantityInputValue,
+                                      unitCostWithDiscount: unitCostInputValue,
+                                      selectionDate: selectionDateInputValue,
+                                    },
+                                  };
+                                  const nextDuplicates = {
+                                    ...rawProductAssignmentDuplicates,
+                                    [duplicateKey]: {
+                                      sourceProductId,
+                                      createdAt: Date.now(),
+                                    },
+                                  };
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
+                                    nextAssignments,
+                                    nextDuplicates,
+                                    rawProductAssignmentExtras,
+                                  );
+                                }}
+                                disabled={
+                                  !processingData.permissions?.canUpdate ||
+                                  !Number.isInteger(Number(item.sourceProductId || 0)) ||
+                                  Number(item.sourceProductId || 0) <= 0
+                                }
+                              >
+                                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                  <path d="M8 4.75A2.75 2.75 0 0 0 5.25 7.5v8A2.75 2.75 0 0 0 8 18.25h8a2.75 2.75 0 0 0 2.75-2.75v-8A2.75 2.75 0 0 0 16 4.75zm0 1.5h8c.69 0 1.25.56 1.25 1.25v8c0 .69-.56 1.25-1.25 1.25H8c-.69 0-1.25-.56-1.25-1.25v-8c0-.69.56-1.25 1.25-1.25" />
+                                  <path d="M4 8.5a.75.75 0 0 1 .75.75v8c0 .69.56 1.25 1.25 1.25h8a.75.75 0 0 1 0 1.5H6A2.75 2.75 0 0 1 3.25 17.25v-8A.75.75 0 0 1 4 8.5" />
+                                </svg>
+                              </button>
+                              {item.isDuplicate || item.isCustom ? (
+                                <button
+                                  type="button"
+                                  className="btn-secondary processing-product-action-icon is-danger"
+                                  aria-label={item.isCustom ? "Eliminar item" : "Eliminar copia"}
+                                  title={item.isCustom ? "Eliminar item" : "Eliminar copia"}
+                                  onClick={() => {
+                                    const nextAssignments = { ...rawProductAssignments };
+                                    const nextDuplicates = {
+                                      ...rawProductAssignmentDuplicates,
+                                    };
+                                    const nextExtras = {
+                                      ...rawProductAssignmentExtras,
+                                    };
+                                    delete nextAssignments[itemKey];
+                                    delete nextDuplicates[itemKey];
+                                    delete nextExtras[itemKey];
+                                    updateStageProductAssignmentState(
+                                      stage.stageCode,
+                                      nextAssignments,
+                                      nextDuplicates,
+                                      nextExtras,
+                                    );
+                                    if (editingProductCell?.itemKey === itemKey) {
+                                      setEditingProductCell(null);
+                                    }
+                                  }}
+                                  disabled={!processingData.permissions?.canUpdate}
+                                >
+                                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                    <path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" />
+                                    <path d="M10.75 9a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75m2.5 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1924,7 +2510,101 @@ export default function AcceptOrderPage() {
               </p>
             )}
 
+            <section className="processing-products-box">
+              <header>
+                <h6>Ordenes generadas</h6>
+                <p>
+                  Listado de ordenes de compra ya generadas para este pedido.
+                </p>
+              </header>
+
+              {generatedPurchaseOrders.length ? (
+                <div className="processing-products-table-wrap">
+                  <table className="processing-products-table">
+                    <thead>
+                      <tr>
+                        <th>Numero de orden</th>
+                        <th>Proveedor</th>
+                        <th>Fecha</th>
+                        <th className="is-right">Monto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {generatedPurchaseOrders.map((order, index) => (
+                        <tr key={order.orderId || `${order.providerId || "provider"}-${index}`}>
+                          <td>{order.orderNumber || "-"}</td>
+                          <td>{order.providerName || "Proveedor"}</td>
+                          <td>{formatDate(order.orderDate)}</td>
+                          <td className="is-right">
+                            {formatCurrency(
+                              Number(order.total || 0),
+                              order.currencyCode || processingCurrencyCode,
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="field-hint">Aun no hay ordenes generadas.</p>
+              )}
+            </section>
+
             <div className="processing-stage-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  const createdAt = Date.now();
+                  const nextIndex = Object.keys(rawProductAssignmentExtras).length + 1;
+                  const extraKey = `extra-${createdAt}`;
+                  const nextAssignments = {
+                    ...rawProductAssignments,
+                    [extraKey]: {
+                      selected: true,
+                      providerId: null,
+                      quantity: "1",
+                      unitCostWithDiscount: "0",
+                      selectionDate: toDateInputValue(new Date()),
+                    },
+                  };
+                  const nextExtras = {
+                    ...rawProductAssignmentExtras,
+                    [extraKey]: {
+                      createdAt,
+                      code: `ITEM-MANUAL-${nextIndex}`,
+                      description: "Item agregado manualmente",
+                      quantity: 1,
+                      unitCostWithDiscount: 0,
+                      selectionDate: toDateInputValue(new Date()),
+                      currencyCode: processingCurrencyCode || "USD",
+                    },
+                  };
+                  updateStageProductAssignmentState(
+                    stage.stageCode,
+                    nextAssignments,
+                    rawProductAssignmentDuplicates,
+                    nextExtras,
+                  );
+                }}
+                disabled={!processingData.permissions?.canUpdate}
+              >
+                Anadir item
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void saveProcessingStage(stage.stageCode)}
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                {processingSavingStageCode === stage.stageCode
+                  ? "Guardando..."
+                  : "Guardar"}
+              </button>
               <button
                 type="button"
                 className="btn-primary"
@@ -1932,11 +2612,13 @@ export default function AcceptOrderPage() {
                   openPurchaseOrderModal({
                     stage,
                     productAssignments: rawProductAssignments,
+                    productAssignmentDuplicates: rawProductAssignmentDuplicates,
+                    productAssignmentExtras: rawProductAssignmentExtras,
                   })
                 }
                 disabled={!processingData.permissions?.canUpdate}
               >
-                Generar orden
+                Vista previa
               </button>
             </div>
           </section>
@@ -2080,6 +2762,15 @@ export default function AcceptOrderPage() {
     },
     { subtotal: 0, ivaAmount: 0, total: 0 },
   );
+  const purchaseOrderPrintModel =
+    purchaseOrderFinalPreviewOpen && Array.isArray(purchaseOrderPendingGeneratedOrders)
+      ? buildPurchaseOrderPrintModel({
+          quotation: quotationToProcess,
+          orders: purchaseOrderPendingGeneratedOrders,
+          currencyCode: purchaseOrderDraft?.currencyCode || processingCurrencyCode || "USD",
+          notes: activeProcessingStage?.notes || "",
+        })
+      : null;
   const kickoffExternalGeneratedSummary = String(
     processingData?.kickoffExternal?.aiSummaryCurrent?.summary?.summary || "",
   ).trim();
@@ -3790,61 +4481,14 @@ export default function AcceptOrderPage() {
                   <div className="processing-stage-grid two">
                     <label className="field-group processing-stage-field">
                       <span>Orden #</span>
-                      <input
-                        type="text"
-                        value={order.orderNumber || ""}
-                        onChange={(event) =>
-                          updatePurchaseOrderDraftOrderField(
-                            order.draftId,
-                            "orderNumber",
-                            event.target.value,
-                          )
-                        }
-                      />
-                    </label>
-                    <label className="field-group processing-stage-field">
-                      <span>Fecha</span>
-                      <input
-                        type="date"
-                        value={order.orderDate || ""}
-                        onChange={(event) =>
-                          updatePurchaseOrderDraftOrderField(
-                            order.draftId,
-                            "orderDate",
-                            event.target.value,
-                          )
-                        }
-                      />
+                      <input type="text" value={order.orderNumber || "Pendiente"} readOnly />
                     </label>
                     <label className="field-group processing-stage-field">
                       <span>Moneda</span>
                       <input
                         type="text"
                         value={order.currencyCode || purchaseOrderDraft.currencyCode || "USD"}
-                        onChange={(event) =>
-                          updatePurchaseOrderDraftOrderField(
-                            order.draftId,
-                            "currencyCode",
-                            event.target.value,
-                          )
-                        }
-                      />
-                    </label>
-                    <label className="field-group processing-stage-field">
-                      <span>I.V.A. (%)</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.01"
-                        value={order.ivaPct == null ? 16 : order.ivaPct}
-                        onChange={(event) =>
-                          updatePurchaseOrderDraftOrderField(
-                            order.draftId,
-                            "ivaPct",
-                            event.target.value,
-                          )
-                        }
+                        readOnly
                       />
                     </label>
                   </div>
@@ -3857,82 +4501,33 @@ export default function AcceptOrderPage() {
                           <th>Descripcion</th>
                           <th className="is-right">Cantidad</th>
                           <th className="is-right">Costo unitario</th>
-                          <th>Fecha seleccion</th>
                           <th className="is-right">Importe</th>
-                          <th>Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
                         {orderLines.map((line) => (
                           <tr key={`${order.draftId}-${line.lineId}`}>
                             <td>{line.code || "-"}</td>
-                            <td>
-                              <input
-                                type="text"
-                                value={line.description || ""}
-                                onChange={(event) =>
-                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
-                                    description: event.target.value,
-                                  })
-                                }
-                              />
+                            <td>{line.description || "Sin descripcion"}</td>
+                            <td className="is-right">
+                              {Number(normalizePositiveNumber(line.quantity, 0)).toLocaleString(
+                                "es-MX",
+                                {
+                                  maximumFractionDigits: 4,
+                                },
+                              )}
                             </td>
                             <td className="is-right">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.0001"
-                                value={line.quantity}
-                                onChange={(event) =>
-                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
-                                    quantity: event.target.value,
-                                  })
-                                }
-                              />
-                            </td>
-                            <td className="is-right">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.0001"
-                                value={line.unitCost}
-                                onChange={(event) =>
-                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
-                                    unitCost: event.target.value,
-                                  })
-                                }
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="date"
-                                value={line.selectionDate || ""}
-                                onChange={(event) =>
-                                  updatePurchaseOrderDraftLine(order.draftId, line.lineId, {
-                                    selectionDate: event.target.value,
-                                  })
-                                }
-                              />
+                              {formatCurrency(
+                                Number(normalizePositiveNumber(line.unitCost, 0)),
+                                order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                              )}
                             </td>
                             <td className="is-right">
                               {formatCurrency(
                                 calculatePurchaseOrderLineAmount(line),
                                 order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
                               )}
-                            </td>
-                            <td>
-                              <button
-                                type="button"
-                                className="btn-secondary"
-                                onClick={() =>
-                                  duplicatePurchaseOrderDraftLine(
-                                    order.draftId,
-                                    line.lineId,
-                                  )
-                                }
-                              >
-                                Duplicar
-                              </button>
                             </td>
                           </tr>
                         ))}
@@ -4016,9 +4611,186 @@ export default function AcceptOrderPage() {
               <button
                 type="button"
                 className="btn-primary"
-                onClick={() => generatePurchaseOrdersFromModal(activeProcessingStage)}
+                onClick={openPurchaseOrderFinalPreview}
               >
                 Generar orden
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {purchaseOrderModalOpen && purchaseOrderFinalPreviewOpen ? (
+        <PurchaseOrderPrintPreviewModal
+          isOpen={purchaseOrderFinalPreviewOpen}
+          model={purchaseOrderPrintModel}
+          onClose={() => setPurchaseOrderFinalPreviewOpen(false)}
+          onConfirm={confirmGeneratePurchaseOrdersFromPreview}
+        />
+      ) : null}
+
+      {customStepItemPicker.isOpen ? (
+        <div
+          className="modal-overlay modal-overlay-elevated"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="custom-step-item-picker-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCustomStepItemPicker();
+            }
+          }}
+        >
+          <div className="modal-dialog processing-custom-item-picker-modal">
+            <div className="accept-order-notification-header">
+              <span>Seleccion de item</span>
+              <h3 id="custom-step-item-picker-title">Seleccionar producto de cotizacion</h3>
+              <p>
+                Doble clic en código abre este selector. Elige un item para precargar
+                codigo, descripcion, proveedor y costo.
+              </p>
+            </div>
+
+            <div className="processing-stage-grid two">
+              <label className="field-group processing-stage-field">
+                <span>Proveedor</span>
+                <select
+                  value={customStepItemPicker.providerId}
+                  onChange={(event) =>
+                    setCustomStepItemPicker((current) => ({
+                      ...current,
+                      providerId: event.target.value,
+                      priceListId: "",
+                      activeLists: [],
+                      unavailableListMessage: "",
+                      results: [],
+                    }))
+                  }
+                >
+                  <option value="">Selecciona proveedor</option>
+                  {processingProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-group processing-stage-field">
+                <span>Buscar</span>
+                <input
+                  type="text"
+                  placeholder={
+                    customStepItemPicker.providerId
+                      ? customStepItemPicker.priceListId
+                        ? "Codigo o descripcion"
+                        : customStepItemPicker.loadingLists
+                          ? "Cargando lista activa..."
+                          : "Proveedor sin lista activa"
+                      : "Selecciona proveedor"
+                  }
+                  value={customStepItemPicker.query}
+                  disabled={!customStepItemPicker.priceListId}
+                  onChange={(event) =>
+                    setCustomStepItemPicker((current) => ({
+                      ...current,
+                      query: event.target.value,
+                    }))
+                  }
+                  autoFocus
+                />
+              </label>
+            </div>
+
+            {customStepItemPicker.error ? (
+              <p className="field-hint">{customStepItemPicker.error}</p>
+            ) : null}
+
+            <div className="processing-products-table-wrap">
+              <table className="processing-products-table">
+                <thead>
+                  <tr>
+                    <th>Codigo</th>
+                    <th>Descripcion</th>
+                    <th>Lista</th>
+                    <th>Proveedor</th>
+                    <th className="is-right">Costo unitario</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {!customStepItemPicker.providerId ? (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        Selecciona un proveedor activo para continuar.
+                      </td>
+                    </tr>
+                  ) : !customStepItemPicker.priceListId ? (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        {customStepItemPicker.loadingLists
+                          ? "Cargando lista activa del proveedor..."
+                          : customStepItemPicker.unavailableListMessage ||
+                            "El proveedor seleccionado no tiene una lista activa disponible."}
+                      </td>
+                    </tr>
+                  ) : customStepItemPicker.loading ? (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        Cargando productos...
+                      </td>
+                    </tr>
+                  ) : customStepItemPicker.results.length ? (
+                    customStepItemPicker.results.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.code || "-"}</td>
+                        <td>{item.description || "Sin descripcion"}</td>
+                        <td>{item.priceListName || "-"}</td>
+                        <td>{item.providerName || "-"}</td>
+                        <td className="is-right">
+                          {formatCurrency(
+                            normalizePositiveNumber(
+                              item.price,
+                              normalizePositiveNumber(item.unitCostWithDiscount, 0),
+                            ),
+                            item.currencyCode || processingCurrencyCode,
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-secondary processing-product-action-icon"
+                            title="Seleccionar item"
+                            aria-label="Seleccionar item"
+                            onClick={() => applyCatalogProductToCustomStepItem(item)}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              aria-hidden="true"
+                            >
+                              <path d="m20 6-11 11-5-5" />
+                            </svg>
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        No se encontraron items con ese criterio.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="processing-stage-actions split">
+              <button type="button" className="btn-secondary" onClick={closeCustomStepItemPicker}>
+                Cerrar
               </button>
             </div>
           </div>

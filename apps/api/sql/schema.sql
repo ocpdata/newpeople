@@ -604,6 +604,11 @@ CREATE TABLE IF NOT EXISTS providers (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
   registration_code VARCHAR(80) NULL,
+  contact_first_name VARCHAR(120) NULL,
+  contact_last_name VARCHAR(120) NULL,
+  contact_email VARCHAR(190) NULL,
+  contact_mobile VARCHAR(40) NULL,
+  contact_role VARCHAR(120) NULL,
   address_line VARCHAR(255) NULL,
   country_id BIGINT UNSIGNED NOT NULL,
   city VARCHAR(120) NULL,
@@ -619,6 +624,23 @@ CREATE TABLE IF NOT EXISTS providers (
   CONSTRAINT fk_providers_created_by FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT fk_providers_updated_by FOREIGN KEY (updated_by) REFERENCES users(id),
   CONSTRAINT uq_providers_registration UNIQUE (registration_code)
+);
+
+CREATE TABLE IF NOT EXISTS provider_contacts (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  provider_id BIGINT UNSIGNED NOT NULL,
+  first_name VARCHAR(120) NULL,
+  last_name VARCHAR(120) NULL,
+  email VARCHAR(190) NULL,
+  mobile VARCHAR(40) NULL,
+  role_title VARCHAR(120) NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_by BIGINT UNSIGNED NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_provider_contacts_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_provider_contacts_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_provider_contacts_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS provider_price_lists (

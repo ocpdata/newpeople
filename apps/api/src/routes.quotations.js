@@ -339,6 +339,38 @@ const quotationProcessingStageUpdateSchema = z.object({
   stageData: z.record(z.string(), z.any()).optional(),
 });
 
+const quotationProcessingPurchaseOrderLineSchema = z.object({
+  productId: z.number().int().positive().nullable().optional(),
+  code: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(5000),
+  quantity: z.number().nonnegative(),
+  unitCost: z.number().nonnegative(),
+  discountPct: z.number().min(0).max(100).optional().default(0),
+  selectionDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+});
+
+const quotationProcessingPurchaseOrderSchema = z.object({
+  providerId: z.number().int().positive(),
+  providerName: z.string().trim().min(1).max(190).optional().default(""),
+  orderNumber: z.string().trim().max(120).nullable().optional(),
+  orderDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+  currencyCode: z.string().trim().min(1).max(20),
+  ivaPct: z.number().min(0).max(100).optional().default(16),
+  lines: z.array(quotationProcessingPurchaseOrderLineSchema).min(1),
+});
+
+const quotationProcessingPurchaseOrdersCreateSchema = z.object({
+  orders: z.array(quotationProcessingPurchaseOrderSchema).min(1).max(200),
+});
+
 const quotationProcessingKickoffInvitationSchema = z.object({
   meetingDate: z
     .string()
@@ -2146,6 +2178,54 @@ async function ensureQuotationProcessingSchema() {
           INDEX idx_qpas_lookup (quotation_id, stage_code, created_at)
         )`,
       );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS quotation_processing_purchase_orders (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          quotation_id BIGINT UNSIGNED NOT NULL,
+          quotation_version_id BIGINT UNSIGNED NOT NULL,
+          opportunity_id BIGINT UNSIGNED NOT NULL,
+          stage_code VARCHAR(80) NOT NULL,
+          provider_id BIGINT UNSIGNED NOT NULL,
+          provider_name VARCHAR(190) NULL,
+          order_number VARCHAR(120) NULL,
+          order_date DATE NULL,
+          currency_code VARCHAR(20) NOT NULL,
+          iva_pct DECIMAL(6,3) NOT NULL DEFAULT 16.000,
+          subtotal_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          iva_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          total_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          created_by_user_id BIGINT UNSIGNED NOT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT fk_qppo_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qppo_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qppo_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qppo_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          INDEX idx_qppo_lookup (quotation_id, stage_code, created_at),
+          INDEX idx_qppo_provider (provider_id, created_at)
+        )`,
+      );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS quotation_processing_purchase_order_items (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          purchase_order_id BIGINT UNSIGNED NOT NULL,
+          product_id BIGINT UNSIGNED NULL,
+          line_code VARCHAR(120) NOT NULL,
+          line_description VARCHAR(5000) NOT NULL,
+          quantity DECIMAL(18,6) NOT NULL DEFAULT 0,
+          unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0,
+          discount_pct DECIMAL(6,3) NOT NULL DEFAULT 0,
+          selection_date DATE NULL,
+          amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT fk_qppoi_order FOREIGN KEY (purchase_order_id) REFERENCES quotation_processing_purchase_orders(id) ON DELETE CASCADE,
+          INDEX idx_qppoi_order (purchase_order_id, id),
+          INDEX idx_qppoi_product (product_id)
+        )`,
+      );
     })().catch((error) => {
       ensureQuotationProcessingSchemaPromise = undefined;
       throw error;
@@ -2393,6 +2473,179 @@ async function listProcessingAssignableUsers() {
     fullName: row.full_name || `Usuario #${row.id}`,
     email: row.email || "",
   }));
+}
+
+async function listQuotationProcessingPurchaseOrders({
+  quotationId,
+  stageCode = "provider_purchase_order",
+}) {
+  await ensureQuotationProcessingSchema();
+  const orderRows = await query(
+    `SELECT id, provider_id, provider_name, order_number, order_date,
+            currency_code, iva_pct, subtotal_amount, iva_amount, total_amount,
+            created_at
+     FROM quotation_processing_purchase_orders
+     WHERE quotation_id = ?
+       AND stage_code = ?
+     ORDER BY created_at ASC, id ASC`,
+    [Number(quotationId), String(stageCode || "provider_purchase_order").trim()],
+  );
+
+  if (!orderRows.length) return [];
+
+  const orderIds = orderRows.map((row) => Number(row.id));
+  const itemRows = await query(
+    `SELECT purchase_order_id, product_id, line_code, line_description,
+            quantity, unit_cost, discount_pct, selection_date, amount
+     FROM quotation_processing_purchase_order_items
+     WHERE purchase_order_id IN (?)
+     ORDER BY purchase_order_id ASC, id ASC`,
+    [orderIds],
+  );
+
+  const itemsByOrderId = new Map();
+  for (const row of itemRows) {
+    const orderId = Number(row.purchase_order_id);
+    const list = itemsByOrderId.get(orderId) || [];
+    list.push({
+      productId: row.product_id ? Number(row.product_id) : null,
+      code: row.line_code || "-",
+      description: row.line_description || "Sin descripcion",
+      quantity: Number(row.quantity || 0),
+      unitCost: Number(row.unit_cost || 0),
+      discountPct: Number(row.discount_pct || 0),
+      selectionDate: row.selection_date
+        ? String(row.selection_date).slice(0, 10)
+        : null,
+      amount: Number(row.amount || 0),
+    });
+    itemsByOrderId.set(orderId, list);
+  }
+
+  return orderRows.map((row) => {
+    const orderId = Number(row.id);
+    return {
+      orderId,
+      providerId: Number(row.provider_id),
+      providerName: row.provider_name || "Proveedor",
+      orderNumber: row.order_number || null,
+      orderDate: row.order_date ? String(row.order_date).slice(0, 10) : null,
+      currencyCode: row.currency_code || "USD",
+      ivaPct: Number(row.iva_pct || 0),
+      subtotal: Number(row.subtotal_amount || 0),
+      ivaAmount: Number(row.iva_amount || 0),
+      total: Number(row.total_amount || 0),
+      generatedAt: row.created_at || null,
+      lines: itemsByOrderId.get(orderId) || [],
+    };
+  });
+}
+
+async function createQuotationProcessingPurchaseOrders({
+  quotation,
+  latestVersion,
+  userId,
+  orders,
+  stageCode = "provider_purchase_order",
+}) {
+  await ensureQuotationProcessingSchema();
+  const normalizedOrders = Array.isArray(orders) ? orders : [];
+  if (!normalizedOrders.length) {
+    return [];
+  }
+
+  await withTransaction(async (conn) => {
+    for (const order of normalizedOrders) {
+      const orderLines = Array.isArray(order?.lines) ? order.lines : [];
+      const normalizedIvaPct = Math.min(
+        100,
+        Math.max(0, Number(order?.ivaPct ?? 16) || 0),
+      );
+      const normalizedLines = orderLines.map((line) => {
+        const quantity = Math.max(0, Number(line?.quantity || 0));
+        const unitCost = Math.max(0, Number(line?.unitCost || 0));
+        const discountPct = Math.min(100, Math.max(0, Number(line?.discountPct || 0)));
+        const amount = quantity * unitCost * (1 - discountPct / 100);
+        return {
+          productId: line?.productId == null ? null : Number(line.productId) || null,
+          code: String(line?.code || "-").trim() || "-",
+          description:
+            String(line?.description || "").trim() || "Sin descripcion",
+          quantity,
+          unitCost,
+          discountPct,
+          selectionDate:
+            line?.selectionDate && /^\d{4}-\d{2}-\d{2}$/.test(String(line.selectionDate))
+              ? String(line.selectionDate)
+              : null,
+          amount,
+        };
+      });
+
+      const subtotal = normalizedLines.reduce((sum, line) => sum + line.amount, 0);
+      const ivaAmount = subtotal * (normalizedIvaPct / 100);
+      const total = subtotal + ivaAmount;
+      const now = new Date();
+
+      const [result] = await conn.query(
+        `INSERT INTO quotation_processing_purchase_orders
+          (quotation_id, quotation_version_id, opportunity_id, stage_code,
+           provider_id, provider_name, order_number, order_date, currency_code,
+           iva_pct, subtotal_amount, iva_amount, total_amount,
+           created_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          Number(quotation.id),
+          Number(latestVersion.id),
+          Number(quotation.opportunity_id),
+          String(stageCode || "provider_purchase_order").trim(),
+          Number(order.providerId),
+          String(order.providerName || "").trim() || null,
+          String(order.orderNumber || "").trim() || null,
+          order.orderDate || null,
+          String(order.currencyCode || "USD").trim() || "USD",
+          Number(normalizedIvaPct.toFixed(3)),
+          Number(subtotal.toFixed(6)),
+          Number(ivaAmount.toFixed(6)),
+          Number(total.toFixed(6)),
+          Number(userId),
+          now,
+          now,
+        ],
+      );
+
+      const insertedOrderId = Number(result?.insertId || 0);
+      if (!insertedOrderId) continue;
+
+      for (const line of normalizedLines) {
+        await conn.query(
+          `INSERT INTO quotation_processing_purchase_order_items
+            (purchase_order_id, product_id, line_code, line_description,
+             quantity, unit_cost, discount_pct, selection_date, amount,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            insertedOrderId,
+            line.productId,
+            line.code,
+            line.description,
+            Number(line.quantity.toFixed(6)),
+            Number(line.unitCost.toFixed(6)),
+            Number(line.discountPct.toFixed(3)),
+            line.selectionDate,
+            Number(line.amount.toFixed(6)),
+            now,
+            now,
+          ],
+        );
+      }
+    }
+  });
+
+  return listQuotationProcessingPurchaseOrders({
+    quotationId: Number(quotation.id),
+    stageCode,
+  });
 }
 
 async function tryExtractEvidenceContentText({
@@ -12436,6 +12689,10 @@ router.get(
         oss.name AS opportunity_sales_stage_name,
               lv.version_number AS latest_version_number,
             lv.currency_code AS latest_currency_code,
+              lv.delivery_time AS latest_delivery_time,
+              lv.quotation_validity AS latest_quotation_validity,
+              lv.warranty_term AS latest_warranty,
+              lv.payment_terms AS latest_payment_terms,
               qs.code AS latest_status_code,
               qs.name AS latest_status_name,
               qs.ui_key AS latest_status_ui_key,
@@ -12498,6 +12755,10 @@ router.get(
           ? Number(row.latest_version_number)
           : null,
         latestCurrencyCode: row.latest_currency_code || null,
+        latestDeliveryTime: row.latest_delivery_time || null,
+        latestQuotationValidity: row.latest_quotation_validity || null,
+        latestWarranty: row.latest_warranty || null,
+        latestPaymentTerms: row.latest_payment_terms || null,
         latestStatusCode: row.latest_status_code || null,
         latestStatusName: row.latest_status_name || null,
         latestStatusUiKey: row.latest_status_ui_key || null,
@@ -12771,6 +13032,7 @@ router.get(
         kickoffEvidences,
         aiHistory,
         processingProducts,
+        providerPurchaseOrders,
       ] =
         await Promise.all([
           listQuotationProcessingStages({ quotation, latestVersion }),
@@ -12797,7 +13059,26 @@ router.get(
             versionId: Number(latestVersion.id),
             currencyCode: latestVersion.currency_code || "USD",
           }),
+          listQuotationProcessingPurchaseOrders({
+            quotationId: Number(quotation.id),
+            stageCode: "provider_purchase_order",
+          }),
         ]);
+
+      const stagesWithPurchaseOrders = (Array.isArray(stages) ? stages : []).map(
+        (stage) => {
+          if (String(stage?.stageCode || "").trim() !== "provider_purchase_order") {
+            return stage;
+          }
+          return {
+            ...stage,
+            stageData: {
+              ...(stage?.stageData || {}),
+              generatedPurchaseOrders: providerPurchaseOrders,
+            },
+          };
+        },
+      );
 
       return res.json({
         quotation: {
@@ -12813,7 +13094,7 @@ router.get(
           statusCode: latestVersion.status_code || "",
           products: processingProducts,
         },
-        stages,
+        stages: stagesWithPurchaseOrders,
         assignableUsers,
         providers,
         kickoffInternal: {
@@ -12941,6 +13222,115 @@ router.patch(
 
     const stages = await listQuotationProcessingStages({ quotation, latestVersion });
     return res.json({ message: "Etapa actualizada", stages });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/provider-purchase-orders",
+  requireAnyPermission(quotationPermissionCodes),
+  async (req, res) => {
+    if (!assertQuotationPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para generar ordenes de compra",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const parsed = quotationProcessingPurchaseOrdersCreateSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
+      return res.status(400).json({
+        message: "Solo se pueden generar ordenes para cotizaciones ganadas o aceptadas",
+      });
+    }
+
+    try {
+      await createQuotationProcessingPurchaseOrders({
+        quotation,
+        latestVersion,
+        userId: Number(req.user.id),
+        stageCode: "provider_purchase_order",
+        orders: parsed.data.orders,
+      });
+    } catch (saveError) {
+      return res.status(500).json({
+        message: "No fue posible guardar las ordenes de compra",
+      });
+    }
+
+    const [stages, persistedOrders] = await Promise.all([
+      listQuotationProcessingStages({ quotation, latestVersion }),
+      listQuotationProcessingPurchaseOrders({
+        quotationId: Number(quotation.id),
+        stageCode: "provider_purchase_order",
+      }),
+    ]);
+
+    const stagesWithPurchaseOrders = (Array.isArray(stages) ? stages : []).map(
+      (stage) => {
+        if (String(stage?.stageCode || "").trim() !== "provider_purchase_order") {
+          return stage;
+        }
+        return {
+          ...stage,
+          stageData: {
+            ...(stage?.stageData || {}),
+            generatedPurchaseOrders: persistedOrders,
+          },
+        };
+      },
+    );
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_purchase_orders_created",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: `Ordenes de compra a proveedor generadas: ${parsed.data.orders.length}`,
+      after: {
+        stageCode: "provider_purchase_order",
+        generatedOrdersCount: parsed.data.orders.length,
+      },
+    });
+
+    return res.json({
+      message: "Ordenes de compra generadas",
+      stages: stagesWithPurchaseOrders,
+      generatedOrdersCount: parsed.data.orders.length,
+    });
   },
 );
 
