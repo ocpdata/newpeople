@@ -409,13 +409,13 @@ const quotationPdfRowSchema = z.object({
   productDescription: z.string().trim().max(5000).optional().nullable(),
   quantity: z.number().nonnegative().optional().nullable(),
   quantityDisplay: z.string().trim().max(120).optional().nullable(),
-  salePriceUnit: z.number().nonnegative().optional().nullable(),
-  salePriceTotal: z.number().nonnegative().optional().nullable(),
+  salePriceUnit: z.number().optional().nullable(),
+  salePriceTotal: z.number().optional().nullable(),
 });
 
 const quotationPdfSectionSchema = z.object({
   title: z.string().trim().min(1).max(180),
-  subtotal: z.number().nonnegative().optional().default(0),
+  subtotal: z.number().optional().default(0),
   rows: z.array(quotationPdfRowSchema).optional().default([]),
 });
 
@@ -436,11 +436,11 @@ const quotationPdfRenderSchema = z.object({
   introduction: z.string().trim().max(50000).optional().default(""),
   sections: z.array(quotationPdfSectionSchema).optional().default([]),
   summary: z.object({
-    subtotal: z.number().nonnegative().optional().default(0),
-    discount: z.number().nonnegative().optional().default(0),
-    discountedSubtotal: z.number().nonnegative().optional().default(0),
-    vatAmount: z.number().nonnegative().optional().default(0),
-    total: z.number().nonnegative().optional().default(0),
+    subtotal: z.number().optional().default(0),
+    discount: z.number().optional().default(0),
+    discountedSubtotal: z.number().optional().default(0),
+    vatAmount: z.number().optional().default(0),
+    total: z.number().optional().default(0),
     showVat: z.boolean().optional().default(false),
     vatMode: z
       .enum(["without_vat", "total", "per_item"])

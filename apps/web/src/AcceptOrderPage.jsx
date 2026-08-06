@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
@@ -43,9 +43,7 @@ const PROCESSING_STAGE_STATUS_LABELS = Object.fromEntries(
 );
 
 const BASE_STAGE_SPECIFIC_FIELDS = {
-  provider_purchase_order: [
-    { key: "poRequestedAt", label: "Fecha solicitud OC", type: "date" },
-  ],
+  provider_purchase_order: [],
   products_reception: [
     {
       key: "expectedReceptionDate",
@@ -714,6 +712,7 @@ export default function AcceptOrderPage() {
     query: "",
     results: [],
   });
+  const processingStageContentRef = useRef(null);
 
   useEffect(() => {
     let ignore = false;
@@ -751,6 +750,14 @@ export default function AcceptOrderPage() {
       ignore = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeProcessingStageCode) return;
+    processingStageContentRef.current?.scrollIntoView({
+      block: "start",
+      behavior: "smooth",
+    });
+  }, [activeProcessingStageCode]);
 
   useEffect(() => {
     setPage(1);
@@ -2003,50 +2010,44 @@ export default function AcceptOrderPage() {
     return (
       <section className="processing-stage-box">
         <header>
-          <h5>Datos base de etapa</h5>
+          <h5>Listado de productos y servicios de la cotización</h5>
         </header>
         <div className="processing-stage-grid two">
-          {fieldList.map((field) => {
-            const value = stage?.stageData?.[field.key] ?? "";
-            if (field.type === "textarea") {
-              return (
-                <label key={field.key} className="field-group processing-stage-field full">
-                  <span>{field.label}</span>
-                  <textarea
-                    value={value}
-                    onChange={(event) =>
-                      updateActiveStageDataField(field.key, event.target.value)
-                    }
-                    rows={4}
-                    placeholder={field.placeholder || ""}
-                    disabled={!processingData.permissions?.canUpdate}
-                  />
-                </label>
-              );
-            }
+          {fieldList.length
+            ? fieldList.map((field) => {
+                const value = stage?.stageData?.[field.key] ?? "";
+                if (field.type === "textarea") {
+                  return (
+                    <label key={field.key} className="field-group processing-stage-field full">
+                      <span>{field.label}</span>
+                      <textarea
+                        value={value}
+                        onChange={(event) =>
+                          updateActiveStageDataField(field.key, event.target.value)
+                        }
+                        rows={4}
+                        placeholder={field.placeholder || ""}
+                        disabled={!processingData.permissions?.canUpdate}
+                      />
+                    </label>
+                  );
+                }
 
-            return (
-              <label key={field.key} className="field-group processing-stage-field">
-                <span>{field.label}</span>
-                <input
-                  type={field.type}
-                  value={value}
-                  placeholder={field.placeholder || ""}
-                  onChange={(event) =>
-                    updateActiveStageDataField(field.key, event.target.value)
-                  }
-                  disabled={!processingData.permissions?.canUpdate}
-                />
-              </label>
-            );
-          })}
-          {stage.stageCode === "provider_purchase_order"
-            ? quotationCommercialFields.map((field) => (
-                <label key={field.key} className="field-group processing-stage-field">
-                  <span>{field.label}</span>
-                  <input type="text" value={field.value || "-"} readOnly disabled />
-                </label>
-              ))
+                return (
+                  <label key={field.key} className="field-group processing-stage-field">
+                    <span>{field.label}</span>
+                    <input
+                      type={field.type}
+                      value={value}
+                      placeholder={field.placeholder || ""}
+                      onChange={(event) =>
+                        updateActiveStageDataField(field.key, event.target.value)
+                      }
+                      disabled={!processingData.permissions?.canUpdate}
+                    />
+                  </label>
+                );
+              })
             : null}
         </div>
 
@@ -2509,6 +2510,20 @@ export default function AcceptOrderPage() {
                 No hay items disponibles en la cotizacion para mostrar en este step.
               </p>
             )}
+
+            <section className="processing-stage-box" style={{ marginTop: 16 }}>
+              <header>
+                <h5>Datos de orden de compra</h5>
+              </header>
+              <div className="processing-stage-grid two">
+                {quotationCommercialFields.map((field) => (
+                  <label key={field.key} className="field-group processing-stage-field">
+                    <span>{field.label}</span>
+                    <input type="text" value={field.value || "-"} readOnly disabled />
+                  </label>
+                ))}
+              </div>
+            </section>
 
             <section className="processing-products-box">
               <header>
@@ -3482,7 +3497,7 @@ export default function AcceptOrderPage() {
             ) : null}
 
             {!processingLoading && !processingModalError && activeProcessingStage ? (
-              <div className="processing-stage-content">
+              <div ref={processingStageContentRef} className="processing-stage-content">
                 {!isKickoffInternalStage &&
                 !isKickoffExternalStage &&
                 !isProviderPurchaseOrderStage ? (
