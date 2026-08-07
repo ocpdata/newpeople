@@ -138,6 +138,14 @@ const submissionNotesSchema = z.object({
   user_notes: z.string().max(8000).optional().nullable(),
 });
 
+const submissionSellerSchema = z.object({
+  seller_user_id: z.number().int().positive().nullable(),
+});
+
+const autoAssignSubmissionSellersSchema = z.object({
+  submission_ids: z.array(z.number().int().positive()).min(1).max(500),
+});
+
 const privateRouter = express.Router();
 const publicRouter = express.Router();
 
@@ -1319,6 +1327,165 @@ async function resolveOrCreateContact({
   return { contactId, action: "create" };
 }
 
+async function resolveFirstActiveAccountOwnerUserId(accountId) {
+  const normalizedAccountId = Number(accountId || 0);
+  if (!Number.isInteger(normalizedAccountId) || normalizedAccountId <= 0) {
+    return null;
+  }
+
+  // Business rule: if multiple active owners exist, assign the first by oldest assignment.
+  const rows = await query(
+    `SELECT ao.user_id
+     FROM account_owners ao
+     INNER JOIN users u ON u.id = ao.user_id
+     WHERE ao.account_id = ?
+       AND u.status = 'active'
+     ORDER BY ao.assigned_at ASC, ao.user_id ASC
+     LIMIT 1`,
+    [normalizedAccountId],
+  );
+
+  if (!rows[0]?.user_id) {
+    return null;
+  }
+
+  return Number(rows[0].user_id) || null;
+}
+
+async function resolveSubmissionSellerUserId({
+  accountId,
+  contactId,
+  fallbackLeadAccountId = null,
+}) {
+  let targetAccountId = Number(accountId || 0) || Number(fallbackLeadAccountId || 0) || null;
+
+  if (!targetAccountId) {
+    const normalizedContactId = Number(contactId || 0);
+    if (normalizedContactId > 0) {
+      const contactRows = await query(
+        `SELECT account_id
+         FROM contacts
+         WHERE id = ?
+         LIMIT 1`,
+        [normalizedContactId],
+      );
+      targetAccountId = Number(contactRows[0]?.account_id || 0) || null;
+    }
+  }
+
+  if (!targetAccountId) {
+    return null;
+  }
+
+  return resolveFirstActiveAccountOwnerUserId(targetAccountId);
+}
+
+function resolveSubmissionAccountName(normalizedPayload) {
+  return normalizeCompanyName(
+    normalizedPayload?.account?.name ||
+      normalizedPayload?.contact?.company_name ||
+      "",
+  );
+}
+
+function resolveSubmissionContactEmail(normalizedPayload) {
+  return normalizeEmail(normalizedPayload?.contact?.email || "");
+}
+
+async function resolveSubmissionAccountAndContactForSeller({ normalizedPayload }) {
+  const accountName = resolveSubmissionAccountName(normalizedPayload);
+  const contactEmail = resolveSubmissionContactEmail(normalizedPayload);
+
+  if (!accountName && !contactEmail) {
+    return {
+      accountId: null,
+      contactId: null,
+      accountPathAmbiguous: false,
+      crossPathAmbiguous: false,
+    };
+  }
+
+  let accountIdByName = null;
+  let accountPathAmbiguous = false;
+  if (accountName) {
+    const accountRows = await query(
+      `SELECT id
+       FROM accounts
+       WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+       ORDER BY id ASC
+       LIMIT 2`,
+      [accountName],
+    );
+    if (accountRows.length > 1) {
+      accountPathAmbiguous = true;
+    } else if (accountRows.length === 1) {
+      accountIdByName = Number(accountRows[0].id) || null;
+    }
+  }
+
+  let contactIdByEmail = null;
+  let accountIdByContact = null;
+  if (contactEmail) {
+    const contactRows = await query(
+      `SELECT id, account_id
+       FROM contacts
+       WHERE LOWER(TRIM(email)) = ?
+       ORDER BY id ASC
+       LIMIT 2`,
+      [contactEmail],
+    );
+
+    if (contactRows.length === 1) {
+      contactIdByEmail = Number(contactRows[0].id) || null;
+      accountIdByContact = Number(contactRows[0].account_id) || null;
+    }
+  }
+
+  const hasNameAccount = Number(accountIdByName || 0) > 0;
+  const hasContactAccount = Number(accountIdByContact || 0) > 0;
+  const crossPathAmbiguous =
+    hasNameAccount &&
+    hasContactAccount &&
+    Number(accountIdByName) !== Number(accountIdByContact);
+
+  let resolvedAccountId = null;
+  if (accountPathAmbiguous || crossPathAmbiguous) {
+    resolvedAccountId = null;
+  } else if (hasNameAccount && hasContactAccount) {
+    resolvedAccountId = Number(accountIdByName);
+  } else if (hasNameAccount) {
+    resolvedAccountId = Number(accountIdByName);
+  } else if (hasContactAccount) {
+    resolvedAccountId = Number(accountIdByContact);
+  }
+
+  return {
+    accountId: resolvedAccountId,
+    contactId: contactIdByEmail,
+    accountPathAmbiguous,
+    crossPathAmbiguous,
+  };
+}
+
+async function resolveSubmissionSellerUserIdForAutoAssignment({
+  normalizedPayload,
+  fallbackLeadAccountId = null,
+}) {
+  const resolution = await resolveSubmissionAccountAndContactForSeller({
+    normalizedPayload,
+  });
+
+  if (resolution.accountPathAmbiguous || resolution.crossPathAmbiguous) {
+    return null;
+  }
+
+  return resolveSubmissionSellerUserId({
+    accountId: resolution.accountId,
+    contactId: resolution.contactId,
+    fallbackLeadAccountId,
+  });
+}
+
 async function resolveOrCreateLead({
   submissionId,
   eventId,
@@ -1331,7 +1498,7 @@ async function resolveOrCreateLead({
   actorUserId,
 }) {
   const existingSubmissionLeadRows = await query(
-    `SELECT i.id
+    `SELECT i.id, i.account_id, i.seller_user_id
      FROM interactions i
      WHERE i.landing_submission_id = ?
      ORDER BY i.id DESC
@@ -1340,17 +1507,29 @@ async function resolveOrCreateLead({
   );
 
   if (existingSubmissionLeadRows[0]) {
-    const leadId = Number(existingSubmissionLeadRows[0].id);
+    const existingLead = existingSubmissionLeadRows[0];
+    const leadId = Number(existingLead.id);
+    let resolvedSellerUserId = null;
+    if (Number(existingLead.seller_user_id || 0) <= 0) {
+      resolvedSellerUserId = await resolveSubmissionSellerUserId({
+        accountId,
+        contactId,
+        fallbackLeadAccountId: existingLead.account_id,
+      });
+    }
+
     await query(
       `UPDATE interactions
        SET title = ?,
            summary = ?,
+           seller_user_id = COALESCE(seller_user_id, ?),
            updated_by = ?,
            updated_at = NOW(3)
        WHERE id = ?`,
       [
         normalizeGenericText(leadTitle || `Registro landing ${slug}`, 180),
         leadSynopsis || null,
+        resolvedSellerUserId,
         Number(actorUserId),
         leadId,
       ],
@@ -1361,7 +1540,7 @@ async function resolveOrCreateLead({
   const canDeduplicateByOwnership = Boolean(accountId || contactId);
   const dedupRows = canDeduplicateByOwnership
     ? await query(
-        `SELECT i.id
+        `SELECT i.id, i.account_id, i.seller_user_id
          FROM interactions i
          LEFT JOIN interaction_contact_links icl ON icl.interaction_id = i.id
          WHERE i.account_id <=> ?
@@ -1379,17 +1558,29 @@ async function resolveOrCreateLead({
     : [];
 
   if (dedupRows[0]) {
-    const leadId = Number(dedupRows[0].id);
+    const dedupLead = dedupRows[0];
+    const leadId = Number(dedupLead.id);
+    let resolvedSellerUserId = null;
+    if (Number(dedupLead.seller_user_id || 0) <= 0) {
+      resolvedSellerUserId = await resolveSubmissionSellerUserId({
+        accountId,
+        contactId,
+        fallbackLeadAccountId: dedupLead.account_id,
+      });
+    }
+
     await query(
       `UPDATE interactions
        SET title = ?,
            summary = ?,
+           seller_user_id = COALESCE(seller_user_id, ?),
            updated_by = ?,
            updated_at = NOW(3)
        WHERE id = ?`,
       [
         normalizeGenericText(leadTitle || `Registro landing ${slug}`, 180),
         leadSynopsis || null,
+        resolvedSellerUserId,
         Number(actorUserId),
         leadId,
       ],
@@ -1404,6 +1595,10 @@ async function resolveOrCreateLead({
     180,
   );
   const sourceNotes = `landing:event_id=${Number(eventId)};slug=${slug};submission_id=${Number(submissionId)};campaign=${normalizeGenericText(normalizedPayload?.meta?.utm_campaign || "", 120)}`;
+  let resolvedSellerUserId = await resolveSubmissionSellerUserId({
+    accountId,
+    contactId,
+  });
 
   const insertResult = await query(
     `INSERT INTO interactions
@@ -1413,7 +1608,7 @@ async function resolveOrCreateLead({
         account_id, primary_opportunity_id, seller_user_id,
         landing_submission_id,
         created_by, updated_by, created_at, updated_at, analyzed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
     [
       publicId,
       title,
@@ -1423,6 +1618,7 @@ async function resolveOrCreateLead({
       "created",
       "analyzed",
       accountId || null,
+      resolvedSellerUserId,
       Number(submissionId),
       Number(actorUserId),
       Number(actorUserId),
@@ -2893,11 +3089,17 @@ privateRouter.get(
               scl.lead_id,
               scl.account_id,
               scl.contact_id,
+        i.seller_user_id AS crm_seller_user_id,
+        su.full_name AS crm_seller_full_name,
+        sb.full_name AS sent_to_leads_by_full_name,
               c.first_name AS crm_contact_first_name,
               c.last_name AS crm_contact_last_name
        FROM landing_submissions s
        LEFT JOIN landing_page_versions lv ON lv.id = s.landing_version_id
        LEFT JOIN landing_submission_crm_links scl ON scl.submission_id = s.id
+      LEFT JOIN interactions i ON i.id = scl.lead_id
+      LEFT JOIN users su ON su.id = i.seller_user_id
+      LEFT JOIN users sb ON sb.id = s.sent_to_leads_by
        LEFT JOIN contacts c ON c.id = scl.contact_id
        ${accessJoins}
        WHERE ${where.join(" AND ")}
@@ -2944,6 +3146,16 @@ privateRouter.get(
             account_id: row.account_id === null ? null : Number(row.account_id),
             contact_id: row.contact_id === null ? null : Number(row.contact_id),
           },
+          crm_seller: {
+            user_id:
+              row.crm_seller_user_id === null
+                ? null
+                : Number(row.crm_seller_user_id),
+            full_name: String(row.crm_seller_full_name || "").trim(),
+          },
+          sent_to_leads_by_user: {
+            full_name: String(row.sent_to_leads_by_full_name || "").trim(),
+          },
           crm_contact: {
             first_name: String(row.crm_contact_first_name || "").trim(),
             last_name: String(row.crm_contact_last_name || "").trim(),
@@ -2955,6 +3167,314 @@ privateRouter.get(
         page_size: pageSize,
         total: Number(totalRows[0]?.total || 0),
       },
+    });
+  },
+);
+
+privateRouter.get(
+  "/submission-sellers",
+  requireAnyPermission(landingSubmissionsReadPermissions),
+  async (_req, res) => {
+    const rows = await query(
+      `SELECT u.id, u.full_name, u.email
+       FROM users u
+       WHERE u.status = 'active'
+       ORDER BY u.full_name ASC, u.id ASC`,
+    );
+
+    return res.json({
+      items: rows.map((row) => ({
+        id: Number(row.id),
+        full_name: String(row.full_name || "").trim(),
+        email: String(row.email || "").trim(),
+      })),
+    });
+  },
+);
+
+privateRouter.patch(
+  "/submissions/:submissionId/seller",
+  requireAnyPermission(landingSubmissionsReprocessPermissions),
+  async (req, res) => {
+    const submissionId = Number(req.params.submissionId);
+    if (!Number.isInteger(submissionId) || submissionId <= 0) {
+      return res.status(400).json({ message: "submissionId invalido" });
+    }
+
+    const parsed = submissionSellerSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Payload invalido" });
+    }
+
+    const rows = await query(
+      `SELECT s.id AS submission_id,
+              scl.lead_id
+       FROM landing_submissions s
+       LEFT JOIN landing_submission_crm_links scl ON scl.submission_id = s.id
+       WHERE s.id = ?
+       LIMIT 1`,
+      [submissionId],
+    );
+    const submission = rows[0] || null;
+    if (!submission) {
+      return res.status(404).json({ message: "Submission no encontrado" });
+    }
+
+    const leadId = Number(submission.lead_id || 0);
+    if (!leadId) {
+      return res.status(409).json({
+        message:
+          "Este registro aun no esta vinculado a un lead. Envialo a Leads antes de asignar vendedor.",
+      });
+    }
+
+    const sellerUserId =
+      parsed.data.seller_user_id === null
+        ? null
+        : Number(parsed.data.seller_user_id);
+
+    let sellerPayload = { user_id: null, full_name: "" };
+
+    if (sellerUserId !== null) {
+      const sellerRows = await query(
+        `SELECT id, full_name
+         FROM users
+         WHERE id = ?
+           AND status = 'active'
+         LIMIT 1`,
+        [sellerUserId],
+      );
+      const seller = sellerRows[0] || null;
+      if (!seller) {
+        return res.status(404).json({ message: "Vendedor no encontrado" });
+      }
+      sellerPayload = {
+        user_id: Number(seller.id),
+        full_name: String(seller.full_name || "").trim(),
+      };
+    }
+
+    const updateResult = await query(
+      `UPDATE interactions
+       SET seller_user_id = ?
+       WHERE id = ?
+       LIMIT 1`,
+      [sellerUserId, leadId],
+    );
+
+    if (!Number(updateResult?.affectedRows || 0)) {
+      return res.status(404).json({ message: "Lead relacionado no encontrado" });
+    }
+
+    return res.json({
+      submission_id: submissionId,
+      lead_id: leadId,
+      crm_seller: sellerPayload,
+      updated: true,
+    });
+  },
+);
+
+privateRouter.post(
+  "/submissions/seller/auto-assign",
+  requireAnyPermission(landingSubmissionsReprocessPermissions),
+  async (req, res) => {
+    const parsed = autoAssignSubmissionSellersSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Payload invalido" });
+    }
+
+    const requestedSubmissionIds = Array.from(
+      new Set(
+        parsed.data.submission_ids
+          .map((value) => Number(value || 0))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    );
+
+    if (!requestedSubmissionIds.length) {
+      return res.status(400).json({ message: "submission_ids invalido" });
+    }
+
+    const placeholders = requestedSubmissionIds.map(() => "?").join(", ");
+    const rows = await query(
+      `SELECT s.id AS submission_id,
+              s.payload_normalized_json,
+              scl.lead_id,
+              i.account_id AS lead_account_id,
+              i.seller_user_id AS lead_seller_user_id
+       FROM landing_submissions s
+       LEFT JOIN landing_submission_crm_links scl ON scl.submission_id = s.id
+       LEFT JOIN interactions i ON i.id = scl.lead_id
+       WHERE s.id IN (${placeholders})`,
+      requestedSubmissionIds,
+    );
+
+    const rowBySubmissionId = new Map();
+    for (const row of rows) {
+      rowBySubmissionId.set(Number(row.submission_id), row);
+    }
+
+    const sellerNameCache = new Map();
+    const items = [];
+    let assignedCount = 0;
+    let alreadyAssignedCount = 0;
+    let skippedCount = 0;
+
+    for (const submissionId of requestedSubmissionIds) {
+      const row = rowBySubmissionId.get(submissionId);
+      if (!row) {
+        skippedCount += 1;
+        items.push({
+          submission_id: submissionId,
+          updated: false,
+          reason: "submission_not_found",
+        });
+        continue;
+      }
+
+      const leadId = Number(row.lead_id || 0);
+      if (!leadId) {
+        skippedCount += 1;
+        items.push({
+          submission_id: submissionId,
+          lead_id: null,
+          updated: false,
+          reason: "lead_not_linked",
+        });
+        continue;
+      }
+
+      const currentSellerUserId = Number(row.lead_seller_user_id || 0) || null;
+
+      let normalizedPayload = {};
+      try {
+        normalizedPayload =
+          typeof row.payload_normalized_json === "string"
+            ? JSON.parse(row.payload_normalized_json || "{}")
+            : row.payload_normalized_json || {};
+      } catch {
+        normalizedPayload = {};
+      }
+
+      const resolvedSellerUserId = await resolveSubmissionSellerUserIdForAutoAssignment(
+        {
+          normalizedPayload,
+          fallbackLeadAccountId: Number(row.lead_account_id || 0) || null,
+        },
+      );
+
+      if (!resolvedSellerUserId) {
+        if (!currentSellerUserId) {
+          skippedCount += 1;
+          items.push({
+            submission_id: submissionId,
+            lead_id: leadId,
+            updated: false,
+            reason: "seller_not_resolved",
+          });
+          continue;
+        }
+
+        const clearResult = await query(
+          `UPDATE interactions
+           SET seller_user_id = NULL
+           WHERE id = ?
+           LIMIT 1`,
+          [leadId],
+        );
+
+        if (!Number(clearResult?.affectedRows || 0)) {
+          skippedCount += 1;
+          items.push({
+            submission_id: submissionId,
+            lead_id: leadId,
+            updated: false,
+            reason: "lead_not_updated",
+          });
+          continue;
+        }
+
+        assignedCount += 1;
+        items.push({
+          submission_id: submissionId,
+          lead_id: leadId,
+          updated: true,
+          reason: "cleared_no_owner",
+          crm_seller: {
+            user_id: null,
+            full_name: "",
+          },
+        });
+        continue;
+      }
+
+      if (currentSellerUserId === resolvedSellerUserId) {
+        alreadyAssignedCount += 1;
+        items.push({
+          submission_id: submissionId,
+          lead_id: leadId,
+          updated: false,
+          reason: "already_matches_rule",
+          crm_seller: {
+            user_id: resolvedSellerUserId,
+            full_name: "",
+          },
+        });
+        continue;
+      }
+
+      const updateResult = await query(
+        `UPDATE interactions
+         SET seller_user_id = ?
+         WHERE id = ?
+         LIMIT 1`,
+        [resolvedSellerUserId, leadId],
+      );
+
+      if (!Number(updateResult?.affectedRows || 0)) {
+        skippedCount += 1;
+        items.push({
+          submission_id: submissionId,
+          lead_id: leadId,
+          updated: false,
+          reason: "lead_not_updated",
+        });
+        continue;
+      }
+
+      let sellerFullName = sellerNameCache.get(resolvedSellerUserId) || "";
+      if (!sellerNameCache.has(resolvedSellerUserId)) {
+        const sellerRows = await query(
+          `SELECT full_name
+           FROM users
+           WHERE id = ?
+           LIMIT 1`,
+          [resolvedSellerUserId],
+        );
+        sellerFullName = String(sellerRows[0]?.full_name || "").trim();
+        sellerNameCache.set(resolvedSellerUserId, sellerFullName);
+      }
+
+      assignedCount += 1;
+      items.push({
+        submission_id: submissionId,
+        lead_id: leadId,
+        updated: true,
+        reason: "assigned",
+        crm_seller: {
+          user_id: resolvedSellerUserId,
+          full_name: sellerFullName,
+        },
+      });
+    }
+
+    return res.json({
+      requested_count: requestedSubmissionIds.length,
+      assigned_count: assignedCount,
+      already_assigned_count: alreadyAssignedCount,
+      skipped_count: skippedCount,
+      items,
     });
   },
 );

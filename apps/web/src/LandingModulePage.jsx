@@ -836,6 +836,15 @@ export default function LandingModulePage() {
     direction: "desc",
   });
   const [submissionNotesDrafts, setSubmissionNotesDrafts] = useState({});
+  const [submissionSellerDrafts, setSubmissionSellerDrafts] = useState({});
+  const [submissionSellerOptions, setSubmissionSellerOptions] = useState([]);
+  const [isLoadingSubmissionSellers, setIsLoadingSubmissionSellers] =
+    useState(false);
+  const [savingSubmissionSellerById, setSavingSubmissionSellerById] = useState(
+    {},
+  );
+  const [isApplyingSubmissionSellers, setIsApplyingSubmissionSellers] =
+    useState(false);
   const [savingSubmissionNotesById, setSavingSubmissionNotesById] = useState(
     {},
   );
@@ -994,7 +1003,34 @@ export default function LandingModulePage() {
         });
       }
     }
-    return Array.from(byKey.values());
+    const preferredOrder = {
+      first_name: 10,
+      last_name: 20,
+      email: 30,
+    };
+
+    return Array.from(byKey.values())
+      .map((column, index) => ({
+        column,
+        index,
+      }))
+      .sort((left, right) => {
+        const leftPriority =
+          preferredOrder[left.column.key] !== undefined
+            ? preferredOrder[left.column.key]
+            : 1000;
+        const rightPriority =
+          preferredOrder[right.column.key] !== undefined
+            ? preferredOrder[right.column.key]
+            : 1000;
+
+        if (leftPriority !== rightPriority) {
+          return leftPriority - rightPriority;
+        }
+
+        return left.index - right.index;
+      })
+      .map((entry) => entry.column);
   }, [submissions]);
 
   const submissionEventOptions = useMemo(() => {
@@ -1043,6 +1079,8 @@ export default function LandingModulePage() {
       const submittedFields = buildSubmissionFieldEntries(submission);
       const haystack = [
         formatBusinessDateTime(submission?.submitted_at, { fallback: "" }),
+        String(submission?.crm_seller?.full_name || ""),
+        String(submission?.sent_to_leads_by_user?.full_name || ""),
         String(submission?.user_notes || ""),
         ...submittedFields.flatMap((field) => [
           String(field?.label || ""),
@@ -1073,6 +1111,13 @@ export default function LandingModulePage() {
         if (key === "submitted_at") {
           return new Date(entry.submission?.submitted_at || 0).getTime();
         }
+        if (key === "seller_name") {
+          return String(
+            entry.submission?.crm_seller?.full_name ||
+              entry.submission?.sent_to_leads_by_user?.full_name ||
+              "",
+          ).toLowerCase();
+        }
         if (key === "user_notes") {
           return String(entry.submission?.user_notes || "").toLowerCase();
         }
@@ -1101,6 +1146,60 @@ export default function LandingModulePage() {
 
     return decorated;
   }, [submissionSort, submissionTableFilter, submissions]);
+
+  const submissionSellerApplyTargets = useMemo(() => {
+    return visibleSubmissions
+      .map(({ submission }) => {
+        const submissionId = Number(submission?.submission_id || 0);
+        const leadId = Number(submission?.crm_links?.lead_id || 0);
+        if (!submissionId || !leadId) return null;
+
+        if (
+          !Object.prototype.hasOwnProperty.call(
+            submissionSellerDrafts,
+            submissionId,
+          )
+        ) {
+          return null;
+        }
+
+        const draftValue = String(submissionSellerDrafts[submissionId] || "");
+        const nextSellerId = draftValue ? Number(draftValue) : null;
+        const currentSellerId = submission?.crm_seller?.user_id
+          ? Number(submission.crm_seller.user_id)
+          : null;
+
+        if (nextSellerId === currentSellerId) return null;
+
+        return {
+          submissionId,
+          nextSellerId,
+        };
+      })
+      .filter(Boolean);
+  }, [submissionSellerDrafts, visibleSubmissions]);
+
+  const submissionSellerAutoAssignTargets = useMemo(() => {
+    return visibleSubmissions
+      .map(({ submission }) => {
+        const submissionId = Number(submission?.submission_id || 0);
+        const leadId = Number(submission?.crm_links?.lead_id || 0);
+        if (!submissionId || !leadId) return null;
+
+        // Auto-assign only when there is no explicit manual override in the UI.
+        if (
+          Object.prototype.hasOwnProperty.call(
+            submissionSellerDrafts,
+            submissionId,
+          )
+        ) {
+          return null;
+        }
+
+        return submissionId;
+      })
+      .filter(Boolean);
+  }, [submissionSellerDrafts, visibleSubmissions]);
 
   const pushSuccess = useCallback((message) => {
     setGlobalSuccess(message);
@@ -1260,6 +1359,9 @@ export default function LandingModulePage() {
     if (!selectedEventId) {
       setSubmissions([]);
       setSubmissionNotesDrafts({});
+      setSubmissionSellerDrafts({});
+      setSavingSubmissionSellerById({});
+      setIsApplyingSubmissionSellers(false);
       return;
     }
 
@@ -1288,6 +1390,11 @@ export default function LandingModulePage() {
           return acc;
         }, {}),
       );
+      setSubmissionSellerDrafts(
+        {},
+      );
+      setSavingSubmissionSellerById({});
+      setIsApplyingSubmissionSellers(false);
     } catch (error) {
       pushError(
         getApiErrorMessage(
@@ -1299,6 +1406,32 @@ export default function LandingModulePage() {
       setIsLoadingSubmissions(false);
     }
   }, [crmStatusFilter, fromDate, pushError, selectedEventId, toDate]);
+
+  const loadSubmissionSellerOptions = useCallback(async () => {
+    try {
+      setIsLoadingSubmissionSellers(true);
+      const { data } = await api.get("/api/landing/v1/submission-sellers");
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setSubmissionSellerOptions(
+        items
+          .map((item) => ({
+            id: Number(item?.id || 0),
+            fullName: String(item?.full_name || "").trim(),
+            email: String(item?.email || "").trim(),
+          }))
+          .filter((item) => item.id > 0),
+      );
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible cargar la lista de vendedores",
+        ),
+      );
+    } finally {
+      setIsLoadingSubmissionSellers(false);
+    }
+  }, [pushError]);
 
   useEffect(() => {
     loadLandingList();
@@ -1316,7 +1449,8 @@ export default function LandingModulePage() {
   useEffect(() => {
     if (activeTab !== "submissions") return;
     loadSubmissions();
-  }, [activeTab, loadSubmissions]);
+    loadSubmissionSellerOptions();
+  }, [activeTab, loadSubmissionSellerOptions, loadSubmissions]);
 
   useEffect(() => {
     if (!selectedEventId) {
@@ -2313,6 +2447,176 @@ export default function LandingModulePage() {
         [numericSubmissionId]: false,
       }));
     }
+  }
+
+  async function handleUpdateSubmissionSeller(submissionId, rawValue) {
+    const numericSubmissionId = Number(submissionId || 0);
+    if (!numericSubmissionId) return;
+    setSubmissionSellerDrafts((prev) => ({
+      ...prev,
+      [numericSubmissionId]: String(rawValue || "").trim(),
+    }));
+  }
+
+  async function handleApplySubmissionSellerAssignments() {
+    if (isApplyingSubmissionSellers) return;
+
+    const pendingAssignments = submissionSellerApplyTargets;
+    const autoAssignTargets = submissionSellerAutoAssignTargets;
+
+    if (!pendingAssignments.length && !autoAssignTargets.length) {
+      pushError(
+        "No hay registros visibles listos para asignar vendedor",
+      );
+      return;
+    }
+
+    const initialSavingState = [...pendingAssignments, ...autoAssignTargets.map((submissionId) => ({ submissionId }))].reduce((acc, entry) => {
+      acc[entry.submissionId] = true;
+      return acc;
+    }, {});
+
+    setIsApplyingSubmissionSellers(true);
+    setSavingSubmissionSellerById((prev) => ({
+      ...prev,
+      ...initialSavingState,
+    }));
+
+    let updatedCount = 0;
+    let firstErrorMessage = "";
+
+    for (const assignment of pendingAssignments) {
+      try {
+        const { data } = await api.patch(
+          `/api/landing/v1/submissions/${assignment.submissionId}/seller`,
+          {
+            seller_user_id: assignment.nextSellerId,
+          },
+        );
+
+        const crmSeller = {
+          user_id:
+            data?.crm_seller?.user_id === null ||
+            data?.crm_seller?.user_id === undefined
+              ? null
+              : Number(data.crm_seller.user_id),
+          full_name: String(data?.crm_seller?.full_name || "").trim(),
+        };
+
+        setSubmissions((prev) =>
+          prev.map((item) =>
+            Number(item?.submission_id) === assignment.submissionId
+              ? {
+                  ...item,
+                  crm_seller: crmSeller,
+                }
+              : item,
+          ),
+        );
+        setSubmissionSellerDrafts((prev) => ({
+          ...prev,
+          [assignment.submissionId]:
+            crmSeller.user_id !== null ? String(crmSeller.user_id) : "",
+        }));
+        updatedCount += 1;
+      } catch (error) {
+        if (!firstErrorMessage) {
+          firstErrorMessage = getApiErrorMessage(
+            error,
+            "No fue posible actualizar uno o más vendedores",
+          );
+        }
+      } finally {
+        setSavingSubmissionSellerById((prev) => ({
+          ...prev,
+          [assignment.submissionId]: false,
+        }));
+      }
+    }
+
+    if (autoAssignTargets.length) {
+      try {
+        const { data } = await api.post(
+          "/api/landing/v1/submissions/seller/auto-assign",
+          {
+            submission_ids: autoAssignTargets,
+          },
+        );
+
+        const assignedItems = Array.isArray(data?.items)
+          ? data.items.filter((item) => item?.updated)
+          : [];
+
+        if (assignedItems.length) {
+          const assignedBySubmission = new Map(
+            assignedItems.map((item) => [
+              Number(item.submission_id),
+              {
+                user_id:
+                  item?.crm_seller?.user_id === null ||
+                  item?.crm_seller?.user_id === undefined
+                    ? null
+                    : Number(item.crm_seller.user_id),
+                full_name: String(item?.crm_seller?.full_name || "").trim(),
+              },
+            ]),
+          );
+
+          setSubmissions((prev) =>
+            prev.map((entry) => {
+              const submissionId = Number(entry?.submission_id || 0);
+              if (!assignedBySubmission.has(submissionId)) return entry;
+              return {
+                ...entry,
+                crm_seller: assignedBySubmission.get(submissionId),
+              };
+            }),
+          );
+
+          setSubmissionSellerDrafts((prev) => {
+            const next = { ...prev };
+            for (const item of assignedItems) {
+              const submissionId = Number(item.submission_id || 0);
+              if (submissionId) {
+                delete next[submissionId];
+              }
+            }
+            return next;
+          });
+
+          updatedCount += assignedItems.length;
+        }
+      } catch (error) {
+        if (!firstErrorMessage) {
+          firstErrorMessage = getApiErrorMessage(
+            error,
+            "No fue posible ejecutar la autoasignacion de vendedores",
+          );
+        }
+      } finally {
+        for (const submissionId of autoAssignTargets) {
+          setSavingSubmissionSellerById((prev) => ({
+            ...prev,
+            [submissionId]: false,
+          }));
+        }
+      }
+    }
+
+    setIsApplyingSubmissionSellers(false);
+
+    if (firstErrorMessage) {
+      if (updatedCount > 0) {
+        pushError(
+          `Se actualizaron ${updatedCount} registro(s), pero hubo errores: ${firstErrorMessage}`,
+        );
+      } else {
+        pushError(firstErrorMessage);
+      }
+      return;
+    }
+
+    pushSuccess(`Vendedor asignado en ${updatedCount} registro(s)`);
   }
 
   async function handleDeleteSubmission(submissionId) {
@@ -3624,6 +3928,11 @@ export default function LandingModulePage() {
         <section className="landing-panel">
           <article className="landing-card">
             <h3>Registros por evento</h3>
+            <p className="landing-muted">
+              {isLoadingSubmissions
+                ? "Cargando registros..."
+                : `Mostrando ${visibleSubmissions.length} de ${submissions.length} registros`}
+            </p>
             <div className="landing-submission-filters">
               <label className="landing-submission-filter-field">
                 <span>Evento</span>
@@ -3715,6 +4024,50 @@ export default function LandingModulePage() {
                   placeholder="Buscar por fecha, nombre, correo, empresa o notas"
                 />
               </label>
+              <div className="landing-submission-filter-actions">
+                <button
+                  type="button"
+                  className="landing-icon-action-button"
+                  onClick={() => {
+                    void handleApplySubmissionSellerAssignments();
+                  }}
+                  title={
+                    isApplyingSubmissionSellers
+                      ? "Aplicando asignaciones..."
+                      : "Aplicar asignación de vendedor"
+                  }
+                  aria-label={
+                    isApplyingSubmissionSellers
+                      ? "Aplicando asignaciones"
+                      : "Aplicar asignación de vendedor"
+                  }
+                  disabled={
+                    isApplyingSubmissionSellers ||
+                    isLoadingSubmissionSellers
+                  }
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <path d="M5 12l4 4L19 6" />
+                  </svg>
+                </button>
+                <span className="landing-submission-apply-hint">
+                  {submissionSellerApplyTargets.length ||
+                  submissionSellerAutoAssignTargets.length
+                    ? `${submissionSellerApplyTargets.length} manual(es) y ${submissionSellerAutoAssignTargets.length} autoasignable(s)`
+                    : "Sin vendedores listos para asignar"}
+                </span>
+              </div>
             </div>
 
             <div className="landing-list-wrap">
@@ -3730,6 +4083,22 @@ export default function LandingModulePage() {
                         Fecha
                         <span>
                           {submissionSort.key === "submitted_at"
+                            ? submissionSort.direction === "asc"
+                              ? "↑"
+                              : "↓"
+                            : "↕"}
+                        </span>
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        className="landing-sort-button"
+                        onClick={() => toggleSubmissionSort("seller_name")}
+                      >
+                        Vendedor
+                        <span>
+                          {submissionSort.key === "seller_name"
                             ? submissionSort.direction === "asc"
                               ? "↑"
                               : "↓"
@@ -3777,7 +4146,7 @@ export default function LandingModulePage() {
                 <tbody>
                   {visibleSubmissions.length === 0 ? (
                     <tr>
-                      <td colSpan={submissionFieldColumns.length + 3}>
+                      <td colSpan={submissionFieldColumns.length + 4}>
                         No hay registros para este filtro
                       </td>
                     </tr>
@@ -3786,8 +4155,12 @@ export default function LandingModulePage() {
                       const submissionId = Number(
                         submission.submission_id || 0,
                       );
+                      const leadId = Number(submission?.crm_links?.lead_id || 0);
                       const isSentToLeads = Boolean(
                         String(submission?.sent_to_leads_at || "").trim(),
+                      );
+                      const isSavingSeller = Boolean(
+                        savingSubmissionSellerById[submissionId],
                       );
                       const isSendingSubmission = Boolean(
                         sendingSubmissionById[submissionId],
@@ -3815,6 +4188,48 @@ export default function LandingModulePage() {
                             {formatBusinessDateTime(submission.submitted_at, {
                               fallback: "-",
                             })}
+                          </td>
+                          <td>
+                            <div className="landing-submission-seller-cell">
+                              <select
+                                value={String(
+                                  Object.prototype.hasOwnProperty.call(
+                                    submissionSellerDrafts,
+                                    submissionId,
+                                  )
+                                    ? submissionSellerDrafts[submissionId]
+                                    : submission?.crm_seller?.user_id
+                                      ? String(submission.crm_seller.user_id)
+                                      : "",
+                                )}
+                                onChange={(event) =>
+                                  handleUpdateSubmissionSeller(
+                                    submissionId,
+                                    event.target.value,
+                                  )
+                                }
+                                disabled={
+                                  !leadId ||
+                                  isSavingSeller ||
+                                  isLoadingSubmissionSellers
+                                }
+                                className="landing-submission-seller-select"
+                              >
+                                <option value="">
+                                  {leadId ? "Sin asignar" : "No disponible"}
+                                </option>
+                                {submissionSellerOptions.map((seller) => (
+                                  <option key={seller.id} value={seller.id}>
+                                    {seller.fullName || seller.email}
+                                  </option>
+                                ))}
+                              </select>
+                              {!leadId ? (
+                                <span className="landing-submission-seller-hint">
+                                  Envia a Leads para habilitar vendedor
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
                           {submissionFieldColumns.map((column) => (
                             <td
