@@ -68,6 +68,19 @@ const quotationPermissionCodes = [
   "cotizaciones.externo",
 ];
 
+const acceptOrderPermissionCodes = [
+  "aceptar_pedido.procesamiento.read",
+  "aceptar_pedido.procesamiento.update",
+  "aceptar_pedido.procesamiento.ia",
+  "aceptar_pedido.procesamiento.convocar",
+];
+
+const acceptOrderAccessPermissionCodes = Array.from(
+  new Set([...quotationPermissionCodes, ...acceptOrderPermissionCodes]),
+);
+
+const acceptOrderStatusCodes = new Set(["ganada", "aceptada"]);
+
 const proposalReadPermissionCodes = [
   "propuestas.read",
   "propuestas.create",
@@ -2243,7 +2256,7 @@ function hasQuotationProcessingReadPermission(user) {
   return (
     hasAnyQuotationPermission(user) ||
     hasQuotationAdministration(user) ||
-    user?.permissionSet?.has("aceptar_pedido.procesamiento.read")
+    hasAnyAcceptOrderPermission(user)
   );
 }
 
@@ -2270,6 +2283,14 @@ function hasQuotationProcessingConvokePermission(user) {
     user?.permissionSet?.has("aceptar_pedido.procesamiento.convocar") ||
     user?.permissionSet?.has("cotizaciones.operacion")
   );
+}
+
+function assertAcceptOrderPermission(req, res) {
+  if (!hasAnyQuotationPermission(req.user) && !hasAnyAcceptOrderPermission(req.user)) {
+    res.status(403).json({ message: "No autorizado" });
+    return false;
+  }
+  return true;
 }
 
 function buildQuotationProcessingEvidenceStorageKey({
@@ -8361,6 +8382,12 @@ function hasAnyQuotationPermission(user) {
   );
 }
 
+function hasAnyAcceptOrderPermission(user) {
+  return acceptOrderPermissionCodes.some((permission) =>
+    user?.permissionSet?.has(permission),
+  );
+}
+
 function hasAnyProposalReadPermission(user) {
   return proposalReadPermissionCodes.some((permission) =>
     user?.permissionSet?.has(permission),
@@ -12442,9 +12469,17 @@ router.get(
 
 router.get(
   "/quotation-product-lists",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingUpdatePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para consultar listas de productos de Aceptar Pedido",
+      });
+    }
 
     const parsed = quotationProductListsQuerySchema.safeParse(req.query || {});
     if (!parsed.success) {
@@ -12473,9 +12508,17 @@ router.get(
 
 router.get(
   "/quotation-products/search",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingUpdatePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para consultar productos de Aceptar Pedido",
+      });
+    }
 
     const searchQuery = String(req.query.q || "").trim();
     const providerId = Number(req.query.providerId || 0);
@@ -12632,9 +12675,32 @@ router.post(
 
 router.get(
   "/quotations",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    const latestStatusCodesFilter = String(req.query.latestStatusCodes || "")
+      .split(",")
+      .map((code) => code.trim().toLowerCase())
+      .filter(Boolean);
+    const hasQuotationPermission = hasAnyQuotationPermission(req.user);
+    const hasAcceptOrderPermission = hasAnyAcceptOrderPermission(req.user);
+
+    if (!hasQuotationPermission && !hasAcceptOrderPermission) {
+      return res.status(403).json({ message: "No autorizado" });
+    }
+    if (latestStatusCodesFilter.some((code) => !/^[a-z0-9_]+$/.test(code))) {
+      return res.status(400).json({ message: "latestStatusCodes invalido" });
+    }
+    if (!hasQuotationPermission) {
+      const isAcceptOrderFilter =
+        latestStatusCodesFilter.length > 0 &&
+        latestStatusCodesFilter.every((code) => acceptOrderStatusCodes.has(code));
+      if (!isAcceptOrderFilter) {
+        return res.status(403).json({
+          message: "No autorizado para consultar cotizaciones fuera de Aceptar Pedido",
+        });
+      }
+    }
+
     await ensureQuotationAcceptanceNotificationsTable();
 
     const params = [];
@@ -12642,13 +12708,6 @@ router.get(
     const opportunityId = req.query.opportunityId
       ? Number(req.query.opportunityId)
       : null;
-    const latestStatusCodesFilter = String(req.query.latestStatusCodes || "")
-      .split(",")
-      .map((code) => code.trim().toLowerCase())
-      .filter(Boolean);
-    if (latestStatusCodesFilter.some((code) => !/^[a-z0-9_]+$/.test(code))) {
-      return res.status(400).json({ message: "latestStatusCodes invalido" });
-    }
 
     const ownershipJoin = applyOwnedAccountScope({
       user: req.user,
@@ -12820,9 +12879,17 @@ router.get(
 
 router.post(
   "/quotations/:quotationId/seller-notification",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingConvokePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para notificar al vendedor desde Aceptar Pedido",
+      });
+    }
     await ensureQuotationAcceptanceNotificationsTable();
 
     const quotationId = Number(req.params.quotationId);
@@ -12972,9 +13039,9 @@ router.post(
 
 router.get(
   "/quotations/:quotationId/processing",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingReadPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para consultar el procesamiento de la cotizacion",
@@ -13133,9 +13200,9 @@ router.get(
 
 router.patch(
   "/quotations/:quotationId/processing/stages/:stageCode",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para actualizar etapas de procesamiento",
@@ -13227,9 +13294,9 @@ router.patch(
 
 router.post(
   "/quotations/:quotationId/processing/provider-purchase-orders",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para generar ordenes de compra",
@@ -13336,9 +13403,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-internal/invitations",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingConvokePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para convocar kick off interno",
@@ -13504,9 +13571,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-internal/evidences/files",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para registrar minuta",
@@ -13670,9 +13737,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-internal/ai-summary",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingIaPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para generar resumen IA",
@@ -13786,9 +13853,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-external/evidences/manual-note",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para registrar evidencias",
@@ -13876,9 +13943,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-external/evidences/files",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para registrar evidencias",
@@ -14042,9 +14109,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-external/ai-summary",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingIaPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para generar resumen IA",
@@ -14170,9 +14237,9 @@ router.post(
 
 router.delete(
   "/quotations/:quotationId/processing/evidences/:evidenceId",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para eliminar evidencias",
@@ -14270,9 +14337,9 @@ router.delete(
 
 router.get(
   "/quotations/:quotationId/processing/evidences/:evidenceId/download",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingReadPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para descargar evidencias",
@@ -17074,9 +17141,17 @@ router.get(
 
 router.get(
   "/quotation-versions/:versionId/won-documents",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingReadPermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para consultar documentos de cierre",
+      });
+    }
     const versionId = Number(req.params.versionId);
     if (!Number.isInteger(versionId) || versionId <= 0) {
       return res.status(400).json({ message: "Id de version invalido" });
@@ -17111,9 +17186,17 @@ router.get(
 
 router.post(
   "/quotation-versions/:versionId/won-documents",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingUpdatePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para registrar documentos de cierre",
+      });
+    }
     const versionId = Number(req.params.versionId);
     if (!Number.isInteger(versionId) || versionId <= 0) {
       return res.status(400).json({ message: "Id de version invalido" });
@@ -18646,9 +18729,17 @@ router.get(
 
 router.get(
   "/quotation-versions/:versionId/won-documents/:source/:documentId/download",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingReadPermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para descargar documentos de cierre",
+      });
+    }
 
     const versionId = Number(req.params.versionId);
     const documentId = Number(req.params.documentId);
@@ -21166,20 +21257,29 @@ async function evaluateQuotationApprovalPolicies({
 
 router.post(
   "/quotation-versions/:versionId/transition",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
-    const versionId = Number(req.params.versionId);
-    if (!Number.isInteger(versionId) || versionId <= 0) {
-      return res.status(400).json({ message: "Id de version invalido" });
-    }
-
     const parsed = transitionSchema.safeParse(req.body || {});
     if (!parsed.success) {
       return res.status(400).json({
         message: "Datos invalidos",
         errors: parsed.error.flatten(),
       });
+    }
+
+    const actionCode = parsed.data.actionCode;
+    const hasQuotationPermission = hasAnyQuotationPermission(req.user);
+    const isAcceptOrderAction = actionCode === "aceptar";
+
+    if (!hasQuotationPermission) {
+      if (!hasAnyAcceptOrderPermission(req.user) || !isAcceptOrderAction) {
+        return res.status(403).json({ message: "No autorizado" });
+      }
+    }
+
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
     }
 
     const version = await getAccessibleQuotationVersion({
@@ -21195,7 +21295,6 @@ router.post(
       });
     }
 
-    const actionCode = parsed.data.actionCode;
     const approvalContext = parsed.data.approvalContext || {};
     const approvalMode = String(approvalContext?.approvalMode || "").trim();
     const canExecute = await canExecuteQuotationAction({
@@ -21203,7 +21302,13 @@ router.post(
       versionRow: version,
       actionCode,
     });
-    if (!canExecute && !hasQuotationAdministration(req.user)) {
+    const canAcceptFromAcceptOrderModule =
+      isAcceptOrderAction && hasQuotationProcessingUpdatePermission(req.user);
+    if (
+      !canExecute &&
+      !canAcceptFromAcceptOrderModule &&
+      !hasQuotationAdministration(req.user)
+    ) {
       return res
         .status(403)
         .json({ message: "No autorizado para esta accion" });
