@@ -27,7 +27,10 @@ function PurchaseOrderPrintDocument({ model }) {
   const hasDiscount = hasVisibleMoneyValue(model.summary.discount);
 
   return (
-    <div className="quotation-print-sheet" data-testid="purchase-order-print-sheet">
+    <div
+      className="quotation-print-sheet"
+      data-testid="purchase-order-print-sheet"
+    >
       <header className="quotation-print-header-grid">
         <div className="quotation-print-company-block">
           {model.company.logoUrl ? (
@@ -48,19 +51,25 @@ function PurchaseOrderPrintDocument({ model }) {
 
         <div className="quotation-print-metadata-grid">
           <div className="quotation-print-info-card">
-            <strong>Orden de compra: {model.header.documentNumber || ""}</strong>
+            <strong>
+              Orden de compra: {model.header.documentNumber || ""}
+            </strong>
           </div>
           <div className="quotation-print-info-card">
             <strong>Fecha: {model.header.documentDate || ""}</strong>
           </div>
           <div className="quotation-print-info-card">
-            <strong>{model.header.quotationReference || ""}</strong>
+            <strong>
+              Cotización del proveedor: {model.header.providerQuotation || ""}
+            </strong>
           </div>
           <div className="quotation-print-info-card">
             <strong>Cliente: {model.header.accountName || ""}</strong>
           </div>
           <div className="quotation-print-info-card">
-            <strong>Propuesta: {model.header.proposalName || ""}</strong>
+            <strong>
+              Contacto del proveedor: {model.header.providerContactName || ""}
+            </strong>
           </div>
           <div className="quotation-print-info-card">
             <strong>Proveedores: {model.header.providerNames || ""}</strong>
@@ -124,8 +133,13 @@ function PurchaseOrderPrintDocument({ model }) {
             </table>
             <div className="quotation-print-section-subtotal">
               <span>Sub-Total:</span>
-              <strong data-testid={`purchase-order-print-section-subtotal-${section.id}`}>
-                {formatPrintMoney(section.subtotal, section.currencyCode || model.summary.currencyCode)}
+              <strong
+                data-testid={`purchase-order-print-section-subtotal-${section.id}`}
+              >
+                {formatPrintMoney(
+                  section.subtotal,
+                  section.currencyCode || model.summary.currencyCode,
+                )}
               </strong>
             </div>
           </section>
@@ -136,8 +150,16 @@ function PurchaseOrderPrintDocument({ model }) {
         <section className="quotation-print-summary-card">
           <div className="quotation-print-summary-title">Datos de la orden</div>
           <div className="quotation-print-summary-row">
-            <span>Cotización origen</span>
-            <strong>{model.header.quotationReference || ""}</strong>
+            <span>Cotización del proveedor</span>
+            <strong>{model.header.providerQuotation || ""}</strong>
+          </div>
+          <div className="quotation-print-summary-row">
+            <span>Condiciones de pago</span>
+            <strong>{model.header.paymentConditions || ""}</strong>
+          </div>
+          <div className="quotation-print-summary-row">
+            <span>Cliente final</span>
+            <strong>{model.header.accountName || ""}</strong>
           </div>
           <div className="quotation-print-summary-row">
             <span>Proveedores</span>
@@ -158,7 +180,10 @@ function PurchaseOrderPrintDocument({ model }) {
           <div className="quotation-print-summary-row">
             <span>Subtotal</span>
             <strong>
-              {formatPrintMoney(model.summary.subtotal, model.summary.currencyCode)}
+              {formatPrintMoney(
+                model.summary.subtotal,
+                model.summary.currencyCode,
+              )}
             </strong>
           </div>
           {hasDiscount ? (
@@ -166,7 +191,10 @@ function PurchaseOrderPrintDocument({ model }) {
               <div className="quotation-print-summary-row">
                 <span>Descuento</span>
                 <strong>
-                  {formatPrintMoney(model.summary.discount, model.summary.currencyCode)}
+                  {formatPrintMoney(
+                    model.summary.discount,
+                    model.summary.currencyCode,
+                  )}
                 </strong>
               </div>
               <div className="quotation-print-summary-row">
@@ -184,14 +212,20 @@ function PurchaseOrderPrintDocument({ model }) {
             <div className="quotation-print-summary-row">
               <span>I.V.A.</span>
               <strong>
-                {formatPrintMoney(model.summary.vatAmount, model.summary.currencyCode)}
+                {formatPrintMoney(
+                  model.summary.vatAmount,
+                  model.summary.currencyCode,
+                )}
               </strong>
             </div>
           ) : null}
           <div className="quotation-print-summary-row is-total">
             <span>Total</span>
             <strong>
-              {formatPrintMoney(model.summary.total, model.summary.currencyCode)}
+              {formatPrintMoney(
+                model.summary.total,
+                model.summary.currencyCode,
+              )}
             </strong>
           </div>
         </section>

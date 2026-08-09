@@ -13,6 +13,14 @@ const WON_DOCUMENT_SOURCE_LABELS = {
   opportunity: "Oportunidad",
 };
 
+const DEFAULT_PURCHASE_ORDER_NOTES = `Notas:
+* Forma de Pago. Transferencia Bancaria
+* Cualquier documento adicional enviarlo a nuestros correos: icruz@accessq.com.mx
+*Envio de equipo físico en nuestras oficinas ubicadas en: Montecito 38 P7 OF 1, Col. Nápoles
+Alcaldía. Benito Juarez, CP. 03810 CDMX, Mèxico.
+En coordinación con Isaac Emmanuel Cruz
+icruz@accessq.com.mx Cel. +52 55 1459 8758`;
+
 const PROCESSING_STAGE_DEFINITIONS = [
   { code: "quotation_accepted", name: "Aceptar Cotización" },
   { code: "kickoff_internal", name: "Kick Off interno" },
@@ -83,7 +91,11 @@ const BASE_STAGE_SPECIFIC_FIELDS = {
     },
   ],
   invoicing: [
-    { key: "estimatedInvoiceDate", label: "Fecha estimada factura", type: "date" },
+    {
+      key: "estimatedInvoiceDate",
+      label: "Fecha estimada factura",
+      type: "date",
+    },
     { key: "actualInvoiceDate", label: "Fecha real factura", type: "date" },
     { key: "invoiceNumber", label: "Numero factura", type: "text" },
     { key: "invoiceAmount", label: "Monto factura", type: "text" },
@@ -103,7 +115,11 @@ const BASE_STAGE_SPECIFIC_FIELDS = {
     },
   ],
   provider_invoice_reception: [
-    { key: "providerInvoiceDate", label: "Fecha factura proveedor", type: "date" },
+    {
+      key: "providerInvoiceDate",
+      label: "Fecha factura proveedor",
+      type: "date",
+    },
     {
       key: "providerInvoiceNumber",
       label: "Numero factura proveedor",
@@ -239,14 +255,14 @@ function buildKickoffInternalEmailPreview({ quotation, draft }) {
 
   const sellerName = String(quotation?.sellerUserName || "").trim();
   const usersById = new Map(
-    (Array.isArray(draft?.assignableUsers) ? draft.assignableUsers : []).map((user) => [
-      Number(user.id),
-      String(user.fullName || "").trim(),
-    ]),
+    (Array.isArray(draft?.assignableUsers) ? draft.assignableUsers : []).map(
+      (user) => [Number(user.id), String(user.fullName || "").trim()],
+    ),
   );
-  const selectedNames = (Array.isArray(draft?.internalAttendeesUserIds)
-    ? draft.internalAttendeesUserIds
-    : []
+  const selectedNames = (
+    Array.isArray(draft?.internalAttendeesUserIds)
+      ? draft.internalAttendeesUserIds
+      : []
   )
     .map((id) => usersById.get(Number(id)) || "")
     .map((name) => String(name || "").trim())
@@ -335,6 +351,22 @@ function toDateInputValue(value) {
   return date.toISOString().slice(0, 10);
 }
 
+function calculateRemainingDays(value) {
+  const [year, month, day] = String(value || "")
+    .split("-")
+    .map(Number);
+  if (!year || !month || !day) return 0;
+
+  const today = new Date();
+  const todayUtc = Date.UTC(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+  const targetUtc = Date.UTC(year, month - 1, day);
+  return Math.round((targetUtc - todayUtc) / (24 * 60 * 60 * 1000));
+}
+
 function normalizePositiveNumber(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -361,7 +393,9 @@ function buildPurchaseOrderLines({
 
   const selectedOnly = normalizedProducts.filter((product) => {
     const assignment =
-      normalizedAssignments[String(product.assignmentKey || product.id || "")] || {};
+      normalizedAssignments[
+        String(product.assignmentKey || product.id || "")
+      ] || {};
     return Boolean(assignment?.selected);
   });
   const source = selectedOnly.length ? selectedOnly : normalizedProducts;
@@ -398,7 +432,8 @@ function buildPurchaseOrderLines({
       lineId: itemKey || `${Math.random()}`,
       productId: Number(product.sourceProductId || product.id || 0) || null,
       code: String(product.code || "").trim() || "-",
-      description: String(product.description || "").trim() || "Sin descripcion",
+      description:
+        String(product.description || "").trim() || "Sin descripcion",
       quantity,
       unitCost,
       discountPct,
@@ -417,7 +452,8 @@ function buildProviderPurchaseOrderRows({
 }) {
   const normalizedProducts = Array.isArray(products) ? products : [];
   const normalizedDuplicates =
-    productAssignmentDuplicates && typeof productAssignmentDuplicates === "object"
+    productAssignmentDuplicates &&
+    typeof productAssignmentDuplicates === "object"
       ? productAssignmentDuplicates
       : {};
   const normalizedExtras =
@@ -478,12 +514,18 @@ function buildProviderPurchaseOrderRows({
       isCustom: true,
       code: String(extraMeta?.code || "").trim() || "ITEM-MANUAL",
       description:
-        String(extraMeta?.description || "").trim() || "Item agregado manualmente",
+        String(extraMeta?.description || "").trim() ||
+        "Item agregado manualmente",
       providerId: Number(extraMeta?.providerId || 0) || null,
       providerName: "",
       quantity: normalizePositiveNumber(extraMeta?.quantity, 1),
-      unitCostWithDiscount: normalizePositiveNumber(extraMeta?.unitCostWithDiscount, 0),
-      selectionDate: toDateInputValue(extraMeta?.selectionDate) || toDateInputValue(new Date()),
+      unitCostWithDiscount: normalizePositiveNumber(
+        extraMeta?.unitCostWithDiscount,
+        0,
+      ),
+      selectionDate:
+        toDateInputValue(extraMeta?.selectionDate) ||
+        toDateInputValue(new Date()),
       currencyCode: String(extraMeta?.currencyCode || "USD").trim() || "USD",
       createdAt: Number(extraMeta?.createdAt || 0),
     }))
@@ -495,7 +537,10 @@ function buildProviderPurchaseOrderRows({
 function calculatePurchaseOrderLineAmount(line) {
   const quantity = normalizePositiveNumber(line?.quantity, 0);
   const unitCost = normalizePositiveNumber(line?.unitCost, 0);
-  const discountPct = Math.min(100, normalizePositiveNumber(line?.discountPct, 0));
+  const discountPct = Math.min(
+    100,
+    normalizePositiveNumber(line?.discountPct, 0),
+  );
   return quantity * unitCost * (1 - discountPct / 100);
 }
 
@@ -675,29 +720,43 @@ export default function AcceptOrderPage() {
   const [kickoffInvitationDraft, setKickoffInvitationDraft] = useState(() =>
     buildEmptyKickoffInvitationDraft(),
   );
-  const [savingKickoffInvitation, setSavingKickoffInvitation] =
-    useState(false);
+  const [savingKickoffInvitation, setSavingKickoffInvitation] = useState(false);
   const [kickoffExternalManualNote, setKickoffExternalManualNote] =
     useState("");
-  const [uploadingKickoffExternalEvidence, setUploadingKickoffExternalEvidence] =
-    useState(false);
+  const [
+    uploadingKickoffExternalEvidence,
+    setUploadingKickoffExternalEvidence,
+  ] = useState(false);
   const [savingKickoffExternalManualNote, setSavingKickoffExternalManualNote] =
     useState(false);
   const [generatingKickoffExternalAi, setGeneratingKickoffExternalAi] =
     useState(false);
-  const [uploadingKickoffInternalEvidence, setUploadingKickoffInternalEvidence] =
-    useState(false);
+  const [
+    uploadingKickoffInternalEvidence,
+    setUploadingKickoffInternalEvidence,
+  ] = useState(false);
   const [generatingKickoffInternalAi, setGeneratingKickoffInternalAi] =
     useState(false);
   const [deletingProcessingEvidenceIds, setDeletingProcessingEvidenceIds] =
     useState(() => new Set());
+  const [deletingPurchaseOrderIds, setDeletingPurchaseOrderIds] = useState(
+    () => new Set(),
+  );
   const [editingProductCell, setEditingProductCell] = useState(null);
   const [purchaseOrderModalOpen, setPurchaseOrderModalOpen] = useState(false);
   const [purchaseOrderDraft, setPurchaseOrderDraft] = useState(null);
+  const [quotationDeliveryTimes, setQuotationDeliveryTimes] = useState([]);
+  const [quotationPaymentTerms, setQuotationPaymentTerms] = useState([]);
   const [purchaseOrderFinalPreviewOpen, setPurchaseOrderFinalPreviewOpen] =
     useState(false);
-  const [purchaseOrderPendingGeneratedOrders, setPurchaseOrderPendingGeneratedOrders] =
-    useState([]);
+  const [
+    generatedPurchaseOrderPreviewModel,
+    setGeneratedPurchaseOrderPreviewModel,
+  ] = useState(null);
+  const [
+    purchaseOrderPendingGeneratedOrders,
+    setPurchaseOrderPendingGeneratedOrders,
+  ] = useState([]);
   const [customStepItemPicker, setCustomStepItemPicker] = useState({
     isOpen: false,
     stageCode: "",
@@ -746,6 +805,43 @@ export default function AcceptOrderPage() {
     }
 
     void loadQuotations();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadQuotationCommercialCatalogs() {
+      try {
+        const [deliveryTimesResponse, paymentTermsResponse] = await Promise.all(
+          [
+            api.get("/api/catalogs/quotation-delivery-times"),
+            api.get("/api/catalogs/quotation-payment-terms"),
+          ],
+        );
+        if (!ignore) {
+          setQuotationDeliveryTimes(
+            Array.isArray(deliveryTimesResponse.data)
+              ? deliveryTimesResponse.data
+              : [],
+          );
+          setQuotationPaymentTerms(
+            Array.isArray(paymentTermsResponse.data)
+              ? paymentTermsResponse.data
+              : [],
+          );
+        }
+      } catch {
+        if (!ignore) {
+          setQuotationDeliveryTimes([]);
+          setQuotationPaymentTerms([]);
+        }
+      }
+    }
+
+    void loadQuotationCommercialCatalogs();
     return () => {
       ignore = true;
     };
@@ -804,7 +900,9 @@ export default function AcceptOrderPage() {
           unavailableListMessage: nextActiveLists.length
             ? ""
             : "El proveedor seleccionado no tiene una lista activa disponible.",
-          priceListId: nextActiveLists.length ? String(nextActiveLists[0].id) : "",
+          priceListId: nextActiveLists.length
+            ? String(nextActiveLists[0].id)
+            : "",
           results: nextActiveLists.length ? prev.results : [],
         }));
       } catch (pickerError) {
@@ -900,7 +998,11 @@ export default function AcceptOrderPage() {
     return sortDirection === "asc" ? "↑" : "↓";
   }
 
-  async function loadWonDocumentsForVersion(versionId, setState, fallbackMessage) {
+  async function loadWonDocumentsForVersion(
+    versionId,
+    setState,
+    fallbackMessage,
+  ) {
     const safeVersionId = Number(versionId || 0);
     if (!safeVersionId) {
       setState(buildAcceptOrderWonDocumentsState());
@@ -965,7 +1067,9 @@ export default function AcceptOrderPage() {
 
   async function handleDownloadWonDocument(documentItem) {
     const versionId = Number(
-      quotationToAccept?.latestVersionId || quotationToProcess?.latestVersionId || 0,
+      quotationToAccept?.latestVersionId ||
+        quotationToProcess?.latestVersionId ||
+        0,
     );
     const source = String(documentItem?.source || "").trim();
     const documentId = Number(documentItem?.documentId || 0);
@@ -1112,7 +1216,9 @@ export default function AcceptOrderPage() {
     setProcessingLoading(true);
     setProcessingModalError("");
     try {
-      const { data } = await api.get(`/api/quotations/${quotationId}/processing`);
+      const { data } = await api.get(
+        `/api/quotations/${quotationId}/processing`,
+      );
       setProcessingData(data || buildEmptyProcessingData());
       const availableStageCodes = Array.isArray(data?.stages)
         ? data.stages.map((item) => item?.stageCode).filter(Boolean)
@@ -1179,7 +1285,9 @@ export default function AcceptOrderPage() {
   function closeProcessingModal() {
     if (
       processingDirty &&
-      !window.confirm("Hay cambios sin guardar en procesamiento. Deseas cerrar?")
+      !window.confirm(
+        "Hay cambios sin guardar en procesamiento. Deseas cerrar?",
+      )
     ) {
       return;
     }
@@ -1194,6 +1302,7 @@ export default function AcceptOrderPage() {
     setKickoffExternalManualNote("");
     setProcessingWonDocuments(buildAcceptOrderWonDocumentsState());
     setDownloadingWonDocumentKey("");
+    setGeneratedPurchaseOrderPreviewModel(null);
     closePurchaseOrderModal();
     closeCustomStepItemPicker();
   }
@@ -1253,55 +1362,56 @@ export default function AcceptOrderPage() {
     const normalizedDescription =
       String(product.description || "").trim() || "Item agregado manualmente";
     const normalizedCurrency =
-      String(product.currencyCode || processingCurrencyCode || "USD").trim() || "USD";
+      String(product.currencyCode || processingCurrencyCode || "USD").trim() ||
+      "USD";
 
     setProcessingData((current) => {
-      const nextStages = (Array.isArray(current.stages) ? current.stages : []).map(
-        (stage) => {
-          if (stage.stageCode !== stageCode) return stage;
-          const stageData = stage.stageData || {};
-          const currentAssignments =
-            stageData.productAssignments &&
-            typeof stageData.productAssignments === "object"
-              ? stageData.productAssignments
-              : {};
-          const currentExtras =
-            stageData.productAssignmentExtras &&
-            typeof stageData.productAssignmentExtras === "object"
-              ? stageData.productAssignmentExtras
-              : {};
-          const previousAssignment = currentAssignments[itemKey] || {};
-          const previousExtra = currentExtras[itemKey] || {};
+      const nextStages = (
+        Array.isArray(current.stages) ? current.stages : []
+      ).map((stage) => {
+        if (stage.stageCode !== stageCode) return stage;
+        const stageData = stage.stageData || {};
+        const currentAssignments =
+          stageData.productAssignments &&
+          typeof stageData.productAssignments === "object"
+            ? stageData.productAssignments
+            : {};
+        const currentExtras =
+          stageData.productAssignmentExtras &&
+          typeof stageData.productAssignmentExtras === "object"
+            ? stageData.productAssignmentExtras
+            : {};
+        const previousAssignment = currentAssignments[itemKey] || {};
+        const previousExtra = currentExtras[itemKey] || {};
 
-          return {
-            ...stage,
-            stageData: {
-              ...stageData,
-              productAssignments: {
-                ...currentAssignments,
-                [itemKey]: {
-                  ...previousAssignment,
-                  selected: true,
-                  providerId,
-                  unitCostWithDiscount: String(unitCost),
-                },
-              },
-              productAssignmentExtras: {
-                ...currentExtras,
-                [itemKey]: {
-                  ...previousExtra,
-                  sourceProductId: Number(product.id || 0) || null,
-                  providerId,
-                  code: normalizedCode,
-                  description: normalizedDescription,
-                  currencyCode: normalizedCurrency,
-                  unitCostWithDiscount: unitCost,
-                },
+        return {
+          ...stage,
+          stageData: {
+            ...stageData,
+            productAssignments: {
+              ...currentAssignments,
+              [itemKey]: {
+                ...previousAssignment,
+                selected: true,
+                providerId,
+                unitCostWithDiscount: String(unitCost),
               },
             },
-          };
-        },
-      );
+            productAssignmentExtras: {
+              ...currentExtras,
+              [itemKey]: {
+                ...previousExtra,
+                sourceProductId: Number(product.id || 0) || null,
+                providerId,
+                code: normalizedCode,
+                description: normalizedDescription,
+                currencyCode: normalizedCurrency,
+                unitCostWithDiscount: unitCost,
+              },
+            },
+          },
+        };
+      });
       return {
         ...current,
         stages: nextStages,
@@ -1316,6 +1426,7 @@ export default function AcceptOrderPage() {
     productAssignments,
     productAssignmentDuplicates,
     productAssignmentExtras,
+    excludedProductIds = new Set(),
   }) {
     const selectedProductIds = new Set(
       Object.entries(
@@ -1343,9 +1454,16 @@ export default function AcceptOrderPage() {
       productAssignments,
       providers: processingProviders,
     });
-    const selectedLines = candidateLines.filter((line) =>
-      selectedProductIds.has(String(line.lineId || "")),
+    const selectedLines = candidateLines.filter(
+      (line) =>
+        selectedProductIds.has(String(line.lineId || "")) &&
+        !excludedProductIds.has(Number(line.productId || 0)),
     );
+
+    if (!selectedLines.length) {
+      setError("Selecciona al menos un item disponible para generar orden.");
+      return;
+    }
 
     const missingProviderLine = selectedLines.find(
       (line) => !Number(line?.providerId || 0),
@@ -1357,8 +1475,33 @@ export default function AcceptOrderPage() {
       return;
     }
 
+    const selectedProviderIds = new Set(
+      selectedLines.map((line) => Number(line.providerId)),
+    );
+    if (selectedProviderIds.size > 1) {
+      setError(
+        "Selecciona items de un solo proveedor para generar la vista previa.",
+      );
+      return;
+    }
+    setError("");
+
     const today = toDateInputValue(new Date());
     const quotationNumber = Number(quotationToProcess?.id || 0);
+    const deliveryTimeCode = String(
+      quotationToProcess?.latestDeliveryTime || "",
+    );
+    const deliveryTimeName =
+      quotationDeliveryTimes.find(
+        (option) => String(option.code || "") === deliveryTimeCode,
+      )?.name || deliveryTimeCode;
+    const paymentTermsCode = String(
+      quotationToProcess?.latestPaymentTerms || "",
+    );
+    const paymentTermsName =
+      quotationPaymentTerms.find(
+        (option) => String(option.code || "") === paymentTermsCode,
+      )?.name || paymentTermsCode;
     const groupedByProvider = selectedLines.reduce((map, line) => {
       const providerId = Number(line.providerId || 0);
       const current = map.get(providerId) || {
@@ -1378,7 +1521,22 @@ export default function AcceptOrderPage() {
     }, new Map());
 
     const draft = {
+      providerId: Number(selectedLines[0]?.providerId || 0),
+      providerName: selectedLines[0]?.providerName || "Proveedor",
+      providerContacts:
+        processingProviders.find(
+          (provider) =>
+            Number(provider.id) === Number(selectedLines[0]?.providerId || 0),
+        )?.contacts || [],
+      providerContactId: Number(stage?.stageData?.providerContactId || 0) || "",
+      finalCustomerName: quotationToProcess?.accountName || "",
+      providerQuotation: stage?.stageData?.providerQuotation || "",
+      paymentConditions:
+        stage?.stageData?.purchaseOrderPaymentConditions ?? paymentTermsName,
+      deliveryTime: deliveryTimeName,
       currencyCode: processingCurrencyCode || "USD",
+      notes:
+        stage?.stageData?.purchaseOrderNotes ?? DEFAULT_PURCHASE_ORDER_NOTES,
       orders: Array.from(groupedByProvider.values()),
     };
 
@@ -1391,13 +1549,14 @@ export default function AcceptOrderPage() {
       if (!current) return current;
       return {
         ...current,
-        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) =>
-          String(order.draftId) === String(orderDraftId)
-            ? {
-                ...order,
-                [field]: value,
-              }
-            : order,
+        orders: (Array.isArray(current.orders) ? current.orders : []).map(
+          (order) =>
+            String(order.draftId) === String(orderDraftId)
+              ? {
+                  ...order,
+                  [field]: value,
+                }
+              : order,
         ),
       };
     });
@@ -1408,20 +1567,23 @@ export default function AcceptOrderPage() {
       if (!current) return current;
       return {
         ...current,
-        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) => {
-          if (String(order.draftId) !== String(orderDraftId)) return order;
-          return {
-            ...order,
-            lines: (Array.isArray(order.lines) ? order.lines : []).map((line) =>
-              String(line.lineId) === String(lineId)
-                ? {
-                    ...line,
-                    ...patch,
-                  }
-                : line,
-            ),
-          };
-        }),
+        orders: (Array.isArray(current.orders) ? current.orders : []).map(
+          (order) => {
+            if (String(order.draftId) !== String(orderDraftId)) return order;
+            return {
+              ...order,
+              lines: (Array.isArray(order.lines) ? order.lines : []).map(
+                (line) =>
+                  String(line.lineId) === String(lineId)
+                    ? {
+                        ...line,
+                        ...patch,
+                      }
+                    : line,
+              ),
+            };
+          },
+        ),
       };
     });
   }
@@ -1464,7 +1626,8 @@ export default function AcceptOrderPage() {
           order.orderDate || purchaseOrderDraft.orders?.[index]?.orderDate,
         ),
       orderDate: order.orderDate || toDateInputValue(new Date()),
-      currencyCode: purchaseOrderDraft.currencyCode || processingCurrencyCode || "USD",
+      currencyCode:
+        purchaseOrderDraft.currencyCode || processingCurrencyCode || "USD",
       ivaPct: normalizePositiveNumber(order.ivaPct, 16),
       generatedAt: new Date().toISOString(),
       lines: (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
@@ -1473,7 +1636,10 @@ export default function AcceptOrderPage() {
         description: String(line.description || "").trim() || "Sin descripcion",
         quantity: normalizePositiveNumber(line.quantity, 0),
         unitCost: normalizePositiveNumber(line.unitCost, 0),
-        discountPct: Math.min(100, normalizePositiveNumber(line.discountPct, 0)),
+        discountPct: Math.min(
+          100,
+          normalizePositiveNumber(line.discountPct, 0),
+        ),
         selectionDate: line.selectionDate || toDateInputValue(new Date()),
         amount: calculatePurchaseOrderLineAmount(line),
       })),
@@ -1519,9 +1685,7 @@ export default function AcceptOrderPage() {
           stages: data.stages,
         }));
       }
-      setSuccess(
-        `Se generaron ${generatedOrders.length} orden(es) de compra.`,
-      );
+      setSuccess(`Se generaron ${generatedOrders.length} orden(es) de compra.`);
       closePurchaseOrderModal();
     } catch (generationError) {
       setError(
@@ -1533,21 +1697,122 @@ export default function AcceptOrderPage() {
     }
   }
 
+  async function deleteGeneratedPurchaseOrder(order) {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    const orderId = Number(order?.orderId || 0);
+    if (!quotationId || !orderId) return;
+
+    const orderLabel = order?.orderNumber || `Orden #${orderId}`;
+    const shouldDelete = window.confirm(
+      `Se eliminara "${orderLabel}". Esta accion no se puede deshacer.`,
+    );
+    if (!shouldDelete) return;
+
+    setDeletingPurchaseOrderIds((current) => {
+      const next = new Set(current);
+      next.add(orderId);
+      return next;
+    });
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.delete(
+        `/api/quotations/${quotationId}/processing/provider-purchase-orders/${orderId}`,
+      );
+      const generatedPurchaseOrders = Array.isArray(
+        data?.generatedPurchaseOrders,
+      )
+        ? data.generatedPurchaseOrders
+        : [];
+      setProcessingData((current) => ({
+        ...current,
+        stages: current.stages.map((stage) =>
+          stage.stageCode === "provider_purchase_order"
+            ? {
+                ...stage,
+                stageData: {
+                  ...(stage.stageData || {}),
+                  generatedPurchaseOrders,
+                },
+              }
+            : stage,
+        ),
+      }));
+      setSuccess("Orden de compra eliminada");
+    } catch (deleteError) {
+      setError(
+        getApiErrorMessage(
+          deleteError,
+          "No fue posible eliminar la orden de compra",
+        ),
+      );
+    } finally {
+      setDeletingPurchaseOrderIds((current) => {
+        const next = new Set(current);
+        next.delete(orderId);
+        return next;
+      });
+    }
+  }
+
+  function openGeneratedPurchaseOrderPreview(order, stage) {
+    const providers = Array.isArray(processingData?.providers)
+      ? processingData.providers
+      : [];
+    const provider = providers.find(
+      (item) => Number(item.id) === Number(order?.providerId),
+    );
+    const contacts = Array.isArray(provider?.contacts) ? provider.contacts : [];
+    const providerContact = contacts.find(
+      (contact) =>
+        Number(contact.id) === Number(stage?.stageData?.providerContactId),
+    );
+    const providerContactName = providerContact
+      ? [providerContact.firstName, providerContact.lastName]
+          .filter(Boolean)
+          .join(" ") ||
+        providerContact.email ||
+        ""
+      : "";
+    const paymentTermsCode = String(
+      quotationToProcess?.latestPaymentTerms || "",
+    );
+    const defaultPaymentConditions =
+      quotationPaymentTerms.find(
+        (option) => String(option.code || "") === paymentTermsCode,
+      )?.name || paymentTermsCode;
+
+    setGeneratedPurchaseOrderPreviewModel(
+      buildPurchaseOrderPrintModel({
+        quotation: quotationToProcess,
+        orders: [order],
+        currencyCode: order?.currencyCode || processingCurrencyCode || "USD",
+        providerQuotation: stage?.stageData?.providerQuotation || "",
+        providerContactName,
+        paymentConditions:
+          stage?.stageData?.purchaseOrderPaymentConditions ??
+          defaultPaymentConditions,
+        notes:
+          stage?.stageData?.purchaseOrderNotes ?? DEFAULT_PURCHASE_ORDER_NOTES,
+      }),
+    );
+  }
+
   function patchProcessingStage(stageCode, patch) {
     setProcessingData((current) => {
-      const nextStages = (Array.isArray(current.stages) ? current.stages : []).map(
-        (stage) => {
-          if (stage.stageCode !== stageCode) return stage;
-          return {
-            ...stage,
-            ...patch,
-            stageData: {
-              ...(stage.stageData || {}),
-              ...(patch.stageData || {}),
-            },
-          };
-        },
-      );
+      const nextStages = (
+        Array.isArray(current.stages) ? current.stages : []
+      ).map((stage) => {
+        if (stage.stageCode !== stageCode) return stage;
+        return {
+          ...stage,
+          ...patch,
+          stageData: {
+            ...(stage.stageData || {}),
+            ...(patch.stageData || {}),
+          },
+        };
+      });
       return {
         ...current,
         stages: nextStages,
@@ -1609,10 +1874,16 @@ export default function AcceptOrderPage() {
     const quotationId = Number(quotationToProcess?.id || 0);
     if (!quotationId) return;
 
-    const optionOne = String(kickoffInvitationDraft.meetingDateOptionOne || "").trim();
-    const optionTwo = String(kickoffInvitationDraft.meetingDateOptionTwo || "").trim();
+    const optionOne = String(
+      kickoffInvitationDraft.meetingDateOptionOne || "",
+    ).trim();
+    const optionTwo = String(
+      kickoffInvitationDraft.meetingDateOptionTwo || "",
+    ).trim();
     if (statusCode === "sent" && (!optionOne || !optionTwo)) {
-      setError("Selecciona las dos fechas propuestas antes de enviar la convocatoria");
+      setError(
+        "Selecciona las dos fechas propuestas antes de enviar la convocatoria",
+      );
       return;
     }
 
@@ -1631,13 +1902,15 @@ export default function AcceptOrderPage() {
       const payload = {
         meetingDate: optionOne || null,
         meetingTime:
-          String(kickoffInvitationDraft.meetingTimeOptionOne || "").trim() || null,
+          String(kickoffInvitationDraft.meetingTimeOptionOne || "").trim() ||
+          null,
         meetingMode: kickoffInvitationDraft.meetingMode || null,
         meetingLocation: kickoffInvitationDraft.meetingLocation || null,
         meetingLink: null,
         inviteSubject: preparedEmail.subject,
         inviteBodyTemplate: preparedEmail.body,
-        internalAttendeesUserIds: kickoffInvitationDraft.internalAttendeesUserIds,
+        internalAttendeesUserIds:
+          kickoffInvitationDraft.internalAttendeesUserIds,
         externalAttendeesEmails: parseEmailDraft(
           kickoffInvitationDraft.externalAttendeesEmails,
         ),
@@ -1769,7 +2042,9 @@ export default function AcceptOrderPage() {
         },
       );
       await loadQuotationProcessing(quotationToProcess, "kickoff_internal");
-      const summaryText = String(data?.aiSummaryCurrent?.summary?.summary || "").trim();
+      const summaryText = String(
+        data?.aiSummaryCurrent?.summary?.summary || "",
+      ).trim();
       if (summaryText) {
         updateActiveStageDataField("minutesSummary", summaryText);
       }
@@ -1830,7 +2105,9 @@ export default function AcceptOrderPage() {
         },
       );
       await loadQuotationProcessing(quotationToProcess, "kickoff_external");
-      const summaryText = String(data?.aiSummaryCurrent?.summary?.summary || "").trim();
+      const summaryText = String(
+        data?.aiSummaryCurrent?.summary?.summary || "",
+      ).trim();
       if (summaryText) {
         updateActiveStageDataField("minutesSummary", summaryText);
       }
@@ -1866,7 +2143,10 @@ export default function AcceptOrderPage() {
       window.URL.revokeObjectURL(objectUrl);
     } catch (downloadError) {
       setError(
-        getApiErrorMessage(downloadError, "No fue posible descargar la evidencia"),
+        getApiErrorMessage(
+          downloadError,
+          "No fue posible descargar la evidencia",
+        ),
       );
     }
   }
@@ -1874,12 +2154,16 @@ export default function AcceptOrderPage() {
   async function deleteKickoffEvidence(evidence) {
     const quotationId = Number(quotationToProcess?.id || 0);
     const evidenceId = Number(evidence?.id || 0);
-    const stageCode = String(evidence?.stageCode || activeProcessingStageCode || "").trim();
+    const stageCode = String(
+      evidence?.stageCode || activeProcessingStageCode || "",
+    ).trim();
     if (!quotationId || !evidenceId || !stageCode) return;
 
     const evidenceLabel =
       evidence?.document?.originalFileName ||
-      (evidence?.evidenceType === "manual_note" ? "minuta manual" : "evidencia");
+      (evidence?.evidenceType === "manual_note"
+        ? "minuta manual"
+        : "evidencia");
     const shouldDelete = window.confirm(
       `Se eliminara \"${evidenceLabel}\". Esta accion no se puede deshacer.`,
     );
@@ -1947,7 +2231,9 @@ export default function AcceptOrderPage() {
 
   function renderStageBaseSpecificFields(stage) {
     const fieldList = BASE_STAGE_SPECIFIC_FIELDS[stage.stageCode] || [];
-    if (!fieldList.length) return null;
+    if (!fieldList.length && stage.stageCode !== "provider_purchase_order") {
+      return null;
+    }
     const rawProductAssignments =
       stage?.stageData && typeof stage.stageData.productAssignments === "object"
         ? stage.stageData.productAssignments
@@ -1967,11 +2253,77 @@ export default function AcceptOrderPage() {
       productAssignmentDuplicates: rawProductAssignmentDuplicates,
       productAssignmentExtras: rawProductAssignmentExtras,
     });
+    const providerPurchaseOrderTotalCost = providerPurchaseOrderRows.reduce(
+      (sum, item) => {
+        const itemKey = String(item.assignmentKey || item.id || "");
+        const assignment = (itemKey && rawProductAssignments[itemKey]) || {};
+        const quantity = Number(
+          assignment?.quantity == null || assignment?.quantity === ""
+            ? item.quantity || 0
+            : assignment.quantity,
+        );
+        const unitCost = Number(
+          assignment?.unitCostWithDiscount == null ||
+            assignment?.unitCostWithDiscount === ""
+            ? item.unitCostWithDiscount || 0
+            : assignment.unitCostWithDiscount,
+        );
+        return (
+          sum +
+          (Number.isFinite(quantity) && Number.isFinite(unitCost)
+            ? quantity * unitCost
+            : 0)
+        );
+      },
+      0,
+    );
+    const selectedProductIds = new Set(
+      Object.entries(rawProductAssignments)
+        .filter(([, assignment]) => Boolean(assignment?.selected))
+        .map(([itemKey]) => String(itemKey)),
+    );
+    const selectedPurchaseOrderLines = buildPurchaseOrderLines({
+      products: providerPurchaseOrderRows,
+      productAssignments: rawProductAssignments,
+      providers: processingProviders,
+    }).filter((line) => selectedProductIds.has(String(line.lineId || "")));
+    const selectedProviderIds = new Set(
+      selectedPurchaseOrderLines
+        .map((line) => Number(line.providerId || 0))
+        .filter((providerId) => providerId > 0),
+    );
+    const hasSelectedLinesWithoutProvider = selectedPurchaseOrderLines.some(
+      (line) => !Number(line.providerId || 0),
+    );
+    const selectedProviderId =
+      selectedProviderIds.size === 1 && !hasSelectedLinesWithoutProvider
+        ? Array.from(selectedProviderIds)[0]
+        : null;
+    const selectedProvider = selectedProviderId
+      ? processingProviders.find(
+          (provider) => Number(provider.id) === selectedProviderId,
+        ) || null
+      : null;
+    const selectedProviderContacts = Array.isArray(selectedProvider?.contacts)
+      ? selectedProvider.contacts
+      : [];
+    const savedProviderContactId = Number(
+      stage?.stageData?.providerContactId || 0,
+    );
+    const selectedProviderContactId = selectedProviderContacts.some(
+      (contact) => Number(contact.id) === savedProviderContactId,
+    )
+      ? savedProviderContactId
+      : "";
     const generatedPurchaseOrders = Array.isArray(
       stage?.stageData?.generatedPurchaseOrders,
     )
       ? stage.stageData.generatedPurchaseOrders
       : [];
+    const generatedPurchaseOrdersTotal = generatedPurchaseOrders.reduce(
+      (sum, order) => sum + Number(order?.total || 0),
+      0,
+    );
     const generatedItemIds = new Set(
       generatedPurchaseOrders.flatMap((order) =>
         (Array.isArray(order?.lines) ? order.lines : [])
@@ -1979,26 +2331,25 @@ export default function AcceptOrderPage() {
           .filter((value) => Number.isInteger(value) && value > 0),
       ),
     );
+    const deliveryTimeCode = String(
+      quotationToProcess?.latestDeliveryTime || "",
+    );
+    const deliveryTimeName =
+      quotationDeliveryTimes.find(
+        (option) => String(option.code || "") === deliveryTimeCode,
+      )?.name || deliveryTimeCode;
+    const paymentTermsCode = String(
+      quotationToProcess?.latestPaymentTerms || "",
+    );
+    const paymentTermsName =
+      quotationPaymentTerms.find(
+        (option) => String(option.code || "") === paymentTermsCode,
+      )?.name || paymentTermsCode;
     const quotationCommercialFields = [
       {
         key: "commercialDeliveryTime",
         label: "Tiempo de entrega",
-        value: quotationToProcess?.latestDeliveryTime || "",
-      },
-      {
-        key: "commercialValidity",
-        label: "Validez",
-        value: quotationToProcess?.latestQuotationValidity || "",
-      },
-      {
-        key: "commercialWarranty",
-        label: "Garantia",
-        value: quotationToProcess?.latestWarranty || "",
-      },
-      {
-        key: "commercialPaymentTerms",
-        label: "Forma de pago",
-        value: quotationToProcess?.latestPaymentTerms || "",
+        value: deliveryTimeName,
       },
       {
         key: "commercialCurrency",
@@ -2018,12 +2369,18 @@ export default function AcceptOrderPage() {
                 const value = stage?.stageData?.[field.key] ?? "";
                 if (field.type === "textarea") {
                   return (
-                    <label key={field.key} className="field-group processing-stage-field full">
+                    <label
+                      key={field.key}
+                      className="field-group processing-stage-field full"
+                    >
                       <span>{field.label}</span>
                       <textarea
                         value={value}
                         onChange={(event) =>
-                          updateActiveStageDataField(field.key, event.target.value)
+                          updateActiveStageDataField(
+                            field.key,
+                            event.target.value,
+                          )
                         }
                         rows={4}
                         placeholder={field.placeholder || ""}
@@ -2034,14 +2391,20 @@ export default function AcceptOrderPage() {
                 }
 
                 return (
-                  <label key={field.key} className="field-group processing-stage-field">
+                  <label
+                    key={field.key}
+                    className="field-group processing-stage-field"
+                  >
                     <span>{field.label}</span>
                     <input
                       type={field.type}
                       value={value}
                       placeholder={field.placeholder || ""}
                       onChange={(event) =>
-                        updateActiveStageDataField(field.key, event.target.value)
+                        updateActiveStageDataField(
+                          field.key,
+                          event.target.value,
+                        )
                       }
                       disabled={!processingData.permissions?.canUpdate}
                     />
@@ -2056,7 +2419,8 @@ export default function AcceptOrderPage() {
             <header>
               <h6>Productos</h6>
               <p>
-                Items de la cotizacion con costo unitario considerando descuentos.
+                Items de la cotizacion con costo unitario considerando
+                descuentos.
               </p>
             </header>
 
@@ -2072,18 +2436,22 @@ export default function AcceptOrderPage() {
                       <th className="is-right">Cantidad</th>
                       <th className="is-right">Costo unitario</th>
                       <th>Fecha</th>
+                      <th>Tiempo restante</th>
                       <th className="is-right">Costo total</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
                     {providerPurchaseOrderRows.map((item) => {
-                      const itemKey = String(item.assignmentKey || item.id || "");
+                      const itemKey = String(
+                        item.assignmentKey || item.id || "",
+                      );
                       const assignment =
                         (itemKey && rawProductAssignments[itemKey]) || {};
                       const selected = Boolean(assignment?.selected);
                       const quantityInputValue =
-                        assignment?.quantity == null || assignment?.quantity === ""
+                        assignment?.quantity == null ||
+                        assignment?.quantity === ""
                           ? String(Number(item.quantity || 0))
                           : String(assignment.quantity);
                       const unitCostInputValue =
@@ -2095,6 +2463,9 @@ export default function AcceptOrderPage() {
                         toDateInputValue(assignment?.selectionDate) ||
                         toDateInputValue(item.selectionDate) ||
                         toDateInputValue(new Date());
+                      const remainingDays = calculateRemainingDays(
+                        selectionDateInputValue,
+                      );
                       const effectiveQuantity = Number(quantityInputValue || 0);
                       const effectiveUnitCost = Number(unitCostInputValue || 0);
                       const effectiveTotalCost =
@@ -2103,13 +2474,19 @@ export default function AcceptOrderPage() {
                           ? effectiveQuantity * effectiveUnitCost
                           : 0;
                       const selectedProviderId =
-                        assignment?.providerId == null || assignment?.providerId === ""
+                        assignment?.providerId == null ||
+                        assignment?.providerId === ""
                           ? item.providerId || ""
                           : Number(assignment.providerId || 0) || "";
+                      const isGeneratedItem = generatedItemIds.has(
+                        Number(item.sourceProductId || item.id || 0),
+                      );
                       const isEditingQuantity =
+                        !isGeneratedItem &&
                         editingProductCell?.itemKey === itemKey &&
                         editingProductCell?.field === "quantity";
                       const isEditingUnitCost =
+                        !isGeneratedItem &&
                         editingProductCell?.itemKey === itemKey &&
                         editingProductCell?.field === "unitCostWithDiscount";
 
@@ -2117,7 +2494,7 @@ export default function AcceptOrderPage() {
                         <tr
                           key={itemKey}
                           className={
-                            generatedItemIds.has(Number(item.sourceProductId || item.id || 0))
+                            isGeneratedItem
                               ? "processing-product-row-generated"
                               : ""
                           }
@@ -2145,7 +2522,10 @@ export default function AcceptOrderPage() {
                                   rawProductAssignmentExtras,
                                 );
                               }}
-                              disabled={!processingData.permissions?.canUpdate}
+                              disabled={
+                                isGeneratedItem ||
+                                !processingData.permissions?.canUpdate
+                              }
                             />
                           </td>
                           <td>
@@ -2172,7 +2552,9 @@ export default function AcceptOrderPage() {
                           <td>
                             {item.description || "Sin descripcion"}
                             {item.isDuplicate ? (
-                              <span className="processing-item-copy-badge">Copia</span>
+                              <span className="processing-item-copy-badge">
+                                Copia
+                              </span>
                             ) : null}
                           </td>
                           <td>
@@ -2197,7 +2579,10 @@ export default function AcceptOrderPage() {
                                   rawProductAssignmentExtras,
                                 );
                               }}
-                              disabled={!processingData.permissions?.canUpdate}
+                              disabled={
+                                isGeneratedItem ||
+                                !processingData.permissions?.canUpdate
+                              }
                             >
                               <option value="">Sin proveedor</option>
                               {processingProviders.map((provider) => (
@@ -2271,7 +2656,10 @@ export default function AcceptOrderPage() {
                                 }}
                                 autoFocus
                                 className="processing-inline-edit-input"
-                                disabled={!processingData.permissions?.canUpdate}
+                                disabled={
+                                  isGeneratedItem ||
+                                  !processingData.permissions?.canUpdate
+                                }
                               />
                             ) : (
                               <button
@@ -2283,11 +2671,17 @@ export default function AcceptOrderPage() {
                                     field: "quantity",
                                   })
                                 }
-                                disabled={!processingData.permissions?.canUpdate}
+                                disabled={
+                                  isGeneratedItem ||
+                                  !processingData.permissions?.canUpdate
+                                }
                               >
-                                {Number(effectiveQuantity || 0).toLocaleString("es-MX", {
-                                  maximumFractionDigits: 4,
-                                })}
+                                {Number(effectiveQuantity || 0).toLocaleString(
+                                  "es-MX",
+                                  {
+                                    maximumFractionDigits: 4,
+                                  },
+                                )}
                               </button>
                             )}
                           </td>
@@ -2332,7 +2726,9 @@ export default function AcceptOrderPage() {
                                         selectedProviderId === ""
                                           ? null
                                           : Number(selectedProviderId),
-                                      unitCostWithDiscount: Number.isFinite(normalized)
+                                      unitCostWithDiscount: Number.isFinite(
+                                        normalized,
+                                      )
                                         ? String(Number(normalized.toFixed(4)))
                                         : "0",
                                     },
@@ -2355,7 +2751,10 @@ export default function AcceptOrderPage() {
                                 }}
                                 autoFocus
                                 className="processing-inline-edit-input"
-                                disabled={!processingData.permissions?.canUpdate}
+                                disabled={
+                                  isGeneratedItem ||
+                                  !processingData.permissions?.canUpdate
+                                }
                               />
                             ) : (
                               <button
@@ -2367,7 +2766,10 @@ export default function AcceptOrderPage() {
                                     field: "unitCostWithDiscount",
                                   })
                                 }
-                                disabled={!processingData.permissions?.canUpdate}
+                                disabled={
+                                  isGeneratedItem ||
+                                  !processingData.permissions?.canUpdate
+                                }
                               >
                                 {formatCurrency(
                                   Number(effectiveUnitCost || 0),
@@ -2400,8 +2802,18 @@ export default function AcceptOrderPage() {
                                   rawProductAssignmentExtras,
                                 );
                               }}
-                              disabled={!processingData.permissions?.canUpdate}
+                              disabled={
+                                isGeneratedItem ||
+                                !processingData.permissions?.canUpdate
+                              }
                             />
+                          </td>
+                          <td
+                            className={`processing-remaining-days${
+                              remainingDays < 0 ? " is-negative" : ""
+                            }`}
+                          >
+                            {remainingDays}
                           </td>
                           <td className="is-right">
                             {formatCurrency(
@@ -2420,7 +2832,10 @@ export default function AcceptOrderPage() {
                                   const sourceProductId = Number(
                                     item.sourceProductId || item.id || 0,
                                   );
-                                  if (!Number.isInteger(sourceProductId) || sourceProductId <= 0) {
+                                  if (
+                                    !Number.isInteger(sourceProductId) ||
+                                    sourceProductId <= 0
+                                  ) {
                                     return;
                                   }
                                   const duplicateKey = `dup-${sourceProductId}-${Date.now()}`;
@@ -2452,12 +2867,19 @@ export default function AcceptOrderPage() {
                                   );
                                 }}
                                 disabled={
+                                  isGeneratedItem ||
                                   !processingData.permissions?.canUpdate ||
-                                  !Number.isInteger(Number(item.sourceProductId || 0)) ||
+                                  !Number.isInteger(
+                                    Number(item.sourceProductId || 0),
+                                  ) ||
                                   Number(item.sourceProductId || 0) <= 0
                                 }
                               >
-                                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
                                   <path d="M8 4.75A2.75 2.75 0 0 0 5.25 7.5v8A2.75 2.75 0 0 0 8 18.25h8a2.75 2.75 0 0 0 2.75-2.75v-8A2.75 2.75 0 0 0 16 4.75zm0 1.5h8c.69 0 1.25.56 1.25 1.25v8c0 .69-.56 1.25-1.25 1.25H8c-.69 0-1.25-.56-1.25-1.25v-8c0-.69.56-1.25 1.25-1.25" />
                                   <path d="M4 8.5a.75.75 0 0 1 .75.75v8c0 .69.56 1.25 1.25 1.25h8a.75.75 0 0 1 0 1.5H6A2.75 2.75 0 0 1 3.25 17.25v-8A.75.75 0 0 1 4 8.5" />
                                 </svg>
@@ -2466,10 +2888,20 @@ export default function AcceptOrderPage() {
                                 <button
                                   type="button"
                                   className="btn-secondary processing-product-action-icon is-danger"
-                                  aria-label={item.isCustom ? "Eliminar item" : "Eliminar copia"}
-                                  title={item.isCustom ? "Eliminar item" : "Eliminar copia"}
+                                  aria-label={
+                                    item.isCustom
+                                      ? "Eliminar item"
+                                      : "Eliminar copia"
+                                  }
+                                  title={
+                                    item.isCustom
+                                      ? "Eliminar item"
+                                      : "Eliminar copia"
+                                  }
                                   onClick={() => {
-                                    const nextAssignments = { ...rawProductAssignments };
+                                    const nextAssignments = {
+                                      ...rawProductAssignments,
+                                    };
                                     const nextDuplicates = {
                                       ...rawProductAssignmentDuplicates,
                                     };
@@ -2485,13 +2917,21 @@ export default function AcceptOrderPage() {
                                       nextDuplicates,
                                       nextExtras,
                                     );
-                                    if (editingProductCell?.itemKey === itemKey) {
+                                    if (
+                                      editingProductCell?.itemKey === itemKey
+                                    ) {
                                       setEditingProductCell(null);
                                     }
                                   }}
-                                  disabled={!processingData.permissions?.canUpdate}
+                                  disabled={
+                                    !processingData.permissions?.canUpdate
+                                  }
                                 >
-                                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    focusable="false"
+                                    aria-hidden="true"
+                                  >
                                     <path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" />
                                     <path d="M10.75 9a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75m2.5 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75" />
                                   </svg>
@@ -2503,11 +2943,27 @@ export default function AcceptOrderPage() {
                       );
                     })}
                   </tbody>
+                  <tfoot>
+                    <tr>
+                      <th colSpan={8} className="is-right">
+                        Costo total
+                      </th>
+                      <th className="is-right">
+                        {formatCurrency(
+                          providerPurchaseOrderTotalCost,
+                          providerPurchaseOrderRows[0]?.currencyCode ||
+                            processingCurrencyCode,
+                        )}
+                      </th>
+                      <th aria-label="Acciones" />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             ) : (
               <p className="field-hint">
-                No hay items disponibles en la cotizacion para mostrar en este step.
+                No hay items disponibles en la cotizacion para mostrar en este
+                step.
               </p>
             )}
 
@@ -2516,12 +2972,140 @@ export default function AcceptOrderPage() {
                 <h5>Datos de orden de compra</h5>
               </header>
               <div className="processing-stage-grid two">
+                <label className="field-group processing-stage-field">
+                  <span>Proveedor</span>
+                  <input
+                    type="text"
+                    value={
+                      selectedProvider?.name ||
+                      (selectedProviderIds.size > 1
+                        ? "Seleccion multiple de proveedores"
+                        : hasSelectedLinesWithoutProvider
+                          ? "Hay items sin proveedor"
+                          : "Selecciona items de un proveedor")
+                    }
+                    readOnly
+                    disabled
+                  />
+                </label>
+
+                <label className="field-group processing-stage-field">
+                  <span>Contacto del proveedor</span>
+                  <select
+                    value={selectedProviderContactId}
+                    onChange={(event) =>
+                      updateActiveStageDataField(
+                        "providerContactId",
+                        event.target.value ? Number(event.target.value) : null,
+                      )
+                    }
+                    disabled={
+                      !selectedProvider ||
+                      !processingData.permissions?.canUpdate
+                    }
+                  >
+                    <option value="">
+                      {selectedProvider
+                        ? selectedProviderContacts.length
+                          ? "Selecciona contacto"
+                          : "Proveedor sin contactos"
+                        : "Selecciona un proveedor"}
+                    </option>
+                    {selectedProviderContacts.map((contact) => {
+                      const fullName = [contact.firstName, contact.lastName]
+                        .filter(Boolean)
+                        .join(" ");
+                      return (
+                        <option key={contact.id} value={contact.id}>
+                          {fullName ||
+                            contact.email ||
+                            `Contacto #${contact.id}`}
+                          {fullName && contact.email
+                            ? ` (${contact.email})`
+                            : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+
+                <label className="field-group processing-stage-field">
+                  <span>Cliente final</span>
+                  <input
+                    type="text"
+                    value={quotationToProcess?.accountName || "-"}
+                    readOnly
+                    disabled
+                  />
+                </label>
+
+                <label className="field-group processing-stage-field">
+                  <span>Cotizacion del proveedor</span>
+                  <input
+                    type="text"
+                    value={stage?.stageData?.providerQuotation || ""}
+                    placeholder="Ingresa la cotizacion del proveedor"
+                    onChange={(event) =>
+                      updateActiveStageDataField(
+                        "providerQuotation",
+                        event.target.value,
+                      )
+                    }
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
+
+                <label className="field-group processing-stage-field full">
+                  <span>Condiciones de pago</span>
+                  <input
+                    type="text"
+                    value={
+                      stage?.stageData?.purchaseOrderPaymentConditions ??
+                      paymentTermsName
+                    }
+                    placeholder="Ingresa las condiciones de pago"
+                    onChange={(event) =>
+                      updateActiveStageDataField(
+                        "purchaseOrderPaymentConditions",
+                        event.target.value,
+                      )
+                    }
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
+
                 {quotationCommercialFields.map((field) => (
-                  <label key={field.key} className="field-group processing-stage-field">
+                  <label
+                    key={field.key}
+                    className="field-group processing-stage-field"
+                  >
                     <span>{field.label}</span>
-                    <input type="text" value={field.value || "-"} readOnly disabled />
+                    <input
+                      type="text"
+                      value={field.value || "-"}
+                      readOnly
+                      disabled
+                    />
                   </label>
                 ))}
+
+                <label className="field-group processing-stage-field full">
+                  <span>Notas</span>
+                  <textarea
+                    rows={8}
+                    value={
+                      stage?.stageData?.purchaseOrderNotes ??
+                      DEFAULT_PURCHASE_ORDER_NOTES
+                    }
+                    onChange={(event) =>
+                      updateActiveStageDataField(
+                        "purchaseOrderNotes",
+                        event.target.value,
+                      )
+                    }
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
               </div>
             </section>
 
@@ -2542,11 +3126,17 @@ export default function AcceptOrderPage() {
                         <th>Proveedor</th>
                         <th>Fecha</th>
                         <th className="is-right">Monto</th>
+                        <th>Acciones</th>
                       </tr>
                     </thead>
                     <tbody>
                       {generatedPurchaseOrders.map((order, index) => (
-                        <tr key={order.orderId || `${order.providerId || "provider"}-${index}`}>
+                        <tr
+                          key={
+                            order.orderId ||
+                            `${order.providerId || "provider"}-${index}`
+                          }
+                        >
                           <td>{order.orderNumber || "-"}</td>
                           <td>{order.providerName || "Proveedor"}</td>
                           <td>{formatDate(order.orderDate)}</td>
@@ -2556,9 +3146,78 @@ export default function AcceptOrderPage() {
                               order.currencyCode || processingCurrencyCode,
                             )}
                           </td>
+                          <td>
+                            <div className="processing-product-actions">
+                              <button
+                                type="button"
+                                className="btn-secondary processing-product-action-icon"
+                                aria-label={`Ver orden ${order.orderNumber || order.orderId}`}
+                                title="Ver orden"
+                                onClick={() =>
+                                  openGeneratedPurchaseOrderPreview(
+                                    order,
+                                    stage,
+                                  )
+                                }
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M12 5c5.3 0 8.7 4.7 9.4 5.8a2.2 2.2 0 0 1 0 2.4C20.7 14.3 17.3 19 12 19s-8.7-4.7-9.4-5.8a2.2 2.2 0 0 1 0-2.4C3.3 9.7 6.7 5 12 5m0 1.5c-4.5 0-7.5 4.1-8.1 5.1a.7.7 0 0 0 0 .8c.6 1 3.6 5.1 8.1 5.1s7.5-4.1 8.1-5.1a.7.7 0 0 0 0-.8c-.6-1-3.6-5.1-8.1-5.1m0 2.25A3.25 3.25 0 1 1 12 15.25 3.25 3.25 0 0 1 12 8.75m0 1.5A1.75 1.75 0 1 0 12 13.75 1.75 1.75 0 0 0 12 10.25" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary processing-product-action-icon is-danger"
+                                aria-label={`Eliminar orden ${order.orderNumber || order.orderId}`}
+                                title={
+                                  deletingPurchaseOrderIds.has(
+                                    Number(order.orderId),
+                                  )
+                                    ? "Eliminando orden"
+                                    : "Eliminar orden"
+                                }
+                                onClick={() =>
+                                  deleteGeneratedPurchaseOrder(order)
+                                }
+                                disabled={
+                                  !processingData.permissions?.canUpdate ||
+                                  deletingPurchaseOrderIds.has(
+                                    Number(order.orderId),
+                                  )
+                                }
+                              >
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  focusable="false"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" />
+                                  <path d="M10.75 9a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75m2.5 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr>
+                        <th colSpan={3} className="is-right">
+                          Total de ordenes
+                        </th>
+                        <th className="is-right">
+                          {formatCurrency(
+                            generatedPurchaseOrdersTotal,
+                            generatedPurchaseOrders[0]?.currencyCode ||
+                              processingCurrencyCode,
+                          )}
+                        </th>
+                        <th aria-label="Acciones" />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               ) : (
@@ -2572,7 +3231,8 @@ export default function AcceptOrderPage() {
                 className="btn-secondary"
                 onClick={() => {
                   const createdAt = Date.now();
-                  const nextIndex = Object.keys(rawProductAssignmentExtras).length + 1;
+                  const nextIndex =
+                    Object.keys(rawProductAssignmentExtras).length + 1;
                   const extraKey = `extra-${createdAt}`;
                   const nextAssignments = {
                     ...rawProductAssignments,
@@ -2629,6 +3289,7 @@ export default function AcceptOrderPage() {
                     productAssignments: rawProductAssignments,
                     productAssignmentDuplicates: rawProductAssignmentDuplicates,
                     productAssignmentExtras: rawProductAssignmentExtras,
+                    excludedProductIds: generatedItemIds,
                   })
                 }
                 disabled={!processingData.permissions?.canUpdate}
@@ -2717,7 +3378,9 @@ export default function AcceptOrderPage() {
     ? processingData.stages
     : [];
   const activeProcessingStage =
-    processingStages.find((stage) => stage.stageCode === activeProcessingStageCode) ||
+    processingStages.find(
+      (stage) => stage.stageCode === activeProcessingStageCode,
+    ) ||
     processingStages[0] ||
     null;
   const isQuotationAcceptedStage =
@@ -2731,14 +3394,17 @@ export default function AcceptOrderPage() {
   const processingFinancials = quotationToProcess
     ? getQuotationFinancials(quotationToProcess)
     : getQuotationFinancials({});
-  const processingCurrencyCode = quotationToProcess?.latestCurrencyCode || "USD";
+  const processingCurrencyCode =
+    quotationToProcess?.latestCurrencyCode || "USD";
   const processingUsers = Array.isArray(processingData?.assignableUsers)
     ? processingData.assignableUsers
     : [];
   const processingProviders = Array.isArray(processingData?.providers)
     ? processingData.providers
     : [];
-  const kickoffInternalEvidences = Array.isArray(processingData?.kickoffInternal?.evidences)
+  const kickoffInternalEvidences = Array.isArray(
+    processingData?.kickoffInternal?.evidences,
+  )
     ? processingData.kickoffInternal.evidences
     : [];
   const kickoffInternalGeneratedSummary = String(
@@ -2751,39 +3417,52 @@ export default function AcceptOrderPage() {
       ? kickoffInternalGeneratedSummary
       : kickoffInternalStageMinutesSummary,
   );
-  const kickoffExternalEvidences = Array.isArray(processingData?.kickoffExternal?.evidences)
+  const kickoffExternalEvidences = Array.isArray(
+    processingData?.kickoffExternal?.evidences,
+  )
     ? processingData.kickoffExternal.evidences
     : [];
-  const processingQuotationProducts = Array.isArray(processingData?.quotation?.products)
+  const processingQuotationProducts = Array.isArray(
+    processingData?.quotation?.products,
+  )
     ? processingData.quotation.products
     : [];
   const purchaseOrderDraftOrders = Array.isArray(purchaseOrderDraft?.orders)
     ? purchaseOrderDraft.orders
     : [];
-  const purchaseOrderDraftTotals = purchaseOrderDraftOrders.reduce(
-    (acc, order) => {
-      const lines = Array.isArray(order?.lines) ? order.lines : [];
-      const subtotal = lines.reduce(
-        (sum, line) => sum + calculatePurchaseOrderLineAmount(line),
-        0,
-      );
-      const ivaPct = normalizePositiveNumber(order?.ivaPct, 16);
-      const ivaAmount = subtotal * (ivaPct / 100);
-      return {
-        subtotal: acc.subtotal + subtotal,
-        ivaAmount: acc.ivaAmount + ivaAmount,
-        total: acc.total + subtotal + ivaAmount,
-      };
-    },
-    { subtotal: 0, ivaAmount: 0, total: 0 },
-  );
+  const purchaseOrderProviderContact = Array.isArray(
+    purchaseOrderDraft?.providerContacts,
+  )
+    ? purchaseOrderDraft.providerContacts.find(
+        (contact) =>
+          Number(contact.id) === Number(purchaseOrderDraft?.providerContactId),
+      )
+    : null;
+  const purchaseOrderProviderContactName = purchaseOrderProviderContact
+    ? [
+        purchaseOrderProviderContact.firstName,
+        purchaseOrderProviderContact.lastName,
+      ]
+        .filter(Boolean)
+        .join(" ") ||
+      purchaseOrderProviderContact.email ||
+      ""
+    : "";
   const purchaseOrderPrintModel =
-    purchaseOrderFinalPreviewOpen && Array.isArray(purchaseOrderPendingGeneratedOrders)
+    purchaseOrderFinalPreviewOpen &&
+    Array.isArray(purchaseOrderPendingGeneratedOrders)
       ? buildPurchaseOrderPrintModel({
           quotation: quotationToProcess,
           orders: purchaseOrderPendingGeneratedOrders,
-          currencyCode: purchaseOrderDraft?.currencyCode || processingCurrencyCode || "USD",
-          notes: activeProcessingStage?.notes || "",
+          currencyCode:
+            purchaseOrderDraft?.currencyCode || processingCurrencyCode || "USD",
+          providerQuotation: purchaseOrderDraft?.providerQuotation || "",
+          providerContactName: purchaseOrderProviderContactName,
+          paymentConditions: purchaseOrderDraft?.paymentConditions || "",
+          notes:
+            purchaseOrderDraft?.notes ??
+            activeProcessingStage?.stageData?.purchaseOrderNotes ??
+            DEFAULT_PURCHASE_ORDER_NOTES,
         })
       : null;
   const kickoffExternalGeneratedSummary = String(
@@ -3223,13 +3902,15 @@ export default function AcceptOrderPage() {
                 <p className="field-hint">Cargando documentos de cierre...</p>
               ) : null}
 
-              {!acceptOrderWonDocuments.loading && acceptOrderWonDocuments.error ? (
+              {!acceptOrderWonDocuments.loading &&
+              acceptOrderWonDocuments.error ? (
                 <p className="field-hint opportunity-documents-preview-error">
                   {acceptOrderWonDocuments.error}
                 </p>
               ) : null}
 
-              {!acceptOrderWonDocuments.loading && !acceptOrderWonDocuments.error ? (
+              {!acceptOrderWonDocuments.loading &&
+              !acceptOrderWonDocuments.error ? (
                 <div className="accept-order-won-documents-grid">
                   <section className="accept-order-won-documents-section">
                     <h5>1) Orden de compra</h5>
@@ -3283,7 +3964,9 @@ export default function AcceptOrderPage() {
                             className="accept-order-won-document-item"
                           >
                             <div className="accept-order-won-document-item-main">
-                              <strong>{item.originalFileName || "Documento"}</strong>
+                              <strong>
+                                {item.originalFileName || "Documento"}
+                              </strong>
                               <span className="field-hint">
                                 {formatWonDocumentSourceLabel(item.source)}
                               </span>
@@ -3427,7 +4110,8 @@ export default function AcceptOrderPage() {
                   Cotizacion #{quotationToProcess.id} · Procesamiento operativo
                 </span>
                 <h3 id="processing-modal-title">
-                  {processingData?.quotation?.proposalName || "Flujo de procesamiento"}
+                  {processingData?.quotation?.proposalName ||
+                    "Flujo de procesamiento"}
                 </h3>
                 <p>
                   {processingData?.quotation?.accountName || "Cuenta"} ·{" "}
@@ -3441,7 +4125,12 @@ export default function AcceptOrderPage() {
                 title="Cerrar procesamiento"
                 aria-label="Cerrar procesamiento"
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
                   <path
                     fill="currentColor"
                     d="M6.22 4.81a1 1 0 0 0-1.41 1.41L10.59 12l-5.78 5.78a1 1 0 1 0 1.41 1.41L12 13.41l5.78 5.78a1 1 0 0 0 1.41-1.41L13.41 12l5.78-5.78a1 1 0 0 0-1.41-1.41L12 10.59z"
@@ -3450,7 +4139,11 @@ export default function AcceptOrderPage() {
               </button>
             </div>
 
-            <div className="processing-stage-flow" role="tablist" aria-label="Etapas">
+            <div
+              className="processing-stage-flow"
+              role="tablist"
+              aria-label="Etapas"
+            >
               {PROCESSING_STAGE_DEFINITIONS.map((stageDef, index) => {
                 const stage = processingStages.find(
                   (item) => item.stageCode === stageDef.code,
@@ -3470,13 +4163,17 @@ export default function AcceptOrderPage() {
                     aria-selected={isActive}
                     aria-current={isActive ? "step" : undefined}
                   >
-                    <span className="processing-stage-step-circle" aria-hidden="true">
+                    <span
+                      className="processing-stage-step-circle"
+                      aria-hidden="true"
+                    >
                       {index + 1}
                     </span>
                     <span className="processing-stage-step-copy">
                       <strong>{stageDef.name}</strong>
                       <small>
-                        {PROCESSING_STAGE_STATUS_LABELS[status] || "No iniciada"}
+                        {PROCESSING_STAGE_STATUS_LABELS[status] ||
+                          "No iniciada"}
                       </small>
                     </span>
                   </button>
@@ -3496,302 +4193,465 @@ export default function AcceptOrderPage() {
               </p>
             ) : null}
 
-            {!processingLoading && !processingModalError && activeProcessingStage ? (
-              <div ref={processingStageContentRef} className="processing-stage-content">
+            {!processingLoading &&
+            !processingModalError &&
+            activeProcessingStage ? (
+              <div
+                ref={processingStageContentRef}
+                className="processing-stage-content"
+              >
                 {!isKickoffInternalStage &&
                 !isKickoffExternalStage &&
                 !isProviderPurchaseOrderStage ? (
-                <section className="processing-stage-box">
-                  <header>
-                    <h4>{activeProcessingStage.stageName}</h4>
-                    <p>
-                      {isQuotationAcceptedStage
-                        ? activeProcessingStage.status === "completed"
-                          ? "La cotizacion ya fue aceptada. Aqui puedes revisar la evidencia y los datos registrados."
-                          : "La cotizacion aun no esta aceptada. Revisa la informacion y confirma esta etapa con el boton Aceptar."
-                        : "Edita esta etapa de forma independiente. El flujo no requiere secuencia estricta."}
-                    </p>
-                  </header>
+                  <section className="processing-stage-box">
+                    <header>
+                      <h4>{activeProcessingStage.stageName}</h4>
+                      <p>
+                        {isQuotationAcceptedStage
+                          ? activeProcessingStage.status === "completed"
+                            ? "La cotizacion ya fue aceptada. Aqui puedes revisar la evidencia y los datos registrados."
+                            : "La cotizacion aun no esta aceptada. Revisa la informacion y confirma esta etapa con el boton Aceptar."
+                          : "Edita esta etapa de forma independiente. El flujo no requiere secuencia estricta."}
+                      </p>
+                    </header>
 
-                  {isQuotationAcceptedStage ? (
-                    <div className="processing-accepted-scroll-area">
-                      <div className="processing-accepted-status-row">
-                        <span
-                          className={`processing-accepted-status-indicator${
-                            activeProcessingStage.status === "completed"
-                              ? " is-completed"
-                              : ""
-                          }`}
-                        >
-                          <span className="processing-accepted-status-icon" aria-hidden="true">
-                            {activeProcessingStage.status === "completed" ? "✓" : "○"}
+                    {isQuotationAcceptedStage ? (
+                      <div className="processing-accepted-scroll-area">
+                        <div className="processing-accepted-status-row">
+                          <span
+                            className={`processing-accepted-status-indicator${
+                              activeProcessingStage.status === "completed"
+                                ? " is-completed"
+                                : ""
+                            }`}
+                          >
+                            <span
+                              className="processing-accepted-status-icon"
+                              aria-hidden="true"
+                            >
+                              {activeProcessingStage.status === "completed"
+                                ? "✓"
+                                : "○"}
+                            </span>
+                            <span>
+                              {activeProcessingStage.status === "completed"
+                                ? "Aceptada"
+                                : "Pendiente de aceptar"}
+                            </span>
                           </span>
-                          <span>
-                            {activeProcessingStage.status === "completed"
-                              ? "Aceptada"
-                              : "Pendiente de aceptar"}
-                          </span>
-                        </span>
-                      </div>
+                        </div>
 
-                      <div className="accept-order-modal-summary">
-                        <div>
-                          <span>Oportunidad</span>
-                          <strong>{quotationToProcess?.opportunityName || "-"}</strong>
-                        </div>
-                        <div>
-                          <span>Vendedor</span>
-                          <strong>{quotationToProcess?.sellerUserName || "-"}</strong>
-                        </div>
-                        <div>
-                          <span>Cierre</span>
-                          <strong>{formatDate(quotationToProcess?.opportunityCloseDate)}</strong>
-                        </div>
-                      </div>
-
-                      <div className="accept-order-total-card">
-                        <div>
-                          <span>Importe total</span>
-                          <strong>
-                            {formatCurrency(
-                              processingFinancials.totalSale,
-                              processingCurrencyCode,
-                            )}
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Costo total</span>
-                          <strong>
-                            {formatCurrency(
-                              processingFinancials.totalCost,
-                              processingCurrencyCode,
-                            )}
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Contribucion total</span>
-                          <strong>
-                            {formatCurrency(
-                              processingFinancials.totalContribution,
-                              processingCurrencyCode,
-                            )}
-                          </strong>
-                          <small>
-                            {formatPercent(processingFinancials.totalContributionPct)}
-                          </small>
-                        </div>
-                      </div>
-
-                      <div className="accept-order-financial-grid">
-                        <div className="accept-order-financial-card">
-                          <div className="accept-order-financial-card-header">
-                            <span>Productos</span>
+                        <div className="accept-order-modal-summary">
+                          <div>
+                            <span>Oportunidad</span>
                             <strong>
-                              {formatPercent(
-                                processingFinancials.productContributionPct,
+                              {quotationToProcess?.opportunityName || "-"}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Vendedor</span>
+                            <strong>
+                              {quotationToProcess?.sellerUserName || "-"}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Cierre</span>
+                            <strong>
+                              {formatDate(
+                                quotationToProcess?.opportunityCloseDate,
                               )}
                             </strong>
                           </div>
-                          <dl>
-                            <div>
-                              <dt>Venta</dt>
-                              <dd>
-                                {formatCurrency(
-                                  processingFinancials.productSale,
-                                  processingCurrencyCode,
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Costo</dt>
-                              <dd>
-                                {formatCurrency(
-                                  processingFinancials.productCost,
-                                  processingCurrencyCode,
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Contribucion</dt>
-                              <dd>
-                                {formatCurrency(
-                                  processingFinancials.productContribution,
-                                  processingCurrencyCode,
-                                )}
-                              </dd>
-                            </div>
-                          </dl>
                         </div>
-                        <div className="accept-order-financial-card">
-                          <div className="accept-order-financial-card-header">
-                            <span>Servicios</span>
+
+                        <div className="accept-order-total-card">
+                          <div>
+                            <span>Importe total</span>
                             <strong>
-                              {formatPercent(
-                                processingFinancials.serviceContributionPct,
+                              {formatCurrency(
+                                processingFinancials.totalSale,
+                                processingCurrencyCode,
                               )}
                             </strong>
                           </div>
-                          <dl>
-                            <div>
-                              <dt>Venta</dt>
-                              <dd>
-                                {formatCurrency(
-                                  processingFinancials.serviceSale,
-                                  processingCurrencyCode,
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Costo</dt>
-                              <dd>
-                                {formatCurrency(
-                                  processingFinancials.serviceCost,
-                                  processingCurrencyCode,
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Contribucion</dt>
-                              <dd>
-                                {formatCurrency(
-                                  processingFinancials.serviceContribution,
-                                  processingCurrencyCode,
-                                )}
-                              </dd>
-                            </div>
-                          </dl>
-                        </div>
-                      </div>
-
-                      <section className="accept-order-won-documents-card processing-accepted-won-documents-card">
-                        <header className="accept-order-won-documents-header">
-                          <h4>Documentos de cierre</h4>
-                          <p>
-                            Archivos seleccionados cuando la cotizacion fue declarada como ganada.
-                          </p>
-                        </header>
-
-                        {processingWonDocuments.loading ? (
-                          <p className="field-hint">Cargando documentos de cierre...</p>
-                        ) : null}
-
-                        {!processingWonDocuments.loading && processingWonDocuments.error ? (
-                          <p className="field-hint opportunity-documents-preview-error">
-                            {processingWonDocuments.error}
-                          </p>
-                        ) : null}
-
-                        {!processingWonDocuments.loading &&
-                        !processingWonDocuments.error ? (
-                          <div className="accept-order-won-documents-grid">
-                            <section className="accept-order-won-documents-section">
-                              <h5>1) Orden de compra</h5>
-                              {processingWonDocuments.purchaseOrder ? (
-                                <article className="accept-order-won-document-item">
-                                  <div className="accept-order-won-document-item-main">
-                                    <strong>
-                                      {processingWonDocuments.purchaseOrder
-                                        .originalFileName || "Documento"}
-                                    </strong>
-                                    <span className="field-hint">
-                                      {formatWonDocumentSourceLabel(
-                                        processingWonDocuments.purchaseOrder.source,
-                                      )}
-                                    </span>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    className="btn-secondary accept-order-won-document-download-btn"
-                                    onClick={() => {
-                                      void handleDownloadWonDocument(
-                                        processingWonDocuments.purchaseOrder,
-                                      );
-                                    }}
-                                    disabled={
-                                      downloadingWonDocumentKey ===
-                                      `${processingWonDocuments.purchaseOrder.source}:${processingWonDocuments.purchaseOrder.documentId}`
-                                    }
-                                    title="Descargar documento"
-                                    aria-label="Descargar documento"
-                                  >
-                                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                                      <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
-                                    </svg>
-                                  </button>
-                                </article>
-                              ) : (
-                                <p className="field-hint">
-                                  No hay orden de compra registrada.
-                                </p>
+                          <div>
+                            <span>Costo total</span>
+                            <strong>
+                              {formatCurrency(
+                                processingFinancials.totalCost,
+                                processingCurrencyCode,
                               )}
-                            </section>
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Contribucion total</span>
+                            <strong>
+                              {formatCurrency(
+                                processingFinancials.totalContribution,
+                                processingCurrencyCode,
+                              )}
+                            </strong>
+                            <small>
+                              {formatPercent(
+                                processingFinancials.totalContributionPct,
+                              )}
+                            </small>
+                          </div>
+                        </div>
 
-                            <section className="accept-order-won-documents-section">
-                              <h5>2) Cotizaciones de proveedores</h5>
-                              {processingWonDocuments.providerQuotes.length ? (
-                                <div className="accept-order-won-documents-list">
-                                  {processingWonDocuments.providerQuotes.map((item) => (
-                                    <article
-                                      key={`provider-quote-${item.source}-${item.documentId}`}
-                                      className="accept-order-won-document-item"
+                        <div className="accept-order-financial-grid">
+                          <div className="accept-order-financial-card">
+                            <div className="accept-order-financial-card-header">
+                              <span>Productos</span>
+                              <strong>
+                                {formatPercent(
+                                  processingFinancials.productContributionPct,
+                                )}
+                              </strong>
+                            </div>
+                            <dl>
+                              <div>
+                                <dt>Venta</dt>
+                                <dd>
+                                  {formatCurrency(
+                                    processingFinancials.productSale,
+                                    processingCurrencyCode,
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Costo</dt>
+                                <dd>
+                                  {formatCurrency(
+                                    processingFinancials.productCost,
+                                    processingCurrencyCode,
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Contribucion</dt>
+                                <dd>
+                                  {formatCurrency(
+                                    processingFinancials.productContribution,
+                                    processingCurrencyCode,
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+                          </div>
+                          <div className="accept-order-financial-card">
+                            <div className="accept-order-financial-card-header">
+                              <span>Servicios</span>
+                              <strong>
+                                {formatPercent(
+                                  processingFinancials.serviceContributionPct,
+                                )}
+                              </strong>
+                            </div>
+                            <dl>
+                              <div>
+                                <dt>Venta</dt>
+                                <dd>
+                                  {formatCurrency(
+                                    processingFinancials.serviceSale,
+                                    processingCurrencyCode,
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Costo</dt>
+                                <dd>
+                                  {formatCurrency(
+                                    processingFinancials.serviceCost,
+                                    processingCurrencyCode,
+                                  )}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Contribucion</dt>
+                                <dd>
+                                  {formatCurrency(
+                                    processingFinancials.serviceContribution,
+                                    processingCurrencyCode,
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+                          </div>
+                        </div>
+
+                        <section className="accept-order-won-documents-card processing-accepted-won-documents-card">
+                          <header className="accept-order-won-documents-header">
+                            <h4>Documentos de cierre</h4>
+                            <p>
+                              Archivos seleccionados cuando la cotizacion fue
+                              declarada como ganada.
+                            </p>
+                          </header>
+
+                          {processingWonDocuments.loading ? (
+                            <p className="field-hint">
+                              Cargando documentos de cierre...
+                            </p>
+                          ) : null}
+
+                          {!processingWonDocuments.loading &&
+                          processingWonDocuments.error ? (
+                            <p className="field-hint opportunity-documents-preview-error">
+                              {processingWonDocuments.error}
+                            </p>
+                          ) : null}
+
+                          {!processingWonDocuments.loading &&
+                          !processingWonDocuments.error ? (
+                            <div className="accept-order-won-documents-grid">
+                              <section className="accept-order-won-documents-section">
+                                <h5>1) Orden de compra</h5>
+                                {processingWonDocuments.purchaseOrder ? (
+                                  <article className="accept-order-won-document-item">
+                                    <div className="accept-order-won-document-item-main">
+                                      <strong>
+                                        {processingWonDocuments.purchaseOrder
+                                          .originalFileName || "Documento"}
+                                      </strong>
+                                      <span className="field-hint">
+                                        {formatWonDocumentSourceLabel(
+                                          processingWonDocuments.purchaseOrder
+                                            .source,
+                                        )}
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary accept-order-won-document-download-btn"
+                                      onClick={() => {
+                                        void handleDownloadWonDocument(
+                                          processingWonDocuments.purchaseOrder,
+                                        );
+                                      }}
+                                      disabled={
+                                        downloadingWonDocumentKey ===
+                                        `${processingWonDocuments.purchaseOrder.source}:${processingWonDocuments.purchaseOrder.documentId}`
+                                      }
+                                      title="Descargar documento"
+                                      aria-label="Descargar documento"
                                     >
-                                      <div className="accept-order-won-document-item-main">
-                                        <strong>{item.originalFileName || "Documento"}</strong>
-                                        <span className="field-hint">
-                                          {formatWonDocumentSourceLabel(item.source)}
-                                        </span>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="btn-secondary accept-order-won-document-download-btn"
-                                        onClick={() => {
-                                          void handleDownloadWonDocument(item);
-                                        }}
-                                        disabled={
-                                          downloadingWonDocumentKey ===
-                                          `${item.source}:${item.documentId}`
-                                        }
-                                        title="Descargar documento"
-                                        aria-label="Descargar documento"
+                                      <svg
+                                        viewBox="0 0 24 24"
+                                        aria-hidden="true"
                                       >
-                                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                                          <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
-                                        </svg>
-                                      </button>
-                                    </article>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="field-hint">
-                                  No hay cotizaciones de proveedores registradas.
-                                </p>
-                              )}
-                            </section>
-                          </div>
-                        ) : null}
-                      </section>
+                                        <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                      </svg>
+                                    </button>
+                                  </article>
+                                ) : (
+                                  <p className="field-hint">
+                                    No hay orden de compra registrada.
+                                  </p>
+                                )}
+                              </section>
 
+                              <section className="accept-order-won-documents-section">
+                                <h5>2) Cotizaciones de proveedores</h5>
+                                {processingWonDocuments.providerQuotes
+                                  .length ? (
+                                  <div className="accept-order-won-documents-list">
+                                    {processingWonDocuments.providerQuotes.map(
+                                      (item) => (
+                                        <article
+                                          key={`provider-quote-${item.source}-${item.documentId}`}
+                                          className="accept-order-won-document-item"
+                                        >
+                                          <div className="accept-order-won-document-item-main">
+                                            <strong>
+                                              {item.originalFileName ||
+                                                "Documento"}
+                                            </strong>
+                                            <span className="field-hint">
+                                              {formatWonDocumentSourceLabel(
+                                                item.source,
+                                              )}
+                                            </span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            className="btn-secondary accept-order-won-document-download-btn"
+                                            onClick={() => {
+                                              void handleDownloadWonDocument(
+                                                item,
+                                              );
+                                            }}
+                                            disabled={
+                                              downloadingWonDocumentKey ===
+                                              `${item.source}:${item.documentId}`
+                                            }
+                                            title="Descargar documento"
+                                            aria-label="Descargar documento"
+                                          >
+                                            <svg
+                                              viewBox="0 0 24 24"
+                                              aria-hidden="true"
+                                            >
+                                              <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                            </svg>
+                                          </button>
+                                        </article>
+                                      ),
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="field-hint">
+                                    No hay cotizaciones de proveedores
+                                    registradas.
+                                  </p>
+                                )}
+                              </section>
+                            </div>
+                          ) : null}
+                        </section>
+
+                        <div className="processing-stage-grid two">
+                          <label className="field-group processing-stage-field">
+                            <span>Fecha de aceptacion</span>
+                            <input
+                              type="date"
+                              value={
+                                activeProcessingStage.stageData?.acceptedAt
+                                  ? String(
+                                      activeProcessingStage.stageData
+                                        .acceptedAt,
+                                    ).slice(0, 10)
+                                  : ""
+                              }
+                              onChange={(event) =>
+                                updateActiveStageDataField(
+                                  "acceptedAt",
+                                  event.target.value
+                                    ? new Date(
+                                        `${event.target.value}T12:00:00.000Z`,
+                                      ).toISOString()
+                                    : null,
+                                )
+                              }
+                              disabled={!processingData.permissions?.canUpdate}
+                            />
+                          </label>
+
+                          <label className="field-group processing-stage-field full">
+                            <span>Notas</span>
+                            <textarea
+                              rows={4}
+                              value={activeProcessingStage.notes || ""}
+                              onChange={(event) =>
+                                updateActiveStageCommonField(
+                                  "notes",
+                                  event.target.value,
+                                )
+                              }
+                              disabled={!processingData.permissions?.canUpdate}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ) : !isKickoffInternalStage ? (
                       <div className="processing-stage-grid two">
                         <label className="field-group processing-stage-field">
-                          <span>Fecha de aceptacion</span>
+                          <span>Estado</span>
+                          <select
+                            value={
+                              activeProcessingStage.status || "not_started"
+                            }
+                            onChange={(event) =>
+                              updateActiveStageCommonField(
+                                "status",
+                                event.target.value,
+                              )
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          >
+                            {PROCESSING_STAGE_STATUS_OPTIONS.map(
+                              (statusOption) => (
+                                <option
+                                  key={statusOption.value}
+                                  value={statusOption.value}
+                                >
+                                  {statusOption.label}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </label>
+
+                        <label className="field-group processing-stage-field">
+                          <span>Responsable</span>
+                          <select
+                            value={activeProcessingStage.ownerUserId || ""}
+                            onChange={(event) =>
+                              updateActiveStageCommonField(
+                                "ownerUserId",
+                                event.target.value
+                                  ? Number(event.target.value)
+                                  : null,
+                              )
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          >
+                            <option value="">Sin responsable</option>
+                            {processingUsers.map((user) => (
+                              <option key={user.id} value={user.id}>
+                                {user.fullName}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="field-group processing-stage-field">
+                          <span>Fecha objetivo</span>
                           <input
                             type="date"
+                            value={activeProcessingStage.targetDate || ""}
+                            onChange={(event) =>
+                              updateActiveStageCommonField(
+                                "targetDate",
+                                event.target.value || null,
+                              )
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+
+                        <label className="field-group processing-stage-field">
+                          <span>Fecha completada</span>
+                          <input
+                            type="datetime-local"
                             value={
-                              activeProcessingStage.stageData?.acceptedAt
-                                ? String(activeProcessingStage.stageData.acceptedAt).slice(
-                                    0,
-                                    10,
-                                  )
+                              activeProcessingStage.completedAt
+                                ? String(
+                                    activeProcessingStage.completedAt,
+                                  ).slice(0, 16)
                                 : ""
                             }
                             onChange={(event) =>
-                              updateActiveStageDataField(
-                                "acceptedAt",
+                              updateActiveStageCommonField(
+                                "completedAt",
                                 event.target.value
-                                  ? new Date(
-                                      `${event.target.value}T12:00:00.000Z`,
-                                    ).toISOString()
+                                  ? new Date(event.target.value).toISOString()
                                   : null,
+                              )
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+
+                        <label className="field-group processing-stage-field full">
+                          <span>Razon de bloqueo</span>
+                          <textarea
+                            rows={3}
+                            value={activeProcessingStage.blockedReason || ""}
+                            onChange={(event) =>
+                              updateActiveStageCommonField(
+                                "blockedReason",
+                                event.target.value,
                               )
                             }
                             disabled={!processingData.permissions?.canUpdate}
@@ -3804,171 +4664,76 @@ export default function AcceptOrderPage() {
                             rows={4}
                             value={activeProcessingStage.notes || ""}
                             onChange={(event) =>
-                              updateActiveStageCommonField("notes", event.target.value)
+                              updateActiveStageCommonField(
+                                "notes",
+                                event.target.value,
+                              )
                             }
                             disabled={!processingData.permissions?.canUpdate}
                           />
                         </label>
                       </div>
+                    ) : null}
 
-                    </div>
-                  ) : !isKickoffInternalStage ? (
-                    <div className="processing-stage-grid two">
-                      <label className="field-group processing-stage-field">
-                        <span>Estado</span>
-                        <select
-                          value={activeProcessingStage.status || "not_started"}
-                          onChange={(event) =>
-                            updateActiveStageCommonField("status", event.target.value)
+                    <div
+                      className={`processing-stage-actions${
+                        isQuotationAcceptedStage
+                          ? " processing-stage-actions-sticky"
+                          : ""
+                      }`}
+                    >
+                      {isQuotationAcceptedStage ? (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() =>
+                            openSellerNotificationModal(quotationToProcess)
                           }
-                          disabled={!processingData.permissions?.canUpdate}
+                          disabled={Boolean(sendingNotificationQuotationId)}
                         >
-                          {PROCESSING_STAGE_STATUS_OPTIONS.map((statusOption) => (
-                            <option key={statusOption.value} value={statusOption.value}>
-                              {statusOption.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="field-group processing-stage-field">
-                        <span>Responsable</span>
-                        <select
-                          value={activeProcessingStage.ownerUserId || ""}
-                          onChange={(event) =>
-                            updateActiveStageCommonField(
-                              "ownerUserId",
-                              event.target.value
-                                ? Number(event.target.value)
-                                : null,
-                            )
-                          }
-                          disabled={!processingData.permissions?.canUpdate}
-                        >
-                          <option value="">Sin responsable</option>
-                          {processingUsers.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.fullName}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="field-group processing-stage-field">
-                        <span>Fecha objetivo</span>
-                        <input
-                          type="date"
-                          value={activeProcessingStage.targetDate || ""}
-                          onChange={(event) =>
-                            updateActiveStageCommonField(
-                              "targetDate",
-                              event.target.value || null,
-                            )
-                          }
-                          disabled={!processingData.permissions?.canUpdate}
-                        />
-                      </label>
-
-                      <label className="field-group processing-stage-field">
-                        <span>Fecha completada</span>
-                        <input
-                          type="datetime-local"
-                          value={
-                            activeProcessingStage.completedAt
-                              ? String(activeProcessingStage.completedAt).slice(0, 16)
-                              : ""
-                          }
-                          onChange={(event) =>
-                            updateActiveStageCommonField(
-                              "completedAt",
-                              event.target.value
-                                ? new Date(event.target.value).toISOString()
-                                : null,
-                            )
-                          }
-                          disabled={!processingData.permissions?.canUpdate}
-                        />
-                      </label>
-
-                      <label className="field-group processing-stage-field full">
-                        <span>Razon de bloqueo</span>
-                        <textarea
-                          rows={3}
-                          value={activeProcessingStage.blockedReason || ""}
-                          onChange={(event) =>
-                            updateActiveStageCommonField(
-                              "blockedReason",
-                              event.target.value,
-                            )
-                          }
-                          disabled={!processingData.permissions?.canUpdate}
-                        />
-                      </label>
-
-                      <label className="field-group processing-stage-field full">
-                        <span>Notas</span>
-                        <textarea
-                          rows={4}
-                          value={activeProcessingStage.notes || ""}
-                          onChange={(event) =>
-                            updateActiveStageCommonField("notes", event.target.value)
-                          }
-                          disabled={!processingData.permissions?.canUpdate}
-                        />
-                      </label>
-                    </div>
-                  ) : null}
-
-                  <div
-                    className={`processing-stage-actions${
-                      isQuotationAcceptedStage
-                        ? " processing-stage-actions-sticky"
-                        : ""
-                    }`}
-                  >
-                    {isQuotationAcceptedStage ? (
+                          Correo vendedor
+                        </button>
+                      ) : null}
                       <button
                         type="button"
-                        className="btn-secondary"
-                        onClick={() => openSellerNotificationModal(quotationToProcess)}
-                        disabled={Boolean(sendingNotificationQuotationId)}
-                      >
-                        Correo vendedor
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => {
-                        if (isQuotationAcceptedStage) {
-                          const acceptedAtIso =
-                            activeProcessingStage.stageData?.acceptedAt ||
-                            activeProcessingStage.completedAt ||
-                            new Date().toISOString();
-                          void saveProcessingStage(activeProcessingStage.stageCode, {
-                            forceStatus: "completed",
-                            forceCompletedAt: acceptedAtIso,
-                            stageDataPatch: {
-                              acceptedAt: acceptedAtIso,
-                            },
-                          });
-                          return;
+                        className="btn-primary"
+                        onClick={() => {
+                          if (isQuotationAcceptedStage) {
+                            const acceptedAtIso =
+                              activeProcessingStage.stageData?.acceptedAt ||
+                              activeProcessingStage.completedAt ||
+                              new Date().toISOString();
+                            void saveProcessingStage(
+                              activeProcessingStage.stageCode,
+                              {
+                                forceStatus: "completed",
+                                forceCompletedAt: acceptedAtIso,
+                                stageDataPatch: {
+                                  acceptedAt: acceptedAtIso,
+                                },
+                              },
+                            );
+                            return;
+                          }
+                          void saveProcessingStage(
+                            activeProcessingStage.stageCode,
+                          );
+                        }}
+                        disabled={
+                          !processingData.permissions?.canUpdate ||
+                          processingSavingStageCode ===
+                            activeProcessingStage.stageCode
                         }
-                        void saveProcessingStage(activeProcessingStage.stageCode);
-                      }}
-                      disabled={
-                        !processingData.permissions?.canUpdate ||
-                        processingSavingStageCode === activeProcessingStage.stageCode
-                      }
-                    >
-                      {processingSavingStageCode === activeProcessingStage.stageCode
-                        ? "Guardando..."
-                        : isQuotationAcceptedStage
-                          ? "Aceptar"
-                          : "Guardar etapa"}
-                    </button>
-                  </div>
-                </section>
+                      >
+                        {processingSavingStageCode ===
+                        activeProcessingStage.stageCode
+                          ? "Guardando..."
+                          : isQuotationAcceptedStage
+                            ? "Aceptar"
+                            : "Guardar etapa"}
+                      </button>
+                    </div>
+                  </section>
                 ) : null}
 
                 {activeProcessingStage.stageCode === "kickoff_internal" ? (
@@ -3977,7 +4742,8 @@ export default function AcceptOrderPage() {
                       <header>
                         <h5>Convocatoria Kick Off interno</h5>
                         <p>
-                          Selecciona convocados internos y dos fechas propuestas.
+                          Selecciona convocados internos y dos fechas
+                          propuestas.
                         </p>
                       </header>
 
@@ -4024,14 +4790,19 @@ export default function AcceptOrderPage() {
                                     }}
                                   />
                                   <span>
-                                    {user.fullName} {user.email ? `(${user.email})` : ""}
+                                    {user.fullName}{" "}
+                                    {user.email ? `(${user.email})` : ""}
                                   </span>
                                 </label>
                               );
                             })}
                           </div>
                           <span className="field-hint">
-                            Seleccionados: {kickoffInvitationDraft.internalAttendeesUserIds.length}
+                            Seleccionados:{" "}
+                            {
+                              kickoffInvitationDraft.internalAttendeesUserIds
+                                .length
+                            }
                           </span>
                         </label>
 
@@ -4040,7 +4811,9 @@ export default function AcceptOrderPage() {
                           <div className="kickoff-internal-date-time-row">
                             <input
                               type="date"
-                              value={kickoffInvitationDraft.meetingDateOptionOne}
+                              value={
+                                kickoffInvitationDraft.meetingDateOptionOne
+                              }
                               onChange={(event) =>
                                 setKickoffInvitationDraft((current) => ({
                                   ...current,
@@ -4050,7 +4823,9 @@ export default function AcceptOrderPage() {
                             />
                             <input
                               type="time"
-                              value={kickoffInvitationDraft.meetingTimeOptionOne}
+                              value={
+                                kickoffInvitationDraft.meetingTimeOptionOne
+                              }
                               onChange={(event) =>
                                 setKickoffInvitationDraft((current) => ({
                                   ...current,
@@ -4066,7 +4841,9 @@ export default function AcceptOrderPage() {
                           <div className="kickoff-internal-date-time-row">
                             <input
                               type="date"
-                              value={kickoffInvitationDraft.meetingDateOptionTwo}
+                              value={
+                                kickoffInvitationDraft.meetingDateOptionTwo
+                              }
                               onChange={(event) =>
                                 setKickoffInvitationDraft((current) => ({
                                   ...current,
@@ -4076,7 +4853,9 @@ export default function AcceptOrderPage() {
                             />
                             <input
                               type="time"
-                              value={kickoffInvitationDraft.meetingTimeOptionTwo}
+                              value={
+                                kickoffInvitationDraft.meetingTimeOptionTwo
+                              }
                               onChange={(event) =>
                                 setKickoffInvitationDraft((current) => ({
                                   ...current,
@@ -4090,7 +4869,9 @@ export default function AcceptOrderPage() {
                         <label className="field-group processing-stage-field kickoff-internal-right-field">
                           <span>Modalidad</span>
                           <select
-                            value={kickoffInvitationDraft.meetingMode || "virtual"}
+                            value={
+                              kickoffInvitationDraft.meetingMode || "virtual"
+                            }
                             onChange={(event) =>
                               setKickoffInvitationDraft((current) => ({
                                 ...current,
@@ -4130,15 +4911,16 @@ export default function AcceptOrderPage() {
                           Abrir vista previa de correo
                         </button>
                         <span className="field-hint">
-                          {processingData?.kickoffInternal?.latestInvitation?.statusCode ===
-                          "sent"
+                          {processingData?.kickoffInternal?.latestInvitation
+                            ?.statusCode === "sent"
                             ? "Ultima convocatoria enviada"
                             : "Sin convocatoria enviada"}
                         </span>
                       </div>
 
-                      {Array.isArray(processingData?.kickoffInternal?.invitations) &&
-                      processingData.kickoffInternal.invitations.length ? (
+                      {Array.isArray(
+                        processingData?.kickoffInternal?.invitations,
+                      ) && processingData.kickoffInternal.invitations.length ? (
                         <div className="processing-stage-log-list">
                           {processingData.kickoffInternal.invitations
                             .slice(0, 5)
@@ -4169,7 +4951,8 @@ export default function AcceptOrderPage() {
                       <header>
                         <h5>Minuta</h5>
                         <p>
-                          Carga archivo de texto o audio, genera resumen IA y culmina el step.
+                          Carga archivo de texto o audio, genera resumen IA y
+                          culmina el step.
                         </p>
                       </header>
 
@@ -4194,58 +4977,92 @@ export default function AcceptOrderPage() {
                         <div className="processing-stage-field full">
                           {kickoffInternalEvidences.length ? (
                             <div className="processing-stage-log-list">
-                              {kickoffInternalEvidences.slice(0, 8).map((evidence) => {
-                                const evidenceId = Number(evidence.id || 0);
-                                const deletingEvidence = deletingProcessingEvidenceIds.has(
-                                  evidenceId,
-                                );
-                                return (
-                                  <article key={evidence.id} className="processing-stage-log-item">
-                                    <div>
-                                      <strong>
-                                        {evidence.document?.originalFileName || "Evidencia de minuta"}
-                                      </strong>
-                                      <span className="field-hint">
-                                        {evidence.createdByUserName || "Usuario"}
-                                        {" · "}
-                                        {formatDate(evidence.createdAt)}
-                                      </span>
-                                    </div>
-                                    <div className="processing-stage-actions split">
-                                      {evidence.document ? (
+                              {kickoffInternalEvidences
+                                .slice(0, 8)
+                                .map((evidence) => {
+                                  const evidenceId = Number(evidence.id || 0);
+                                  const deletingEvidence =
+                                    deletingProcessingEvidenceIds.has(
+                                      evidenceId,
+                                    );
+                                  return (
+                                    <article
+                                      key={evidence.id}
+                                      className="processing-stage-log-item"
+                                    >
+                                      <div>
+                                        <strong>
+                                          {evidence.document
+                                            ?.originalFileName ||
+                                            "Evidencia de minuta"}
+                                        </strong>
+                                        <span className="field-hint">
+                                          {evidence.createdByUserName ||
+                                            "Usuario"}
+                                          {" · "}
+                                          {formatDate(evidence.createdAt)}
+                                        </span>
+                                      </div>
+                                      <div className="processing-stage-actions split">
+                                        {evidence.document ? (
+                                          <button
+                                            type="button"
+                                            className="btn-ghost processing-evidence-icon-button"
+                                            onClick={() =>
+                                              void downloadKickoffEvidence(
+                                                evidence,
+                                              )
+                                            }
+                                            disabled={deletingEvidence}
+                                            title="Descargar evidencia"
+                                            aria-label="Descargar evidencia"
+                                          >
+                                            <svg
+                                              viewBox="0 0 24 24"
+                                              aria-hidden="true"
+                                            >
+                                              <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                            </svg>
+                                          </button>
+                                        ) : null}
                                         <button
                                           type="button"
-                                          className="btn-ghost processing-evidence-icon-button"
-                                          onClick={() => void downloadKickoffEvidence(evidence)}
-                                          disabled={deletingEvidence}
-                                          title="Descargar evidencia"
-                                          aria-label="Descargar evidencia"
+                                          className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
+                                          onClick={() =>
+                                            void deleteKickoffEvidence(evidence)
+                                          }
+                                          disabled={
+                                            deletingEvidence ||
+                                            !processingData.permissions
+                                              ?.canUpdate
+                                          }
+                                          title={
+                                            deletingEvidence
+                                              ? "Eliminando evidencia"
+                                              : "Eliminar evidencia"
+                                          }
+                                          aria-label={
+                                            deletingEvidence
+                                              ? "Eliminando evidencia"
+                                              : "Eliminar evidencia"
+                                          }
                                         >
-                                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                                            <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                          <svg
+                                            viewBox="0 0 24 24"
+                                            aria-hidden="true"
+                                          >
+                                            <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
                                           </svg>
                                         </button>
-                                      ) : null}
-                                      <button
-                                        type="button"
-                                        className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
-                                        onClick={() => void deleteKickoffEvidence(evidence)}
-                                        disabled={deletingEvidence || !processingData.permissions?.canUpdate}
-                                        title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
-                                        aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
-                                      >
-                                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                                          <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
-                                        </svg>
-                                      </button>
-                                    </div>
-                                  </article>
-                                );
-                              })}
+                                      </div>
+                                    </article>
+                                  );
+                                })}
                             </div>
                           ) : (
                             <p className="field-hint">
-                              Aun no se registran archivos en la minuta de Kick Off interno.
+                              Aun no se registran archivos en la minuta de Kick
+                              Off interno.
                             </p>
                           )}
                         </div>
@@ -4270,33 +5087,40 @@ export default function AcceptOrderPage() {
                         <button
                           type="button"
                           className="btn-secondary"
-                          onClick={() => void generateKickoffInternalAiSummary()}
+                          onClick={() =>
+                            void generateKickoffInternalAiSummary()
+                          }
                           disabled={
                             generatingKickoffInternalAi ||
                             !processingData.permissions?.canGenerateIa
                           }
                         >
-                          {generatingKickoffInternalAi ? "Generando resumen..." : "IA resumir"}
+                          {generatingKickoffInternalAi
+                            ? "Generando resumen..."
+                            : "IA resumir"}
                         </button>
 
                         <button
                           type="button"
                           className="btn-primary"
                           onClick={() =>
-                            void saveProcessingStage(activeProcessingStage.stageCode, {
-                              forceStatus: "completed",
-                              forceCompletedAt: new Date().toISOString(),
-                            })
+                            void saveProcessingStage(
+                              activeProcessingStage.stageCode,
+                              {
+                                forceStatus: "completed",
+                                forceCompletedAt: new Date().toISOString(),
+                              },
+                            )
                           }
                           disabled={
                             !processingData.permissions?.canUpdate ||
-                            processingSavingStageCode === activeProcessingStage.stageCode
+                            processingSavingStageCode ===
+                              activeProcessingStage.stageCode
                           }
                         >
                           Culminar Kick Off Interno
                         </button>
                       </div>
-
                     </section>
                   </>
                 ) : null}
@@ -4306,7 +5130,8 @@ export default function AcceptOrderPage() {
                     <header>
                       <h5>Minuta</h5>
                       <p>
-                        Carga archivo de texto o audio, genera resumen IA y culmina el step.
+                        Carga archivo de texto o audio, genera resumen IA y
+                        culmina el step.
                       </p>
                     </header>
 
@@ -4335,9 +5160,8 @@ export default function AcceptOrderPage() {
                           <div className="processing-stage-log-list">
                             {kickoffExternalEvidences.map((evidence) => {
                               const evidenceId = Number(evidence.id || 0);
-                              const deletingEvidence = deletingProcessingEvidenceIds.has(
-                                evidenceId,
-                              );
+                              const deletingEvidence =
+                                deletingProcessingEvidenceIds.has(evidenceId);
                               return (
                                 <article
                                   key={evidence.id}
@@ -4351,7 +5175,8 @@ export default function AcceptOrderPage() {
                                           : "Evidencia")}
                                     </strong>
                                     <span className="field-hint">
-                                      {evidence.evidenceType} · {formatDate(evidence.createdAt)}
+                                      {evidence.evidenceType} ·{" "}
+                                      {formatDate(evidence.createdAt)}
                                     </span>
                                   </div>
                                   <div className="processing-stage-actions split">
@@ -4359,12 +5184,17 @@ export default function AcceptOrderPage() {
                                       <button
                                         type="button"
                                         className="btn-secondary processing-evidence-icon-button"
-                                        onClick={() => void downloadKickoffEvidence(evidence)}
+                                        onClick={() =>
+                                          void downloadKickoffEvidence(evidence)
+                                        }
                                         disabled={deletingEvidence}
                                         title="Descargar evidencia"
                                         aria-label="Descargar evidencia"
                                       >
-                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          aria-hidden="true"
+                                        >
                                           <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
                                         </svg>
                                       </button>
@@ -4373,12 +5203,28 @@ export default function AcceptOrderPage() {
                                       <button
                                         type="button"
                                         className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
-                                        onClick={() => void deleteKickoffEvidence(evidence)}
-                                        disabled={deletingEvidence || !processingData.permissions?.canUpdate}
-                                        title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
-                                        aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                        onClick={() =>
+                                          void deleteKickoffEvidence(evidence)
+                                        }
+                                        disabled={
+                                          deletingEvidence ||
+                                          !processingData.permissions?.canUpdate
+                                        }
+                                        title={
+                                          deletingEvidence
+                                            ? "Eliminando evidencia"
+                                            : "Eliminar evidencia"
+                                        }
+                                        aria-label={
+                                          deletingEvidence
+                                            ? "Eliminando evidencia"
+                                            : "Eliminar evidencia"
+                                        }
                                       >
-                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <svg
+                                          viewBox="0 0 24 24"
+                                          aria-hidden="true"
+                                        >
                                           <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
                                         </svg>
                                       </button>
@@ -4421,21 +5267,27 @@ export default function AcceptOrderPage() {
                           !processingData.permissions?.canGenerateIa
                         }
                       >
-                        {generatingKickoffExternalAi ? "Generando resumen..." : "IA resumir"}
+                        {generatingKickoffExternalAi
+                          ? "Generando resumen..."
+                          : "IA resumir"}
                       </button>
 
                       <button
                         type="button"
                         className="btn-primary"
                         onClick={() =>
-                          void saveProcessingStage(activeProcessingStage.stageCode, {
-                            forceStatus: "completed",
-                            forceCompletedAt: new Date().toISOString(),
-                          })
+                          void saveProcessingStage(
+                            activeProcessingStage.stageCode,
+                            {
+                              forceStatus: "completed",
+                              forceCompletedAt: new Date().toISOString(),
+                            },
+                          )
                         }
                         disabled={
                           !processingData.permissions?.canUpdate ||
-                          processingSavingStageCode === activeProcessingStage.stageCode
+                          processingSavingStageCode ===
+                            activeProcessingStage.stageCode
                         }
                       >
                         Culminar Kick Off Externo
@@ -4446,9 +5298,9 @@ export default function AcceptOrderPage() {
 
                 {activeProcessingStage.stageCode !== "quotation_accepted" &&
                 activeProcessingStage.stageCode !== "kickoff_external" &&
-                activeProcessingStage.stageCode !== "kickoff_internal" ? (
-                  renderStageBaseSpecificFields(activeProcessingStage)
-                ) : null}
+                activeProcessingStage.stageCode !== "kickoff_internal"
+                  ? renderStageBaseSpecificFields(activeProcessingStage)
+                  : null}
               </div>
             ) : null}
           </div>
@@ -4476,6 +5328,91 @@ export default function AcceptOrderPage() {
               </p>
             </div>
 
+            <section className="processing-stage-box">
+              <header>
+                <h4>Datos de orden de compra</h4>
+              </header>
+              <div className="processing-stage-grid two">
+                <label className="field-group processing-stage-field">
+                  <span>Proveedor</span>
+                  <input
+                    type="text"
+                    value={purchaseOrderDraft.providerName || "Proveedor"}
+                    readOnly
+                    disabled
+                  />
+                </label>
+                <label className="field-group processing-stage-field">
+                  <span>Contacto del proveedor</span>
+                  <select
+                    value={purchaseOrderDraft.providerContactId || ""}
+                    onChange={(event) => {
+                      const providerContactId = event.target.value
+                        ? Number(event.target.value)
+                        : null;
+                      setPurchaseOrderDraft((current) =>
+                        current ? { ...current, providerContactId } : current,
+                      );
+                      updateActiveStageDataField(
+                        "providerContactId",
+                        providerContactId,
+                      );
+                    }}
+                    disabled={!processingData.permissions?.canUpdate}
+                  >
+                    <option value="">
+                      {purchaseOrderDraft.providerContacts.length
+                        ? "Selecciona contacto"
+                        : "Proveedor sin contactos"}
+                    </option>
+                    {purchaseOrderDraft.providerContacts.map((contact) => {
+                      const fullName = [contact.firstName, contact.lastName]
+                        .filter(Boolean)
+                        .join(" ");
+                      return (
+                        <option key={contact.id} value={contact.id}>
+                          {fullName ||
+                            contact.email ||
+                            `Contacto #${contact.id}`}
+                          {fullName && contact.email
+                            ? ` (${contact.email})`
+                            : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+                <label className="field-group processing-stage-field">
+                  <span>Cliente final</span>
+                  <input
+                    type="text"
+                    value={purchaseOrderDraft.finalCustomerName || "-"}
+                    readOnly
+                    disabled
+                  />
+                </label>
+                <label className="field-group processing-stage-field">
+                  <span>Cotizacion del proveedor</span>
+                  <input
+                    type="text"
+                    value={purchaseOrderDraft.providerQuotation || ""}
+                    placeholder="Ingresa la cotizacion del proveedor"
+                    onChange={(event) => {
+                      const providerQuotation = event.target.value;
+                      setPurchaseOrderDraft((current) =>
+                        current ? { ...current, providerQuotation } : current,
+                      );
+                      updateActiveStageDataField(
+                        "providerQuotation",
+                        providerQuotation,
+                      );
+                    }}
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
+              </div>
+            </section>
+
             {purchaseOrderDraftOrders.map((order) => {
               const orderLines = Array.isArray(order?.lines) ? order.lines : [];
               const subtotal = orderLines.reduce(
@@ -4487,7 +5424,10 @@ export default function AcceptOrderPage() {
               const total = subtotal + ivaAmount;
 
               return (
-                <section key={order.draftId} className="processing-purchase-order-lines">
+                <section
+                  key={order.draftId}
+                  className="processing-purchase-order-lines"
+                >
                   <header className="processing-purchase-order-lines-header">
                     <h4>{order.providerName || "Proveedor"}</h4>
                     <span>{orderLines.length} item(s)</span>
@@ -4496,13 +5436,9 @@ export default function AcceptOrderPage() {
                   <div className="processing-stage-grid two">
                     <label className="field-group processing-stage-field">
                       <span>Orden #</span>
-                      <input type="text" value={order.orderNumber || "Pendiente"} readOnly />
-                    </label>
-                    <label className="field-group processing-stage-field">
-                      <span>Moneda</span>
                       <input
                         type="text"
-                        value={order.currencyCode || purchaseOrderDraft.currencyCode || "USD"}
+                        value={order.orderNumber || "Pendiente"}
                         readOnly
                       />
                     </label>
@@ -4525,23 +5461,28 @@ export default function AcceptOrderPage() {
                             <td>{line.code || "-"}</td>
                             <td>{line.description || "Sin descripcion"}</td>
                             <td className="is-right">
-                              {Number(normalizePositiveNumber(line.quantity, 0)).toLocaleString(
-                                "es-MX",
-                                {
-                                  maximumFractionDigits: 4,
-                                },
-                              )}
+                              {Number(
+                                normalizePositiveNumber(line.quantity, 0),
+                              ).toLocaleString("es-MX", {
+                                maximumFractionDigits: 4,
+                              })}
                             </td>
                             <td className="is-right">
                               {formatCurrency(
-                                Number(normalizePositiveNumber(line.unitCost, 0)),
-                                order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                                Number(
+                                  normalizePositiveNumber(line.unitCost, 0),
+                                ),
+                                order.currencyCode ||
+                                  purchaseOrderDraft.currencyCode ||
+                                  processingCurrencyCode,
                               )}
                             </td>
                             <td className="is-right">
                               {formatCurrency(
                                 calculatePurchaseOrderLineAmount(line),
-                                order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                                order.currencyCode ||
+                                  purchaseOrderDraft.currencyCode ||
+                                  processingCurrencyCode,
                               )}
                             </td>
                           </tr>
@@ -4556,7 +5497,9 @@ export default function AcceptOrderPage() {
                       <strong>
                         {formatCurrency(
                           subtotal,
-                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                          order.currencyCode ||
+                            purchaseOrderDraft.currencyCode ||
+                            processingCurrencyCode,
                         )}
                       </strong>
                     </div>
@@ -4565,7 +5508,9 @@ export default function AcceptOrderPage() {
                       <strong>
                         {formatCurrency(
                           ivaAmount,
-                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                          order.currencyCode ||
+                            purchaseOrderDraft.currencyCode ||
+                            processingCurrencyCode,
                         )}
                       </strong>
                     </div>
@@ -4574,7 +5519,9 @@ export default function AcceptOrderPage() {
                       <strong>
                         {formatCurrency(
                           total,
-                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                          order.currencyCode ||
+                            purchaseOrderDraft.currencyCode ||
+                            processingCurrencyCode,
                         )}
                       </strong>
                     </div>
@@ -4583,35 +5530,63 @@ export default function AcceptOrderPage() {
               );
             })}
 
-            <section className="purchase-order-preview-card">
-              <div className="purchase-order-preview-totals">
-                <div>
-                  <span>Subtotal global</span>
-                  <strong>
-                    {formatCurrency(
-                      purchaseOrderDraftTotals.subtotal,
-                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
-                    )}
-                  </strong>
-                </div>
-                <div>
-                  <span>I.V.A. global</span>
-                  <strong>
-                    {formatCurrency(
-                      purchaseOrderDraftTotals.ivaAmount,
-                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
-                    )}
-                  </strong>
-                </div>
-                <div>
-                  <span>Total global</span>
-                  <strong>
-                    {formatCurrency(
-                      purchaseOrderDraftTotals.total,
-                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
-                    )}
-                  </strong>
-                </div>
+            <section className="processing-stage-box">
+              <header>
+                <h4>Condiciones de la orden</h4>
+              </header>
+              <div className="processing-stage-grid two">
+                <label className="field-group processing-stage-field full">
+                  <span>Condiciones de pago</span>
+                  <input
+                    type="text"
+                    value={purchaseOrderDraft.paymentConditions || ""}
+                    placeholder="Ingresa las condiciones de pago"
+                    onChange={(event) => {
+                      const paymentConditions = event.target.value;
+                      setPurchaseOrderDraft((current) =>
+                        current ? { ...current, paymentConditions } : current,
+                      );
+                      updateActiveStageDataField(
+                        "purchaseOrderPaymentConditions",
+                        paymentConditions,
+                      );
+                    }}
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
+                <label className="field-group processing-stage-field">
+                  <span>Tiempo de entrega</span>
+                  <input
+                    type="text"
+                    value={purchaseOrderDraft.deliveryTime || "-"}
+                    readOnly
+                    disabled
+                  />
+                </label>
+                <label className="field-group processing-stage-field">
+                  <span>Moneda</span>
+                  <input
+                    type="text"
+                    value={purchaseOrderDraft.currencyCode || "USD"}
+                    readOnly
+                    disabled
+                  />
+                </label>
+                <label className="field-group processing-stage-field full">
+                  <span>Notas</span>
+                  <textarea
+                    rows={8}
+                    value={purchaseOrderDraft.notes || ""}
+                    onChange={(event) => {
+                      const notes = event.target.value;
+                      setPurchaseOrderDraft((current) =>
+                        current ? { ...current, notes } : current,
+                      );
+                      updateActiveStageDataField("purchaseOrderNotes", notes);
+                    }}
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
               </div>
             </section>
 
@@ -4644,6 +5619,15 @@ export default function AcceptOrderPage() {
         />
       ) : null}
 
+      {generatedPurchaseOrderPreviewModel ? (
+        <PurchaseOrderPrintPreviewModal
+          isOpen
+          title="Vista previa de orden"
+          model={generatedPurchaseOrderPreviewModel}
+          onClose={() => setGeneratedPurchaseOrderPreviewModel(null)}
+        />
+      ) : null}
+
       {customStepItemPicker.isOpen ? (
         <div
           className="modal-overlay modal-overlay-elevated"
@@ -4659,10 +5643,12 @@ export default function AcceptOrderPage() {
           <div className="modal-dialog processing-custom-item-picker-modal">
             <div className="accept-order-notification-header">
               <span>Seleccion de item</span>
-              <h3 id="custom-step-item-picker-title">Seleccionar producto de cotizacion</h3>
+              <h3 id="custom-step-item-picker-title">
+                Seleccionar producto de cotizacion
+              </h3>
               <p>
-                Doble clic en código abre este selector. Elige un item para precargar
-                codigo, descripcion, proveedor y costo.
+                Doble clic en código abre este selector. Elige un item para
+                precargar codigo, descripcion, proveedor y costo.
               </p>
             </div>
 
@@ -4766,7 +5752,10 @@ export default function AcceptOrderPage() {
                           {formatCurrency(
                             normalizePositiveNumber(
                               item.price,
-                              normalizePositiveNumber(item.unitCostWithDiscount, 0),
+                              normalizePositiveNumber(
+                                item.unitCostWithDiscount,
+                                0,
+                              ),
                             ),
                             item.currencyCode || processingCurrencyCode,
                           )}
@@ -4777,7 +5766,9 @@ export default function AcceptOrderPage() {
                             className="btn-secondary processing-product-action-icon"
                             title="Seleccionar item"
                             aria-label="Seleccionar item"
-                            onClick={() => applyCatalogProductToCustomStepItem(item)}
+                            onClick={() =>
+                              applyCatalogProductToCustomStepItem(item)
+                            }
                           >
                             <svg
                               viewBox="0 0 24 24"
@@ -4804,7 +5795,11 @@ export default function AcceptOrderPage() {
             </div>
 
             <div className="processing-stage-actions split">
-              <button type="button" className="btn-secondary" onClick={closeCustomStepItemPicker}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closeCustomStepItemPicker}
+              >
                 Cerrar
               </button>
             </div>
@@ -4819,7 +5814,10 @@ export default function AcceptOrderPage() {
           aria-modal="true"
           aria-labelledby="kickoff-internal-invite-title"
           onClick={(event) => {
-            if (event.target === event.currentTarget && !savingKickoffInvitation) {
+            if (
+              event.target === event.currentTarget &&
+              !savingKickoffInvitation
+            ) {
               setKickoffInvitationModalOpen(false);
             }
           }}
@@ -4829,7 +5827,8 @@ export default function AcceptOrderPage() {
               <span>Kick Off interno</span>
               <h3 id="kickoff-internal-invite-title">Convocatoria interna</h3>
               <p>
-                Revisa el correo que se enviara a los convocados y confirma el envio.
+                Revisa el correo que se enviara a los convocados y confirma el
+                envio.
               </p>
             </div>
 
@@ -4876,7 +5875,9 @@ export default function AcceptOrderPage() {
                 onClick={() => void saveKickoffInvitation("sent")}
                 disabled={savingKickoffInvitation}
               >
-                {savingKickoffInvitation ? "Enviando..." : "Enviar convocatoria"}
+                {savingKickoffInvitation
+                  ? "Enviando..."
+                  : "Enviar convocatoria"}
               </button>
             </div>
           </div>

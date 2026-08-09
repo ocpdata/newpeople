@@ -1,7 +1,13 @@
 import PurchaseOrderPrintDocument from "./PurchaseOrderPrintDocument";
 import "./quotation-print.css";
 
-function PurchaseOrderPrintPreviewModal({ isOpen, onClose, onConfirm, model }) {
+function PurchaseOrderPrintPreviewModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  model,
+  title = "Vista previa final",
+}) {
   if (!isOpen) {
     return null;
   }
@@ -16,14 +22,16 @@ function PurchaseOrderPrintPreviewModal({ isOpen, onClose, onConfirm, model }) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="quotation-print-preview-header">
-          <h3 className="modal-title">Vista previa final</h3>
+          <h3 className="modal-title">{title}</h3>
           <div className="quotation-print-preview-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>
               Volver
             </button>
-            <button type="button" className="btn-primary" onClick={onConfirm}>
-              Confirmar y generar
-            </button>
+            {onConfirm ? (
+              <button type="button" className="btn-primary" onClick={onConfirm}>
+                Confirmar y generar
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="quotation-print-preview-body">

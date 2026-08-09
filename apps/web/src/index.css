@@ -16635,6 +16635,11 @@ td {
   text-align: right;
 }
 
+.processing-remaining-days.is-negative {
+  color: #b42318;
+  font-weight: 700;
+}
+
 .processing-product-row-generated td {
   background: #e9f8ef;
 }

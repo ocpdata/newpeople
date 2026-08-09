@@ -2286,7 +2286,10 @@ function hasQuotationProcessingConvokePermission(user) {
 }
 
 function assertAcceptOrderPermission(req, res) {
-  if (!hasAnyQuotationPermission(req.user) && !hasAnyAcceptOrderPermission(req.user)) {
+  if (
+    !hasAnyQuotationPermission(req.user) &&
+    !hasAnyAcceptOrderPermission(req.user)
+  ) {
     res.status(403).json({ message: "No autorizado" });
     return false;
   }
@@ -2338,8 +2341,9 @@ function buildQuotationAcceptedStageData({ latestVersion, acceptedSnapshot }) {
     acceptedByUserId: acceptedSnapshot?.acceptedByUserId || null,
     acceptedVersionId: latestVersion?.id ? Number(latestVersion.id) : null,
     initialScopeSummary:
-      String(latestVersion?.proposal_name || latestVersion?.opportunity_name || "").trim() ||
-      null,
+      String(
+        latestVersion?.proposal_name || latestVersion?.opportunity_name || "",
+      ).trim() || null,
   };
 }
 
@@ -2414,13 +2418,18 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
   );
 
   const byCode = new Map(
-    rows.map((row) => [String(row.stage_code || "").trim(), mapQuotationProcessingStageRow(row)]),
+    rows.map((row) => [
+      String(row.stage_code || "").trim(),
+      mapQuotationProcessingStageRow(row),
+    ]),
   );
 
   const acceptedSnapshot = await getQuotationAcceptedSnapshot({
     versionId: Number(latestVersion.id),
   });
-  const latestVersionStatusCode = String(latestVersion.status_code || "").trim();
+  const latestVersionStatusCode = String(
+    latestVersion.status_code || "",
+  ).trim();
   const isQuotationAccepted = latestVersionStatusCode === "aceptada";
 
   return quotationProcessingStageCatalog.map((stage) => {
@@ -2430,9 +2439,13 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
         const foundAcceptedAt =
           found.stageData?.acceptedAt || found.completedAt || null;
         const acceptedStageCompleted =
-          String(found.status || "").trim() === "completed" || isQuotationAccepted;
+          String(found.status || "").trim() === "completed" ||
+          isQuotationAccepted;
         const effectiveAcceptedAt = acceptedStageCompleted
-          ? foundAcceptedAt || acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+          ? foundAcceptedAt ||
+            acceptedSnapshot?.acceptedAt ||
+            latestVersion.updated_at ||
+            null
           : null;
         return {
           ...found,
@@ -2440,7 +2453,10 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
           status: acceptedStageCompleted ? "completed" : "not_started",
           completedAt: effectiveAcceptedAt,
           stageData: {
-            ...buildQuotationAcceptedStageData({ latestVersion, acceptedSnapshot }),
+            ...buildQuotationAcceptedStageData({
+              latestVersion,
+              acceptedSnapshot,
+            }),
             ...(found.stageData || {}),
             acceptedAt: effectiveAcceptedAt,
           },
@@ -2509,7 +2525,10 @@ async function listQuotationProcessingPurchaseOrders({
      WHERE quotation_id = ?
        AND stage_code = ?
      ORDER BY created_at ASC, id ASC`,
-    [Number(quotationId), String(stageCode || "provider_purchase_order").trim()],
+    [
+      Number(quotationId),
+      String(stageCode || "provider_purchase_order").trim(),
+    ],
   );
 
   if (!orderRows.length) return [];
@@ -2585,10 +2604,14 @@ async function createQuotationProcessingPurchaseOrders({
       const normalizedLines = orderLines.map((line) => {
         const quantity = Math.max(0, Number(line?.quantity || 0));
         const unitCost = Math.max(0, Number(line?.unitCost || 0));
-        const discountPct = Math.min(100, Math.max(0, Number(line?.discountPct || 0)));
+        const discountPct = Math.min(
+          100,
+          Math.max(0, Number(line?.discountPct || 0)),
+        );
         const amount = quantity * unitCost * (1 - discountPct / 100);
         return {
-          productId: line?.productId == null ? null : Number(line.productId) || null,
+          productId:
+            line?.productId == null ? null : Number(line.productId) || null,
           code: String(line?.code || "-").trim() || "-",
           description:
             String(line?.description || "").trim() || "Sin descripcion",
@@ -2596,14 +2619,18 @@ async function createQuotationProcessingPurchaseOrders({
           unitCost,
           discountPct,
           selectionDate:
-            line?.selectionDate && /^\d{4}-\d{2}-\d{2}$/.test(String(line.selectionDate))
+            line?.selectionDate &&
+            /^\d{4}-\d{2}-\d{2}$/.test(String(line.selectionDate))
               ? String(line.selectionDate)
               : null,
           amount,
         };
       });
 
-      const subtotal = normalizedLines.reduce((sum, line) => sum + line.amount, 0);
+      const subtotal = normalizedLines.reduce(
+        (sum, line) => sum + line.amount,
+        0,
+      );
       const ivaAmount = subtotal * (normalizedIvaPct / 100);
       const total = subtotal + ivaAmount;
       const now = new Date();
@@ -2834,7 +2861,11 @@ const KICKOFF_AI_SUMMARY_OPENAI_TIMEOUT_MS = 60_000;
 function normalizeKickoffSummaryList(value) {
   if (!Array.isArray(value)) return [];
   return value
-    .map((item) => String(item || "").replace(/\s+/g, " ").trim())
+    .map((item) =>
+      String(item || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
     .filter(Boolean)
     .slice(0, 8);
 }
@@ -2877,13 +2908,11 @@ function buildKickoffEvidenceSourceText(evidenceRows = []) {
   const normalizedRows = Array.isArray(evidenceRows) ? evidenceRows : [];
   const sections = normalizedRows
     .map((row, index) => {
-      const fileName = String(row?.original_file_name || "archivo").trim() || "archivo";
+      const fileName =
+        String(row?.original_file_name || "archivo").trim() || "archivo";
       const contentText = String(row?.content_text || "").trim();
       if (!contentText) return "";
-      return [
-        `EVIDENCIA ${index + 1}: ${fileName}`,
-        contentText,
-      ].join("\n");
+      return [`EVIDENCIA ${index + 1}: ${fileName}`, contentText].join("\n");
     })
     .filter(Boolean);
   return sections.join("\n\n").slice(0, 30_000);
@@ -2901,7 +2930,9 @@ function resolveKickoffOpenAiTextCandidates(responseData) {
     candidates.push(directOutputText);
   }
 
-  const outputItems = Array.isArray(responseData?.output) ? responseData.output : [];
+  const outputItems = Array.isArray(responseData?.output)
+    ? responseData.output
+    : [];
   for (const item of outputItems) {
     const contentItems = Array.isArray(item?.content) ? item.content : [];
     for (const part of contentItems) {
@@ -2915,7 +2946,10 @@ function resolveKickoffOpenAiTextCandidates(responseData) {
   return Array.from(new Set(candidates));
 }
 
-function resolveKickoffAiSummaryFromOpenAiResponse(responseData, fallbackSummary) {
+function resolveKickoffAiSummaryFromOpenAiResponse(
+  responseData,
+  fallbackSummary,
+) {
   const candidates = resolveKickoffOpenAiTextCandidates(responseData);
   for (const candidate of candidates) {
     const parsed = extractJsonObject(candidate);
@@ -3024,7 +3058,9 @@ async function buildKickoffAiSummaryFromEvidence({
         await recordAiUsageFromOpenAiResponse({
           userId: aiUsageUserId,
           featureCode: "quotation_processing_kickoff_ai_summary",
-          model: String(requestPayload.model || config.openai.model || "").trim(),
+          model: String(
+            requestPayload.model || config.openai.model || "",
+          ).trim(),
           openAiResponse: responseData,
           startedAt,
           endedAt: new Date(),
@@ -3078,7 +3114,9 @@ async function listQuotationProcessingKickoffInvitations({ quotationId }) {
 
   return rows.map((row) => ({
     id: Number(row.id),
-    meetingDate: row.meeting_date ? String(row.meeting_date).slice(0, 10) : null,
+    meetingDate: row.meeting_date
+      ? String(row.meeting_date).slice(0, 10)
+      : null,
     meetingTime: row.meeting_time || null,
     meetingMode: row.meeting_mode || null,
     meetingLocation: row.meeting_location || null,
@@ -3094,7 +3132,9 @@ async function listQuotationProcessingKickoffInvitations({ quotationId }) {
     ),
     statusCode: row.status_code || "draft",
     sentAt: row.sent_at || null,
-    createdByUserId: row.created_by_user_id ? Number(row.created_by_user_id) : null,
+    createdByUserId: row.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
     createdByUserName: row.created_by_user_name || null,
     createdAt: row.created_at || null,
   }));
@@ -3131,7 +3171,9 @@ async function listQuotationProcessingEvidences({ quotationId, stageCode }) {
     evidenceType: row.evidence_type,
     documentId: row.document_id ? Number(row.document_id) : null,
     contentText: row.content_text || null,
-    createdByUserId: row.created_by_user_id ? Number(row.created_by_user_id) : null,
+    createdByUserId: row.created_by_user_id
+      ? Number(row.created_by_user_id)
+      : null,
     createdByUserName: row.created_by_user_name || null,
     createdAt: row.created_at || null,
     document: row.document_id
@@ -3208,7 +3250,8 @@ async function listQuotationProcessingProducts({ versionId, currencyCode }) {
         totalCost,
         providerId: Number(item?.providerId || 0) || null,
         providerName: String(item?.providerName || "").trim() || null,
-        currencyCode: String(item?.originalCurrencyCode || currencyCode || "USD").trim() ||
+        currencyCode:
+          String(item?.originalCurrencyCode || currencyCode || "USD").trim() ||
           "USD",
       });
     }
@@ -3240,7 +3283,8 @@ async function upsertQuotationProcessingStage({
     [Number(quotation.id), String(stageCode || "").trim()],
   );
   const existing = existingRows[0] || null;
-  const existingStageData = safeParseJsonObject(existing?.stage_data_json) || {};
+  const existingStageData =
+    safeParseJsonObject(existing?.stage_data_json) || {};
   const mergedStageData = {
     ...existingStageData,
     ...(stageData && typeof stageData === "object" ? stageData : {}),
@@ -3251,9 +3295,7 @@ async function upsertQuotationProcessingStage({
   const normalizedNotes =
     notes == null ? null : String(notes || "").trim() || null;
   const normalizedOwnerUserId =
-    ownerUserId == null || ownerUserId === ""
-      ? null
-      : Number(ownerUserId);
+    ownerUserId == null || ownerUserId === "" ? null : Number(ownerUserId);
   const normalizedTargetDate = targetDate || null;
   const normalizedCompletedAt = completedAt || null;
   const now = new Date();
@@ -4011,7 +4053,9 @@ async function saveQuotationWonDocumentsSelections({
 
   const now = new Date();
   const requestedAcceptedDate = String(acceptedAt || "").trim();
-  const existingAcceptedAt = parseDateOrNull(existingAcceptedSnapshot?.acceptedAt);
+  const existingAcceptedAt = parseDateOrNull(
+    existingAcceptedSnapshot?.acceptedAt,
+  );
   const existingAcceptedDateText = existingAcceptedAt
     ? toUtcIso(existingAcceptedAt)?.slice(0, 10) || ""
     : "";
@@ -5152,17 +5196,45 @@ function buildProviderDocumentImportCommercialTermsSuggestion(analysis = {}) {
 }
 
 async function listActiveProvidersForImport() {
-  const rows = await query(
-    `SELECT p.id, p.name
+  const [providerRows, contactRows] = await Promise.all([
+    query(
+      `SELECT p.id, p.name
      FROM providers p
      INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
      WHERE pas.code = 'activado'
      ORDER BY p.name, p.id`,
-  );
+    ),
+    query(
+      `SELECT pc.id, pc.provider_id, pc.first_name, pc.last_name, pc.email,
+              pc.mobile, pc.role_title
+       FROM provider_contacts pc
+       INNER JOIN providers p ON p.id = pc.provider_id
+       INNER JOIN provider_activation_statuses pas ON pas.id = p.activation_status_id
+       WHERE pas.code = 'activado'
+       ORDER BY pc.provider_id, pc.id`,
+    ),
+  ]);
 
-  return rows.map((row) => ({
+  const contactsByProviderId = new Map();
+  contactRows.forEach((row) => {
+    const providerId = Number(row.provider_id);
+    const contacts = contactsByProviderId.get(providerId) || [];
+    contacts.push({
+      id: Number(row.id),
+      providerId,
+      firstName: row.first_name || "",
+      lastName: row.last_name || "",
+      email: row.email || "",
+      mobile: row.mobile || "",
+      role: row.role_title || "",
+    });
+    contactsByProviderId.set(providerId, contacts);
+  });
+
+  return providerRows.map((row) => ({
     id: Number(row.id),
     name: row.name || "",
+    contacts: contactsByProviderId.get(Number(row.id)) || [],
   }));
 }
 
@@ -12477,7 +12549,8 @@ router.get(
       !hasQuotationProcessingUpdatePermission(req.user)
     ) {
       return res.status(403).json({
-        message: "No autorizado para consultar listas de productos de Aceptar Pedido",
+        message:
+          "No autorizado para consultar listas de productos de Aceptar Pedido",
       });
     }
 
@@ -12693,10 +12766,13 @@ router.get(
     if (!hasQuotationPermission) {
       const isAcceptOrderFilter =
         latestStatusCodesFilter.length > 0 &&
-        latestStatusCodesFilter.every((code) => acceptOrderStatusCodes.has(code));
+        latestStatusCodesFilter.every((code) =>
+          acceptOrderStatusCodes.has(code),
+        );
       if (!isAcceptOrderFilter) {
         return res.status(403).json({
-          message: "No autorizado para consultar cotizaciones fuera de Aceptar Pedido",
+          message:
+            "No autorizado para consultar cotizaciones fuera de Aceptar Pedido",
         });
       }
     }
@@ -12887,7 +12963,8 @@ router.post(
       !hasQuotationProcessingConvokePermission(req.user)
     ) {
       return res.status(403).json({
-        message: "No autorizado para notificar al vendedor desde Aceptar Pedido",
+        message:
+          "No autorizado para notificar al vendedor desde Aceptar Pedido",
       });
     }
     await ensureQuotationAcceptanceNotificationsTable();
@@ -13044,7 +13121,8 @@ router.get(
     if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingReadPermission(req.user)) {
       return res.status(403).json({
-        message: "No autorizado para consultar el procesamiento de la cotizacion",
+        message:
+          "No autorizado para consultar el procesamiento de la cotizacion",
       });
     }
 
@@ -13085,7 +13163,8 @@ router.get(
         )
       ) {
         return res.status(400).json({
-          message: "El procesamiento solo aplica para cotizaciones ganadas o aceptadas",
+          message:
+            "El procesamiento solo aplica para cotizaciones ganadas o aceptadas",
         });
       }
 
@@ -13100,52 +13179,53 @@ router.get(
         aiHistory,
         processingProducts,
         providerPurchaseOrders,
-      ] =
-        await Promise.all([
-          listQuotationProcessingStages({ quotation, latestVersion }),
-          listProcessingAssignableUsers(),
-          listActiveProvidersForImport(),
-          listQuotationProcessingKickoffInvitations({ quotationId }),
-          listQuotationProcessingEvidences({
-            quotationId,
-            stageCode: "kickoff_internal",
-          }),
-          listQuotationProcessingAiSummaries({
-            quotationId,
-            stageCode: "kickoff_internal",
-          }),
-          listQuotationProcessingEvidences({
-            quotationId,
-            stageCode: "kickoff_external",
-          }),
-          listQuotationProcessingAiSummaries({
-            quotationId,
-            stageCode: "kickoff_external",
-          }),
-          listQuotationProcessingProducts({
-            versionId: Number(latestVersion.id),
-            currencyCode: latestVersion.currency_code || "USD",
-          }),
-          listQuotationProcessingPurchaseOrders({
-            quotationId: Number(quotation.id),
-            stageCode: "provider_purchase_order",
-          }),
-        ]);
+      ] = await Promise.all([
+        listQuotationProcessingStages({ quotation, latestVersion }),
+        listProcessingAssignableUsers(),
+        listActiveProvidersForImport(),
+        listQuotationProcessingKickoffInvitations({ quotationId }),
+        listQuotationProcessingEvidences({
+          quotationId,
+          stageCode: "kickoff_internal",
+        }),
+        listQuotationProcessingAiSummaries({
+          quotationId,
+          stageCode: "kickoff_internal",
+        }),
+        listQuotationProcessingEvidences({
+          quotationId,
+          stageCode: "kickoff_external",
+        }),
+        listQuotationProcessingAiSummaries({
+          quotationId,
+          stageCode: "kickoff_external",
+        }),
+        listQuotationProcessingProducts({
+          versionId: Number(latestVersion.id),
+          currencyCode: latestVersion.currency_code || "USD",
+        }),
+        listQuotationProcessingPurchaseOrders({
+          quotationId: Number(quotation.id),
+          stageCode: "provider_purchase_order",
+        }),
+      ]);
 
-      const stagesWithPurchaseOrders = (Array.isArray(stages) ? stages : []).map(
-        (stage) => {
-          if (String(stage?.stageCode || "").trim() !== "provider_purchase_order") {
-            return stage;
-          }
-          return {
-            ...stage,
-            stageData: {
-              ...(stage?.stageData || {}),
-              generatedPurchaseOrders: providerPurchaseOrders,
-            },
-          };
-        },
-      );
+      const stagesWithPurchaseOrders = (
+        Array.isArray(stages) ? stages : []
+      ).map((stage) => {
+        if (
+          String(stage?.stageCode || "").trim() !== "provider_purchase_order"
+        ) {
+          return stage;
+        }
+        return {
+          ...stage,
+          stageData: {
+            ...(stage?.stageData || {}),
+            generatedPurchaseOrders: providerPurchaseOrders,
+          },
+        };
+      });
 
       return res.json({
         quotation: {
@@ -13218,7 +13298,9 @@ router.patch(
       return res.status(400).json({ message: "Etapa invalida" });
     }
 
-    const parsed = quotationProcessingStageUpdateSchema.safeParse(req.body || {});
+    const parsed = quotationProcessingStageUpdateSchema.safeParse(
+      req.body || {},
+    );
     if (!parsed.success) {
       return res.status(400).json({
         message: "Datos invalidos",
@@ -13287,7 +13369,10 @@ router.patch(
       },
     });
 
-    const stages = await listQuotationProcessingStages({ quotation, latestVersion });
+    const stages = await listQuotationProcessingStages({
+      quotation,
+      latestVersion,
+    });
     return res.json({ message: "Etapa actualizada", stages });
   },
 );
@@ -13339,7 +13424,8 @@ router.post(
       )
     ) {
       return res.status(400).json({
-        message: "Solo se pueden generar ordenes para cotizaciones ganadas o aceptadas",
+        message:
+          "Solo se pueden generar ordenes para cotizaciones ganadas o aceptadas",
       });
     }
 
@@ -13367,7 +13453,9 @@ router.post(
 
     const stagesWithPurchaseOrders = (Array.isArray(stages) ? stages : []).map(
       (stage) => {
-        if (String(stage?.stageCode || "").trim() !== "provider_purchase_order") {
+        if (
+          String(stage?.stageCode || "").trim() !== "provider_purchase_order"
+        ) {
           return stage;
         }
         return {
@@ -13397,6 +13485,83 @@ router.post(
       message: "Ordenes de compra generadas",
       stages: stagesWithPurchaseOrders,
       generatedOrdersCount: parsed.data.orders.length,
+    });
+  },
+);
+
+router.delete(
+  "/quotations/:quotationId/processing/provider-purchase-orders/:orderId",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para eliminar ordenes de compra",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    const orderId = Number(req.params.orderId);
+    if (
+      !Number.isInteger(quotationId) ||
+      quotationId <= 0 ||
+      !Number.isInteger(orderId) ||
+      orderId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    await ensureQuotationProcessingSchema();
+    const orderRows = await query(
+      `SELECT id, order_number, stage_code
+       FROM quotation_processing_purchase_orders
+       WHERE id = ?
+         AND quotation_id = ?
+         AND stage_code = 'provider_purchase_order'
+       LIMIT 1`,
+      [orderId, quotationId],
+    );
+    const order = orderRows[0] || null;
+    if (!order) {
+      return res.status(404).json({ message: "Orden de compra no encontrada" });
+    }
+
+    await query(
+      `DELETE FROM quotation_processing_purchase_orders
+       WHERE id = ?
+         AND quotation_id = ?
+       LIMIT 1`,
+      [orderId, quotationId],
+    );
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_purchase_order_deleted",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Orden de compra a proveedor eliminada",
+      after: {
+        orderId,
+        orderNumber: order.order_number || null,
+        stageCode: order.stage_code || "provider_purchase_order",
+      },
+    });
+
+    return res.json({
+      message: "Orden de compra eliminada",
+      generatedPurchaseOrders: await listQuotationProcessingPurchaseOrders({
+        quotationId,
+        stageCode: "provider_purchase_order",
+      }),
     });
   },
 );
@@ -13626,12 +13791,14 @@ router.post(
         const now = new Date();
         for (const file of files) {
           const originalFileName =
-            String(file.originalFilename || file.newFilename || "minuta").trim() ||
-            "minuta";
+            String(
+              file.originalFilename || file.newFilename || "minuta",
+            ).trim() || "minuta";
           const mimeType =
             String(file.mimetype || "application/octet-stream").trim() ||
             "application/octet-stream";
-          const extension = path.extname(originalFileName || "").slice(1) || null;
+          const extension =
+            path.extname(originalFileName || "").slice(1) || null;
           const buffer = await readFile(file.filepath);
           const extractedContentText = await tryExtractEvidenceContentText({
             buffer,
@@ -13778,9 +13945,8 @@ router.post(
       });
     }
 
-    const hydratedEvidences = await hydrateEvidenceContentTextForAiSummary(
-      evidences,
-    );
+    const hydratedEvidences =
+      await hydrateEvidenceContentTextForAiSummary(evidences);
 
     let summaryData = null;
     try {
@@ -13867,7 +14033,9 @@ router.post(
       return res.status(400).json({ message: "Id de cotizacion invalido" });
     }
 
-    const parsed = quotationProcessingManualEvidenceSchema.safeParse(req.body || {});
+    const parsed = quotationProcessingManualEvidenceSchema.safeParse(
+      req.body || {},
+    );
     if (!parsed.success) {
       return res.status(400).json({
         message: "Datos invalidos",
@@ -13998,12 +14166,14 @@ router.post(
         const now = new Date();
         for (const file of files) {
           const originalFileName =
-            String(file.originalFilename || file.newFilename || "evidencia").trim() ||
-            "evidencia";
+            String(
+              file.originalFilename || file.newFilename || "evidencia",
+            ).trim() || "evidencia";
           const mimeType =
             String(file.mimetype || "application/octet-stream").trim() ||
             "application/octet-stream";
-          const extension = path.extname(originalFileName || "").slice(1) || null;
+          const extension =
+            path.extname(originalFileName || "").slice(1) || null;
           const buffer = await readFile(file.filepath);
           const extractedContentText = await tryExtractEvidenceContentText({
             buffer,
@@ -14150,9 +14320,8 @@ router.post(
       });
     }
 
-    const hydratedEvidences = await hydrateEvidenceContentTextForAiSummary(
-      evidences,
-    );
+    const hydratedEvidences =
+      await hydrateEvidenceContentTextForAiSummary(evidences);
 
     let summaryData = null;
     try {
@@ -14387,7 +14556,9 @@ router.get(
 
     const row = rows[0] || null;
     if (!row) {
-      return res.status(404).json({ message: "Evidencia descargable no encontrada" });
+      return res
+        .status(404)
+        .json({ message: "Evidencia descargable no encontrada" });
     }
 
     const streamResult = await getDocumentContentStream({
@@ -14398,14 +14569,18 @@ router.get(
     });
 
     const mimeType = row.mime_type || "application/octet-stream";
-    const fileName = row.original_file_name || row.stored_file_name || "evidencia";
+    const fileName =
+      row.original_file_name || row.stored_file_name || "evidencia";
 
     res.setHeader("Content-Type", mimeType);
     res.setHeader(
       "Content-Disposition",
       `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
     );
-    if (streamResult?.size != null && Number.isFinite(Number(streamResult.size))) {
+    if (
+      streamResult?.size != null &&
+      Number.isFinite(Number(streamResult.size))
+    ) {
       res.setHeader("Content-Length", String(Number(streamResult.size)));
     }
 
@@ -17230,8 +17405,9 @@ router.post(
       versionRow: version,
       actionCode: "modificar",
     });
-    const canManageClosedLatestVersion =
-      ["ganada", "aceptada"].includes(normalizedStatusCode);
+    const canManageClosedLatestVersion = ["ganada", "aceptada"].includes(
+      normalizedStatusCode,
+    );
     if (
       !canModify &&
       !canManageClosedLatestVersion &&

@@ -34,6 +34,9 @@ export function buildPurchaseOrderPrintModel({
   quotation = null,
   orders = [],
   currencyCode = "USD",
+  providerQuotation = "",
+  providerContactName = "",
+  paymentConditions = "",
   notes = "",
 }) {
   const normalizedOrders = Array.isArray(orders) ? orders : [];
@@ -74,18 +77,30 @@ export function buildPurchaseOrderPrintModel({
     };
   });
 
-  const summarySubtotal = sections.reduce((sum, section) => sum + section.subtotal, 0);
-  const summaryIvaAmount = sections.reduce((sum, section) => sum + section.ivaAmount, 0);
-  const summaryTotal = sections.reduce((sum, section) => sum + section.total, 0);
+  const summarySubtotal = sections.reduce(
+    (sum, section) => sum + section.subtotal,
+    0,
+  );
+  const summaryIvaAmount = sections.reduce(
+    (sum, section) => sum + section.ivaAmount,
+    0,
+  );
+  const summaryTotal = sections.reduce(
+    (sum, section) => sum + section.total,
+    0,
+  );
 
   return {
     company,
     header: {
-      documentNumber: quotationId ? `OC-${quotationId}` : "OC",
+      documentNumber:
+        String(firstOrder?.orderNumber || "").trim() ||
+        (quotationId ? `OC-${quotationId}` : "OC"),
       documentDate: formatPrintDate(orderDate),
-      quotationReference: quotationId ? `Cotización origen #${quotationId}` : "",
+      providerQuotation: String(providerQuotation || "").trim(),
+      providerContactName: String(providerContactName || "").trim(),
+      paymentConditions: String(paymentConditions || "").trim(),
       accountName: String(quotation?.accountName || "").trim(),
-      proposalName: String(quotation?.latestProposalName || quotation?.proposalName || "").trim(),
       providerNames: providerNames.join(", "),
       orderCountLabel: `${sections.length} orden(es)`,
     },
