@@ -12,6 +12,91 @@ import {
 
 const router = express.Router();
 let ensureProviderPriceListItemComponentsTablePromise;
+let ensureProvidersContactColumnsPromise;
+let ensureProviderContactsTablePromise;
+
+async function ensureProvidersContactColumns() {
+  if (!ensureProvidersContactColumnsPromise) {
+    ensureProvidersContactColumnsPromise = (async () => {
+      const contactColumnDefinitions = [
+        {
+          columnName: "contact_first_name",
+          alterSql:
+            "ALTER TABLE providers ADD COLUMN contact_first_name VARCHAR(120) NULL AFTER registration_code",
+        },
+        {
+          columnName: "contact_last_name",
+          alterSql:
+            "ALTER TABLE providers ADD COLUMN contact_last_name VARCHAR(120) NULL AFTER contact_first_name",
+        },
+        {
+          columnName: "contact_email",
+          alterSql:
+            "ALTER TABLE providers ADD COLUMN contact_email VARCHAR(190) NULL AFTER contact_last_name",
+        },
+        {
+          columnName: "contact_mobile",
+          alterSql:
+            "ALTER TABLE providers ADD COLUMN contact_mobile VARCHAR(40) NULL AFTER contact_email",
+        },
+        {
+          columnName: "contact_role",
+          alterSql:
+            "ALTER TABLE providers ADD COLUMN contact_role VARCHAR(120) NULL AFTER contact_mobile",
+        },
+      ];
+
+      for (const definition of contactColumnDefinitions) {
+        const rows = await query(
+          `SELECT 1
+           FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = 'providers'
+             AND COLUMN_NAME = ?
+           LIMIT 1`,
+          [definition.columnName],
+        );
+
+        if (!rows.length) {
+          await query(definition.alterSql);
+        }
+      }
+    })().catch((error) => {
+      ensureProvidersContactColumnsPromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureProvidersContactColumnsPromise;
+}
+
+async function ensureProviderContactsTable() {
+  if (!ensureProviderContactsTablePromise) {
+    ensureProviderContactsTablePromise = query(`
+      CREATE TABLE IF NOT EXISTS provider_contacts (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        provider_id BIGINT UNSIGNED NOT NULL,
+        first_name VARCHAR(120) NULL,
+        last_name VARCHAR(120) NULL,
+        email VARCHAR(190) NULL,
+        mobile VARCHAR(40) NULL,
+        role_title VARCHAR(120) NULL,
+        created_by BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME(3) NOT NULL,
+        updated_by BIGINT UNSIGNED NOT NULL,
+        updated_at DATETIME(3) NOT NULL,
+        CONSTRAINT fk_provider_contacts_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE,
+        CONSTRAINT fk_provider_contacts_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+        CONSTRAINT fk_provider_contacts_updated_by FOREIGN KEY (updated_by) REFERENCES users(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+    `).catch((error) => {
+      ensureProviderContactsTablePromise = undefined;
+      throw error;
+    });
+  }
+
+  await ensureProviderContactsTablePromise;
+}
 
 async function ensureProviderPriceListItemComponentsTable() {
   if (!ensureProviderPriceListItemComponentsTablePromise) {
@@ -77,6 +162,8 @@ router.use(async (_req, _res, next) => {
   try {
     await ensureProductTypesCatalog();
     await ensureProviderPriceListItemComponentsTable();
+    await ensureProvidersContactColumns();
+    await ensureProviderContactsTable();
     next();
   } catch (error) {
     next(error);
@@ -93,18 +180,74 @@ const providerPriceItemTypeSchema = z.enum([
   "grupo_productos",
 ]);
 
+const providerContactSchema = z
+  .object({
+    firstName: z.preprocess((value) => {
+      const trimmed = String(value ?? "").trim();
+      return trimmed === "" ? null : trimmed;
+    }, z.string().max(120).nullable()),
+    lastName: z.preprocess((value) => {
+      const trimmed = String(value ?? "").trim();
+      return trimmed === "" ? null : trimmed;
+    }, z.string().max(120).nullable()),
+    email: z.preprocess((value) => {
+      const trimmed = String(value ?? "").trim();
+      return trimmed === "" ? null : trimmed;
+    }, z.string().email().max(190).nullable()),
+    mobile: z.preprocess((value) => {
+      const trimmed = String(value ?? "").trim();
+      return trimmed === "" ? null : trimmed;
+    }, z.string().max(40).nullable()),
+    role: z.preprocess((value) => {
+      const trimmed = String(value ?? "").trim();
+      return trimmed === "" ? null : trimmed;
+    }, z.string().max(120).nullable()),
+  })
+  .superRefine((value, ctx) => {
+    const hasSomeValue = Boolean(
+      value.firstName || value.lastName || value.email || value.mobile || value.role,
+    );
+    if (!hasSomeValue) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "El contacto debe tener al menos un campo con valor",
+      });
+    }
+  });
+
 const providerSchema = z.object({
   name: z.string().min(2).max(180),
   registrationCode: z.preprocess((value) => {
     const trimmed = String(value ?? "").trim();
     return trimmed === "" ? null : trimmed;
   }, z.string().max(80).nullable()),
+  contactFirstName: z.preprocess((value) => {
+    const trimmed = String(value ?? "").trim();
+    return trimmed === "" ? null : trimmed;
+  }, z.string().max(120).nullable()),
+  contactLastName: z.preprocess((value) => {
+    const trimmed = String(value ?? "").trim();
+    return trimmed === "" ? null : trimmed;
+  }, z.string().max(120).nullable()),
+  contactEmail: z.preprocess((value) => {
+    const trimmed = String(value ?? "").trim();
+    return trimmed === "" ? null : trimmed;
+  }, z.string().email().max(190).nullable()),
+  contactMobile: z.preprocess((value) => {
+    const trimmed = String(value ?? "").trim();
+    return trimmed === "" ? null : trimmed;
+  }, z.string().max(40).nullable()),
+  contactRole: z.preprocess((value) => {
+    const trimmed = String(value ?? "").trim();
+    return trimmed === "" ? null : trimmed;
+  }, z.string().max(120).nullable()),
   addressLine: z.string().max(255).optional(),
   countryId: z.number().int().positive(),
   city: z.string().max(120).optional(),
   postalCode: z.string().max(20).optional(),
   stateRegion: z.string().max(120).optional(),
   activationStatusId: z.number().int().positive(),
+  contacts: z.array(providerContactSchema).optional().default([]),
 });
 
 const providerStatusSchema = z.object({
@@ -316,6 +459,57 @@ async function requireProviderOr404(providerId) {
   }
 
   return { ok: true };
+}
+
+async function listProviderContacts(providerId) {
+  const rows = await query(
+    `SELECT id, provider_id, first_name, last_name, email, mobile, role_title,
+            created_at, updated_at
+     FROM provider_contacts
+     WHERE provider_id = ?
+     ORDER BY id ASC`,
+    [Number(providerId)],
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    providerId: Number(row.provider_id),
+    firstName: row.first_name || "",
+    lastName: row.last_name || "",
+    email: row.email || "",
+    mobile: row.mobile || "",
+    role: row.role_title || "",
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  }));
+}
+
+async function replaceProviderContacts({ conn, providerId, contacts, userId, now }) {
+  await conn.query("DELETE FROM provider_contacts WHERE provider_id = ?", [
+    Number(providerId),
+  ]);
+
+  const normalizedContacts = Array.isArray(contacts) ? contacts : [];
+  for (const contact of normalizedContacts) {
+    await conn.query(
+      `INSERT INTO provider_contacts
+        (provider_id, first_name, last_name, email, mobile, role_title,
+         created_by, created_at, updated_by, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        Number(providerId),
+        contact.firstName || null,
+        contact.lastName || null,
+        contact.email || null,
+        contact.mobile || null,
+        contact.role || null,
+        Number(userId),
+        now,
+        Number(userId),
+        now,
+      ],
+    );
+  }
 }
 
 async function requireProviderPriceListOr404(providerId, listId) {
@@ -880,7 +1074,9 @@ function isUniqueViolation(error, constraintName) {
 
 router.get("/", requirePermission("proveedores.read"), async (_req, res) => {
   const rows = await query(
-    `SELECT p.id, p.name, p.registration_code, p.address_line, p.city,
+        `SELECT p.id, p.name, p.registration_code,
+          p.contact_first_name, p.contact_last_name, p.contact_email, p.contact_mobile, p.contact_role,
+            p.address_line, p.city,
             p.postal_code, p.state_region, c.name AS country,
             pas.name AS activation_status, pas.code AS activation_status_code,
             active_list.name AS active_price_list_name,
@@ -986,7 +1182,11 @@ router.get("/:id", requirePermission("proveedores.read"), async (req, res) => {
     return res.status(404).json({ message: "Proveedor no encontrado" });
   }
 
-  res.json(rows[0]);
+  const contacts = await listProviderContacts(providerId);
+  res.json({
+    ...rows[0],
+    contacts,
+  });
 });
 
 router.post("/", requirePermission("proveedores.create"), async (req, res) => {
@@ -999,17 +1199,24 @@ router.post("/", requirePermission("proveedores.create"), async (req, res) => {
 
   const now = new Date();
   const body = parsed.data;
+  const contacts = Array.isArray(body.contacts) ? body.contacts : [];
 
   try {
-    const [insertResult] = await withTransaction(async (conn) =>
-      conn.query(
+    const insertResult = await withTransaction(async (conn) => {
+      const [result] = await conn.query(
         `INSERT INTO providers
-          (name, registration_code, address_line, country_id, city, postal_code,
-           state_region, activation_status_id, created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (name, registration_code, contact_first_name, contact_last_name, contact_email, contact_mobile, contact_role,
+           address_line, country_id, city, postal_code, state_region,
+           activation_status_id, created_by, created_at, updated_by, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           body.name,
           body.registrationCode,
+          body.contactFirstName,
+          body.contactLastName,
+          body.contactEmail,
+          body.contactMobile,
+          body.contactRole,
           body.addressLine || null,
           body.countryId,
           body.city || null,
@@ -1021,8 +1228,18 @@ router.post("/", requirePermission("proveedores.create"), async (req, res) => {
           req.user.id,
           now,
         ],
-      ),
-    );
+      );
+
+      await replaceProviderContacts({
+        conn,
+        providerId: Number(result.insertId),
+        contacts,
+        userId: Number(req.user.id),
+        now,
+      });
+
+      return result;
+    });
 
     await logAuditEvent({
       req,
@@ -1034,6 +1251,12 @@ router.post("/", requirePermission("proveedores.create"), async (req, res) => {
       after: {
         name: body.name,
         registration_code: body.registrationCode,
+        contact_first_name: body.contactFirstName,
+        contact_last_name: body.contactLastName,
+        contact_email: body.contactEmail,
+        contact_mobile: body.contactMobile,
+        contact_role: body.contactRole,
+        contacts_count: contacts.length,
         address_line: body.addressLine || null,
         country_id: body.countryId,
         city: body.city || null,
@@ -1080,8 +1303,11 @@ router.put(
 
     const now = new Date();
     const body = parsed.data;
+    const contacts = Array.isArray(body.contacts) ? body.contacts : [];
     const beforeRows = await query(
-      `SELECT id, name, registration_code, address_line, country_id, city,
+      `SELECT id, name, registration_code,
+        contact_first_name, contact_last_name, contact_email, contact_mobile, contact_role,
+        address_line, country_id, city,
             postal_code, state_region, activation_status_id
      FROM providers
      WHERE id = ?
@@ -1113,26 +1339,43 @@ router.put(
     }
 
     try {
-      await query(
-        `UPDATE providers
-       SET name = ?, registration_code = ?, address_line = ?, country_id = ?, city = ?,
-           postal_code = ?, state_region = ?, activation_status_id = ?,
-           updated_by = ?, updated_at = ?
-       WHERE id = ?`,
-        [
-          body.name,
-          body.registrationCode,
-          body.addressLine || null,
-          body.countryId,
-          body.city || null,
-          body.postalCode || null,
-          body.stateRegion || null,
-          body.activationStatusId,
-          req.user.id,
-          now,
+      await withTransaction(async (conn) => {
+        await conn.query(
+          `UPDATE providers
+         SET name = ?, registration_code = ?,
+             contact_first_name = ?, contact_last_name = ?, contact_email = ?, contact_mobile = ?, contact_role = ?,
+             address_line = ?, country_id = ?, city = ?,
+             postal_code = ?, state_region = ?, activation_status_id = ?,
+             updated_by = ?, updated_at = ?
+         WHERE id = ?`,
+          [
+            body.name,
+            body.registrationCode,
+            body.contactFirstName,
+            body.contactLastName,
+            body.contactEmail,
+            body.contactMobile,
+            body.contactRole,
+            body.addressLine || null,
+            body.countryId,
+            body.city || null,
+            body.postalCode || null,
+            body.stateRegion || null,
+            body.activationStatusId,
+            req.user.id,
+            now,
+            providerId,
+          ],
+        );
+
+        await replaceProviderContacts({
+          conn,
           providerId,
-        ],
-      );
+          contacts,
+          userId: Number(req.user.id),
+          now,
+        });
+      });
     } catch (error) {
       if (isUniqueViolation(error, "uq_providers_registration")) {
         return res.status(409).json({
@@ -1145,7 +1388,9 @@ router.put(
     }
 
     const afterRows = await query(
-      `SELECT id, name, registration_code, address_line, country_id, city,
+      `SELECT id, name, registration_code,
+        contact_first_name, contact_last_name, contact_email, contact_mobile, contact_role,
+        address_line, country_id, city,
             postal_code, state_region, activation_status_id
      FROM providers
      WHERE id = ?
@@ -1161,7 +1406,10 @@ router.put(
       entityId: providerId,
       detail: "Proveedor actualizado",
       before: beforeRows[0],
-      after: afterRows[0],
+      after: {
+        ...afterRows[0],
+        contacts_count: contacts.length,
+      },
     });
 
     res.json({ message: "Proveedor actualizado" });

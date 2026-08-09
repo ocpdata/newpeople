@@ -68,6 +68,19 @@ const quotationPermissionCodes = [
   "cotizaciones.externo",
 ];
 
+const acceptOrderPermissionCodes = [
+  "aceptar_pedido.procesamiento.read",
+  "aceptar_pedido.procesamiento.update",
+  "aceptar_pedido.procesamiento.ia",
+  "aceptar_pedido.procesamiento.convocar",
+];
+
+const acceptOrderAccessPermissionCodes = Array.from(
+  new Set([...quotationPermissionCodes, ...acceptOrderPermissionCodes]),
+);
+
+const acceptOrderStatusCodes = new Set(["ganada", "aceptada"]);
+
 const proposalReadPermissionCodes = [
   "propuestas.read",
   "propuestas.create",
@@ -277,7 +290,7 @@ const quotationProcessingStageCodes = [
   "provider_payment",
 ];
 const quotationProcessingStageCatalog = [
-  { code: "quotation_accepted", name: "Cotizacion Aceptada" },
+  { code: "quotation_accepted", name: "Aceptar Cotizacion" },
   { code: "kickoff_internal", name: "Kick Off interno" },
   { code: "kickoff_external", name: "Kick Off externo" },
   {
@@ -314,6 +327,11 @@ const quotationWonDocumentSelectionSchema = z.object({
 const quotationWonDocumentsSaveSchema = z.object({
   selections: z.array(quotationWonDocumentSelectionSchema).max(500),
   accept: z.boolean().optional().default(false),
+  acceptedAt: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
 });
 
 const quotationSellerNotificationSchema = z.object({
@@ -332,6 +350,38 @@ const quotationProcessingStageUpdateSchema = z.object({
   blockedReason: z.string().trim().max(4000).nullable().optional(),
   notes: z.string().trim().max(40000).nullable().optional(),
   stageData: z.record(z.string(), z.any()).optional(),
+});
+
+const quotationProcessingPurchaseOrderLineSchema = z.object({
+  productId: z.number().int().positive().nullable().optional(),
+  code: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(5000),
+  quantity: z.number().nonnegative(),
+  unitCost: z.number().nonnegative(),
+  discountPct: z.number().min(0).max(100).optional().default(0),
+  selectionDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+});
+
+const quotationProcessingPurchaseOrderSchema = z.object({
+  providerId: z.number().int().positive(),
+  providerName: z.string().trim().min(1).max(190).optional().default(""),
+  orderNumber: z.string().trim().max(120).nullable().optional(),
+  orderDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
+  currencyCode: z.string().trim().min(1).max(20),
+  ivaPct: z.number().min(0).max(100).optional().default(16),
+  lines: z.array(quotationProcessingPurchaseOrderLineSchema).min(1),
+});
+
+const quotationProcessingPurchaseOrdersCreateSchema = z.object({
+  orders: z.array(quotationProcessingPurchaseOrderSchema).min(1).max(200),
 });
 
 const quotationProcessingKickoffInvitationSchema = z.object({
@@ -372,13 +422,13 @@ const quotationPdfRowSchema = z.object({
   productDescription: z.string().trim().max(5000).optional().nullable(),
   quantity: z.number().nonnegative().optional().nullable(),
   quantityDisplay: z.string().trim().max(120).optional().nullable(),
-  salePriceUnit: z.number().nonnegative().optional().nullable(),
-  salePriceTotal: z.number().nonnegative().optional().nullable(),
+  salePriceUnit: z.number().optional().nullable(),
+  salePriceTotal: z.number().optional().nullable(),
 });
 
 const quotationPdfSectionSchema = z.object({
   title: z.string().trim().min(1).max(180),
-  subtotal: z.number().nonnegative().optional().default(0),
+  subtotal: z.number().optional().default(0),
   rows: z.array(quotationPdfRowSchema).optional().default([]),
 });
 
@@ -399,11 +449,11 @@ const quotationPdfRenderSchema = z.object({
   introduction: z.string().trim().max(50000).optional().default(""),
   sections: z.array(quotationPdfSectionSchema).optional().default([]),
   summary: z.object({
-    subtotal: z.number().nonnegative().optional().default(0),
-    discount: z.number().nonnegative().optional().default(0),
-    discountedSubtotal: z.number().nonnegative().optional().default(0),
-    vatAmount: z.number().nonnegative().optional().default(0),
-    total: z.number().nonnegative().optional().default(0),
+    subtotal: z.number().optional().default(0),
+    discount: z.number().optional().default(0),
+    discountedSubtotal: z.number().optional().default(0),
+    vatAmount: z.number().optional().default(0),
+    total: z.number().optional().default(0),
     showVat: z.boolean().optional().default(false),
     vatMode: z
       .enum(["without_vat", "total", "per_item"])
@@ -2141,6 +2191,54 @@ async function ensureQuotationProcessingSchema() {
           INDEX idx_qpas_lookup (quotation_id, stage_code, created_at)
         )`,
       );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS quotation_processing_purchase_orders (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          quotation_id BIGINT UNSIGNED NOT NULL,
+          quotation_version_id BIGINT UNSIGNED NOT NULL,
+          opportunity_id BIGINT UNSIGNED NOT NULL,
+          stage_code VARCHAR(80) NOT NULL,
+          provider_id BIGINT UNSIGNED NOT NULL,
+          provider_name VARCHAR(190) NULL,
+          order_number VARCHAR(120) NULL,
+          order_date DATE NULL,
+          currency_code VARCHAR(20) NOT NULL,
+          iva_pct DECIMAL(6,3) NOT NULL DEFAULT 16.000,
+          subtotal_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          iva_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          total_amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          created_by_user_id BIGINT UNSIGNED NOT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT fk_qppo_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qppo_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qppo_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+          CONSTRAINT fk_qppo_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+          INDEX idx_qppo_lookup (quotation_id, stage_code, created_at),
+          INDEX idx_qppo_provider (provider_id, created_at)
+        )`,
+      );
+
+      await query(
+        `CREATE TABLE IF NOT EXISTS quotation_processing_purchase_order_items (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          purchase_order_id BIGINT UNSIGNED NOT NULL,
+          product_id BIGINT UNSIGNED NULL,
+          line_code VARCHAR(120) NOT NULL,
+          line_description VARCHAR(5000) NOT NULL,
+          quantity DECIMAL(18,6) NOT NULL DEFAULT 0,
+          unit_cost DECIMAL(18,6) NOT NULL DEFAULT 0,
+          discount_pct DECIMAL(6,3) NOT NULL DEFAULT 0,
+          selection_date DATE NULL,
+          amount DECIMAL(18,6) NOT NULL DEFAULT 0,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          CONSTRAINT fk_qppoi_order FOREIGN KEY (purchase_order_id) REFERENCES quotation_processing_purchase_orders(id) ON DELETE CASCADE,
+          INDEX idx_qppoi_order (purchase_order_id, id),
+          INDEX idx_qppoi_product (product_id)
+        )`,
+      );
     })().catch((error) => {
       ensureQuotationProcessingSchemaPromise = undefined;
       throw error;
@@ -2158,7 +2256,7 @@ function hasQuotationProcessingReadPermission(user) {
   return (
     hasAnyQuotationPermission(user) ||
     hasQuotationAdministration(user) ||
-    user?.permissionSet?.has("aceptar_pedido.procesamiento.read")
+    hasAnyAcceptOrderPermission(user)
   );
 }
 
@@ -2174,6 +2272,7 @@ function hasQuotationProcessingIaPermission(user) {
   return (
     hasQuotationAdministration(user) ||
     user?.permissionSet?.has("aceptar_pedido.procesamiento.ia") ||
+    user?.permissionSet?.has("cotizaciones.operacion") ||
     hasQuotationAiApprovalPermission(user)
   );
 }
@@ -2184,6 +2283,14 @@ function hasQuotationProcessingConvokePermission(user) {
     user?.permissionSet?.has("aceptar_pedido.procesamiento.convocar") ||
     user?.permissionSet?.has("cotizaciones.operacion")
   );
+}
+
+function assertAcceptOrderPermission(req, res) {
+  if (!hasAnyQuotationPermission(req.user) && !hasAnyAcceptOrderPermission(req.user)) {
+    res.status(403).json({ message: "No autorizado" });
+    return false;
+  }
+  return true;
 }
 
 function buildQuotationProcessingEvidenceStorageKey({
@@ -2227,7 +2334,7 @@ function normalizeProcessingSearchText(value) {
 
 function buildQuotationAcceptedStageData({ latestVersion, acceptedSnapshot }) {
   return {
-    acceptedAt: acceptedSnapshot?.acceptedAt || latestVersion?.updated_at || null,
+    acceptedAt: acceptedSnapshot?.acceptedAt || null,
     acceptedByUserId: acceptedSnapshot?.acceptedByUserId || null,
     acceptedVersionId: latestVersion?.id ? Number(latestVersion.id) : null,
     initialScopeSummary:
@@ -2313,17 +2420,29 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
   const acceptedSnapshot = await getQuotationAcceptedSnapshot({
     versionId: Number(latestVersion.id),
   });
+  const latestVersionStatusCode = String(latestVersion.status_code || "").trim();
+  const isQuotationAccepted = latestVersionStatusCode === "aceptada";
 
   return quotationProcessingStageCatalog.map((stage) => {
     const found = byCode.get(stage.code);
     if (found) {
       if (stage.code === "quotation_accepted") {
+        const foundAcceptedAt =
+          found.stageData?.acceptedAt || found.completedAt || null;
+        const acceptedStageCompleted =
+          String(found.status || "").trim() === "completed" || isQuotationAccepted;
+        const effectiveAcceptedAt = acceptedStageCompleted
+          ? foundAcceptedAt || acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+          : null;
         return {
           ...found,
           stageName: stage.name,
+          status: acceptedStageCompleted ? "completed" : "not_started",
+          completedAt: effectiveAcceptedAt,
           stageData: {
             ...buildQuotationAcceptedStageData({ latestVersion, acceptedSnapshot }),
             ...(found.stageData || {}),
+            acceptedAt: effectiveAcceptedAt,
           },
         };
       }
@@ -2333,13 +2452,20 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
     return {
       stageCode: stage.code,
       stageName: stage.name,
-      status: stage.code === "quotation_accepted" ? "completed" : "not_started",
+      status:
+        stage.code === "quotation_accepted"
+          ? isQuotationAccepted
+            ? "completed"
+            : "not_started"
+          : "not_started",
       ownerUserId: null,
       ownerUserName: null,
       targetDate: null,
       completedAt:
         stage.code === "quotation_accepted"
-          ? acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+          ? isQuotationAccepted
+            ? acceptedSnapshot?.acceptedAt || latestVersion.updated_at || null
+            : null
           : null,
       blockedReason: null,
       notes: null,
@@ -2358,6 +2484,7 @@ async function listProcessingAssignableUsers() {
   const rows = await query(
     `SELECT id, full_name, email
      FROM users
+     WHERE COALESCE(status, 'active') = 'active'
      ORDER BY full_name ASC, id ASC
      LIMIT 1000`,
   );
@@ -2369,12 +2496,293 @@ async function listProcessingAssignableUsers() {
   }));
 }
 
+async function listQuotationProcessingPurchaseOrders({
+  quotationId,
+  stageCode = "provider_purchase_order",
+}) {
+  await ensureQuotationProcessingSchema();
+  const orderRows = await query(
+    `SELECT id, provider_id, provider_name, order_number, order_date,
+            currency_code, iva_pct, subtotal_amount, iva_amount, total_amount,
+            created_at
+     FROM quotation_processing_purchase_orders
+     WHERE quotation_id = ?
+       AND stage_code = ?
+     ORDER BY created_at ASC, id ASC`,
+    [Number(quotationId), String(stageCode || "provider_purchase_order").trim()],
+  );
+
+  if (!orderRows.length) return [];
+
+  const orderIds = orderRows.map((row) => Number(row.id));
+  const itemRows = await query(
+    `SELECT purchase_order_id, product_id, line_code, line_description,
+            quantity, unit_cost, discount_pct, selection_date, amount
+     FROM quotation_processing_purchase_order_items
+     WHERE purchase_order_id IN (?)
+     ORDER BY purchase_order_id ASC, id ASC`,
+    [orderIds],
+  );
+
+  const itemsByOrderId = new Map();
+  for (const row of itemRows) {
+    const orderId = Number(row.purchase_order_id);
+    const list = itemsByOrderId.get(orderId) || [];
+    list.push({
+      productId: row.product_id ? Number(row.product_id) : null,
+      code: row.line_code || "-",
+      description: row.line_description || "Sin descripcion",
+      quantity: Number(row.quantity || 0),
+      unitCost: Number(row.unit_cost || 0),
+      discountPct: Number(row.discount_pct || 0),
+      selectionDate: row.selection_date
+        ? String(row.selection_date).slice(0, 10)
+        : null,
+      amount: Number(row.amount || 0),
+    });
+    itemsByOrderId.set(orderId, list);
+  }
+
+  return orderRows.map((row) => {
+    const orderId = Number(row.id);
+    return {
+      orderId,
+      providerId: Number(row.provider_id),
+      providerName: row.provider_name || "Proveedor",
+      orderNumber: row.order_number || null,
+      orderDate: row.order_date ? String(row.order_date).slice(0, 10) : null,
+      currencyCode: row.currency_code || "USD",
+      ivaPct: Number(row.iva_pct || 0),
+      subtotal: Number(row.subtotal_amount || 0),
+      ivaAmount: Number(row.iva_amount || 0),
+      total: Number(row.total_amount || 0),
+      generatedAt: row.created_at || null,
+      lines: itemsByOrderId.get(orderId) || [],
+    };
+  });
+}
+
+async function createQuotationProcessingPurchaseOrders({
+  quotation,
+  latestVersion,
+  userId,
+  orders,
+  stageCode = "provider_purchase_order",
+}) {
+  await ensureQuotationProcessingSchema();
+  const normalizedOrders = Array.isArray(orders) ? orders : [];
+  if (!normalizedOrders.length) {
+    return [];
+  }
+
+  await withTransaction(async (conn) => {
+    for (const order of normalizedOrders) {
+      const orderLines = Array.isArray(order?.lines) ? order.lines : [];
+      const normalizedIvaPct = Math.min(
+        100,
+        Math.max(0, Number(order?.ivaPct ?? 16) || 0),
+      );
+      const normalizedLines = orderLines.map((line) => {
+        const quantity = Math.max(0, Number(line?.quantity || 0));
+        const unitCost = Math.max(0, Number(line?.unitCost || 0));
+        const discountPct = Math.min(100, Math.max(0, Number(line?.discountPct || 0)));
+        const amount = quantity * unitCost * (1 - discountPct / 100);
+        return {
+          productId: line?.productId == null ? null : Number(line.productId) || null,
+          code: String(line?.code || "-").trim() || "-",
+          description:
+            String(line?.description || "").trim() || "Sin descripcion",
+          quantity,
+          unitCost,
+          discountPct,
+          selectionDate:
+            line?.selectionDate && /^\d{4}-\d{2}-\d{2}$/.test(String(line.selectionDate))
+              ? String(line.selectionDate)
+              : null,
+          amount,
+        };
+      });
+
+      const subtotal = normalizedLines.reduce((sum, line) => sum + line.amount, 0);
+      const ivaAmount = subtotal * (normalizedIvaPct / 100);
+      const total = subtotal + ivaAmount;
+      const now = new Date();
+
+      const [result] = await conn.query(
+        `INSERT INTO quotation_processing_purchase_orders
+          (quotation_id, quotation_version_id, opportunity_id, stage_code,
+           provider_id, provider_name, order_number, order_date, currency_code,
+           iva_pct, subtotal_amount, iva_amount, total_amount,
+           created_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          Number(quotation.id),
+          Number(latestVersion.id),
+          Number(quotation.opportunity_id),
+          String(stageCode || "provider_purchase_order").trim(),
+          Number(order.providerId),
+          String(order.providerName || "").trim() || null,
+          String(order.orderNumber || "").trim() || null,
+          order.orderDate || null,
+          String(order.currencyCode || "USD").trim() || "USD",
+          Number(normalizedIvaPct.toFixed(3)),
+          Number(subtotal.toFixed(6)),
+          Number(ivaAmount.toFixed(6)),
+          Number(total.toFixed(6)),
+          Number(userId),
+          now,
+          now,
+        ],
+      );
+
+      const insertedOrderId = Number(result?.insertId || 0);
+      if (!insertedOrderId) continue;
+
+      for (const line of normalizedLines) {
+        await conn.query(
+          `INSERT INTO quotation_processing_purchase_order_items
+            (purchase_order_id, product_id, line_code, line_description,
+             quantity, unit_cost, discount_pct, selection_date, amount,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            insertedOrderId,
+            line.productId,
+            line.code,
+            line.description,
+            Number(line.quantity.toFixed(6)),
+            Number(line.unitCost.toFixed(6)),
+            Number(line.discountPct.toFixed(3)),
+            line.selectionDate,
+            Number(line.amount.toFixed(6)),
+            now,
+            now,
+          ],
+        );
+      }
+    }
+  });
+
+  return listQuotationProcessingPurchaseOrders({
+    quotationId: Number(quotation.id),
+    stageCode,
+  });
+}
+
+async function tryExtractEvidenceContentText({
+  buffer,
+  mimeType,
+  fileName,
+  extension,
+}) {
+  try {
+    const extracted = await extractContentFromBuffer({
+      buffer,
+      mimeType,
+      fileName,
+      extension,
+    });
+    const contentText = String(
+      extracted?.normalizedText || extracted?.rawText || "",
+    ).trim();
+    return contentText || null;
+  } catch {
+    return null;
+  }
+}
+
+async function hydrateEvidenceContentTextForAiSummary(evidences = []) {
+  const normalizedEvidences = Array.isArray(evidences) ? evidences : [];
+  const missingContentEvidences = normalizedEvidences.filter((item) => {
+    const contentText = String(item?.contentText || "").trim();
+    return !contentText && Number(item?.documentId || 0) > 0;
+  });
+  if (!missingContentEvidences.length) {
+    return normalizedEvidences;
+  }
+
+  const documentIds = Array.from(
+    new Set(
+      missingContentEvidences
+        .map((item) => Number(item.documentId || 0))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  );
+  if (!documentIds.length) {
+    return normalizedEvidences;
+  }
+
+  const documentRows = await query(
+    `SELECT id,
+            original_file_name,
+            stored_file_name,
+            mime_type,
+            file_extension,
+            storage_provider,
+            storage_bucket,
+            storage_key
+     FROM documents
+     WHERE id IN (${documentIds.map(() => "?").join(",")})
+       AND COALESCE(is_deleted, 0) = 0`,
+    documentIds,
+  );
+  const documentsById = new Map(
+    documentRows.map((row) => [Number(row.id), row]),
+  );
+
+  for (const evidence of missingContentEvidences) {
+    const documentId = Number(evidence.documentId || 0);
+    const document = documentsById.get(documentId);
+    if (!document) continue;
+
+    try {
+      const streamResult = await getDocumentContentStream({
+        storageProvider: document.storage_provider,
+        storageBucket: document.storage_bucket,
+        storageKey: document.storage_key,
+        storedFileName: document.stored_file_name,
+      });
+      const buffer = streamResult?.buffer
+        ? streamResult.buffer
+        : streamResult?.stream
+          ? await streamToBuffer(streamResult.stream)
+          : null;
+      if (!buffer) {
+        continue;
+      }
+
+      const extractedContent = await tryExtractEvidenceContentText({
+        buffer,
+        mimeType: document.mime_type,
+        fileName: document.original_file_name,
+        extension: document.file_extension,
+      });
+      if (!extractedContent) {
+        continue;
+      }
+
+      evidence.contentText = extractedContent;
+      await query(
+        `UPDATE quotation_processing_evidences
+         SET content_text = ?
+         WHERE id = ?`,
+        [extractedContent, Number(evidence.id)],
+      );
+    } catch {
+      continue;
+    }
+  }
+
+  return normalizedEvidences;
+}
+
 function buildAiSummaryFromEvidence(evidenceRows = []) {
   const normalizedRows = Array.isArray(evidenceRows) ? evidenceRows : [];
   const fragments = normalizedRows
     .map((row) => {
-      if (row.evidence_type === "manual_note") {
-        return String(row.content_text || "").trim();
+      const contentText = String(row.content_text || "").trim();
+      if (contentText) {
+        return contentText;
       }
       return String(row.original_file_name || row.evidence_type || "").trim();
     })
@@ -2392,7 +2800,7 @@ function buildAiSummaryFromEvidence(evidenceRows = []) {
   const summaryLines = lineCandidates.slice(0, 6);
   const summaryText = summaryLines.length
     ? summaryLines.join(". ")
-    : "Se registro evidencia de kick off externo y se requiere validacion comercial del vendedor.";
+    : "Se registro evidencia de kick off y se requiere validacion comercial del vendedor.";
 
   const pickLines = (pattern, fallbackText) => {
     const matches = lineCandidates.filter((line) =>
@@ -2419,6 +2827,227 @@ function buildAiSummaryFromEvidence(evidenceRows = []) {
       "Aclarar con cliente alcance operativo, tiempos y condiciones de cobranza.",
     ),
   };
+}
+
+const KICKOFF_AI_SUMMARY_OPENAI_TIMEOUT_MS = 60_000;
+
+function normalizeKickoffSummaryList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeKickoffAiSummaryPayload(payload, fallbackSummary) {
+  const fallback = fallbackSummary || {};
+  const summaryText = String(payload?.summary || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const conflictPoints = normalizeKickoffSummaryList(payload?.conflictPoints);
+  const riskPoints = normalizeKickoffSummaryList(payload?.riskPoints);
+  const clarificationPoints = normalizeKickoffSummaryList(
+    payload?.clarificationPoints,
+  );
+
+  return {
+    summary: summaryText || String(fallback.summary || "").trim(),
+    conflictPoints:
+      conflictPoints.length > 0
+        ? conflictPoints
+        : Array.isArray(fallback.conflictPoints)
+          ? fallback.conflictPoints
+          : [],
+    riskPoints:
+      riskPoints.length > 0
+        ? riskPoints
+        : Array.isArray(fallback.riskPoints)
+          ? fallback.riskPoints
+          : [],
+    clarificationPoints:
+      clarificationPoints.length > 0
+        ? clarificationPoints
+        : Array.isArray(fallback.clarificationPoints)
+          ? fallback.clarificationPoints
+          : [],
+  };
+}
+
+function buildKickoffEvidenceSourceText(evidenceRows = []) {
+  const normalizedRows = Array.isArray(evidenceRows) ? evidenceRows : [];
+  const sections = normalizedRows
+    .map((row, index) => {
+      const fileName = String(row?.original_file_name || "archivo").trim() || "archivo";
+      const contentText = String(row?.content_text || "").trim();
+      if (!contentText) return "";
+      return [
+        `EVIDENCIA ${index + 1}: ${fileName}`,
+        contentText,
+      ].join("\n");
+    })
+    .filter(Boolean);
+  return sections.join("\n\n").slice(0, 30_000);
+}
+
+function resolveKickoffOpenAiTextCandidates(responseData) {
+  const candidates = [];
+  const primaryOutput = String(getOpenAiOutputText(responseData) || "").trim();
+  if (primaryOutput) {
+    candidates.push(primaryOutput);
+  }
+
+  const directOutputText = String(responseData?.output_text || "").trim();
+  if (directOutputText) {
+    candidates.push(directOutputText);
+  }
+
+  const outputItems = Array.isArray(responseData?.output) ? responseData.output : [];
+  for (const item of outputItems) {
+    const contentItems = Array.isArray(item?.content) ? item.content : [];
+    for (const part of contentItems) {
+      const partText = String(part?.text || part?.output_text || "").trim();
+      if (partText) {
+        candidates.push(partText);
+      }
+    }
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+function resolveKickoffAiSummaryFromOpenAiResponse(responseData, fallbackSummary) {
+  const candidates = resolveKickoffOpenAiTextCandidates(responseData);
+  for (const candidate of candidates) {
+    const parsed = extractJsonObject(candidate);
+    if (parsed && typeof parsed === "object") {
+      return normalizeKickoffAiSummaryPayload(parsed, fallbackSummary);
+    }
+  }
+
+  const plainText = String(candidates[0] || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (plainText) {
+    return normalizeKickoffAiSummaryPayload(
+      {
+        summary: plainText,
+        conflictPoints: [],
+        riskPoints: [],
+        clarificationPoints: [],
+      },
+      fallbackSummary,
+    );
+  }
+
+  return fallbackSummary;
+}
+
+async function buildKickoffAiSummaryFromEvidence({
+  evidenceRows = [],
+  user,
+  stageCode,
+}) {
+  const fallbackSummary = buildAiSummaryFromEvidence(evidenceRows);
+  const sourceText = buildKickoffEvidenceSourceText(evidenceRows);
+  if (!sourceText) {
+    return fallbackSummary;
+  }
+
+  if (!config.openai.apiKey) {
+    return fallbackSummary;
+  }
+
+  const aiUsageUserId = Number(user?.id || 0);
+
+  const requestPayload = {
+    model: config.openai.model,
+    input: [
+      {
+        role: "system",
+        content:
+          "Eres un asistente comercial B2B. Analiza la evidencia de una minuta de kick off y responde solo JSON valido con las llaves: summary (string), conflictPoints (array de strings), riskPoints (array de strings), clarificationPoints (array de strings). Responde en espanol y no inventes datos.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify(
+          {
+            stageCode: String(stageCode || "kickoff_internal").trim(),
+            instructions:
+              "Resume acuerdos y proximos pasos. Incluye riesgos y puntos por aclarar accionables.",
+            sourceText,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    KICKOFF_AI_SUMMARY_OPENAI_TIMEOUT_MS,
+  );
+
+  const startedAt = new Date();
+  const internalRequestId = randomUUID();
+  try {
+    const response = await fetch(
+      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.openai.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestPayload),
+        signal: controller.signal,
+      },
+    );
+
+    const responseData = await response.json().catch(() => null);
+    if (!response.ok || !responseData) {
+      const message = String(
+        responseData?.error?.message ||
+          responseData?.error?.code ||
+          `OpenAI request failed: ${response.status}`,
+      ).trim();
+      const error = new Error(
+        message || "No fue posible generar el resumen IA de la minuta",
+      );
+      error.status = Number(response.status || 502) || 502;
+      throw error;
+    }
+
+    if (aiUsageUserId) {
+      try {
+        await recordAiUsageFromOpenAiResponse({
+          userId: aiUsageUserId,
+          featureCode: "quotation_processing_kickoff_ai_summary",
+          model: String(requestPayload.model || config.openai.model || "").trim(),
+          openAiResponse: responseData,
+          startedAt,
+          endedAt: new Date(),
+          internalRequestId,
+          jobType: `quotation_processing_${String(stageCode || "kickoff").trim()}_ai_summary`,
+        });
+      } catch {
+        // Do not block summary delivery if usage accounting fails.
+      }
+    }
+
+    return resolveKickoffAiSummaryFromOpenAiResponse(
+      responseData,
+      fallbackSummary,
+    );
+  } catch (error) {
+    if (!error?.status) {
+      error.status = 502;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function listQuotationProcessingKickoffInvitations({ quotationId }) {
@@ -2551,28 +3180,41 @@ async function listQuotationProcessingAiSummaries({ quotationId, stageCode }) {
   }));
 }
 
-function validateKickoffExternalCompletionPayload(stageData = {}) {
-  const requiredFields = [
-    "estimatedInvoicingDate",
-    "estimatedDeliveryDate",
-    "collectionsCreditDays",
-    "operationalScope",
-    "operationalOwner",
-    "operationalTimeline",
-  ];
+async function listQuotationProcessingProducts({ versionId, currencyCode }) {
+  const sections = await getQuotationVersionSections(Number(versionId));
+  const items = [];
 
-  const missing = requiredFields.filter((fieldName) => {
-    const value = stageData?.[fieldName];
-    if (fieldName === "collectionsCreditDays") {
-      return !Number.isFinite(Number(value));
+  for (const section of sections) {
+    const sectionItems = Array.isArray(section?.items) ? section.items : [];
+    for (const item of sectionItems) {
+      if (String(item?.itemType || "").trim() === "grupo_productos") {
+        continue;
+      }
+
+      const quantity = Number(item?.quantity || 0);
+      const pricing = calculateProposalSalePrice(item);
+      const unitCostWithDiscount = Number(
+        Number(pricing?.discountedListPriceUnit || 0).toFixed(6),
+      );
+      const totalCost = Number((unitCostWithDiscount * quantity).toFixed(6));
+
+      items.push({
+        id: Number(item?.id || 0),
+        code: String(item?.productCode || "").trim() || "-",
+        description:
+          String(item?.productDescription || "").trim() || "Sin descripcion",
+        quantity,
+        unitCostWithDiscount,
+        totalCost,
+        providerId: Number(item?.providerId || 0) || null,
+        providerName: String(item?.providerName || "").trim() || null,
+        currencyCode: String(item?.originalCurrencyCode || currencyCode || "USD").trim() ||
+          "USD",
+      });
     }
-    return !String(value || "").trim();
-  });
+  }
 
-  return {
-    valid: missing.length === 0,
-    missing,
-  };
+  return items;
 }
 
 async function upsertQuotationProcessingStage({
@@ -2603,17 +3245,6 @@ async function upsertQuotationProcessingStage({
     ...existingStageData,
     ...(stageData && typeof stageData === "object" ? stageData : {}),
   };
-
-  if (status === "completed" && stageCode === "kickoff_external") {
-    const validation = validateKickoffExternalCompletionPayload(mergedStageData);
-    if (!validation.valid) {
-      const error = new Error(
-        `Faltan campos requeridos para completar Kick Off externo: ${validation.missing.join(", ")}`,
-      );
-      error.status = 400;
-      throw error;
-    }
-  }
 
   const normalizedBlockedReason =
     blockedReason == null ? null : String(blockedReason || "").trim() || null;
@@ -3270,9 +3901,14 @@ async function saveQuotationWonDocumentsSelections({
   version,
   selections,
   accept,
+  acceptedAt,
   userId,
 }) {
   await ensureQuotationWonDocumentsSchema();
+
+  const existingAcceptedSnapshot = await getQuotationAcceptedSnapshot({
+    versionId: Number(version.id),
+  });
 
   const normalizedSelections = Array.isArray(selections)
     ? selections
@@ -3374,6 +4010,37 @@ async function saveQuotationWonDocumentsSelections({
   }
 
   const now = new Date();
+  const requestedAcceptedDate = String(acceptedAt || "").trim();
+  const existingAcceptedAt = parseDateOrNull(existingAcceptedSnapshot?.acceptedAt);
+  const existingAcceptedDateText = existingAcceptedAt
+    ? toUtcIso(existingAcceptedAt)?.slice(0, 10) || ""
+    : "";
+  const shouldKeepAccepted = Boolean(existingAcceptedAt);
+  const effectiveAccepted = Boolean(accept) || shouldKeepAccepted;
+  let effectiveAcceptedAt = null;
+
+  if (effectiveAccepted) {
+    if (requestedAcceptedDate) {
+      if (
+        existingAcceptedAt &&
+        requestedAcceptedDate === existingAcceptedDateText
+      ) {
+        effectiveAcceptedAt = existingAcceptedAt;
+      } else {
+        effectiveAcceptedAt =
+          parseDateOrNull(`${requestedAcceptedDate}T12:00:00.000Z`) || now;
+      }
+    } else {
+      effectiveAcceptedAt = existingAcceptedAt || now;
+    }
+  }
+
+  const effectiveAcceptedByUserId = effectiveAccepted
+    ? Boolean(accept)
+      ? Number(userId)
+      : existingAcceptedSnapshot?.acceptedByUserId || Number(userId)
+    : null;
+
   await withTransaction(async (conn) => {
     await conn.query(
       `DELETE FROM quotation_won_documents
@@ -3397,8 +4064,8 @@ async function saveQuotationWonDocumentsSelections({
           entry.role,
           Number(userId),
           now,
-          accept ? now : null,
-          accept ? Number(userId) : null,
+          effectiveAcceptedAt,
+          effectiveAcceptedByUserId,
         ],
       );
     }
@@ -7715,6 +8382,12 @@ function hasAnyQuotationPermission(user) {
   );
 }
 
+function hasAnyAcceptOrderPermission(user) {
+  return acceptOrderPermissionCodes.some((permission) =>
+    user?.permissionSet?.has(permission),
+  );
+}
+
 function hasAnyProposalReadPermission(user) {
   return proposalReadPermissionCodes.some((permission) =>
     user?.permissionSet?.has(permission),
@@ -11796,9 +12469,17 @@ router.get(
 
 router.get(
   "/quotation-product-lists",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingUpdatePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para consultar listas de productos de Aceptar Pedido",
+      });
+    }
 
     const parsed = quotationProductListsQuerySchema.safeParse(req.query || {});
     if (!parsed.success) {
@@ -11827,9 +12508,17 @@ router.get(
 
 router.get(
   "/quotation-products/search",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingUpdatePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para consultar productos de Aceptar Pedido",
+      });
+    }
 
     const searchQuery = String(req.query.q || "").trim();
     const providerId = Number(req.query.providerId || 0);
@@ -11986,9 +12675,32 @@ router.post(
 
 router.get(
   "/quotations",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    const latestStatusCodesFilter = String(req.query.latestStatusCodes || "")
+      .split(",")
+      .map((code) => code.trim().toLowerCase())
+      .filter(Boolean);
+    const hasQuotationPermission = hasAnyQuotationPermission(req.user);
+    const hasAcceptOrderPermission = hasAnyAcceptOrderPermission(req.user);
+
+    if (!hasQuotationPermission && !hasAcceptOrderPermission) {
+      return res.status(403).json({ message: "No autorizado" });
+    }
+    if (latestStatusCodesFilter.some((code) => !/^[a-z0-9_]+$/.test(code))) {
+      return res.status(400).json({ message: "latestStatusCodes invalido" });
+    }
+    if (!hasQuotationPermission) {
+      const isAcceptOrderFilter =
+        latestStatusCodesFilter.length > 0 &&
+        latestStatusCodesFilter.every((code) => acceptOrderStatusCodes.has(code));
+      if (!isAcceptOrderFilter) {
+        return res.status(403).json({
+          message: "No autorizado para consultar cotizaciones fuera de Aceptar Pedido",
+        });
+      }
+    }
+
     await ensureQuotationAcceptanceNotificationsTable();
 
     const params = [];
@@ -11996,13 +12708,6 @@ router.get(
     const opportunityId = req.query.opportunityId
       ? Number(req.query.opportunityId)
       : null;
-    const latestStatusCodesFilter = String(req.query.latestStatusCodes || "")
-      .split(",")
-      .map((code) => code.trim().toLowerCase())
-      .filter(Boolean);
-    if (latestStatusCodesFilter.some((code) => !/^[a-z0-9_]+$/.test(code))) {
-      return res.status(400).json({ message: "latestStatusCodes invalido" });
-    }
 
     const ownershipJoin = applyOwnedAccountScope({
       user: req.user,
@@ -12043,6 +12748,10 @@ router.get(
         oss.name AS opportunity_sales_stage_name,
               lv.version_number AS latest_version_number,
             lv.currency_code AS latest_currency_code,
+              lv.delivery_time AS latest_delivery_time,
+              lv.quotation_validity AS latest_quotation_validity,
+              lv.warranty_term AS latest_warranty,
+              lv.payment_terms AS latest_payment_terms,
               qs.code AS latest_status_code,
               qs.name AS latest_status_name,
               qs.ui_key AS latest_status_ui_key,
@@ -12105,6 +12814,10 @@ router.get(
           ? Number(row.latest_version_number)
           : null,
         latestCurrencyCode: row.latest_currency_code || null,
+        latestDeliveryTime: row.latest_delivery_time || null,
+        latestQuotationValidity: row.latest_quotation_validity || null,
+        latestWarranty: row.latest_warranty || null,
+        latestPaymentTerms: row.latest_payment_terms || null,
         latestStatusCode: row.latest_status_code || null,
         latestStatusName: row.latest_status_name || null,
         latestStatusUiKey: row.latest_status_ui_key || null,
@@ -12166,9 +12879,17 @@ router.get(
 
 router.post(
   "/quotations/:quotationId/seller-notification",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingConvokePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para notificar al vendedor desde Aceptar Pedido",
+      });
+    }
     await ensureQuotationAcceptanceNotificationsTable();
 
     const quotationId = Number(req.params.quotationId);
@@ -12318,9 +13039,9 @@ router.post(
 
 router.get(
   "/quotations/:quotationId/processing",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingReadPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para consultar el procesamiento de la cotizacion",
@@ -12332,91 +13053,156 @@ router.get(
       return res.status(400).json({ message: "Id de cotizacion invalido" });
     }
 
-    const quotation = await getAccessibleQuotation({
-      user: req.user,
-      quotationId,
-    });
-    if (!quotation) {
-      return res.status(404).json({ message: "Cotizacion no encontrada" });
-    }
+    try {
+      const quotation = await getAccessibleQuotation({
+        user: req.user,
+        quotationId,
+      });
+      if (!quotation) {
+        return res.status(404).json({ message: "Cotizacion no encontrada" });
+      }
 
-    const latestVersionId = Number(quotation.latest_version_id || 0);
-    if (!latestVersionId) {
-      return res.status(404).json({
-        message: "La cotizacion no tiene version activa para procesamiento",
+      const latestVersionId = Number(quotation.latest_version_id || 0);
+      if (!latestVersionId) {
+        return res.status(404).json({
+          message: "La cotizacion no tiene version activa para procesamiento",
+        });
+      }
+
+      const latestVersion = await getAccessibleQuotationVersion({
+        user: req.user,
+        versionId: latestVersionId,
+      });
+      if (!latestVersion) {
+        return res.status(404).json({
+          message: "Version de cotizacion no encontrada",
+        });
+      }
+
+      if (
+        !["aceptada", "ganada"].includes(
+          String(latestVersion.status_code || "").trim(),
+        )
+      ) {
+        return res.status(400).json({
+          message: "El procesamiento solo aplica para cotizaciones ganadas o aceptadas",
+        });
+      }
+
+      const [
+        stages,
+        assignableUsers,
+        providers,
+        kickoffInvitations,
+        kickoffInternalEvidences,
+        kickoffInternalAiHistory,
+        kickoffEvidences,
+        aiHistory,
+        processingProducts,
+        providerPurchaseOrders,
+      ] =
+        await Promise.all([
+          listQuotationProcessingStages({ quotation, latestVersion }),
+          listProcessingAssignableUsers(),
+          listActiveProvidersForImport(),
+          listQuotationProcessingKickoffInvitations({ quotationId }),
+          listQuotationProcessingEvidences({
+            quotationId,
+            stageCode: "kickoff_internal",
+          }),
+          listQuotationProcessingAiSummaries({
+            quotationId,
+            stageCode: "kickoff_internal",
+          }),
+          listQuotationProcessingEvidences({
+            quotationId,
+            stageCode: "kickoff_external",
+          }),
+          listQuotationProcessingAiSummaries({
+            quotationId,
+            stageCode: "kickoff_external",
+          }),
+          listQuotationProcessingProducts({
+            versionId: Number(latestVersion.id),
+            currencyCode: latestVersion.currency_code || "USD",
+          }),
+          listQuotationProcessingPurchaseOrders({
+            quotationId: Number(quotation.id),
+            stageCode: "provider_purchase_order",
+          }),
+        ]);
+
+      const stagesWithPurchaseOrders = (Array.isArray(stages) ? stages : []).map(
+        (stage) => {
+          if (String(stage?.stageCode || "").trim() !== "provider_purchase_order") {
+            return stage;
+          }
+          return {
+            ...stage,
+            stageData: {
+              ...(stage?.stageData || {}),
+              generatedPurchaseOrders: providerPurchaseOrders,
+            },
+          };
+        },
+      );
+
+      return res.json({
+        quotation: {
+          id: Number(quotation.id),
+          opportunityId: Number(quotation.opportunity_id),
+          latestVersionId: Number(latestVersion.id),
+          latestVersionNumber: Number(latestVersion.version_number || 0),
+          proposalName: latestVersion.proposal_name || "",
+          accountName: latestVersion.account_name || "",
+          opportunityName: latestVersion.opportunity_name || "",
+          sellerUserName: latestVersion.seller_user_name || "",
+          sellerUserEmail: latestVersion.seller_user_email || "",
+          statusCode: latestVersion.status_code || "",
+          products: processingProducts,
+        },
+        stages: stagesWithPurchaseOrders,
+        assignableUsers,
+        providers,
+        kickoffInternal: {
+          latestInvitation: kickoffInvitations[0] || null,
+          invitations: kickoffInvitations,
+          evidences: kickoffInternalEvidences,
+          aiSummaryCurrent: kickoffInternalAiHistory[0] || null,
+          aiSummaryHistory: kickoffInternalAiHistory,
+        },
+        kickoffExternal: {
+          evidences: kickoffEvidences,
+          aiSummaryCurrent: aiHistory[0] || null,
+          aiSummaryHistory: aiHistory,
+        },
+        permissions: {
+          canRead: hasQuotationProcessingReadPermission(req.user),
+          canUpdate: hasQuotationProcessingUpdatePermission(req.user),
+          canGenerateIa: hasQuotationProcessingIaPermission(req.user),
+          canConvoke: hasQuotationProcessingConvokePermission(req.user),
+        },
+      });
+    } catch (error) {
+      if (String(error?.code || "").trim() === "ER_CON_COUNT_ERROR") {
+        return res.status(503).json({
+          message:
+            "La base de datos esta temporalmente saturada. Intenta nuevamente en unos segundos.",
+        });
+      }
+
+      return res.status(500).json({
+        message: "No fue posible cargar el flujo de procesamiento operativo",
       });
     }
-
-    const latestVersion = await getAccessibleQuotationVersion({
-      user: req.user,
-      versionId: latestVersionId,
-    });
-    if (!latestVersion) {
-      return res.status(404).json({
-        message: "Version de cotizacion no encontrada",
-      });
-    }
-
-    if (String(latestVersion.status_code || "").trim() !== "aceptada") {
-      return res.status(400).json({
-        message: "El procesamiento solo aplica para cotizaciones aceptadas",
-      });
-    }
-
-    const [stages, assignableUsers, kickoffInvitations, kickoffEvidences, aiHistory] =
-      await Promise.all([
-        listQuotationProcessingStages({ quotation, latestVersion }),
-        listProcessingAssignableUsers(),
-        listQuotationProcessingKickoffInvitations({ quotationId }),
-        listQuotationProcessingEvidences({
-          quotationId,
-          stageCode: "kickoff_external",
-        }),
-        listQuotationProcessingAiSummaries({
-          quotationId,
-          stageCode: "kickoff_external",
-        }),
-      ]);
-
-    return res.json({
-      quotation: {
-        id: Number(quotation.id),
-        opportunityId: Number(quotation.opportunity_id),
-        latestVersionId: Number(latestVersion.id),
-        latestVersionNumber: Number(latestVersion.version_number || 0),
-        proposalName: latestVersion.proposal_name || "",
-        accountName: latestVersion.account_name || "",
-        opportunityName: latestVersion.opportunity_name || "",
-        sellerUserName: latestVersion.seller_user_name || "",
-        sellerUserEmail: latestVersion.seller_user_email || "",
-        statusCode: latestVersion.status_code || "",
-      },
-      stages,
-      assignableUsers,
-      kickoffInternal: {
-        latestInvitation: kickoffInvitations[0] || null,
-        invitations: kickoffInvitations,
-      },
-      kickoffExternal: {
-        evidences: kickoffEvidences,
-        aiSummaryCurrent: aiHistory[0] || null,
-        aiSummaryHistory: aiHistory,
-      },
-      permissions: {
-        canRead: hasQuotationProcessingReadPermission(req.user),
-        canUpdate: hasQuotationProcessingUpdatePermission(req.user),
-        canGenerateIa: hasQuotationProcessingIaPermission(req.user),
-        canConvoke: hasQuotationProcessingConvokePermission(req.user),
-      },
-    });
   },
 );
 
 router.patch(
   "/quotations/:quotationId/processing/stages/:stageCode",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para actualizar etapas de procesamiento",
@@ -12455,9 +13241,13 @@ router.patch(
     if (!latestVersion) {
       return res.status(404).json({ message: "Version no encontrada" });
     }
-    if (String(latestVersion.status_code || "").trim() !== "aceptada") {
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
       return res.status(400).json({
-        message: "Solo se puede procesar una cotizacion aceptada",
+        message: "Solo se puede procesar una cotizacion ganada o aceptada",
       });
     }
 
@@ -12503,10 +13293,119 @@ router.patch(
 );
 
 router.post(
-  "/quotations/:quotationId/processing/kickoff-internal/invitations",
-  requireAnyPermission(quotationPermissionCodes),
+  "/quotations/:quotationId/processing/provider-purchase-orders",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para generar ordenes de compra",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const parsed = quotationProcessingPurchaseOrdersCreateSchema.safeParse(
+      req.body || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
+      return res.status(400).json({
+        message: "Solo se pueden generar ordenes para cotizaciones ganadas o aceptadas",
+      });
+    }
+
+    try {
+      await createQuotationProcessingPurchaseOrders({
+        quotation,
+        latestVersion,
+        userId: Number(req.user.id),
+        stageCode: "provider_purchase_order",
+        orders: parsed.data.orders,
+      });
+    } catch (saveError) {
+      return res.status(500).json({
+        message: "No fue posible guardar las ordenes de compra",
+      });
+    }
+
+    const [stages, persistedOrders] = await Promise.all([
+      listQuotationProcessingStages({ quotation, latestVersion }),
+      listQuotationProcessingPurchaseOrders({
+        quotationId: Number(quotation.id),
+        stageCode: "provider_purchase_order",
+      }),
+    ]);
+
+    const stagesWithPurchaseOrders = (Array.isArray(stages) ? stages : []).map(
+      (stage) => {
+        if (String(stage?.stageCode || "").trim() !== "provider_purchase_order") {
+          return stage;
+        }
+        return {
+          ...stage,
+          stageData: {
+            ...(stage?.stageData || {}),
+            generatedPurchaseOrders: persistedOrders,
+          },
+        };
+      },
+    );
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_purchase_orders_created",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: `Ordenes de compra a proveedor generadas: ${parsed.data.orders.length}`,
+      after: {
+        stageCode: "provider_purchase_order",
+        generatedOrdersCount: parsed.data.orders.length,
+      },
+    });
+
+    return res.json({
+      message: "Ordenes de compra generadas",
+      stages: stagesWithPurchaseOrders,
+      generatedOrdersCount: parsed.data.orders.length,
+    });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/kickoff-internal/invitations",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingConvokePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para convocar kick off interno",
@@ -12542,9 +13441,13 @@ router.post(
     if (!latestVersion) {
       return res.status(404).json({ message: "Version no encontrada" });
     }
-    if (String(latestVersion.status_code || "").trim() !== "aceptada") {
+    if (
+      !["aceptada", "ganada"].includes(
+        String(latestVersion.status_code || "").trim(),
+      )
+    ) {
       return res.status(400).json({
-        message: "Solo se puede procesar una cotizacion aceptada",
+        message: "Solo se puede procesar una cotizacion ganada o aceptada",
       });
     }
 
@@ -12574,11 +13477,7 @@ router.post(
           message: "La ubicacion es obligatoria para reuniones presenciales",
         });
       }
-      if (payload.meetingMode === "virtual" && !payload.meetingLink) {
-        return res.status(400).json({
-          message: "El link es obligatorio para reuniones virtuales",
-        });
-      }
+      // The kickoff internal UI no longer captures a virtual link.
     }
 
     await ensureQuotationProcessingSchema();
@@ -12671,10 +13570,292 @@ router.post(
 );
 
 router.post(
-  "/quotations/:quotationId/processing/kickoff-external/evidences/manual-note",
-  requireAnyPermission(quotationPermissionCodes),
+  "/quotations/:quotationId/processing/kickoff-internal/evidences/files",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para registrar minuta",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const { files } = await parseMultipartFiles(req);
+    if (!files.length) {
+      return res
+        .status(400)
+        .json({ message: "Selecciona al menos un archivo" });
+    }
+
+    const allowedMimeTypes = new Set(config.documents.storage.allowedMimeTypes);
+    const invalidFile = files.find((file) => {
+      const mimeType = String(file.mimetype || "").trim();
+      return !mimeType || !allowedMimeTypes.has(mimeType);
+    });
+    if (invalidFile) {
+      await cleanupTempFiles(files);
+      return res.status(400).json({
+        message: `Tipo de archivo no permitido: ${invalidFile.originalFilename || invalidFile.newFilename || "archivo"}`,
+      });
+    }
+
+    try {
+      await ensureQuotationProcessingSchema();
+      await withTransaction(async (conn) => {
+        const now = new Date();
+        for (const file of files) {
+          const originalFileName =
+            String(file.originalFilename || file.newFilename || "minuta").trim() ||
+            "minuta";
+          const mimeType =
+            String(file.mimetype || "application/octet-stream").trim() ||
+            "application/octet-stream";
+          const extension = path.extname(originalFileName || "").slice(1) || null;
+          const buffer = await readFile(file.filepath);
+          const extractedContentText = await tryExtractEvidenceContentText({
+            buffer,
+            mimeType,
+            fileName: originalFileName,
+            extension,
+          });
+          const sha256 = createHash("sha256").update(buffer).digest("hex");
+          const storageKey = buildQuotationProcessingEvidenceStorageKey({
+            quotationId,
+            versionId: Number(latestVersion.id),
+            sha256,
+            fileName: originalFileName,
+          });
+          const stored = await documentStorage.save({ buffer, storageKey });
+          const publicId = `doc_${randomUUID().replace(/-/g, "")}`;
+          const [insertResult] = await conn.query(
+            `INSERT INTO documents
+               (public_id, upload_session_id, entity_type, entity_id, storage_provider,
+                storage_bucket, storage_key, original_file_name, stored_file_name,
+                mime_type, file_extension, byte_size, sha256, document_kind, source_label,
+                processing_status, processing_error, duration_seconds, is_deleted,
+                uploaded_by_user_id, created_at, updated_at)
+             VALUES (?, NULL, 'quotation_processing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, 0, ?, ?, ?)`,
+            [
+              publicId,
+              Number(latestVersion.id),
+              stored.storageProvider,
+              stored.storageBucket,
+              stored.storageKey,
+              originalFileName,
+              stored.storedFileName,
+              mimeType,
+              extension,
+              Number(file.size || buffer.length || 0),
+              sha256,
+              "quotation_processing_evidence",
+              "Minuta kick off interno",
+              Number(req.user.id),
+              now,
+              now,
+            ],
+          );
+
+          const evidenceType = mimeType.startsWith("audio/")
+            ? "audio_file"
+            : "text_file";
+          await conn.query(
+            `INSERT INTO quotation_processing_evidences
+              (quotation_id, quotation_version_id, opportunity_id, stage_code,
+               evidence_type, document_id, content_text, created_by_user_id, created_at)
+             VALUES (?, ?, ?, 'kickoff_internal', ?, ?, ?, ?, ?)`,
+            [
+              Number(quotation.id),
+              Number(latestVersion.id),
+              Number(quotation.opportunity_id),
+              evidenceType,
+              Number(insertResult.insertId),
+              extractedContentText,
+              Number(req.user.id),
+              now,
+            ],
+          );
+        }
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
+
+    await upsertQuotationProcessingStage({
+      quotation,
+      latestVersion,
+      stageCode: "kickoff_internal",
+      userId: Number(req.user.id),
+      status: "in_progress",
+      ownerUserId: null,
+      targetDate: null,
+      completedAt: null,
+      blockedReason: null,
+      notes: null,
+      stageData: {},
+    });
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_kickoff_internal_minutes_uploaded",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Archivo de minuta cargado en kick off interno",
+      after: { filesCount: files.length },
+    });
+
+    return res.status(201).json({
+      message: "Minuta cargada",
+      evidences: await listQuotationProcessingEvidences({
+        quotationId,
+        stageCode: "kickoff_internal",
+      }),
+    });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/kickoff-internal/ai-summary",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (!hasQuotationProcessingIaPermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para generar resumen IA",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) {
+      return res.status(404).json({ message: "Version no encontrada" });
+    }
+
+    const evidences = await listQuotationProcessingEvidences({
+      quotationId,
+      stageCode: "kickoff_internal",
+    });
+    if (!evidences.length) {
+      return res.status(400).json({
+        message:
+          "Debes registrar al menos una minuta antes de generar el resumen IA",
+      });
+    }
+
+    const hydratedEvidences = await hydrateEvidenceContentTextForAiSummary(
+      evidences,
+    );
+
+    let summaryData = null;
+    try {
+      summaryData = await buildKickoffAiSummaryFromEvidence({
+        evidenceRows: hydratedEvidences.map((item) => ({
+          evidence_type: item.evidenceType,
+          content_text: item.contentText,
+          original_file_name: item.document?.originalFileName || null,
+        })),
+        user: req.user,
+        stageCode: "kickoff_internal",
+      });
+    } catch (error) {
+      const status = Number(error?.status || 502);
+      return res.status(status >= 400 && status < 600 ? status : 502).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible generar el resumen IA de la minuta",
+      });
+    }
+
+    await ensureQuotationProcessingSchema();
+    await query(
+      `INSERT INTO quotation_processing_ai_summaries
+        (quotation_id, quotation_version_id, opportunity_id, stage_code,
+         summary_json, source_evidence_json, generated_by_user_id, created_at)
+       VALUES (?, ?, ?, 'kickoff_internal', ?, ?, ?, NOW(3))`,
+      [
+        Number(quotation.id),
+        Number(latestVersion.id),
+        Number(quotation.opportunity_id),
+        JSON.stringify(summaryData),
+        JSON.stringify(evidences.map((item) => item.id)),
+        Number(req.user.id),
+      ],
+    );
+
+    await upsertQuotationProcessingStage({
+      quotation,
+      latestVersion,
+      stageCode: "kickoff_internal",
+      userId: Number(req.user.id),
+      status: "in_progress",
+      ownerUserId: null,
+      targetDate: null,
+      completedAt: null,
+      blockedReason: null,
+      notes: null,
+      stageData: {
+        aiSummaryCurrent: {
+          ...summaryData,
+          generatedAt: new Date().toISOString(),
+          generatedByUserId: Number(req.user.id),
+        },
+      },
+    });
+
+    const history = await listQuotationProcessingAiSummaries({
+      quotationId,
+      stageCode: "kickoff_internal",
+    });
+
+    return res.json({
+      message: "Resumen IA generado",
+      aiSummaryCurrent: history[0] || null,
+      aiSummaryHistory: history,
+    });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/kickoff-external/evidences/manual-note",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para registrar evidencias",
@@ -12762,9 +13943,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-external/evidences/files",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para registrar evidencias",
@@ -12824,6 +14005,12 @@ router.post(
             "application/octet-stream";
           const extension = path.extname(originalFileName || "").slice(1) || null;
           const buffer = await readFile(file.filepath);
+          const extractedContentText = await tryExtractEvidenceContentText({
+            buffer,
+            mimeType,
+            fileName: originalFileName,
+            extension,
+          });
           const sha256 = createHash("sha256").update(buffer).digest("hex");
           const storageKey = buildQuotationProcessingEvidenceStorageKey({
             quotationId,
@@ -12868,13 +14055,14 @@ router.post(
             `INSERT INTO quotation_processing_evidences
               (quotation_id, quotation_version_id, opportunity_id, stage_code,
                evidence_type, document_id, content_text, created_by_user_id, created_at)
-             VALUES (?, ?, ?, 'kickoff_external', ?, ?, NULL, ?, ?)`,
+             VALUES (?, ?, ?, 'kickoff_external', ?, ?, ?, ?, ?)`,
             [
               Number(quotation.id),
               Number(latestVersion.id),
               Number(quotation.opportunity_id),
               evidenceType,
               Number(insertResult.insertId),
+              extractedContentText,
               Number(req.user.id),
               now,
             ],
@@ -12921,9 +14109,9 @@ router.post(
 
 router.post(
   "/quotations/:quotationId/processing/kickoff-external/ai-summary",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingIaPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para generar resumen IA",
@@ -12962,13 +14150,29 @@ router.post(
       });
     }
 
-    const summaryData = buildAiSummaryFromEvidence(
-      evidences.map((item) => ({
-        evidence_type: item.evidenceType,
-        content_text: item.contentText,
-        original_file_name: item.document?.originalFileName || null,
-      })),
+    const hydratedEvidences = await hydrateEvidenceContentTextForAiSummary(
+      evidences,
     );
+
+    let summaryData = null;
+    try {
+      summaryData = await buildKickoffAiSummaryFromEvidence({
+        evidenceRows: hydratedEvidences.map((item) => ({
+          evidence_type: item.evidenceType,
+          content_text: item.contentText,
+          original_file_name: item.document?.originalFileName || null,
+        })),
+        user: req.user,
+        stageCode: "kickoff_external",
+      });
+    } catch (error) {
+      const status = Number(error?.status || 502);
+      return res.status(status >= 400 && status < 600 ? status : 502).json({
+        message:
+          String(error?.message || "").trim() ||
+          "No fue posible generar el resumen IA de la minuta",
+      });
+    }
 
     await ensureQuotationProcessingSchema();
     await query(
@@ -13031,11 +14235,111 @@ router.post(
   },
 );
 
+router.delete(
+  "/quotations/:quotationId/processing/evidences/:evidenceId",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({
+        message: "No autorizado para eliminar evidencias",
+      });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    const evidenceId = Number(req.params.evidenceId);
+    if (
+      !Number.isInteger(quotationId) ||
+      quotationId <= 0 ||
+      !Number.isInteger(evidenceId) ||
+      evidenceId <= 0
+    ) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation) {
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
+    }
+
+    await ensureQuotationProcessingSchema();
+    const evidenceRows = await query(
+      `SELECT id, stage_code, document_id
+       FROM quotation_processing_evidences
+       WHERE id = ?
+         AND quotation_id = ?
+       LIMIT 1`,
+      [evidenceId, quotationId],
+    );
+    const evidenceRow = evidenceRows[0] || null;
+    if (!evidenceRow) {
+      return res.status(404).json({ message: "Evidencia no encontrada" });
+    }
+
+    const stageCode = String(evidenceRow.stage_code || "").trim() || null;
+    const documentId = Number(evidenceRow.document_id || 0) || null;
+
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `DELETE FROM quotation_processing_evidences
+         WHERE id = ?
+           AND quotation_id = ?
+         LIMIT 1`,
+        [evidenceId, quotationId],
+      );
+
+      if (documentId) {
+        const [linkedRows] = await conn.query(
+          `SELECT COUNT(*) AS count
+           FROM quotation_processing_evidences
+           WHERE document_id = ?`,
+          [documentId],
+        );
+        const linkedCount = Number(linkedRows?.[0]?.count || 0);
+        if (linkedCount === 0) {
+          await conn.query(
+            `UPDATE documents
+             SET is_deleted = 1,
+                 updated_at = NOW(3)
+             WHERE id = ?`,
+            [documentId],
+          );
+        }
+      }
+    });
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_evidence_deleted",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Evidencia eliminada del procesamiento de cotizacion",
+      after: {
+        evidenceId,
+        stageCode,
+      },
+    });
+
+    return res.json({
+      message: "Evidencia eliminada",
+      stageCode,
+      evidences: await listQuotationProcessingEvidences({
+        quotationId,
+        stageCode: stageCode || "kickoff_internal",
+      }),
+    });
+  },
+);
+
 router.get(
   "/quotations/:quotationId/processing/evidences/:evidenceId/download",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingReadPermission(req.user)) {
       return res.status(403).json({
         message: "No autorizado para descargar evidencias",
@@ -15837,9 +17141,17 @@ router.get(
 
 router.get(
   "/quotation-versions/:versionId/won-documents",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingReadPermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para consultar documentos de cierre",
+      });
+    }
     const versionId = Number(req.params.versionId);
     if (!Number.isInteger(versionId) || versionId <= 0) {
       return res.status(400).json({ message: "Id de version invalido" });
@@ -15874,9 +17186,17 @@ router.get(
 
 router.post(
   "/quotation-versions/:versionId/won-documents",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingUpdatePermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para registrar documentos de cierre",
+      });
+    }
     const versionId = Number(req.params.versionId);
     if (!Number.isInteger(versionId) || versionId <= 0) {
       return res.status(400).json({ message: "Id de version invalido" });
@@ -15934,6 +17254,7 @@ router.post(
         version,
         selections: parsed.data.selections,
         accept: Boolean(parsed.data.accept),
+        acceptedAt: parsed.data.acceptedAt || null,
         userId: Number(req.user.id),
       });
     } catch (error) {
@@ -17408,9 +18729,17 @@ router.get(
 
 router.get(
   "/quotation-versions/:versionId/won-documents/:source/:documentId/download",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (
+      !hasAnyQuotationPermission(req.user) &&
+      !hasQuotationProcessingReadPermission(req.user)
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para descargar documentos de cierre",
+      });
+    }
 
     const versionId = Number(req.params.versionId);
     const documentId = Number(req.params.documentId);
@@ -19928,20 +21257,29 @@ async function evaluateQuotationApprovalPolicies({
 
 router.post(
   "/quotation-versions/:versionId/transition",
-  requireAnyPermission(quotationPermissionCodes),
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
-    if (!assertQuotationPermission(req, res)) return;
-    const versionId = Number(req.params.versionId);
-    if (!Number.isInteger(versionId) || versionId <= 0) {
-      return res.status(400).json({ message: "Id de version invalido" });
-    }
-
     const parsed = transitionSchema.safeParse(req.body || {});
     if (!parsed.success) {
       return res.status(400).json({
         message: "Datos invalidos",
         errors: parsed.error.flatten(),
       });
+    }
+
+    const actionCode = parsed.data.actionCode;
+    const hasQuotationPermission = hasAnyQuotationPermission(req.user);
+    const isAcceptOrderAction = actionCode === "aceptar";
+
+    if (!hasQuotationPermission) {
+      if (!hasAnyAcceptOrderPermission(req.user) || !isAcceptOrderAction) {
+        return res.status(403).json({ message: "No autorizado" });
+      }
+    }
+
+    const versionId = Number(req.params.versionId);
+    if (!Number.isInteger(versionId) || versionId <= 0) {
+      return res.status(400).json({ message: "Id de version invalido" });
     }
 
     const version = await getAccessibleQuotationVersion({
@@ -19957,7 +21295,6 @@ router.post(
       });
     }
 
-    const actionCode = parsed.data.actionCode;
     const approvalContext = parsed.data.approvalContext || {};
     const approvalMode = String(approvalContext?.approvalMode || "").trim();
     const canExecute = await canExecuteQuotationAction({
@@ -19965,7 +21302,13 @@ router.post(
       versionRow: version,
       actionCode,
     });
-    if (!canExecute && !hasQuotationAdministration(req.user)) {
+    const canAcceptFromAcceptOrderModule =
+      isAcceptOrderAction && hasQuotationProcessingUpdatePermission(req.user);
+    if (
+      !canExecute &&
+      !canAcceptFromAcceptOrderModule &&
+      !hasQuotationAdministration(req.user)
+    ) {
       return res
         .status(403)
         .json({ message: "No autorizado para esta accion" });

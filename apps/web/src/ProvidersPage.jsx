@@ -30,6 +30,9 @@ function ProvidersPage({ currentUser }) {
     canCreateProviderPrices,
     canUpdateProviderPrices,
     form,
+    providerContactsDraft,
+    providerContactDraft,
+    editingProviderContactIndex,
     providerStatusCounts,
     totalProvidersCount,
     visibleProviders,
@@ -55,6 +58,11 @@ function ProvidersPage({ currentUser }) {
     getProviderStatusConfirmationMeta,
     saveProvider,
     updateProviderFormField,
+    updateProviderContactDraftField,
+    upsertProviderContactDraft,
+    editProviderContact,
+    removeProviderContact,
+    cancelProviderContactEdit,
     providerPriceListModalProvider,
     currentProviderForPriceList,
     providerPriceLists,
@@ -287,6 +295,14 @@ function ProvidersPage({ currentUser }) {
         onClose={closeProviderModal}
         onSubmit={saveProvider}
         onChange={updateProviderFormField}
+        contacts={providerContactsDraft}
+        contactDraft={providerContactDraft}
+        editingContactIndex={editingProviderContactIndex}
+        onContactDraftChange={updateProviderContactDraftField}
+        onUpsertContact={upsertProviderContactDraft}
+        onEditContact={editProviderContact}
+        onRemoveContact={removeProviderContact}
+        onCancelContactEdit={cancelProviderContactEdit}
         getProviderStatusIconBadgeClassById={getProviderStatusIconBadgeClassById}
         formatDateTime={formatDateTime}
       />

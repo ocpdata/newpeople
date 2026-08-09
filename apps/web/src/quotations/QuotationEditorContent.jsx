@@ -55,6 +55,22 @@ function formatWonDocumentSourceLabel(source) {
   return WON_DOCUMENT_SOURCE_LABELS[normalizedSource] || "Documento";
 }
 
+function getTodayDateInputValue() {
+  const now = new Date();
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeWonAcceptedDateInput(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
+    return text.slice(0, 10);
+  }
+  return getTodayDateInputValue();
+}
+
 function normalizeQuotationPdfPayload(printModel) {
   if (!printModel || typeof printModel !== "object") {
     return null;
@@ -1015,6 +1031,7 @@ function QuotationEditorContent({
     purchaseOrderSelectionKey: "",
     providerQuoteSelectionKeys: [],
     accepted: false,
+    acceptedAtInput: getTodayDateInputValue(),
   });
   const [quotationGoogleMailStatus, setQuotationGoogleMailStatus] = useState({
     loading: false,
@@ -1463,6 +1480,9 @@ function QuotationEditorContent({
         )
         .filter(Boolean),
       accepted: Boolean(payload?.acceptance?.accepted),
+      acceptedAtInput: normalizeWonAcceptedDateInput(
+        payload?.acceptance?.acceptedAt,
+      ),
     }));
   }, []);
 
@@ -1481,6 +1501,7 @@ function QuotationEditorContent({
       message: "",
       pendingWonDeclaration: Boolean(pendingWonDeclaration),
       accepted: false,
+        acceptedAtInput: prev.acceptedAtInput || getTodayDateInputValue(),
     }));
 
     try {
@@ -1608,18 +1629,19 @@ function QuotationEditorContent({
           {
             selections: buildWonDocumentSelectionsPayload(),
             accept: normalizedAccept,
+            acceptedAt:
+              String(wonDocumentsModalState.acceptedAtInput || "").trim() || null,
           },
         );
 
         applyWonDocumentsPayloadToState(data || {});
+
+        if (normalizedAccept) return true;
+
         setWonDocumentsModalState((prev) => ({
           ...prev,
           message: String(data?.message || "Documentos guardados").trim(),
         }));
-
-        if (normalizedAccept) {
-          closeWonDocumentsModal();
-        }
 
         return true;
       } catch (err) {
@@ -1634,6 +1656,10 @@ function QuotationEditorContent({
         }));
         return false;
       } finally {
+        if (normalizedAccept) {
+          closeWonDocumentsModal();
+        }
+
         setWonDocumentsModalState((prev) => ({
           ...prev,
           saving: "",
@@ -5675,6 +5701,30 @@ function QuotationEditorContent({
                       {wonDocumentsModalState.message}
                     </p>
                   ) : null}
+
+                  <section className="account-form-section quotation-won-documents-meta-section">
+                    <label className="field-group quotation-won-documents-date-field">
+                      <span>Fecha declarada ganada</span>
+                      <input
+                        type="date"
+                        value={wonDocumentsModalState.acceptedAtInput || ""}
+                        onChange={(event) =>
+                          setWonDocumentsModalState((prev) => ({
+                            ...prev,
+                            acceptedAtInput:
+                              String(event.target.value || "").trim() ||
+                              getTodayDateInputValue(),
+                          }))
+                        }
+                        disabled={Boolean(wonDocumentsModalState.saving)}
+                      />
+                      <small className="field-hint">
+                        {wonDocumentsModalState.accepted
+                          ? "Puedes ajustar la fecha registrada de la declaracion ganada."
+                          : "Si la cotizacion aun no fue declarada ganada, se usara esta fecha al aceptarla."}
+                      </small>
+                    </label>
+                  </section>
 
                   <section className="account-form-section quotation-won-documents-section">
                     <div className="section-header-actions">

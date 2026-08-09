@@ -872,6 +872,28 @@
   gap: 14px;
 }
 
+.quotation-won-documents-meta-section {
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+  border: 1px solid #d7e3f3;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.quotation-won-documents-date-field {
+  display: grid;
+  gap: 8px;
+  max-width: 280px;
+}
+
+.quotation-won-documents-date-field input {
+  width: 100%;
+}
+
+.quotation-won-documents-date-field .field-hint {
+  margin: 0;
+}
+
 .quotation-won-documents-section {
   display: grid;
   gap: 12px;

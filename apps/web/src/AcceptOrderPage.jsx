@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
+import PurchaseOrderPrintPreviewModal from "./quotations/PurchaseOrderPrintPreviewModal";
+import { buildPurchaseOrderPrintModel } from "./quotations/buildPurchaseOrderPrintModel";
 import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation";
 
 const ACCEPT_ORDER_STATUS_CODES = ["ganada", "aceptada"];
@@ -12,7 +14,7 @@ const WON_DOCUMENT_SOURCE_LABELS = {
 };
 
 const PROCESSING_STAGE_DEFINITIONS = [
-  { code: "quotation_accepted", name: "Cotizacion Aceptada" },
+  { code: "quotation_accepted", name: "Aceptar Cotización" },
   { code: "kickoff_internal", name: "Kick Off interno" },
   { code: "kickoff_external", name: "Kick Off externo" },
   { code: "provider_purchase_order", name: "Orden de compra a proveedores" },
@@ -41,22 +43,7 @@ const PROCESSING_STAGE_STATUS_LABELS = Object.fromEntries(
 );
 
 const BASE_STAGE_SPECIFIC_FIELDS = {
-  provider_purchase_order: [
-    { key: "poRequestedAt", label: "Fecha solicitud OC", type: "date" },
-    { key: "poConfirmedAt", label: "Fecha confirmacion OC", type: "date" },
-    {
-      key: "providersInvolved",
-      label: "Proveedores involucrados",
-      type: "text",
-      placeholder: "Ej. Provider A, Provider B",
-    },
-    {
-      key: "purchaseOrderReferences",
-      label: "Referencias OC",
-      type: "text",
-      placeholder: "Ej. OC-2025-004, OC-2025-009",
-    },
-  ],
+  provider_purchase_order: [],
   products_reception: [
     {
       key: "expectedReceptionDate",
@@ -162,9 +149,13 @@ function buildEmptyProcessingData() {
     quotation: null,
     stages: [],
     assignableUsers: [],
+    providers: [],
     kickoffInternal: {
       latestInvitation: null,
       invitations: [],
+      evidences: [],
+      aiSummaryCurrent: null,
+      aiSummaryHistory: [],
     },
     kickoffExternal: {
       evidences: [],
@@ -182,11 +173,12 @@ function buildEmptyProcessingData() {
 
 function buildEmptyKickoffInvitationDraft() {
   return {
-    meetingDate: "",
-    meetingTime: "",
+    meetingDateOptionOne: "",
+    meetingDateOptionTwo: "",
+    meetingTimeOptionOne: "",
+    meetingTimeOptionTwo: "",
     meetingMode: "virtual",
     meetingLocation: "",
-    meetingLink: "",
     inviteSubject: "",
     inviteBodyTemplate: "",
     internalAttendeesUserIds: [],
@@ -194,21 +186,28 @@ function buildEmptyKickoffInvitationDraft() {
   };
 }
 
+function formatInvitationDateOption(dateText) {
+  const normalized = String(dateText || "").trim();
+  if (!normalized) return "[pendiente]";
+  const parts = normalized.split("-");
+  if (parts.length !== 3) return normalized;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
 function buildKickoffInvitePrefill(quotation) {
   const opportunity = quotation?.opportunityName || "Oportunidad";
-  const account = quotation?.accountName || "Cliente";
   const subject = `Kick Off interno - ${opportunity}`;
   const body = [
     `Hola equipo,`,
     "",
-    `Se convoca Kick Off interno para la oportunidad ${opportunity} (${account}).`,
+    `Se convoca Kick Off interno para la oportunidad ${opportunity}.`,
     "",
-    "Fecha: [definir]",
+    "Fecha opcion 1: [definir]",
+    "Fecha opcion 2: [definir]",
     "Hora: [definir]",
     "Modalidad: [presencial/virtual]",
-    "Ubicacion o link: [definir]",
     "",
-    "Objetivo: alinear alcance operativo, tiempos y responsabilidades previas a la ejecucion.",
+    "Por favor confirmar disponibilidad para cualquiera de las dos fechas propuestas.",
     "",
     "Gracias.",
   ].join("\n");
@@ -218,6 +217,95 @@ function buildKickoffInvitePrefill(quotation) {
     inviteSubject: subject,
     inviteBodyTemplate: body,
   };
+}
+
+function buildKickoffInternalEmailPreview({ quotation, draft }) {
+  const opportunity =
+    String(quotation?.opportunityName || "Oportunidad").trim() || "Oportunidad";
+  const optionOne = formatInvitationDateOption(draft?.meetingDateOptionOne);
+  const optionTwo = formatInvitationDateOption(draft?.meetingDateOptionTwo);
+  const timeOptionOne =
+    String(draft?.meetingTimeOptionOne || "").trim() || "[pendiente]";
+  const timeOptionTwo =
+    String(draft?.meetingTimeOptionTwo || "").trim() || "[pendiente]";
+  const modeText =
+    String(draft?.meetingMode || "virtual").trim() === "presencial"
+      ? "Presencial"
+      : "Virtual";
+  const locationText =
+    modeText === "Presencial"
+      ? String(draft?.meetingLocation || "").trim() || "[pendiente]"
+      : "Se compartira en la convocatoria interna";
+
+  const sellerName = String(quotation?.sellerUserName || "").trim();
+  const usersById = new Map(
+    (Array.isArray(draft?.assignableUsers) ? draft.assignableUsers : []).map((user) => [
+      Number(user.id),
+      String(user.fullName || "").trim(),
+    ]),
+  );
+  const selectedNames = (Array.isArray(draft?.internalAttendeesUserIds)
+    ? draft.internalAttendeesUserIds
+    : []
+  )
+    .map((id) => usersById.get(Number(id)) || "")
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  const normalizedSeller = sellerName.toLowerCase();
+  const sellerInSelection =
+    selectedNames.find((name) => name.toLowerCase() === normalizedSeller) ||
+    sellerName ||
+    "No identificado";
+  const preSalesInSelection =
+    selectedNames.find((name) => name.toLowerCase() !== normalizedSeller) ||
+    "No identificado";
+
+  const subject = `Kick Off interno - ${opportunity}`;
+  const body = [
+    "Hola equipo,",
+    "",
+    `Se convoca reunion de Kick Off interno para la oportunidad ${opportunity}.`,
+    "",
+    `Fecha opcion 1: ${optionOne} ${timeOptionOne !== "[pendiente]" ? `a las ${timeOptionOne}` : ""}`,
+    `Fecha opcion 2: ${optionTwo} ${timeOptionTwo !== "[pendiente]" ? `a las ${timeOptionTwo}` : ""}`,
+    `Modalidad: ${modeText}`,
+    `${modeText === "Presencial" ? "Ubicacion" : "Referencia"}: ${locationText}`,
+    "",
+    `Vendedor (convocados): ${sellerInSelection}`,
+    `Preventa (convocados): ${preSalesInSelection}`,
+    "",
+    "Por favor confirmar su disponibilidad para asistir en cualquiera de las dos fechas propuestas.",
+    "",
+    "Gracias.",
+  ].join("\n");
+
+  return { subject, body };
+}
+
+function buildSellerNotificationPrefill(quotation) {
+  const sellerName = String(quotation?.sellerUserName || "Vendedor").trim();
+  const quotationId = Number(quotation?.id || 0);
+  const proposalName =
+    String(quotation?.latestProposalName || "Sin propuesta").trim() ||
+    "Sin propuesta";
+  const opportunityName =
+    String(quotation?.opportunityName || "Sin oportunidad").trim() ||
+    "Sin oportunidad";
+  const accountName =
+    String(quotation?.accountName || "Sin cuenta").trim() || "Sin cuenta";
+
+  return [
+    `Hola ${sellerName},`,
+    "",
+    `Por favor da seguimiento a la cotizacion #${quotationId || "-"}.`,
+    `Propuesta: ${proposalName}.`,
+    `Oportunidad: ${opportunityName}.`,
+    `Cuenta: ${accountName}.`,
+    "",
+    "Accion solicitada: revisar el flujo de procesamiento operativo y confirmar la etapa Aceptar Cotizacion.",
+    "",
+    "Gracias.",
+  ].join("\n");
 }
 
 function parseEmailDraft(value) {
@@ -238,6 +326,177 @@ function buildAcceptOrderWonDocumentsState() {
     purchaseOrder: null,
     providerQuotes: [],
   };
+}
+
+function toDateInputValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizePositiveNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
+function buildPurchaseOrderLines({
+  products = [],
+  productAssignments = {},
+  providers = [],
+}) {
+  const providersById = new Map(
+    (Array.isArray(providers) ? providers : []).map((provider) => [
+      Number(provider.id),
+      String(provider.name || "").trim(),
+    ]),
+  );
+
+  const normalizedProducts = Array.isArray(products) ? products : [];
+  const normalizedAssignments =
+    productAssignments && typeof productAssignments === "object"
+      ? productAssignments
+      : {};
+
+  const selectedOnly = normalizedProducts.filter((product) => {
+    const assignment =
+      normalizedAssignments[String(product.assignmentKey || product.id || "")] || {};
+    return Boolean(assignment?.selected);
+  });
+  const source = selectedOnly.length ? selectedOnly : normalizedProducts;
+
+  return source.map((product) => {
+    const itemKey = String(product.assignmentKey || product.id || "");
+    const assignment = normalizedAssignments[itemKey] || {};
+    const selectionDate =
+      toDateInputValue(assignment?.selectionDate) ||
+      toDateInputValue(product.selectionDate) ||
+      toDateInputValue(new Date());
+    const quantity = normalizePositiveNumber(
+      assignment?.quantity,
+      normalizePositiveNumber(product.quantity, 0),
+    );
+    const unitCost = normalizePositiveNumber(
+      assignment?.unitCostWithDiscount,
+      normalizePositiveNumber(product.unitCostWithDiscount, 0),
+    );
+    const discountPct = Math.min(
+      100,
+      normalizePositiveNumber(assignment?.discountPct, 0),
+    );
+    const providerId =
+      assignment?.providerId == null || assignment?.providerId === ""
+        ? Number(product.providerId || 0) || null
+        : Number(assignment.providerId || 0) || null;
+    const providerName =
+      (providerId ? providersById.get(Number(providerId)) : "") ||
+      String(product.providerName || "").trim() ||
+      "";
+
+    return {
+      lineId: itemKey || `${Math.random()}`,
+      productId: Number(product.sourceProductId || product.id || 0) || null,
+      code: String(product.code || "").trim() || "-",
+      description: String(product.description || "").trim() || "Sin descripcion",
+      quantity,
+      unitCost,
+      discountPct,
+      selectionDate,
+      providerId,
+      providerName,
+      currencyCode: String(product.currencyCode || "USD").trim() || "USD",
+    };
+  });
+}
+
+function buildProviderPurchaseOrderRows({
+  products = [],
+  productAssignmentDuplicates = {},
+  productAssignmentExtras = {},
+}) {
+  const normalizedProducts = Array.isArray(products) ? products : [];
+  const normalizedDuplicates =
+    productAssignmentDuplicates && typeof productAssignmentDuplicates === "object"
+      ? productAssignmentDuplicates
+      : {};
+  const normalizedExtras =
+    productAssignmentExtras && typeof productAssignmentExtras === "object"
+      ? productAssignmentExtras
+      : {};
+
+  const productsById = new Map(
+    normalizedProducts
+      .map((product) => [Number(product.id || 0), product])
+      .filter(([id]) => Number.isInteger(id) && id > 0),
+  );
+
+  const baseRows = normalizedProducts.map((product) => {
+    const productId = Number(product.id || 0) || null;
+    return {
+      ...product,
+      id: String(product.id || ""),
+      assignmentKey: String(product.id || ""),
+      sourceProductId: productId,
+      isDuplicate: false,
+    };
+  });
+
+  const duplicatesBySource = Object.entries(normalizedDuplicates).reduce(
+    (map, [duplicateKey, duplicateMeta]) => {
+      const sourceProductId = Number(duplicateMeta?.sourceProductId || 0);
+      const sourceProduct = productsById.get(sourceProductId);
+      if (!sourceProduct) return map;
+      const duplicateRow = {
+        ...sourceProduct,
+        id: String(duplicateKey),
+        assignmentKey: String(duplicateKey),
+        sourceProductId,
+        isDuplicate: true,
+        createdAt: Number(duplicateMeta?.createdAt || 0),
+      };
+      const current = map.get(sourceProductId) || [];
+      current.push(duplicateRow);
+      map.set(sourceProductId, current);
+      return map;
+    },
+    new Map(),
+  );
+
+  const groupedRows = baseRows.flatMap((baseRow) => {
+    const sourceProductId = Number(baseRow.sourceProductId || 0);
+    const duplicates = duplicatesBySource.get(sourceProductId) || [];
+    return [baseRow, ...duplicates];
+  });
+
+  const extraRows = Object.entries(normalizedExtras)
+    .map(([extraKey, extraMeta]) => ({
+      id: String(extraKey),
+      assignmentKey: String(extraKey),
+      sourceProductId: Number(extraMeta?.sourceProductId || 0) || null,
+      isDuplicate: false,
+      isCustom: true,
+      code: String(extraMeta?.code || "").trim() || "ITEM-MANUAL",
+      description:
+        String(extraMeta?.description || "").trim() || "Item agregado manualmente",
+      providerId: Number(extraMeta?.providerId || 0) || null,
+      providerName: "",
+      quantity: normalizePositiveNumber(extraMeta?.quantity, 1),
+      unitCostWithDiscount: normalizePositiveNumber(extraMeta?.unitCostWithDiscount, 0),
+      selectionDate: toDateInputValue(extraMeta?.selectionDate) || toDateInputValue(new Date()),
+      currencyCode: String(extraMeta?.currencyCode || "USD").trim() || "USD",
+      createdAt: Number(extraMeta?.createdAt || 0),
+    }))
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  return [...groupedRows, ...extraRows];
+}
+
+function calculatePurchaseOrderLineAmount(line) {
+  const quantity = normalizePositiveNumber(line?.quantity, 0);
+  const unitCost = normalizePositiveNumber(line?.unitCost, 0);
+  const discountPct = Math.min(100, normalizePositiveNumber(line?.discountPct, 0));
+  return quantity * unitCost * (1 - discountPct / 100);
 }
 
 function normalizeText(value) {
@@ -264,6 +523,17 @@ function formatDate(value) {
     month: "short",
     year: "numeric",
   }).format(date);
+}
+
+function formatPurchaseOrderNumber(quotationId, orderDate) {
+  const dateValue = String(orderDate || "").trim();
+  const [year, month, day] = dateValue.split("-");
+  if (!year || !month || !day) {
+    return `OC-${Number(quotationId || 0)}`;
+  }
+
+  const yearSuffix = String(year).slice(-2);
+  return `OC-${Number(quotationId || 0)}-${day}-${month}-${yearSuffix}`;
 }
 
 function formatPercent(value) {
@@ -375,7 +645,6 @@ export default function AcceptOrderPage() {
   const [sortDirection, setSortDirection] = useState("desc");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
-  const [openQuotationMenuId, setOpenQuotationMenuId] = useState(null);
   const [acceptingVersionId, setAcceptingVersionId] = useState(null);
   const [quotationToAccept, setQuotationToAccept] = useState(null);
   const [quotationToNotify, setQuotationToNotify] = useState(null);
@@ -387,6 +656,9 @@ export default function AcceptOrderPage() {
   );
   const [downloadingWonDocumentKey, setDownloadingWonDocumentKey] =
     useState("");
+  const [processingWonDocuments, setProcessingWonDocuments] = useState(() =>
+    buildAcceptOrderWonDocumentsState(),
+  );
   const [quotationToProcess, setQuotationToProcess] = useState(null);
   const [processingData, setProcessingData] = useState(() =>
     buildEmptyProcessingData(),
@@ -413,6 +685,34 @@ export default function AcceptOrderPage() {
     useState(false);
   const [generatingKickoffExternalAi, setGeneratingKickoffExternalAi] =
     useState(false);
+  const [uploadingKickoffInternalEvidence, setUploadingKickoffInternalEvidence] =
+    useState(false);
+  const [generatingKickoffInternalAi, setGeneratingKickoffInternalAi] =
+    useState(false);
+  const [deletingProcessingEvidenceIds, setDeletingProcessingEvidenceIds] =
+    useState(() => new Set());
+  const [editingProductCell, setEditingProductCell] = useState(null);
+  const [purchaseOrderModalOpen, setPurchaseOrderModalOpen] = useState(false);
+  const [purchaseOrderDraft, setPurchaseOrderDraft] = useState(null);
+  const [purchaseOrderFinalPreviewOpen, setPurchaseOrderFinalPreviewOpen] =
+    useState(false);
+  const [purchaseOrderPendingGeneratedOrders, setPurchaseOrderPendingGeneratedOrders] =
+    useState([]);
+  const [customStepItemPicker, setCustomStepItemPicker] = useState({
+    isOpen: false,
+    stageCode: "",
+    itemKey: "",
+    providerId: "",
+    priceListId: "",
+    activeLists: [],
+    unavailableListMessage: "",
+    loadingLists: false,
+    loading: false,
+    error: "",
+    query: "",
+    results: [],
+  });
+  const processingStageContentRef = useRef(null);
 
   useEffect(() => {
     let ignore = false;
@@ -452,8 +752,139 @@ export default function AcceptOrderPage() {
   }, []);
 
   useEffect(() => {
+    if (!activeProcessingStageCode) return;
+    processingStageContentRef.current?.scrollIntoView({
+      block: "start",
+      behavior: "smooth",
+    });
+  }, [activeProcessingStageCode]);
+
+  useEffect(() => {
     setPage(1);
   }, [query, perPage]);
+
+  useEffect(() => {
+    if (!customStepItemPicker.isOpen) return undefined;
+
+    if (!customStepItemPicker.providerId) {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        activeLists: [],
+        priceListId: "",
+        loadingLists: false,
+        unavailableListMessage: "",
+        loading: false,
+        error: "",
+        results: [],
+      }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        loadingLists: true,
+        error: "",
+      }));
+
+      try {
+        const { data } = await api.get("/api/quotation-product-lists", {
+          params: {
+            providerId: customStepItemPicker.providerId,
+          },
+        });
+
+        if (cancelled) return;
+        const nextActiveLists = Array.isArray(data) ? data : [];
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loadingLists: false,
+          activeLists: nextActiveLists,
+          unavailableListMessage: nextActiveLists.length
+            ? ""
+            : "El proveedor seleccionado no tiene una lista activa disponible.",
+          priceListId: nextActiveLists.length ? String(nextActiveLists[0].id) : "",
+          results: nextActiveLists.length ? prev.results : [],
+        }));
+      } catch (pickerError) {
+        if (cancelled) return;
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loadingLists: false,
+          error: getApiErrorMessage(
+            pickerError,
+            "No fue posible cargar las listas activas del proveedor",
+          ),
+        }));
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [customStepItemPicker.isOpen, customStepItemPicker.providerId]);
+
+  useEffect(() => {
+    if (!customStepItemPicker.isOpen) return undefined;
+
+    if (!customStepItemPicker.providerId || !customStepItemPicker.priceListId) {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        loading: false,
+        results: [],
+      }));
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setCustomStepItemPicker((prev) => ({
+        ...prev,
+        loading: true,
+        error: "",
+      }));
+
+      try {
+        const { data } = await api.get("/api/quotation-products/search", {
+          params: {
+            providerId: customStepItemPicker.providerId,
+            priceListId: customStepItemPicker.priceListId,
+            q: customStepItemPicker.query,
+            limit: 25,
+          },
+        });
+
+        if (cancelled) return;
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loading: false,
+          results: Array.isArray(data) ? data : [],
+        }));
+      } catch (pickerError) {
+        if (cancelled) return;
+        setCustomStepItemPicker((prev) => ({
+          ...prev,
+          loading: false,
+          error: getApiErrorMessage(
+            pickerError,
+            "No fue posible cargar los productos disponibles",
+          ),
+        }));
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    customStepItemPicker.isOpen,
+    customStepItemPicker.providerId,
+    customStepItemPicker.priceListId,
+    customStepItemPicker.query,
+  ]);
 
   function toggleSort(field) {
     if (sortField === field) {
@@ -469,10 +900,41 @@ export default function AcceptOrderPage() {
     return sortDirection === "asc" ? "↑" : "↓";
   }
 
-  function toggleQuotationMenu(quotationId) {
-    setOpenQuotationMenuId((current) =>
-      current === quotationId ? null : quotationId,
-    );
+  async function loadWonDocumentsForVersion(versionId, setState, fallbackMessage) {
+    const safeVersionId = Number(versionId || 0);
+    if (!safeVersionId) {
+      setState(buildAcceptOrderWonDocumentsState());
+      return;
+    }
+
+    setState({
+      loading: true,
+      error: "",
+      purchaseOrder: null,
+      providerQuotes: [],
+    });
+
+    try {
+      const { data } = await api.get(
+        `/api/quotation-versions/${safeVersionId}/won-documents`,
+      );
+
+      setState({
+        loading: false,
+        error: "",
+        purchaseOrder: data?.savedSelections?.purchaseOrder || null,
+        providerQuotes: Array.isArray(data?.savedSelections?.providerQuotes)
+          ? data.savedSelections.providerQuotes
+          : [],
+      });
+    } catch (loadError) {
+      setState({
+        loading: false,
+        error: getApiErrorMessage(loadError, fallbackMessage),
+        purchaseOrder: null,
+        providerQuotes: [],
+      });
+    }
   }
 
   async function openAcceptQuotationModal(quotation) {
@@ -484,41 +946,14 @@ export default function AcceptOrderPage() {
     }
 
     const versionId = Number(quotation?.latestVersionId || 0);
-    setOpenQuotationMenuId(null);
     setQuotationToAccept(quotation);
-    setAcceptOrderWonDocuments({
-      loading: true,
-      error: "",
-      purchaseOrder: null,
-      providerQuotes: [],
-    });
     setError("");
     setSuccess("");
-
-    try {
-      const { data } = await api.get(
-        `/api/quotation-versions/${versionId}/won-documents`,
-      );
-
-      setAcceptOrderWonDocuments({
-        loading: false,
-        error: "",
-        purchaseOrder: data?.savedSelections?.purchaseOrder || null,
-        providerQuotes: Array.isArray(data?.savedSelections?.providerQuotes)
-          ? data.savedSelections.providerQuotes
-          : [],
-      });
-    } catch (loadError) {
-      setAcceptOrderWonDocuments({
-        loading: false,
-        error: getApiErrorMessage(
-          loadError,
-          "No fue posible cargar los documentos de cierre registrados",
-        ),
-        purchaseOrder: null,
-        providerQuotes: [],
-      });
-    }
+    await loadWonDocumentsForVersion(
+      versionId,
+      setAcceptOrderWonDocuments,
+      "No fue posible cargar los documentos de cierre registrados",
+    );
   }
 
   function closeAcceptQuotationModal() {
@@ -529,7 +964,9 @@ export default function AcceptOrderPage() {
   }
 
   async function handleDownloadWonDocument(documentItem) {
-    const versionId = Number(quotationToAccept?.latestVersionId || 0);
+    const versionId = Number(
+      quotationToAccept?.latestVersionId || quotationToProcess?.latestVersionId || 0,
+    );
     const source = String(documentItem?.source || "").trim();
     const documentId = Number(documentItem?.documentId || 0);
     if (!versionId || !source || !documentId) {
@@ -570,7 +1007,7 @@ export default function AcceptOrderPage() {
   function openSellerNotificationModal(quotation) {
     if (!quotation) return;
     setQuotationToNotify(quotation);
-    setSellerNotificationNote("");
+    setSellerNotificationNote(buildSellerNotificationPrefill(quotation));
     setError("");
     setSuccess("");
   }
@@ -592,7 +1029,6 @@ export default function AcceptOrderPage() {
     if (!versionId || isAcceptedQuotation(quotation)) return;
 
     setAcceptingVersionId(versionId);
-    setOpenQuotationMenuId(null);
     setError("");
     setSuccess("");
     try {
@@ -689,8 +1125,10 @@ export default function AcceptOrderPage() {
       const latestInvitation = data?.kickoffInternal?.latestInvitation;
       if (latestInvitation) {
         setKickoffInvitationDraft({
-          meetingDate: latestInvitation.meetingDate || "",
-          meetingTime: latestInvitation.meetingTime || "",
+          ...buildEmptyKickoffInvitationDraft(),
+          meetingDateOptionOne: latestInvitation.meetingDate || "",
+          meetingTimeOptionOne: latestInvitation.meetingTime || "",
+          meetingTimeOptionTwo: latestInvitation.meetingTime || "",
           meetingMode: latestInvitation.meetingMode || "virtual",
           meetingLocation: latestInvitation.meetingLocation || "",
           meetingLink: latestInvitation.meetingLink || "",
@@ -725,14 +1163,17 @@ export default function AcceptOrderPage() {
   }
 
   async function openProcessingModal(quotation) {
-    if (!isAcceptedQuotation(quotation)) {
-      return;
-    }
-    setOpenQuotationMenuId(null);
     setQuotationToProcess(quotation);
     setError("");
     setSuccess("");
-    await loadQuotationProcessing(quotation);
+    await Promise.all([
+      loadQuotationProcessing(quotation),
+      loadWonDocumentsForVersion(
+        quotation?.latestVersionId,
+        setProcessingWonDocuments,
+        "No fue posible cargar los documentos de cierre registrados",
+      ),
+    ]);
   }
 
   function closeProcessingModal() {
@@ -751,6 +1192,345 @@ export default function AcceptOrderPage() {
     setProcessingDirty(false);
     setKickoffInvitationModalOpen(false);
     setKickoffExternalManualNote("");
+    setProcessingWonDocuments(buildAcceptOrderWonDocumentsState());
+    setDownloadingWonDocumentKey("");
+    closePurchaseOrderModal();
+    closeCustomStepItemPicker();
+  }
+
+  function closePurchaseOrderModal() {
+    setPurchaseOrderModalOpen(false);
+    setPurchaseOrderDraft(null);
+    setPurchaseOrderFinalPreviewOpen(false);
+    setPurchaseOrderPendingGeneratedOrders([]);
+  }
+
+  function openCustomStepItemPicker(stageCode, itemKey, providerId = "") {
+    setCustomStepItemPicker({
+      isOpen: true,
+      stageCode: String(stageCode || ""),
+      itemKey: String(itemKey || ""),
+      providerId: providerId ? String(providerId) : "",
+      priceListId: "",
+      activeLists: [],
+      unavailableListMessage: "",
+      loadingLists: false,
+      loading: false,
+      error: "",
+      query: "",
+      results: [],
+    });
+  }
+
+  function closeCustomStepItemPicker() {
+    setCustomStepItemPicker({
+      isOpen: false,
+      stageCode: "",
+      itemKey: "",
+      providerId: "",
+      priceListId: "",
+      activeLists: [],
+      unavailableListMessage: "",
+      loadingLists: false,
+      loading: false,
+      error: "",
+      query: "",
+      results: [],
+    });
+  }
+
+  function applyCatalogProductToCustomStepItem(product) {
+    const stageCode = String(customStepItemPicker.stageCode || "");
+    const itemKey = String(customStepItemPicker.itemKey || "");
+    if (!stageCode || !itemKey || !product) return;
+
+    const providerId = Number(product.providerId || 0) || null;
+    const unitCost = normalizePositiveNumber(
+      product.unitCostWithDiscount,
+      normalizePositiveNumber(product.price, 0),
+    );
+    const normalizedCode = String(product.code || "").trim() || "ITEM-MANUAL";
+    const normalizedDescription =
+      String(product.description || "").trim() || "Item agregado manualmente";
+    const normalizedCurrency =
+      String(product.currencyCode || processingCurrencyCode || "USD").trim() || "USD";
+
+    setProcessingData((current) => {
+      const nextStages = (Array.isArray(current.stages) ? current.stages : []).map(
+        (stage) => {
+          if (stage.stageCode !== stageCode) return stage;
+          const stageData = stage.stageData || {};
+          const currentAssignments =
+            stageData.productAssignments &&
+            typeof stageData.productAssignments === "object"
+              ? stageData.productAssignments
+              : {};
+          const currentExtras =
+            stageData.productAssignmentExtras &&
+            typeof stageData.productAssignmentExtras === "object"
+              ? stageData.productAssignmentExtras
+              : {};
+          const previousAssignment = currentAssignments[itemKey] || {};
+          const previousExtra = currentExtras[itemKey] || {};
+
+          return {
+            ...stage,
+            stageData: {
+              ...stageData,
+              productAssignments: {
+                ...currentAssignments,
+                [itemKey]: {
+                  ...previousAssignment,
+                  selected: true,
+                  providerId,
+                  unitCostWithDiscount: String(unitCost),
+                },
+              },
+              productAssignmentExtras: {
+                ...currentExtras,
+                [itemKey]: {
+                  ...previousExtra,
+                  sourceProductId: Number(product.id || 0) || null,
+                  providerId,
+                  code: normalizedCode,
+                  description: normalizedDescription,
+                  currencyCode: normalizedCurrency,
+                  unitCostWithDiscount: unitCost,
+                },
+              },
+            },
+          };
+        },
+      );
+      return {
+        ...current,
+        stages: nextStages,
+      };
+    });
+    setProcessingDirty(true);
+    closeCustomStepItemPicker();
+  }
+
+  function openPurchaseOrderModal({
+    stage,
+    productAssignments,
+    productAssignmentDuplicates,
+    productAssignmentExtras,
+  }) {
+    const selectedProductIds = new Set(
+      Object.entries(
+        productAssignments && typeof productAssignments === "object"
+          ? productAssignments
+          : {},
+      )
+        .filter(([, value]) => Boolean(value?.selected))
+        .map(([key]) => String(key)),
+    );
+
+    if (!selectedProductIds.size) {
+      setError("Selecciona al menos un item para generar orden.");
+      return;
+    }
+
+    const providerPurchaseOrderRows = buildProviderPurchaseOrderRows({
+      products: processingQuotationProducts,
+      productAssignmentDuplicates,
+      productAssignmentExtras,
+    });
+
+    const candidateLines = buildPurchaseOrderLines({
+      products: providerPurchaseOrderRows,
+      productAssignments,
+      providers: processingProviders,
+    });
+    const selectedLines = candidateLines.filter((line) =>
+      selectedProductIds.has(String(line.lineId || "")),
+    );
+
+    const missingProviderLine = selectedLines.find(
+      (line) => !Number(line?.providerId || 0),
+    );
+    if (missingProviderLine) {
+      setError(
+        `Selecciona proveedor para el item ${missingProviderLine.code || "sin codigo"}.`,
+      );
+      return;
+    }
+
+    const today = toDateInputValue(new Date());
+    const quotationNumber = Number(quotationToProcess?.id || 0);
+    const groupedByProvider = selectedLines.reduce((map, line) => {
+      const providerId = Number(line.providerId || 0);
+      const current = map.get(providerId) || {
+        draftId: `provider-${providerId}`,
+        providerId,
+        providerName: line.providerName || `Proveedor #${providerId}`,
+        orderNumber: formatPurchaseOrderNumber(quotationNumber, today),
+        orderDate: today,
+        lines: [],
+      };
+      current.lines.push({
+        ...line,
+        selectionDate: toDateInputValue(line.selectionDate) || today,
+      });
+      map.set(providerId, current);
+      return map;
+    }, new Map());
+
+    const draft = {
+      currencyCode: processingCurrencyCode || "USD",
+      orders: Array.from(groupedByProvider.values()),
+    };
+
+    setPurchaseOrderDraft(draft);
+    setPurchaseOrderModalOpen(true);
+  }
+
+  function updatePurchaseOrderDraftOrderField(orderDraftId, field, value) {
+    setPurchaseOrderDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) =>
+          String(order.draftId) === String(orderDraftId)
+            ? {
+                ...order,
+                [field]: value,
+              }
+            : order,
+        ),
+      };
+    });
+  }
+
+  function updatePurchaseOrderDraftLine(orderDraftId, lineId, patch) {
+    setPurchaseOrderDraft((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        orders: (Array.isArray(current.orders) ? current.orders : []).map((order) => {
+          if (String(order.draftId) !== String(orderDraftId)) return order;
+          return {
+            ...order,
+            lines: (Array.isArray(order.lines) ? order.lines : []).map((line) =>
+              String(line.lineId) === String(lineId)
+                ? {
+                    ...line,
+                    ...patch,
+                  }
+                : line,
+            ),
+          };
+        }),
+      };
+    });
+  }
+
+  function buildGeneratedPurchaseOrdersFromDraft() {
+    if (!purchaseOrderDraft) {
+      return { orders: [], errorMessage: "No hay ordenes para generar." };
+    }
+
+    const orders = Array.isArray(purchaseOrderDraft.orders)
+      ? purchaseOrderDraft.orders
+      : [];
+    if (!orders.length) {
+      return { orders: [], errorMessage: "No hay ordenes para generar." };
+    }
+
+    const invalidLine = orders
+      .flatMap((order) =>
+        (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
+          order,
+          line,
+        })),
+      )
+      .find(({ line }) => normalizePositiveNumber(line?.quantity, 0) <= 0);
+    if (invalidLine) {
+      return {
+        orders: [],
+        errorMessage: `La cantidad debe ser mayor a 0 para el item ${invalidLine.line.code || "sin codigo"}.`,
+      };
+    }
+
+    const generatedOrders = orders.map((order, index) => ({
+      orderId: `po-${Date.now()}-${index + 1}`,
+      providerId: Number(order.providerId || 0),
+      providerName: String(order.providerName || "").trim() || "Proveedor",
+      orderNumber:
+        String(order.orderNumber || "").trim() ||
+        formatPurchaseOrderNumber(
+          quotationToProcess?.id,
+          order.orderDate || purchaseOrderDraft.orders?.[index]?.orderDate,
+        ),
+      orderDate: order.orderDate || toDateInputValue(new Date()),
+      currencyCode: purchaseOrderDraft.currencyCode || processingCurrencyCode || "USD",
+      ivaPct: normalizePositiveNumber(order.ivaPct, 16),
+      generatedAt: new Date().toISOString(),
+      lines: (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
+        productId: Number(line.productId || 0) || null,
+        code: line.code || "-",
+        description: String(line.description || "").trim() || "Sin descripcion",
+        quantity: normalizePositiveNumber(line.quantity, 0),
+        unitCost: normalizePositiveNumber(line.unitCost, 0),
+        discountPct: Math.min(100, normalizePositiveNumber(line.discountPct, 0)),
+        selectionDate: line.selectionDate || toDateInputValue(new Date()),
+        amount: calculatePurchaseOrderLineAmount(line),
+      })),
+    }));
+
+    return { orders: generatedOrders, errorMessage: "" };
+  }
+
+  function openPurchaseOrderFinalPreview() {
+    const { orders, errorMessage } = buildGeneratedPurchaseOrdersFromDraft();
+    if (errorMessage) {
+      setError(errorMessage);
+      return;
+    }
+    setError("");
+    setPurchaseOrderPendingGeneratedOrders(orders);
+    setPurchaseOrderFinalPreviewOpen(true);
+  }
+
+  async function confirmGeneratePurchaseOrdersFromPreview() {
+    const generatedOrders = Array.isArray(purchaseOrderPendingGeneratedOrders)
+      ? purchaseOrderPendingGeneratedOrders
+      : [];
+    if (!generatedOrders.length) {
+      setError("No hay ordenes para generar.");
+      return;
+    }
+
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId) return;
+
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/quotations/${quotationId}/processing/provider-purchase-orders`,
+        {
+          orders: generatedOrders,
+        },
+      );
+      if (Array.isArray(data?.stages)) {
+        setProcessingData((current) => ({
+          ...current,
+          stages: data.stages,
+        }));
+      }
+      setSuccess(
+        `Se generaron ${generatedOrders.length} orden(es) de compra.`,
+      );
+      closePurchaseOrderModal();
+    } catch (generationError) {
+      setError(
+        getApiErrorMessage(
+          generationError,
+          "No fue posible guardar las ordenes de compra",
+        ),
+      );
+    }
   }
 
   function patchProcessingStage(stageCode, patch) {
@@ -776,7 +1556,7 @@ export default function AcceptOrderPage() {
     setProcessingDirty(true);
   }
 
-  async function saveProcessingStage(stageCode) {
+  async function saveProcessingStage(stageCode, options = {}) {
     const quotationId = Number(quotationToProcess?.id || 0);
     const stage = (processingData.stages || []).find(
       (item) => item.stageCode === stageCode,
@@ -787,14 +1567,24 @@ export default function AcceptOrderPage() {
     setError("");
     setSuccess("");
     try {
+      const nextStageData = {
+        ...(stage.stageData || {}),
+        ...(options.stageDataPatch && typeof options.stageDataPatch === "object"
+          ? options.stageDataPatch
+          : {}),
+      };
+
       const payload = {
-        status: stage.status || "not_started",
+        status: options.forceStatus || stage.status || "not_started",
         ownerUserId: stage.ownerUserId || null,
         targetDate: stage.targetDate || null,
-        completedAt: stage.completedAt || null,
+        completedAt:
+          options.forceCompletedAt !== undefined
+            ? options.forceCompletedAt
+            : stage.completedAt || null,
         blockedReason: stage.blockedReason || null,
         notes: stage.notes || null,
-        stageData: stage.stageData || {},
+        stageData: nextStageData,
       };
       const { data } = await api.patch(
         `/api/quotations/${quotationId}/processing/stages/${encodeURIComponent(stageCode)}`,
@@ -819,18 +1609,34 @@ export default function AcceptOrderPage() {
     const quotationId = Number(quotationToProcess?.id || 0);
     if (!quotationId) return;
 
+    const optionOne = String(kickoffInvitationDraft.meetingDateOptionOne || "").trim();
+    const optionTwo = String(kickoffInvitationDraft.meetingDateOptionTwo || "").trim();
+    if (statusCode === "sent" && (!optionOne || !optionTwo)) {
+      setError("Selecciona las dos fechas propuestas antes de enviar la convocatoria");
+      return;
+    }
+
+    const preparedEmail = buildKickoffInternalEmailPreview({
+      quotation: quotationToProcess,
+      draft: {
+        ...kickoffInvitationDraft,
+        assignableUsers: processingUsers,
+      },
+    });
+
     setSavingKickoffInvitation(true);
     setError("");
     setSuccess("");
     try {
       const payload = {
-        meetingDate: kickoffInvitationDraft.meetingDate || null,
-        meetingTime: kickoffInvitationDraft.meetingTime || null,
+        meetingDate: optionOne || null,
+        meetingTime:
+          String(kickoffInvitationDraft.meetingTimeOptionOne || "").trim() || null,
         meetingMode: kickoffInvitationDraft.meetingMode || null,
         meetingLocation: kickoffInvitationDraft.meetingLocation || null,
-        meetingLink: kickoffInvitationDraft.meetingLink || null,
-        inviteSubject: kickoffInvitationDraft.inviteSubject,
-        inviteBodyTemplate: kickoffInvitationDraft.inviteBodyTemplate,
+        meetingLink: null,
+        inviteSubject: preparedEmail.subject,
+        inviteBodyTemplate: preparedEmail.body,
         internalAttendeesUserIds: kickoffInvitationDraft.internalAttendeesUserIds,
         externalAttendeesEmails: parseEmailDraft(
           kickoffInvitationDraft.externalAttendeesEmails,
@@ -858,6 +1664,22 @@ export default function AcceptOrderPage() {
     } finally {
       setSavingKickoffInvitation(false);
     }
+  }
+
+  function openKickoffInvitationPreviewModal() {
+    const preparedEmail = buildKickoffInternalEmailPreview({
+      quotation: quotationToProcess,
+      draft: {
+        ...kickoffInvitationDraft,
+        assignableUsers: processingUsers,
+      },
+    });
+    setKickoffInvitationDraft((current) => ({
+      ...current,
+      inviteSubject: preparedEmail.subject,
+      inviteBodyTemplate: preparedEmail.body,
+    }));
+    setKickoffInvitationModalOpen(true);
   }
 
   async function uploadKickoffExternalEvidence(files) {
@@ -892,6 +1714,72 @@ export default function AcceptOrderPage() {
       );
     } finally {
       setUploadingKickoffExternalEvidence(false);
+    }
+  }
+
+  async function uploadKickoffInternalEvidence(files) {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId || !files?.length) return;
+
+    setUploadingKickoffInternalEvidence(true);
+    setError("");
+    setSuccess("");
+    try {
+      const formData = new FormData();
+      Array.from(files).forEach((file) => {
+        formData.append("files", file);
+      });
+      await api.post(
+        `/api/quotations/${quotationId}/processing/kickoff-internal/evidences/files`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          timeout: 120000,
+        },
+      );
+      await loadQuotationProcessing(quotationToProcess, "kickoff_internal");
+      setSuccess("Minuta cargada en Kick Off interno");
+    } catch (uploadError) {
+      setError(
+        getApiErrorMessage(
+          uploadError,
+          "No fue posible cargar la minuta en Kick Off interno",
+        ),
+      );
+    } finally {
+      setUploadingKickoffInternalEvidence(false);
+    }
+  }
+
+  async function generateKickoffInternalAiSummary() {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId) return;
+
+    setGeneratingKickoffInternalAi(true);
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.post(
+        `/api/quotations/${quotationId}/processing/kickoff-internal/ai-summary`,
+        null,
+        {
+          timeout: 120000,
+        },
+      );
+      await loadQuotationProcessing(quotationToProcess, "kickoff_internal");
+      const summaryText = String(data?.aiSummaryCurrent?.summary?.summary || "").trim();
+      if (summaryText) {
+        updateActiveStageDataField("minutesSummary", summaryText);
+      }
+      setSuccess("Resumen IA generado para Minuta de Kick Off interno");
+    } catch (aiError) {
+      setError(
+        getApiErrorMessage(aiError, "No fue posible generar el resumen IA"),
+      );
+    } finally {
+      setGeneratingKickoffInternalAi(false);
     }
   }
 
@@ -934,10 +1822,18 @@ export default function AcceptOrderPage() {
     setError("");
     setSuccess("");
     try {
-      await api.post(
+      const { data } = await api.post(
         `/api/quotations/${quotationId}/processing/kickoff-external/ai-summary`,
+        null,
+        {
+          timeout: 120000,
+        },
       );
       await loadQuotationProcessing(quotationToProcess, "kickoff_external");
+      const summaryText = String(data?.aiSummaryCurrent?.summary?.summary || "").trim();
+      if (summaryText) {
+        updateActiveStageDataField("minutesSummary", summaryText);
+      }
       setSuccess("Resumen IA generado para Kick Off externo");
     } catch (aiError) {
       setError(
@@ -975,6 +1871,49 @@ export default function AcceptOrderPage() {
     }
   }
 
+  async function deleteKickoffEvidence(evidence) {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    const evidenceId = Number(evidence?.id || 0);
+    const stageCode = String(evidence?.stageCode || activeProcessingStageCode || "").trim();
+    if (!quotationId || !evidenceId || !stageCode) return;
+
+    const evidenceLabel =
+      evidence?.document?.originalFileName ||
+      (evidence?.evidenceType === "manual_note" ? "minuta manual" : "evidencia");
+    const shouldDelete = window.confirm(
+      `Se eliminara \"${evidenceLabel}\". Esta accion no se puede deshacer.`,
+    );
+    if (!shouldDelete) return;
+
+    setDeletingProcessingEvidenceIds((current) => {
+      const next = new Set(current);
+      next.add(evidenceId);
+      return next;
+    });
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.delete(
+        `/api/quotations/${quotationId}/processing/evidences/${evidenceId}`,
+      );
+      await loadQuotationProcessing(
+        quotationToProcess,
+        stageCode || String(data?.stageCode || "").trim(),
+      );
+      setSuccess("Evidencia eliminada");
+    } catch (deleteError) {
+      setError(
+        getApiErrorMessage(deleteError, "No fue posible eliminar la evidencia"),
+      );
+    } finally {
+      setDeletingProcessingEvidenceIds((current) => {
+        const next = new Set(current);
+        next.delete(evidenceId);
+        return next;
+      });
+    }
+  }
+
   function updateActiveStageCommonField(fieldName, value) {
     if (!activeProcessingStage) return;
     patchProcessingStage(activeProcessingStage.stageCode, {
@@ -991,51 +1930,714 @@ export default function AcceptOrderPage() {
     });
   }
 
+  function updateStageProductAssignmentState(
+    stageCode,
+    productAssignments,
+    productAssignmentDuplicates,
+    productAssignmentExtras,
+  ) {
+    patchProcessingStage(stageCode, {
+      stageData: {
+        productAssignments,
+        productAssignmentDuplicates,
+        productAssignmentExtras,
+      },
+    });
+  }
+
   function renderStageBaseSpecificFields(stage) {
     const fieldList = BASE_STAGE_SPECIFIC_FIELDS[stage.stageCode] || [];
     if (!fieldList.length) return null;
+    const rawProductAssignments =
+      stage?.stageData && typeof stage.stageData.productAssignments === "object"
+        ? stage.stageData.productAssignments
+        : {};
+    const rawProductAssignmentDuplicates =
+      stage?.stageData &&
+      typeof stage.stageData.productAssignmentDuplicates === "object"
+        ? stage.stageData.productAssignmentDuplicates
+        : {};
+    const rawProductAssignmentExtras =
+      stage?.stageData &&
+      typeof stage.stageData.productAssignmentExtras === "object"
+        ? stage.stageData.productAssignmentExtras
+        : {};
+    const providerPurchaseOrderRows = buildProviderPurchaseOrderRows({
+      products: processingQuotationProducts,
+      productAssignmentDuplicates: rawProductAssignmentDuplicates,
+      productAssignmentExtras: rawProductAssignmentExtras,
+    });
+    const generatedPurchaseOrders = Array.isArray(
+      stage?.stageData?.generatedPurchaseOrders,
+    )
+      ? stage.stageData.generatedPurchaseOrders
+      : [];
+    const generatedItemIds = new Set(
+      generatedPurchaseOrders.flatMap((order) =>
+        (Array.isArray(order?.lines) ? order.lines : [])
+          .map((line) => Number(line?.productId || 0))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    );
+    const quotationCommercialFields = [
+      {
+        key: "commercialDeliveryTime",
+        label: "Tiempo de entrega",
+        value: quotationToProcess?.latestDeliveryTime || "",
+      },
+      {
+        key: "commercialValidity",
+        label: "Validez",
+        value: quotationToProcess?.latestQuotationValidity || "",
+      },
+      {
+        key: "commercialWarranty",
+        label: "Garantia",
+        value: quotationToProcess?.latestWarranty || "",
+      },
+      {
+        key: "commercialPaymentTerms",
+        label: "Forma de pago",
+        value: quotationToProcess?.latestPaymentTerms || "",
+      },
+      {
+        key: "commercialCurrency",
+        label: "Moneda",
+        value: quotationToProcess?.latestCurrencyCode || "",
+      },
+    ];
 
     return (
       <section className="processing-stage-box">
         <header>
-          <h5>Datos base de etapa</h5>
+          <h5>Listado de productos y servicios de la cotización</h5>
         </header>
         <div className="processing-stage-grid two">
-          {fieldList.map((field) => {
-            const value = stage?.stageData?.[field.key] ?? "";
-            if (field.type === "textarea") {
-              return (
-                <label key={field.key} className="field-group processing-stage-field full">
-                  <span>{field.label}</span>
-                  <textarea
-                    value={value}
-                    onChange={(event) =>
-                      updateActiveStageDataField(field.key, event.target.value)
-                    }
-                    rows={4}
-                    placeholder={field.placeholder || ""}
-                    disabled={!processingData.permissions?.canUpdate}
-                  />
-                </label>
-              );
-            }
+          {fieldList.length
+            ? fieldList.map((field) => {
+                const value = stage?.stageData?.[field.key] ?? "";
+                if (field.type === "textarea") {
+                  return (
+                    <label key={field.key} className="field-group processing-stage-field full">
+                      <span>{field.label}</span>
+                      <textarea
+                        value={value}
+                        onChange={(event) =>
+                          updateActiveStageDataField(field.key, event.target.value)
+                        }
+                        rows={4}
+                        placeholder={field.placeholder || ""}
+                        disabled={!processingData.permissions?.canUpdate}
+                      />
+                    </label>
+                  );
+                }
 
-            return (
-              <label key={field.key} className="field-group processing-stage-field">
-                <span>{field.label}</span>
-                <input
-                  type={field.type}
-                  value={value}
-                  placeholder={field.placeholder || ""}
-                  onChange={(event) =>
-                    updateActiveStageDataField(field.key, event.target.value)
-                  }
-                  disabled={!processingData.permissions?.canUpdate}
-                />
-              </label>
-            );
-          })}
+                return (
+                  <label key={field.key} className="field-group processing-stage-field">
+                    <span>{field.label}</span>
+                    <input
+                      type={field.type}
+                      value={value}
+                      placeholder={field.placeholder || ""}
+                      onChange={(event) =>
+                        updateActiveStageDataField(field.key, event.target.value)
+                      }
+                      disabled={!processingData.permissions?.canUpdate}
+                    />
+                  </label>
+                );
+              })
+            : null}
         </div>
+
+        {stage.stageCode === "provider_purchase_order" ? (
+          <section className="processing-products-box">
+            <header>
+              <h6>Productos</h6>
+              <p>
+                Items de la cotizacion con costo unitario considerando descuentos.
+              </p>
+            </header>
+
+            {providerPurchaseOrderRows.length ? (
+              <div className="processing-products-table-wrap">
+                <table className="processing-products-table">
+                  <thead>
+                    <tr>
+                      <th>Sel.</th>
+                      <th>Codigo</th>
+                      <th>Descripcion</th>
+                      <th>Proveedor</th>
+                      <th className="is-right">Cantidad</th>
+                      <th className="is-right">Costo unitario</th>
+                      <th>Fecha</th>
+                      <th className="is-right">Costo total</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {providerPurchaseOrderRows.map((item) => {
+                      const itemKey = String(item.assignmentKey || item.id || "");
+                      const assignment =
+                        (itemKey && rawProductAssignments[itemKey]) || {};
+                      const selected = Boolean(assignment?.selected);
+                      const quantityInputValue =
+                        assignment?.quantity == null || assignment?.quantity === ""
+                          ? String(Number(item.quantity || 0))
+                          : String(assignment.quantity);
+                      const unitCostInputValue =
+                        assignment?.unitCostWithDiscount == null ||
+                        assignment?.unitCostWithDiscount === ""
+                          ? String(Number(item.unitCostWithDiscount || 0))
+                          : String(assignment.unitCostWithDiscount);
+                      const selectionDateInputValue =
+                        toDateInputValue(assignment?.selectionDate) ||
+                        toDateInputValue(item.selectionDate) ||
+                        toDateInputValue(new Date());
+                      const effectiveQuantity = Number(quantityInputValue || 0);
+                      const effectiveUnitCost = Number(unitCostInputValue || 0);
+                      const effectiveTotalCost =
+                        Number.isFinite(effectiveQuantity) &&
+                        Number.isFinite(effectiveUnitCost)
+                          ? effectiveQuantity * effectiveUnitCost
+                          : 0;
+                      const selectedProviderId =
+                        assignment?.providerId == null || assignment?.providerId === ""
+                          ? item.providerId || ""
+                          : Number(assignment.providerId || 0) || "";
+                      const isEditingQuantity =
+                        editingProductCell?.itemKey === itemKey &&
+                        editingProductCell?.field === "quantity";
+                      const isEditingUnitCost =
+                        editingProductCell?.itemKey === itemKey &&
+                        editingProductCell?.field === "unitCostWithDiscount";
+
+                      return (
+                        <tr
+                          key={itemKey}
+                          className={
+                            generatedItemIds.has(Number(item.sourceProductId || item.id || 0))
+                              ? "processing-product-row-generated"
+                              : ""
+                          }
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={(event) => {
+                                const nextAssignments = {
+                                  ...rawProductAssignments,
+                                  [itemKey]: {
+                                    ...assignment,
+                                    selected: event.target.checked,
+                                    providerId:
+                                      selectedProviderId === ""
+                                        ? null
+                                        : Number(selectedProviderId),
+                                  },
+                                };
+                                updateStageProductAssignmentState(
+                                  stage.stageCode,
+                                  nextAssignments,
+                                  rawProductAssignmentDuplicates,
+                                  rawProductAssignmentExtras,
+                                );
+                              }}
+                              disabled={!processingData.permissions?.canUpdate}
+                            />
+                          </td>
+                          <td>
+                            {item.isCustom ? (
+                              <input
+                                type="text"
+                                className="processing-custom-code-trigger"
+                                value={item.code || ""}
+                                readOnly
+                                title="Doble clic para seleccionar item del catalogo"
+                                onDoubleClick={(event) => {
+                                  event.stopPropagation();
+                                  openCustomStepItemPicker(
+                                    stage.stageCode,
+                                    itemKey,
+                                    selectedProviderId,
+                                  );
+                                }}
+                              />
+                            ) : (
+                              item.code || "-"
+                            )}
+                          </td>
+                          <td>
+                            {item.description || "Sin descripcion"}
+                            {item.isDuplicate ? (
+                              <span className="processing-item-copy-badge">Copia</span>
+                            ) : null}
+                          </td>
+                          <td>
+                            <select
+                              value={selectedProviderId}
+                              onChange={(event) => {
+                                const providerValue = event.target.value;
+                                const nextAssignments = {
+                                  ...rawProductAssignments,
+                                  [itemKey]: {
+                                    ...assignment,
+                                    selected,
+                                    providerId: providerValue
+                                      ? Number(providerValue)
+                                      : null,
+                                  },
+                                };
+                                updateStageProductAssignmentState(
+                                  stage.stageCode,
+                                  nextAssignments,
+                                  rawProductAssignmentDuplicates,
+                                  rawProductAssignmentExtras,
+                                );
+                              }}
+                              disabled={!processingData.permissions?.canUpdate}
+                            >
+                              <option value="">Sin proveedor</option>
+                              {processingProviders.map((provider) => (
+                                <option key={provider.id} value={provider.id}>
+                                  {provider.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="is-right">
+                            {isEditingQuantity ? (
+                              <input
+                                type="number"
+                                step="0.0001"
+                                min="0"
+                                value={quantityInputValue}
+                                onChange={(event) => {
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      quantity: event.target.value,
+                                    },
+                                  };
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
+                                    nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
+                                  );
+                                }}
+                                onBlur={() => {
+                                  const normalized = Math.max(
+                                    0,
+                                    Number(quantityInputValue || 0),
+                                  );
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      quantity: Number.isFinite(normalized)
+                                        ? String(Number(normalized.toFixed(4)))
+                                        : "0",
+                                    },
+                                  };
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
+                                    nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
+                                  );
+                                  setEditingProductCell(null);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.currentTarget.blur();
+                                  }
+                                  if (event.key === "Escape") {
+                                    setEditingProductCell(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="processing-inline-edit-input"
+                                disabled={!processingData.permissions?.canUpdate}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="processing-inline-edit-trigger"
+                                onClick={() =>
+                                  setEditingProductCell({
+                                    itemKey,
+                                    field: "quantity",
+                                  })
+                                }
+                                disabled={!processingData.permissions?.canUpdate}
+                              >
+                                {Number(effectiveQuantity || 0).toLocaleString("es-MX", {
+                                  maximumFractionDigits: 4,
+                                })}
+                              </button>
+                            )}
+                          </td>
+                          <td className="is-right">
+                            {isEditingUnitCost ? (
+                              <input
+                                type="number"
+                                step="0.0001"
+                                min="0"
+                                value={unitCostInputValue}
+                                onChange={(event) => {
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      unitCostWithDiscount: event.target.value,
+                                    },
+                                  };
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
+                                    nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
+                                  );
+                                }}
+                                onBlur={() => {
+                                  const normalized = Math.max(
+                                    0,
+                                    Number(unitCostInputValue || 0),
+                                  );
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [itemKey]: {
+                                      ...assignment,
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      unitCostWithDiscount: Number.isFinite(normalized)
+                                        ? String(Number(normalized.toFixed(4)))
+                                        : "0",
+                                    },
+                                  };
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
+                                    nextAssignments,
+                                    rawProductAssignmentDuplicates,
+                                    rawProductAssignmentExtras,
+                                  );
+                                  setEditingProductCell(null);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.currentTarget.blur();
+                                  }
+                                  if (event.key === "Escape") {
+                                    setEditingProductCell(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="processing-inline-edit-input"
+                                disabled={!processingData.permissions?.canUpdate}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="processing-inline-edit-trigger"
+                                onClick={() =>
+                                  setEditingProductCell({
+                                    itemKey,
+                                    field: "unitCostWithDiscount",
+                                  })
+                                }
+                                disabled={!processingData.permissions?.canUpdate}
+                              >
+                                {formatCurrency(
+                                  Number(effectiveUnitCost || 0),
+                                  item.currencyCode || processingCurrencyCode,
+                                )}
+                              </button>
+                            )}
+                          </td>
+                          <td>
+                            <input
+                              type="date"
+                              value={selectionDateInputValue}
+                              onChange={(event) => {
+                                const nextAssignments = {
+                                  ...rawProductAssignments,
+                                  [itemKey]: {
+                                    ...assignment,
+                                    selected,
+                                    providerId:
+                                      selectedProviderId === ""
+                                        ? null
+                                        : Number(selectedProviderId),
+                                    selectionDate: event.target.value,
+                                  },
+                                };
+                                updateStageProductAssignmentState(
+                                  stage.stageCode,
+                                  nextAssignments,
+                                  rawProductAssignmentDuplicates,
+                                  rawProductAssignmentExtras,
+                                );
+                              }}
+                              disabled={!processingData.permissions?.canUpdate}
+                            />
+                          </td>
+                          <td className="is-right">
+                            {formatCurrency(
+                              Number(effectiveTotalCost || 0),
+                              item.currencyCode || processingCurrencyCode,
+                            )}
+                          </td>
+                          <td>
+                            <div className="processing-product-actions">
+                              <button
+                                type="button"
+                                className="btn-secondary processing-product-action-icon"
+                                aria-label="Duplicar item"
+                                title="Duplicar item"
+                                onClick={() => {
+                                  const sourceProductId = Number(
+                                    item.sourceProductId || item.id || 0,
+                                  );
+                                  if (!Number.isInteger(sourceProductId) || sourceProductId <= 0) {
+                                    return;
+                                  }
+                                  const duplicateKey = `dup-${sourceProductId}-${Date.now()}`;
+                                  const nextAssignments = {
+                                    ...rawProductAssignments,
+                                    [duplicateKey]: {
+                                      selected,
+                                      providerId:
+                                        selectedProviderId === ""
+                                          ? null
+                                          : Number(selectedProviderId),
+                                      quantity: quantityInputValue,
+                                      unitCostWithDiscount: unitCostInputValue,
+                                      selectionDate: selectionDateInputValue,
+                                    },
+                                  };
+                                  const nextDuplicates = {
+                                    ...rawProductAssignmentDuplicates,
+                                    [duplicateKey]: {
+                                      sourceProductId,
+                                      createdAt: Date.now(),
+                                    },
+                                  };
+                                  updateStageProductAssignmentState(
+                                    stage.stageCode,
+                                    nextAssignments,
+                                    nextDuplicates,
+                                    rawProductAssignmentExtras,
+                                  );
+                                }}
+                                disabled={
+                                  !processingData.permissions?.canUpdate ||
+                                  !Number.isInteger(Number(item.sourceProductId || 0)) ||
+                                  Number(item.sourceProductId || 0) <= 0
+                                }
+                              >
+                                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                  <path d="M8 4.75A2.75 2.75 0 0 0 5.25 7.5v8A2.75 2.75 0 0 0 8 18.25h8a2.75 2.75 0 0 0 2.75-2.75v-8A2.75 2.75 0 0 0 16 4.75zm0 1.5h8c.69 0 1.25.56 1.25 1.25v8c0 .69-.56 1.25-1.25 1.25H8c-.69 0-1.25-.56-1.25-1.25v-8c0-.69.56-1.25 1.25-1.25" />
+                                  <path d="M4 8.5a.75.75 0 0 1 .75.75v8c0 .69.56 1.25 1.25 1.25h8a.75.75 0 0 1 0 1.5H6A2.75 2.75 0 0 1 3.25 17.25v-8A.75.75 0 0 1 4 8.5" />
+                                </svg>
+                              </button>
+                              {item.isDuplicate || item.isCustom ? (
+                                <button
+                                  type="button"
+                                  className="btn-secondary processing-product-action-icon is-danger"
+                                  aria-label={item.isCustom ? "Eliminar item" : "Eliminar copia"}
+                                  title={item.isCustom ? "Eliminar item" : "Eliminar copia"}
+                                  onClick={() => {
+                                    const nextAssignments = { ...rawProductAssignments };
+                                    const nextDuplicates = {
+                                      ...rawProductAssignmentDuplicates,
+                                    };
+                                    const nextExtras = {
+                                      ...rawProductAssignmentExtras,
+                                    };
+                                    delete nextAssignments[itemKey];
+                                    delete nextDuplicates[itemKey];
+                                    delete nextExtras[itemKey];
+                                    updateStageProductAssignmentState(
+                                      stage.stageCode,
+                                      nextAssignments,
+                                      nextDuplicates,
+                                      nextExtras,
+                                    );
+                                    if (editingProductCell?.itemKey === itemKey) {
+                                      setEditingProductCell(null);
+                                    }
+                                  }}
+                                  disabled={!processingData.permissions?.canUpdate}
+                                >
+                                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                    <path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" />
+                                    <path d="M10.75 9a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75m2.5 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75" />
+                                  </svg>
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="field-hint">
+                No hay items disponibles en la cotizacion para mostrar en este step.
+              </p>
+            )}
+
+            <section className="processing-stage-box" style={{ marginTop: 16 }}>
+              <header>
+                <h5>Datos de orden de compra</h5>
+              </header>
+              <div className="processing-stage-grid two">
+                {quotationCommercialFields.map((field) => (
+                  <label key={field.key} className="field-group processing-stage-field">
+                    <span>{field.label}</span>
+                    <input type="text" value={field.value || "-"} readOnly disabled />
+                  </label>
+                ))}
+              </div>
+            </section>
+
+            <section className="processing-products-box">
+              <header>
+                <h6>Ordenes generadas</h6>
+                <p>
+                  Listado de ordenes de compra ya generadas para este pedido.
+                </p>
+              </header>
+
+              {generatedPurchaseOrders.length ? (
+                <div className="processing-products-table-wrap">
+                  <table className="processing-products-table">
+                    <thead>
+                      <tr>
+                        <th>Numero de orden</th>
+                        <th>Proveedor</th>
+                        <th>Fecha</th>
+                        <th className="is-right">Monto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {generatedPurchaseOrders.map((order, index) => (
+                        <tr key={order.orderId || `${order.providerId || "provider"}-${index}`}>
+                          <td>{order.orderNumber || "-"}</td>
+                          <td>{order.providerName || "Proveedor"}</td>
+                          <td>{formatDate(order.orderDate)}</td>
+                          <td className="is-right">
+                            {formatCurrency(
+                              Number(order.total || 0),
+                              order.currencyCode || processingCurrencyCode,
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="field-hint">Aun no hay ordenes generadas.</p>
+              )}
+            </section>
+
+            <div className="processing-stage-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  const createdAt = Date.now();
+                  const nextIndex = Object.keys(rawProductAssignmentExtras).length + 1;
+                  const extraKey = `extra-${createdAt}`;
+                  const nextAssignments = {
+                    ...rawProductAssignments,
+                    [extraKey]: {
+                      selected: true,
+                      providerId: null,
+                      quantity: "1",
+                      unitCostWithDiscount: "0",
+                      selectionDate: toDateInputValue(new Date()),
+                    },
+                  };
+                  const nextExtras = {
+                    ...rawProductAssignmentExtras,
+                    [extraKey]: {
+                      createdAt,
+                      code: `ITEM-MANUAL-${nextIndex}`,
+                      description: "Item agregado manualmente",
+                      quantity: 1,
+                      unitCostWithDiscount: 0,
+                      selectionDate: toDateInputValue(new Date()),
+                      currencyCode: processingCurrencyCode || "USD",
+                    },
+                  };
+                  updateStageProductAssignmentState(
+                    stage.stageCode,
+                    nextAssignments,
+                    rawProductAssignmentDuplicates,
+                    nextExtras,
+                  );
+                }}
+                disabled={!processingData.permissions?.canUpdate}
+              >
+                Anadir item
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void saveProcessingStage(stage.stageCode)}
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                {processingSavingStageCode === stage.stageCode
+                  ? "Guardando..."
+                  : "Guardar"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  openPurchaseOrderModal({
+                    stage,
+                    productAssignments: rawProductAssignments,
+                    productAssignmentDuplicates: rawProductAssignmentDuplicates,
+                    productAssignmentExtras: rawProductAssignmentExtras,
+                  })
+                }
+                disabled={!processingData.permissions?.canUpdate}
+              >
+                Vista previa
+              </button>
+            </div>
+          </section>
+        ) : null}
       </section>
     );
   }
@@ -1118,9 +2720,82 @@ export default function AcceptOrderPage() {
     processingStages.find((stage) => stage.stageCode === activeProcessingStageCode) ||
     processingStages[0] ||
     null;
+  const isQuotationAcceptedStage =
+    activeProcessingStage?.stageCode === "quotation_accepted";
+  const isKickoffInternalStage =
+    activeProcessingStage?.stageCode === "kickoff_internal";
+  const isKickoffExternalStage =
+    activeProcessingStage?.stageCode === "kickoff_external";
+  const isProviderPurchaseOrderStage =
+    activeProcessingStage?.stageCode === "provider_purchase_order";
+  const processingFinancials = quotationToProcess
+    ? getQuotationFinancials(quotationToProcess)
+    : getQuotationFinancials({});
+  const processingCurrencyCode = quotationToProcess?.latestCurrencyCode || "USD";
   const processingUsers = Array.isArray(processingData?.assignableUsers)
     ? processingData.assignableUsers
     : [];
+  const processingProviders = Array.isArray(processingData?.providers)
+    ? processingData.providers
+    : [];
+  const kickoffInternalEvidences = Array.isArray(processingData?.kickoffInternal?.evidences)
+    ? processingData.kickoffInternal.evidences
+    : [];
+  const kickoffInternalGeneratedSummary = String(
+    processingData?.kickoffInternal?.aiSummaryCurrent?.summary?.summary || "",
+  ).trim();
+  const kickoffInternalStageMinutesSummary =
+    activeProcessingStage?.stageData?.minutesSummary;
+  const kickoffInternalSummaryText = String(
+    kickoffInternalStageMinutesSummary == null
+      ? kickoffInternalGeneratedSummary
+      : kickoffInternalStageMinutesSummary,
+  );
+  const kickoffExternalEvidences = Array.isArray(processingData?.kickoffExternal?.evidences)
+    ? processingData.kickoffExternal.evidences
+    : [];
+  const processingQuotationProducts = Array.isArray(processingData?.quotation?.products)
+    ? processingData.quotation.products
+    : [];
+  const purchaseOrderDraftOrders = Array.isArray(purchaseOrderDraft?.orders)
+    ? purchaseOrderDraft.orders
+    : [];
+  const purchaseOrderDraftTotals = purchaseOrderDraftOrders.reduce(
+    (acc, order) => {
+      const lines = Array.isArray(order?.lines) ? order.lines : [];
+      const subtotal = lines.reduce(
+        (sum, line) => sum + calculatePurchaseOrderLineAmount(line),
+        0,
+      );
+      const ivaPct = normalizePositiveNumber(order?.ivaPct, 16);
+      const ivaAmount = subtotal * (ivaPct / 100);
+      return {
+        subtotal: acc.subtotal + subtotal,
+        ivaAmount: acc.ivaAmount + ivaAmount,
+        total: acc.total + subtotal + ivaAmount,
+      };
+    },
+    { subtotal: 0, ivaAmount: 0, total: 0 },
+  );
+  const purchaseOrderPrintModel =
+    purchaseOrderFinalPreviewOpen && Array.isArray(purchaseOrderPendingGeneratedOrders)
+      ? buildPurchaseOrderPrintModel({
+          quotation: quotationToProcess,
+          orders: purchaseOrderPendingGeneratedOrders,
+          currencyCode: purchaseOrderDraft?.currencyCode || processingCurrencyCode || "USD",
+          notes: activeProcessingStage?.notes || "",
+        })
+      : null;
+  const kickoffExternalGeneratedSummary = String(
+    processingData?.kickoffExternal?.aiSummaryCurrent?.summary?.summary || "",
+  ).trim();
+  const kickoffExternalStageMinutesSummary =
+    activeProcessingStage?.stageData?.minutesSummary;
+  const kickoffExternalSummaryText = String(
+    kickoffExternalStageMinutesSummary == null
+      ? kickoffExternalGeneratedSummary
+      : kickoffExternalStageMinutesSummary,
+  );
 
   return (
     <section className="panel">
@@ -1251,13 +2926,18 @@ export default function AcceptOrderPage() {
               </button>
             </th>
             <th>Estado</th>
-            <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {!loading && pagedQuotations.length > 0 ? (
             pagedQuotations.map((quotation) => (
-              <tr key={quotation.id}>
+              <tr
+                key={quotation.id}
+                className="accounts-row-clickable"
+                onClick={() => {
+                  void openProcessingModal(quotation);
+                }}
+              >
                 <td>{quotation.id}</td>
                 <td>{quotation.latestVersionNumber || "-"}</td>
                 <td>{quotation.accountName || "-"}</td>
@@ -1300,52 +2980,11 @@ export default function AcceptOrderPage() {
                     </span>
                   ) : null}
                 </td>
-                <td className="accounts-actions-cell">
-                  <div className="user-kebab-wrap opportunities-kebab-wrap">
-                    <button
-                      type="button"
-                      className="kebab-btn"
-                      onClick={() => toggleQuotationMenu(quotation.id)}
-                      aria-label="Abrir acciones"
-                    >
-                      ⋮
-                    </button>
-                    {openQuotationMenuId === quotation.id ? (
-                      <div className="user-kebab-menu quotation-actions-menu">
-                        <button
-                          type="button"
-                          disabled={
-                            isAcceptedQuotation(quotation) ||
-                            acceptingVersionId === quotation.latestVersionId ||
-                            !Number(quotation.latestVersionId || 0)
-                          }
-                          onClick={() => {
-                            void openAcceptQuotationModal(quotation);
-                          }}
-                        >
-                          {acceptingVersionId === quotation.latestVersionId
-                            ? "Aceptando..."
-                            : "Aceptar"}
-                        </button>
-                        {isAcceptedQuotation(quotation) ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void openProcessingModal(quotation);
-                            }}
-                          >
-                            Procesar
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={12} className="empty-state">
+              <td colSpan={11} className="empty-state">
                 {loading
                   ? "Cargando cotizaciones..."
                   : "No hay cotizaciones ganadas o aceptadas para mostrar"}
@@ -1812,23 +3451,34 @@ export default function AcceptOrderPage() {
             </div>
 
             <div className="processing-stage-flow" role="tablist" aria-label="Etapas">
-              {PROCESSING_STAGE_DEFINITIONS.map((stageDef) => {
+              {PROCESSING_STAGE_DEFINITIONS.map((stageDef, index) => {
                 const stage = processingStages.find(
                   (item) => item.stageCode === stageDef.code,
                 );
                 const isActive = activeProcessingStageCode === stageDef.code;
                 const status = stage?.status || "not_started";
+                const isCompleted = status === "completed";
+                const isBlocked = status === "blocked";
+                const isNotApplicable = status === "not_applicable";
                 return (
                   <button
                     key={stageDef.code}
                     type="button"
-                    className={`processing-stage-pill${isActive ? " is-active" : ""}`}
+                    className={`processing-stage-step${isActive ? " is-active" : ""}${isCompleted ? " is-completed" : ""}${isBlocked ? " is-blocked" : ""}${isNotApplicable ? " is-not-applicable" : ""}`}
                     onClick={() => setActiveProcessingStageCode(stageDef.code)}
                     role="tab"
                     aria-selected={isActive}
+                    aria-current={isActive ? "step" : undefined}
                   >
-                    <span>{stageDef.name}</span>
-                    <small>{PROCESSING_STAGE_STATUS_LABELS[status] || "No iniciada"}</small>
+                    <span className="processing-stage-step-circle" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <span className="processing-stage-step-copy">
+                      <strong>{stageDef.name}</strong>
+                      <small>
+                        {PROCESSING_STAGE_STATUS_LABELS[status] || "No iniciada"}
+                      </small>
+                    </span>
                   </button>
                 );
               })}
@@ -1847,128 +3497,465 @@ export default function AcceptOrderPage() {
             ) : null}
 
             {!processingLoading && !processingModalError && activeProcessingStage ? (
-              <div className="processing-stage-content">
+              <div ref={processingStageContentRef} className="processing-stage-content">
+                {!isKickoffInternalStage &&
+                !isKickoffExternalStage &&
+                !isProviderPurchaseOrderStage ? (
                 <section className="processing-stage-box">
                   <header>
                     <h4>{activeProcessingStage.stageName}</h4>
                     <p>
-                      Edita esta etapa de forma independiente. El flujo no requiere
-                      secuencia estricta.
+                      {isQuotationAcceptedStage
+                        ? activeProcessingStage.status === "completed"
+                          ? "La cotizacion ya fue aceptada. Aqui puedes revisar la evidencia y los datos registrados."
+                          : "La cotizacion aun no esta aceptada. Revisa la informacion y confirma esta etapa con el boton Aceptar."
+                        : "Edita esta etapa de forma independiente. El flujo no requiere secuencia estricta."}
                     </p>
                   </header>
 
-                  <div className="processing-stage-grid two">
-                    <label className="field-group processing-stage-field">
-                      <span>Estado</span>
-                      <select
-                        value={activeProcessingStage.status || "not_started"}
-                        onChange={(event) =>
-                          updateActiveStageCommonField("status", event.target.value)
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
+                  {isQuotationAcceptedStage ? (
+                    <div className="processing-accepted-scroll-area">
+                      <div className="processing-accepted-status-row">
+                        <span
+                          className={`processing-accepted-status-indicator${
+                            activeProcessingStage.status === "completed"
+                              ? " is-completed"
+                              : ""
+                          }`}
+                        >
+                          <span className="processing-accepted-status-icon" aria-hidden="true">
+                            {activeProcessingStage.status === "completed" ? "✓" : "○"}
+                          </span>
+                          <span>
+                            {activeProcessingStage.status === "completed"
+                              ? "Aceptada"
+                              : "Pendiente de aceptar"}
+                          </span>
+                        </span>
+                      </div>
+
+                      <div className="accept-order-modal-summary">
+                        <div>
+                          <span>Oportunidad</span>
+                          <strong>{quotationToProcess?.opportunityName || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>Vendedor</span>
+                          <strong>{quotationToProcess?.sellerUserName || "-"}</strong>
+                        </div>
+                        <div>
+                          <span>Cierre</span>
+                          <strong>{formatDate(quotationToProcess?.opportunityCloseDate)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="accept-order-total-card">
+                        <div>
+                          <span>Importe total</span>
+                          <strong>
+                            {formatCurrency(
+                              processingFinancials.totalSale,
+                              processingCurrencyCode,
+                            )}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Costo total</span>
+                          <strong>
+                            {formatCurrency(
+                              processingFinancials.totalCost,
+                              processingCurrencyCode,
+                            )}
+                          </strong>
+                        </div>
+                        <div>
+                          <span>Contribucion total</span>
+                          <strong>
+                            {formatCurrency(
+                              processingFinancials.totalContribution,
+                              processingCurrencyCode,
+                            )}
+                          </strong>
+                          <small>
+                            {formatPercent(processingFinancials.totalContributionPct)}
+                          </small>
+                        </div>
+                      </div>
+
+                      <div className="accept-order-financial-grid">
+                        <div className="accept-order-financial-card">
+                          <div className="accept-order-financial-card-header">
+                            <span>Productos</span>
+                            <strong>
+                              {formatPercent(
+                                processingFinancials.productContributionPct,
+                              )}
+                            </strong>
+                          </div>
+                          <dl>
+                            <div>
+                              <dt>Venta</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.productSale,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Costo</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.productCost,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Contribucion</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.productContribution,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <div className="accept-order-financial-card">
+                          <div className="accept-order-financial-card-header">
+                            <span>Servicios</span>
+                            <strong>
+                              {formatPercent(
+                                processingFinancials.serviceContributionPct,
+                              )}
+                            </strong>
+                          </div>
+                          <dl>
+                            <div>
+                              <dt>Venta</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.serviceSale,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Costo</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.serviceCost,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Contribucion</dt>
+                              <dd>
+                                {formatCurrency(
+                                  processingFinancials.serviceContribution,
+                                  processingCurrencyCode,
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                      </div>
+
+                      <section className="accept-order-won-documents-card processing-accepted-won-documents-card">
+                        <header className="accept-order-won-documents-header">
+                          <h4>Documentos de cierre</h4>
+                          <p>
+                            Archivos seleccionados cuando la cotizacion fue declarada como ganada.
+                          </p>
+                        </header>
+
+                        {processingWonDocuments.loading ? (
+                          <p className="field-hint">Cargando documentos de cierre...</p>
+                        ) : null}
+
+                        {!processingWonDocuments.loading && processingWonDocuments.error ? (
+                          <p className="field-hint opportunity-documents-preview-error">
+                            {processingWonDocuments.error}
+                          </p>
+                        ) : null}
+
+                        {!processingWonDocuments.loading &&
+                        !processingWonDocuments.error ? (
+                          <div className="accept-order-won-documents-grid">
+                            <section className="accept-order-won-documents-section">
+                              <h5>1) Orden de compra</h5>
+                              {processingWonDocuments.purchaseOrder ? (
+                                <article className="accept-order-won-document-item">
+                                  <div className="accept-order-won-document-item-main">
+                                    <strong>
+                                      {processingWonDocuments.purchaseOrder
+                                        .originalFileName || "Documento"}
+                                    </strong>
+                                    <span className="field-hint">
+                                      {formatWonDocumentSourceLabel(
+                                        processingWonDocuments.purchaseOrder.source,
+                                      )}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary accept-order-won-document-download-btn"
+                                    onClick={() => {
+                                      void handleDownloadWonDocument(
+                                        processingWonDocuments.purchaseOrder,
+                                      );
+                                    }}
+                                    disabled={
+                                      downloadingWonDocumentKey ===
+                                      `${processingWonDocuments.purchaseOrder.source}:${processingWonDocuments.purchaseOrder.documentId}`
+                                    }
+                                    title="Descargar documento"
+                                    aria-label="Descargar documento"
+                                  >
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                      <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                    </svg>
+                                  </button>
+                                </article>
+                              ) : (
+                                <p className="field-hint">
+                                  No hay orden de compra registrada.
+                                </p>
+                              )}
+                            </section>
+
+                            <section className="accept-order-won-documents-section">
+                              <h5>2) Cotizaciones de proveedores</h5>
+                              {processingWonDocuments.providerQuotes.length ? (
+                                <div className="accept-order-won-documents-list">
+                                  {processingWonDocuments.providerQuotes.map((item) => (
+                                    <article
+                                      key={`provider-quote-${item.source}-${item.documentId}`}
+                                      className="accept-order-won-document-item"
+                                    >
+                                      <div className="accept-order-won-document-item-main">
+                                        <strong>{item.originalFileName || "Documento"}</strong>
+                                        <span className="field-hint">
+                                          {formatWonDocumentSourceLabel(item.source)}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="btn-secondary accept-order-won-document-download-btn"
+                                        onClick={() => {
+                                          void handleDownloadWonDocument(item);
+                                        }}
+                                        disabled={
+                                          downloadingWonDocumentKey ===
+                                          `${item.source}:${item.documentId}`
+                                        }
+                                        title="Descargar documento"
+                                        aria-label="Descargar documento"
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                        </svg>
+                                      </button>
+                                    </article>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="field-hint">
+                                  No hay cotizaciones de proveedores registradas.
+                                </p>
+                              )}
+                            </section>
+                          </div>
+                        ) : null}
+                      </section>
+
+                      <div className="processing-stage-grid two">
+                        <label className="field-group processing-stage-field">
+                          <span>Fecha de aceptacion</span>
+                          <input
+                            type="date"
+                            value={
+                              activeProcessingStage.stageData?.acceptedAt
+                                ? String(activeProcessingStage.stageData.acceptedAt).slice(
+                                    0,
+                                    10,
+                                  )
+                                : ""
+                            }
+                            onChange={(event) =>
+                              updateActiveStageDataField(
+                                "acceptedAt",
+                                event.target.value
+                                  ? new Date(
+                                      `${event.target.value}T12:00:00.000Z`,
+                                    ).toISOString()
+                                  : null,
+                              )
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+
+                        <label className="field-group processing-stage-field full">
+                          <span>Notas</span>
+                          <textarea
+                            rows={4}
+                            value={activeProcessingStage.notes || ""}
+                            onChange={(event) =>
+                              updateActiveStageCommonField("notes", event.target.value)
+                            }
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+                      </div>
+
+                    </div>
+                  ) : !isKickoffInternalStage ? (
+                    <div className="processing-stage-grid two">
+                      <label className="field-group processing-stage-field">
+                        <span>Estado</span>
+                        <select
+                          value={activeProcessingStage.status || "not_started"}
+                          onChange={(event) =>
+                            updateActiveStageCommonField("status", event.target.value)
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        >
+                          {PROCESSING_STAGE_STATUS_OPTIONS.map((statusOption) => (
+                            <option key={statusOption.value} value={statusOption.value}>
+                              {statusOption.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="field-group processing-stage-field">
+                        <span>Responsable</span>
+                        <select
+                          value={activeProcessingStage.ownerUserId || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "ownerUserId",
+                              event.target.value
+                                ? Number(event.target.value)
+                                : null,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        >
+                          <option value="">Sin responsable</option>
+                          {processingUsers.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.fullName}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="field-group processing-stage-field">
+                        <span>Fecha objetivo</span>
+                        <input
+                          type="date"
+                          value={activeProcessingStage.targetDate || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "targetDate",
+                              event.target.value || null,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+
+                      <label className="field-group processing-stage-field">
+                        <span>Fecha completada</span>
+                        <input
+                          type="datetime-local"
+                          value={
+                            activeProcessingStage.completedAt
+                              ? String(activeProcessingStage.completedAt).slice(0, 16)
+                              : ""
+                          }
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "completedAt",
+                              event.target.value
+                                ? new Date(event.target.value).toISOString()
+                                : null,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+
+                      <label className="field-group processing-stage-field full">
+                        <span>Razon de bloqueo</span>
+                        <textarea
+                          rows={3}
+                          value={activeProcessingStage.blockedReason || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField(
+                              "blockedReason",
+                              event.target.value,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+
+                      <label className="field-group processing-stage-field full">
+                        <span>Notas</span>
+                        <textarea
+                          rows={4}
+                          value={activeProcessingStage.notes || ""}
+                          onChange={(event) =>
+                            updateActiveStageCommonField("notes", event.target.value)
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+                    </div>
+                  ) : null}
+
+                  <div
+                    className={`processing-stage-actions${
+                      isQuotationAcceptedStage
+                        ? " processing-stage-actions-sticky"
+                        : ""
+                    }`}
+                  >
+                    {isQuotationAcceptedStage ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => openSellerNotificationModal(quotationToProcess)}
+                        disabled={Boolean(sendingNotificationQuotationId)}
                       >
-                        {PROCESSING_STAGE_STATUS_OPTIONS.map((statusOption) => (
-                          <option key={statusOption.value} value={statusOption.value}>
-                            {statusOption.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field-group processing-stage-field">
-                      <span>Responsable</span>
-                      <select
-                        value={activeProcessingStage.ownerUserId || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "ownerUserId",
-                            event.target.value
-                              ? Number(event.target.value)
-                              : null,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      >
-                        <option value="">Sin responsable</option>
-                        {processingUsers.map((user) => (
-                          <option key={user.id} value={user.id}>
-                            {user.fullName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field-group processing-stage-field">
-                      <span>Fecha objetivo</span>
-                      <input
-                        type="date"
-                        value={activeProcessingStage.targetDate || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "targetDate",
-                            event.target.value || null,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-
-                    <label className="field-group processing-stage-field">
-                      <span>Fecha completada</span>
-                      <input
-                        type="datetime-local"
-                        value={
-                          activeProcessingStage.completedAt
-                            ? String(activeProcessingStage.completedAt).slice(0, 16)
-                            : ""
-                        }
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "completedAt",
-                            event.target.value
-                              ? new Date(event.target.value).toISOString()
-                              : null,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-
-                    <label className="field-group processing-stage-field full">
-                      <span>Razon de bloqueo</span>
-                      <textarea
-                        rows={3}
-                        value={activeProcessingStage.blockedReason || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField(
-                            "blockedReason",
-                            event.target.value,
-                          )
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-
-                    <label className="field-group processing-stage-field full">
-                      <span>Notas</span>
-                      <textarea
-                        rows={4}
-                        value={activeProcessingStage.notes || ""}
-                        onChange={(event) =>
-                          updateActiveStageCommonField("notes", event.target.value)
-                        }
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="processing-stage-actions">
+                        Correo vendedor
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="btn-primary"
-                      onClick={() =>
-                        void saveProcessingStage(activeProcessingStage.stageCode)
-                      }
+                      onClick={() => {
+                        if (isQuotationAcceptedStage) {
+                          const acceptedAtIso =
+                            activeProcessingStage.stageData?.acceptedAt ||
+                            activeProcessingStage.completedAt ||
+                            new Date().toISOString();
+                          void saveProcessingStage(activeProcessingStage.stageCode, {
+                            forceStatus: "completed",
+                            forceCompletedAt: acceptedAtIso,
+                            stageDataPatch: {
+                              acceptedAt: acceptedAtIso,
+                            },
+                          });
+                          return;
+                        }
+                        void saveProcessingStage(activeProcessingStage.stageCode);
+                      }}
                       disabled={
                         !processingData.permissions?.canUpdate ||
                         processingSavingStageCode === activeProcessingStage.stageCode
@@ -1976,87 +3963,305 @@ export default function AcceptOrderPage() {
                     >
                       {processingSavingStageCode === activeProcessingStage.stageCode
                         ? "Guardando..."
-                        : "Guardar etapa"}
+                        : isQuotationAcceptedStage
+                          ? "Aceptar"
+                          : "Guardar etapa"}
                     </button>
                   </div>
                 </section>
-
-                {activeProcessingStage.stageCode === "kickoff_internal" ? (
-                  <section className="processing-stage-box">
-                    <header>
-                      <h5>Convocatoria Kick Off interno</h5>
-                      <p>
-                        Convoca usuarios internos y correos externos con mensaje
-                        prellenado.
-                      </p>
-                    </header>
-
-                    <div className="processing-stage-actions split">
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => setKickoffInvitationModalOpen(true)}
-                        disabled={!processingData.permissions?.canConvoke}
-                      >
-                        Convocar kick off interno
-                      </button>
-                      <span className="field-hint">
-                        {processingData?.kickoffInternal?.latestInvitation?.statusCode ===
-                        "sent"
-                          ? "Ultima convocatoria enviada"
-                          : "Sin convocatoria enviada"}
-                      </span>
-                    </div>
-
-                    {Array.isArray(processingData?.kickoffInternal?.invitations) &&
-                    processingData.kickoffInternal.invitations.length ? (
-                      <div className="processing-stage-log-list">
-                        {processingData.kickoffInternal.invitations
-                          .slice(0, 5)
-                          .map((invitation) => (
-                            <article
-                              key={invitation.id}
-                              className="processing-stage-log-item"
-                            >
-                              <strong>{invitation.inviteSubject}</strong>
-                              <span className="field-hint">
-                                {invitation.statusCode === "sent"
-                                  ? "Enviada"
-                                  : "Borrador"}
-                                {" · "}
-                                {formatDate(invitation.createdAt)}
-                              </span>
-                            </article>
-                          ))}
-                      </div>
-                    ) : (
-                      <p className="field-hint">
-                        Aun no se registra convocatoria de Kick Off interno.
-                      </p>
-                    )}
-                  </section>
                 ) : null}
 
-                {activeProcessingStage.stageCode === "kickoff_external" ? (
+                {activeProcessingStage.stageCode === "kickoff_internal" ? (
                   <>
                     <section className="processing-stage-box">
                       <header>
-                        <h5>Evidencias Kick Off externo</h5>
+                        <h5>Convocatoria Kick Off interno</h5>
                         <p>
-                          Adjunta archivos de texto/audio o registra minuta manual.
+                          Selecciona convocados internos y dos fechas propuestas.
+                        </p>
+                      </header>
+
+                      <div className="processing-stage-grid two">
+                        <label className="field-group processing-stage-field kickoff-internal-users-field">
+                          <span>Convocados internos</span>
+                          <div className="kickoff-internal-users-picker">
+                            {processingUsers.map((user) => {
+                              const isSelected =
+                                kickoffInvitationDraft.internalAttendeesUserIds.includes(
+                                  Number(user.id),
+                                );
+                              return (
+                                <label
+                                  key={user.id}
+                                  className="kickoff-internal-user-choice"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={(event) => {
+                                      setKickoffInvitationDraft((current) => {
+                                        const currentIds = Array.isArray(
+                                          current.internalAttendeesUserIds,
+                                        )
+                                          ? current.internalAttendeesUserIds
+                                          : [];
+                                        const nextIds = event.target.checked
+                                          ? Array.from(
+                                              new Set([
+                                                ...currentIds,
+                                                Number(user.id),
+                                              ]),
+                                            )
+                                          : currentIds.filter(
+                                              (id) =>
+                                                Number(id) !== Number(user.id),
+                                            );
+                                        return {
+                                          ...current,
+                                          internalAttendeesUserIds: nextIds,
+                                        };
+                                      });
+                                    }}
+                                  />
+                                  <span>
+                                    {user.fullName} {user.email ? `(${user.email})` : ""}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <span className="field-hint">
+                            Seleccionados: {kickoffInvitationDraft.internalAttendeesUserIds.length}
+                          </span>
+                        </label>
+
+                        <label className="field-group processing-stage-field kickoff-internal-right-field">
+                          <span>Opcion 1 (fecha y hora)</span>
+                          <div className="kickoff-internal-date-time-row">
+                            <input
+                              type="date"
+                              value={kickoffInvitationDraft.meetingDateOptionOne}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingDateOptionOne: event.target.value,
+                                }))
+                              }
+                            />
+                            <input
+                              type="time"
+                              value={kickoffInvitationDraft.meetingTimeOptionOne}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingTimeOptionOne: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </label>
+
+                        <label className="field-group processing-stage-field kickoff-internal-right-field">
+                          <span>Opcion 2 (fecha y hora)</span>
+                          <div className="kickoff-internal-date-time-row">
+                            <input
+                              type="date"
+                              value={kickoffInvitationDraft.meetingDateOptionTwo}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingDateOptionTwo: event.target.value,
+                                }))
+                              }
+                            />
+                            <input
+                              type="time"
+                              value={kickoffInvitationDraft.meetingTimeOptionTwo}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingTimeOptionTwo: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        </label>
+
+                        <label className="field-group processing-stage-field kickoff-internal-right-field">
+                          <span>Modalidad</span>
+                          <select
+                            value={kickoffInvitationDraft.meetingMode || "virtual"}
+                            onChange={(event) =>
+                              setKickoffInvitationDraft((current) => ({
+                                ...current,
+                                meetingMode: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="virtual">Virtual</option>
+                            <option value="presencial">Presencial</option>
+                          </select>
+                        </label>
+
+                        {kickoffInvitationDraft.meetingMode === "presencial" ? (
+                          <label className="field-group processing-stage-field kickoff-internal-right-field">
+                            <span>Ubicacion</span>
+                            <input
+                              type="text"
+                              value={kickoffInvitationDraft.meetingLocation}
+                              onChange={(event) =>
+                                setKickoffInvitationDraft((current) => ({
+                                  ...current,
+                                  meetingLocation: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                        ) : null}
+                      </div>
+
+                      <div className="processing-stage-actions split">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={openKickoffInvitationPreviewModal}
+                          disabled={!processingData.permissions?.canConvoke}
+                        >
+                          Abrir vista previa de correo
+                        </button>
+                        <span className="field-hint">
+                          {processingData?.kickoffInternal?.latestInvitation?.statusCode ===
+                          "sent"
+                            ? "Ultima convocatoria enviada"
+                            : "Sin convocatoria enviada"}
+                        </span>
+                      </div>
+
+                      {Array.isArray(processingData?.kickoffInternal?.invitations) &&
+                      processingData.kickoffInternal.invitations.length ? (
+                        <div className="processing-stage-log-list">
+                          {processingData.kickoffInternal.invitations
+                            .slice(0, 5)
+                            .map((invitation) => (
+                              <article
+                                key={invitation.id}
+                                className="processing-stage-log-item"
+                              >
+                                <strong>{invitation.inviteSubject}</strong>
+                                <span className="field-hint">
+                                  {invitation.statusCode === "sent"
+                                    ? "Enviada"
+                                    : "Borrador"}
+                                  {" · "}
+                                  {formatDate(invitation.createdAt)}
+                                </span>
+                              </article>
+                            ))}
+                        </div>
+                      ) : (
+                        <p className="field-hint">
+                          Aun no se registra convocatoria de Kick Off interno.
+                        </p>
+                      )}
+                    </section>
+
+                    <section className="processing-stage-box">
+                      <header>
+                        <h5>Minuta</h5>
+                        <p>
+                          Carga archivo de texto o audio, genera resumen IA y culmina el step.
                         </p>
                       </header>
 
                       <div className="processing-stage-grid two">
                         <label className="field-group processing-stage-field full">
-                          <span>Minuta / acuerdos manuales</span>
-                          <textarea
-                            rows={4}
-                            value={kickoffExternalManualNote}
-                            onChange={(event) =>
-                              setKickoffExternalManualNote(event.target.value)
+                          <span>Archivo de minuta (texto/audio)</span>
+                          <input
+                            type="file"
+                            accept=".txt,.md,.csv,.pdf,.doc,.docx,audio/*"
+                            onChange={(event) => {
+                              const selectedFiles = event.target.files;
+                              void uploadKickoffInternalEvidence(selectedFiles);
+                              event.target.value = "";
+                            }}
+                            disabled={
+                              uploadingKickoffInternalEvidence ||
+                              !processingData.permissions?.canUpdate
                             }
-                            placeholder="Escribe acuerdos, riesgos y pendientes del kick off externo"
+                          />
+                        </label>
+
+                        <div className="processing-stage-field full">
+                          {kickoffInternalEvidences.length ? (
+                            <div className="processing-stage-log-list">
+                              {kickoffInternalEvidences.slice(0, 8).map((evidence) => {
+                                const evidenceId = Number(evidence.id || 0);
+                                const deletingEvidence = deletingProcessingEvidenceIds.has(
+                                  evidenceId,
+                                );
+                                return (
+                                  <article key={evidence.id} className="processing-stage-log-item">
+                                    <div>
+                                      <strong>
+                                        {evidence.document?.originalFileName || "Evidencia de minuta"}
+                                      </strong>
+                                      <span className="field-hint">
+                                        {evidence.createdByUserName || "Usuario"}
+                                        {" · "}
+                                        {formatDate(evidence.createdAt)}
+                                      </span>
+                                    </div>
+                                    <div className="processing-stage-actions split">
+                                      {evidence.document ? (
+                                        <button
+                                          type="button"
+                                          className="btn-ghost processing-evidence-icon-button"
+                                          onClick={() => void downloadKickoffEvidence(evidence)}
+                                          disabled={deletingEvidence}
+                                          title="Descargar evidencia"
+                                          aria-label="Descargar evidencia"
+                                        >
+                                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                                            <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                          </svg>
+                                        </button>
+                                      ) : null}
+                                      <button
+                                        type="button"
+                                        className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
+                                        onClick={() => void deleteKickoffEvidence(evidence)}
+                                        disabled={deletingEvidence || !processingData.permissions?.canUpdate}
+                                        title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                        aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="field-hint">
+                              Aun no se registran archivos en la minuta de Kick Off interno.
+                            </p>
+                          )}
+                        </div>
+
+                        <label className="field-group processing-stage-field full">
+                          <span>Resumen de minuta</span>
+                          <textarea
+                            rows={6}
+                            value={kickoffInternalSummaryText}
+                            onChange={(event) =>
+                              updateActiveStageDataField(
+                                "minutesSummary",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="Resumen de acuerdos, responsables y proximos pasos"
                           />
                         </label>
                       </div>
@@ -2065,263 +4270,544 @@ export default function AcceptOrderPage() {
                         <button
                           type="button"
                           className="btn-secondary"
-                          onClick={() => void saveKickoffExternalManualEvidence()}
+                          onClick={() => void generateKickoffInternalAiSummary()}
                           disabled={
-                            !kickoffExternalManualNote.trim() ||
-                            savingKickoffExternalManualNote
+                            generatingKickoffInternalAi ||
+                            !processingData.permissions?.canGenerateIa
                           }
                         >
-                          {savingKickoffExternalManualNote
-                            ? "Guardando minuta..."
-                            : "Guardar minuta"}
+                          {generatingKickoffInternalAi ? "Generando resumen..." : "IA resumir"}
                         </button>
 
-                        <label className="btn-secondary processing-upload-button">
-                          {uploadingKickoffExternalEvidence
-                            ? "Subiendo evidencia..."
-                            : "Subir evidencia"}
-                          <input
-                            type="file"
-                            multiple
-                            onChange={(event) => {
-                              const selectedFiles = event.target.files;
-                              if (selectedFiles?.length) {
-                                void uploadKickoffExternalEvidence(selectedFiles);
-                              }
-                              event.target.value = "";
-                            }}
-                            disabled={uploadingKickoffExternalEvidence}
-                            hidden
-                          />
-                        </label>
-                      </div>
-
-                      {Array.isArray(processingData?.kickoffExternal?.evidences) &&
-                      processingData.kickoffExternal.evidences.length ? (
-                        <div className="processing-stage-log-list">
-                          {processingData.kickoffExternal.evidences.map((evidence) => (
-                            <article
-                              key={evidence.id}
-                              className="processing-stage-log-item"
-                            >
-                              <div>
-                                <strong>
-                                  {evidence.document?.originalFileName ||
-                                    (evidence.evidenceType === "manual_note"
-                                      ? "Minuta manual"
-                                      : "Evidencia")}
-                                </strong>
-                                <span className="field-hint">
-                                  {evidence.evidenceType} · {formatDate(evidence.createdAt)}
-                                </span>
-                              </div>
-                              {evidence.document ? (
-                                <button
-                                  type="button"
-                                  className="btn-secondary"
-                                  onClick={() => void downloadKickoffEvidence(evidence)}
-                                >
-                                  Descargar
-                                </button>
-                              ) : null}
-                            </article>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="field-hint">
-                          Aun no existen evidencias en Kick Off externo.
-                        </p>
-                      )}
-                    </section>
-
-                    <section className="processing-stage-box">
-                      <header>
-                        <h5>Resumen IA y validacion comercial</h5>
-                        <p>
-                          Genera resumen IA y captura validaciones para completar la etapa.
-                        </p>
-                      </header>
-
-                      <div className="processing-stage-actions split">
                         <button
                           type="button"
                           className="btn-primary"
-                          onClick={() => void generateKickoffExternalAiSummary()}
+                          onClick={() =>
+                            void saveProcessingStage(activeProcessingStage.stageCode, {
+                              forceStatus: "completed",
+                              forceCompletedAt: new Date().toISOString(),
+                            })
+                          }
                           disabled={
-                            !processingData.permissions?.canGenerateIa ||
-                            generatingKickoffExternalAi ||
-                            !processingData?.kickoffExternal?.evidences?.length
+                            !processingData.permissions?.canUpdate ||
+                            processingSavingStageCode === activeProcessingStage.stageCode
                           }
                         >
-                          {generatingKickoffExternalAi
-                            ? "Generando resumen IA..."
-                            : "Generar resumen IA"}
+                          Culminar Kick Off Interno
                         </button>
                       </div>
 
-                      {processingData?.kickoffExternal?.aiSummaryCurrent?.summary ? (
-                        <div className="processing-ai-summary-grid">
-                          <article>
-                            <h6>Resumen ejecutivo</h6>
-                            <p>
-                              {processingData.kickoffExternal.aiSummaryCurrent.summary
-                                .summary || "-"}
-                            </p>
-                          </article>
-                          <article>
-                            <h6>Puntos de conflicto</h6>
-                            <p>
-                              {(
-                                processingData.kickoffExternal.aiSummaryCurrent.summary
-                                  .conflictPoints || []
-                              ).join(" | ") || "-"}
-                            </p>
-                          </article>
-                          <article>
-                            <h6>Riesgos</h6>
-                            <p>
-                              {(
-                                processingData.kickoffExternal.aiSummaryCurrent.summary
-                                  .riskPoints || []
-                              ).join(" | ") || "-"}
-                            </p>
-                          </article>
-                          <article>
-                            <h6>Puntos por aclarar</h6>
-                            <p>
-                              {(
-                                processingData.kickoffExternal.aiSummaryCurrent.summary
-                                  .clarificationPoints || []
-                              ).join(" | ") || "-"}
-                            </p>
-                          </article>
-                        </div>
-                      ) : (
-                        <p className="field-hint">Aun no se genero resumen IA.</p>
-                      )}
-
-                      <div className="processing-stage-grid two">
-                        <label className="field-group processing-stage-field">
-                          <span>Fecha estimada facturacion</span>
-                          <input
-                            type="date"
-                            value={
-                              activeProcessingStage.stageData?.estimatedInvoicingDate || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "estimatedInvoicingDate",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field">
-                          <span>Fecha estimada entrega productos</span>
-                          <input
-                            type="date"
-                            value={
-                              activeProcessingStage.stageData?.estimatedDeliveryDate || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "estimatedDeliveryDate",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field">
-                          <span>Dias de credito cobranza</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={
-                              activeProcessingStage.stageData?.collectionsCreditDays || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "collectionsCreditDays",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field">
-                          <span>Responsable operativo</span>
-                          <input
-                            type="text"
-                            value={activeProcessingStage.stageData?.operationalOwner || ""}
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "operationalOwner",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field full">
-                          <span>Alcance operativo</span>
-                          <textarea
-                            rows={3}
-                            value={activeProcessingStage.stageData?.operationalScope || ""}
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "operationalScope",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field full">
-                          <span>Timeline operativo</span>
-                          <textarea
-                            rows={3}
-                            value={
-                              activeProcessingStage.stageData?.operationalTimeline || ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "operationalTimeline",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                        <label className="field-group processing-stage-field full">
-                          <span>Otros puntos relevantes</span>
-                          <textarea
-                            rows={3}
-                            value={
-                              activeProcessingStage.stageData?.relevantAdditionalPoints ||
-                              ""
-                            }
-                            onChange={(event) =>
-                              updateActiveStageDataField(
-                                "relevantAdditionalPoints",
-                                event.target.value,
-                              )
-                            }
-                            disabled={!processingData.permissions?.canUpdate}
-                          />
-                        </label>
-                      </div>
                     </section>
                   </>
                 ) : null}
 
-                {activeProcessingStage.stageCode !== "kickoff_external" &&
+                {activeProcessingStage.stageCode === "kickoff_external" ? (
+                  <section className="processing-stage-box">
+                    <header>
+                      <h5>Minuta</h5>
+                      <p>
+                        Carga archivo de texto o audio, genera resumen IA y culmina el step.
+                      </p>
+                    </header>
+
+                    <div className="processing-stage-grid two">
+                      <label className="field-group processing-stage-field full">
+                        <span>Archivo de minuta (texto/audio)</span>
+                        <input
+                          type="file"
+                          accept=".txt,.md,.csv,.pdf,.doc,.docx,audio/*"
+                          onChange={(event) => {
+                            const selectedFiles = event.target.files;
+                            if (selectedFiles?.length) {
+                              void uploadKickoffExternalEvidence(selectedFiles);
+                            }
+                            event.target.value = "";
+                          }}
+                          disabled={
+                            uploadingKickoffExternalEvidence ||
+                            !processingData.permissions?.canUpdate
+                          }
+                        />
+                      </label>
+
+                      <div className="processing-stage-field full">
+                        {kickoffExternalEvidences.length ? (
+                          <div className="processing-stage-log-list">
+                            {kickoffExternalEvidences.map((evidence) => {
+                              const evidenceId = Number(evidence.id || 0);
+                              const deletingEvidence = deletingProcessingEvidenceIds.has(
+                                evidenceId,
+                              );
+                              return (
+                                <article
+                                  key={evidence.id}
+                                  className="processing-stage-log-item"
+                                >
+                                  <div>
+                                    <strong>
+                                      {evidence.document?.originalFileName ||
+                                        (evidence.evidenceType === "manual_note"
+                                          ? "Minuta manual"
+                                          : "Evidencia")}
+                                    </strong>
+                                    <span className="field-hint">
+                                      {evidence.evidenceType} · {formatDate(evidence.createdAt)}
+                                    </span>
+                                  </div>
+                                  <div className="processing-stage-actions split">
+                                    {evidence.document ? (
+                                      <button
+                                        type="button"
+                                        className="btn-secondary processing-evidence-icon-button"
+                                        onClick={() => void downloadKickoffEvidence(evidence)}
+                                        disabled={deletingEvidence}
+                                        title="Descargar evidencia"
+                                        aria-label="Descargar evidencia"
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                        </svg>
+                                      </button>
+                                    ) : null}
+                                    {evidence.document ? (
+                                      <button
+                                        type="button"
+                                        className="btn-danger processing-evidence-icon-button processing-evidence-delete-button"
+                                        onClick={() => void deleteKickoffEvidence(evidence)}
+                                        disabled={deletingEvidence || !processingData.permissions?.canUpdate}
+                                        title={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                        aria-label={deletingEvidence ? "Eliminando evidencia" : "Eliminar evidencia"}
+                                      >
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.62l.84 10.03A2.25 2.25 0 0 0 8.2 20.25h7.6a2.25 2.25 0 0 0 2.24-1.97l.84-10.03h.62a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75zM8.25 6A.75.75 0 0 1 9 5.25h6a.75.75 0 0 1 .75.75v.75h-7.5zm1.5 4.25a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0zm3.75-.75a.75.75 0 0 1 .75.75v6a.75.75 0 0 1-1.5 0v-6a.75.75 0 0 1 .75-.75zm3 .75a.75.75 0 0 0-1.5 0v6a.75.75 0 0 0 1.5 0z" />
+                                        </svg>
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="field-hint">
+                            Aun no existen evidencias en Kick Off externo.
+                          </p>
+                        )}
+                      </div>
+
+                      <label className="field-group processing-stage-field full">
+                        <span>Resumen de minuta</span>
+                        <textarea
+                          rows={6}
+                          value={kickoffExternalSummaryText}
+                          onChange={(event) =>
+                            updateActiveStageDataField(
+                              "minutesSummary",
+                              event.target.value,
+                            )
+                          }
+                          placeholder="Resumen de acuerdos, responsables y proximos pasos"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="processing-stage-actions split">
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => void generateKickoffExternalAiSummary()}
+                        disabled={
+                          generatingKickoffExternalAi ||
+                          !processingData.permissions?.canGenerateIa
+                        }
+                      >
+                        {generatingKickoffExternalAi ? "Generando resumen..." : "IA resumir"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() =>
+                          void saveProcessingStage(activeProcessingStage.stageCode, {
+                            forceStatus: "completed",
+                            forceCompletedAt: new Date().toISOString(),
+                          })
+                        }
+                        disabled={
+                          !processingData.permissions?.canUpdate ||
+                          processingSavingStageCode === activeProcessingStage.stageCode
+                        }
+                      >
+                        Culminar Kick Off Externo
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+
+                {activeProcessingStage.stageCode !== "quotation_accepted" &&
+                activeProcessingStage.stageCode !== "kickoff_external" &&
                 activeProcessingStage.stageCode !== "kickoff_internal" ? (
                   renderStageBaseSpecificFields(activeProcessingStage)
                 ) : null}
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {purchaseOrderModalOpen && purchaseOrderDraft ? (
+        <div
+          className="modal-overlay modal-overlay-elevated"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="purchase-order-modal-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closePurchaseOrderModal();
+            }
+          }}
+        >
+          <div className="modal-dialog processing-purchase-order-modal">
+            <div className="accept-order-notification-header">
+              <span>Orden de compra</span>
+              <h3 id="purchase-order-modal-title">Generar orden</h3>
+              <p>
+                Se generara una orden por proveedor con los items seleccionados.
+              </p>
+            </div>
+
+            {purchaseOrderDraftOrders.map((order) => {
+              const orderLines = Array.isArray(order?.lines) ? order.lines : [];
+              const subtotal = orderLines.reduce(
+                (sum, line) => sum + calculatePurchaseOrderLineAmount(line),
+                0,
+              );
+              const ivaPct = normalizePositiveNumber(order?.ivaPct, 16);
+              const ivaAmount = subtotal * (ivaPct / 100);
+              const total = subtotal + ivaAmount;
+
+              return (
+                <section key={order.draftId} className="processing-purchase-order-lines">
+                  <header className="processing-purchase-order-lines-header">
+                    <h4>{order.providerName || "Proveedor"}</h4>
+                    <span>{orderLines.length} item(s)</span>
+                  </header>
+
+                  <div className="processing-stage-grid two">
+                    <label className="field-group processing-stage-field">
+                      <span>Orden #</span>
+                      <input type="text" value={order.orderNumber || "Pendiente"} readOnly />
+                    </label>
+                    <label className="field-group processing-stage-field">
+                      <span>Moneda</span>
+                      <input
+                        type="text"
+                        value={order.currencyCode || purchaseOrderDraft.currencyCode || "USD"}
+                        readOnly
+                      />
+                    </label>
+                  </div>
+
+                  <div className="processing-products-table-wrap">
+                    <table className="processing-products-table">
+                      <thead>
+                        <tr>
+                          <th>Codigo</th>
+                          <th>Descripcion</th>
+                          <th className="is-right">Cantidad</th>
+                          <th className="is-right">Costo unitario</th>
+                          <th className="is-right">Importe</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {orderLines.map((line) => (
+                          <tr key={`${order.draftId}-${line.lineId}`}>
+                            <td>{line.code || "-"}</td>
+                            <td>{line.description || "Sin descripcion"}</td>
+                            <td className="is-right">
+                              {Number(normalizePositiveNumber(line.quantity, 0)).toLocaleString(
+                                "es-MX",
+                                {
+                                  maximumFractionDigits: 4,
+                                },
+                              )}
+                            </td>
+                            <td className="is-right">
+                              {formatCurrency(
+                                Number(normalizePositiveNumber(line.unitCost, 0)),
+                                order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                              )}
+                            </td>
+                            <td className="is-right">
+                              {formatCurrency(
+                                calculatePurchaseOrderLineAmount(line),
+                                order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="purchase-order-preview-totals">
+                    <div>
+                      <span>Subtotal</span>
+                      <strong>
+                        {formatCurrency(
+                          subtotal,
+                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>I.V.A.</span>
+                      <strong>
+                        {formatCurrency(
+                          ivaAmount,
+                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Total</span>
+                      <strong>
+                        {formatCurrency(
+                          total,
+                          order.currencyCode || purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                        )}
+                      </strong>
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+
+            <section className="purchase-order-preview-card">
+              <div className="purchase-order-preview-totals">
+                <div>
+                  <span>Subtotal global</span>
+                  <strong>
+                    {formatCurrency(
+                      purchaseOrderDraftTotals.subtotal,
+                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                    )}
+                  </strong>
+                </div>
+                <div>
+                  <span>I.V.A. global</span>
+                  <strong>
+                    {formatCurrency(
+                      purchaseOrderDraftTotals.ivaAmount,
+                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                    )}
+                  </strong>
+                </div>
+                <div>
+                  <span>Total global</span>
+                  <strong>
+                    {formatCurrency(
+                      purchaseOrderDraftTotals.total,
+                      purchaseOrderDraft.currencyCode || processingCurrencyCode,
+                    )}
+                  </strong>
+                </div>
+              </div>
+            </section>
+
+            <div className="processing-stage-actions split">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={closePurchaseOrderModal}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={openPurchaseOrderFinalPreview}
+              >
+                Generar orden
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {purchaseOrderModalOpen && purchaseOrderFinalPreviewOpen ? (
+        <PurchaseOrderPrintPreviewModal
+          isOpen={purchaseOrderFinalPreviewOpen}
+          model={purchaseOrderPrintModel}
+          onClose={() => setPurchaseOrderFinalPreviewOpen(false)}
+          onConfirm={confirmGeneratePurchaseOrdersFromPreview}
+        />
+      ) : null}
+
+      {customStepItemPicker.isOpen ? (
+        <div
+          className="modal-overlay modal-overlay-elevated"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="custom-step-item-picker-title"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCustomStepItemPicker();
+            }
+          }}
+        >
+          <div className="modal-dialog processing-custom-item-picker-modal">
+            <div className="accept-order-notification-header">
+              <span>Seleccion de item</span>
+              <h3 id="custom-step-item-picker-title">Seleccionar producto de cotizacion</h3>
+              <p>
+                Doble clic en código abre este selector. Elige un item para precargar
+                codigo, descripcion, proveedor y costo.
+              </p>
+            </div>
+
+            <div className="processing-stage-grid two">
+              <label className="field-group processing-stage-field">
+                <span>Proveedor</span>
+                <select
+                  value={customStepItemPicker.providerId}
+                  onChange={(event) =>
+                    setCustomStepItemPicker((current) => ({
+                      ...current,
+                      providerId: event.target.value,
+                      priceListId: "",
+                      activeLists: [],
+                      unavailableListMessage: "",
+                      results: [],
+                    }))
+                  }
+                >
+                  <option value="">Selecciona proveedor</option>
+                  {processingProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="field-group processing-stage-field">
+                <span>Buscar</span>
+                <input
+                  type="text"
+                  placeholder={
+                    customStepItemPicker.providerId
+                      ? customStepItemPicker.priceListId
+                        ? "Codigo o descripcion"
+                        : customStepItemPicker.loadingLists
+                          ? "Cargando lista activa..."
+                          : "Proveedor sin lista activa"
+                      : "Selecciona proveedor"
+                  }
+                  value={customStepItemPicker.query}
+                  disabled={!customStepItemPicker.priceListId}
+                  onChange={(event) =>
+                    setCustomStepItemPicker((current) => ({
+                      ...current,
+                      query: event.target.value,
+                    }))
+                  }
+                  autoFocus
+                />
+              </label>
+            </div>
+
+            {customStepItemPicker.error ? (
+              <p className="field-hint">{customStepItemPicker.error}</p>
+            ) : null}
+
+            <div className="processing-products-table-wrap">
+              <table className="processing-products-table">
+                <thead>
+                  <tr>
+                    <th>Codigo</th>
+                    <th>Descripcion</th>
+                    <th>Lista</th>
+                    <th>Proveedor</th>
+                    <th className="is-right">Costo unitario</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {!customStepItemPicker.providerId ? (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        Selecciona un proveedor activo para continuar.
+                      </td>
+                    </tr>
+                  ) : !customStepItemPicker.priceListId ? (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        {customStepItemPicker.loadingLists
+                          ? "Cargando lista activa del proveedor..."
+                          : customStepItemPicker.unavailableListMessage ||
+                            "El proveedor seleccionado no tiene una lista activa disponible."}
+                      </td>
+                    </tr>
+                  ) : customStepItemPicker.loading ? (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        Cargando productos...
+                      </td>
+                    </tr>
+                  ) : customStepItemPicker.results.length ? (
+                    customStepItemPicker.results.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.code || "-"}</td>
+                        <td>{item.description || "Sin descripcion"}</td>
+                        <td>{item.priceListName || "-"}</td>
+                        <td>{item.providerName || "-"}</td>
+                        <td className="is-right">
+                          {formatCurrency(
+                            normalizePositiveNumber(
+                              item.price,
+                              normalizePositiveNumber(item.unitCostWithDiscount, 0),
+                            ),
+                            item.currencyCode || processingCurrencyCode,
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-secondary processing-product-action-icon"
+                            title="Seleccionar item"
+                            aria-label="Seleccionar item"
+                            onClick={() => applyCatalogProductToCustomStepItem(item)}
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              aria-hidden="true"
+                            >
+                              <path d="m20 6-11 11-5-5" />
+                            </svg>
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="empty-state">
+                        No se encontraron items con ese criterio.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="processing-stage-actions split">
+              <button type="button" className="btn-secondary" onClick={closeCustomStepItemPicker}>
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -2343,127 +4829,17 @@ export default function AcceptOrderPage() {
               <span>Kick Off interno</span>
               <h3 id="kickoff-internal-invite-title">Convocatoria interna</h3>
               <p>
-                Define invitados, fecha y mensaje para la coordinacion vendedor -
-                preventa.
+                Revisa el correo que se enviara a los convocados y confirma el envio.
               </p>
             </div>
 
             <div className="processing-stage-grid two">
-              <label className="field-group processing-stage-field">
-                <span>Fecha</span>
-                <input
-                  type="date"
-                  value={kickoffInvitationDraft.meetingDate}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingDate: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field">
-                <span>Hora</span>
-                <input
-                  type="time"
-                  value={kickoffInvitationDraft.meetingTime}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingTime: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field">
-                <span>Modalidad</span>
-                <select
-                  value={kickoffInvitationDraft.meetingMode || "virtual"}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingMode: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="virtual">Virtual</option>
-                  <option value="presencial">Presencial</option>
-                </select>
-              </label>
-              <label className="field-group processing-stage-field">
-                <span>Ubicacion (si presencial)</span>
-                <input
-                  type="text"
-                  value={kickoffInvitationDraft.meetingLocation}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingLocation: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field full">
-                <span>Link (si virtual)</span>
-                <input
-                  type="url"
-                  value={kickoffInvitationDraft.meetingLink}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      meetingLink: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field-group processing-stage-field full">
-                <span>Invitados internos</span>
-                <select
-                  multiple
-                  value={kickoffInvitationDraft.internalAttendeesUserIds.map(String)}
-                  onChange={(event) => {
-                    const values = Array.from(event.target.selectedOptions).map(
-                      (option) => Number(option.value),
-                    );
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      internalAttendeesUserIds: values,
-                    }));
-                  }}
-                  size={6}
-                >
-                  {processingUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.fullName} {user.email ? `(${user.email})` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field-group processing-stage-field full">
-                <span>Correos externos</span>
-                <textarea
-                  rows={3}
-                  value={kickoffInvitationDraft.externalAttendeesEmails}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      externalAttendeesEmails: event.target.value,
-                    }))
-                  }
-                  placeholder="correo1@empresa.com, correo2@empresa.com"
-                />
-              </label>
               <label className="field-group processing-stage-field full">
                 <span>Asunto</span>
                 <input
                   type="text"
                   value={kickoffInvitationDraft.inviteSubject}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      inviteSubject: event.target.value,
-                    }))
-                  }
+                  readOnly
                   maxLength={240}
                 />
               </label>
@@ -2472,17 +4848,20 @@ export default function AcceptOrderPage() {
                 <textarea
                   rows={8}
                   value={kickoffInvitationDraft.inviteBodyTemplate}
-                  onChange={(event) =>
-                    setKickoffInvitationDraft((current) => ({
-                      ...current,
-                      inviteBodyTemplate: event.target.value,
-                    }))
-                  }
+                  readOnly
                 />
               </label>
             </div>
 
             <div className="processing-stage-actions split">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setKickoffInvitationModalOpen(false)}
+                disabled={savingKickoffInvitation}
+              >
+                Cancelar
+              </button>
               <button
                 type="button"
                 className="btn-secondary"

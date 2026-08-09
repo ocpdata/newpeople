@@ -81,6 +81,30 @@ const CORE_PERMISSIONS = [
     description: "Aprobar cotizaciones con IA",
   },
   {
+    code: "aceptar_pedido.procesamiento.read",
+    module: "aceptar_pedido",
+    action: "procesamiento_read",
+    description: "Ver el modulo Aceptar Pedido y su flujo operativo",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.update",
+    module: "aceptar_pedido",
+    action: "procesamiento_update",
+    description: "Actualizar etapas y documentos del modulo Aceptar Pedido",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.ia",
+    module: "aceptar_pedido",
+    action: "procesamiento_ia",
+    description: "Generar contenido IA dentro del modulo Aceptar Pedido",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.convocar",
+    module: "aceptar_pedido",
+    action: "procesamiento_convocar",
+    description: "Enviar convocatorias y notificaciones desde Aceptar Pedido",
+  },
+  {
     code: "propuestas.read",
     module: "propuestas",
     action: "read",
@@ -148,6 +172,22 @@ const PERMISSION_DESCRIPTION_OVERRIDES = [
   {
     code: "cotizaciones.administracion",
     description: "Administrar cotizaciones (control total y excepciones)",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.read",
+    description: "Ver el modulo Aceptar Pedido y su flujo operativo",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.update",
+    description: "Actualizar etapas y documentos del modulo Aceptar Pedido",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.ia",
+    description: "Generar contenido IA dentro del modulo Aceptar Pedido",
+  },
+  {
+    code: "aceptar_pedido.procesamiento.convocar",
+    description: "Enviar convocatorias y notificaciones desde Aceptar Pedido",
   },
   {
     code: "cotizaciones.externo",

@@ -173,7 +173,13 @@ export default function AppShell({
     "cotizaciones.administracion",
     "cotizaciones.externo",
   ].some(can);
-  const canAccessAcceptOrder = can("cotizaciones.administracion");
+  const canAccessAcceptOrder = [
+    "cotizaciones.administracion",
+    "aceptar_pedido.procesamiento.read",
+    "aceptar_pedido.procesamiento.update",
+    "aceptar_pedido.procesamiento.ia",
+    "aceptar_pedido.procesamiento.convocar",
+  ].some(can);
   const canAccessInteractions =
     can("interacciones.read") || can("interacciones.read_all");
   const canReadAccounts = can("cuentas.read") || can("cuentas.read_all");
