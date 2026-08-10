@@ -16603,6 +16603,37 @@ td {
   color: #122845;
 }
 
+.processing-reception-orders {
+  display: grid;
+  gap: 14px;
+}
+
+.processing-reception-order {
+  border-left: 3px solid #2b6cb0;
+  background: #f8fbff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.processing-reception-order-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.processing-reception-order-header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.processing-reception-order-header > span {
+  color: #4e6784;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .processing-products-table-wrap {
   width: 100%;
   overflow-x: auto;
@@ -16635,8 +16666,32 @@ td {
   text-align: right;
 }
 
+.processing-products-table .is-center {
+  text-align: center;
+}
+
+.processing-reception-order .react-datepicker-wrapper,
+.processing-reception-order .react-datepicker__input-container {
+  width: 100%;
+}
+
 .processing-remaining-days.is-negative {
   color: #b42318;
+  font-weight: 700;
+}
+
+.processing-date-input {
+  width: 100%;
+  min-width: 112px;
+}
+
+.processing-date-calendar .react-datepicker__day--today {
+  box-shadow: none;
+  font-weight: 400;
+}
+
+.processing-date-calendar .processing-date-business-today {
+  box-shadow: inset 0 0 0 2px #2b6cb0;
   font-weight: 700;
 }
 

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import DatePicker from "react-datepicker";
+import { es } from "date-fns/locale";
 import { api, getApiErrorMessage } from "./api";
+import { getTodayBusinessDate, toBusinessDateIso } from "./business-timezone";
 import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
 import PurchaseOrderPrintPreviewModal from "./quotations/PurchaseOrderPrintPreviewModal";
 import { buildPurchaseOrderPrintModel } from "./quotations/buildPurchaseOrderPrintModel";
@@ -346,9 +349,23 @@ function buildAcceptOrderWonDocumentsState() {
 
 function toDateInputValue(value) {
   if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
+  return toBusinessDateIso(value);
+}
+
+function parseDateInputValue(value) {
+  const [year, month, day] = String(value || "")
+    .split("-")
+    .map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 12);
+}
+
+function formatDatePickerValue(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "";
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function calculateRemainingDays(value) {
@@ -357,12 +374,10 @@ function calculateRemainingDays(value) {
     .map(Number);
   if (!year || !month || !day) return 0;
 
-  const today = new Date();
-  const todayUtc = Date.UTC(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
+  const [todayYear, todayMonth, todayDay] = getTodayBusinessDate()
+    .split("-")
+    .map(Number);
+  const todayUtc = Date.UTC(todayYear, todayMonth - 1, todayDay);
   const targetUtc = Date.UTC(year, month - 1, day);
   return Math.round((targetUtc - todayUtc) / (24 * 60 * 60 * 1000));
 }
@@ -561,7 +576,15 @@ function formatCurrency(value, currencyCode = "USD") {
 
 function formatDate(value) {
   if (!value) return "-";
-  const date = new Date(value);
+  const normalizedValue = String(value).trim();
+  const dateOnlyMatch = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = dateOnlyMatch
+    ? new Date(
+        Number(dateOnlyMatch[1]),
+        Number(dateOnlyMatch[2]) - 1,
+        Number(dateOnlyMatch[3]),
+      )
+    : new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return new Intl.DateTimeFormat("es-MX", {
     day: "2-digit",
@@ -570,15 +593,15 @@ function formatDate(value) {
   }).format(date);
 }
 
-function formatPurchaseOrderNumber(quotationId, orderDate) {
+function formatPurchaseOrderNumber(quotationId, orderSequence, orderDate) {
   const dateValue = String(orderDate || "").trim();
   const [year, month, day] = dateValue.split("-");
   if (!year || !month || !day) {
-    return `OC-${Number(quotationId || 0)}`;
+    return `OC-${Number(quotationId || 0)}-${Number(orderSequence || 1)}`;
   }
 
   const yearSuffix = String(year).slice(-2);
-  return `OC-${Number(quotationId || 0)}-${day}-${month}-${yearSuffix}`;
+  return `OC-${Number(quotationId || 0)}-${Number(orderSequence || 1)}-${day}-${month}-${yearSuffix}`;
 }
 
 function formatPercent(value) {
@@ -1484,10 +1507,27 @@ export default function AcceptOrderPage() {
       );
       return;
     }
+    const selectedOrderDates = Array.from(
+      new Set(
+        selectedLines
+          .map((line) => toDateInputValue(line.selectionDate))
+          .filter(Boolean),
+      ),
+    );
+    if (selectedOrderDates.length !== 1) {
+      setError(
+        "Los items seleccionados deben tener la misma fecha para generar la orden.",
+      );
+      return;
+    }
     setError("");
 
-    const today = toDateInputValue(new Date());
+    const orderDate = selectedOrderDates[0];
     const quotationNumber = Number(quotationToProcess?.id || 0);
+    const firstOrderSequence =
+      (Array.isArray(stage?.stageData?.generatedPurchaseOrders)
+        ? stage.stageData.generatedPurchaseOrders.length
+        : 0) + 1;
     const deliveryTimeCode = String(
       quotationToProcess?.latestDeliveryTime || "",
     );
@@ -1508,13 +1548,17 @@ export default function AcceptOrderPage() {
         draftId: `provider-${providerId}`,
         providerId,
         providerName: line.providerName || `Proveedor #${providerId}`,
-        orderNumber: formatPurchaseOrderNumber(quotationNumber, today),
-        orderDate: today,
+        orderNumber: formatPurchaseOrderNumber(
+          quotationNumber,
+          firstOrderSequence + map.size,
+          orderDate,
+        ),
+        orderDate,
         lines: [],
       };
       current.lines.push({
         ...line,
-        selectionDate: toDateInputValue(line.selectionDate) || today,
+        selectionDate: toDateInputValue(line.selectionDate) || orderDate,
       });
       map.set(providerId, current);
       return map;
@@ -1623,6 +1667,7 @@ export default function AcceptOrderPage() {
         String(order.orderNumber || "").trim() ||
         formatPurchaseOrderNumber(
           quotationToProcess?.id,
+          index + 1,
           order.orderDate || purchaseOrderDraft.orders?.[index]?.orderDate,
         ),
       orderDate: order.orderDate || toDateInputValue(new Date()),
@@ -2320,8 +2365,44 @@ export default function AcceptOrderPage() {
     )
       ? stage.stageData.generatedPurchaseOrders
       : [];
+    const purchaseOrderStage = (processingData.stages || []).find(
+      (item) => item.stageCode === "provider_purchase_order",
+    );
+    const receptionPurchaseOrders = Array.isArray(
+      purchaseOrderStage?.stageData?.generatedPurchaseOrders,
+    )
+      ? purchaseOrderStage.stageData.generatedPurchaseOrders
+      : [];
+    const productsReceptionStage = (processingData.stages || []).find(
+      (item) => item.stageCode === "products_reception",
+    );
+    const receptionItems =
+      productsReceptionStage?.stageData?.receptionItems &&
+      typeof productsReceptionStage.stageData.receptionItems === "object"
+        ? productsReceptionStage.stageData.receptionItems
+        : {};
+    const preworksStage = (processingData.stages || []).find(
+      (item) => item.stageCode === "preworks",
+    );
+    const preworksItems =
+      preworksStage?.stageData?.preworksItems &&
+      typeof preworksStage.stageData.preworksItems === "object"
+        ? preworksStage.stageData.preworksItems
+        : {};
+    const productsDeliveryStage = (processingData.stages || []).find(
+      (item) => item.stageCode === "products_delivery",
+    );
+    const deliveryItems =
+      productsDeliveryStage?.stageData?.deliveryItems &&
+      typeof productsDeliveryStage.stageData.deliveryItems === "object"
+        ? productsDeliveryStage.stageData.deliveryItems
+        : {};
     const generatedPurchaseOrdersTotal = generatedPurchaseOrders.reduce(
       (sum, order) => sum + Number(order?.total || 0),
+      0,
+    );
+    const generatedPurchaseOrdersSubtotal = generatedPurchaseOrders.reduce(
+      (sum, order) => sum + Number(order?.subtotal || 0),
       0,
     );
     const generatedItemIds = new Set(
@@ -2360,59 +2441,602 @@ export default function AcceptOrderPage() {
 
     return (
       <section className="processing-stage-box">
-        <header>
-          <h5>Listado de productos y servicios de la cotización</h5>
-        </header>
-        <div className="processing-stage-grid two">
-          {fieldList.length
-            ? fieldList.map((field) => {
-                const value = stage?.stageData?.[field.key] ?? "";
-                if (field.type === "textarea") {
-                  return (
-                    <label
-                      key={field.key}
-                      className="field-group processing-stage-field full"
-                    >
-                      <span>{field.label}</span>
-                      <textarea
-                        value={value}
-                        onChange={(event) =>
-                          updateActiveStageDataField(
-                            field.key,
-                            event.target.value,
-                          )
-                        }
-                        rows={4}
-                        placeholder={field.placeholder || ""}
-                        disabled={!processingData.permissions?.canUpdate}
-                      />
-                    </label>
-                  );
-                }
+        {stage.stageCode !== "products_reception" &&
+        stage.stageCode !== "preworks" &&
+        stage.stageCode !== "products_delivery" ? (
+          <>
+            <header>
+              <h5>Listado de productos y servicios de la cotización</h5>
+            </header>
+            <div className="processing-stage-grid two">
+              {fieldList.length
+                ? fieldList.map((field) => {
+                    const value = stage?.stageData?.[field.key] ?? "";
+                    if (field.type === "textarea") {
+                      return (
+                        <label
+                          key={field.key}
+                          className="field-group processing-stage-field full"
+                        >
+                          <span>{field.label}</span>
+                          <textarea
+                            value={value}
+                            onChange={(event) =>
+                              updateActiveStageDataField(
+                                field.key,
+                                event.target.value,
+                              )
+                            }
+                            rows={4}
+                            placeholder={field.placeholder || ""}
+                            disabled={!processingData.permissions?.canUpdate}
+                          />
+                        </label>
+                      );
+                    }
 
-                return (
-                  <label
-                    key={field.key}
-                    className="field-group processing-stage-field"
-                  >
-                    <span>{field.label}</span>
-                    <input
-                      type={field.type}
-                      value={value}
-                      placeholder={field.placeholder || ""}
-                      onChange={(event) =>
-                        updateActiveStageDataField(
-                          field.key,
-                          event.target.value,
-                        )
+                    return (
+                      <label
+                        key={field.key}
+                        className="field-group processing-stage-field"
+                      >
+                        <span>{field.label}</span>
+                        <input
+                          type={field.type}
+                          value={value}
+                          placeholder={field.placeholder || ""}
+                          onChange={(event) =>
+                            updateActiveStageDataField(
+                              field.key,
+                              event.target.value,
+                            )
+                          }
+                          disabled={!processingData.permissions?.canUpdate}
+                        />
+                      </label>
+                    );
+                  })
+                : null}
+            </div>
+          </>
+        ) : null}
+
+        {stage.stageCode === "products_reception" ? (
+          <section className="processing-products-box">
+            <header>
+              <h6>Ordenes de compra generadas</h6>
+              <p>Productos y servicios incluidos en cada orden de compra.</p>
+            </header>
+
+            {receptionPurchaseOrders.length ? (
+              <div className="processing-reception-orders">
+                {receptionPurchaseOrders.map((order, orderIndex) => {
+                  const orderLines = Array.isArray(order?.lines)
+                    ? order.lines
+                    : [];
+                  const currencyCode =
+                    order?.currencyCode || processingCurrencyCode || "USD";
+
+                  return (
+                    <article
+                      key={
+                        order?.orderId ||
+                        order?.orderNumber ||
+                        `reception-order-${orderIndex}`
                       }
-                      disabled={!processingData.permissions?.canUpdate}
-                    />
-                  </label>
-                );
-              })
-            : null}
-        </div>
+                      className="processing-reception-order"
+                    >
+                      <header className="processing-reception-order-header">
+                        <div>
+                          <h6>{order?.orderNumber || "Orden de compra"}</h6>
+                          <p>{order?.providerName || "Proveedor"}</p>
+                        </div>
+                        <span>{formatDate(order?.orderDate)}</span>
+                      </header>
+
+                      {orderLines.length ? (
+                        <div className="processing-products-table-wrap">
+                          <table className="processing-products-table">
+                            <thead>
+                              <tr>
+                                <th>Codigo</th>
+                                <th>Producto o servicio</th>
+                                <th className="is-right">Cantidad</th>
+                                <th className="is-right">Costo unitario</th>
+                                <th>Fecha</th>
+                                <th className="is-right">Total</th>
+                                <th className="is-center">Recibido</th>
+                                <th>Fecha de recepcion</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {orderLines.map((line, lineIndex) => {
+                                const receptionItemKey = `${order?.orderId || orderIndex}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const receptionItem =
+                                  receptionItems[receptionItemKey] || {};
+                                const updateReceptionItem = (patch) =>
+                                  updateActiveStageDataField("receptionItems", {
+                                    ...receptionItems,
+                                    [receptionItemKey]: {
+                                      ...receptionItem,
+                                      ...patch,
+                                    },
+                                  });
+
+                                return (
+                                  <tr key={receptionItemKey}>
+                                    <td>{line?.code || "-"}</td>
+                                    <td>
+                                      {line?.description || "Sin descripcion"}
+                                    </td>
+                                    <td className="is-right">
+                                      {Number(
+                                        line?.quantity || 0,
+                                      ).toLocaleString("es-MX", {
+                                        maximumFractionDigits: 4,
+                                      })}
+                                    </td>
+                                    <td className="is-right">
+                                      {formatCurrency(
+                                        Number(line?.unitCost || 0),
+                                        currencyCode,
+                                      )}
+                                    </td>
+                                    <td>{formatDate(line?.selectionDate)}</td>
+                                    <td className="is-right">
+                                      {formatCurrency(
+                                        Number(line?.amount || 0),
+                                        currencyCode,
+                                      )}
+                                    </td>
+                                    <td className="is-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(
+                                          receptionItem.received,
+                                        )}
+                                        onChange={(event) =>
+                                          updateReceptionItem({
+                                            received: event.target.checked,
+                                          })
+                                        }
+                                        disabled={
+                                          !processingData.permissions?.canUpdate
+                                        }
+                                        aria-label={`Marcar ${line?.description || line?.code || "item"} como recibido`}
+                                      />
+                                    </td>
+                                    <td>
+                                      <DatePicker
+                                        selected={parseDateInputValue(
+                                          receptionItem.receptionDate,
+                                        )}
+                                        onChange={(date) =>
+                                          updateReceptionItem({
+                                            receptionDate:
+                                              formatDatePickerValue(date),
+                                          })
+                                        }
+                                        dateFormat="dd-MM-yyyy"
+                                        locale={es}
+                                        showMonthDropdown
+                                        showYearDropdown
+                                        dropdownMode="select"
+                                        fixedHeight
+                                        calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                        popperClassName="audit-datepicker-popper"
+                                        className="processing-date-input"
+                                        dayClassName={(date) =>
+                                          formatDatePickerValue(date) ===
+                                          getTodayBusinessDate()
+                                            ? "processing-date-business-today"
+                                            : undefined
+                                        }
+                                        autoComplete="off"
+                                        showPopperArrow={false}
+                                        disabled={
+                                          !processingData.permissions?.canUpdate
+                                        }
+                                        placeholderText="Seleccionar fecha"
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="field-hint">
+                          Esta orden no tiene productos o servicios.
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="field-hint">
+                Aun no hay ordenes de compra generadas.
+              </p>
+            )}
+
+            <div className="processing-stage-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void saveProcessingStage(stage.stageCode)}
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                {processingSavingStageCode === stage.stageCode
+                  ? "Guardando..."
+                  : "Guardar recepcion"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  void saveProcessingStage(stage.stageCode, {
+                    forceStatus: "completed",
+                    forceCompletedAt: new Date().toISOString(),
+                  })
+                }
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                Culminar Recepcion
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {stage.stageCode === "preworks" ? (
+          <section className="processing-products-box">
+            <header>
+              <h6>Items de ordenes de compra</h6>
+              <p>
+                Productos y servicios generados en las ordenes de compra, con su
+                estado de recepcion.
+              </p>
+            </header>
+
+            {receptionPurchaseOrders.some(
+              (order) => Array.isArray(order?.lines) && order.lines.length,
+            ) ? (
+              <div className="processing-products-table-wrap">
+                <table className="processing-products-table">
+                  <thead>
+                    <tr>
+                      <th>Orden</th>
+                      <th>Proveedor</th>
+                      <th>Codigo</th>
+                      <th>Producto o servicio</th>
+                      <th className="is-right">Cantidad</th>
+                      <th className="is-center">Recibido</th>
+                      <th>Fecha de recepcion</th>
+                      <th className="is-center">Preworks</th>
+                      <th>Fecha de preworks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receptionPurchaseOrders.flatMap((order, orderIndex) =>
+                      (Array.isArray(order?.lines) ? order.lines : []).map(
+                        (line, lineIndex) => {
+                          const receptionItemKey = `${order?.orderId || orderIndex}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                          const receptionItem =
+                            receptionItems[receptionItemKey] || {};
+                          const preworksItem =
+                            preworksItems[receptionItemKey] || {};
+                          const updatePreworksItem = (patch) =>
+                            updateActiveStageDataField("preworksItems", {
+                              ...preworksItems,
+                              [receptionItemKey]: {
+                                ...preworksItem,
+                                ...patch,
+                              },
+                            });
+
+                          return (
+                            <tr key={`preworks-${receptionItemKey}`}>
+                              <td>{order?.orderNumber || "-"}</td>
+                              <td>{order?.providerName || "Proveedor"}</td>
+                              <td>{line?.code || "-"}</td>
+                              <td>{line?.description || "Sin descripcion"}</td>
+                              <td className="is-right">
+                                {Number(line?.quantity || 0).toLocaleString(
+                                  "es-MX",
+                                  { maximumFractionDigits: 4 },
+                                )}
+                              </td>
+                              <td className="is-center">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(receptionItem.received)}
+                                  readOnly
+                                  disabled
+                                  aria-label={`${line?.description || line?.code || "Item"} recibido`}
+                                />
+                              </td>
+                              <td>{formatDate(receptionItem.receptionDate)}</td>
+                              <td className="is-center">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(preworksItem.completed)}
+                                  onChange={(event) =>
+                                    updatePreworksItem({
+                                      completed: event.target.checked,
+                                    })
+                                  }
+                                  disabled={
+                                    !processingData.permissions?.canUpdate
+                                  }
+                                  aria-label={`Marcar preworks de ${line?.description || line?.code || "item"}`}
+                                />
+                              </td>
+                              <td>
+                                <DatePicker
+                                  selected={parseDateInputValue(
+                                    preworksItem.preworksDate,
+                                  )}
+                                  onChange={(date) =>
+                                    updatePreworksItem({
+                                      preworksDate: formatDatePickerValue(date),
+                                    })
+                                  }
+                                  dateFormat="dd-MM-yyyy"
+                                  locale={es}
+                                  showMonthDropdown
+                                  showYearDropdown
+                                  dropdownMode="select"
+                                  fixedHeight
+                                  calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                  popperClassName="audit-datepicker-popper"
+                                  className="processing-date-input"
+                                  dayClassName={(date) =>
+                                    formatDatePickerValue(date) ===
+                                    getTodayBusinessDate()
+                                      ? "processing-date-business-today"
+                                      : undefined
+                                  }
+                                  autoComplete="off"
+                                  showPopperArrow={false}
+                                  disabled={
+                                    !processingData.permissions?.canUpdate
+                                  }
+                                  placeholderText="Seleccionar fecha"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        },
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="field-hint">
+                Aun no hay items en las ordenes de compra generadas.
+              </p>
+            )}
+
+            <div className="processing-stage-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void saveProcessingStage(stage.stageCode)}
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                {processingSavingStageCode === stage.stageCode
+                  ? "Guardando..."
+                  : "Guardar preworks"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  void saveProcessingStage(stage.stageCode, {
+                    forceStatus: "completed",
+                    forceCompletedAt: new Date().toISOString(),
+                  })
+                }
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                Culminar Preworks
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {stage.stageCode === "products_delivery" ? (
+          <section className="processing-products-box">
+            <header>
+              <h6>Items del pedido</h6>
+              <p>
+                Productos y servicios incluidos en las ordenes de compra del
+                pedido.
+              </p>
+            </header>
+
+            {receptionPurchaseOrders.length ? (
+              <div className="processing-reception-orders">
+                {receptionPurchaseOrders.map((order, orderIndex) => {
+                  const orderLines = Array.isArray(order?.lines)
+                    ? order.lines
+                    : [];
+
+                  return (
+                    <article
+                      key={
+                        order?.orderId ||
+                        order?.orderNumber ||
+                        `delivery-order-${orderIndex}`
+                      }
+                      className="processing-reception-order"
+                    >
+                      <header className="processing-reception-order-header">
+                        <div>
+                          <h6>{order?.orderNumber || "Orden de compra"}</h6>
+                          <p>{order?.providerName || "Proveedor"}</p>
+                        </div>
+                        <span>{formatDate(order?.orderDate)}</span>
+                      </header>
+
+                      {orderLines.length ? (
+                        <div className="processing-products-table-wrap">
+                          <table className="processing-products-table">
+                            <thead>
+                              <tr>
+                                <th>Codigo</th>
+                                <th>Producto o servicio</th>
+                                <th className="is-right">Cantidad</th>
+                                <th className="is-center">Entregado</th>
+                                <th>Fecha de entrega</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {orderLines.map((line, lineIndex) => {
+                                const itemKey = `${order?.orderId || orderIndex}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const deliveryItem =
+                                  deliveryItems[itemKey] || {};
+                                const updateDeliveryItem = (patch) =>
+                                  updateActiveStageDataField("deliveryItems", {
+                                    ...deliveryItems,
+                                    [itemKey]: {
+                                      ...deliveryItem,
+                                      ...patch,
+                                    },
+                                  });
+
+                                return (
+                                  <tr key={`delivery-${itemKey}`}>
+                                    <td>{line?.code || "-"}</td>
+                                    <td>
+                                      {line?.description || "Sin descripcion"}
+                                    </td>
+                                    <td className="is-right">
+                                      {Number(
+                                        line?.quantity || 0,
+                                      ).toLocaleString("es-MX", {
+                                        maximumFractionDigits: 4,
+                                      })}
+                                    </td>
+                                    <td className="is-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(
+                                          deliveryItem.delivered,
+                                        )}
+                                        onChange={(event) =>
+                                          updateDeliveryItem({
+                                            delivered: event.target.checked,
+                                          })
+                                        }
+                                        disabled={
+                                          !processingData.permissions?.canUpdate
+                                        }
+                                        aria-label={`Marcar ${line?.description || line?.code || "item"} como entregado`}
+                                      />
+                                    </td>
+                                    <td>
+                                      <DatePicker
+                                        selected={parseDateInputValue(
+                                          deliveryItem.deliveryDate,
+                                        )}
+                                        onChange={(date) =>
+                                          updateDeliveryItem({
+                                            deliveryDate:
+                                              formatDatePickerValue(date),
+                                          })
+                                        }
+                                        dateFormat="dd-MM-yyyy"
+                                        locale={es}
+                                        showMonthDropdown
+                                        showYearDropdown
+                                        dropdownMode="select"
+                                        fixedHeight
+                                        calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                        popperClassName="audit-datepicker-popper"
+                                        className="processing-date-input"
+                                        dayClassName={(date) =>
+                                          formatDatePickerValue(date) ===
+                                          getTodayBusinessDate()
+                                            ? "processing-date-business-today"
+                                            : undefined
+                                        }
+                                        autoComplete="off"
+                                        showPopperArrow={false}
+                                        disabled={
+                                          !processingData.permissions?.canUpdate
+                                        }
+                                        placeholderText="Seleccionar fecha"
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="field-hint">
+                          Esta orden no tiene productos o servicios.
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="field-hint">
+                Aun no hay items en las ordenes de compra generadas.
+              </p>
+            )}
+
+            <div className="processing-stage-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => void saveProcessingStage(stage.stageCode)}
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                {processingSavingStageCode === stage.stageCode
+                  ? "Guardando..."
+                  : "Guardar entrega"}
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  void saveProcessingStage(stage.stageCode, {
+                    forceStatus: "completed",
+                    forceCompletedAt: new Date().toISOString(),
+                  })
+                }
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                Culminar Entrega de Productos
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         {stage.stageCode === "provider_purchase_order" ? (
           <section className="processing-products-box">
@@ -2779,10 +3403,11 @@ export default function AcceptOrderPage() {
                             )}
                           </td>
                           <td>
-                            <input
-                              type="date"
-                              value={selectionDateInputValue}
-                              onChange={(event) => {
+                            <DatePicker
+                              selected={parseDateInputValue(
+                                selectionDateInputValue,
+                              )}
+                              onChange={(date) => {
                                 const nextAssignments = {
                                   ...rawProductAssignments,
                                   [itemKey]: {
@@ -2792,7 +3417,7 @@ export default function AcceptOrderPage() {
                                       selectedProviderId === ""
                                         ? null
                                         : Number(selectedProviderId),
-                                    selectionDate: event.target.value,
+                                    selectionDate: formatDatePickerValue(date),
                                   },
                                 };
                                 updateStageProductAssignmentState(
@@ -2802,6 +3427,23 @@ export default function AcceptOrderPage() {
                                   rawProductAssignmentExtras,
                                 );
                               }}
+                              dateFormat="dd-MM-yyyy"
+                              locale={es}
+                              showMonthDropdown
+                              showYearDropdown
+                              dropdownMode="select"
+                              fixedHeight
+                              calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                              popperClassName="audit-datepicker-popper"
+                              className="processing-date-input"
+                              dayClassName={(date) =>
+                                formatDatePickerValue(date) ===
+                                getTodayBusinessDate()
+                                  ? "processing-date-business-today"
+                                  : undefined
+                              }
+                              autoComplete="off"
+                              showPopperArrow={false}
                               disabled={
                                 isGeneratedItem ||
                                 !processingData.permissions?.canUpdate
@@ -3125,7 +3767,8 @@ export default function AcceptOrderPage() {
                         <th>Numero de orden</th>
                         <th>Proveedor</th>
                         <th>Fecha</th>
-                        <th className="is-right">Monto</th>
+                        <th className="is-right">Sin IVA</th>
+                        <th className="is-right">Total</th>
                         <th>Acciones</th>
                       </tr>
                     </thead>
@@ -3140,6 +3783,12 @@ export default function AcceptOrderPage() {
                           <td>{order.orderNumber || "-"}</td>
                           <td>{order.providerName || "Proveedor"}</td>
                           <td>{formatDate(order.orderDate)}</td>
+                          <td className="is-right">
+                            {formatCurrency(
+                              Number(order.subtotal || 0),
+                              order.currencyCode || processingCurrencyCode,
+                            )}
+                          </td>
                           <td className="is-right">
                             {formatCurrency(
                               Number(order.total || 0),
@@ -3207,6 +3856,13 @@ export default function AcceptOrderPage() {
                       <tr>
                         <th colSpan={3} className="is-right">
                           Total de ordenes
+                        </th>
+                        <th className="is-right">
+                          {formatCurrency(
+                            generatedPurchaseOrdersSubtotal,
+                            generatedPurchaseOrders[0]?.currencyCode ||
+                              processingCurrencyCode,
+                          )}
                         </th>
                         <th className="is-right">
                           {formatCurrency(
@@ -3295,6 +3951,22 @@ export default function AcceptOrderPage() {
                 disabled={!processingData.permissions?.canUpdate}
               >
                 Vista previa
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  void saveProcessingStage(stage.stageCode, {
+                    forceStatus: "completed",
+                    forceCompletedAt: new Date().toISOString(),
+                  })
+                }
+                disabled={
+                  !processingData.permissions?.canUpdate ||
+                  processingSavingStageCode === stage.stageCode
+                }
+              >
+                Culminar Orden de Compra
               </button>
             </div>
           </section>
@@ -4202,7 +4874,10 @@ export default function AcceptOrderPage() {
               >
                 {!isKickoffInternalStage &&
                 !isKickoffExternalStage &&
-                !isProviderPurchaseOrderStage ? (
+                !isProviderPurchaseOrderStage &&
+                activeProcessingStage.stageCode !== "products_reception" &&
+                activeProcessingStage.stageCode !== "preworks" &&
+                activeProcessingStage.stageCode !== "products_delivery" ? (
                   <section className="processing-stage-box">
                     <header>
                       <h4>{activeProcessingStage.stageName}</h4>

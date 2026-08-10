@@ -366,19 +366,35 @@ const quotationProcessingPurchaseOrderLineSchema = z.object({
     .optional(),
 });
 
-const quotationProcessingPurchaseOrderSchema = z.object({
-  providerId: z.number().int().positive(),
-  providerName: z.string().trim().min(1).max(190).optional().default(""),
-  orderNumber: z.string().trim().max(120).nullable().optional(),
-  orderDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .nullable()
-    .optional(),
-  currencyCode: z.string().trim().min(1).max(20),
-  ivaPct: z.number().min(0).max(100).optional().default(16),
-  lines: z.array(quotationProcessingPurchaseOrderLineSchema).min(1),
-});
+const quotationProcessingPurchaseOrderSchema = z
+  .object({
+    providerId: z.number().int().positive(),
+    providerName: z.string().trim().min(1).max(190).optional().default(""),
+    orderNumber: z.string().trim().max(120).nullable().optional(),
+    orderDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+    currencyCode: z.string().trim().min(1).max(20),
+    ivaPct: z.number().min(0).max(100).optional().default(16),
+    lines: z.array(quotationProcessingPurchaseOrderLineSchema).min(1),
+  })
+  .superRefine((order, ctx) => {
+    const selectionDates = new Set(
+      order.lines.map((line) => line.selectionDate).filter(Boolean),
+    );
+    if (
+      selectionDates.size !== 1 ||
+      order.lines.some((line) => !line.selectionDate)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["lines"],
+        message: "Todos los items deben tener la misma fecha",
+      });
+    }
+  });
 
 const quotationProcessingPurchaseOrdersCreateSchema = z.object({
   orders: z.array(quotationProcessingPurchaseOrderSchema).min(1).max(200),
@@ -2554,9 +2570,7 @@ async function listQuotationProcessingPurchaseOrders({
       quantity: Number(row.quantity || 0),
       unitCost: Number(row.unit_cost || 0),
       discountPct: Number(row.discount_pct || 0),
-      selectionDate: row.selection_date
-        ? String(row.selection_date).slice(0, 10)
-        : null,
+      selectionDate: formatDateOnly(row.selection_date) || null,
       amount: Number(row.amount || 0),
     });
     itemsByOrderId.set(orderId, list);
@@ -2569,7 +2583,7 @@ async function listQuotationProcessingPurchaseOrders({
       providerId: Number(row.provider_id),
       providerName: row.provider_name || "Proveedor",
       orderNumber: row.order_number || null,
-      orderDate: row.order_date ? String(row.order_date).slice(0, 10) : null,
+      orderDate: formatDateOnly(row.order_date) || null,
       currencyCode: row.currency_code || "USD",
       ivaPct: Number(row.iva_pct || 0),
       subtotal: Number(row.subtotal_amount || 0),
@@ -2579,6 +2593,16 @@ async function listQuotationProcessingPurchaseOrders({
       lines: itemsByOrderId.get(orderId) || [],
     };
   });
+}
+
+function formatProcessingPurchaseOrderNumber({
+  quotationId,
+  orderSequence,
+  orderDate,
+}) {
+  const [year, month, day] = String(orderDate || "").split("-");
+  const yearSuffix = String(year || "").slice(-2);
+  return `OC-${Number(quotationId)}-${Number(orderSequence)}-${day}-${month}-${yearSuffix}`;
 }
 
 async function createQuotationProcessingPurchaseOrders({
@@ -2595,6 +2619,21 @@ async function createQuotationProcessingPurchaseOrders({
   }
 
   await withTransaction(async (conn) => {
+    await conn.query(`SELECT id FROM quotations WHERE id = ? FOR UPDATE`, [
+      Number(quotation.id),
+    ]);
+    const [existingOrderRows] = await conn.query(
+      `SELECT COUNT(*) AS count
+       FROM quotation_processing_purchase_orders
+       WHERE quotation_id = ?
+         AND stage_code = ?`,
+      [
+        Number(quotation.id),
+        String(stageCode || "provider_purchase_order").trim(),
+      ],
+    );
+    let nextOrderSequence = Number(existingOrderRows?.[0]?.count || 0) + 1;
+
     for (const order of normalizedOrders) {
       const orderLines = Array.isArray(order?.lines) ? order.lines : [];
       const normalizedIvaPct = Math.min(
@@ -2631,6 +2670,12 @@ async function createQuotationProcessingPurchaseOrders({
         (sum, line) => sum + line.amount,
         0,
       );
+      const orderDate = normalizedLines[0].selectionDate;
+      const orderNumber = formatProcessingPurchaseOrderNumber({
+        quotationId: quotation.id,
+        orderSequence: nextOrderSequence,
+        orderDate,
+      });
       const ivaAmount = subtotal * (normalizedIvaPct / 100);
       const total = subtotal + ivaAmount;
       const now = new Date();
@@ -2649,8 +2694,8 @@ async function createQuotationProcessingPurchaseOrders({
           String(stageCode || "provider_purchase_order").trim(),
           Number(order.providerId),
           String(order.providerName || "").trim() || null,
-          String(order.orderNumber || "").trim() || null,
-          order.orderDate || null,
+          orderNumber,
+          orderDate,
           String(order.currencyCode || "USD").trim() || "USD",
           Number(normalizedIvaPct.toFixed(3)),
           Number(subtotal.toFixed(6)),
@@ -2661,6 +2706,7 @@ async function createQuotationProcessingPurchaseOrders({
           now,
         ],
       );
+      nextOrderSequence += 1;
 
       const insertedOrderId = Number(result?.insertId || 0);
       if (!insertedOrderId) continue;
