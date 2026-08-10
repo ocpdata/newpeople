@@ -52,6 +52,10 @@ const LandingModulePage = lazy(() => import("./LandingModulePage"));
 const CampaignsPage = lazy(() => import("./CampaignsPage"));
 const CampaignEmailModulePage = lazy(() => import("./CampaignEmailModulePage"));
 const AcceptOrderPage = lazy(() => import("./AcceptOrderPage"));
+const InvoicingPage = lazy(() => import("./InvoicingPage"));
+const ProviderInvoiceReceptionPage = lazy(
+  () => import("./ProviderInvoiceReceptionPage"),
+);
 
 function GuardedNavLink({ onBeforeNavigate, onClick, ...props }) {
   return (
@@ -511,6 +515,22 @@ export default function AppShell({
           }
         />
         <Route
+          path="/invoicing"
+          element={
+            canAccessAcceptOrder ? <InvoicingPage /> : <Navigate to="/" />
+          }
+        />
+        <Route
+          path="/provider-invoice-reception"
+          element={
+            canAccessAcceptOrder ? (
+              <ProviderInvoiceReceptionPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/landing"
           element={
             canAccessLandingModule ? <LandingModulePage /> : <Navigate to="/" />
@@ -767,6 +787,18 @@ export default function AppShell({
                   onBeforeNavigate={confirmRouteChange}
                 >
                   Aceptar Pedido
+                </GuardedNavLink>
+                <GuardedNavLink
+                  to="/invoicing"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Facturacion
+                </GuardedNavLink>
+                <GuardedNavLink
+                  to="/provider-invoice-reception"
+                  onBeforeNavigate={confirmRouteChange}
+                >
+                  Recepcion de Facturas
                 </GuardedNavLink>
               </SidebarNavGroup>
             )}

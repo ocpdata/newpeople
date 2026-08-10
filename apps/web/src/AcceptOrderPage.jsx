@@ -464,6 +464,7 @@ function buildProviderPurchaseOrderRows({
   products = [],
   productAssignmentDuplicates = {},
   productAssignmentExtras = {},
+  productAssignments = {},
 }) {
   const normalizedProducts = Array.isArray(products) ? products : [];
   const normalizedDuplicates =
@@ -474,6 +475,10 @@ function buildProviderPurchaseOrderRows({
   const normalizedExtras =
     productAssignmentExtras && typeof productAssignmentExtras === "object"
       ? productAssignmentExtras
+      : {};
+  const normalizedAssignments =
+    productAssignments && typeof productAssignments === "object"
+      ? productAssignments
       : {};
 
   const productsById = new Map(
@@ -514,10 +519,79 @@ function buildProviderPurchaseOrderRows({
     new Map(),
   );
 
-  const groupedRows = baseRows.flatMap((baseRow) => {
+  const groupedRows = [];
+  const seenAssignmentKeys = new Set();
+
+  baseRows.forEach((baseRow) => {
     const sourceProductId = Number(baseRow.sourceProductId || 0);
-    const duplicates = duplicatesBySource.get(sourceProductId) || [];
-    return [baseRow, ...duplicates];
+    groupedRows.push(baseRow);
+    seenAssignmentKeys.add(String(baseRow.assignmentKey || baseRow.id || ""));
+
+    const explicitDuplicates = (duplicatesBySource.get(sourceProductId) || [])
+      .filter((duplicateRow) => {
+        const duplicateAssignmentKey = String(
+          duplicateRow.assignmentKey || duplicateRow.id || "",
+        );
+        if (seenAssignmentKeys.has(duplicateAssignmentKey)) {
+          return false;
+        }
+        seenAssignmentKeys.add(duplicateAssignmentKey);
+        return true;
+      })
+      .map((duplicateRow) => ({ ...duplicateRow }));
+    groupedRows.push(...explicitDuplicates);
+
+    if (sourceProductId > 0) {
+      Object.entries(normalizedAssignments).forEach(
+        ([assignmentKey, assignment]) => {
+          const normalizedAssignmentKey = String(assignmentKey || "");
+          if (!normalizedAssignmentKey || seenAssignmentKeys.has(normalizedAssignmentKey)) {
+            return;
+          }
+          if (!Boolean(assignment?.selected)) {
+            return;
+          }
+          const assignmentSourceProductId = Number(assignment?.sourceProductId || 0);
+          if (assignmentSourceProductId !== sourceProductId) {
+            return;
+          }
+
+          const duplicateRow = {
+            ...baseRow,
+            id: normalizedAssignmentKey,
+            assignmentKey: normalizedAssignmentKey,
+            sourceProductId,
+            isDuplicate: true,
+            createdAt: Number(assignment?.createdAt || 0) || Date.now(),
+            quantity: normalizePositiveNumber(
+              assignment?.quantity,
+              normalizePositiveNumber(baseRow.quantity, 0),
+            ),
+            unitCostWithDiscount: normalizePositiveNumber(
+              assignment?.unitCostWithDiscount,
+              normalizePositiveNumber(baseRow.unitCostWithDiscount, 0),
+            ),
+            providerId:
+              assignment?.providerId == null || assignment?.providerId === ""
+                ? Number(baseRow.providerId || 0) || null
+                : Number(assignment.providerId || 0) || null,
+            providerName:
+              String(
+                assignment?.providerName ||
+                  baseRow.providerName ||
+                  "",
+              ).trim() || "",
+            selectionDate:
+              toDateInputValue(assignment?.selectionDate) ||
+              toDateInputValue(baseRow.selectionDate) ||
+              toDateInputValue(new Date()),
+          };
+
+          groupedRows.push(duplicateRow);
+          seenAssignmentKeys.add(normalizedAssignmentKey);
+        },
+      );
+    }
   });
 
   const extraRows = Object.entries(normalizedExtras)
@@ -547,6 +621,131 @@ function buildProviderPurchaseOrderRows({
     .sort((left, right) => left.createdAt - right.createdAt);
 
   return [...groupedRows, ...extraRows];
+}
+
+function hydrateAssignmentsFromGeneratedOrders({
+  products = [],
+  productAssignments = {},
+  productAssignmentDuplicates = {},
+  productAssignmentExtras = {},
+  generatedPurchaseOrders = [],
+}) {
+  const hydratedAssignments = {
+    ...(productAssignments && typeof productAssignments === "object"
+      ? productAssignments
+      : {}),
+  };
+  const hydratedDuplicates = {
+    ...(productAssignmentDuplicates &&
+    typeof productAssignmentDuplicates === "object"
+      ? productAssignmentDuplicates
+      : {}),
+  };
+  const hydratedExtras = {
+    ...(productAssignmentExtras && typeof productAssignmentExtras === "object"
+      ? productAssignmentExtras
+      : {}),
+  };
+
+  const productById = new Map(
+    (Array.isArray(products) ? products : [])
+      .map((product) => [Number(product.id || 0), product])
+      .filter(([id]) => Number.isInteger(id) && id > 0),
+  );
+
+  (Array.isArray(generatedPurchaseOrders) ? generatedPurchaseOrders : []).forEach(
+    (order) => {
+      const orderDate = toDateInputValue(order?.orderDate) || "";
+      const providerId = Number(order?.providerId || 0) || null;
+      const generatedAt = Number(new Date(order?.generatedAt || Date.now()));
+
+      (Array.isArray(order?.lines) ? order.lines : []).forEach((line) => {
+        const assignmentKey = String(line?.sourceAssignmentKey || "").trim();
+        if (!assignmentKey) return;
+
+        const productId = Number(line?.productId || 0) || null;
+        const sourceProductId =
+          productId && productById.has(productId)
+            ? productId
+            : Number(assignmentKey || 0) || null;
+
+        const existingAssignment = hydratedAssignments[assignmentKey] || {};
+        hydratedAssignments[assignmentKey] = {
+          ...existingAssignment,
+          selected:
+            existingAssignment?.selected == null
+              ? true
+              : Boolean(existingAssignment.selected),
+          providerId:
+            existingAssignment?.providerId == null ||
+            existingAssignment?.providerId === ""
+              ? providerId
+              : existingAssignment.providerId,
+          quantity:
+            existingAssignment?.quantity == null ||
+            existingAssignment?.quantity === ""
+              ? String(normalizePositiveNumber(line?.quantity, 0))
+              : existingAssignment.quantity,
+          unitCostWithDiscount:
+            existingAssignment?.unitCostWithDiscount == null ||
+            existingAssignment?.unitCostWithDiscount === ""
+              ? String(normalizePositiveNumber(line?.unitCost, 0))
+              : existingAssignment.unitCostWithDiscount,
+          selectionDate:
+            toDateInputValue(existingAssignment?.selectionDate) ||
+            toDateInputValue(line?.selectionDate) ||
+            orderDate ||
+            toDateInputValue(new Date()),
+          sourceProductId:
+            Number(existingAssignment?.sourceProductId || 0) || sourceProductId,
+          createdAt:
+            Number(existingAssignment?.createdAt || 0) ||
+            (Number.isFinite(generatedAt) ? generatedAt : Date.now()),
+        };
+
+        const isBaseAssignmentKey =
+          sourceProductId != null && assignmentKey === String(sourceProductId);
+        if (
+          sourceProductId != null &&
+          !isBaseAssignmentKey &&
+          !hydratedDuplicates[assignmentKey] &&
+          !hydratedExtras[assignmentKey]
+        ) {
+          hydratedDuplicates[assignmentKey] = {
+            sourceProductId,
+            createdAt: Number.isFinite(generatedAt) ? generatedAt : Date.now(),
+          };
+        }
+
+        if (
+          sourceProductId == null &&
+          !hydratedExtras[assignmentKey] &&
+          !hydratedDuplicates[assignmentKey]
+        ) {
+          hydratedExtras[assignmentKey] = {
+            createdAt: Number.isFinite(generatedAt) ? generatedAt : Date.now(),
+            code: String(line?.code || "").trim() || "ITEM-MANUAL",
+            description:
+              String(line?.description || "").trim() ||
+              "Item agregado manualmente",
+            providerId,
+            quantity: normalizePositiveNumber(line?.quantity, 1),
+            unitCostWithDiscount: normalizePositiveNumber(line?.unitCost, 0),
+            selectionDate:
+              toDateInputValue(line?.selectionDate) ||
+              orderDate ||
+              toDateInputValue(new Date()),
+          };
+        }
+      });
+    },
+  );
+
+  return {
+    productAssignments: hydratedAssignments,
+    productAssignmentDuplicates: hydratedDuplicates,
+    productAssignmentExtras: hydratedExtras,
+  };
 }
 
 function calculatePurchaseOrderLineAmount(line) {
@@ -1186,6 +1385,51 @@ export default function AcceptOrderPage() {
     }
   }
 
+  async function acceptQuotationFromProcessing(quotation) {
+    const versionId = Number(quotation?.latestVersionId || 0);
+    if (!versionId || isAcceptedQuotation(quotation)) return true;
+
+    setAcceptingVersionId(versionId);
+    setError("");
+    setSuccess("");
+    try {
+      const { data } = await api.post(
+        `/api/quotation-versions/${versionId}/transition`,
+        { actionCode: "aceptar" },
+      );
+      const acceptedPatch = {
+        latestStatusCode: data?.statusCode || "aceptada",
+        latestStatusName: data?.statusName || "Aceptada",
+        latestStatusUiKey: "accepted",
+      };
+      setQuotations((current) =>
+        current.map((item) =>
+          Number(item.latestVersionId || 0) === versionId
+            ? { ...item, ...acceptedPatch }
+            : item,
+        ),
+      );
+      setQuotationToAccept((current) =>
+        Number(current?.latestVersionId || 0) === versionId
+          ? { ...current, ...acceptedPatch }
+          : current,
+      );
+      setQuotationToProcess((current) =>
+        Number(current?.latestVersionId || 0) === versionId
+          ? { ...current, ...acceptedPatch }
+          : current,
+      );
+      return true;
+    } catch (acceptError) {
+      setError(
+        getApiErrorMessage(acceptError, "No fue posible aceptar el pedido"),
+      );
+      return false;
+    } finally {
+      setAcceptingVersionId(null);
+    }
+  }
+
   async function sendSellerNotification() {
     const quotationId = Number(quotationToNotify?.id || 0);
     const note = sellerNotificationNote.trim();
@@ -1449,7 +1693,7 @@ export default function AcceptOrderPage() {
     productAssignments,
     productAssignmentDuplicates,
     productAssignmentExtras,
-    excludedProductIds = new Set(),
+    excludedAssignmentKeys = new Set(),
   }) {
     const selectedProductIds = new Set(
       Object.entries(
@@ -1468,6 +1712,7 @@ export default function AcceptOrderPage() {
 
     const providerPurchaseOrderRows = buildProviderPurchaseOrderRows({
       products: processingQuotationProducts,
+      productAssignments,
       productAssignmentDuplicates,
       productAssignmentExtras,
     });
@@ -1480,7 +1725,7 @@ export default function AcceptOrderPage() {
     const selectedLines = candidateLines.filter(
       (line) =>
         selectedProductIds.has(String(line.lineId || "")) &&
-        !excludedProductIds.has(Number(line.productId || 0)),
+        !excludedAssignmentKeys.has(String(line.lineId || "")),
     );
 
     if (!selectedLines.length) {
@@ -1676,6 +1921,8 @@ export default function AcceptOrderPage() {
       ivaPct: normalizePositiveNumber(order.ivaPct, 16),
       generatedAt: new Date().toISOString(),
       lines: (Array.isArray(order.lines) ? order.lines : []).map((line) => ({
+        sourceAssignmentKey:
+          String(line.lineId || line.sourceAssignmentKey || "").trim() || null,
         productId: Number(line.productId || 0) || null,
         code: line.code || "-",
         description: String(line.description || "").trim() || "Sin descripcion",
@@ -2279,22 +2526,39 @@ export default function AcceptOrderPage() {
     if (!fieldList.length && stage.stageCode !== "provider_purchase_order") {
       return null;
     }
-    const rawProductAssignments =
+    const baseProductAssignments =
       stage?.stageData && typeof stage.stageData.productAssignments === "object"
         ? stage.stageData.productAssignments
         : {};
-    const rawProductAssignmentDuplicates =
+    const baseProductAssignmentDuplicates =
       stage?.stageData &&
       typeof stage.stageData.productAssignmentDuplicates === "object"
         ? stage.stageData.productAssignmentDuplicates
         : {};
-    const rawProductAssignmentExtras =
+    const baseProductAssignmentExtras =
       stage?.stageData &&
       typeof stage.stageData.productAssignmentExtras === "object"
         ? stage.stageData.productAssignmentExtras
         : {};
+    const generatedPurchaseOrders = Array.isArray(
+      stage?.stageData?.generatedPurchaseOrders,
+    )
+      ? stage.stageData.generatedPurchaseOrders
+      : [];
+    const {
+      productAssignments: rawProductAssignments,
+      productAssignmentDuplicates: rawProductAssignmentDuplicates,
+      productAssignmentExtras: rawProductAssignmentExtras,
+    } = hydrateAssignmentsFromGeneratedOrders({
+      products: processingQuotationProducts,
+      productAssignments: baseProductAssignments,
+      productAssignmentDuplicates: baseProductAssignmentDuplicates,
+      productAssignmentExtras: baseProductAssignmentExtras,
+      generatedPurchaseOrders,
+    });
     const providerPurchaseOrderRows = buildProviderPurchaseOrderRows({
       products: processingQuotationProducts,
+      productAssignments: rawProductAssignments,
       productAssignmentDuplicates: rawProductAssignmentDuplicates,
       productAssignmentExtras: rawProductAssignmentExtras,
     });
@@ -2360,11 +2624,6 @@ export default function AcceptOrderPage() {
     )
       ? savedProviderContactId
       : "";
-    const generatedPurchaseOrders = Array.isArray(
-      stage?.stageData?.generatedPurchaseOrders,
-    )
-      ? stage.stageData.generatedPurchaseOrders
-      : [];
     const purchaseOrderStage = (processingData.stages || []).find(
       (item) => item.stageCode === "provider_purchase_order",
     );
@@ -2405,11 +2664,11 @@ export default function AcceptOrderPage() {
       (sum, order) => sum + Number(order?.subtotal || 0),
       0,
     );
-    const generatedItemIds = new Set(
+    const generatedAssignmentKeys = new Set(
       generatedPurchaseOrders.flatMap((order) =>
         (Array.isArray(order?.lines) ? order.lines : [])
-          .map((line) => Number(line?.productId || 0))
-          .filter((value) => Number.isInteger(value) && value > 0),
+          .map((line) => String(line?.sourceAssignmentKey || "").trim())
+          .filter(Boolean),
       ),
     );
     const deliveryTimeCode = String(
@@ -3102,8 +3361,8 @@ export default function AcceptOrderPage() {
                         assignment?.providerId === ""
                           ? item.providerId || ""
                           : Number(assignment.providerId || 0) || "";
-                      const isGeneratedItem = generatedItemIds.has(
-                        Number(item.sourceProductId || item.id || 0),
+                      const isGeneratedItem = generatedAssignmentKeys.has(
+                        itemKey,
                       );
                       const isEditingQuantity =
                         !isGeneratedItem &&
@@ -3492,6 +3751,9 @@ export default function AcceptOrderPage() {
                                       quantity: quantityInputValue,
                                       unitCostWithDiscount: unitCostInputValue,
                                       selectionDate: selectionDateInputValue,
+                                      sourceProductId: Number(
+                                        item.sourceProductId || item.id || 0,
+                                      ),
                                     },
                                   };
                                   const nextDuplicates = {
@@ -3945,7 +4207,7 @@ export default function AcceptOrderPage() {
                     productAssignments: rawProductAssignments,
                     productAssignmentDuplicates: rawProductAssignmentDuplicates,
                     productAssignmentExtras: rawProductAssignmentExtras,
-                    excludedProductIds: generatedItemIds,
+                    excludedAssignmentKeys: generatedAssignmentKeys,
                   })
                 }
                 disabled={!processingData.permissions?.canUpdate}
@@ -4194,8 +4456,34 @@ export default function AcceptOrderPage() {
         />
       </div>
 
-      {error ? <div className="toast toast-error">{error}</div> : null}
-      {success ? <div className="toast toast-success">{success}</div> : null}
+      {error ? (
+        <div className="toast toast-error" role="alert" aria-live="assertive">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="toast-close"
+            onClick={() => setError("")}
+            aria-label="Cerrar notificacion de error"
+            title="Cerrar"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+      {success ? (
+        <div className="toast toast-success" role="status" aria-live="polite">
+          <span>{success}</span>
+          <button
+            type="button"
+            className="toast-close"
+            onClick={() => setSuccess("")}
+            aria-label="Cerrar notificacion de exito"
+            title="Cerrar"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       {loading ? <p className="field-hint">Cargando cotizaciones...</p> : null}
 
       <table>
@@ -5374,20 +5662,31 @@ export default function AcceptOrderPage() {
                         className="btn-primary"
                         onClick={() => {
                           if (isQuotationAcceptedStage) {
-                            const acceptedAtIso =
-                              activeProcessingStage.stageData?.acceptedAt ||
-                              activeProcessingStage.completedAt ||
-                              new Date().toISOString();
-                            void saveProcessingStage(
-                              activeProcessingStage.stageCode,
-                              {
-                                forceStatus: "completed",
-                                forceCompletedAt: acceptedAtIso,
-                                stageDataPatch: {
-                                  acceptedAt: acceptedAtIso,
+                            void (async () => {
+                              const acceptedAtIso =
+                                activeProcessingStage.stageData?.acceptedAt ||
+                                activeProcessingStage.completedAt ||
+                                new Date().toISOString();
+                              const quotationAccepted =
+                                isAcceptedQuotation(quotationToProcess) ||
+                                (await acceptQuotationFromProcessing(
+                                  quotationToProcess,
+                                ));
+                              if (!quotationAccepted) {
+                                return;
+                              }
+
+                              await saveProcessingStage(
+                                activeProcessingStage.stageCode,
+                                {
+                                  forceStatus: "completed",
+                                  forceCompletedAt: acceptedAtIso,
+                                  stageDataPatch: {
+                                    acceptedAt: acceptedAtIso,
+                                  },
                                 },
-                              },
-                            );
+                              );
+                            })();
                             return;
                           }
                           void saveProcessingStage(
@@ -5396,6 +5695,7 @@ export default function AcceptOrderPage() {
                         }}
                         disabled={
                           !processingData.permissions?.canUpdate ||
+                          Boolean(acceptingVersionId) ||
                           processingSavingStageCode ===
                             activeProcessingStage.stageCode
                         }

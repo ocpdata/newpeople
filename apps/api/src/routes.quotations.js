@@ -353,6 +353,7 @@ const quotationProcessingStageUpdateSchema = z.object({
 });
 
 const quotationProcessingPurchaseOrderLineSchema = z.object({
+  sourceAssignmentKey: z.string().trim().min(1).max(190).nullable().optional(),
   productId: z.number().int().positive().nullable().optional(),
   code: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(5000),
@@ -2240,6 +2241,7 @@ async function ensureQuotationProcessingSchema() {
         `CREATE TABLE IF NOT EXISTS quotation_processing_purchase_order_items (
           id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
           purchase_order_id BIGINT UNSIGNED NOT NULL,
+          source_assignment_key VARCHAR(190) NULL,
           product_id BIGINT UNSIGNED NULL,
           line_code VARCHAR(120) NOT NULL,
           line_description VARCHAR(5000) NOT NULL,
@@ -2252,9 +2254,33 @@ async function ensureQuotationProcessingSchema() {
           updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
           CONSTRAINT fk_qppoi_order FOREIGN KEY (purchase_order_id) REFERENCES quotation_processing_purchase_orders(id) ON DELETE CASCADE,
           INDEX idx_qppoi_order (purchase_order_id, id),
+          INDEX idx_qppoi_assignment_key (source_assignment_key),
           INDEX idx_qppoi_product (product_id)
         )`,
       );
+
+      await ensureTableColumn(
+        "quotation_processing_purchase_order_items",
+        "source_assignment_key",
+        `ALTER TABLE quotation_processing_purchase_order_items
+         ADD COLUMN source_assignment_key VARCHAR(190) NULL AFTER purchase_order_id`,
+      );
+
+      const purchaseOrderItemAssignmentIndexRows = await query(
+        `SELECT 1
+         FROM information_schema.STATISTICS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'quotation_processing_purchase_order_items'
+           AND INDEX_NAME = 'idx_qppoi_assignment_key'
+         LIMIT 1`,
+      );
+
+      if (!purchaseOrderItemAssignmentIndexRows.length) {
+        await query(
+          `ALTER TABLE quotation_processing_purchase_order_items
+           ADD INDEX idx_qppoi_assignment_key (source_assignment_key)`,
+        );
+      }
     })().catch((error) => {
       ensureQuotationProcessingSchemaPromise = undefined;
       throw error;
@@ -2551,7 +2577,7 @@ async function listQuotationProcessingPurchaseOrders({
 
   const orderIds = orderRows.map((row) => Number(row.id));
   const itemRows = await query(
-    `SELECT purchase_order_id, product_id, line_code, line_description,
+    `SELECT purchase_order_id, source_assignment_key, product_id, line_code, line_description,
             quantity, unit_cost, discount_pct, selection_date, amount
      FROM quotation_processing_purchase_order_items
      WHERE purchase_order_id IN (?)
@@ -2564,6 +2590,7 @@ async function listQuotationProcessingPurchaseOrders({
     const orderId = Number(row.purchase_order_id);
     const list = itemsByOrderId.get(orderId) || [];
     list.push({
+      sourceAssignmentKey: String(row.source_assignment_key || "").trim() || null,
       productId: row.product_id ? Number(row.product_id) : null,
       code: row.line_code || "-",
       description: row.line_description || "Sin descripcion",
@@ -2649,6 +2676,8 @@ async function createQuotationProcessingPurchaseOrders({
         );
         const amount = quantity * unitCost * (1 - discountPct / 100);
         return {
+          sourceAssignmentKey:
+            String(line?.sourceAssignmentKey || "").trim() || null,
           productId:
             line?.productId == null ? null : Number(line.productId) || null,
           code: String(line?.code || "-").trim() || "-",
@@ -2714,12 +2743,13 @@ async function createQuotationProcessingPurchaseOrders({
       for (const line of normalizedLines) {
         await conn.query(
           `INSERT INTO quotation_processing_purchase_order_items
-            (purchase_order_id, product_id, line_code, line_description,
+            (purchase_order_id, source_assignment_key, product_id, line_code, line_description,
              quantity, unit_cost, discount_pct, selection_date, amount,
              created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             insertedOrderId,
+            line.sourceAssignmentKey,
             line.productId,
             line.code,
             line.description,
