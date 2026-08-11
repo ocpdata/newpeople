@@ -276,6 +276,7 @@ export default function InvoicingPage() {
   const [invoiceDateDraft, setInvoiceDateDraft] = useState("");
   const [selectedQuotationIds, setSelectedQuotationIds] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [invoicePreviewModalOpen, setInvoicePreviewModalOpen] = useState(false);
   const [invoicePreviewLoading, setInvoicePreviewLoading] = useState(false);
   const [invoicePreviewError, setInvoicePreviewError] = useState("");
@@ -306,19 +307,31 @@ export default function InvoicingPage() {
     }
   }
 
+  async function loadInvoices() {
+    setInvoicesLoading(true);
+    try {
+      const { data } = await api.get("/api/quotation-invoices");
+      setInvoices(Array.isArray(data) ? data : []);
+    } catch {
+      setInvoices([]);
+    } finally {
+      setInvoicesLoading(false);
+    }
+  }
+
   useEffect(() => {
     void loadAcceptedQuotations();
+    void loadInvoices();
   }, []);
 
   useEffect(() => {
     const persisted = loadInvoicingState();
     setSelectedQuotationIds(persisted.selectedQuotationIds);
-    setInvoices(persisted.invoices);
   }, []);
 
   useEffect(() => {
-    saveInvoicingState({ selectedQuotationIds, invoices });
-  }, [selectedQuotationIds, invoices]);
+    saveInvoicingState({ selectedQuotationIds, invoices: [] });
+  }, [selectedQuotationIds]);
 
   function toggleQuotationSelection(quotationId) {
     const normalizedId = Number(quotationId || 0);
@@ -536,7 +549,7 @@ export default function InvoicingPage() {
     setInvoiceModelModalOpen(true);
   }
 
-  function deleteStoredInvoice(invoiceId) {
+  async function deleteStoredInvoice(invoiceId) {
     const normalizedId = String(invoiceId || "").trim();
     if (!normalizedId) return;
     const shouldDelete = window.confirm(
@@ -544,9 +557,15 @@ export default function InvoicingPage() {
     );
     if (!shouldDelete) return;
 
-    setInvoices((current) =>
-      current.filter((item) => String(item.id || "").trim() !== normalizedId),
-    );
+    try {
+      await api.delete(`/api/quotation-invoices/${normalizedId}`);
+      setInvoices((current) =>
+        current.filter((item) => String(item.id || "").trim() !== normalizedId),
+      );
+    } catch (deleteError) {
+      setError(getApiErrorMessage(deleteError, "No fue posible eliminar la factura"));
+      return;
+    }
 
     if (String(pendingInvoiceModel?.id || "").trim() === normalizedId) {
       closeInvoiceModelModal();
@@ -832,19 +851,26 @@ export default function InvoicingPage() {
     setInvoiceModelModalOpen(true);
   }
 
-  function finalizeInvoiceCreation() {
+  async function finalizeInvoiceCreation() {
     if (!pendingInvoiceModel) return;
-    setInvoices((current) => [
-      {
-        id: pendingInvoiceModel.id,
+    const firstQuotationId = pendingInvoiceModel.quotationIds[0] || null;
+    const firstQuotation = firstQuotationId
+      ? rows.find((r) => Number(r.id || 0) === Number(firstQuotationId))
+      : null;
+    const accountId = firstQuotation?.accountId ? Number(firstQuotation.accountId) : null;
+    try {
+      await api.post("/api/quotation-invoices", {
         invoiceNumber: pendingInvoiceModel.invoiceNumber,
         invoiceDate: pendingInvoiceModel.invoiceDate,
+        accountId,
         quotationIds: pendingInvoiceModel.quotationIds,
         quotationItems: pendingInvoiceModel.quotationItems,
-        createdAt: pendingInvoiceModel.createdAt,
-      },
-      ...current,
-    ]);
+      });
+      await loadInvoices();
+    } catch (saveError) {
+      setError(getApiErrorMessage(saveError, "No fue posible guardar la factura"));
+      return;
+    }
     setSelectedQuotationIds([]);
     setInvoiceDateDraft("");
     setError("");
@@ -941,10 +967,10 @@ export default function InvoicingPage() {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => void loadAcceptedQuotations()}
-            disabled={loading}
+            onClick={() => { void loadAcceptedQuotations(); void loadInvoices(); }}
+            disabled={loading || invoicesLoading}
           >
-            {loading ? "Actualizando..." : "Actualizar"}
+            {loading || invoicesLoading ? "Actualizando..." : "Actualizar"}
           </button>
         </div>
 
@@ -1039,7 +1065,7 @@ export default function InvoicingPage() {
                   const quotationId = Number(item.id || 0);
                   const quotationTotalAmount = Math.max(
                     0,
-                    Number(item?.latestTotalSaleAmount || 0),
+                    Number(item?.latestBaseSaleTotal ?? item?.latestTotalSaleAmount ?? 0),
                   );
                   const invoicedAmount = Math.max(
                     0,
@@ -1248,7 +1274,10 @@ export default function InvoicingPage() {
             }
           }}
         >
-          <div className="modal-dialog modal-dialog-wide">
+          <div
+            className="modal-dialog modal-dialog-wide"
+            style={{ width: "min(96vw, 1500px)", maxWidth: "1500px" }}
+          >
             <div className="modal-header accept-order-notification-header">
               <h3 id="invoicing-preview-modal-title">
                 Items de cotizaciones seleccionadas
@@ -1265,7 +1294,7 @@ export default function InvoicingPage() {
               ) : null}
 
               {!invoicePreviewLoading && !invoicePreviewError ? (
-                <div style={{ maxHeight: "58vh", overflow: "auto", paddingRight: 4 }}>
+                <div style={{ maxHeight: "68vh", overflow: "auto", paddingRight: 4 }}>
                   <div
                     style={{
                       display: "flex",
@@ -1363,9 +1392,6 @@ export default function InvoicingPage() {
                                   <th className="is-center">Factura</th>
                                   <th>Codigo</th>
                                   <th>Descripcion</th>
-                                  <th className="is-right">Cotizada</th>
-                                  <th className="is-right">Ya facturada</th>
-                                  <th className="is-right">Pendiente</th>
                                   <th className="is-right">Cantidad a facturar</th>
                                   <th className="is-right">Costo unitario</th>
                                   <th className="is-right">Total</th>
@@ -1409,21 +1435,6 @@ export default function InvoicingPage() {
                                           Copia
                                         </span>
                                       ) : null}
-                                    </td>
-                                    <td className="is-right">
-                                      {Number(item.originalQuantity || 0).toLocaleString("es-MX", {
-                                        maximumFractionDigits: 4,
-                                      })}
-                                    </td>
-                                    <td className="is-right">
-                                      {Number(item.invoicedQuantity || 0).toLocaleString("es-MX", {
-                                        maximumFractionDigits: 4,
-                                      })}
-                                    </td>
-                                    <td className="is-right">
-                                      {Number(item.pendingQuantity || 0).toLocaleString("es-MX", {
-                                        maximumFractionDigits: 4,
-                                      })}
                                     </td>
                                     <td className="is-right">
                                       <input

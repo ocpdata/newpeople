@@ -3312,7 +3312,7 @@ async function listQuotationProcessingProducts({ versionId, currencyCode }) {
       const quantity = Number(item?.quantity || 0);
       const pricing = calculateProposalSalePrice(item);
       const unitCostWithDiscount = Number(
-        Number(pricing?.discountedListPriceUnit || 0).toFixed(6),
+        Number(pricing?.salePriceUnit || 0).toFixed(6),
       );
       const totalCost = Number((unitCostWithDiscount * quantity).toFixed(6));
 
@@ -12912,6 +12912,7 @@ router.get(
               qan.status_code AS acceptance_notification_status_code,
               qan.sent_at AS acceptance_notification_sent_at,
           ${buildQuotationVersionEffectiveTotalSql()} AS latest_total_sale_amount,
+          COALESCE(latest_total.base_sale_total, 0) AS latest_base_sale_total,
           ${buildQuotationVersionContributionSql()} AS latest_contribution_amount,
           COALESCE(latest_total.product_sale_total, 0) AS latest_product_sale_amount,
           COALESCE(latest_total.product_cost_total, 0) AS latest_product_cost_amount,
@@ -12984,6 +12985,7 @@ router.get(
           row.latest_total_sale_amount === undefined
             ? null
             : Number(row.latest_total_sale_amount),
+        latestBaseSaleTotal: Number(row.latest_base_sale_total || 0),
         latestContributionAmount:
           row.latest_contribution_amount === null ||
           row.latest_contribution_amount === undefined
@@ -13255,6 +13257,7 @@ router.get(
         aiHistory,
         processingProducts,
         providerPurchaseOrders,
+        receptionEvidences,
       ] = await Promise.all([
         listQuotationProcessingStages({ quotation, latestVersion }),
         listProcessingAssignableUsers(),
@@ -13283,6 +13286,10 @@ router.get(
         listQuotationProcessingPurchaseOrders({
           quotationId: Number(quotation.id),
           stageCode: "provider_purchase_order",
+        }),
+        listQuotationProcessingEvidences({
+          quotationId,
+          stageCode: "products_reception",
         }),
       ]);
 
@@ -13332,6 +13339,7 @@ router.get(
           aiSummaryCurrent: aiHistory[0] || null,
           aiSummaryHistory: aiHistory,
         },
+        receptionEvidences,
         permissions: {
           canRead: hasQuotationProcessingReadPermission(req.user),
           canUpdate: hasQuotationProcessingUpdatePermission(req.user),
@@ -13974,6 +13982,110 @@ router.post(
         quotationId,
         stageCode: "kickoff_internal",
       }),
+    });
+  },
+);
+
+router.post(
+  "/quotations/:quotationId/processing/products-reception/evidence-files",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertAcceptOrderPermission(req, res)) return;
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({ message: "No autorizado para cargar documentos de recepcion" });
+    }
+
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+
+    // itemKey tags the evidence so the frontend can filter per-item
+    const itemKey = String(req.query.itemKey || "").trim() || null;
+
+    const quotation = await getAccessibleQuotation({ user: req.user, quotationId });
+    if (!quotation) return res.status(404).json({ message: "Cotizacion no encontrada" });
+
+    const latestVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: Number(quotation.latest_version_id || 0),
+    });
+    if (!latestVersion) return res.status(404).json({ message: "Version no encontrada" });
+
+    const { files } = await parseMultipartFiles(req);
+    if (!files.length) return res.status(400).json({ message: "Selecciona al menos un archivo" });
+
+    const allowedMimeTypes = new Set(config.documents.storage.allowedMimeTypes);
+    const invalidFile = files.find((f) => !String(f.mimetype || "").trim() || !allowedMimeTypes.has(String(f.mimetype || "").trim()));
+    if (invalidFile) {
+      await cleanupTempFiles(files);
+      return res.status(400).json({ message: `Tipo de archivo no permitido: ${invalidFile.originalFilename || invalidFile.newFilename || "archivo"}` });
+    }
+
+    try {
+      await ensureQuotationProcessingSchema();
+      await withTransaction(async (conn) => {
+        const now = new Date();
+        for (const file of files) {
+          const originalFileName = String(file.originalFilename || file.newFilename || "documento").trim() || "documento";
+          const mimeType = String(file.mimetype || "application/octet-stream").trim();
+          const extension = path.extname(originalFileName).slice(1) || null;
+          const buffer = await readFile(file.filepath);
+          const sha256 = createHash("sha256").update(buffer).digest("hex");
+          const storageKey = buildQuotationProcessingEvidenceStorageKey({
+            quotationId,
+            versionId: Number(latestVersion.id),
+            sha256,
+            fileName: originalFileName,
+          });
+          const stored = await documentStorage.save({ buffer, storageKey });
+          const publicId = `doc_${randomUUID().replace(/-/g, "")}`;
+          const [insertResult] = await conn.query(
+            `INSERT INTO documents
+               (public_id, upload_session_id, entity_type, entity_id, storage_provider,
+                storage_bucket, storage_key, original_file_name, stored_file_name,
+                mime_type, file_extension, byte_size, sha256, document_kind, source_label,
+                processing_status, processing_error, duration_seconds, is_deleted,
+                uploaded_by_user_id, created_at, updated_at)
+             VALUES (?, NULL, 'quotation_processing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, 0, ?, ?, ?)`,
+            [
+              publicId, Number(latestVersion.id), stored.storageProvider, stored.storageBucket,
+              stored.storageKey, originalFileName, stored.storedFileName, mimeType, extension,
+              Number(file.size || buffer.length || 0), sha256, "quotation_processing_evidence",
+              "Documento recepcion de productos", Number(req.user.id), now, now,
+            ],
+          );
+          await conn.query(
+            `INSERT INTO quotation_processing_evidences
+              (quotation_id, quotation_version_id, opportunity_id, stage_code,
+               evidence_type, document_id, content_text, created_by_user_id, created_at)
+             VALUES (?, ?, ?, 'products_reception', ?, ?, ?, ?, ?)`,
+            [
+              Number(quotation.id), Number(latestVersion.id), Number(quotation.opportunity_id),
+              "text_file", Number(insertResult.insertId),
+              itemKey ? JSON.stringify({ itemKey }) : null,
+              Number(req.user.id), now,
+            ],
+          );
+        }
+      });
+    } finally {
+      await cleanupTempFiles(files);
+    }
+
+    await logAuditEvent({
+      req,
+      module: "cotizaciones",
+      action: "quotation_processing_reception_document_uploaded",
+      entityType: "quotation",
+      entityId: quotationId,
+      detail: "Documento cargado en recepcion de productos",
+      after: { filesCount: files.length },
+    });
+
+    return res.status(201).json({
+      message: "Documento cargado",
+      evidences: await listQuotationProcessingEvidences({ quotationId, stageCode: "products_reception" }),
     });
   },
 );
@@ -21856,5 +21968,159 @@ async function getCatalogIdFromConn(conn, table, code) {
   );
   return rows.length ? Number(rows[0].id) : null;
 }
+
+// ─── Quotation Invoices ───────────────────────────────────────────────────────
+
+let ensureQuotationInvoicesSchemaPromise = null;
+
+async function ensureQuotationInvoicesSchema() {
+  if (!ensureQuotationInvoicesSchemaPromise) {
+    ensureQuotationInvoicesSchemaPromise = query(
+      `CREATE TABLE IF NOT EXISTS quotation_invoices (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        invoice_number VARCHAR(80) NOT NULL,
+        invoice_date DATE NOT NULL,
+        account_id BIGINT UNSIGNED NULL,
+        quotation_ids_json LONGTEXT NOT NULL,
+        quotation_items_json LONGTEXT NOT NULL,
+        created_by_user_id BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        CONSTRAINT fk_qi_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+        INDEX idx_qi_account (account_id, created_at),
+        INDEX idx_qi_user (created_by_user_id, created_at)
+      )`,
+    );
+  }
+  return ensureQuotationInvoicesSchemaPromise;
+}
+
+router.get(
+  "/quotation-invoices",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    try {
+      await ensureQuotationInvoicesSchema();
+      const params = [];
+      let scopeJoin = "";
+      if (!hasQuotationAdministration(req.user)) {
+        params.push(Number(req.user.id));
+        scopeJoin = `INNER JOIN account_owners ao_scope
+                       ON ao_scope.account_id = qi.account_id
+                      AND ao_scope.user_id = ?`;
+      }
+      const rows = await query(
+        `SELECT qi.id, qi.invoice_number, qi.invoice_date,
+                qi.account_id, qi.quotation_ids_json, qi.quotation_items_json,
+                qi.created_by_user_id, qi.created_at
+           FROM quotation_invoices qi
+           ${scopeJoin}
+          ORDER BY qi.created_at DESC`,
+        params,
+      );
+      return res.json(
+        rows.map((row) => ({
+          id: String(row.id),
+          invoiceNumber: row.invoice_number,
+          invoiceDate: row.invoice_date
+            ? String(row.invoice_date).slice(0, 10)
+            : null,
+          accountId: row.account_id ? Number(row.account_id) : null,
+          quotationIds: (() => {
+            try { return JSON.parse(row.quotation_ids_json || "[]"); } catch { return []; }
+          })(),
+          quotationItems: (() => {
+            try { return JSON.parse(row.quotation_items_json || "[]"); } catch { return []; }
+          })(),
+          createdByUserId: Number(row.created_by_user_id),
+          createdAt: row.created_at,
+        })),
+      );
+    } catch (err) {
+      console.error("GET /quotation-invoices error", err);
+      return res.status(500).json({ message: "Error al cargar facturas" });
+    }
+  },
+);
+
+router.post(
+  "/quotation-invoices",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    try {
+      await ensureQuotationInvoicesSchema();
+      const invoiceNumber = String(req.body?.invoiceNumber || "").trim();
+      const invoiceDate = String(req.body?.invoiceDate || "").trim();
+      const accountId = req.body?.accountId ? Number(req.body.accountId) : null;
+      const quotationIds = Array.isArray(req.body?.quotationIds)
+        ? req.body.quotationIds.map(Number).filter((id) => id > 0)
+        : [];
+      const quotationItems = Array.isArray(req.body?.quotationItems)
+        ? req.body.quotationItems
+        : [];
+
+      if (!invoiceNumber) {
+        return res.status(400).json({ message: "Numero de factura requerido" });
+      }
+      if (!invoiceDate || !/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) {
+        return res.status(400).json({ message: "Fecha de factura invalida" });
+      }
+      if (!quotationIds.length) {
+        return res.status(400).json({ message: "Se requiere al menos una cotizacion" });
+      }
+
+      const result = await query(
+        `INSERT INTO quotation_invoices
+           (invoice_number, invoice_date, account_id, quotation_ids_json, quotation_items_json, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          invoiceNumber,
+          invoiceDate,
+          accountId || null,
+          JSON.stringify(quotationIds),
+          JSON.stringify(quotationItems),
+          Number(req.user.id),
+        ],
+      );
+      const insertedId = String(result.insertId);
+      return res.status(201).json({ id: insertedId, invoiceNumber, invoiceDate });
+    } catch (err) {
+      console.error("POST /quotation-invoices error", err);
+      return res.status(500).json({ message: "Error al guardar la factura" });
+    }
+  },
+);
+
+router.delete(
+  "/quotation-invoices/:id",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    try {
+      await ensureQuotationInvoicesSchema();
+      const invoiceId = Number(req.params.id || 0);
+      if (!invoiceId) {
+        return res.status(400).json({ message: "ID de factura invalido" });
+      }
+      const existing = await query(
+        `SELECT id, created_by_user_id FROM quotation_invoices WHERE id = ? LIMIT 1`,
+        [invoiceId],
+      );
+      if (!existing.length) {
+        return res.status(404).json({ message: "Factura no encontrada" });
+      }
+      if (
+        !hasQuotationAdministration(req.user) &&
+        Number(existing[0].created_by_user_id) !== Number(req.user.id)
+      ) {
+        return res.status(403).json({ message: "No autorizado" });
+      }
+      await query(`DELETE FROM quotation_invoices WHERE id = ?`, [invoiceId]);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("DELETE /quotation-invoices/:id error", err);
+      return res.status(500).json({ message: "Error al eliminar la factura" });
+    }
+  },
+);
 
 export default router;

@@ -957,6 +957,8 @@ export default function AcceptOrderPage() {
     uploadingKickoffInternalEvidence,
     setUploadingKickoffInternalEvidence,
   ] = useState(false);
+  const [uploadingReceptionEvidence, setUploadingReceptionEvidence] =
+    useState(false);
   const [generatingKickoffInternalAi, setGeneratingKickoffInternalAi] =
     useState(false);
   const [deletingProcessingEvidenceIds, setDeletingProcessingEvidenceIds] =
@@ -2318,6 +2320,32 @@ export default function AcceptOrderPage() {
     }
   }
 
+  async function uploadReceptionEvidence(files, itemKey) {
+    const quotationId = Number(quotationToProcess?.id || 0);
+    if (!quotationId || !files?.length) return;
+    setUploadingReceptionEvidence(true);
+    setError("");
+    setSuccess("");
+    try {
+      const formData = new FormData();
+      Array.from(files).forEach((file) => formData.append("files", file));
+      const itemKeyParam = itemKey ? `?itemKey=${encodeURIComponent(itemKey)}` : "";
+      await api.post(
+        `/api/quotations/${quotationId}/processing/products-reception/evidence-files${itemKeyParam}`,
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } },
+      );
+      await loadQuotationProcessing(quotationToProcess, "products_reception");
+      setSuccess("Documento cargado en recepcion de productos");
+    } catch (uploadError) {
+      setError(
+        getApiErrorMessage(uploadError, "No fue posible cargar el documento"),
+      );
+    } finally {
+      setUploadingReceptionEvidence(false);
+    }
+  }
+
   async function generateKickoffInternalAiSummary() {
     const quotationId = Number(quotationToProcess?.id || 0);
     if (!quotationId) return;
@@ -2767,7 +2795,21 @@ export default function AcceptOrderPage() {
               <p>Productos y servicios incluidos en cada orden de compra.</p>
             </header>
 
-            {receptionPurchaseOrders.length ? (
+            {receptionPurchaseOrders.length ? (() => {
+              const receptionEvidences = Array.isArray(processingData?.receptionEvidences)
+                ? processingData.receptionEvidences
+                : [];
+              const evidencesByItemKey = new Map();
+              receptionEvidences.forEach((ev) => {
+                try {
+                  const parsed = ev.contentText ? JSON.parse(ev.contentText) : null;
+                  const key = String(parsed?.itemKey || "");
+                  if (!key) return;
+                  if (!evidencesByItemKey.has(key)) evidencesByItemKey.set(key, []);
+                  evidencesByItemKey.get(key).push(ev);
+                } catch { /* non-JSON contentText */ }
+              });
+              return (
               <div className="processing-reception-orders">
                 {receptionPurchaseOrders.map((order, orderIndex) => {
                   const orderLines = Array.isArray(order?.lines)
@@ -2775,14 +2817,19 @@ export default function AcceptOrderPage() {
                     : [];
                   const currencyCode =
                     order?.currencyCode || processingCurrencyCode || "USD";
+                  const orderKey = String(order?.orderId || order?.orderNumber || orderIndex);
+                  const receptionItemExtras = Array.isArray(
+                    productsReceptionStage?.stageData?.receptionItemExtras,
+                  )
+                    ? productsReceptionStage.stageData.receptionItemExtras
+                    : [];
+                  const orderExtras = receptionItemExtras.filter(
+                    (e) => String(e.orderId || "") === orderKey,
+                  );
 
                   return (
                     <article
-                      key={
-                        order?.orderId ||
-                        order?.orderNumber ||
-                        `reception-order-${orderIndex}`
-                      }
+                      key={orderKey}
                       className="processing-reception-order"
                     >
                       <header className="processing-reception-order-header">
@@ -2806,13 +2853,21 @@ export default function AcceptOrderPage() {
                                 <th className="is-right">Total</th>
                                 <th className="is-center">Recibido</th>
                                 <th>Fecha de recepcion</th>
+                                <th>Inicio soporte/suscripcion</th>
+                                <th>Fin soporte/suscripcion</th>
+                                <th>Documentos</th>
+                                <th className="is-center">Acciones</th>
                               </tr>
                             </thead>
                             <tbody>
                               {orderLines.map((line, lineIndex) => {
-                                const receptionItemKey = `${order?.orderId || orderIndex}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const receptionItemKey = `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
                                 const receptionItem =
                                   receptionItems[receptionItemKey] || {};
+                                const effectiveQuantity =
+                                  receptionItem.quantityOverride != null
+                                    ? receptionItem.quantityOverride
+                                    : Number(line?.quantity || 0);
                                 const updateReceptionItem = (patch) =>
                                   updateActiveStageDataField("receptionItems", {
                                     ...receptionItems,
@@ -2829,11 +2884,19 @@ export default function AcceptOrderPage() {
                                       {line?.description || "Sin descripcion"}
                                     </td>
                                     <td className="is-right">
-                                      {Number(
-                                        line?.quantity || 0,
-                                      ).toLocaleString("es-MX", {
-                                        maximumFractionDigits: 4,
-                                      })}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.0001"
+                                        value={String(effectiveQuantity)}
+                                        onChange={(e) =>
+                                          updateReceptionItem({
+                                            quantityOverride: e.target.value === "" ? null : Number(e.target.value),
+                                          })
+                                        }
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        style={{ width: 80, textAlign: "right" }}
+                                      />
                                     </td>
                                     <td className="is-right">
                                       {formatCurrency(
@@ -2844,7 +2907,7 @@ export default function AcceptOrderPage() {
                                     <td>{formatDate(line?.selectionDate)}</td>
                                     <td className="is-right">
                                       {formatCurrency(
-                                        Number(line?.amount || 0),
+                                        Number(effectiveQuantity) * Number(line?.unitCost || 0),
                                         currencyCode,
                                       )}
                                     </td>
@@ -2899,9 +2962,299 @@ export default function AcceptOrderPage() {
                                         placeholderText="Seleccionar fecha"
                                       />
                                     </td>
+                                    <td>
+                                      <DatePicker
+                                        selected={parseDateInputValue(receptionItem.supportStartDate)}
+                                        onChange={(date) => updateReceptionItem({ supportStartDate: formatDatePickerValue(date) })}
+                                        dateFormat="dd-MM-yyyy"
+                                        locale={es}
+                                        showMonthDropdown
+                                        showYearDropdown
+                                        dropdownMode="select"
+                                        fixedHeight
+                                        calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                        popperClassName="audit-datepicker-popper"
+                                        className="processing-date-input"
+                                        autoComplete="off"
+                                        showPopperArrow={false}
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        placeholderText="Inicio soporte"
+                                      />
+                                    </td>
+                                    <td>
+                                      <DatePicker
+                                        selected={parseDateInputValue(receptionItem.supportEndDate)}
+                                        onChange={(date) => updateReceptionItem({ supportEndDate: formatDatePickerValue(date) })}
+                                        dateFormat="dd-MM-yyyy"
+                                        locale={es}
+                                        showMonthDropdown
+                                        showYearDropdown
+                                        dropdownMode="select"
+                                        fixedHeight
+                                        calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                        popperClassName="audit-datepicker-popper"
+                                        className="processing-date-input"
+                                        autoComplete="off"
+                                        showPopperArrow={false}
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        placeholderText="Fin soporte"
+                                      />
+                                    </td>
+                                    <td style={{ minWidth: 160 }}>
+                                      {(evidencesByItemKey.get(receptionItemKey) || []).map((ev) => {
+                                        const evId = Number(ev.id || 0);
+                                        const deleting = deletingProcessingEvidenceIds.has(evId);
+                                        return (
+                                          <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                                            <span style={{ fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ev.document?.originalFileName}>
+                                              {ev.document?.originalFileName || "Documento"}
+                                            </span>
+                                            {ev.document ? (
+                                              <button type="button" className="btn-ghost processing-evidence-icon-button" onClick={() => void downloadKickoffEvidence(ev)} disabled={deleting} title="Descargar" aria-label="Descargar documento">
+                                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" /></svg>
+                                              </button>
+                                            ) : null}
+                                            <button type="button" className="btn-ghost processing-evidence-icon-button is-danger" onClick={() => void deleteKickoffEvidence(ev)} disabled={deleting || !processingData.permissions?.canUpdate} title="Eliminar" aria-label="Eliminar documento">
+                                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" /></svg>
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                      <label style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#3b82f6" }}>
+                                        <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: "currentColor" }} aria-hidden="true"><path d="M12 4.5a.75.75 0 0 1 .75.75v6h6a.75.75 0 0 1 0 1.5h-6v6a.75.75 0 0 1-1.5 0v-6h-6a.75.75 0 0 1 0-1.5h6v-6A.75.75 0 0 1 12 4.5Z" /></svg>
+                                        {uploadingReceptionEvidence ? "Subiendo..." : "Adjuntar"}
+                                        <input
+                                          type="file"
+                                          style={{ display: "none" }}
+                                          accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt,.csv"
+                                          onChange={(e) => {
+                                            if (e.target.files?.length) void uploadReceptionEvidence(e.target.files, receptionItemKey);
+                                            e.target.value = "";
+                                          }}
+                                          disabled={uploadingReceptionEvidence || !processingData.permissions?.canUpdate}
+                                        />
+                                      </label>
+                                    </td>
+                                    <td className="is-center">
+                                      <button
+                                        type="button"
+                                        className="btn-secondary processing-product-action-icon"
+                                        title="Duplicar item"
+                                        aria-label={`Duplicar ${line?.description || line?.code || "item"}`}
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        onClick={() => {
+                                          const nextExtras = [
+                                            ...receptionItemExtras,
+                                            {
+                                              id: `dup-${Date.now()}-${Math.round(Math.random() * 9999)}`,
+                                              orderId: orderKey,
+                                              code: line?.code || "-",
+                                              description: line?.description || "Sin descripcion",
+                                              unitCost: Number(line?.unitCost || 0),
+                                              quantityOverride: Number(effectiveQuantity),
+                                              received: false,
+                                              receptionDate: "",
+                                              supportStartDate: receptionItem.supportStartDate || "",
+                                              supportEndDate: receptionItem.supportEndDate || "",
+                                              selectionDate: line?.selectionDate || null,
+                                              currencyCode,
+                                            },
+                                          ];
+                                          patchProcessingStage("products_reception", {
+                                            stageData: { receptionItemExtras: nextExtras },
+                                          });
+                                        }}
+                                      >
+                                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                          <path d="M8 4.75A2.75 2.75 0 0 0 5.25 7.5v8A2.75 2.75 0 0 0 8 18.25h8a2.75 2.75 0 0 0 2.75-2.75v-8A2.75 2.75 0 0 0 16 4.75zm0 1.5h8c.69 0 1.25.56 1.25 1.25v8c0 .69-.56 1.25-1.25 1.25H8c-.69 0-1.25-.56-1.25-1.25v-8c0-.69.56-1.25 1.25-1.25" />
+                                          <path d="M4 8.5a.75.75 0 0 1 .75.75v8c0 .69.56 1.25 1.25 1.25h8a.75.75 0 0 1 0 1.5H6A2.75 2.75 0 0 1 3.25 17.25v-8A.75.75 0 0 1 4 8.5" />
+                                        </svg>
+                                      </button>
+                                    </td>
                                   </tr>
                                 );
                               })}
+                              {orderExtras.map((extra) => (
+                                <tr key={extra.id} style={{ background: "#f8faff" }}>
+                                  <td style={{ color: "#64748b", fontStyle: "italic" }}>{extra.code}</td>
+                                  <td style={{ color: "#64748b", fontStyle: "italic" }}>{extra.description}</td>
+                                  <td className="is-right">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.0001"
+                                      value={String(extra.quantityOverride ?? 0)}
+                                      onChange={(e) => {
+                                        const nextExtras = receptionItemExtras.map((ex) =>
+                                          ex.id === extra.id
+                                            ? { ...ex, quantityOverride: e.target.value === "" ? 0 : Number(e.target.value) }
+                                            : ex,
+                                        );
+                                        patchProcessingStage("products_reception", {
+                                          stageData: { receptionItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      style={{ width: 80, textAlign: "right" }}
+                                    />
+                                  </td>
+                                  <td className="is-right">
+                                    {formatCurrency(extra.unitCost, extra.currencyCode)}
+                                  </td>
+                                  <td>{formatDate(extra.selectionDate)}</td>
+                                  <td className="is-right">
+                                    {formatCurrency(
+                                      Number(extra.quantityOverride ?? 0) * Number(extra.unitCost || 0),
+                                      extra.currencyCode,
+                                    )}
+                                  </td>
+                                  <td className="is-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(extra.received)}
+                                      onChange={(e) => {
+                                        const nextExtras = receptionItemExtras.map((ex) =>
+                                          ex.id === extra.id ? { ...ex, received: e.target.checked } : ex,
+                                        );
+                                        patchProcessingStage("products_reception", {
+                                          stageData: { receptionItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                    />
+                                  </td>
+                                  <td>
+                                    <DatePicker
+                                      selected={parseDateInputValue(extra.receptionDate)}
+                                      onChange={(date) => {
+                                        const nextExtras = receptionItemExtras.map((ex) =>
+                                          ex.id === extra.id ? { ...ex, receptionDate: formatDatePickerValue(date) } : ex,
+                                        );
+                                        patchProcessingStage("products_reception", {
+                                          stageData: { receptionItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      dateFormat="dd-MM-yyyy"
+                                      locale={es}
+                                      showMonthDropdown
+                                      showYearDropdown
+                                      dropdownMode="select"
+                                      fixedHeight
+                                      calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                      popperClassName="audit-datepicker-popper"
+                                      className="processing-date-input"
+                                      autoComplete="off"
+                                      showPopperArrow={false}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      placeholderText="Seleccionar fecha"
+                                    />
+                                  </td>
+                                  <td>
+                                    <DatePicker
+                                      selected={parseDateInputValue(extra.supportStartDate)}
+                                      onChange={(date) => {
+                                        const nextExtras = receptionItemExtras.map((ex) =>
+                                          ex.id === extra.id ? { ...ex, supportStartDate: formatDatePickerValue(date) } : ex,
+                                        );
+                                        patchProcessingStage("products_reception", { stageData: { receptionItemExtras: nextExtras } });
+                                      }}
+                                      dateFormat="dd-MM-yyyy"
+                                      locale={es}
+                                      showMonthDropdown
+                                      showYearDropdown
+                                      dropdownMode="select"
+                                      fixedHeight
+                                      calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                      popperClassName="audit-datepicker-popper"
+                                      className="processing-date-input"
+                                      autoComplete="off"
+                                      showPopperArrow={false}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      placeholderText="Inicio soporte"
+                                    />
+                                  </td>
+                                  <td>
+                                    <DatePicker
+                                      selected={parseDateInputValue(extra.supportEndDate)}
+                                      onChange={(date) => {
+                                        const nextExtras = receptionItemExtras.map((ex) =>
+                                          ex.id === extra.id ? { ...ex, supportEndDate: formatDatePickerValue(date) } : ex,
+                                        );
+                                        patchProcessingStage("products_reception", { stageData: { receptionItemExtras: nextExtras } });
+                                      }}
+                                      dateFormat="dd-MM-yyyy"
+                                      locale={es}
+                                      showMonthDropdown
+                                      showYearDropdown
+                                      dropdownMode="select"
+                                      fixedHeight
+                                      calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                      popperClassName="audit-datepicker-popper"
+                                      className="processing-date-input"
+                                      autoComplete="off"
+                                      showPopperArrow={false}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      placeholderText="Fin soporte"
+                                    />
+                                  </td>
+                                  <td style={{ minWidth: 160 }}>
+                                    {(evidencesByItemKey.get(extra.id) || []).map((ev) => {
+                                      const evId = Number(ev.id || 0);
+                                      const deleting = deletingProcessingEvidenceIds.has(evId);
+                                      return (
+                                        <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                                          <span style={{ fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ev.document?.originalFileName}>
+                                            {ev.document?.originalFileName || "Documento"}
+                                          </span>
+                                          {ev.document ? (
+                                            <button type="button" className="btn-ghost processing-evidence-icon-button" onClick={() => void downloadKickoffEvidence(ev)} disabled={deleting} title="Descargar" aria-label="Descargar documento">
+                                              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" /></svg>
+                                            </button>
+                                          ) : null}
+                                          <button type="button" className="btn-ghost processing-evidence-icon-button is-danger" onClick={() => void deleteKickoffEvidence(ev)} disabled={deleting || !processingData.permissions?.canUpdate} title="Eliminar" aria-label="Eliminar documento">
+                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" /></svg>
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                    <label style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#3b82f6" }}>
+                                      <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: "currentColor" }} aria-hidden="true"><path d="M12 4.5a.75.75 0 0 1 .75.75v6h6a.75.75 0 0 1 0 1.5h-6v6a.75.75 0 0 1-1.5 0v-6h-6a.75.75 0 0 1 0-1.5h6v-6A.75.75 0 0 1 12 4.5Z" /></svg>
+                                      {uploadingReceptionEvidence ? "Subiendo..." : "Adjuntar"}
+                                      <input
+                                        type="file"
+                                        style={{ display: "none" }}
+                                        accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt,.csv"
+                                        onChange={(e) => {
+                                          if (e.target.files?.length) void uploadReceptionEvidence(e.target.files, extra.id);
+                                          e.target.value = "";
+                                        }}
+                                        disabled={uploadingReceptionEvidence || !processingData.permissions?.canUpdate}
+                                      />
+                                    </label>
+                                  </td>
+                                  <td className="is-center">
+                                    <button
+                                      type="button"
+                                      className="btn-secondary processing-product-action-icon is-danger"
+                                      title="Eliminar copia"
+                                      aria-label="Eliminar item duplicado"
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      onClick={() => {
+                                        patchProcessingStage("products_reception", {
+                                          stageData: {
+                                            receptionItemExtras: receptionItemExtras.filter((ex) => ex.id !== extra.id),
+                                          },
+                                        });
+                                      }}
+                                    >
+                                      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                        <path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" />
+                                        <path d="M10.75 9a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75m2.5 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75" />
+                                      </svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         </div>
@@ -2914,7 +3267,8 @@ export default function AcceptOrderPage() {
                   );
                 })}
               </div>
-            ) : (
+              );
+            })() : (
               <p className="field-hint">
                 Aun no hay ordenes de compra generadas.
               </p>
@@ -3134,14 +3488,19 @@ export default function AcceptOrderPage() {
                   const orderLines = Array.isArray(order?.lines)
                     ? order.lines
                     : [];
+                  const deliveryOrderKey = String(order?.orderId || order?.orderNumber || orderIndex);
+                  const deliveryItemExtras = Array.isArray(
+                    productsDeliveryStage?.stageData?.deliveryItemExtras,
+                  )
+                    ? productsDeliveryStage.stageData.deliveryItemExtras
+                    : [];
+                  const orderDeliveryExtras = deliveryItemExtras.filter(
+                    (e) => String(e.orderId || "") === deliveryOrderKey,
+                  );
 
                   return (
                     <article
-                      key={
-                        order?.orderId ||
-                        order?.orderNumber ||
-                        `delivery-order-${orderIndex}`
-                      }
+                      key={deliveryOrderKey}
                       className="processing-reception-order"
                     >
                       <header className="processing-reception-order-header">
@@ -3162,13 +3521,18 @@ export default function AcceptOrderPage() {
                                 <th className="is-right">Cantidad</th>
                                 <th className="is-center">Entregado</th>
                                 <th>Fecha de entrega</th>
+                                <th className="is-center">Acciones</th>
                               </tr>
                             </thead>
                             <tbody>
                               {orderLines.map((line, lineIndex) => {
-                                const itemKey = `${order?.orderId || orderIndex}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const itemKey = `${deliveryOrderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
                                 const deliveryItem =
                                   deliveryItems[itemKey] || {};
+                                const effectiveQty =
+                                  deliveryItem.quantityOverride != null
+                                    ? deliveryItem.quantityOverride
+                                    : Number(line?.quantity || 0);
                                 const updateDeliveryItem = (patch) =>
                                   updateActiveStageDataField("deliveryItems", {
                                     ...deliveryItems,
@@ -3185,11 +3549,19 @@ export default function AcceptOrderPage() {
                                       {line?.description || "Sin descripcion"}
                                     </td>
                                     <td className="is-right">
-                                      {Number(
-                                        line?.quantity || 0,
-                                      ).toLocaleString("es-MX", {
-                                        maximumFractionDigits: 4,
-                                      })}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.0001"
+                                        value={String(effectiveQty)}
+                                        onChange={(e) =>
+                                          updateDeliveryItem({
+                                            quantityOverride: e.target.value === "" ? null : Number(e.target.value),
+                                          })
+                                        }
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        style={{ width: 80, textAlign: "right" }}
+                                      />
                                     </td>
                                     <td className="is-center">
                                       <input
@@ -3242,9 +3614,128 @@ export default function AcceptOrderPage() {
                                         placeholderText="Seleccionar fecha"
                                       />
                                     </td>
+                                    <td className="is-center">
+                                      <button
+                                        type="button"
+                                        className="btn-secondary processing-product-action-icon"
+                                        title="Duplicar item"
+                                        aria-label={`Duplicar ${line?.description || line?.code || "item"}`}
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        onClick={() => {
+                                          const nextExtras = [
+                                            ...deliveryItemExtras,
+                                            {
+                                              id: `dup-${Date.now()}-${Math.round(Math.random() * 9999)}`,
+                                              orderId: deliveryOrderKey,
+                                              code: line?.code || "-",
+                                              description: line?.description || "Sin descripcion",
+                                              quantityOverride: Number(effectiveQty),
+                                              delivered: false,
+                                              deliveryDate: "",
+                                            },
+                                          ];
+                                          patchProcessingStage("products_delivery", {
+                                            stageData: { deliveryItemExtras: nextExtras },
+                                          });
+                                        }}
+                                      >
+                                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                          <path d="M8 4.75A2.75 2.75 0 0 0 5.25 7.5v8A2.75 2.75 0 0 0 8 18.25h8a2.75 2.75 0 0 0 2.75-2.75v-8A2.75 2.75 0 0 0 16 4.75zm0 1.5h8c.69 0 1.25.56 1.25 1.25v8c0 .69-.56 1.25-1.25 1.25H8c-.69 0-1.25-.56-1.25-1.25v-8c0-.69.56-1.25 1.25-1.25" />
+                                          <path d="M4 8.5a.75.75 0 0 1 .75.75v8c0 .69.56 1.25 1.25 1.25h8a.75.75 0 0 1 0 1.5H6A2.75 2.75 0 0 1 3.25 17.25v-8A.75.75 0 0 1 4 8.5" />
+                                        </svg>
+                                      </button>
+                                    </td>
                                   </tr>
                                 );
                               })}
+                              {orderDeliveryExtras.map((extra) => (
+                                <tr key={extra.id} style={{ background: "#f8faff" }}>
+                                  <td style={{ color: "#64748b", fontStyle: "italic" }}>{extra.code}</td>
+                                  <td style={{ color: "#64748b", fontStyle: "italic" }}>{extra.description}</td>
+                                  <td className="is-right">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.0001"
+                                      value={String(extra.quantityOverride ?? 0)}
+                                      onChange={(e) => {
+                                        const nextExtras = deliveryItemExtras.map((ex) =>
+                                          ex.id === extra.id
+                                            ? { ...ex, quantityOverride: e.target.value === "" ? 0 : Number(e.target.value) }
+                                            : ex,
+                                        );
+                                        patchProcessingStage("products_delivery", {
+                                          stageData: { deliveryItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      style={{ width: 80, textAlign: "right" }}
+                                    />
+                                  </td>
+                                  <td className="is-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(extra.delivered)}
+                                      onChange={(e) => {
+                                        const nextExtras = deliveryItemExtras.map((ex) =>
+                                          ex.id === extra.id ? { ...ex, delivered: e.target.checked } : ex,
+                                        );
+                                        patchProcessingStage("products_delivery", {
+                                          stageData: { deliveryItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                    />
+                                  </td>
+                                  <td>
+                                    <DatePicker
+                                      selected={parseDateInputValue(extra.deliveryDate)}
+                                      onChange={(date) => {
+                                        const nextExtras = deliveryItemExtras.map((ex) =>
+                                          ex.id === extra.id ? { ...ex, deliveryDate: formatDatePickerValue(date) } : ex,
+                                        );
+                                        patchProcessingStage("products_delivery", {
+                                          stageData: { deliveryItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      dateFormat="dd-MM-yyyy"
+                                      locale={es}
+                                      showMonthDropdown
+                                      showYearDropdown
+                                      dropdownMode="select"
+                                      fixedHeight
+                                      calendarClassName="audit-datepicker-calendar processing-date-calendar"
+                                      popperClassName="audit-datepicker-popper"
+                                      className="processing-date-input"
+                                      autoComplete="off"
+                                      showPopperArrow={false}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      placeholderText="Seleccionar fecha"
+                                    />
+                                  </td>
+                                  <td className="is-center">
+                                    <button
+                                      type="button"
+                                      className="btn-secondary processing-product-action-icon is-danger"
+                                      title="Eliminar copia"
+                                      aria-label="Eliminar item duplicado"
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      onClick={() => {
+                                        patchProcessingStage("products_delivery", {
+                                          stageData: {
+                                            deliveryItemExtras: deliveryItemExtras.filter((ex) => ex.id !== extra.id),
+                                          },
+                                        });
+                                      }}
+                                    >
+                                      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                                        <path d="M9.25 4a.75.75 0 0 1 .75-.75h4a.75.75 0 0 1 .75.75V5h3a.75.75 0 0 1 0 1.5h-.76l-.63 11.01A2.75 2.75 0 0 1 14.37 20h-4.74a2.75 2.75 0 0 1-2.74-2.49L6.26 6.5H5.5a.75.75 0 0 1 0-1.5h3zm1.5.75V5h2.5v-.25zM7.76 6.5l.62 10.92c.04.66.58 1.18 1.25 1.18h4.74c.67 0 1.21-.52 1.25-1.18l.62-10.92z" />
+                                        <path d="M10.75 9a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75m2.5 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5a.75.75 0 0 1 .75-.75" />
+                                      </svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         </div>

@@ -16377,8 +16377,8 @@ td {
 .processing-modal {
   display: grid;
   gap: 14px;
-  max-width: 980px;
-  width: min(96vw, 980px);
+  max-width: 1440px;
+  width: min(98vw, 1440px);
   max-height: calc(100dvh - 28px);
   padding: 0;
   overflow-x: hidden;
