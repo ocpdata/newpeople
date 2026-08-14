@@ -31,10 +31,6 @@ Al hacer clic en `Procesar`, abrir un modal con el flujo completo:
 5. Recepcion de productos
 6. Preworks
 7. Entrega de productos
-8. Facturacion
-9. Cobranza
-10. Recepcion de factura del proveedor
-11. Pago a proveedor
 
 ### 2.3 Naturaleza del flujo
 
@@ -214,10 +210,6 @@ Cada etapa debe soportar, como minimo:
 - `products_reception`
 - `preworks`
 - `products_delivery`
-- `invoicing`
-- `collections`
-- `provider_invoice_reception`
-- `provider_payment`
 
 ## 5.3 Datos especificos por etapa
 
@@ -324,42 +316,6 @@ Campos base iniciales:
 - `deliveryEvidenceRefs[]`
 - `deliveryObservations`
 
-### Etapa: Facturacion
-
-Campos base iniciales:
-
-- `estimatedInvoiceDate`
-- `actualInvoiceDate`
-- `invoiceNumber`
-- `invoiceAmount`
-
-### Etapa: Cobranza
-
-Campos base iniciales:
-
-- `creditDays`
-- `expectedCollectionDate`
-- `actualCollectionDate`
-- `collectionStatusDetail`
-
-### Etapa: Recepcion de factura del proveedor
-
-Campos base iniciales:
-
-- `providerInvoiceDate`
-- `providerInvoiceNumber`
-- `providerInvoiceAmount`
-- `providerInvoiceReceivedAt`
-
-### Etapa: Pago a proveedor
-
-Campos base iniciales:
-
-- `providerPaymentPlannedDate`
-- `providerPaymentActualDate`
-- `providerPaymentAmount`
-- `providerPaymentReference`
-
 ## 6. Reglas de negocio
 
 1. `Procesar` solo aplica para cotizaciones `aceptada`.
@@ -392,7 +348,7 @@ Incluye:
 
 1. Opcion `Procesar` en kebab para cotizaciones aceptadas.
 2. Modal de procesamiento con flujo completo visible.
-3. Secciones para las 11 etapas con estructura comun.
+3. Secciones para las 7 etapas con estructura comun.
 4. Implementacion completa de:
    - Kick Off interno (convocatoria);
    - Kick Off externo (evidencias + resumen IA + validacion comercial).
@@ -401,7 +357,7 @@ Incluye:
 No incluye (en esta entrega):
 
 1. Automatizaciones cross-etapa avanzadas.
-2. Reglas contables/fiscales profundas de facturacion/cobranza.
+2. Etapas de facturacion, cobranza, recepcion de factura del proveedor y pago a proveedor.
 3. Integraciones externas con calendarios/correo transaccional corporativo fuera del flujo base.
 
 ## 10. Criterios de aceptacion del entregable completo

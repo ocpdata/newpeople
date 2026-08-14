@@ -32,13 +32,6 @@ const PROCESSING_STAGE_DEFINITIONS = [
   { code: "products_reception", name: "Recepcion de productos" },
   { code: "preworks", name: "Preworks" },
   { code: "products_delivery", name: "Entrega de productos" },
-  { code: "invoicing", name: "Facturacion" },
-  { code: "collections", name: "Cobranza" },
-  {
-    code: "provider_invoice_reception",
-    name: "Recepcion de factura del proveedor",
-  },
-  { code: "provider_payment", name: "Pago a proveedor" },
 ];
 
 const PROCESSING_STAGE_STATUS_OPTIONS = [
@@ -91,74 +84,6 @@ const BASE_STAGE_SPECIFIC_FIELDS = {
       key: "deliveryObservations",
       label: "Observaciones de entrega",
       type: "textarea",
-    },
-  ],
-  invoicing: [
-    {
-      key: "estimatedInvoiceDate",
-      label: "Fecha estimada factura",
-      type: "date",
-    },
-    { key: "actualInvoiceDate", label: "Fecha real factura", type: "date" },
-    { key: "invoiceNumber", label: "Numero factura", type: "text" },
-    { key: "invoiceAmount", label: "Monto factura", type: "text" },
-  ],
-  collections: [
-    { key: "creditDays", label: "Dias de credito", type: "number" },
-    {
-      key: "expectedCollectionDate",
-      label: "Fecha esperada cobranza",
-      type: "date",
-    },
-    { key: "actualCollectionDate", label: "Fecha real cobranza", type: "date" },
-    {
-      key: "collectionStatusDetail",
-      label: "Detalle estado cobranza",
-      type: "textarea",
-    },
-  ],
-  provider_invoice_reception: [
-    {
-      key: "providerInvoiceDate",
-      label: "Fecha factura proveedor",
-      type: "date",
-    },
-    {
-      key: "providerInvoiceNumber",
-      label: "Numero factura proveedor",
-      type: "text",
-    },
-    {
-      key: "providerInvoiceAmount",
-      label: "Monto factura proveedor",
-      type: "text",
-    },
-    {
-      key: "providerInvoiceReceivedAt",
-      label: "Fecha recepcion factura proveedor",
-      type: "date",
-    },
-  ],
-  provider_payment: [
-    {
-      key: "providerPaymentPlannedDate",
-      label: "Fecha planificada pago proveedor",
-      type: "date",
-    },
-    {
-      key: "providerPaymentActualDate",
-      label: "Fecha real pago proveedor",
-      type: "date",
-    },
-    {
-      key: "providerPaymentAmount",
-      label: "Monto pago proveedor",
-      type: "text",
-    },
-    {
-      key: "providerPaymentReference",
-      label: "Referencia pago proveedor",
-      type: "text",
     },
   ],
 };

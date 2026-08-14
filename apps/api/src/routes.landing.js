@@ -277,8 +277,26 @@ function buildLeadSynopsisFromSubmission({
   payloadRaw,
   formSchema,
   userNotes,
+  eventName,
+  ownerName,
 }) {
   const lines = [];
+
+  // Add event name if available
+  if (eventName) {
+    lines.push(`Evento: ${normalizeGenericText(eventName, 180)}`);
+  }
+
+  // Add owner/account owner if available
+  if (ownerName) {
+    lines.push(`Propietario de la cuenta: ${normalizeGenericText(ownerName, 180)}`);
+  }
+
+  // Add separator if we added event or owner info
+  if (lines.length) {
+    lines.push("");
+  }
+
   const entries = buildSubmissionFieldEntries(payloadRaw, formSchema);
 
   for (const entry of entries) {
@@ -293,7 +311,7 @@ function buildLeadSynopsisFromSubmission({
 
   const notesText = normalizeGenericText(userNotes || "", 4000);
   if (notesText) {
-    if (lines.length) {
+    if (lines.length > (eventName || ownerName ? 3 : 0)) {
       lines.push("");
     }
     lines.push("Notas del registro:");
@@ -1697,10 +1715,28 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
     normalizedPayload,
     submission.slug,
   );
+
+  // Try to get existing lead's seller info if submission is already linked
+  let ownerName = null;
+  const existingLeadRows = await query(
+    `SELECT i.seller_user_id, u.full_name
+     FROM interactions i
+     LEFT JOIN users u ON u.id = i.seller_user_id
+     WHERE i.landing_submission_id = ?
+     LIMIT 1`,
+    [Number(submissionId)],
+  ).catch(() => []);
+
+  if (existingLeadRows[0]?.full_name) {
+    ownerName = String(existingLeadRows[0].full_name || "").trim();
+  }
+
   const leadSynopsis = buildLeadSynopsisFromSubmission({
     payloadRaw,
     formSchema,
     userNotes: submission.user_notes,
+    eventName: String(submission.event_name || "").trim(),
+    ownerName,
   });
 
   const actorUserId =

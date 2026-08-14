@@ -2452,10 +2452,67 @@ export default function LandingModulePage() {
   async function handleUpdateSubmissionSeller(submissionId, rawValue) {
     const numericSubmissionId = Number(submissionId || 0);
     if (!numericSubmissionId) return;
+    
+    const nextSellerId = String(rawValue || "").trim() ? Number(rawValue) : null;
+    
+    // Update draft immediately
     setSubmissionSellerDrafts((prev) => ({
       ...prev,
       [numericSubmissionId]: String(rawValue || "").trim(),
     }));
+
+    // Save immediately to server
+    setSavingSubmissionSellerById((prev) => ({
+      ...prev,
+      [numericSubmissionId]: true,
+    }));
+
+    try {
+      const { data } = await api.patch(
+        `/api/landing/v1/submissions/${numericSubmissionId}/seller`,
+        {
+          seller_user_id: nextSellerId,
+        },
+      );
+
+      const crmSeller = {
+        user_id:
+          data?.crm_seller?.user_id === null ||
+          data?.crm_seller?.user_id === undefined
+            ? null
+            : Number(data.crm_seller.user_id),
+        full_name: String(data?.crm_seller?.full_name || "").trim(),
+      };
+
+      setSubmissions((prev) =>
+        prev.map((item) =>
+          Number(item?.submission_id) === numericSubmissionId
+            ? {
+                ...item,
+                crm_seller: crmSeller,
+              }
+            : item,
+        ),
+      );
+
+      setSubmissionSellerDrafts((prev) => ({
+        ...prev,
+        [numericSubmissionId]:
+          crmSeller.user_id !== null ? String(crmSeller.user_id) : "",
+      }));
+    } catch (error) {
+      pushError(
+        getApiErrorMessage(
+          error,
+          "No fue posible asignar el propietario de la cuenta",
+        ),
+      );
+    } finally {
+      setSavingSubmissionSellerById((prev) => ({
+        ...prev,
+        [numericSubmissionId]: false,
+      }));
+    }
   }
 
   async function handleApplySubmissionSellerAssignments() {
@@ -4033,13 +4090,13 @@ export default function LandingModulePage() {
                   }}
                   title={
                     isApplyingSubmissionSellers
-                      ? "Aplicando asignaciones..."
-                      : "Aplicar asignación de vendedor"
+                      ? "Ubicando propietario de la cuenta..."
+                      : "Ubicar propietario de la cuenta"
                   }
                   aria-label={
                     isApplyingSubmissionSellers
-                      ? "Aplicando asignaciones"
-                      : "Aplicar asignación de vendedor"
+                      ? "Ubicando propietario de la cuenta"
+                      : "Ubicar propietario de la cuenta"
                   }
                   disabled={
                     isApplyingSubmissionSellers ||
@@ -4096,7 +4153,7 @@ export default function LandingModulePage() {
                         className="landing-sort-button"
                         onClick={() => toggleSubmissionSort("seller_name")}
                       >
-                        Vendedor
+                        Propietario de la cuenta
                         <span>
                           {submissionSort.key === "seller_name"
                             ? submissionSort.direction === "asc"

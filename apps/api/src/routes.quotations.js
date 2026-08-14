@@ -284,10 +284,6 @@ const quotationProcessingStageCodes = [
   "products_reception",
   "preworks",
   "products_delivery",
-  "invoicing",
-  "collections",
-  "provider_invoice_reception",
-  "provider_payment",
 ];
 const quotationProcessingStageCatalog = [
   { code: "quotation_accepted", name: "Aceptar Cotizacion" },
@@ -300,13 +296,6 @@ const quotationProcessingStageCatalog = [
   { code: "products_reception", name: "Recepcion de productos" },
   { code: "preworks", name: "Preworks" },
   { code: "products_delivery", name: "Entrega de productos" },
-  { code: "invoicing", name: "Facturacion" },
-  { code: "collections", name: "Cobranza" },
-  {
-    code: "provider_invoice_reception",
-    name: "Recepcion de factura del proveedor",
-  },
-  { code: "provider_payment", name: "Pago a proveedor" },
 ];
 const quotationProcessingStageStatusCodes = [
   "not_started",
