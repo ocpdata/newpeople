@@ -1123,6 +1123,7 @@ function QuotationEditorContent({
         {},
         {
           inclusionTypes: catalogs.inclusionTypes,
+          exchangeRate: versionForm.exchangeRate,
         },
       ),
     [
@@ -1184,6 +1185,7 @@ function QuotationEditorContent({
         },
         {
           inclusionTypes: catalogs.inclusionTypes,
+          exchangeRate: versionForm.exchangeRate,
         },
       ),
     [

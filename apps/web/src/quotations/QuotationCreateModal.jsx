@@ -692,6 +692,7 @@ function QuotationCreateModal({
         {},
         {
           inclusionTypes: catalogs.inclusionTypes,
+          exchangeRate: commercialConditions.exchangeRate,
         },
       ),
     [
@@ -777,6 +778,7 @@ function QuotationCreateModal({
         },
         {
           inclusionTypes: catalogs.inclusionTypes,
+          exchangeRate: commercialConditions.exchangeRate,
         },
       ),
     [

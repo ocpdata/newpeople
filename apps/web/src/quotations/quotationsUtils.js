@@ -1045,23 +1045,31 @@ export function calculateCreateQuotationSummary(
     Number(summaryDiscountInput?.value) || 0,
     0,
   );
+  const exchangeRate = normalizeQuotationExchangeRateValue(
+    options?.exchangeRate,
+    1,
+  );
+  const convertedSummaryDiscountValue =
+    summaryDiscountMode === "amount"
+      ? numericSummaryDiscountValue * exchangeRate
+      : numericSummaryDiscountValue;
   const normalizedSummaryDiscountPct =
     summaryDiscountMode === "amount"
       ? buckets.total.salePriceTotal > 0
         ? Math.min(
             Math.max(
-              (numericSummaryDiscountValue / buckets.total.salePriceTotal) *
+              (convertedSummaryDiscountValue / buckets.total.salePriceTotal) *
                 100,
               0,
             ),
             100,
           )
         : 0
-      : Math.min(numericSummaryDiscountValue, 100);
+      : Math.min(convertedSummaryDiscountValue, 100);
   const totalSalePriceTotal = roundQuotationMoney(buckets.total.salePriceTotal);
   const discountAmount = roundQuotationMoney(
     summaryDiscountMode === "amount"
-      ? Math.min(numericSummaryDiscountValue, totalSalePriceTotal)
+      ? Math.min(convertedSummaryDiscountValue, totalSalePriceTotal)
       : totalSalePriceTotal * (normalizedSummaryDiscountPct / 100),
   );
   const discountedTotalAmount = roundQuotationMoney(
