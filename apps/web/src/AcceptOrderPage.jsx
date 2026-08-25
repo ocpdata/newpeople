@@ -2771,13 +2771,11 @@ export default function AcceptOrderPage() {
                             <thead>
                               <tr>
                                 <th>Codigo</th>
-                                <th>Producto o servicio</th>
-                                <th className="is-right">Cantidad</th>
-                                <th className="is-right">Costo unitario</th>
-                                <th>Fecha</th>
-                                <th className="is-right">Total</th>
+                                <th className="is-right" style={{ width: 90 }}>Cantidad comprada</th>
+                                <th className="is-right">Cantidad recibida</th>
                                 <th className="is-center">Recibido</th>
                                 <th>Fecha de recepcion</th>
+                                <th>Serial/Key</th>
                                 <th>Inicio soporte/suscripcion</th>
                                 <th>Fin soporte/suscripcion</th>
                                 <th>Documentos</th>
@@ -2786,13 +2784,31 @@ export default function AcceptOrderPage() {
                             </thead>
                             <tbody>
                               {orderLines.map((line, lineIndex) => {
-                                const receptionItemKey = `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const persistentReceptionItemKey = line?.itemId
+                                  ? `${orderKey}:${line.itemId}`
+                                  : `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const legacyReceptionItemKey = `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                const receptionItemKey = receptionItems[persistentReceptionItemKey]
+                                  ? persistentReceptionItemKey
+                                  : legacyReceptionItemKey;
                                 const receptionItem =
                                   receptionItems[receptionItemKey] || {};
-                                const effectiveQuantity =
+                                const purchasedQuantity = Number(line?.quantity || 0);
+                                const lineExtras = orderExtras.filter(
+                                  (extra) => extra.sourceItemKey === receptionItemKey,
+                                );
+                                const partialQuantity = lineExtras.reduce(
+                                  (sum, extra) => sum + Number(extra.quantityOverride || 0),
+                                  0,
+                                );
+                                const receivedQuantity =
                                   receptionItem.quantityOverride != null
-                                    ? receptionItem.quantityOverride
-                                    : Number(line?.quantity || 0);
+                                    ? Number(receptionItem.quantityOverride)
+                                    : 0;
+                                const remainingQuantity = Math.max(
+                                  0,
+                                  purchasedQuantity - partialQuantity,
+                                );
                                 const updateReceptionItem = (patch) =>
                                   updateActiveStageDataField("receptionItems", {
                                     ...receptionItems,
@@ -2803,17 +2819,16 @@ export default function AcceptOrderPage() {
                                   });
 
                                 return (
-                                  <tr key={receptionItemKey}>
+                                  <tr key={persistentReceptionItemKey}>
                                     <td>{line?.code || "-"}</td>
-                                    <td>
-                                      {line?.description || "Sin descripcion"}
-                                    </td>
+                                    <td className="is-right" style={{ width: 90 }}>{purchasedQuantity}</td>
                                     <td className="is-right">
                                       <input
                                         type="number"
                                         min="0"
+                                        max={remainingQuantity}
                                         step="0.0001"
-                                        value={String(effectiveQuantity)}
+                                        value={String(receivedQuantity)}
                                         onChange={(e) =>
                                           updateReceptionItem({
                                             quantityOverride: e.target.value === "" ? null : Number(e.target.value),
@@ -2823,33 +2838,16 @@ export default function AcceptOrderPage() {
                                         style={{ width: 80, textAlign: "right" }}
                                       />
                                     </td>
-                                    <td className="is-right">
-                                      {formatCurrency(
-                                        Number(line?.unitCost || 0),
-                                        currencyCode,
-                                      )}
-                                    </td>
-                                    <td>{formatDate(line?.selectionDate)}</td>
-                                    <td className="is-right">
-                                      {formatCurrency(
-                                        Number(effectiveQuantity) * Number(line?.unitCost || 0),
-                                        currencyCode,
-                                      )}
-                                    </td>
                                     <td className="is-center">
                                       <input
                                         type="checkbox"
-                                        checked={Boolean(
-                                          receptionItem.received,
-                                        )}
+                                        checked={Boolean(receptionItem.received)}
                                         onChange={(event) =>
                                           updateReceptionItem({
                                             received: event.target.checked,
                                           })
                                         }
-                                        disabled={
-                                          !processingData.permissions?.canUpdate
-                                        }
+                                        disabled={!processingData.permissions?.canUpdate}
                                         aria-label={`Marcar ${line?.description || line?.code || "item"} como recibido`}
                                       />
                                     </td>
@@ -2885,6 +2883,19 @@ export default function AcceptOrderPage() {
                                           !processingData.permissions?.canUpdate
                                         }
                                         placeholderText="Seleccionar fecha"
+                                      />
+                                    </td>
+                                    <td>
+                                      <input
+                                        type="text"
+                                        value={receptionItem.serialKey || ""}
+                                        onChange={(event) =>
+                                          updateReceptionItem({
+                                            serialKey: event.target.value,
+                                          })
+                                        }
+                                        disabled={!processingData.permissions?.canUpdate}
+                                        placeholder="Serial o Key"
                                       />
                                     </td>
                                     <td>
@@ -2964,49 +2975,65 @@ export default function AcceptOrderPage() {
                                       <button
                                         type="button"
                                         className="btn-secondary processing-product-action-icon"
-                                        title="Duplicar item"
-                                        aria-label={`Duplicar ${line?.description || line?.code || "item"}`}
-                                        disabled={!processingData.permissions?.canUpdate}
+                                        title="Agregar recepcion parcial"
+                                        aria-label={`Agregar recepcion parcial de ${line?.description || line?.code || "item"}`}
+                                        disabled={!processingData.permissions?.canUpdate || remainingQuantity <= 0}
                                         onClick={() => {
-                                          const nextExtras = [
-                                            ...receptionItemExtras,
-                                            {
-                                              id: `dup-${Date.now()}-${Math.round(Math.random() * 9999)}`,
-                                              orderId: orderKey,
-                                              code: line?.code || "-",
-                                              description: line?.description || "Sin descripcion",
-                                              unitCost: Number(line?.unitCost || 0),
-                                              quantityOverride: Number(effectiveQuantity),
-                                              received: false,
-                                              receptionDate: "",
-                                              supportStartDate: receptionItem.supportStartDate || "",
-                                              supportEndDate: receptionItem.supportEndDate || "",
-                                              selectionDate: line?.selectionDate || null,
-                                              currencyCode,
-                                            },
-                                          ];
                                           patchProcessingStage("products_reception", {
-                                            stageData: { receptionItemExtras: nextExtras },
+                                            stageData: {
+                                              receptionItemExtras: [
+                                                ...receptionItemExtras,
+                                                {
+                                                  id: `partial-${Date.now()}-${Math.round(Math.random() * 9999)}`,
+                                                  orderId: orderKey,
+                                                  sourceItemKey: receptionItemKey,
+                                                  code: line?.code || "-",
+                                                  description: line?.description || "Sin descripcion",
+                                                  unitCost: Number(line?.unitCost || 0),
+                                                  quantityOverride: 0,
+                                                  received: false,
+                                                  receptionDate: "",
+                                                  supportStartDate: receptionItem.supportStartDate || "",
+                                                  supportEndDate: receptionItem.supportEndDate || "",
+                                                  selectionDate: line?.selectionDate || null,
+                                                  currencyCode,
+                                                },
+                                              ],
+                                            },
                                           });
                                         }}
                                       >
-                                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
-                                          <path d="M8 4.75A2.75 2.75 0 0 0 5.25 7.5v8A2.75 2.75 0 0 0 8 18.25h8a2.75 2.75 0 0 0 2.75-2.75v-8A2.75 2.75 0 0 0 16 4.75zm0 1.5h8c.69 0 1.25.56 1.25 1.25v8c0 .69-.56 1.25-1.25 1.25H8c-.69 0-1.25-.56-1.25-1.25v-8c0-.69.56-1.25 1.25-1.25" />
-                                          <path d="M4 8.5a.75.75 0 0 1 .75.75v8c0 .69.56 1.25 1.25 1.25h8a.75.75 0 0 1 0 1.5H6A2.75 2.75 0 0 1 3.25 17.25v-8A.75.75 0 0 1 4 8.5" />
-                                        </svg>
+                                        <span>+</span>
                                       </button>
                                     </td>
                                   </tr>
                                 );
                               })}
-                              {orderExtras.map((extra) => (
+                              {orderExtras.map((extra) => {
+                                const sourceLine = orderLines.find((line, lineIndex) => {
+                                  const sourceKey = line?.itemId
+                                    ? `${orderKey}:${line.itemId}`
+                                    : `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                                  return sourceKey === extra.sourceItemKey;
+                                });
+                                const sourceQuantity = Number(sourceLine?.quantity || 0);
+                                const sourceReception = receptionItems[extra.sourceItemKey] || {};
+                                const otherPartialQuantity = orderExtras
+                                  .filter((candidate) => candidate.id !== extra.id && candidate.sourceItemKey === extra.sourceItemKey)
+                                  .reduce((sum, candidate) => sum + Number(candidate.quantityOverride || 0), 0);
+                                const extraMaxQuantity = Math.max(
+                                  0,
+                                  sourceQuantity - Number(sourceReception.quantityOverride || 0) - otherPartialQuantity,
+                                );
+                                return (
                                 <tr key={extra.id} style={{ background: "#f8faff" }}>
                                   <td style={{ color: "#64748b", fontStyle: "italic" }}>{extra.code}</td>
-                                  <td style={{ color: "#64748b", fontStyle: "italic" }}>{extra.description}</td>
+                                  <td className="is-right" style={{ color: "#64748b" }}>-</td>
                                   <td className="is-right">
                                     <input
                                       type="number"
                                       min="0"
+                                      max={extraMaxQuantity}
                                       step="0.0001"
                                       value={String(extra.quantityOverride ?? 0)}
                                       onChange={(e) => {
@@ -3023,16 +3050,6 @@ export default function AcceptOrderPage() {
                                       style={{ width: 80, textAlign: "right" }}
                                     />
                                   </td>
-                                  <td className="is-right">
-                                    {formatCurrency(extra.unitCost, extra.currencyCode)}
-                                  </td>
-                                  <td>{formatDate(extra.selectionDate)}</td>
-                                  <td className="is-right">
-                                    {formatCurrency(
-                                      Number(extra.quantityOverride ?? 0) * Number(extra.unitCost || 0),
-                                      extra.currencyCode,
-                                    )}
-                                  </td>
                                   <td className="is-center">
                                     <input
                                       type="checkbox"
@@ -3045,7 +3062,7 @@ export default function AcceptOrderPage() {
                                           stageData: { receptionItemExtras: nextExtras },
                                         });
                                       }}
-                                      disabled={!processingData.permissions?.canUpdate}
+                                      disabled={!processingData.permissions?.canUpdate || Number(extra.quantityOverride || 0) <= 0}
                                     />
                                   </td>
                                   <td>
@@ -3072,6 +3089,24 @@ export default function AcceptOrderPage() {
                                       showPopperArrow={false}
                                       disabled={!processingData.permissions?.canUpdate}
                                       placeholderText="Seleccionar fecha"
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="text"
+                                      value={extra.serialKey || ""}
+                                      onChange={(event) => {
+                                        const nextExtras = receptionItemExtras.map((ex) =>
+                                          ex.id === extra.id
+                                            ? { ...ex, serialKey: event.target.value }
+                                            : ex,
+                                        );
+                                        patchProcessingStage("products_reception", {
+                                          stageData: { receptionItemExtras: nextExtras },
+                                        });
+                                      }}
+                                      disabled={!processingData.permissions?.canUpdate}
+                                      placeholder="Serial o Key"
                                     />
                                   </td>
                                   <td>
@@ -3179,7 +3214,8 @@ export default function AcceptOrderPage() {
                                     </button>
                                   </td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>

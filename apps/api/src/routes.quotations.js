@@ -2566,7 +2566,7 @@ async function listQuotationProcessingPurchaseOrders({
 
   const orderIds = orderRows.map((row) => Number(row.id));
   const itemRows = await query(
-    `SELECT purchase_order_id, source_assignment_key, product_id, line_code, line_description,
+    `SELECT id, purchase_order_id, source_assignment_key, product_id, line_code, line_description,
             quantity, unit_cost, discount_pct, selection_date, amount
      FROM quotation_processing_purchase_order_items
      WHERE purchase_order_id IN (?)
@@ -2579,6 +2579,7 @@ async function listQuotationProcessingPurchaseOrders({
     const orderId = Number(row.purchase_order_id);
     const list = itemsByOrderId.get(orderId) || [];
     list.push({
+      itemId: Number(row.id),
       sourceAssignmentKey: String(row.source_assignment_key || "").trim() || null,
       productId: row.product_id ? Number(row.product_id) : null,
       code: row.line_code || "-",
@@ -2609,6 +2610,154 @@ async function listQuotationProcessingPurchaseOrders({
       lines: itemsByOrderId.get(orderId) || [],
     };
   });
+}
+
+async function validateProductsReceptionStageData({
+  quotationId,
+  stageData,
+  requireComplete = false,
+}) {
+  const rows = await query(
+        `SELECT poi.id AS item_id, poi.purchase_order_id, poi.product_id,
+          poi.line_code, poi.line_description, po.order_number,
+          poi.quantity
+     FROM quotation_processing_purchase_order_items poi
+     INNER JOIN quotation_processing_purchase_orders po
+       ON po.id = poi.purchase_order_id
+     WHERE po.quotation_id = ?
+       AND po.stage_code = 'provider_purchase_order'
+     ORDER BY poi.purchase_order_id ASC, poi.id ASC`,
+    [Number(quotationId)],
+  );
+  const orderIndexes = new Map();
+  const items = rows.map((row) => {
+    const orderId = Number(row.purchase_order_id);
+    const index = orderIndexes.get(orderId) || 0;
+    orderIndexes.set(orderId, index + 1);
+    return {
+      itemId: Number(row.item_id),
+      orderId,
+      productId: row.product_id ? Number(row.product_id) : null,
+      code: String(row.line_code || "").trim(),
+      description: String(row.line_description || "").trim(),
+      orderNumber: String(row.order_number || "").trim(),
+      quantity: Number(row.quantity || 0),
+      index,
+    };
+  });
+  const itemsByKey = new Map();
+  items.forEach((item) => {
+    itemsByKey.set(`${item.orderId}:${item.itemId}`, item);
+    itemsByKey.set(
+      `${item.orderId}:${item.productId || item.itemId}:${item.index}`,
+      item,
+    );
+  });
+  const seenItemIds = new Set();
+
+  const receptionItems =
+    stageData?.receptionItems && typeof stageData.receptionItems === "object"
+      ? stageData.receptionItems
+      : {};
+  const receivedByItemId = new Map();
+
+  for (const [key, receptionItem] of Object.entries(receptionItems)) {
+    const item = itemsByKey.get(String(key));
+    if (!item) {
+      const error = new Error("La recepcion contiene una linea de OC invalida");
+      error.status = 400;
+      throw error;
+    }
+    if (seenItemIds.has(item.itemId)) {
+      const error = new Error(
+        `La recepcion contiene mas de una entrada para el item ${item.itemId}`,
+      );
+      error.status = 400;
+      throw error;
+    }
+    seenItemIds.add(item.itemId);
+    const receivedQuantity =
+      receptionItem?.quantityOverride == null
+        ? 0
+        : Number(receptionItem.quantityOverride);
+    if (!Number.isFinite(receivedQuantity) || receivedQuantity < 0) {
+      const error = new Error(
+        `La cantidad recibida no es valida para el item ${item.itemId}`,
+      );
+      error.status = 400;
+      throw error;
+    }
+    if (receivedQuantity > item.quantity) {
+      const error = new Error(
+        `La cantidad recibida no puede superar la cantidad comprada del item ${item.itemId}`,
+      );
+      error.status = 400;
+      throw error;
+    }
+    receivedByItemId.set(item.itemId, receivedQuantity);
+  }
+
+  const extras = Array.isArray(stageData?.receptionItemExtras)
+    ? stageData.receptionItemExtras
+    : [];
+  const extraTotalsByItemId = new Map();
+  for (const extra of extras) {
+    const sourceItemKey = String(extra?.sourceItemKey || "").trim();
+    const sourceItem = itemsByKey.get(sourceItemKey);
+    const extraQuantity = Number(extra?.quantityOverride ?? 0);
+    if (
+      !sourceItem ||
+      !Number.isFinite(extraQuantity) ||
+      extraQuantity < 0
+    ) {
+      const error = new Error(
+        "La recepcion contiene una recepcion parcial invalida",
+      );
+      error.status = 400;
+      throw error;
+    }
+    const currentTotal = extraTotalsByItemId.get(sourceItem.itemId) || 0;
+    extraTotalsByItemId.set(sourceItem.itemId, currentTotal + extraQuantity);
+  }
+
+  for (const item of items) {
+    const totalReceived =
+      (receivedByItemId.get(item.itemId) || 0) +
+      (extraTotalsByItemId.get(item.itemId) || 0);
+    if (totalReceived > item.quantity + 0.000001) {
+      const error = new Error(
+        `La cantidad recibida acumulada no puede superar la cantidad comprada del item ${item.itemId}`,
+      );
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  if (requireComplete) {
+    const incompleteItem = items.find(
+      (item) =>
+        Math.abs(
+          (receivedByItemId.get(item.itemId) || 0) +
+            (extraTotalsByItemId.get(item.itemId) || 0) -
+            item.quantity,
+        ) > 0.000001,
+    );
+    if (incompleteItem) {
+      const receivedQuantity =
+        (receivedByItemId.get(incompleteItem.itemId) || 0) +
+        (extraTotalsByItemId.get(incompleteItem.itemId) || 0);
+      const itemLabel = incompleteItem.code || `item ${incompleteItem.itemId}`;
+      const error = new Error(
+        `No se puede completar la recepcion. El item con codigo ${itemLabel}${
+          incompleteItem.orderNumber
+            ? ` de la orden ${incompleteItem.orderNumber}`
+            : ""
+        } tiene ${receivedQuantity} de ${incompleteItem.quantity} unidades recibidas.`,
+      );
+      error.status = 400;
+      throw error;
+    }
+  }
 }
 
 function formatProcessingPurchaseOrderNumber({
@@ -3354,6 +3503,14 @@ async function upsertQuotationProcessingStage({
     ...existingStageData,
     ...(stageData && typeof stageData === "object" ? stageData : {}),
   };
+
+  if (String(stageCode || "").trim() === "products_reception") {
+    await validateProductsReceptionStageData({
+      quotationId: Number(quotation.id),
+      stageData: mergedStageData,
+      requireComplete: String(status || "").trim() === "completed",
+    });
+  }
 
   const normalizedBlockedReason =
     blockedReason == null ? null : String(blockedReason || "").trim() || null;

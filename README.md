@@ -98,6 +98,7 @@ Workflows disponibles:
 Guia operativa detallada:
 
 - `readme/deploy-local-cloud.md`
+- [Pruebas del WAF con F5 Distributed Cloud Services](./readme/pruebas-waf-f5-dcs.md)
 
 En apps/api:
 
