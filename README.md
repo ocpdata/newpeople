@@ -99,6 +99,9 @@ Guia operativa detallada:
 
 - `readme/deploy-local-cloud.md`
 - [Pruebas del WAF con F5 Distributed Cloud Services](./readme/pruebas-waf-f5-dcs.md)
+- [Pruebas de Bot Defense con F5 Distributed Cloud Services](./readme/pruebas-bot-defense-f5-dcs.md)
+- `scripts/test-waf.sh`: ejecuta las pruebas WAF HTTP de forma controlada y genera un reporte TSV.
+- `scripts/test-bot-defense.mjs`: ejecuta perfiles de navegador para validar Bot Defense.
 
 En apps/api:
 

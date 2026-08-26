@@ -20,6 +20,7 @@ const OpportunityQuestionAdminPage = lazy(
 );
 const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
 const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
+const DocumentationPage = lazy(() => import("./DocumentationPage"));
 const AccountSettingsPage = lazy(() => import("./AccountSettingsPage"));
 const ToolsPage = lazy(() => import("./ToolsPage"));
 const PriceListDuplicatesPage = lazy(() => import("./PriceListDuplicatesPage"));
@@ -283,6 +284,26 @@ export default function AppShell({
           element={
             can("configuracion.read") ? (
               <ConfigurationPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/documentation"
+          element={
+            can("configuracion.read") ? (
+              <DocumentationPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/documentation/:docId"
+          element={
+            can("configuracion.read") ? (
+              <DocumentationPage />
             ) : (
               <Navigate to="/" />
             )
@@ -839,6 +860,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Configuración
+                  </GuardedNavLink>
+                )}
+                {can("configuracion.read") && (
+                  <GuardedNavLink
+                    to="/documentation"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Documentación
                   </GuardedNavLink>
                 )}
                 {can("herramientas.read") && (

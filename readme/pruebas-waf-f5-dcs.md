@@ -17,18 +17,47 @@ los eventos de seguridad de F5 DCS, no solo en el codigo HTTP.
 - No incluyas secretos, tokens reales ni datos personales en los payloads.
 - Anota para cada prueba la hora UTC, URL, metodo, resultado HTTP y request ID.
 
-## 2. Variables de la sesion
+## 2. Dar permisos de ejecucion al script
+
+Antes de ejecutar el script desde la terminal, asegúrate de que tenga permiso de
+execucion:
+
+```bash
+chmod +x scripts/test-waf.sh
+```
+
+Luego puedes invocarlo directamente:
+
+```bash
+./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
+```
+
+Si prefieres ejecutarlo con el interprete explícito, tambien funciona:
+
+```bash
+bash ./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
+```
+
+## 3. Variables de la sesion
 
 Define el dominio y, cuando sea necesario, una ruta real de la API:
 
 ```bash
 export BASE_URL='https://newpip.digitalvs.com'
-export API_PATH='/api/RUTA_REAL'
+export API_PATH_BOOTSTRAP_STATUS='/api/auth/bootstrap-status'
+export API_PATH_ACCOUNTS='/api/accounts'
+export WAF_LOGIN_EMAIL='usuario-pruebas@example.com'
+export WAF_LOGIN_PASSWORD='PASSWORD_TEMPORAL'
 ```
 
-`API_PATH` debe reemplazarse por un endpoint que realmente procese parametros.
-Puedes identificarlo en el navegador, en DevTools > Network, filtrando por
-`/api/`, o en la documentacion de la API.
+`API_PATH_BOOTSTRAP_STATUS` apunta a una ruta GET y no destructiva. En este
+proyecto la ruta mas segura para validacion es `/api/auth/bootstrap-status`,
+porque solo consulta estado del sistema y no crea ni modifica registros reales.
+`API_PATH_ACCOUNTS` es una prueba adicional para una API protegida de lectura.
+
+Usa `WAF_LOGIN_EMAIL` y `WAF_LOGIN_PASSWORD` para autenticar las pruebas con una
+cuenta de pruebas cuando necesites validar un flujo protegido. Si ya cuentas con
+un token temporal, puedes definirlo en su lugar:
 
 Para una prueba autenticada usa un token temporal de una cuenta de pruebas:
 
@@ -37,6 +66,87 @@ export TOKEN='TOKEN_TEMPORAL_DE_PRUEBAS'
 ```
 
 No guardes el token en este README ni lo pegues en reportes compartidos.
+
+## 2.1 Ejecucion automatica desde la terminal
+
+El repositorio incluye `scripts/test-waf.sh`. El script ejecuta las pruebas
+HTTP una por una y guarda un reporte TSV con el identificador, hora, URL,
+metodo, codigo HTTP y resultado tecnico. La deteccion del WAF debe confirmarse
+en F5 DCS usando el `test_id`, el header `X-WAF-Test-ID` y la hora registrada.
+
+Primero ejecuta una simulacion, que no envia solicitudes:
+
+```bash
+./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
+```
+
+Ejecucion de las pruebas publicas:
+
+```bash
+./scripts/test-waf.sh --output waf-results.tsv
+```
+
+Pruebas contra un endpoint real y seguro de la API:
+
+```bash
+export API_PATH_BOOTSTRAP_STATUS='/api/auth/bootstrap-status'
+./scripts/test-waf.sh --api-path "$API_PATH_BOOTSTRAP_STATUS" \
+  --output waf-api-results.tsv
+```
+
+Prueba adicional para la API de cuentas, usando una ruta protegida de lectura:
+
+```bash
+export API_PATH_ACCOUNTS='/api/accounts'
+./scripts/test-waf.sh --api-path "$API_PATH_ACCOUNTS" \
+  --output waf-accounts-results.tsv
+```
+
+El script prueba automaticamente los endpoints publicos reales `/health` y
+`/api/auth/bootstrap-status`. Para una prueba protegida, usa una ruta GET de
+lectura y credenciales de una cuenta de pruebas. El password se solicita de
+forma interactiva si no se proporciona en una variable:
+
+```bash
+export API_PATH_BOOTSTRAP_STATUS='/api/auth/bootstrap-status'
+./scripts/test-waf.sh --api-path "$API_PATH_BOOTSTRAP_STATUS" \
+  --login-email 'usuario-pruebas@example.com' \
+  --output waf-auth-results.tsv
+```
+
+Tambien puedes proporcionar el password mediante `WAF_LOGIN_PASSWORD`, aunque
+el prompt interactivo es mas seguro:
+
+```bash
+export WAF_LOGIN_PASSWORD='PASSWORD_TEMPORAL'
+./scripts/test-waf.sh --api-path '/api/auth/bootstrap-status' \
+  --login-email 'usuario-pruebas@example.com'
+```
+
+Si ya tienes un token temporal, puedes omitir el login:
+
+```bash
+export TOKEN='TOKEN_TEMPORAL_DE_PRUEBAS'
+./scripts/test-waf.sh --api-path '/api/auth/bootstrap-status' --token "$TOKEN"
+```
+
+Prueba corta y controlada de rate limiting:
+
+```bash
+./scripts/test-waf.sh --rate-limit --output waf-rate-limit.tsv
+```
+
+Prueba de acceso directo al origen, solo después de confirmar la IP real de la
+VM:
+
+```bash
+./scripts/test-waf.sh --origin-ip 'IP_PUBLICA_DE_LA_VM'
+```
+
+Las pruebas de rate limiting y bypass del origen son opcionales. El script no
+consulta la API de F5 ni declara automaticamente que el WAF detecto una
+amenaza; esa confirmacion requiere revisar los eventos de F5 DCS. No uses una
+ruta de creacion para `--api-post-path`.
 
 ## 3. Registro base de trafico normal
 

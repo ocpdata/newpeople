@@ -21,6 +21,7 @@ import commercialEnablementRoutes from "./routes.commercial-enablement.js";
 import commercialPlanningRoutes from "./routes.commercial-planning.js";
 import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.js";
 import settingsRoutes from "./routes.settings.js";
+import documentationRoutes from "./routes.documentation.js";
 import toolsRoutes from "./routes.tools.js";
 import aiRoutes from "./routes.ai.js";
 import chatbotRoutes from "./routes.chatbot.js";
@@ -124,6 +125,7 @@ export function createApp() {
   app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);
   app.use("/api/audit", authRequired, loadUser, auditRoutes);
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
+  app.use("/api/documentation", authRequired, loadUser, documentationRoutes);
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
   app.use("/api", authRequired, loadUser, aiRoutes);
   app.use("/api/chatbot", authRequired, loadUser, chatbotRoutes);
