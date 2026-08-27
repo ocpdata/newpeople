@@ -69,6 +69,24 @@ const CORE_PERMISSIONS = [
     description: "Administrar herramientas operativas de alto impacto",
   },
   {
+    code: "pruebas.read",
+    module: "pruebas",
+    action: "read",
+    description: "Ver ejecuciones de pruebas de seguridad",
+  },
+  {
+    code: "pruebas.execute",
+    module: "pruebas",
+    action: "execute",
+    description: "Ejecutar perfiles de pruebas de seguridad",
+  },
+  {
+    code: "pruebas.admin",
+    module: "pruebas",
+    action: "admin",
+    description: "Ejecutar pruebas de seguridad con integraciones externas",
+  },
+  {
     code: "cotizaciones.aprobacion_humana",
     module: "cotizaciones",
     action: "aprobacion_humana",

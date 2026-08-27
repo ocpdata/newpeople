@@ -23,6 +23,7 @@ import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.
 import settingsRoutes from "./routes.settings.js";
 import documentationRoutes from "./routes.documentation.js";
 import toolsRoutes from "./routes.tools.js";
+import securityTestRoutes from "./routes.security-tests.js";
 import aiRoutes from "./routes.ai.js";
 import chatbotRoutes from "./routes.chatbot.js";
 import landingRoutes, {
@@ -127,6 +128,12 @@ export function createApp() {
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
   app.use("/api/documentation", authRequired, loadUser, documentationRoutes);
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
+  app.use(
+    "/api/tools/security-tests",
+    authRequired,
+    loadUser,
+    securityTestRoutes,
+  );
   app.use("/api", authRequired, loadUser, aiRoutes);
   app.use("/api/chatbot", authRequired, loadUser, chatbotRoutes);
   app.use("/api/landing/v1", authRequired, loadUser, landingRoutes);

@@ -23,6 +23,7 @@ const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
 const DocumentationPage = lazy(() => import("./DocumentationPage"));
 const AccountSettingsPage = lazy(() => import("./AccountSettingsPage"));
 const ToolsPage = lazy(() => import("./ToolsPage"));
+const SecurityTestsPage = lazy(() => import("./SecurityTestsPage"));
 const PriceListDuplicatesPage = lazy(() => import("./PriceListDuplicatesPage"));
 const UsersPage = lazy(() => import("./UsersPage"));
 const RolesPage = lazy(() => import("./RolesPage"));
@@ -333,6 +334,20 @@ export default function AppShell({
               <Navigate to="/" />
             )
           }
+        />
+        <Route
+          path="/security-tests"
+          element={
+            can("pruebas.read") ? (
+              <SecurityTestsPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/tools/security-tests"
+          element={<Navigate to="/security-tests" replace />}
         />
         <Route
           path="/users"
@@ -876,6 +891,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Herramientas
+                  </GuardedNavLink>
+                )}
+                {can("pruebas.read") && (
+                  <GuardedNavLink
+                    to="/security-tests"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Pruebas de seguridad
                   </GuardedNavLink>
                 )}
               </SidebarNavGroup>

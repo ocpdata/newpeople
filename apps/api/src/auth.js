@@ -8,6 +8,9 @@ const ADMIN_FALLBACK_PERMISSIONS = [
   "herramientas.read",
   "herramientas.update",
   "herramientas.admin",
+  "pruebas.read",
+  "pruebas.execute",
+  "pruebas.admin",
   "roles.read",
   "permissions.read",
 ];

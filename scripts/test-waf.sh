@@ -206,6 +206,10 @@ f5_event_field() {
   ' "$event_file"
 }
 
+f5_event_message() {
+  jq -c '.' "$1" | tr '\t\r\n' '   ' | head -c 2000
+}
+
 find_f5_event() {
   local events_file="$1"
   local test_id="$2"
@@ -237,6 +241,13 @@ expected_attack_category() {
   esac
 }
 
+expects_f5_protection() {
+  case "$1" in
+    test-02-*|test-03-*|test-04-*|test-05-*|test-06-*|test-07-*|test-08-*|test-09-*|test-10-*|test-11-*|test-12-*|test-14-*|test-16-*|test-17-*|test-18-*|test-19-*|test-21-*|test-22-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 evaluate_final_result() {
   local test_id="$1"
   local http_status="$2"
@@ -245,11 +256,16 @@ evaluate_final_result() {
   local event_category="$5"
   local event_signature="$6"
   local f5_state="$7"
+  local http_notes="${8:-}"
   local expected_category
   local event_text
 
   if [[ "$http_status" == "000" ]]; then
     [[ "$test_id" == test-22-* ]] && printf 'PASS' || printf 'ERROR'
+    return
+  fi
+  if expects_f5_protection "$test_id" && [[ "$http_notes" == *"response_f5_rejected"* || "$http_notes" == *"response_message=Request Rejected"* ]]; then
+    [[ "$http_notes" == *"sensitive_content_detected"* ]] && printf 'FAIL' || printf 'PASS'
     return
   fi
   if [[ "$f5_state" == "ERROR" ]]; then
@@ -260,6 +276,7 @@ evaluate_final_result() {
     [[ "$DRY_RUN" -eq 1 ]] && printf 'NOT_RUN' || printf 'INCONCLUSIVE'
     return
   fi
+
 
   expected_category="$(expected_attack_category "$test_id")"
   if [[ -n "$expected_category" ]]; then
@@ -347,8 +364,17 @@ explain_final_result() {
   local event_category="$5"
   local final_result="$6"
   local f5_state="$7"
+  local http_notes="${8:-}"
   local expected_category
 
+  if expects_f5_protection "$test_id" && [[ "$http_notes" == *"response_f5_rejected"* || "$http_notes" == *"response_message=Request Rejected"* ]]; then
+    if [[ "$http_notes" == *"sensitive_content_detected"* ]]; then
+      printf 'La respuesta contiene patrones de contenido sensible aunque F5 rechazo la solicitud.'
+    else
+      printf 'F5 rechazo la solicitud; la respuesta HTTP 200 corresponde a una pagina de bloqueo.'
+    fi
+    return
+  fi
   if [[ "$final_result" == "ERROR" ]]; then
     if [[ "$http_status" == "000" ]]; then
       printf 'No se recibió respuesta HTTP del sitio.'
@@ -426,6 +452,9 @@ fetch_f5_events() {
 
     start_epoch="$(jq -nr --arg timestamp "$RUN_STARTED_AT" '$timestamp | fromdateiso8601')" || return 1
     end_epoch="$(jq -nr --arg timestamp "$run_finished_at" '$timestamp | fromdateiso8601')" || return 1
+    if [[ "$end_epoch" -lt "$((start_epoch + 10))" ]]; then
+      end_epoch="$((start_epoch + 10))"
+    fi
     query="{vh_name=\"ves-io-http-loadbalancer-$XC_LB_NAME\",sec_event_type=~\"waf_sec_event|bot_defense_sec_event|api_sec_event|svc_policy_sec_event\"}"
 
     jq -n \
@@ -470,7 +499,7 @@ write_final_output() {
   local event_file="$TMP_DIR/matched-event.json"
   local match_mode_file="$TMP_DIR/match-mode"
 
-  printf 'resultado\tprueba\tque_se_esperaba\tque_ocurrio\thttp\tevento_f5\taccion_f5\tcategoria_f5\tfirma_f5_original\tconfianza_correlacion\tmetodo\turl\tfecha_utc\tid_evento_f5\tid_solicitud_f5\trun_id\n' > "$OUTPUT_FILE"
+  printf 'resultado\tprueba\tque_se_esperaba\tque_ocurrio\thttp\tevento_f5\taccion_f5\tcategoria_f5\tfirma_f5_original\tconfianza_correlacion\tmetodo\turl\tfecha_utc\tid_evento_f5\tid_solicitud_f5\trun_id\tdetalle_f5\tdetalle_respuesta\n' > "$OUTPUT_FILE"
   tail -n +2 "$RAW_OUTPUT" | while IFS=$'\t' read -r run_id test_id started_at finished_at method url scenario expected http_status http_result classification http_notes; do
     local event_found=0
     local event_id=""
@@ -479,6 +508,7 @@ write_final_output() {
     local signature=""
     local action=""
     local event_timestamp=""
+    local event_message=""
     local correlation_method=""
     local confidence="none"
     local final_result
@@ -488,7 +518,7 @@ write_final_output() {
     local displayed_confidence
     local event_status
     local explanation
-    local final_notes="$f5_error"
+    local final_notes="$http_notes"
 
     if [[ "$f5_state" == "QUERIED" ]] && find_f5_event "$events_file" "$test_id" "$event_file" "$match_mode_file"; then
       event_found=1
@@ -500,15 +530,20 @@ write_final_output() {
       signature="$(f5_event_field "$event_file" '["signature","signature_name","attack_name","rule_name"]')"
       action="$(f5_event_field "$event_file" '["action","enforcement_action","waf_action"]')"
       event_timestamp="$(f5_event_field "$event_file" '["timestamp","time","event_time","created_at"]')"
-      final_notes="Evento F5 correlacionado mediante $correlation_method"
+      event_message="$(f5_event_message "$event_file")"
+      final_notes="$final_notes; Evento F5 correlacionado mediante $correlation_method"
     elif [[ "$f5_state" == "QUERIED" ]]; then
       correlation_method="not_found_in_run_window"
-      final_notes="No se encontro un evento F5 despues de los reintentos"
+      final_notes="$final_notes; No se encontro un evento F5 despues de los reintentos"
     elif [[ "$f5_state" == "SKIPPED" ]]; then
-      final_notes="Validacion F5 omitida o no configurada"
+      final_notes="$final_notes; Validacion F5 omitida o no configurada"
     fi
 
-    final_result="$(evaluate_final_result "$test_id" "$http_status" "$event_found" "$action" "$category" "$signature" "$f5_state")"
+    if [[ -z "$event_message" && "$http_notes" == *"response_f5_rejected"* ]]; then
+      event_message="Respuesta de F5: $(printf '%s' "$http_notes" | sed -n 's/.*response_message=//p' | head -c 2000)"
+    fi
+
+    final_result="$(evaluate_final_result "$test_id" "$http_status" "$event_found" "$action" "$category" "$signature" "$f5_state" "$http_notes")"
     displayed_result="$(translate_final_result "$final_result")"
     displayed_action="$(translate_f5_action "$action")"
     displayed_category="$(translate_f5_category "$category")"
@@ -526,10 +561,10 @@ write_final_output() {
     else
       event_status="No"
     fi
-    explanation="$(explain_final_result "$test_id" "$http_status" "$event_found" "$action" "$category" "$final_result" "$f5_state")"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    explanation="$(explain_final_result "$test_id" "$http_status" "$event_found" "$action" "$category" "$final_result" "$f5_state" "$http_notes")"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$displayed_result" "$test_id" "$expected" "$explanation" "$http_status" "$event_status" "$displayed_action" "$displayed_category" \
-      "$signature" "$displayed_confidence" "$method" "$url" "$started_at" "$event_id" "$request_id" "$run_id" >> "$OUTPUT_FILE"
+      "$signature" "$displayed_confidence" "$method" "$url" "$started_at" "$event_id" "$request_id" "$run_id" "$event_message" "$final_notes" >> "$OUTPUT_FILE"
   done
 }
 
@@ -562,10 +597,11 @@ run_request() {
   fi
 
   local body_file="$TMP_DIR/body-$TOTAL"
+  local response_headers="$TMP_DIR/headers-$TOTAL"
   local status
   local curl_result
   local finished_at
-  curl_result="$("$@" -sS --max-time 20 -o "$body_file" -w $'%{http_code}\t%{url_effective}' \
+  curl_result="$("$@" -sS --max-time 20 -D "$response_headers" -o "$body_file" -w $'%{http_code}\t%{url_effective}' \
     -H "X-WAF-Test-ID: $test_id" -H "X-WAF-Run-ID: $RUN_ID" 2>"$TMP_DIR/error-$TOTAL" || printf '000')"
   status="${curl_result%%$'\t'*}"
   if [[ "$curl_result" == *$'\t'* ]]; then
@@ -573,20 +609,35 @@ run_request() {
   fi
   finished_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   classification="$(result_classification "$status")"
+  local response_size
+  response_size="$(wc -c < "$body_file" | tr -d ' ')"
+  local response_content_type
+  response_content_type="$(awk 'BEGIN {IGNORECASE=1} /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' "$response_headers" | tr -d '\r')"
+  local response_server
+  response_server="$(awk 'BEGIN {IGNORECASE=1} /^server:/ {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}' "$response_headers" | tr -d '\r')"
+  notes="bytes=$response_size; content_type=${response_content_type:-unknown}; server=${response_server:-unknown}"
+  if grep -Eiq 'Request Rejected|The requested URL was rejected|Your support ID is' "$body_file"; then
+    local response_message
+    response_message="$(sed 's/<[^>]*>/ /g' "$body_file" | tr '\r\n\t' '   ' | tr -s ' ' | sed 's/^ *//;s/ *$//' | head -c 500)"
+    notes="$notes; response_f5_rejected; response_message=$response_message"
+  fi
+  if [[ "$test_id" == "test-05-traversal-path" ]] && grep -Eiq '(^|[[:space:]])(root|daemon|bin):x:[0-9]+:' "$body_file"; then
+    notes="$notes; sensitive_content_detected"
+  fi
   if [[ "$status" == "000" ]]; then
     result="ERROR"
-    notes="curl fallo; no se recibio una respuesta HTTP"
+    notes="$notes; curl fallo; no se recibio una respuesta HTTP"
   elif [[ "$status" == 403 || "$status" == 405 || "$status" == 406 || "$status" == 429 ]]; then
     result="BLOQUEO_O_LIMITE"
-    notes="se activo una proteccion perimetral o limite de frecuencia"
+    notes="$notes; se activo una proteccion perimetral o limite de frecuencia"
   elif [[ "$status" =~ ^2|^3|^4|^5 ]]; then
     result="REVISAR"
     case "$status" in
-      2*) notes="la solicitud llego al origen o respondio la aplicacion" ;;
-      3*) notes="se detecto una redireccion" ;;
-      4*) notes="error de cliente o aplicacion; revisar en contexto" ;;
-      5*) notes="error del servidor; revisar aplicacion o infraestructura" ;;
-      *) notes="respuesta HTTP inesperada; revisar manualmente" ;;
+      2*) notes="$notes; la solicitud llego al origen o respondio la aplicacion" ;;
+      3*) notes="$notes; se detecto una redireccion" ;;
+      4*) notes="$notes; error de cliente o aplicacion; revisar en contexto" ;;
+      5*) notes="$notes; error del servidor; revisar aplicacion o infraestructura" ;;
+      *) notes="$notes; respuesta HTTP inesperada; revisar manualmente" ;;
     esac
   else
     notes="codigo HTTP inesperado; revisar manualmente"

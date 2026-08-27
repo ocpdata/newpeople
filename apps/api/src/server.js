@@ -50,6 +50,8 @@ import { ensureCampaignsSchema } from "./campaigns/schema.js";
 import { startCampaignEmailDispatchWorker } from "./routes.campaign-emails.js";
 import { ensureCampaignEmailDispatchSchema } from "./campaign-emails/schema.js";
 import { isInitialRoleAssignmentRequired } from "./permissions-bootstrap.js";
+import { ensureSecurityTestSchema } from "./security-tests/schema.js";
+import { startSecurityTestWorker } from "./security-tests/async.js";
 
 export async function startServer() {
   validateConfig();
@@ -87,6 +89,7 @@ export async function startServer() {
   await ensureLandingSchema();
   await ensureCampaignsSchema();
   await ensureCampaignEmailDispatchSchema();
+  await ensureSecurityTestSchema();
   await startAuditRetentionJob();
   await startAccountDraftAnalysisWorker();
   await startCommercialNarrativeWorker();
@@ -99,6 +102,7 @@ export async function startServer() {
   await startChatbotWorker();
   await startLandingWorker();
   await startCampaignEmailDispatchWorker();
+  startSecurityTestWorker();
   return app.listen(config.port, () => {
     console.log(`API running on http://localhost:${config.port}`);
   });
