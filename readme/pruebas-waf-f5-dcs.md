@@ -1,518 +1,213 @@
 # Pruebas del WAF con F5 Distributed Cloud Services
 
-Guia para validar el WAF que protege `https://newpip.digitalvs.com`.
+Guia operativa para ejecutar las pruebas del WAF de `newpip.digitalvs.com`, consultar los eventos de F5 DCS y entender el resultado.
 
-Estas pruebas estan pensadas para ejecutarse una por una desde una terminal,
-mientras la politica WAF esta en modo **Monitoring/Detection**. En este modo una
-solicitud maliciosa puede devolver `200`; el resultado principal se confirma en
-los eventos de seguridad de F5 DCS, no solo en el codigo HTTP.
+## Inicio rapido
 
-## 1. Reglas de seguridad
+### 1. Configura F5
 
-- Ejecuta las pruebas solo contra esta aplicacion y con autorizacion.
-- Usa una cuenta de pruebas, nunca credenciales reales de clientes.
-- Ejecuta una prueba, espera unos segundos y busca su evento en F5 antes de
-  continuar.
-- No ejecutes escaneos masivos, fuzzing indiscriminado ni pruebas de DoS.
-- No incluyas secretos, tokens reales ni datos personales en los payloads.
-- Anota para cada prueba la hora UTC, URL, metodo, resultado HTTP y request ID.
+Abre [scripts/waf-env.example](../scripts/waf-env.example). Ese archivo contiene los nombres exactos de las variables que reconoce el script.
 
-## 2. Dar permisos de ejecucion al script
+En tu terminal:
 
-Antes de ejecutar el script desde la terminal, asegúrate de que tenga permiso de
-execucion:
+1. Define las variables mostradas en el archivo.
+2. Sustituye el marcador del password por el password real del certificado.
+3. Verifica que la ruta del certificado corresponda a tu equipo.
 
-```bash
-chmod +x scripts/test-waf.sh
-```
+El archivo de ejemplo no debe contener el password real.
 
-Luego puedes invocarlo directamente:
+### 2. Prepara el script
 
-```bash
-./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
-```
+Ejecuta una sola vez:
 
-Si prefieres ejecutarlo con el interprete explícito, tambien funciona:
+> chmod +x scripts/test-waf.sh
 
-```bash
-bash ./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
-```
+### 3. Ejecuta las pruebas
 
-## 3. Variables de la sesion
+> ./scripts/test-waf.sh --output waf-results.tsv
 
-Define el dominio y, cuando sea necesario, una ruta real de la API:
+El script realiza las solicitudes, espera la indexacion de F5, consulta los eventos y genera el archivo `waf-results.tsv`.
 
-```bash
-export BASE_URL='https://newpip.digitalvs.com'
-export API_PATH_BOOTSTRAP_STATUS='/api/auth/bootstrap-status'
-export API_PATH_ACCOUNTS='/api/accounts'
-export WAF_LOGIN_EMAIL='usuario-pruebas@example.com'
-export WAF_LOGIN_PASSWORD='PASSWORD_TEMPORAL'
-```
+### 4. Abre el resultado
 
-`API_PATH_BOOTSTRAP_STATUS` apunta a una ruta GET y no destructiva. En este
-proyecto la ruta mas segura para validacion es `/api/auth/bootstrap-status`,
-porque solo consulta estado del sistema y no crea ni modifica registros reales.
-`API_PATH_ACCOUNTS` es una prueba adicional para una API protegida de lectura.
+Abre `waf-results.tsv` con Excel, Numbers o una hoja de calculo. El separador es tabulador.
 
-Usa `WAF_LOGIN_EMAIL` y `WAF_LOGIN_PASSWORD` para autenticar las pruebas con una
-cuenta de pruebas cuando necesites validar un flujo protegido. Si ya cuentas con
-un token temporal, puedes definirlo en su lugar:
+Revisa primero estas columnas:
 
-Para una prueba autenticada usa un token temporal de una cuenta de pruebas:
+- **resultado**: conclusion de la prueba.
+- **prueba**: identificador del caso ejecutado.
+- **que se esperaba**: comportamiento correcto.
+- **que ocurrio**: explicacion del veredicto.
+- **http**: codigo devuelto al cliente.
+- **evento F5**: indica si se encontro evidencia en F5.
+- **accion F5**: indica si F5 detecto, permitio o bloqueo.
+- **categoria F5**: clasificacion asignada por F5.
 
-```bash
-export TOKEN='TOKEN_TEMPORAL_DE_PRUEBAS'
-```
+## Como interpretar el resultado
 
-No guardes el token en este README ni lo pegues en reportes compartidos.
+### PASÓ
 
-## 2.1 Ejecucion automatica desde la terminal
+La respuesta y la evidencia de F5 coinciden con lo esperado. No requiere accion adicional.
 
-El repositorio incluye `scripts/test-waf.sh`. El script ejecuta las pruebas
-HTTP una por una y guarda un reporte TSV con el identificador, hora, URL,
-metodo, codigo HTTP y resultado tecnico. La deteccion del WAF debe confirmarse
-en F5 DCS usando el `test_id`, el header `X-WAF-Test-ID` y la hora registrada.
+Ejemplo: F5 detecto una inyeccion SQL en modo monitoreo, aunque la respuesta HTTP fue `200`.
 
-Primero ejecuta una simulacion, que no envia solicitudes:
+### FALLÓ
 
-```bash
-./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
-```
+No se cumplio una condicion obligatoria.
 
-Ejecucion de las pruebas publicas:
+Causas frecuentes:
 
-```bash
-./scripts/test-waf.sh --output waf-results.tsv
-```
+- F5 no genero el evento esperado.
+- La categoria detectada no corresponde al ataque enviado.
+- La politica estaba en modo bloqueo, pero F5 permitio la solicitud.
+- El origen fue accesible directamente y se pudo evitar F5.
 
-Pruebas contra un endpoint real y seguro de la API:
+### REVISAR
 
-```bash
-export API_PATH_BOOTSTRAP_STATUS='/api/auth/bootstrap-status'
-./scripts/test-waf.sh --api-path "$API_PATH_BOOTSTRAP_STATUS" \
-  --output waf-api-results.tsv
-```
+El script encontro una situacion que no puede decidir de forma segura.
 
-Prueba adicional para la API de cuentas, usando una ruta protegida de lectura:
+Ejemplo: la ruta `/.env` respondio HTTP `200`. Debe confirmarse que la respuesta sea una pagina generica y no el contenido real del archivo.
 
-```bash
-export API_PATH_ACCOUNTS='/api/accounts'
-./scripts/test-waf.sh --api-path "$API_PATH_ACCOUNTS" \
-  --output waf-accounts-results.tsv
-```
+### ERROR
 
-El script prueba automaticamente los endpoints publicos reales `/health` y
-`/api/auth/bootstrap-status`. Para una prueba protegida, usa una ruta GET de
-lectura y credenciales de una cuenta de pruebas. El password se solicita de
-forma interactiva si no se proporciona en una variable:
+La prueba no pudo evaluarse por un problema tecnico.
 
-```bash
-export API_PATH_BOOTSTRAP_STATUS='/api/auth/bootstrap-status'
-./scripts/test-waf.sh --api-path "$API_PATH_BOOTSTRAP_STATUS" \
-  --login-email 'usuario-pruebas@example.com' \
-  --output waf-auth-results.tsv
-```
+Revisa conectividad, certificado, password, URL de F5 y permisos de la credencial.
 
-Tambien puedes proporcionar el password mediante `WAF_LOGIN_PASSWORD`, aunque
-el prompt interactivo es mas seguro:
+### NO EJECUTADA
 
-```bash
-export WAF_LOGIN_PASSWORD='PASSWORD_TEMPORAL'
-./scripts/test-waf.sh --api-path '/api/auth/bootstrap-status' \
-  --login-email 'usuario-pruebas@example.com'
-```
+La prueba fue simulada mediante la opcion `--dry-run`; no se envio una solicitud real.
 
-Si ya tienes un token temporal, puedes omitir el login:
+## Modos de la politica
 
-```bash
-export TOKEN='TOKEN_TEMPORAL_DE_PRUEBAS'
-./scripts/test-waf.sh --api-path '/api/auth/bootstrap-status' --token "$TOKEN"
-```
+El modo configurado en [scripts/waf-env.example](../scripts/waf-env.example) no cambia la politica de F5. Solo informa al script que comportamiento debe validar.
 
-Prueba corta y controlada de rate limiting:
+- **monitoring**: F5 debe detectar el ataque, pero puede permitirlo.
+- **blocking**: F5 debe detectar y bloquear, denegar, desafiar o limitar la solicitud.
 
-```bash
-./scripts/test-waf.sh --rate-limit --output waf-rate-limit.tsv
-```
+Usa el modo que realmente tenga configurado el HTTP Load Balancer durante la prueba.
 
-Prueba de acceso directo al origen, solo después de confirmar la IP real de la
-VM:
+## Variantes de ejecucion
 
-```bash
-./scripts/test-waf.sh --origin-ip 'IP_PUBLICA_DE_LA_VM'
-```
+### Simular sin enviar solicitudes
 
-Las pruebas de rate limiting y bypass del origen son opcionales. El script no
-consulta la API de F5 ni declara automaticamente que el WAF detecto una
-amenaza; esa confirmacion requiere revisar los eventos de F5 DCS. No uses una
-ruta de creacion para `--api-post-path`.
+> ./scripts/test-waf.sh --dry-run --output waf-dry-run.tsv
 
-## 3. Registro base de trafico normal
+### Ejecutar sin consultar F5
 
-### Prueba 1: pagina principal
+> ./scripts/test-waf.sh --skip-f5 --output waf-results.tsv
 
-```bash
-curl -i "$BASE_URL/"
-```
+Los resultados quedaran como `REVISAR` porque no existe evidencia de F5.
 
-**Esperado:** respuesta normal de la aplicacion, normalmente `200`.
+### Probar una ruta autenticada de lectura
 
-**En F5:** debe aparecer como trafico permitido, sin una firma de ataque.
+> ./scripts/test-waf.sh --api-path /api/accounts --login-email usuario-pruebas@example.com --output waf-auth-results.tsv
 
-### Prueba 2: recurso estatico
+El script solicita el password de forma interactiva. Usa solamente una cuenta de pruebas.
 
-```bash
-curl -I "$BASE_URL/assets/index-XNOTm6s4.js"
-```
+### Usar un token temporal
 
-Usa el nombre actual del archivo JavaScript que devuelve la pagina si cambio.
+> ./scripts/test-waf.sh --api-path /api/accounts --token TOKEN_TEMPORAL --output waf-auth-results.tsv
 
-**Esperado:** `200` y `Content-Type` de JavaScript. No debe haber falso
-positivo del WAF.
+No guardes el token en el repositorio ni en reportes compartidos.
 
-### Prueba 3: ruta inexistente
+### Probar el limite de frecuencia
 
-```bash
-curl -i "$BASE_URL/ruta-que-no-existe-para-pruebas"
-```
+> ./scripts/test-waf.sh --rate-limit --output waf-rate-limit.tsv
 
-**Esperado:** `404`, o el fallback de SPA si esa es la configuracion actual.
+La prueba es corta y controlada. No la conviertas en una prueba de carga.
 
-**En F5:** debe registrarse como solicitud normal, sin clasificacion de ataque.
+### Probar acceso directo al origen
 
-## 4. Metodos HTTP
+> ./scripts/test-waf.sh --origin-ip IP_PUBLICA_DE_LA_VM --output waf-origin-results.tsv
 
-### Prueba 4: TRACE
+El resultado correcto es que el origen no sea accesible directamente desde Internet.
 
-```bash
-curl -i -X TRACE "$BASE_URL/"
-```
+## Que valida el script
 
-**Esperado:** `405` o bloqueo por politica. No debe reflejar headers o contenido
-de la solicitud.
+El conjunto principal incluye:
 
-### Prueba 5: metodo no utilizado
+- pagina principal y endpoints publicos;
+- archivos y rutas sensibles;
+- recorrido de rutas;
+- inyeccion SQL;
+- secuencias de comandos entre sitios, XSS;
+- metodos HTTP no permitidos;
+- comportamiento de OPTIONS;
+- User-Agent de herramienta;
+- autenticacion opcional;
+- limite de frecuencia opcional;
+- acceso directo al origen opcional.
 
-```bash
-curl -i -X DELETE "$BASE_URL/"
-```
+Las pruebas son no destructivas. No uses una ruta que cree, modifique o elimine datos para la opcion `--api-post-path`.
 
-**Esperado:** `405` o bloqueo. No debe eliminar ningun recurso.
+## Correlacion con F5
 
-### Prueba 6: OPTIONS
+Cada solicitud incluye un identificador de ejecucion y un identificador de prueba. El script consulta Security Events al terminar y relaciona cada evento con su solicitud.
 
-```bash
-curl -i -X OPTIONS "$BASE_URL/"
-```
+La confianza puede ser:
 
-**Esperado:** respuesta coherente con CORS y los metodos permitidos. No debe
-exponer informacion interna.
+- **Alta**: F5 contiene el identificador de ejecucion y el de la prueba.
+- **Media**: F5 contiene el identificador de la prueba dentro de la ventana consultada.
+- **Ninguna**: no se encontro un evento correlacionable.
 
-## 5. Rutas y archivos sensibles
+Consulta manualmente la consola de F5 cuando:
 
-Ejecuta cada comando por separado.
+- el resultado sea `REVISAR` o `ERROR`;
+- la confianza sea Media o Ninguna;
+- el resultado no coincida con lo observado;
+- necesites confirmar la firma original o la politica aplicada.
 
-### Prueba 7: archivo de entorno
+Busca primero por el ID de solicitud F5. Si no esta disponible, usa fecha UTC, URL, metodo e identificador de ejecucion.
 
-```bash
-curl -i "$BASE_URL/.env"
-```
+## Solucion de problemas
 
-### Prueba 8: configuracion de Git
+### F5 responde HTTP 400
 
-```bash
-curl -i "$BASE_URL/.git/config"
-```
+El script muestra el mensaje devuelto por la API. Verifica la URL del tenant, namespace, nombre del Load Balancer y endpoint de Security Events.
 
-### Prueba 9: estado del servidor
+### F5 no registra un ataque
 
-```bash
-curl -i "$BASE_URL/server-status"
-```
+Comprueba en la consola:
 
-**Esperado para las tres:** `403` o `404`, y nunca contenido del archivo,
-credenciales, variables de entorno o diagnosticos del servidor. Un `200` con
-el HTML de la SPA no significa que el archivo se haya expuesto, pero conviene
-configurar esas rutas para responder explicitamente `404` o `403`.
+- que la politica WAF este asociada al Load Balancer;
+- que la solicitud haya llegado al Load Balancer correcto;
+- que la firma esperada este activa;
+- que el evento no haya tardado mas que la ventana de consulta;
+- que no exista una excepcion para la ruta o parametro.
 
-## 6. Path traversal
+Un HTTP `200` no demuestra por si solo que la prueba fallo. En modo monitoreo puede ser correcto si F5 registro la deteccion.
 
-Estas solicitudes son no destructivas y solo prueban la inspeccion del WAF.
+### Una ruta sensible responde HTTP 200
 
-### Prueba 10: traversal en la ruta
+Confirma el contenido de la respuesta. Puede ser la pagina generica de la aplicacion o una pagina de bloqueo servida con HTTP `200`.
 
-```bash
-curl -i --path-as-is "$BASE_URL/../../etc/passwd"
-```
+Si la respuesta contiene variables, credenciales, configuracion Git o diagnosticos internos, la prueba fallo y existe exposicion de informacion.
 
-### Prueba 11: traversal en un parametro
+### El certificado no funciona
 
-```bash
-curl -iG "$BASE_URL/" --data-urlencode 'file=../../../../etc/passwd'
-```
+Verifica que:
 
-**Esperado en Monitoring:** puede ser `200`, pero F5 debe registrar una
- deteccion de path traversal si la firma aplica.
+- el archivo sea un certificado PKCS#12 valido;
+- el password corresponda al certificado;
+- la credencial tenga permisos de lectura en F5;
+- la ruta indicada sea correcta para el directorio desde donde ejecutas el script.
 
-**Esperado en Blocking:** bloqueo, normalmente `403` o la respuesta configurada
-por la politica.
+## Seguridad
 
-## 7. SQL Injection
+- Ejecuta las pruebas solo con autorizacion.
+- Usa cuentas y tokens temporales de pruebas.
+- No incluyas secretos ni datos personales en los payloads.
+- No realices fuzzing, escaneos masivos ni pruebas de denegacion de servicio.
+- No guardes certificados, passwords, tokens ni resultados sensibles en Git.
+- Revisa los falsos positivos antes de cambiar una politica completa a modo bloqueo.
 
-Prueba estos payloads solo contra un endpoint que procese el parametro indicado.
-Usa `--data-urlencode` para que la shell y `curl` no rechacen comillas.
+## Criterio de validacion
 
-### Prueba 12: parametro de busqueda
+El WAF se considera validado cuando:
 
-```bash
-curl -iG "$BASE_URL$API_PATH" \
-  --data-urlencode "search=' OR '1'='1"
-```
-
-### Prueba 13: parametro numerico
-
-```bash
-curl -iG "$BASE_URL$API_PATH" \
-  --data-urlencode 'id=1 UNION SELECT 1'
-```
-
-### Prueba 14: comentario SQL
-
-```bash
-curl -iG "$BASE_URL$API_PATH" \
-  --data-urlencode 'search=test'
-```
-
-Para la prueba 14, reemplaza `test` por un comentario SQL codificado y
-no destructivo, adaptado al parametro real. No uses comandos de escritura,
-DROP, UPDATE ni DELETE.
-
-**Esperado en Monitoring:** la aplicacion puede responder normalmente, pero F5
-debe crear un evento de SQL Injection.
-
-**Esperado en Blocking:** F5 debe bloquear la solicitud.
-
-## 8. Cross-Site Scripting (XSS)
-
-### Prueba 15: XSS reflejado
-
-```bash
-curl -iG "$BASE_URL$API_PATH" \
-  --data-urlencode 'q=<script>alert(1)</script>'
-```
-
-### Prueba 16: atributo HTML
-
-```bash
-curl -iG "$BASE_URL$API_PATH" \
-  --data-urlencode 'q=" onmouseover="alert(1)'
-```
-
-No abras el resultado esperando ejecutar JavaScript. La prueba es revisar la
-respuesta y el evento WAF; nunca insertes el payload en datos persistentes.
-
-**Esperado en Monitoring:** evento de XSS en F5, aunque la respuesta sea `200`.
-
-**Esperado en Blocking:** solicitud bloqueada.
-
-## 9. Payload JSON en la API
-
-Ejecuta esto solo contra una ruta real que acepte JSON y no modifique datos.
-
-### Prueba 17: SQL Injection en JSON
-
-```bash
-curl -i -X POST "$BASE_URL$API_PATH" \
-  -H 'Content-Type: application/json' \
-  --data '{"search":"'"'"' OR '"'"'1'"'"'='"'"'1"'"'"}'
-```
-
-### Prueba 18: XSS en JSON
-
-```bash
-curl -i -X POST "$BASE_URL$API_PATH" \
-  -H 'Content-Type: application/json' \
-  --data '{"name":"<script>alert(1)</script>"}'
-```
-
-Si el endpoint requiere autenticacion, agrega:
-
-```bash
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Esperado:** en Monitoring, evento clasificado en F5; en Blocking, rechazo
-segun la politica. La API puede devolver `400` por validacion propia, lo cual
-tambien es un resultado valido, pero debe existir el evento correspondiente en
-F5 si la firma fue detectada.
-
-## 10. User-Agent y automatizacion
-
-### Prueba 19: User-Agent de herramienta
-
-```bash
-curl -i -A 'sqlmap' "$BASE_URL/"
-```
-
-### Prueba 20: User-Agent de scanner
-
-```bash
-curl -i -A 'nikto' "$BASE_URL/"
-```
-
-### Prueba 21: User-Agent personalizado
-
-```bash
-curl -i -A 'waf-validation-test' "$BASE_URL/"
-```
-
-Un User-Agent por si solo no prueba que F5 pueda identificar un bot. El
-resultado depende de la configuracion de bot protection. Confirma en la
-consola si la politica registra, desafia o permite la solicitud.
-
-## 11. Rate limiting
-
-No automatices esta prueba con un bucle agresivo. Realiza solicitudes manuales
-y controladas contra una ruta publica o de login de pruebas:
-
-```bash
-curl -i "$BASE_URL/"
-curl -i "$BASE_URL/"
-curl -i "$BASE_URL/"
-```
-
-Repite lentamente hasta alcanzar el umbral configurado.
-
-**Verifica:**
-
-- numero de solicitudes que activa el limite;
-- ventana de tiempo;
-- duracion del bloqueo;
-- codigo HTTP o challenge;
-- evento de rate limiting en F5;
-- que una solicitud normal despues de la ventana vuelva a pasar.
-
-No pruebes con cientos o miles de solicitudes desde una sola terminal.
-
-## 12. Login y rutas autenticadas
-
-Usa un usuario de pruebas y una ruta real.
-
-### Prueba 22: credenciales invalidas
-
-```bash
-curl -i -X POST "$BASE_URL/api/auth/login" \
-  -H 'Content-Type: application/json' \
-  --data '{"email":"waf-test-invalid@example.com","password":"invalid-password"}'
-```
-
-**Esperado:** error de autenticacion sin revelar si el correo existe. Revisa si
-F5 registra el evento de abuso o si el control pertenece al rate limiting de la
-aplicacion.
-
-### Prueba 23: parametro inesperado
-
-```bash
-curl -i -X POST "$BASE_URL/api/auth/login" \
-  -H 'Content-Type: application/json' \
-  --data '{"email":"waf-test-invalid@example.com","password":"invalid-password","unexpected":"test"}'
-```
-
-**Esperado:** rechazo por validacion o respuesta normal controlada; nunca error
-interno con stack trace.
-
-## 13. Tamano y headers
-
-### Prueba 24: URL con muchos parametros
-
-```bash
-curl -iG "$BASE_URL$API_PATH" \
-  --data-urlencode 'p1=test' \
-  --data-urlencode 'p2=test' \
-  --data-urlencode 'p3=test' \
-  --data-urlencode 'p4=test' \
-  --data-urlencode 'p5=test'
-```
-
-Aumenta gradualmente solo si el limite de la politica se esta verificando.
-
-### Prueba 25: headers de seguridad
-
-```bash
-curl -sI "$BASE_URL/"
-```
-
-Revisa si existen, segun la arquitectura, `Strict-Transport-Security`,
-`Content-Security-Policy`, `X-Content-Type-Options` y proteccion contra
-clickjacking. Estos headers pueden configurarse en la aplicacion, nginx o F5;
-la ausencia no demuestra por si sola un fallo del WAF.
-
-## 14. Origen y bypass del WAF
-
-Obtén la IP o hostname real de la VM desde AWS. No asumas que la IP que resuelve
-el dominio es la IP del origen.
-
-### Prueba 26: acceso directo al origen
-
-```bash
-curl -i --connect-to newpip.digitalvs.com:443:ORIGIN_IP:443 \
-  'https://newpip.digitalvs.com/'
-```
-
-Reemplaza `ORIGIN_IP` por la direccion real de la VM y conserva el hostname TLS.
-
-**Esperado:** el origen no debe ser accesible directamente desde Internet.
-Debe aceptar trafico solo desde F5, VPN o las redes autorizadas. Si responde,
-configura el Security Group/NACL/firewall de AWS para cerrar el bypass.
-
-No bloquees la IP del WAF sin confirmar primero los rangos oficiales que usa tu
-configuracion de F5 DCS.
-
-## 15. Revision en F5 DCS
-
-Para cada prueba, busca el evento por la hora exacta y confirma:
-
-- hostname `newpip.digitalvs.com`;
-- path y metodo;
-- IP de origen;
-- User-Agent;
-- categoria o firma detectada;
-- politica aplicada;
-- accion `Detected`, `Allowed`, `Blocked`, `Challenged` o `Rate Limited`;
-- request ID o correlation ID;
-- pais y ASN, si estan disponibles;
-- servicio de origen al que fue enviada la solicitud.
-
-En Monitoring, el criterio de exito para un ataque es que F5 lo detecte y lo
-registre correctamente, aunque la respuesta sea `200`. El criterio de exito
-para trafico normal es que pase sin una deteccion incorrecta.
-
-## 16. Reporte de resultados
-
-Registra cada prueba con esta tabla:
-
-| # | Fecha UTC | Metodo y URL | HTTP | Evento F5 | Categoria | Accion | Resultado |
-|---|---|---|---:|---|---|---|---|
-| 1 |  |  |  |  |  |  |  |
-
-Usa `PASS` cuando la deteccion y la accion coincidan con la politica. Usa
-`FAIL` si no aparece el evento, la categoria es incorrecta, existe un falso
-positivo o el origen puede evadir F5.
-
-## 17. Paso posterior a Blocking
-
-No cambies directamente toda la politica a bloqueo sin revisar primero los
-falsos positivos.
-
-1. Ejecuta todas las pruebas en Monitoring.
-2. Corrige rutas, firmas o excepciones que generen falsos positivos.
-3. Define una ventana de bajo trafico para el cambio.
-4. Cambia a Blocking o aplica una politica de prueba a una ruta controlada.
-5. Repite las pruebas maliciosas y verifica `403`, challenge o la accion definida.
-6. Repite login, cargas, formularios, busquedas y uso normal.
-7. Vigila los eventos despues del cambio y documenta cualquier excepcion.
-
-El WAF se considera validado cuando detecta los ataques en Monitoring, bloquea
-los mismos ataques en Blocking, permite el trafico legitimo y no existe acceso
-directo al origen.
+- detecta ataques en modo monitoreo;
+- bloquea los ataques esperados en modo bloqueo;
+- permite el trafico legitimo sin falsos positivos;
+- protege archivos y rutas sensibles;
+- el origen no es accesible directamente desde Internet.

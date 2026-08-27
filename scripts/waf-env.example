@@ -1,0 +1,6 @@
+export XC_API_URL='https://accessq-nfr.console.ves.volterra.io'
+export XC_API_P12_FILE='cert-f5/accessq-nfr.console.ves.volterra.io.api-creds-2.p12'
+export XC_P12_PASSWORD='PASSWORD_DEL_CERTIFICADO'
+export XC_NAMESPACE='default'
+export XC_LB_NAME='newpeople'
+export XC_WAF_MODE='monitoring'

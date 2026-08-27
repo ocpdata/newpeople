@@ -6,3 +6,4 @@ apps/web/.env
 .vscode/
 waf-test-results.tsv
 bot-defense-results.tsv
+cert-f5/
