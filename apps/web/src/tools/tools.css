@@ -462,6 +462,13 @@
   overflow-wrap: anywhere;
 }
 
+.tools-security-f5-reason {
+  margin: 0;
+  color: #27425f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .tools-security-job {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr) auto;

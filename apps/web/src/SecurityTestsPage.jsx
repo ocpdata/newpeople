@@ -172,32 +172,69 @@ export default function SecurityTestsPage() {
     return { summaryFields, signatures, requestId: parsed.req_id };
   }
 
+  function parseF5RejectionMessage(rawMessage) {
+    if (typeof rawMessage !== "string" || !/request rejected/i.test(rawMessage)) return null;
+    const supportIdMatch = rawMessage.match(/support id is ([a-z0-9-]+)/i);
+    const notesMatch = rawMessage.split(";").map((segment) => segment.trim()).filter(Boolean);
+    const [firstSegment, ...restSegments] = notesMatch;
+    const reason = (firstSegment || rawMessage)
+      .replace(/^Respuesta de F5:\s*/i, "")
+      .replace(/\s*your support id is [a-z0-9-]+/i, "")
+      .replace(/\[go back\]/i, "")
+      .trim();
+    return {
+      reason: reason || "La solicitud fue rechazada por F5.",
+      supportId: supportIdMatch ? supportIdMatch[1] : "",
+      notes: restSegments,
+    };
+  }
+
   function renderF5Message(resultRow) {
     const raw = getF5Message(resultRow);
     const structured = parseF5Message(raw);
-    if (!structured) return <pre>{raw}</pre>;
-    return (
-      <div className="tools-security-f5-detail">
-        {structured.summaryFields.length ? (
-          <dl className="tools-security-kv-list">
-            {structured.summaryFields.map((field) => (
-              <div key={field.label}><dt>{field.label}</dt><dd>{field.value}</dd></div>
-            ))}
-          </dl>
-        ) : null}
-        {structured.signatures.length ? (
-          <ul className="tools-security-signature-list">
-            {structured.signatures.map((signature, index) => (
-              <li key={`${signature.id || index}`}>
-                <strong>{signature.name || signature.attack_type || "Firma sin nombre"}</strong>
-                <span>{[signature.attack_type, signature.risk && `Riesgo: ${signature.risk}`, signature.accuracy && `Precisión: ${signature.accuracy}`].filter(Boolean).join(" · ")}</span>
-                {signature.matching_info ? <small>{signature.matching_info}</small> : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
-    );
+    if (structured) {
+      return (
+        <div className="tools-security-f5-detail">
+          {structured.summaryFields.length ? (
+            <dl className="tools-security-kv-list">
+              {structured.summaryFields.map((field) => (
+                <div key={field.label}><dt>{field.label}</dt><dd>{field.value}</dd></div>
+              ))}
+            </dl>
+          ) : null}
+          {structured.signatures.length ? (
+            <ul className="tools-security-signature-list">
+              {structured.signatures.map((signature, index) => (
+                <li key={`${signature.id || index}`}>
+                  <strong>{signature.name || signature.attack_type || "Firma sin nombre"}</strong>
+                  <span>{[signature.attack_type, signature.risk && `Riesgo: ${signature.risk}`, signature.accuracy && `Precisión: ${signature.accuracy}`].filter(Boolean).join(" · ")}</span>
+                  {signature.matching_info ? <small>{signature.matching_info}</small> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      );
+    }
+    const rejection = parseF5RejectionMessage(raw);
+    if (rejection) {
+      return (
+        <div className="tools-security-f5-detail">
+          <p className="tools-security-f5-reason">{rejection.reason}</p>
+          {rejection.supportId ? (
+            <dl className="tools-security-kv-list">
+              <div><dt>Support ID</dt><dd>{rejection.supportId}</dd></div>
+            </dl>
+          ) : null}
+          {rejection.notes.length ? (
+            <ul className="tools-security-note-list">
+              {rejection.notes.map((note, index) => <li key={index}>{note}</li>)}
+            </ul>
+          ) : null}
+        </div>
+      );
+    }
+    return <pre>{raw}</pre>;
   }
 
   function parseResponseDetail(rawDetail) {
