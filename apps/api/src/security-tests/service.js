@@ -99,7 +99,7 @@ export function listSecurityTestCatalog() {
   }));
 }
 
-export async function createSecurityTestJob({ scriptKey, profileKey, wafMode, requestedByUserId, req }) {
+export async function createSecurityTestJob({ scriptKey, profileKey, wafMode, testId, requestedByUserId, req }) {
   await ensureSecurityTestSchema();
   const selected = getDefinition(scriptKey, profileKey);
   if (!selected) throw Object.assign(new Error("Perfil de prueba invalido"), { status: 400 });
@@ -118,9 +118,9 @@ export async function createSecurityTestJob({ scriptKey, profileKey, wafMode, re
   await query(
     `INSERT INTO security_test_jobs (public_id, script_key, profile_key, requested_by_user_id, options_json, expires_at)
      VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL ? HOUR))`,
-    [publicId, scriptKey, profileKey, Number(requestedByUserId), JSON.stringify({ wafMode }), JOB_TTL_HOURS],
+    [publicId, scriptKey, profileKey, Number(requestedByUserId), JSON.stringify({ wafMode, testId: testId || null }), JOB_TTL_HOURS],
   );
-  await logAuditEvent({ req, module: "pruebas", action: "security_test_requested", entityType: "security_test_job", detail: `${scriptKey}/${profileKey}` });
+  await logAuditEvent({ req, module: "pruebas", action: "security_test_requested", entityType: "security_test_job", detail: testId ? `${scriptKey}/${profileKey}/${testId}` : `${scriptKey}/${profileKey}` });
   return publicId;
 }
 
@@ -191,12 +191,13 @@ async function executeJob(job) {
   const selected = getDefinition(job.script_key, job.profile_key);
   const outputFile = resolve(SCRIPT_ROOT, `.security-test-${job.public_id}.tsv`);
   const options = parseJson(job.options_json, {});
+  const args = options.testId ? [...selected.profile.args, "--only", options.testId] : selected.profile.args;
   const env = { ...process.env, WAF_TEST_OUTPUT: outputFile, XC_WAF_MODE: options.wafMode || "monitoring" };
   try {
     const { stdout, stderr } = await runScriptWithProgress({
       job,
       scriptPath: resolve(SCRIPT_ROOT, selected.definition.script),
-      args: selected.profile.args,
+      args,
       cwd: resolve(SCRIPT_ROOT, ".."),
       env,
     });

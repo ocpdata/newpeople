@@ -25,6 +25,7 @@ XC_EVENT_WAIT_SECONDS="${XC_EVENT_WAIT_SECONDS:-15}"
 XC_EVENT_RETRIES="${XC_EVENT_RETRIES:-4}"
 XC_EVENTS_FILE="${XC_EVENTS_FILE:-}"
 SKIP_F5=0
+ONLY_TEST="${ONLY_TEST:-}"
 
 usage() {
   cat <<'EOF'
@@ -42,6 +43,7 @@ Opciones:
   --output ARCHIVO     Archivo TSV de resultados
   --dry-run            Muestra las pruebas sin enviar solicitudes
   --rate-limit         Ejecuta una prueba corta y controlada de rate limiting
+  --only ID            Ejecuta unicamente el caso con ese identificador (ej. test-07-sqli-query)
   --skip-f5            No consulta F5 aunque existan variables XC_API_*
   --f5-events-file F   Usa eventos JSON locales en vez de consultar F5
   -h, --help           Muestra esta ayuda
@@ -100,6 +102,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_F5=1
       shift
       ;;
+    --only)
+      ONLY_TEST="${2:?Falta el valor de --only}"
+      shift 2
+      ;;
     --f5-events-file)
       XC_EVENTS_FILE="${2:?Falta el valor de --f5-events-file}"
       shift 2
@@ -120,6 +126,14 @@ BASE_URL="${BASE_URL%/}"
 if [[ "$BASE_URL" != https://* ]]; then
   echo "Advertencia: el objetivo no usa HTTPS: $BASE_URL" >&2
 fi
+
+should_run() {
+  local id="$1"
+  [[ -z "$ONLY_TEST" ]] && return 0
+  [[ "$id" == "$ONLY_TEST" ]] && return 0
+  [[ "$id" == "$ONLY_TEST"-* ]] && return 0
+  return 1
+}
 
 case "$XC_WAF_MODE" in
   monitoring|blocking) ;;
@@ -738,28 +752,28 @@ obtain_login_token() {
   append_result_row "test-15-login-token" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "POST" "$login_url" "login token generation" "Token generado" "$login_status" "PASS" "success" "Auth token created successfully for WAF validation"
 }
 
-request_get "test-01-normal-home" "200" "$BASE_URL/"
-request_get "test-public-health" "Respuesta de salud HTTP 200" "$BASE_URL/health"
-request_get "test-public-auth-bootstrap" "Respuesta de inicio HTTP 200" "$BASE_URL/api/auth/bootstrap-status"
-request_get "test-02-sensitive-env" "HTTP 403 o 404, sin contenido sensible" "$BASE_URL/.env"
-request_get "test-03-sensitive-git" "HTTP 403 o 404, sin contenido sensible" "$BASE_URL/.git/config"
-request_get "test-04-server-status" "HTTP 403 o 404, sin diagnosticos" "$BASE_URL/server-status"
-request_get "test-05-traversal-path" "Deteccion de ataque por F5" "$BASE_URL/../../etc/passwd" --path-as-is
-request_get "test-06-traversal-parameter" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'file=../../../../etc/passwd'
-request_get "test-07-sqli-query" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode "search=' OR '1'='1"
-request_get "test-08-sqli-union" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'id=1 UNION SELECT 1'
-request_get "test-09-xss-script" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'q=<script>alert(1)</script>'
-request_get "test-10-xss-attribute" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'q=" onmouseover="alert(1)'
-request_get "test-11-trace" "HTTP 405 o evento F5" "$BASE_URL/" -X TRACE
-request_get "test-12-delete" "HTTP 405 o evento F5" "$BASE_URL/" -X DELETE
-request_get "test-13-options" "Respuesta acorde con la configuracion" "$BASE_URL/" -X OPTIONS
-request_get "test-14-tool-user-agent" "Resultado segun la politica configurada" "$BASE_URL/" -A 'waf-validation-test'
+should_run "test-01-normal-home" && request_get "test-01-normal-home" "200" "$BASE_URL/"
+should_run "test-public-health" && request_get "test-public-health" "Respuesta de salud HTTP 200" "$BASE_URL/health"
+should_run "test-public-auth-bootstrap" && request_get "test-public-auth-bootstrap" "Respuesta de inicio HTTP 200" "$BASE_URL/api/auth/bootstrap-status"
+should_run "test-02-sensitive-env" && request_get "test-02-sensitive-env" "HTTP 403 o 404, sin contenido sensible" "$BASE_URL/.env"
+should_run "test-03-sensitive-git" && request_get "test-03-sensitive-git" "HTTP 403 o 404, sin contenido sensible" "$BASE_URL/.git/config"
+should_run "test-04-server-status" && request_get "test-04-server-status" "HTTP 403 o 404, sin diagnosticos" "$BASE_URL/server-status"
+should_run "test-05-traversal-path" && request_get "test-05-traversal-path" "Deteccion de ataque por F5" "$BASE_URL/../../etc/passwd" --path-as-is
+should_run "test-06-traversal-parameter" && request_get "test-06-traversal-parameter" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'file=../../../../etc/passwd'
+should_run "test-07-sqli-query" && request_get "test-07-sqli-query" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode "search=' OR '1'='1"
+should_run "test-08-sqli-union" && request_get "test-08-sqli-union" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'id=1 UNION SELECT 1'
+should_run "test-09-xss-script" && request_get "test-09-xss-script" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'q=<script>alert(1)</script>'
+should_run "test-10-xss-attribute" && request_get "test-10-xss-attribute" "Deteccion de ataque por F5" "$BASE_URL/" -G --data-urlencode 'q=" onmouseover="alert(1)'
+should_run "test-11-trace" && request_get "test-11-trace" "HTTP 405 o evento F5" "$BASE_URL/" -X TRACE
+should_run "test-12-delete" && request_get "test-12-delete" "HTTP 405 o evento F5" "$BASE_URL/" -X DELETE
+should_run "test-13-options" && request_get "test-13-options" "Respuesta acorde con la configuracion" "$BASE_URL/" -X OPTIONS
+should_run "test-14-tool-user-agent" && request_get "test-14-tool-user-agent" "Resultado segun la politica configurada" "$BASE_URL/" -A 'waf-validation-test'
 
-if [[ -n "$LOGIN_EMAIL" ]]; then
+if [[ -n "$LOGIN_EMAIL" ]] && should_run "test-15-login-token"; then
   obtain_login_token || exit 1
 fi
 
-if [[ -n "$API_PATH" ]]; then
+if [[ -n "$API_PATH" ]] && should_run "test-16-api-sqli"; then
   API_URL="${BASE_URL}${API_PATH}"
   if [[ -n "$TOKEN" ]]; then
     request_get "test-16-api-sqli" "Deteccion de ataque por F5" "$API_URL" -H "Authorization: Bearer $TOKEN" -G --data-urlencode "search=' OR '1'='1"
@@ -770,7 +784,7 @@ if [[ -n "$API_PATH" ]]; then
   fi
 fi
 
-if [[ -n "$API_POST_PATH" ]]; then
+if [[ -n "$API_POST_PATH" ]] && should_run "test-18-api-json-sqli"; then
   API_POST_URL="${BASE_URL}${API_POST_PATH}"
   SQLI_JSON_PAYLOAD='{"search":"\u0027 OR \u00271\u0027=\u00271"}'
   if [[ -n "$TOKEN" ]]; then
@@ -782,7 +796,7 @@ if [[ -n "$API_POST_PATH" ]]; then
   fi
 fi
 
-if [[ -n "$TOKEN" && -n "$API_PATH" ]]; then
+if [[ -n "$TOKEN" && -n "$API_PATH" ]] && should_run "test-20-api-authenticated"; then
   WAF_METHOD="GET"
   WAF_URL="${BASE_URL}${API_PATH}"
     run_request "test-20-api-authenticated" "Permitida sin deteccion WAF" "acceso autenticado a la API" curl -H "Authorization: Bearer $TOKEN" "$BASE_URL$API_PATH"
@@ -790,7 +804,7 @@ else
   printf '[SKIP] test-20-api-authenticated: requiere --api-path y --token\n'
 fi
 
-if [[ "$INCLUDE_RATE_LIMIT" -eq 1 ]]; then
+if [[ "$INCLUDE_RATE_LIMIT" -eq 1 ]] && should_run "test-21-rate-limit"; then
   printf '\nRate limiting: %s solicitudes con %ss entre cada una.\n' "$RATE_LIMIT_REQUESTS" "$RATE_LIMIT_DELAY"
   for request_number in $(seq 1 "$RATE_LIMIT_REQUESTS"); do
     request_get "test-21-rate-limit-$request_number" "Umbral configurado" "$BASE_URL/"
@@ -802,7 +816,7 @@ else
   printf '[SKIP] rate limiting: usa --rate-limit para habilitar una prueba corta\n'
 fi
 
-if [[ -n "$ORIGIN_IP" ]]; then
+if [[ -n "$ORIGIN_IP" ]] && should_run "test-22-origin-bypass"; then
   WAF_METHOD="GET"
   WAF_URL="$BASE_URL/"
   run_request "test-22-origin-bypass" "El origen no debe ser accesible desde Internet" "prueba de acceso directo al origen" curl --connect-to "$HOSTNAME:443:$ORIGIN_IP:443" "$BASE_URL/"

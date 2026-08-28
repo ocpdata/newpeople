@@ -339,12 +339,12 @@ export default function SecurityTestsPage() {
     return () => clearInterval(timer);
   }, [jobs]);
 
-  async function execute() {
+  async function execute(testId) {
     if (testKey !== "waf") return;
     setRunning(true);
     setError("");
     try {
-      await api.post("/api/tools/security-tests/jobs", { scriptKey: "waf", profileKey, wafMode });
+      await api.post("/api/tools/security-tests/jobs", { scriptKey: "waf", profileKey, wafMode, ...(testId ? { testId } : {}) });
       await load();
     } catch (executeError) {
       setError(getApiErrorMessage(executeError, "No fue posible iniciar la prueba"));
@@ -377,7 +377,7 @@ export default function SecurityTestsPage() {
         <div className="tools-security-launch-controls">
           {testKey === "waf" ? <><label className="tools-filter-field"><span>Perfil</span><select value={profileKey} onChange={(event) => setProfileKey(event.target.value)} disabled={running || loading}>{profiles.map((profile) => <option key={profile.key} value={profile.key} disabled={!profile.configured}>{profile.title}{!profile.configured ? " (configuracion incompleta)" : ""}</option>)}</select></label>
           <label className="tools-filter-field"><span>Modo WAF</span><select value={wafMode} onChange={(event) => setWafMode(event.target.value)} disabled={running || loading}><option value="monitoring">Monitoreo</option><option value="blocking">Bloqueo</option></select></label>
-          <button className="btn-primary" type="button" onClick={execute} disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}>{running ? "Ejecutando..." : "Ejecutar prueba"}</button></> : <span className="tools-security-planned-message">Bot Defense estará disponible en una siguiente implementación.</span>}
+          <button className="btn-primary" type="button" onClick={() => execute()} disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}>{running ? "Ejecutando..." : "Ejecutar prueba"}</button></> : <span className="tools-security-planned-message">Bot Defense estará disponible en una siguiente implementación.</span>}
         </div>
       </article>
 
@@ -401,7 +401,7 @@ export default function SecurityTestsPage() {
           ) : null}
           {analyzedJob ? <span className={`tools-state-pill is-${analyzedJob.status}`}>{analyzedJob.status}</span> : null}
         </div>
-        {analyzedJob ? (
+        {WAF_TEST_GUIDE.length ? (
           <div className="tools-security-analysis-list">
             {WAF_TEST_GUIDE.map((test, index) => {
               const state = getAnalysisState(test, index);
@@ -418,6 +418,15 @@ export default function SecurityTestsPage() {
                   </div>
                   <b>{state.label}</b>
                   <button
+                    className="btn-secondary tools-security-analysis-run"
+                    type="button"
+                    onClick={() => execute(test.id)}
+                    disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}
+                    title={`Ejecutar solo ${test.title}`}
+                  >
+                    Ejecutar
+                  </button>
+                  <button
                     className="tools-security-analysis-info"
                     type="button"
                     onClick={() => setSelectedAnalysis({ test, state, resultRow, job: analyzedJob })}
@@ -430,7 +439,7 @@ export default function SecurityTestsPage() {
               );
             })}
           </div>
-        ) : <p className="field-hint">No hay una ejecución para analizar.</p>}
+        ) : null}
       </section>
 
       {selectedAnalysis ? (

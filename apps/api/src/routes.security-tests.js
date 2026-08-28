@@ -16,6 +16,7 @@ const createSchema = z.object({
   scriptKey: z.string().trim().min(1).max(80),
   profileKey: z.string().trim().min(1).max(80),
   wafMode: z.enum(["monitoring", "blocking"]).default("monitoring"),
+  testId: z.string().trim().min(1).max(80).optional(),
 });
 
 router.get("/catalog", requirePermission("pruebas.read"), (_req, res) => {
