@@ -29,6 +29,7 @@ export default function SecurityTestsPage() {
   const [wafMode, setWafMode] = useState("monitoring");
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
 
@@ -380,6 +381,20 @@ export default function SecurityTestsPage() {
     }
   }
 
+  async function cancelActiveJob() {
+    if (!analyzedJob) return;
+    setCancelling(true);
+    setError("");
+    try {
+      await api.post(`/api/tools/security-tests/jobs/${analyzedJob.id}/cancel`);
+      await load();
+    } catch (cancelError) {
+      setError(getApiErrorMessage(cancelError, "No fue posible cancelar la ejecución"));
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   return (
     <section className="panel tools-page tools-security-tests-page">
       <header className="tools-page-header">
@@ -404,7 +419,10 @@ export default function SecurityTestsPage() {
         <div className="tools-security-launch-controls">
           {testKey === "waf" ? <><label className="tools-filter-field"><span>Perfil</span><select value={profileKey} onChange={(event) => setProfileKey(event.target.value)} disabled={running || loading}>{profiles.map((profile) => <option key={profile.key} value={profile.key} disabled={!profile.configured}>{profile.title}{!profile.configured ? " (configuracion incompleta)" : ""}</option>)}</select></label>
           <label className="tools-filter-field"><span>Modo WAF</span><select value={wafMode} onChange={(event) => setWafMode(event.target.value)} disabled={running || loading}><option value="monitoring">Monitoreo</option><option value="blocking">Bloqueo</option></select></label>
-          <button className="btn-primary" type="button" onClick={() => execute()} disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}>{running ? "Ejecutando..." : "Ejecutar prueba"}</button></> : <span className="tools-security-planned-message">Bot Defense estará disponible en una siguiente implementación.</span>}
+          <button className="btn-primary" type="button" onClick={() => execute()} disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}>{running ? "Ejecutando..." : "Ejecutar prueba"}</button>
+          {["pending", "running"].includes(analyzedJob?.status) ? (
+            <button className="btn-secondary" type="button" onClick={cancelActiveJob} disabled={cancelling}>{cancelling ? "Cancelando..." : "Cancelar"}</button>
+          ) : null}</> : <span className="tools-security-planned-message">Bot Defense estará disponible en una siguiente implementación.</span>}
         </div>
       </article>
 
