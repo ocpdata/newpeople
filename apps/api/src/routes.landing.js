@@ -1669,6 +1669,7 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
             s.payload_normalized_json,
             s.user_notes,
             s.crm_processing_status,
+            s.sent_to_leads_at,
             s.sent_to_leads_by,
             s.landing_page_id,
             lp.slug,
@@ -1686,6 +1687,10 @@ async function processSubmissionIntoCrm(submissionId, workerRunId) {
 
   const submission = rows[0] || null;
   if (!submission) {
+    return;
+  }
+
+  if (!submission.sent_to_leads_at) {
     return;
   }
 
@@ -2114,6 +2119,7 @@ async function processPendingLandingSubmissionsBatch(limit = 20) {
     `SELECT id
      FROM landing_submissions
      WHERE crm_processing_status = ?
+       AND sent_to_leads_at IS NOT NULL
      ORDER BY submitted_at ASC, id ASC
      LIMIT ?`,
     [CRM_STATUS_PENDING, Number(limit)],
