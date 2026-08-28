@@ -52,6 +52,10 @@ export default function SecurityTestsPage() {
     : 0;
   const analysisPercent = Math.round((analysisCompleted / analysisTotal) * 100);
 
+  function getTestSlug(id) {
+    return String(id || "").replace(/^test-(\d+-)?/, "");
+  }
+
   function getResultClassName(label) {
     const normalized = String(label || "").toUpperCase();
     if (normalized.includes("ERROR") || normalized.includes("FALL")) return "error";
@@ -380,7 +384,7 @@ export default function SecurityTestsPage() {
                   <span className="tools-security-analysis-number">{String(index + 1).padStart(2, "0")}</span>
                   <div>
                     <strong>{test.title}</strong>
-                    <span>{test.id} · {test.method} · {test.target}</span>
+                    <span>{getTestSlug(test.id)} · {test.method} · {test.target}</span>
                     <small><b>Resumen:</b> {test.detail}</small>
                     <small><b>Por qué:</b> {state.reason}</small>
                   </div>
@@ -407,7 +411,7 @@ export default function SecurityTestsPage() {
             <div className="tools-security-modal-header">
               <div>
                 <h3 id="security-result-title">{selectedAnalysis.test.title}</h3>
-                <p>{selectedAnalysis.test.id} · {selectedAnalysis.test.method} · {selectedAnalysis.test.target}</p>
+                <p>{getTestSlug(selectedAnalysis.test.id)} · {selectedAnalysis.test.method} · {selectedAnalysis.test.target}</p>
               </div>
               <button className="btn-secondary" type="button" onClick={() => setSelectedAnalysis(null)}>Cerrar</button>
             </div>
