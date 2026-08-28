@@ -120,6 +120,92 @@ export default function SecurityTestsPage() {
     return "La prueba todavía no genera una respuesta.";
   }
 
+  function parseF5Message(rawMessage) {
+    let parsed;
+    try {
+      parsed = JSON.parse(rawMessage);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const signatures = Array.isArray(parsed.signatures) ? parsed.signatures : [];
+    const summaryFields = [
+      { label: "País", value: parsed.country },
+      { label: "Aplicación", value: parsed.app_type },
+      { label: "Cliente", value: parsed.browser_type },
+      { label: "Dispositivo", value: parsed.device_type },
+      { label: "Riesgo de solicitud", value: parsed.req_risk },
+    ].filter((field) => field.value != null && field.value !== "");
+    return { summaryFields, signatures, requestId: parsed.req_id };
+  }
+
+  function renderF5Message(resultRow) {
+    const raw = getF5Message(resultRow);
+    const structured = parseF5Message(raw);
+    if (!structured) return <pre>{raw}</pre>;
+    return (
+      <div className="tools-security-f5-detail">
+        {structured.summaryFields.length ? (
+          <dl className="tools-security-kv-list">
+            {structured.summaryFields.map((field) => (
+              <div key={field.label}><dt>{field.label}</dt><dd>{field.value}</dd></div>
+            ))}
+          </dl>
+        ) : null}
+        {structured.signatures.length ? (
+          <ul className="tools-security-signature-list">
+            {structured.signatures.map((signature, index) => (
+              <li key={`${signature.id || index}`}>
+                <strong>{signature.name || signature.attack_type || "Firma sin nombre"}</strong>
+                <span>{[signature.attack_type, signature.risk && `Riesgo: ${signature.risk}`, signature.accuracy && `Precisión: ${signature.accuracy}`].filter(Boolean).join(" · ")}</span>
+                {signature.matching_info ? <small>{signature.matching_info}</small> : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
+
+  function parseResponseDetail(rawDetail) {
+    if (!rawDetail) return null;
+    const segments = rawDetail.split(";").map((segment) => segment.trim()).filter(Boolean);
+    const pairs = [];
+    const notes = [];
+    for (const segment of segments) {
+      const separatorIndex = segment.indexOf("=");
+      if (separatorIndex > 0) {
+        pairs.push({ key: segment.slice(0, separatorIndex), value: segment.slice(separatorIndex + 1) });
+      } else {
+        notes.push(segment);
+      }
+    }
+    if (!pairs.length && !notes.length) return null;
+    return { pairs, notes };
+  }
+
+  function renderResponseDetail(resultRow) {
+    const raw = getResponseDetail(resultRow);
+    const structured = parseResponseDetail(raw);
+    if (!structured) return <pre>{raw}</pre>;
+    return (
+      <div className="tools-security-response-detail">
+        {structured.pairs.length ? (
+          <dl className="tools-security-kv-list">
+            {structured.pairs.map((pair, index) => (
+              <div key={`${pair.key}-${index}`}><dt>{pair.key}</dt><dd>{pair.value}</dd></div>
+            ))}
+          </dl>
+        ) : null}
+        {structured.notes.length ? (
+          <ul className="tools-security-note-list">
+            {structured.notes.map((note, index) => <li key={index}>{note}</li>)}
+          </ul>
+        ) : null}
+      </div>
+    );
+  }
+
   async function load() {
     const [catalogResponse, jobsResponse] = await Promise.all([
       api.get("/api/tools/security-tests/catalog"),
@@ -263,8 +349,8 @@ export default function SecurityTestsPage() {
               <div><span>Categoría F5</span><strong>{selectedAnalysis.resultRow?.categoria_f5 || "Sin categoría registrada"}</strong></div>
               <div><span>Confianza</span><strong>{selectedAnalysis.resultRow?.confianza_correlacion || "Ninguna"}</strong></div>
             </div>
-            <div className="tools-security-result-block"><span>Mensaje F5</span><pre>{getF5Message(selectedAnalysis.resultRow)}</pre></div>
-            <div className="tools-security-result-block"><span>Detalle de respuesta</span><pre>{getResponseDetail(selectedAnalysis.resultRow)}</pre></div>
+            <div className="tools-security-result-block"><span>Mensaje F5</span>{renderF5Message(selectedAnalysis.resultRow)}</div>
+            <div className="tools-security-result-block"><span>Detalle de respuesta</span>{renderResponseDetail(selectedAnalysis.resultRow)}</div>
             <div className="tools-security-result-meta"><span>ID evento: {selectedAnalysis.resultRow?.id_evento_f5 || "No disponible"}</span><span>ID solicitud: {selectedAnalysis.resultRow?.id_solicitud_f5 || "No disponible"}</span><span>Run ID: {selectedAnalysis.resultRow?.run_id || selectedAnalysis.job?.id || "No disponible"}</span></div>
           </div>
         </div>
