@@ -355,7 +355,7 @@ export default function SecurityTestsPage() {
         <div className="tools-card-heading tools-security-analysis-heading">
           <div>
             <h3>Análisis</h3>
-            <p>{analyzedJob ? `Avance de ${analyzedJob.scriptKey} / ${analyzedJob.profileKey}` : "El avance de los casos aparecerá al iniciar una prueba."}</p>
+            {!analyzedJob ? <p>El avance de los casos aparecerá al iniciar una prueba.</p> : null}
           </div>
           {analyzedJob ? (
             <div className="tools-security-analysis-execution">
