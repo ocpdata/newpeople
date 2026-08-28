@@ -120,12 +120,45 @@ export default function SecurityTestsPage() {
     return "La prueba todavía no genera una respuesta.";
   }
 
+  // Best-effort recovery for JSON messages cut mid-structure (server-side length limits).
+  function repairTruncatedJson(rawMessage) {
+    if (typeof rawMessage !== "string") return null;
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+    let lastSafeIndex = -1;
+    let lastSafeStack = null;
+    for (let index = 0; index < rawMessage.length; index += 1) {
+      const char = rawMessage[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') { inString = true; continue; }
+      if (char === "{" || char === "[") stack.push(char === "{" ? "}" : "]");
+      else if (char === "}" || char === "]") stack.pop();
+      if (char === "," || char === "{" || char === "[") {
+        lastSafeIndex = index;
+        lastSafeStack = stack.slice();
+      }
+    }
+    if (!lastSafeStack || !lastSafeStack.length) return null;
+    const truncated = `${rawMessage.slice(0, lastSafeIndex + 1).replace(/,$/, "")}${lastSafeStack.slice().reverse().join("")}`;
+    try {
+      return JSON.parse(truncated);
+    } catch {
+      return null;
+    }
+  }
+
   function parseF5Message(rawMessage) {
     let parsed;
     try {
       parsed = JSON.parse(rawMessage);
     } catch {
-      return null;
+      parsed = repairTruncatedJson(rawMessage);
     }
     if (!parsed || typeof parsed !== "object") return null;
     const signatures = Array.isArray(parsed.signatures) ? parsed.signatures : [];

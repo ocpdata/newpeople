@@ -207,7 +207,7 @@ f5_event_field() {
 }
 
 f5_event_message() {
-  jq -c '.' "$1" | tr '\t\r\n' '   ' | head -c 2000
+  jq -c '.' "$1" | tr '\t\r\n' '   ' | head -c 8000
 }
 
 find_f5_event() {
