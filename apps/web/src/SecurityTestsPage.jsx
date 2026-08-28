@@ -35,8 +35,9 @@ export default function SecurityTestsPage() {
   const waf = catalog.find((item) => item.key === "waf");
   const profiles = waf?.profiles || [];
   const analyzedJob = jobs[0] || null;
+  const currentTest = analyzedJob?.progress?.currentTest || "";
   const activeTestIndex = WAF_TEST_GUIDE.findIndex(
-    (test) => test.id === analyzedJob?.progress?.currentTest,
+    (test) => test.id === currentTest || currentTest.startsWith(`${test.id}-`),
   );
   const analysisTotal = WAF_TEST_GUIDE.length;
   const analysisCompleted = analyzedJob
@@ -81,10 +82,23 @@ export default function SecurityTestsPage() {
     return rawResult || "Completado";
   }
 
+  // Algunos casos (ej. rate limiting) generan varias filas sufijadas
+  // (test-21-rate-limit-1, -2, ...); se agregan a un solo resultado representativo.
+  function findResultRow(rows, testId) {
+    if (!rows) return undefined;
+    const exact = rows.find((row) => row.prueba === testId || row.test_id === testId);
+    if (exact) return exact;
+    const group = rows.filter((row) => {
+      const rowId = row.prueba || row.test_id || "";
+      return rowId.startsWith(`${testId}-`);
+    });
+    if (!group.length) return undefined;
+    const normalized = (row) => String(row.resultado || row.result || "").toUpperCase();
+    return group.find((row) => normalized(row).includes("PAS")) || group[group.length - 1];
+  }
+
   function getAnalysisState(test, index) {
-    const resultRow = analyzedJob?.result?.rows?.find(
-      (row) => row.prueba === test.id || row.test_id === test.id,
-    );
+    const resultRow = findResultRow(analyzedJob?.result?.rows, test.id);
     if (resultRow) {
       const responseDetail = String(resultRow.detalle_respuesta || "");
       const f5Detail = String(resultRow.detalle_f5 || "");
@@ -391,9 +405,7 @@ export default function SecurityTestsPage() {
           <div className="tools-security-analysis-list">
             {WAF_TEST_GUIDE.map((test, index) => {
               const state = getAnalysisState(test, index);
-              const resultRow = analyzedJob?.result?.rows?.find(
-                (row) => row.prueba === test.id || row.test_id === test.id,
-              );
+              const resultRow = findResultRow(analyzedJob?.result?.rows, test.id);
               return (
                 <article className={`tools-security-analysis-item is-${state.className}`} key={test.id}>
                   <span className="tools-security-analysis-marker" aria-hidden="true" />

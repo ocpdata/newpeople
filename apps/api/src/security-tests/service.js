@@ -22,8 +22,8 @@ const SCRIPT_DEFINITIONS = {
     script: "test-waf.sh",
     profiles: {
       dry_run: { title: "Simulacion", args: ["--dry-run", "--skip-f5"], requires: [] },
-      basic: { title: "Basica sin F5", args: ["--skip-f5"], requires: [] },
-      f5: { title: "Basica con F5 DCS", args: [], requires: ["XC_API_URL", "XC_API_P12_FILE", "XC_P12_PASSWORD", "XC_NAMESPACE", "XC_LB_NAME"] },
+      basic: { title: "Basica sin F5", args: ["--skip-f5", "--rate-limit"], requires: [] },
+      f5: { title: "Basica con F5 DCS", args: ["--rate-limit"], requires: ["XC_API_URL", "XC_API_P12_FILE", "XC_P12_PASSWORD", "XC_NAMESPACE", "XC_LB_NAME"] },
     },
   },
   bot_defense: {
