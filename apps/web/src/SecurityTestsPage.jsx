@@ -6,19 +6,19 @@ import "./tools/tools.css";
 const POLL_MS = 3000;
 
 const WAF_TEST_GUIDE = [
-  { id: "test-01-normal-home", title: "Pagina principal", method: "GET", target: "/", detail: "Solicita la pagina principal para comprobar trafico legitimo y ausencia de falso positivo.", expected: "Respuesta exitosa sin alerta WAF." },
-  { id: "test-public-health", title: "Endpoint de salud", method: "GET", target: "/health", detail: "Consulta el endpoint publico de salud de la aplicacion.", expected: "Respuesta HTTP 200." },
-  { id: "test-02-sensitive-env", title: "Archivo de entorno", method: "GET", target: "/.env", detail: "Intenta acceder a un archivo de configuracion sensible.", expected: "HTTP 403 o 404 y nunca contenido sensible." },
-  { id: "test-03-sensitive-git", title: "Configuracion Git", method: "GET", target: "/.git/config", detail: "Intenta acceder a metadatos del repositorio.", expected: "HTTP 403 o 404 y nunca contenido del repositorio." },
-  { id: "test-05-traversal-path", title: "Recorrido de directorios", method: "GET", target: "Ruta con ../", detail: "Envía una ruta de traversal para comprobar deteccion de acceso fuera del sitio.", expected: "F5 detecta el ataque." },
-  { id: "test-07-sqli-query", title: "Inyeccion SQL", method: "GET", target: "Parametro search", detail: "Envía un patron SQL malicioso en una consulta.", expected: "F5 detecta SQL injection." },
-  { id: "test-09-xss-script", title: "XSS", method: "GET", target: "Parametro q", detail: "Envía una etiqueta script para comprobar la deteccion de XSS.", expected: "F5 detecta cross-site scripting." },
-  { id: "test-11-trace", title: "Metodo TRACE", method: "TRACE", target: "/", detail: "Prueba un metodo HTTP que normalmente no debe estar habilitado.", expected: "HTTP 405 o evento F5." },
-  { id: "test-12-delete", title: "Metodo DELETE", method: "DELETE", target: "/", detail: "Comprueba que un metodo destructivo no sea aceptado en la ruta publica.", expected: "HTTP 405 o evento F5." },
-  { id: "test-13-options", title: "Politica OPTIONS", method: "OPTIONS", target: "/", detail: "Comprueba la respuesta de preflight y la politica CORS.", expected: "Respuesta acorde con la configuracion." },
-  { id: "test-14-tool-user-agent", title: "User-Agent automatizado", method: "GET", target: "/", detail: "Envía un User-Agent de herramienta para validar la politica correspondiente.", expected: "Resultado acorde con la politica configurada." },
-  { id: "test-21-rate-limit", title: "Limite de frecuencia", method: "GET", target: "/", detail: "Perfil opcional: envia un conjunto corto y controlado de solicitudes.", expected: "HTTP 429 o evento de limitacion." },
-  { id: "test-22-origin-bypass", title: "Acceso directo al origen", method: "GET", target: "IP del origen", detail: "Perfil opcional: intenta evitar el Load Balancer de F5.", expected: "El origen no debe ser accesible desde Internet." },
+  { id: "test-01-normal-home", title: "Pagina principal", method: "GET", target: "/", detail: "Solicita la pagina principal para comprobar trafico legitimo y ausencia de falso positivo.", expected: "Respuesta exitosa sin alerta WAF.", kind: "legit" },
+  { id: "test-public-health", title: "Endpoint de salud", method: "GET", target: "/health", detail: "Consulta el endpoint publico de salud de la aplicacion.", expected: "Respuesta HTTP 200.", kind: "legit" },
+  { id: "test-02-sensitive-env", title: "Archivo de entorno", method: "GET", target: "/.env", detail: "Intenta acceder a un archivo de configuracion sensible.", expected: "HTTP 403 o 404 y nunca contenido sensible.", kind: "attack" },
+  { id: "test-03-sensitive-git", title: "Configuracion Git", method: "GET", target: "/.git/config", detail: "Intenta acceder a metadatos del repositorio.", expected: "HTTP 403 o 404 y nunca contenido del repositorio.", kind: "attack" },
+  { id: "test-05-traversal-path", title: "Recorrido de directorios", method: "GET", target: "Ruta con ../", detail: "Envía una ruta de traversal para comprobar deteccion de acceso fuera del sitio.", expected: "F5 detecta el ataque.", kind: "attack" },
+  { id: "test-07-sqli-query", title: "Inyeccion SQL", method: "GET", target: "Parametro search", detail: "Envía un patron SQL malicioso en una consulta.", expected: "F5 detecta SQL injection.", kind: "attack" },
+  { id: "test-09-xss-script", title: "XSS", method: "GET", target: "Parametro q", detail: "Envía una etiqueta script para comprobar la deteccion de XSS.", expected: "F5 detecta cross-site scripting.", kind: "attack" },
+  { id: "test-11-trace", title: "Metodo TRACE", method: "TRACE", target: "/", detail: "Prueba un metodo HTTP que normalmente no debe estar habilitado.", expected: "HTTP 405 o evento F5.", kind: "attack" },
+  { id: "test-12-delete", title: "Metodo DELETE", method: "DELETE", target: "/", detail: "Comprueba que un metodo destructivo no sea aceptado en la ruta publica.", expected: "HTTP 405 o evento F5.", kind: "attack" },
+  { id: "test-13-options", title: "Politica OPTIONS", method: "OPTIONS", target: "/", detail: "Comprueba la respuesta de preflight y la politica CORS.", expected: "Respuesta acorde con la configuracion.", kind: "neutral" },
+  { id: "test-14-tool-user-agent", title: "User-Agent automatizado", method: "GET", target: "/", detail: "Envía un User-Agent de herramienta para validar la politica correspondiente.", expected: "Resultado acorde con la politica configurada.", kind: "neutral" },
+  { id: "test-21-rate-limit", title: "Limite de frecuencia", method: "GET", target: "/", detail: "Perfil opcional: envia un conjunto corto y controlado de solicitudes.", expected: "HTTP 429 o evento de limitacion.", kind: "attack" },
+  { id: "test-22-origin-bypass", title: "Acceso directo al origen", method: "GET", target: "IP del origen", detail: "Perfil opcional: intenta evitar el Load Balancer de F5.", expected: "El origen no debe ser accesible desde Internet.", kind: "attack" },
 ];
 
 export default function SecurityTestsPage() {
@@ -58,10 +58,27 @@ export default function SecurityTestsPage() {
 
   function getResultClassName(label) {
     const normalized = String(label || "").toUpperCase();
-    if (normalized.includes("ERROR") || normalized.includes("FALL")) return "error";
-    if (normalized.includes("REVISAR") || normalized.includes("INCONCLUSIVE")) return "review";
-    if (normalized.includes("PAS") || normalized.includes("PASS")) return "completed";
+    if (normalized.includes("RIESGO") || normalized.includes("FALSO POSITIVO") || normalized.includes("ERROR")) return "error";
+    if (normalized.includes("REVISAR")) return "review";
+    if (normalized.includes("BLOQUE") || normalized.includes("PERMIT")) return "completed";
     return "pending";
+  }
+
+  // Traduce el resultado crudo (PASÓ/FALLÓ/REVISAR/...) a un mensaje explícito
+  // según si el caso espera que el tráfico se bloquee (ataque) o se permita (legítimo).
+  function getExplicitResultLabel(kind, rawResult) {
+    const normalized = String(rawResult || "").toUpperCase();
+    if (normalized.includes("REVISAR") || normalized.includes("INCONCLUSIVE")) return "Revisar manualmente";
+    if (normalized.includes("NO EJECUTADA") || normalized.includes("NOT_RUN")) return "No ejecutada";
+    if (normalized.includes("ERROR")) return "Error en la prueba";
+    if (kind === "attack") {
+      if (normalized.includes("PAS")) return "Bloqueado (correcto)";
+      if (normalized.includes("FALL")) return "No bloqueado (riesgo)";
+    } else if (kind === "legit") {
+      if (normalized.includes("PAS")) return "Permitido (correcto)";
+      if (normalized.includes("FALL")) return "Bloqueado (falso positivo)";
+    }
+    return rawResult || "Completado";
   }
 
   function getAnalysisState(test, index) {
@@ -77,11 +94,10 @@ export default function SecurityTestsPage() {
           `${responseDetail} ${f5Detail}`,
         );
       const sensitiveContent = responseDetail.includes("sensitive_content_detected");
-      const resultLabel = responseRejected
-        ? sensitiveContent
-          ? "FALLÓ"
-          : "PASÓ"
+      const rawResult = responseRejected
+        ? (sensitiveContent ? "FALLÓ" : "PASÓ")
         : resultRow.resultado || resultRow.result || "Completado";
+      const resultLabel = getExplicitResultLabel(test.kind, rawResult);
       return {
         label: resultLabel,
         className: getResultClassName(resultLabel),
