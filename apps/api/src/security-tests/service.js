@@ -112,7 +112,9 @@ export async function createSecurityTestJob({ scriptKey, profileKey, wafMode, te
   if (activeRows.length) {
     throw Object.assign(new Error("Ya existe una prueba en ejecucion"), { status: 409 });
   }
-  await query("DELETE FROM security_test_jobs WHERE status NOT IN ('pending', 'running')");
+  // Only prune jobs past their TTL; keep recent completed jobs so per-test
+  // results from previous runs remain visible when running a single test.
+  await query("DELETE FROM security_test_jobs WHERE status NOT IN ('pending', 'running') AND expires_at < NOW(3)");
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
   await query(
@@ -135,7 +137,7 @@ export async function getSecurityTestJob(publicId, includePrivate = false) {
 
 export async function listSecurityTestJobs(limit = 30) {
   await ensureSecurityTestSchema();
-  const rows = await query("SELECT * FROM security_test_jobs ORDER BY created_at DESC LIMIT 1");
+  const rows = await query("SELECT * FROM security_test_jobs ORDER BY created_at DESC LIMIT ?", [Number(limit)]);
   return rows.map(serialize);
 }
 

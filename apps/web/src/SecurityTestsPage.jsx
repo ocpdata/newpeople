@@ -97,8 +97,33 @@ export default function SecurityTestsPage() {
     return group.find((row) => normalized(row).includes("PAS")) || group[group.length - 1];
   }
 
+  // Recorre el historial de jobs (mas reciente primero) y devuelve el ultimo
+  // resultado disponible para un caso, sin importar en que job se haya generado.
+  function findLatestJobForTest(jobsList, testId) {
+    for (const job of jobsList || []) {
+      const resultRow = findResultRow(job?.result?.rows, testId);
+      if (resultRow) return { job, resultRow };
+    }
+    return null;
+  }
+
+  // Un job que corrio un solo caso (testId) solo debe afectar el estado de ESE caso;
+  // los demas conservan su ultimo resultado conocido del historial.
+  function resolveTestResult(test) {
+    const isTargetOfCurrentJob = Boolean(
+      analyzedJob && (!analyzedJob.options?.testId || analyzedJob.options.testId === test.id),
+    );
+    const currentJobRow = isTargetOfCurrentJob ? findResultRow(analyzedJob?.result?.rows, test.id) : undefined;
+    const historical = currentJobRow ? { job: analyzedJob, resultRow: currentJobRow } : findLatestJobForTest(jobs, test.id);
+    return {
+      isTargetOfCurrentJob,
+      resultRow: historical?.resultRow,
+      sourceJob: historical?.job || analyzedJob,
+    };
+  }
+
   function getAnalysisState(test, index) {
-    const resultRow = findResultRow(analyzedJob?.result?.rows, test.id);
+    const { isTargetOfCurrentJob, resultRow, sourceJob } = resolveTestResult(test);
     if (resultRow) {
       const responseDetail = String(resultRow.detalle_respuesta || "");
       const f5Detail = String(resultRow.detalle_f5 || "");
@@ -119,23 +144,25 @@ export default function SecurityTestsPage() {
         reason: responseRejected && !sensitiveContent
           ? "La respuesta contiene Request Rejected; F5 bloqueo la solicitud aunque devolviera HTTP 200."
           : resultRow.que_ocurrio || resultRow.details || "El reporte contiene un resultado para este caso.",
+        job: sourceJob,
       };
     }
-    if (["pending", "running"].includes(analyzedJob?.status)) {
+    if (isTargetOfCurrentJob && ["pending", "running"].includes(analyzedJob?.status)) {
       if (index === activeTestIndex) {
-        return { label: "En ejecución", className: "running", detail: "Procesando este caso", reason: "La solicitud de este caso se está procesando en el servidor." };
+        return { label: "En ejecución", className: "running", detail: "Procesando este caso", reason: "La solicitud de este caso se está procesando en el servidor.", job: sourceJob };
       }
       if (activeTestIndex > index) {
-        return { label: "Completado", className: "completed", detail: "Caso procesado", reason: "El servidor ya avanzó al siguiente caso." };
+        return { label: "Completado", className: "completed", detail: "Caso procesado", reason: "El servidor ya avanzó al siguiente caso.", job: sourceJob };
       }
+      return { label: "Pendiente", className: "pending", detail: "Esperando ejecución", reason: "Este caso todavía no ha sido procesado.", job: sourceJob };
     }
-    if (analyzedJob?.status === "completed") {
-        return { label: "No reportado", className: "pending", detail: "No aparece en el reporte generado", reason: "La ejecución terminó sin incluir una fila para este caso." };
+    if (isTargetOfCurrentJob && analyzedJob?.status === "completed") {
+        return { label: "No reportado", className: "pending", detail: "No aparece en el reporte generado", reason: "La ejecución terminó sin incluir una fila para este caso.", job: sourceJob };
     }
-      if (analyzedJob?.status === "failed" || analyzedJob?.status === "timeout") {
-        return { label: "No ejecutado", className: "pending", detail: "La ejecución terminó antes de llegar a este caso", reason: analyzedJob.error?.message || "La ejecución no pudo completar todos los casos." };
+      if (isTargetOfCurrentJob && (analyzedJob?.status === "failed" || analyzedJob?.status === "timeout")) {
+        return { label: "No ejecutado", className: "pending", detail: "La ejecución terminó antes de llegar a este caso", reason: analyzedJob.error?.message || "La ejecución no pudo completar todos los casos.", job: sourceJob };
       }
-      return { label: "Pendiente", className: "pending", detail: "Esperando ejecución", reason: "Este caso todavía no ha sido procesado." };
+      return { label: "Pendiente", className: "pending", detail: "Esperando ejecución", reason: "Este caso todavía no ha sido procesado.", job: sourceJob };
   }
 
   function getF5Message(resultRow) {
@@ -405,7 +432,7 @@ export default function SecurityTestsPage() {
           <div className="tools-security-analysis-list">
             {WAF_TEST_GUIDE.map((test, index) => {
               const state = getAnalysisState(test, index);
-              const resultRow = findResultRow(analyzedJob?.result?.rows, test.id);
+              const { resultRow, sourceJob } = resolveTestResult(test);
               return (
                 <article className={`tools-security-analysis-item is-${state.className}`} key={test.id}>
                   <span className="tools-security-analysis-marker" aria-hidden="true" />
@@ -429,7 +456,7 @@ export default function SecurityTestsPage() {
                   <button
                     className="tools-security-analysis-info"
                     type="button"
-                    onClick={() => setSelectedAnalysis({ test, state, resultRow, job: analyzedJob })}
+                    onClick={() => setSelectedAnalysis({ test, state, resultRow, job: sourceJob })}
                     title={`Ver detalle de ${test.title}`}
                     aria-label={`Ver detalle de ${test.title}`}
                   >
