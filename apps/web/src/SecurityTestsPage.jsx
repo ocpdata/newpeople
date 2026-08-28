@@ -386,7 +386,7 @@ export default function SecurityTestsPage() {
                     <strong>{test.title}</strong>
                     <span>{getTestSlug(test.id)} · {test.method} · {test.target}</span>
                     <small><b>Resumen:</b> {test.detail}</small>
-                    <small><b>Por qué:</b> {state.reason}</small>
+                    <small><b>Resultado:</b> {state.reason}</small>
                   </div>
                   <b>{state.label}</b>
                   <button
