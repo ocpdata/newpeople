@@ -62,10 +62,10 @@
 
 .tools-security-test-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
   gap: 10px;
   width: 100%;
-  max-width: 470px;
+  max-width: 720px;
 }
 
 .tools-security-test-option {
@@ -150,13 +150,24 @@
   min-width: 220px;
 }
 
-.tools-security-launch-controls select {
+.tools-security-launch-controls select,
+.tools-security-launch-controls input[type="number"] {
   min-height: 40px;
   border-color: #b8cbea;
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.9);
   color: #13263d;
   font-weight: 600;
+}
+
+.tools-security-dos-confirmation {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .tools-security-launch-controls .btn-primary {
@@ -298,8 +309,12 @@
 }
 
 @keyframes tools-security-indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(250%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }
 
 .tools-security-analysis-item {
@@ -536,7 +551,11 @@
   border-radius: 8px;
   background: #f8fafc;
   color: #334e68;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    12px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1101,8 +1120,16 @@
     max-width: none;
   }
 
-  .tools-security-launch-controls .tools-filter-field {
-    flex-basis: auto;
+  .tools-security-launch-fields {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .tools-security-launch-controls .tools-filter-field,
+  .tools-security-launch-fields .tools-filter-field:first-child {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
   }
 
   .tools-security-job {
@@ -1110,11 +1137,30 @@
   }
 
   .tools-security-analysis-item {
-    grid-template-columns: 10px 34px minmax(0, 1fr) auto auto 32px;
+    grid-template-columns: 10px 34px minmax(0, 1fr) 32px;
+    align-items: start;
+  }
+
+  .tools-security-analysis-item > div {
+    grid-column: 3 / -1;
   }
 
   .tools-security-analysis-item b {
+    grid-column: 3;
+  }
+
+  .tools-security-analysis-run {
+    grid-column: 3;
+    justify-self: start;
+  }
+
+  .tools-security-analysis-info {
     grid-column: 4;
+  }
+
+  .tools-security-item-progress-row {
+    flex-direction: column;
+    gap: 6px;
   }
 
   .tools-security-result-grid {

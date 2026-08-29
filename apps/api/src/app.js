@@ -80,6 +80,14 @@ export function createApp() {
     res.json({ ok: true, dbNow: nowRows[0].now });
   });
 
+  app.get("/api/accounts/l7-dos-test", (req, res) => {
+    const testId = String(req.get("X-DOS-Test-ID") || "");
+    const runId = String(req.get("X-DOS-Run-ID") || "");
+    if (!/^dos-[a-z0-9-]+$/i.test(testId) || !/^dos-[a-z0-9-]+$/i.test(runId))
+      return res.sendStatus(404);
+    return res.set("Cache-Control", "no-store").status(204).end();
+  });
+
   app.use("/api/public", quotationPublicRoutes);
   app.use("/api/public", publicCampaignEmailRoutes);
   app.use("/", publicLandingRoutes);

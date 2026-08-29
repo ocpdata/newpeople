@@ -81,6 +81,18 @@ instalado, ejecuta:
 npx playwright install chromium
 ```
 
+En una VM Linux sin entorno grafico, instala tambien las dependencias de
+Chromium y Xvfb:
+
+```bash
+sudo npx playwright install-deps chromium
+sudo apt-get install -y xvfb xauth
+```
+
+La API detecta que no existe `DISPLAY` y ejecuta automaticamente la prueba con
+`xvfb-run -a`. Asi conserva el navegador visible del perfil que representa al
+usuario legitimo mediante un display virtual.
+
 ## 4. Modo simulacion
 
 La simulacion no abre el navegador ni envia solicitudes:

@@ -22,6 +22,9 @@ const cancelledJobs = new Set();
 // Debe coincidir con RATE_LIMIT_REQUESTS en scripts/test-waf.sh.
 const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
 const RATE_LIMIT_TOTAL_REQUESTS = 5;
+const DOS_TOTAL_STAGES = 5;
+const DEFAULT_DOS_THRESHOLD_RPS = 100;
+const DEFAULT_DOS_MAX_RPS_ALLOWED = 120;
 
 const SCRIPT_DEFINITIONS = {
   waf: {
@@ -60,6 +63,31 @@ const SCRIPT_DEFINITIONS = {
         requires: [
           "WAF_LOGIN_EMAIL",
           "WAF_LOGIN_PASSWORD",
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
+      },
+    },
+  },
+  l7_dos: {
+    title: "DoS L7",
+    description:
+      "Valida de forma controlada el umbral RPS, la mitigacion y la recuperacion ante F5 DCS.",
+    script: "test-l7-dos.mjs",
+    defaults: {
+      thresholdRps: DEFAULT_DOS_THRESHOLD_RPS,
+      maxRpsAllowed: Number(
+        process.env.DOS_MAX_RPS_ALLOWED || DEFAULT_DOS_MAX_RPS_ALLOWED,
+      ),
+    },
+    profiles: {
+      f5: {
+        title: "Prueba controlada DoS L7 con F5 DCS",
+        args: [],
+        requires: [
           "XC_API_URL",
           "XC_API_P12_FILE",
           "XC_P12_PASSWORD",
@@ -144,6 +172,7 @@ export function listSecurityTestCatalog() {
     title: definition.title,
     description: definition.description,
     planned: Boolean(definition.planned),
+    defaults: definition.defaults || {},
     profiles: Object.entries(definition.profiles).map(
       ([profileKey, profile]) => ({
         key: profileKey,
@@ -162,6 +191,7 @@ export async function createSecurityTestJob({
   profileKey,
   wafMode,
   testId,
+  dosThresholdRps,
   requestedByUserId,
   req,
 }) {
@@ -195,10 +225,32 @@ export async function createSecurityTestJob({
   );
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
+  const maxDosRpsAllowed = Number(
+    process.env.DOS_MAX_RPS_ALLOWED || DEFAULT_DOS_MAX_RPS_ALLOWED,
+  );
+  const maxDosThresholdRps = Math.floor(maxDosRpsAllowed / 1.2);
+  const selectedDosThresholdRps = Number(
+    dosThresholdRps || DEFAULT_DOS_THRESHOLD_RPS,
+  );
+  if (
+    scriptKey === "l7_dos" &&
+    (!Number.isInteger(selectedDosThresholdRps) ||
+      selectedDosThresholdRps < 10 ||
+      selectedDosThresholdRps > maxDosThresholdRps)
+  ) {
+    throw Object.assign(
+      new Error(
+        `El umbral DoS debe estar entre 10 y ${maxDosThresholdRps} RPS`,
+      ),
+      { status: 400 },
+    );
+  }
   const stepsTotal =
     scriptKey === "waf" && (!testId || testId === RATE_LIMIT_TEST_ID)
       ? RATE_LIMIT_TOTAL_REQUESTS
-      : undefined;
+      : scriptKey === "l7_dos"
+        ? DOS_TOTAL_STAGES
+        : undefined;
   await query(
     `INSERT INTO security_test_jobs (public_id, script_key, profile_key, requested_by_user_id, options_json, expires_at)
      VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL ? HOUR))`,
@@ -207,7 +259,14 @@ export async function createSecurityTestJob({
       scriptKey,
       profileKey,
       Number(requestedByUserId),
-      JSON.stringify({ wafMode, testId: testId || null, stepsTotal }),
+      JSON.stringify({
+        wafMode,
+        testId: testId || null,
+        stepsTotal,
+        ...(scriptKey === "l7_dos"
+          ? { dosThresholdRps: selectedDosThresholdRps }
+          : {}),
+      }),
       JOB_TTL_HOURS,
     ],
   );
@@ -312,13 +371,15 @@ async function executeJob(job) {
     `.security-test-${job.public_id}.tsv`,
   );
   const options = parseJson(job.options_json, {});
-  const args = options.testId
-    ? [...selected.profile.args, "--only", options.testId]
-    : selected.profile.args;
+  const args = [...selected.profile.args];
+  if (job.script_key === "l7_dos")
+    args.push("--threshold-rps", String(options.dosThresholdRps));
+  if (options.testId) args.push("--only", options.testId);
   const env = {
     ...process.env,
     WAF_TEST_OUTPUT: outputFile,
     BOT_TEST_OUTPUT: outputFile,
+    DOS_TEST_OUTPUT: outputFile,
     XC_WAF_MODE: options.wafMode || "monitoring",
   };
   try {
@@ -372,7 +433,15 @@ async function executeJob(job) {
 
 function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(scriptPath, args, {
+    const needsVirtualDisplay =
+      process.platform === "linux" &&
+      args.includes("--headed") &&
+      !String(env.DISPLAY || "").trim();
+    const command = needsVirtualDisplay ? "xvfb-run" : scriptPath;
+    const commandArgs = needsVirtualDisplay
+      ? ["-a", scriptPath, ...args]
+      : args;
+    const child = spawn(command, commandArgs, {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -390,7 +459,9 @@ function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
       if (stream === "stdout")
         stdout = `${stdout}${text}`.slice(-MAX_OUTPUT_LENGTH);
       else stderr = `${stderr}${text}`.slice(-MAX_OUTPUT_LENGTH);
-      for (const match of text.matchAll(/\b((?:test|bot)-[a-z0-9-]+)\b/gi)) {
+      for (const match of text.matchAll(
+        /\b((?:test|bot|dos)-[a-z0-9-]+)\b/gi,
+      )) {
         const testId = match[1];
         seenTests.add(testId);
         progress = {

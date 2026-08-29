@@ -177,12 +177,78 @@ const BOT_DEFENSE_TEST_GUIDE = [
   },
 ];
 
+const L7_DOS_TEST_GUIDE = [
+  {
+    id: "dos-baseline",
+    title: "Linea base",
+    method: "GET",
+    target: "/api/accounts/l7-dos-test",
+    detail:
+      "Genera el 10% del umbral para medir la respuesta normal del servicio.",
+    expected: "Trafico permitido sin mitigacion.",
+    kind: "legit",
+    threatLevel: "Bajo (carga controlada)",
+  },
+  {
+    id: "dos-pre-threshold",
+    title: "Preumbral",
+    method: "GET",
+    target: "/api/accounts/l7-dos-test",
+    detail:
+      "Genera el 80% del umbral para comprobar que F5 no mitigue anticipadamente.",
+    expected: "Trafico permitido sin mitigacion.",
+    kind: "legit",
+    threatLevel: "Medio (carga sostenida)",
+  },
+  {
+    id: "dos-threshold",
+    title: "Umbral",
+    method: "GET",
+    target: "/api/accounts/l7-dos-test",
+    detail:
+      "Sostiene el RPS configurado para observar el momento de activacion.",
+    expected: "Comportamiento acorde con el umbral configurado.",
+    kind: "neutral",
+    threatLevel: "Alto (umbral de mitigacion)",
+  },
+  {
+    id: "dos-over-threshold",
+    title: "Sobreumbral",
+    method: "GET",
+    target: "/api/accounts/l7-dos-test",
+    detail:
+      "Genera el 120% del umbral para validar el evento y la accion Block.",
+    expected: "Evento DoS L7 y mitigacion Block.",
+    kind: "attack",
+    threatLevel: "Alto (sobrecarga HTTP controlada)",
+  },
+  {
+    id: "dos-recovery",
+    title: "Recuperacion",
+    method: "GET",
+    target: "/api/accounts/l7-dos-test",
+    detail:
+      "Reduce la carga al 10% para verificar que el servicio vuelva a responder normalmente.",
+    expected: "Servicio estable despues de la mitigacion.",
+    kind: "legit",
+    threatLevel: "Bajo (verificacion posterior)",
+  },
+];
+
+const TEST_GUIDES = {
+  waf: WAF_TEST_GUIDE,
+  bot_defense: BOT_DEFENSE_TEST_GUIDE,
+  l7_dos: L7_DOS_TEST_GUIDE,
+};
+
 export default function SecurityTestsPage() {
   const [catalog, setCatalog] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [profileKey, setProfileKey] = useState("f5");
   const [testKey, setTestKey] = useState("waf");
   const [wafMode, setWafMode] = useState("blocking");
+  const [dosThresholdRps, setDosThresholdRps] = useState(100);
+  const [dosConfirmed, setDosConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -191,10 +257,9 @@ export default function SecurityTestsPage() {
   const [f5Banner, setF5Banner] = useState(null);
   const stepProgressMaxRef = useRef({});
 
-  const waf = catalog.find((item) => item.key === testKey);
-  const profiles = waf?.profiles || [];
-  const activeGuide =
-    testKey === "bot_defense" ? BOT_DEFENSE_TEST_GUIDE : WAF_TEST_GUIDE;
+  const activeTestDefinition = catalog.find((item) => item.key === testKey);
+  const profiles = activeTestDefinition?.profiles || [];
+  const activeGuide = TEST_GUIDES[testKey] || [];
   const analyzedJob = jobs.find((job) => job.scriptKey === testKey) || null;
   const currentTest = analyzedJob?.progress?.currentTest || "";
   const activeTestIndex = activeGuide.findIndex(
@@ -244,7 +309,7 @@ export default function SecurityTestsPage() {
   const analysisPercent = Math.round((analysisCompleted / analysisTotal) * 100);
 
   function getTestSlug(id) {
-    return String(id || "").replace(/^(test|bot)-(\d+-)?/, "");
+    return String(id || "").replace(/^(test|bot|dos)-(\d+-)?/, "");
   }
 
   function getResultClassName(label) {
@@ -270,6 +335,16 @@ export default function SecurityTestsPage() {
   function getExplicitResultLabel(kind, rawResult) {
     const normalized = String(rawResult || "").toUpperCase();
     if (normalized.includes("PASS_NO_EVENT")) return "Sin evento (correcto)";
+    if (normalized.includes("PASS_NO_MITIGATION"))
+      return "Sin mitigacion (correcto)";
+    if (normalized.includes("PASS_RECOVERED"))
+      return "Servicio recuperado (correcto)";
+    if (normalized.includes("FAIL_EARLY_BLOCK"))
+      return "Mitigacion anticipada (riesgo)";
+    if (normalized.includes("FAIL_ORIGIN_DEGRADED"))
+      return "Servicio degradado (riesgo)";
+    if (normalized.includes("FAIL_NOT_BLOCKED"))
+      return "Detectado sin bloqueo (riesgo)";
     if (normalized.includes("FAIL_UNEXPECTED_EVENT"))
       return "Evento inesperado (falso positivo)";
     if (normalized.includes("PASS_BLOCKED"))
@@ -588,6 +663,10 @@ export default function SecurityTestsPage() {
         className: "pending",
         detail: "La ejecución terminó antes de llegar a este caso",
         reason:
+          String(analyzedJob.stderr || "")
+            .trim()
+            .split("\n")
+            .at(-1) ||
           analyzedJob.error?.message ||
           "La ejecución no pudo completar todos los casos.",
         job: sourceJob,
@@ -883,15 +962,18 @@ export default function SecurityTestsPage() {
     return () => clearInterval(timer);
   }, [jobs]);
 
-  // Cada tipo de prueba (WAF/Bot Defense) tiene sus propios perfiles; si el
-  // perfil actual no aplica al tipo seleccionado, cae al primero disponible.
-  useEffect(() => {
-    const item = catalog.find((entry) => entry.key === testKey);
+  function selectTest(nextTestKey) {
+    const item = catalog.find((entry) => entry.key === nextTestKey);
     const list = item?.profiles || [];
     if (list.length && !list.some((profile) => profile.key === profileKey)) {
       setProfileKey(list[0].key);
     }
-  }, [testKey, catalog]);
+    if (nextTestKey === "l7_dos" && item?.defaults?.thresholdRps) {
+      setDosThresholdRps(Number(item.defaults.thresholdRps));
+      setDosConfirmed(false);
+    }
+    setTestKey(nextTestKey);
+  }
 
   async function execute(testId) {
     setRunning(true);
@@ -901,6 +983,9 @@ export default function SecurityTestsPage() {
         scriptKey: testKey,
         profileKey,
         wafMode,
+        ...(testKey === "l7_dos"
+          ? { dosThresholdRps, dosConfirmed: true }
+          : {}),
         ...(testId ? { testId } : {}),
       });
       await load();
@@ -957,7 +1042,7 @@ export default function SecurityTestsPage() {
           <button
             type="button"
             className={`tools-security-test-option ${testKey === "waf" ? "is-selected" : ""}`}
-            onClick={() => setTestKey("waf")}
+            onClick={() => selectTest("waf")}
           >
             <strong>WAF</strong>
             <span>Disponible</span>
@@ -968,13 +1053,25 @@ export default function SecurityTestsPage() {
           <button
             type="button"
             className={`tools-security-test-option ${testKey === "bot_defense" ? "is-selected" : ""}`}
-            onClick={() => setTestKey("bot_defense")}
+            onClick={() => selectTest("bot_defense")}
           >
             <strong>Bot Defense</strong>
             <span>Disponible</span>
             <small>
               Valida perfiles de navegación con y sin JavaScript, y navegadores
               headless, ante F5 DCS.
+            </small>
+          </button>
+          <button
+            type="button"
+            className={`tools-security-test-option ${testKey === "l7_dos" ? "is-selected" : ""}`}
+            onClick={() => selectTest("l7_dos")}
+          >
+            <strong>DoS L7</strong>
+            <span>Disponible</span>
+            <small>
+              Valida el umbral RPS, la mitigacion Block y la recuperacion ante
+              F5 DCS.
             </small>
           </button>
         </div>
@@ -1012,7 +1109,41 @@ export default function SecurityTestsPage() {
                 </select>
               </label>
             ) : null}
+            {testKey === "l7_dos" ? (
+              <label className="tools-filter-field">
+                <span>Umbral RPS</span>
+                <input
+                  type="number"
+                  min="10"
+                  max={Math.floor(
+                    Number(
+                      activeTestDefinition?.defaults?.maxRpsAllowed || 120,
+                    ) / 1.2,
+                  )}
+                  value={dosThresholdRps}
+                  onChange={(event) => {
+                    setDosThresholdRps(Number(event.target.value));
+                    setDosConfirmed(false);
+                  }}
+                  disabled={running || loading}
+                />
+              </label>
+            ) : null}
           </div>
+          {testKey === "l7_dos" ? (
+            <label className="tools-security-dos-confirmation">
+              <input
+                type="checkbox"
+                checked={dosConfirmed}
+                onChange={(event) => setDosConfirmed(event.target.checked)}
+                disabled={running || loading}
+              />
+              <span>
+                Confirmo la carga controlada hasta{" "}
+                {Math.ceil(dosThresholdRps * 1.2)} RPS
+              </span>
+            </label>
+          ) : null}
           <button
             className="btn-primary"
             type="button"
@@ -1020,6 +1151,7 @@ export default function SecurityTestsPage() {
             disabled={
               running ||
               loading ||
+              (testKey === "l7_dos" && !dosConfirmed) ||
               !profiles.some(
                 (profile) => profile.key === profileKey && profile.configured,
               )
@@ -1150,7 +1282,11 @@ export default function SecurityTestsPage() {
                     ? "Análisis cancelado por el usuario."
                     : analyzedJob.status === "failed" ||
                         analyzedJob.status === "timeout"
-                      ? "Análisis interrumpido antes de completarse."
+                      ? String(analyzedJob.stderr || "")
+                          .trim()
+                          .split("\n")
+                          .at(-1) ||
+                        "Análisis interrumpido antes de completarse."
                       : f5Banner
                         ? "Solicitudes enviadas; correlacionando con F5 DCS…"
                         : analyzedJob.progress?.currentTest
@@ -1271,6 +1407,7 @@ export default function SecurityTestsPage() {
                       disabled={
                         running ||
                         loading ||
+                        (testKey === "l7_dos" && !dosConfirmed) ||
                         !profiles.some(
                           (profile) =>
                             profile.key === profileKey && profile.configured,
