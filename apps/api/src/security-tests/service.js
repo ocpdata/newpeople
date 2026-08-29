@@ -196,7 +196,9 @@ export async function createSecurityTestJob({
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
   const stepsTotal =
-    testId === RATE_LIMIT_TEST_ID ? RATE_LIMIT_TOTAL_REQUESTS : undefined;
+    scriptKey === "waf" && (!testId || testId === RATE_LIMIT_TEST_ID)
+      ? RATE_LIMIT_TOTAL_REQUESTS
+      : undefined;
   await query(
     `INSERT INTO security_test_jobs (public_id, script_key, profile_key, requested_by_user_id, options_json, expires_at)
      VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL ? HOUR))`,

@@ -279,6 +279,10 @@ evaluate_final_result() {
     [[ "$test_id" == test-22-* ]] && printf 'PASS' || printf 'ERROR'
     return
   fi
+  if [[ "$test_id" == test-15-* && ( "$http_notes" == *"token was not returned"* || "$http_notes" == *"no token field was present"* ) ]]; then
+    printf 'ERROR'
+    return
+  fi
   if expects_f5_protection "$test_id" && [[ "$http_notes" == *"response_f5_rejected"* || "$http_notes" == *"response_message=Request Rejected"* ]]; then
     [[ "$http_notes" == *"sensitive_content_detected"* ]] && printf 'FAIL' || printf 'PASS'
     return
@@ -391,7 +395,9 @@ explain_final_result() {
     return
   fi
   if [[ "$final_result" == "ERROR" ]]; then
-    if [[ "$http_status" == "000" ]]; then
+    if [[ "$test_id" == test-15-* && ( "$http_notes" == *"token was not returned"* || "$http_notes" == *"no token field was present"* ) ]]; then
+      printf 'El inicio de sesion respondio HTTP %s, pero no devolvio un token valido.' "$http_status"
+    elif [[ "$http_status" == "000" ]]; then
       printf 'No se recibió respuesta HTTP del sitio.'
     else
       printf 'No fue posible consultar o interpretar los eventos de F5.'
@@ -707,7 +713,7 @@ json_payload() {
 
 extract_token() {
   if command -v jq >/dev/null 2>&1; then
-    jq -r '.token // empty'
+    jq -er '.token // empty' 2>/dev/null
   else
     node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(0,"utf8")); if(value.token) process.stdout.write(value.token);'
   fi
@@ -743,7 +749,7 @@ obtain_login_token() {
     [[ -s "$TMP_DIR/login-error" ]] && sed 's/^/  curl: /' "$TMP_DIR/login-error" >&2
     return 1
   fi
-  TOKEN="$(extract_token < "$login_body")"
+  TOKEN="$(extract_token < "$login_body" || true)"
   if [[ -z "$TOKEN" ]]; then
     printf 'test-15-login-token | HTTP %s | la respuesta no contiene token\n' "$login_status" >&2
     append_result_row "test-15-login-token" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "POST" "$login_url" "login token generation" "Token generado" "$login_status" "ERROR" "unexpected_status" "Login response arrived but no token field was present"
@@ -771,7 +777,7 @@ should_run "test-13-options" && request_get "test-13-options" "Respuesta acorde 
 should_run "test-14-tool-user-agent" && request_get "test-14-tool-user-agent" "Resultado segun la politica configurada" "$BASE_URL/" -A 'waf-validation-test'
 
 if [[ -n "$LOGIN_EMAIL" ]] && should_run "test-15-login-token"; then
-  obtain_login_token || exit 1
+  obtain_login_token || true
 fi
 
 if [[ -n "$API_PATH" ]] && should_run "test-16-api-sqli"; then

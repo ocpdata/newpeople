@@ -394,9 +394,11 @@ export default function SecurityTestsPage() {
   // El stdout puede llegar fragmentado (ej. "test-21-rate-limit-" sin el numero),
   // asi que nunca se permite que el conteo mostrado retroceda para el mismo job.
   function getStepProgress(test) {
+    if (test.id !== "test-21-rate-limit") return null;
     const total = Number(analyzedJob?.options?.stepsTotal || 0);
     if (!total) return null;
-    const isTargetOfCurrentJob = analyzedJob?.options?.testId === test.id;
+    const isTargetOfCurrentJob =
+      !analyzedJob?.options?.testId || analyzedJob.options.testId === test.id;
     if (
       !isTargetOfCurrentJob ||
       !["pending", "running"].includes(analyzedJob?.status)
@@ -528,20 +530,20 @@ export default function SecurityTestsPage() {
       isTargetOfCurrentJob &&
       ["pending", "running"].includes(analyzedJob?.status)
     ) {
+      const correlation = analyzedJob.progress?.f5Correlation;
+      if (correlation?.active) {
+        return {
+          label: "Esperando F5 DCS",
+          className: "running",
+          detail: "Solicitud enviada; esperando confirmación de F5",
+          reason: `Solicitud enviada y respondida; esperando la correlación con F5 DCS (intento ${correlation.attempt} de ${correlation.total}).`,
+          job: sourceJob,
+          waitingForF5: correlation,
+        };
+      }
       const isSingleTestJob = Boolean(analyzedJob.options?.testId);
       const isCurrentRow = isSingleTestJob || index === activeTestIndex;
       if (isCurrentRow) {
-        const correlation = analyzedJob.progress?.f5Correlation;
-        if (correlation?.active) {
-          return {
-            label: "Esperando F5 DCS",
-            className: "running",
-            detail: "Solicitud enviada; esperando confirmación de F5",
-            reason: `Solicitud enviada y respondida; esperando la correlación con F5 DCS (intento ${correlation.attempt} de ${correlation.total}).`,
-            job: sourceJob,
-            waitingForF5: correlation,
-          };
-        }
         return {
           label: "En ejecución",
           className: "running",
