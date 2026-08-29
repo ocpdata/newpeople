@@ -26,20 +26,20 @@ cliente y la accion aplicada.
 Para que Bot Defense pueda evaluar el login, configura un Protected App
 Endpoint con estos valores:
 
-| Campo | Valor recomendado |
-|---|---|
-| Name | `newpip-login` |
-| Description | `Endpoint de inicio de sesion de NewPeople` |
-| HTTP Methods | `POST` |
-| Endpoint Label | `Login` o `Authentication` |
-| Protocol | `BOTH` |
-| Domain Matcher | `newpip.digitalvs.com` |
-| Path Match | `Exact` |
-| Prefix/path | `/api/auth/login` |
-| HTTP Query Parameters | Ninguno inicialmente |
-| HTTP Headers | Ninguno inicialmente |
-| Traffic Channel | `Web Traffic` |
-| Bot Traffic Mitigation | `Flag` durante la validacion |
+| Campo                      | Valor recomendado                                      |
+| -------------------------- | ------------------------------------------------------ |
+| Name                       | `newpip-login`                                         |
+| Description                | `Endpoint de inicio de sesion de NewPeople`            |
+| HTTP Methods               | `POST`                                                 |
+| Endpoint Label             | `Login` o `Authentication`                             |
+| Protocol                   | `BOTH`                                                 |
+| Domain Matcher             | `newpip.digitalvs.com`                                 |
+| Path Match                 | `Exact`                                                |
+| Prefix/path                | `/api/auth/login`                                      |
+| HTTP Query Parameters      | Ninguno inicialmente                                   |
+| HTTP Headers               | Ninguno inicialmente                                   |
+| Traffic Channel            | `Web Traffic`                                          |
+| Bot Traffic Mitigation     | `Flag` durante la validacion                           |
 | Include Mitigation Headers | `No Headers`, salvo que F5 requiera otra configuracion |
 
 La aplicacion usa el endpoint:
@@ -107,18 +107,22 @@ Ejecuta una iteracion de cada perfil:
 ```
 
 El script visita la pagina principal con un contexto nuevo por perfil. Registra
-las respuestas del dominio y el estado de JavaScript.
+las respuestas del dominio y el estado de JavaScript. Despues de cargar el
+sensor, usa `WAF_LOGIN_EMAIL` y `WAF_LOGIN_PASSWORD`, las mismas credenciales de
+prueba usadas por WAF, para iniciar sesion en `/api/auth/login`. El reporte debe
+incluir `protected_endpoint_status=200` cuando las credenciales son validas (o
+la respuesta de mitigacion configurada en F5).
 
 Resultado local esperado:
 
 ```text
-bot-browser-headless-1 | perfil: browser-headless | HTTP 200 | REVIEW_F5
-bot-headless-1 | perfil: headless | HTTP 200 | REVIEW_F5
-bot-javascript-disabled-1 | perfil: javascript-disabled | HTTP 200 | REVIEW_F5
+F5_CORRELATION: attempt=1 total=4
+F5_CORRELATION: done state=QUERIED
+Resultados correlacionados con eventos de Bot Defense en F5 DCS.
 ```
 
-`REVIEW_F5` no significa aprobado ni bloqueado. Significa que debes consultar
-el evento correspondiente en F5.
+F5 puede tardar en indexar los eventos. El script espera y reintenta la consulta
+antes de generar el reporte final.
 
 ## 6. Prueba con navegador visible
 
@@ -136,17 +140,9 @@ clasifique la automatización de Playwright de otra manera.
 
 ## 7. Prueba con login de cuenta de pruebas
 
-Proporciona el correo mediante variable de entorno. El password se solicita de
-forma oculta si no existe `WAF_LOGIN_PASSWORD`:
-
-```bash
-export WAF_LOGIN_EMAIL='usuario-pruebas@example.com'
-./scripts/test-bot-defense.mjs \
-  --output /tmp/bot-defense-login.tsv
-```
-
-También puedes proporcionar el password por variable, aunque el prompt
-interactivo evita dejarlo en el historial:
+Bot Defense reutiliza las mismas variables de credenciales que WAF. Para
+ejecutar las pruebas desde la aplicacion, configura ambas en `apps/api/.env` y
+reinicia la API:
 
 ```bash
 export WAF_LOGIN_EMAIL='usuario-pruebas@example.com'
@@ -197,8 +193,10 @@ Cada sesión envía el header:
 X-Bot-Test-ID: bot-headless-1
 ```
 
-Busca en F5 por ese valor o por el `test_id` del reporte. Para cada evento
-confirma:
+Al terminar las navegaciones, el script consulta automaticamente la API de
+eventos de F5 DCS. Primero busca `X-Bot-Test-ID`; si F5 no conserva el header,
+usa la ventana temporal y el tipo de automatizacion esperado. Para cada evento
+registra:
 
 - host `newpip.digitalvs.com`;
 - hora UTC;
@@ -215,24 +213,31 @@ confirma:
 
 La comparación mínima recomendada es:
 
-| Perfil | Resultado local | Validación en F5 |
-|---|---|---|
-| Navegador visible | HTTP y navegación | Human/Allow o acción configurada |
-| Navegador headless | HTTP y navegación | Clasificación esperada para automatización |
-| JavaScript deshabilitado | HTML parcial | Flag/Challenge/Block según política |
-| Ráfaga corta | Varias sesiones | Cambio de riesgo o mitigación, si aplica |
+| Perfil                   | Resultado local   | Validación en F5                           |
+| ------------------------ | ----------------- | ------------------------------------------ |
+| Navegador visible        | HTTP y navegación | Human/Allow o acción configurada           |
+| Navegador headless       | HTTP y navegación | Clasificación esperada para automatización |
+| JavaScript deshabilitado | HTML parcial      | Flag/Challenge/Block según política        |
+| Ráfaga corta             | Varias sesiones   | Cambio de riesgo o mitigación, si aplica   |
 
 ## 11. Interpretar el reporte TSV
 
 El archivo contiene:
 
 ```text
-test_id, utc, profile, http_status, result, details
+test_id, utc, profile, http_status, result, details, evento_f5, accion_f5,
+categoria_f5, confianza_correlacion, id_evento_f5, id_solicitud_f5,
+detalle_f5, detalle_respuesta
 ```
 
 Los separadores reales son tabulaciones. Valores importantes:
 
-- `REVIEW_F5`: la solicitud terminó y requiere confirmación en F5.
+- `PASS_NO_EVENT`: el navegador legitimo no genero un evento de seguridad.
+- `PASS_BLOCKED`: F5 detecto y bloqueo la automatizacion.
+- `DETECTED_ALLOWED`: F5 detecto la automatizacion, pero la politica la permitio.
+- `FAIL_NO_EVENT`: no se encontro el evento esperado para un perfil automatizado.
+- `FAIL_UNEXPECTED_EVENT`: F5 genero un falso positivo para el navegador legitimo.
+- `ERROR_F5`: no fue posible consultar la API de eventos.
 - `ERROR`: Playwright no pudo completar la sesión.
 - `NOT_RUN`: se ejecutó `--dry-run`.
 - `HTTP 200`: la aplicación respondió, pero no demuestra `Allow` ni `Block`.
@@ -255,10 +260,10 @@ Considera la prueba exitosa cuando:
 
 ## 13. Limitaciones
 
-El script no consulta la API de eventos de F5 DCS. Por eso no puede afirmar
-localmente que una solicitud fue bloqueada, aunque reciba `HTTP 200` o `HTTP
-403`. La evidencia definitiva es el evento de F5 y sus campos `Mode`, `Risk
-Score`, clasificación y acción.
+La correlacion depende de que F5 indexe el evento dentro del periodo de
+reintentos. La confianza es alta cuando el evento conserva `X-Bot-Test-ID` y
+media cuando se asocia por hora y tipo de automatizacion. La evidencia
+definitiva sigue siendo el evento de F5 y sus campos de clasificacion y accion.
 
 El reporte generado por defecto es `bot-defense-results.tsv`; está excluido de
 Git. Para compartir resultados, revisa y elimina cualquier dato sensible antes

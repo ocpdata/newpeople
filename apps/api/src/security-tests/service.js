@@ -11,7 +11,11 @@ const JOB_PREFIX = "securitytest_";
 const JOB_TTL_HOURS = 24;
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_OUTPUT_LENGTH = 2_000_000;
-const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..", "scripts");
+const SCRIPT_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+  "scripts",
+);
 const activeProcesses = new Map();
 const cancelledJobs = new Set();
 
@@ -22,19 +26,47 @@ const RATE_LIMIT_TOTAL_REQUESTS = 5;
 const SCRIPT_DEFINITIONS = {
   waf: {
     title: "Pruebas internas del WAF",
-    description: "Valida trafico legitimo, ataques comunes y, si esta configurado, eventos de F5 DCS.",
+    description:
+      "Valida trafico legitimo, ataques comunes y, si esta configurado, eventos de F5 DCS.",
     script: "test-waf.sh",
     profiles: {
-      basic: { title: "Pruebas sin validación F5 DCS", args: ["--skip-f5", "--rate-limit"], requires: [] },
-      f5: { title: "Pruebas con validación F5 DCS", args: ["--rate-limit"], requires: ["XC_API_URL", "XC_API_P12_FILE", "XC_P12_PASSWORD", "XC_NAMESPACE", "XC_LB_NAME"] },
+      basic: {
+        title: "Pruebas sin validación F5 DCS",
+        args: ["--skip-f5", "--rate-limit"],
+        requires: [],
+      },
+      f5: {
+        title: "Pruebas con validación F5 DCS",
+        args: ["--rate-limit"],
+        requires: [
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
+      },
     },
   },
   bot_defense: {
     title: "Pruebas de Bot Defense",
-    description: "Validacion de navegacion automatizada y perfiles de bot ante F5 DCS.",
+    description:
+      "Validacion de navegacion automatizada y perfiles de bot ante F5 DCS.",
     script: "test-bot-defense.mjs",
     profiles: {
-      basic: { title: "Pruebas de navegacion y bots", args: [], requires: [] },
+      f5: {
+        title: "Pruebas de navegacion y bots con F5 DCS",
+        args: ["--headed"],
+        requires: [
+          "WAF_LOGIN_EMAIL",
+          "WAF_LOGIN_PASSWORD",
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
+      },
     },
   },
 };
@@ -56,13 +88,19 @@ function serialize(row) {
     requestedByUserId: Number(row.requested_by_user_id || 0),
     options: parseJson(row.options_json, {}),
     result: parseJson(row.result_json, null),
-    progress: parseJson(row.progress_json, { completed: 0, total: null, currentTest: null }),
+    progress: parseJson(row.progress_json, {
+      completed: 0,
+      total: null,
+      currentTest: null,
+    }),
     reportAvailable: Boolean(row.report_text),
     stdout: String(row.stdout_text || "").slice(-10000),
     stderr: String(row.stderr_text || "").slice(-10000),
     exitCode: row.exit_code === null ? null : Number(row.exit_code),
     signal: row.process_signal || null,
-    error: row.error_code ? { code: row.error_code, message: row.error_message } : null,
+    error: row.error_code
+      ? { code: row.error_code, message: row.error_message }
+      : null,
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
@@ -73,19 +111,30 @@ function serialize(row) {
 function parseJson(value, fallback) {
   if (!value) return fallback;
   if (typeof value === "object") return value;
-  try { return JSON.parse(value); } catch { return fallback; }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function summarizeReport(reportText) {
-  const lines = String(reportText || "").trim().split(/\r?\n/).filter(Boolean);
+  const lines = String(reportText || "")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
   if (lines.length < 2) return { total: 0, byResult: {}, rows: [] };
   const headers = lines[0].split("\t");
   const rows = lines.slice(1).map((line) => {
     const values = line.split("\t");
-    return Object.fromEntries(headers.map((header, index) => [header, values[index] || ""]));
+    return Object.fromEntries(
+      headers.map((header, index) => [header, values[index] || ""]),
+    );
   });
   const byResult = {};
-  for (const row of rows) byResult[row.resultado || row.result || "UNKNOWN"] = (byResult[row.resultado || row.result || "UNKNOWN"] || 0) + 1;
+  for (const row of rows)
+    byResult[row.resultado || row.result || "UNKNOWN"] =
+      (byResult[row.resultado || row.result || "UNKNOWN"] || 0) + 1;
   return { total: rows.length, byResult, rows };
 }
 
@@ -95,46 +144,89 @@ export function listSecurityTestCatalog() {
     title: definition.title,
     description: definition.description,
     planned: Boolean(definition.planned),
-    profiles: Object.entries(definition.profiles).map(([profileKey, profile]) => ({
-      key: profileKey,
-      title: profile.title,
-      requires: profile.requires,
-      configured: profile.requires.every((name) => String(process.env[name] || "").trim()),
-    })),
+    profiles: Object.entries(definition.profiles).map(
+      ([profileKey, profile]) => ({
+        key: profileKey,
+        title: profile.title,
+        requires: profile.requires,
+        configured: profile.requires.every((name) =>
+          String(process.env[name] || "").trim(),
+        ),
+      }),
+    ),
   }));
 }
 
-export async function createSecurityTestJob({ scriptKey, profileKey, wafMode, testId, requestedByUserId, req }) {
+export async function createSecurityTestJob({
+  scriptKey,
+  profileKey,
+  wafMode,
+  testId,
+  requestedByUserId,
+  req,
+}) {
   await ensureSecurityTestSchema();
   const selected = getDefinition(scriptKey, profileKey);
-  if (!selected) throw Object.assign(new Error("Perfil de prueba invalido"), { status: 400 });
-  const missing = selected.profile.requires.filter((name) => !String(process.env[name] || "").trim());
-  if (missing.length) throw Object.assign(new Error(`Configuracion incompleta: ${missing.join(", ")}`), { status: 409 });
+  if (!selected)
+    throw Object.assign(new Error("Perfil de prueba invalido"), {
+      status: 400,
+    });
+  const missing = selected.profile.requires.filter(
+    (name) => !String(process.env[name] || "").trim(),
+  );
+  if (missing.length)
+    throw Object.assign(
+      new Error(`Configuracion incompleta: ${missing.join(", ")}`),
+      { status: 409 },
+    );
 
   const activeRows = await query(
     "SELECT id FROM security_test_jobs WHERE status IN ('pending', 'running') LIMIT 1",
   );
   if (activeRows.length) {
-    throw Object.assign(new Error("Ya existe una prueba en ejecucion"), { status: 409 });
+    throw Object.assign(new Error("Ya existe una prueba en ejecucion"), {
+      status: 409,
+    });
   }
   // Only prune jobs past their TTL; keep recent completed jobs so per-test
   // results from previous runs remain visible when running a single test.
-  await query("DELETE FROM security_test_jobs WHERE status NOT IN ('pending', 'running') AND expires_at < NOW(3)");
+  await query(
+    "DELETE FROM security_test_jobs WHERE status NOT IN ('pending', 'running') AND expires_at < NOW(3)",
+  );
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
-  const stepsTotal = testId === RATE_LIMIT_TEST_ID ? RATE_LIMIT_TOTAL_REQUESTS : undefined;
+  const stepsTotal =
+    testId === RATE_LIMIT_TEST_ID ? RATE_LIMIT_TOTAL_REQUESTS : undefined;
   await query(
     `INSERT INTO security_test_jobs (public_id, script_key, profile_key, requested_by_user_id, options_json, expires_at)
      VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL ? HOUR))`,
-    [publicId, scriptKey, profileKey, Number(requestedByUserId), JSON.stringify({ wafMode, testId: testId || null, stepsTotal }), JOB_TTL_HOURS],
+    [
+      publicId,
+      scriptKey,
+      profileKey,
+      Number(requestedByUserId),
+      JSON.stringify({ wafMode, testId: testId || null, stepsTotal }),
+      JOB_TTL_HOURS,
+    ],
   );
-  await logAuditEvent({ req, module: "pruebas", action: "security_test_requested", entityType: "security_test_job", detail: testId ? `${scriptKey}/${profileKey}/${testId}` : `${scriptKey}/${profileKey}` });
+  await logAuditEvent({
+    req,
+    module: "pruebas",
+    action: "security_test_requested",
+    entityType: "security_test_job",
+    detail: testId
+      ? `${scriptKey}/${profileKey}/${testId}`
+      : `${scriptKey}/${profileKey}`,
+  });
   return publicId;
 }
 
 export async function getSecurityTestJob(publicId, includePrivate = false) {
   await ensureSecurityTestSchema();
-  const rows = await query("SELECT * FROM security_test_jobs WHERE public_id = ? LIMIT 1", [publicId]);
+  const rows = await query(
+    "SELECT * FROM security_test_jobs WHERE public_id = ? LIMIT 1",
+    [publicId],
+  );
   if (!rows.length) return null;
   const result = serialize(rows[0]);
   if (includePrivate) result.reportText = rows[0].report_text || "";
@@ -143,7 +235,10 @@ export async function getSecurityTestJob(publicId, includePrivate = false) {
 
 export async function listSecurityTestJobs(limit = 30) {
   await ensureSecurityTestSchema();
-  const rows = await query("SELECT * FROM security_test_jobs ORDER BY created_at DESC LIMIT ?", [Number(limit)]);
+  const rows = await query(
+    "SELECT * FROM security_test_jobs ORDER BY created_at DESC LIMIT ?",
+    [Number(limit)],
+  );
   return rows.map(serialize);
 }
 
@@ -153,7 +248,8 @@ export async function cancelSecurityTestJob(publicId, req) {
     [publicId],
   );
   const job = rows[0];
-  if (!job || !["pending", "running"].includes(String(job.status))) return false;
+  if (!job || !["pending", "running"].includes(String(job.status)))
+    return false;
   cancelledJobs.add(publicId);
   const result = await query(
     "UPDATE security_test_jobs SET status = 'cancelled', finished_at = NOW(3), error_code = 'cancelled', error_message = 'Ejecucion cancelada por el usuario' WHERE id = ? AND status IN ('pending', 'running')",
@@ -161,7 +257,13 @@ export async function cancelSecurityTestJob(publicId, req) {
   );
   if (!result.affectedRows) return false;
   activeProcesses.get(publicId)?.kill("SIGTERM");
-  await logAuditEvent({ req, module: "pruebas", action: "security_test_cancelled", entityType: "security_test_job", detail: publicId });
+  await logAuditEvent({
+    req,
+    module: "pruebas",
+    action: "security_test_cancelled",
+    entityType: "security_test_job",
+    detail: publicId,
+  });
   return true;
 }
 
@@ -189,18 +291,34 @@ export async function deleteSecurityTestJob(publicId, req) {
 
 export async function processPendingSecurityTestJobs({ limit = 1 } = {}) {
   await ensureSecurityTestSchema();
-  const jobs = await query("SELECT * FROM security_test_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?", [limit]);
+  const jobs = await query(
+    "SELECT * FROM security_test_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
+    [limit],
+  );
   for (const job of jobs) await executeJob(job);
 }
 
 async function executeJob(job) {
-  const claimed = await query("UPDATE security_test_jobs SET status = 'running', started_at = NOW(3) WHERE id = ? AND status = 'pending'", [job.id]);
+  const claimed = await query(
+    "UPDATE security_test_jobs SET status = 'running', started_at = NOW(3) WHERE id = ? AND status = 'pending'",
+    [job.id],
+  );
   if (!claimed.affectedRows) return;
   const selected = getDefinition(job.script_key, job.profile_key);
-  const outputFile = resolve(SCRIPT_ROOT, `.security-test-${job.public_id}.tsv`);
+  const outputFile = resolve(
+    SCRIPT_ROOT,
+    `.security-test-${job.public_id}.tsv`,
+  );
   const options = parseJson(job.options_json, {});
-  const args = options.testId ? [...selected.profile.args, "--only", options.testId] : selected.profile.args;
-  const env = { ...process.env, WAF_TEST_OUTPUT: outputFile, BOT_TEST_OUTPUT: outputFile, XC_WAF_MODE: options.wafMode || "monitoring" };
+  const args = options.testId
+    ? [...selected.profile.args, "--only", options.testId]
+    : selected.profile.args;
+  const env = {
+    ...process.env,
+    WAF_TEST_OUTPUT: outputFile,
+    BOT_TEST_OUTPUT: outputFile,
+    XC_WAF_MODE: options.wafMode || "monitoring",
+  };
   try {
     const { stdout, stderr } = await runScriptWithProgress({
       job,
@@ -211,12 +329,37 @@ async function executeJob(job) {
     });
     const reportText = await readFile(outputFile, "utf8").catch(() => "");
     if (cancelledJobs.has(job.public_id)) return;
-    await query("UPDATE security_test_jobs SET status = 'completed', stdout_text = ?, stderr_text = ?, report_text = ?, result_json = ?, exit_code = 0, finished_at = NOW(3) WHERE id = ?", [String(stdout).slice(0, MAX_OUTPUT_LENGTH), String(stderr).slice(0, MAX_OUTPUT_LENGTH), reportText.slice(0, MAX_OUTPUT_LENGTH), JSON.stringify(summarizeReport(reportText)), job.id]);
+    await query(
+      "UPDATE security_test_jobs SET status = 'completed', stdout_text = ?, stderr_text = ?, report_text = ?, result_json = ?, exit_code = 0, finished_at = NOW(3) WHERE id = ?",
+      [
+        String(stdout).slice(0, MAX_OUTPUT_LENGTH),
+        String(stderr).slice(0, MAX_OUTPUT_LENGTH),
+        reportText.slice(0, MAX_OUTPUT_LENGTH),
+        JSON.stringify(summarizeReport(reportText)),
+        job.id,
+      ],
+    );
   } catch (error) {
     const reportText = await readFile(outputFile, "utf8").catch(() => "");
-    const timedOut = error?. killed || error?.code === "ETIMEDOUT";
+    const timedOut = error?.killed || error?.code === "ETIMEDOUT";
     if (!cancelledJobs.has(job.public_id)) {
-      await query("UPDATE security_test_jobs SET status = ?, stdout_text = ?, stderr_text = ?, report_text = ?, result_json = ?, exit_code = ?, process_signal = ?, error_code = ?, error_message = ?, finished_at = NOW(3) WHERE id = ?", [timedOut ? "timeout" : "failed", String(error?.stdout || "").slice(0, MAX_OUTPUT_LENGTH), String(error?.stderr || "").slice(0, MAX_OUTPUT_LENGTH), reportText.slice(0, MAX_OUTPUT_LENGTH), JSON.stringify(summarizeReport(reportText)), Number.isInteger(error?.code) ? error.code : null, error?.signal || null, timedOut ? "timeout" : "execution_failed", timedOut ? "La prueba excedio el tiempo maximo permitido" : "No fue posible ejecutar la prueba", job.id]);
+      await query(
+        "UPDATE security_test_jobs SET status = ?, stdout_text = ?, stderr_text = ?, report_text = ?, result_json = ?, exit_code = ?, process_signal = ?, error_code = ?, error_message = ?, finished_at = NOW(3) WHERE id = ?",
+        [
+          timedOut ? "timeout" : "failed",
+          String(error?.stdout || "").slice(0, MAX_OUTPUT_LENGTH),
+          String(error?.stderr || "").slice(0, MAX_OUTPUT_LENGTH),
+          reportText.slice(0, MAX_OUTPUT_LENGTH),
+          JSON.stringify(summarizeReport(reportText)),
+          Number.isInteger(error?.code) ? error.code : null,
+          error?.signal || null,
+          timedOut ? "timeout" : "execution_failed",
+          timedOut
+            ? "La prueba excedio el tiempo maximo permitido"
+            : "No fue posible ejecutar la prueba",
+          job.id,
+        ],
+      );
     }
   } finally {
     activeProcesses.delete(job.public_id);
@@ -227,7 +370,11 @@ async function executeJob(job) {
 
 function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(scriptPath, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(scriptPath, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     activeProcesses.set(job.public_id, child);
     let stdout = "";
     let stderr = "";
@@ -238,20 +385,38 @@ function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
 
     function consume(chunk, stream) {
       const text = String(chunk || "");
-      if (stream === "stdout") stdout = `${stdout}${text}`.slice(-MAX_OUTPUT_LENGTH);
+      if (stream === "stdout")
+        stdout = `${stdout}${text}`.slice(-MAX_OUTPUT_LENGTH);
       else stderr = `${stderr}${text}`.slice(-MAX_OUTPUT_LENGTH);
       for (const match of text.matchAll(/\b((?:test|bot)-[a-z0-9-]+)\b/gi)) {
         const testId = match[1];
         seenTests.add(testId);
-        progress = { ...progress, completed: seenTests.size, total: null, currentTest: testId };
+        progress = {
+          ...progress,
+          completed: seenTests.size,
+          total: null,
+          currentTest: testId,
+        };
       }
-      const attemptMatch = text.match(/F5_CORRELATION: attempt=(\d+) total=(\d+)/);
+      const attemptMatch = text.match(
+        /F5_CORRELATION: attempt=(\d+) total=(\d+)/,
+      );
       if (attemptMatch) {
-        progress = { ...progress, f5Correlation: { active: true, attempt: Number(attemptMatch[1]), total: Number(attemptMatch[2]) } };
+        progress = {
+          ...progress,
+          f5Correlation: {
+            active: true,
+            attempt: Number(attemptMatch[1]),
+            total: Number(attemptMatch[2]),
+          },
+        };
       }
       const doneMatch = text.match(/F5_CORRELATION: done state=(\w+)/);
       if (doneMatch) {
-        progress = { ...progress, f5Correlation: { active: false, state: doneMatch[1] } };
+        progress = {
+          ...progress,
+          f5Correlation: { active: false, state: doneMatch[1] },
+        };
       }
       persistQueue = persistQueue.then(() =>
         query(
@@ -276,7 +441,16 @@ function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
       if (settled) return;
       settled = true;
       if (code === 0) resolvePromise({ stdout, stderr });
-      else rejectPromise(Object.assign(new Error("Security test process failed"), { code, signal, stdout, stderr, killed: signal === "SIGTERM" }));
+      else
+        rejectPromise(
+          Object.assign(new Error("Security test process failed"), {
+            code,
+            signal,
+            stdout,
+            stderr,
+            killed: signal === "SIGTERM",
+          }),
+        );
     });
   });
 }
