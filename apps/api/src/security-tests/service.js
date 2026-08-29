@@ -15,22 +15,27 @@ const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.
 const activeProcesses = new Map();
 const cancelledJobs = new Set();
 
+// Debe coincidir con RATE_LIMIT_REQUESTS en scripts/test-waf.sh.
+const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
+const RATE_LIMIT_TOTAL_REQUESTS = 5;
+
 const SCRIPT_DEFINITIONS = {
   waf: {
     title: "Pruebas internas del WAF",
     description: "Valida trafico legitimo, ataques comunes y, si esta configurado, eventos de F5 DCS.",
     script: "test-waf.sh",
     profiles: {
-      dry_run: { title: "Simulacion", args: ["--dry-run", "--skip-f5"], requires: [] },
-      basic: { title: "Basica sin F5", args: ["--skip-f5", "--rate-limit"], requires: [] },
-      f5: { title: "Basica con F5 DCS", args: ["--rate-limit"], requires: ["XC_API_URL", "XC_API_P12_FILE", "XC_P12_PASSWORD", "XC_NAMESPACE", "XC_LB_NAME"] },
+      basic: { title: "Pruebas sin validación F5 DCS", args: ["--skip-f5", "--rate-limit"], requires: [] },
+      f5: { title: "Pruebas con validación F5 DCS", args: ["--rate-limit"], requires: ["XC_API_URL", "XC_API_P12_FILE", "XC_P12_PASSWORD", "XC_NAMESPACE", "XC_LB_NAME"] },
     },
   },
   bot_defense: {
     title: "Pruebas de Bot Defense",
     description: "Validacion de navegacion automatizada y perfiles de bot ante F5 DCS.",
-    planned: true,
-    profiles: {},
+    script: "test-bot-defense.mjs",
+    profiles: {
+      basic: { title: "Pruebas de navegacion y bots", args: [], requires: [] },
+    },
   },
 };
 
@@ -117,10 +122,11 @@ export async function createSecurityTestJob({ scriptKey, profileKey, wafMode, te
   await query("DELETE FROM security_test_jobs WHERE status NOT IN ('pending', 'running') AND expires_at < NOW(3)");
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
+  const stepsTotal = testId === RATE_LIMIT_TEST_ID ? RATE_LIMIT_TOTAL_REQUESTS : undefined;
   await query(
     `INSERT INTO security_test_jobs (public_id, script_key, profile_key, requested_by_user_id, options_json, expires_at)
      VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL ? HOUR))`,
-    [publicId, scriptKey, profileKey, Number(requestedByUserId), JSON.stringify({ wafMode, testId: testId || null }), JOB_TTL_HOURS],
+    [publicId, scriptKey, profileKey, Number(requestedByUserId), JSON.stringify({ wafMode, testId: testId || null, stepsTotal }), JOB_TTL_HOURS],
   );
   await logAuditEvent({ req, module: "pruebas", action: "security_test_requested", entityType: "security_test_job", detail: testId ? `${scriptKey}/${profileKey}/${testId}` : `${scriptKey}/${profileKey}` });
   return publicId;
@@ -194,7 +200,7 @@ async function executeJob(job) {
   const outputFile = resolve(SCRIPT_ROOT, `.security-test-${job.public_id}.tsv`);
   const options = parseJson(job.options_json, {});
   const args = options.testId ? [...selected.profile.args, "--only", options.testId] : selected.profile.args;
-  const env = { ...process.env, WAF_TEST_OUTPUT: outputFile, XC_WAF_MODE: options.wafMode || "monitoring" };
+  const env = { ...process.env, WAF_TEST_OUTPUT: outputFile, BOT_TEST_OUTPUT: outputFile, XC_WAF_MODE: options.wafMode || "monitoring" };
   try {
     const { stdout, stderr } = await runScriptWithProgress({
       job,
@@ -234,10 +240,18 @@ function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
       const text = String(chunk || "");
       if (stream === "stdout") stdout = `${stdout}${text}`.slice(-MAX_OUTPUT_LENGTH);
       else stderr = `${stderr}${text}`.slice(-MAX_OUTPUT_LENGTH);
-      for (const match of text.matchAll(/\b(test-[a-z0-9-]+)\b/gi)) {
+      for (const match of text.matchAll(/\b((?:test|bot)-[a-z0-9-]+)\b/gi)) {
         const testId = match[1];
         seenTests.add(testId);
-        progress = { completed: seenTests.size, total: null, currentTest: testId };
+        progress = { ...progress, completed: seenTests.size, total: null, currentTest: testId };
+      }
+      const attemptMatch = text.match(/F5_CORRELATION: attempt=(\d+) total=(\d+)/);
+      if (attemptMatch) {
+        progress = { ...progress, f5Correlation: { active: true, attempt: Number(attemptMatch[1]), total: Number(attemptMatch[2]) } };
+      }
+      const doneMatch = text.match(/F5_CORRELATION: done state=(\w+)/);
+      if (doneMatch) {
+        progress = { ...progress, f5Correlation: { active: false, state: doneMatch[1] } };
       }
       persistQueue = persistQueue.then(() =>
         query(

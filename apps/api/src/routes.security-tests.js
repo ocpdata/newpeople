@@ -30,7 +30,7 @@ router.get("/jobs", requirePermission("pruebas.read"), async (_req, res) => {
 router.post("/jobs", requirePermission("pruebas.execute"), async (req, res) => {
   const parsed = createSchema.safeParse(req.body || {});
   if (!parsed.success) return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
-  if ((parsed.data.profileKey === "f5" || parsed.data.wafMode === "blocking") && !req.user.permissionSet.has("pruebas.admin")) {
+  if (parsed.data.scriptKey === "waf" && (parsed.data.profileKey === "f5" || parsed.data.wafMode === "blocking") && !req.user.permissionSet.has("pruebas.admin")) {
     return res.status(403).json({ message: "El perfil con F5 requiere permisos administrativos" });
   }
   try {

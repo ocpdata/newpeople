@@ -22,6 +22,7 @@ XC_LB_NAME="${XC_LB_NAME:-}"
 XC_SECURITY_EVENTS_PATH="${XC_SECURITY_EVENTS_PATH:-}"
 XC_WAF_MODE="${XC_WAF_MODE:-monitoring}"
 XC_EVENT_WAIT_SECONDS="${XC_EVENT_WAIT_SECONDS:-15}"
+XC_EVENT_INITIAL_WAIT_SECONDS="${XC_EVENT_INITIAL_WAIT_SECONDS:-15}"
 XC_EVENT_RETRIES="${XC_EVENT_RETRIES:-4}"
 XC_EVENTS_FILE="${XC_EVENTS_FILE:-}"
 SKIP_F5=0
@@ -52,7 +53,7 @@ Variables equivalentes: BASE_URL, API_PATH, API_POST_PATH, TOKEN,
 WAF_LOGIN_EMAIL, WAF_LOGIN_PASSWORD, ORIGIN_IP y WAF_TEST_OUTPUT.
 Integracion F5: XC_API_URL, XC_API_P12_FILE, XC_P12_PASSWORD, XC_NAMESPACE,
 XC_LB_NAME. Opcionales: XC_SECURITY_EVENTS_PATH, XC_WAF_MODE,
-XC_EVENT_WAIT_SECONDS, XC_EVENT_RETRIES y XC_EVENTS_FILE.
+XC_EVENT_WAIT_SECONDS, XC_EVENT_RETRIES, XC_EVENT_INITIAL_WAIT_SECONDS y XC_EVENTS_FILE.
 EOF
 }
 
@@ -139,8 +140,8 @@ case "$XC_WAF_MODE" in
   monitoring|blocking) ;;
   *) echo "XC_WAF_MODE debe ser monitoring o blocking" >&2; exit 2 ;;
 esac
-if [[ ! "$XC_EVENT_WAIT_SECONDS" =~ ^[0-9]+$ || ! "$XC_EVENT_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
-  echo "XC_EVENT_WAIT_SECONDS debe ser entero >= 0 y XC_EVENT_RETRIES entero > 0" >&2
+if [[ ! "$XC_EVENT_WAIT_SECONDS" =~ ^[0-9]+$ || ! "$XC_EVENT_RETRIES" =~ ^[1-9][0-9]*$ || ! "$XC_EVENT_INITIAL_WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "XC_EVENT_WAIT_SECONDS y XC_EVENT_INITIAL_WAIT_SECONDS deben ser enteros >= 0 y XC_EVENT_RETRIES entero > 0" >&2
   exit 2
 fi
 
@@ -831,6 +832,11 @@ F5_EVENTS_FILE="$TMP_DIR/f5-events.json"
 if [[ "$F5_ENABLED" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
   F5_STATE="ERROR"
   attempt=1
+  printf 'F5_CORRELATION: attempt=1 total=%s\n' "$XC_EVENT_RETRIES"
+  if [[ "$XC_EVENT_INITIAL_WAIT_SECONDS" -gt 0 ]]; then
+    printf 'Esperando %ss para que F5 indexe los eventos antes de consultar...\n' "$XC_EVENT_INITIAL_WAIT_SECONDS"
+    sleep "$XC_EVENT_INITIAL_WAIT_SECONDS"
+  fi
   while [[ "$attempt" -le "$XC_EVENT_RETRIES" ]]; do
     if fetch_f5_events "$F5_EVENTS_FILE" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"; then
       F5_STATE="QUERIED"
@@ -848,10 +854,12 @@ if [[ "$F5_ENABLED" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
     if [[ "$attempt" -lt "$XC_EVENT_RETRIES" ]]; then
       printf 'F5 aun no tiene eventos correlacionables; reintento %s de %s en %ss\n' \
         "$((attempt + 1))" "$XC_EVENT_RETRIES" "$XC_EVENT_WAIT_SECONDS" >&2
+      printf 'F5_CORRELATION: attempt=%s total=%s\n' "$((attempt + 1))" "$XC_EVENT_RETRIES"
       sleep "$XC_EVENT_WAIT_SECONDS"
     fi
     attempt=$((attempt + 1))
   done
+  printf 'F5_CORRELATION: done state=%s\n' "$F5_STATE"
 fi
 
 write_final_output "$F5_EVENTS_FILE" "$F5_STATE" "$F5_ERROR"

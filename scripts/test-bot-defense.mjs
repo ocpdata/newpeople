@@ -18,6 +18,21 @@ const headed = process.argv.includes("--headed");
 const dryRun = process.argv.includes("--dry-run");
 const includeBurst = process.argv.includes("--burst");
 
+const onlyIndex = process.argv.indexOf("--only");
+let onlyTest = "";
+if (onlyIndex >= 0) {
+  if (!process.argv[onlyIndex + 1]) {
+    console.error("Falta el valor de --only");
+    process.exit(2);
+  }
+  onlyTest = process.argv[onlyIndex + 1];
+}
+
+function shouldRun(id) {
+  if (!onlyTest) return true;
+  return id === onlyTest || id.startsWith(`${onlyTest}-`);
+}
+
 const results = [];
 
 function usage() {
@@ -26,6 +41,7 @@ function usage() {
 Opciones:
   --headed       Ejecuta Chromium visible en lugar de headless
   --burst        Ejecuta una prueba corta de navegacion repetitiva
+  --only ID      Ejecuta unicamente el caso con ese identificador (ej. bot-headless)
   --output FILE  Archivo TSV de resultados
   --dry-run      Muestra las sesiones sin abrir el navegador
   -h, --help     Muestra esta ayuda
@@ -155,6 +171,7 @@ async function run() {
   for (const profile of profiles) {
     for (let iteration = 1; iteration <= iterations; iteration += 1) {
       const testId = `bot-${profile.name}-${iteration}`;
+      if (!shouldRun(testId)) continue;
       await runSession({
         testId,
         profile: profile.name,
@@ -167,8 +184,10 @@ async function run() {
 
   if (includeBurst) {
     for (let iteration = 1; iteration <= 5; iteration += 1) {
+      const testId = `bot-short-burst-${iteration}`;
+      if (!shouldRun(testId)) continue;
       await runSession({
-        testId: `bot-short-burst-${iteration}`,
+        testId,
         profile: "short-burst",
         javaScriptEnabled: true,
         headless: true,

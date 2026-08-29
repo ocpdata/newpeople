@@ -1,46 +1,74 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import "./tools/tools.css";
 
-const POLL_MS = 3000;
+const POLL_MS = 1000;
 
 const WAF_TEST_GUIDE = [
-  { id: "test-01-normal-home", title: "Pagina principal", method: "GET", target: "/", detail: "Solicita la pagina principal para comprobar trafico legitimo y ausencia de falso positivo.", expected: "Respuesta exitosa sin alerta WAF.", kind: "legit" },
-  { id: "test-public-health", title: "Endpoint de salud", method: "GET", target: "/health", detail: "Consulta el endpoint publico de salud de la aplicacion.", expected: "Respuesta HTTP 200.", kind: "legit" },
-  { id: "test-02-sensitive-env", title: "Archivo de entorno", method: "GET", target: "/.env", detail: "Intenta acceder a un archivo de configuracion sensible.", expected: "HTTP 403 o 404 y nunca contenido sensible.", kind: "attack" },
-  { id: "test-03-sensitive-git", title: "Configuracion Git", method: "GET", target: "/.git/config", detail: "Intenta acceder a metadatos del repositorio.", expected: "HTTP 403 o 404 y nunca contenido del repositorio.", kind: "attack" },
-  { id: "test-05-traversal-path", title: "Recorrido de directorios", method: "GET", target: "Ruta con ../", detail: "Envía una ruta de traversal para comprobar deteccion de acceso fuera del sitio.", expected: "F5 detecta el ataque.", kind: "attack" },
-  { id: "test-07-sqli-query", title: "Inyeccion SQL", method: "GET", target: "Parametro search", detail: "Envía un patron SQL malicioso en una consulta.", expected: "F5 detecta SQL injection.", kind: "attack" },
-  { id: "test-09-xss-script", title: "XSS", method: "GET", target: "Parametro q", detail: "Envía una etiqueta script para comprobar la deteccion de XSS.", expected: "F5 detecta cross-site scripting.", kind: "attack" },
-  { id: "test-11-trace", title: "Metodo TRACE", method: "TRACE", target: "/", detail: "Prueba un metodo HTTP que normalmente no debe estar habilitado.", expected: "HTTP 405 o evento F5.", kind: "attack" },
-  { id: "test-12-delete", title: "Metodo DELETE", method: "DELETE", target: "/", detail: "Comprueba que un metodo destructivo no sea aceptado en la ruta publica.", expected: "HTTP 405 o evento F5.", kind: "attack" },
-  { id: "test-13-options", title: "Politica OPTIONS", method: "OPTIONS", target: "/", detail: "Comprueba la respuesta de preflight y la politica CORS.", expected: "Respuesta acorde con la configuracion.", kind: "neutral" },
-  { id: "test-14-tool-user-agent", title: "User-Agent automatizado", method: "GET", target: "/", detail: "Envía un User-Agent de herramienta para validar la politica correspondiente.", expected: "Resultado acorde con la politica configurada.", kind: "neutral" },
-  { id: "test-21-rate-limit", title: "Limite de frecuencia", method: "GET", target: "/", detail: "Perfil opcional: envia un conjunto corto y controlado de solicitudes.", expected: "HTTP 429 o evento de limitacion.", kind: "attack" },
-  { id: "test-22-origin-bypass", title: "Acceso directo al origen", method: "GET", target: "IP del origen", detail: "Perfil opcional: intenta evitar el Load Balancer de F5.", expected: "El origen no debe ser accesible desde Internet.", kind: "attack" },
+  { id: "test-01-normal-home", title: "Pagina principal", method: "GET", target: "/", detail: "Envia una solicitud normal a la pagina principal para confirmar que el WAF no bloquea trafico legitimo.", expected: "Respuesta exitosa sin alerta WAF.", kind: "legit", threatLevel: "Ninguna (trafico legitimo)" },
+  { id: "test-public-health", title: "Endpoint de salud", method: "GET", target: "/health", detail: "Consulta el endpoint publico de salud para confirmar que las rutas de monitoreo no se vean afectadas.", expected: "Respuesta HTTP 200.", kind: "legit", threatLevel: "Ninguna (trafico legitimo)" },
+  { id: "test-02-sensitive-env", title: "Archivo de entorno", method: "GET", target: "/.env", detail: "Intenta leer el archivo .env, que puede contener credenciales y llaves secretas si quedara expuesto.", expected: "HTTP 403 o 404 y nunca contenido sensible.", kind: "attack", threatLevel: "Alto (fuga de credenciales)" },
+  { id: "test-03-sensitive-git", title: "Configuracion Git", method: "GET", target: "/.git/config", detail: "Intenta leer la configuracion del repositorio Git, que podria revelar la estructura del codigo fuente.", expected: "HTTP 403 o 404 y nunca contenido del repositorio.", kind: "attack", threatLevel: "Medio (exposicion de codigo fuente)" },
+  { id: "test-05-traversal-path", title: "Recorrido de directorios", method: "GET", target: "Ruta con ../", detail: "Envia una ruta con '../' para intentar salir del directorio del sitio y leer archivos del servidor.", expected: "F5 detecta el ataque.", kind: "attack", threatLevel: "Alto (acceso a archivos del servidor)" },
+  { id: "test-07-sqli-query", title: "Inyeccion SQL", method: "GET", target: "Parametro search", detail: "Envia un patron de inyeccion SQL para intentar manipular o extraer datos de la base de datos.", expected: "F5 detecta SQL injection.", kind: "attack", threatLevel: "Alto (robo o corrupcion de datos)" },
+  { id: "test-09-xss-script", title: "XSS", method: "GET", target: "Parametro q", detail: "Envia una etiqueta <script> para verificar si el sitio ejecutaria codigo malicioso en el navegador de otros usuarios.", expected: "F5 detecta cross-site scripting.", kind: "attack", threatLevel: "Alto (robo de sesion o phishing)" },
+  { id: "test-11-trace", title: "Metodo TRACE", method: "TRACE", target: "/", detail: "Envia el metodo TRACE, usado en ataques de Cross-Site Tracing para robar cookies o encabezados.", expected: "HTTP 405 o evento F5.", kind: "attack", threatLevel: "Medio (robo de credenciales de sesion)" },
+  { id: "test-12-delete", title: "Metodo DELETE", method: "DELETE", target: "/", detail: "Envia el metodo DELETE para comprobar que no se pueda borrar contenido desde una ruta publica sin autorizacion.", expected: "HTTP 405 o evento F5.", kind: "attack", threatLevel: "Alto (perdida de datos)" },
+  { id: "test-13-options", title: "Politica OPTIONS", method: "OPTIONS", target: "/", detail: "Envia una solicitud OPTIONS para revisar la politica de CORS y metodos permitidos configurados.", expected: "Respuesta acorde con la configuracion.", kind: "neutral", threatLevel: "Bajo (configuracion expuesta)" },
+  { id: "test-14-tool-user-agent", title: "User-Agent automatizado", method: "GET", target: "/", detail: "Envia un User-Agent tipico de herramientas automatizadas para validar si la politica de bots lo detecta.", expected: "Resultado acorde con la politica configurada.", kind: "neutral", threatLevel: "Medio (automatizacion no autorizada)" },
+  { id: "test-21-rate-limit", title: "Limite de frecuencia", method: "GET", target: "/", detail: "Envia varias solicitudes seguidas para comprobar si existe un limite que frene abusos o fuerza bruta.", expected: "HTTP 429 o evento de limitacion.", kind: "attack", threatLevel: "Medio (agotamiento de recursos o fuerza bruta)" },
+];
+
+const BOT_DEFENSE_TEST_GUIDE = [
+  { id: "bot-browser-headless", title: "Navegador con interfaz", method: "GET", target: "/", detail: "Simula un usuario real navegando con un navegador completo y JavaScript habilitado.", expected: "Navegacion permitida sin bloqueo.", kind: "legit", threatLevel: "Ninguna (trafico legitimo)" },
+  { id: "bot-headless", title: "Navegador headless", method: "GET", target: "/", detail: "Simula un navegador headless (sin interfaz grafica), un patron tipico de bots automatizados.", expected: "Bot Defense puede marcarlo como sospechoso.", kind: "attack", threatLevel: "Medio (automatizacion no autorizada)" },
+  { id: "bot-javascript-disabled", title: "JavaScript deshabilitado", method: "GET", target: "/", detail: "Simula un cliente sin JavaScript, tipico de scripts simples que no ejecutan un navegador completo.", expected: "Bot Defense puede marcarlo como sospechoso.", kind: "attack", threatLevel: "Medio (automatizacion no autorizada)" },
 ];
 
 export default function SecurityTestsPage() {
   const [catalog, setCatalog] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [profileKey, setProfileKey] = useState("dry_run");
+  const [profileKey, setProfileKey] = useState("f5");
   const [testKey, setTestKey] = useState("waf");
-  const [wafMode, setWafMode] = useState("monitoring");
+  const [wafMode, setWafMode] = useState("blocking");
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
+  const [f5Banner, setF5Banner] = useState(null);
+  const stepProgressMaxRef = useRef({});
 
-  const waf = catalog.find((item) => item.key === "waf");
+  const waf = catalog.find((item) => item.key === testKey);
   const profiles = waf?.profiles || [];
-  const analyzedJob = jobs[0] || null;
+  const activeGuide = testKey === "bot_defense" ? BOT_DEFENSE_TEST_GUIDE : WAF_TEST_GUIDE;
+  const analyzedJob = jobs.find((job) => job.scriptKey === testKey) || null;
   const currentTest = analyzedJob?.progress?.currentTest || "";
-  const activeTestIndex = WAF_TEST_GUIDE.findIndex(
+  const activeTestIndex = activeGuide.findIndex(
     (test) => test.id === currentTest || currentTest.startsWith(`${test.id}-`),
   );
-  const analysisTotal = WAF_TEST_GUIDE.length;
+
+  // La consulta a F5 suele resolverse en el primer intento (menos de un ciclo de polling),
+  // asi que este banner se mantiene visible un minimo de tiempo para que sea perceptible.
+  useEffect(() => {
+    const jobId = analyzedJob?.id;
+    const correlation = analyzedJob?.progress?.f5Correlation;
+    const jobActive = ["pending", "running"].includes(analyzedJob?.status);
+    if (!jobActive) {
+      setF5Banner(null);
+      return undefined;
+    }
+    if (correlation?.active) {
+      setF5Banner({ jobId, attempt: correlation.attempt, total: correlation.total });
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setF5Banner((current) => (current?.jobId === jobId ? null : current));
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [analyzedJob?.id, analyzedJob?.status, analyzedJob?.progress?.f5Correlation?.active, analyzedJob?.progress?.f5Correlation?.attempt]);
+  const analysisTotal = activeGuide.length;
   const analysisCompleted = analyzedJob
     ? analyzedJob.status === "completed"
       ? analysisTotal
@@ -55,7 +83,7 @@ export default function SecurityTestsPage() {
   const analysisPercent = Math.round((analysisCompleted / analysisTotal) * 100);
 
   function getTestSlug(id) {
-    return String(id || "").replace(/^test-(\d+-)?/, "");
+    return String(id || "").replace(/^(test|bot)-(\d+-)?/, "");
   }
 
   function getResultClassName(label) {
@@ -66,11 +94,11 @@ export default function SecurityTestsPage() {
     return "pending";
   }
 
-  // Traduce el resultado crudo (PASÓ/FALLÓ/REVISAR/...) a un mensaje explícito
+  // Traduce el resultado crudo (PASÓ/FALLÓ/REVISAR/REVIEW_F5/...) a un mensaje explícito
   // según si el caso espera que el tráfico se bloquee (ataque) o se permita (legítimo).
   function getExplicitResultLabel(kind, rawResult) {
     const normalized = String(rawResult || "").toUpperCase();
-    if (normalized.includes("REVISAR") || normalized.includes("INCONCLUSIVE")) return "Revisar manualmente";
+    if (normalized.includes("REVISAR") || normalized.includes("INCONCLUSIVE") || normalized.includes("REVIEW")) return "Revisar en F5 DCS";
     if (normalized.includes("NO EJECUTADA") || normalized.includes("NOT_RUN")) return "No ejecutada";
     if (normalized.includes("ERROR")) return "Error en la prueba";
     if (kind === "attack") {
@@ -114,13 +142,93 @@ export default function SecurityTestsPage() {
     const isTargetOfCurrentJob = Boolean(
       analyzedJob && (!analyzedJob.options?.testId || analyzedJob.options.testId === test.id),
     );
+    // Mientras el job actual sigue corriendo y apunta a este caso, no se debe
+    // consultar el historial: hay que reflejar el estado en vivo (pendiente/ejecutando),
+    // no la ultima fila de una ejecucion anterior.
+    const jobInProgress = isTargetOfCurrentJob && ["pending", "running"].includes(analyzedJob?.status);
     const currentJobRow = isTargetOfCurrentJob ? findResultRow(analyzedJob?.result?.rows, test.id) : undefined;
-    const historical = currentJobRow ? { job: analyzedJob, resultRow: currentJobRow } : findLatestJobForTest(jobs, test.id);
+    const historical = currentJobRow
+      ? { job: analyzedJob, resultRow: currentJobRow }
+      : jobInProgress
+      ? null
+      : findLatestJobForTest(jobs.filter((job) => job.scriptKey === testKey), test.id);
     return {
       isTargetOfCurrentJob,
       resultRow: historical?.resultRow,
       sourceJob: historical?.job || analyzedJob,
     };
+  }
+
+  // Avance propio de un caso con varios pasos (ej. limite de frecuencia:
+  // test-21-rate-limit-1, -2, ...), independiente del avance general del job.
+  // El stdout puede llegar fragmentado (ej. "test-21-rate-limit-" sin el numero),
+  // asi que nunca se permite que el conteo mostrado retroceda para el mismo job.
+  function getStepProgress(test) {
+    const total = Number(analyzedJob?.options?.stepsTotal || 0);
+    if (!total) return null;
+    const isTargetOfCurrentJob = analyzedJob?.options?.testId === test.id;
+    if (!isTargetOfCurrentJob || !["pending", "running"].includes(analyzedJob?.status)) return null;
+    const jobId = analyzedJob?.id;
+    // La consulta a F5 solo arranca cuando el loop de solicitudes ya termino por completo
+    // (es secuencial en el script), asi que su sola presencia garantiza el 100% del conteo.
+    if (analyzedJob?.progress?.f5Correlation) {
+      stepProgressMaxRef.current[jobId] = total;
+      return { current: total, total, percent: 100 };
+    }
+    const currentTestId = analyzedJob?.progress?.currentTest || "";
+    const match = currentTestId.startsWith(`${test.id}-`) ? currentTestId.slice(test.id.length + 1) : "";
+    const rawCurrent = Math.min(total, Math.max(0, Number(match) || 0));
+    const previousMax = stepProgressMaxRef.current[jobId] || 0;
+    const current = Math.max(rawCurrent, previousMax);
+    stepProgressMaxRef.current[jobId] = current;
+    return { current, total, percent: Math.round((current / total) * 100) };
+  }
+
+  // Barra de F5 DCS a nivel de job completo (para la tarjeta "Avance" general).
+  function getJobF5Progress(job) {
+    if (!job) return null;
+    if (job.profileKey !== "f5") {
+      return { percent: 0, disabled: true, label: "No aplica (perfil sin F5)" };
+    }
+    const correlation = job.progress?.f5Correlation;
+    if (correlation?.active) {
+      return { indeterminate: true, percent: 60, label: `Consultando F5 DCS (intento ${correlation.attempt} de ${correlation.total})` };
+    }
+    if (job.status === "completed" || correlation) {
+      return { percent: 100, label: "Consulta a F5 DCS finalizada" };
+    }
+    return { percent: 0, label: "Pendiente" };
+  }
+
+  // Avance de cada fila: dos barras independientes.
+  // 1) Solicitud/respuesta HTTP. 2) Consulta de correlacion con F5 DCS (si el perfil la usa).
+  function getRowProgress(test, state) {
+    const stepProgress = getStepProgress(test);
+    const requestBar = stepProgress
+      ? { percent: stepProgress.percent, label: `Solicitud ${stepProgress.current} de ${stepProgress.total}` }
+      : state.className === "pending"
+      ? { percent: 0, label: "Sin iniciar" }
+      : state.className === "running" && !state.waitingForF5
+      ? { indeterminate: true, percent: 40, label: "Enviando solicitud..." }
+      : { percent: 100, label: "Solicitud enviada y respondida" };
+
+    const profileKeyForRow = state.job?.profileKey || profileKey;
+    const f5Applicable = profileKeyForRow === "f5";
+    let f5Bar;
+    if (!f5Applicable) {
+      f5Bar = { percent: 0, disabled: true, label: "No aplica (perfil sin F5)" };
+    } else if (state.waitingForF5) {
+      f5Bar = { indeterminate: true, percent: 60, label: `Consultando F5 DCS (intento ${state.waitingForF5.attempt} de ${state.waitingForF5.total})` };
+    } else if (state.resultRow) {
+      const evento = String(state.resultRow.evento_f5 || "");
+      f5Bar = {
+        percent: 100,
+        label: evento === "Sí" ? "Evento F5 correlacionado" : evento === "Error al consultar" ? "Error al consultar F5" : "Sin evento F5 correlacionado",
+      };
+    } else {
+      f5Bar = { percent: 0, label: "Pendiente" };
+    }
+    return { requestBar, f5Bar };
   }
 
   function getAnalysisState(test, index) {
@@ -146,10 +254,24 @@ export default function SecurityTestsPage() {
           ? "La respuesta contiene Request Rejected; F5 bloqueo la solicitud aunque devolviera HTTP 200."
           : resultRow.que_ocurrio || resultRow.details || "El reporte contiene un resultado para este caso.",
         job: sourceJob,
+        resultRow,
       };
     }
     if (isTargetOfCurrentJob && ["pending", "running"].includes(analyzedJob?.status)) {
-      if (index === activeTestIndex) {
+      const isSingleTestJob = Boolean(analyzedJob.options?.testId);
+      const isCurrentRow = isSingleTestJob || index === activeTestIndex;
+      if (isCurrentRow) {
+        const correlation = analyzedJob.progress?.f5Correlation;
+        if (correlation?.active) {
+          return {
+            label: "Esperando F5 DCS",
+            className: "running",
+            detail: "Solicitud enviada; esperando confirmación de F5",
+            reason: `Solicitud enviada y respondida; esperando la correlación con F5 DCS (intento ${correlation.attempt} de ${correlation.total}).`,
+            job: sourceJob,
+            waitingForF5: correlation,
+          };
+        }
         return { label: "En ejecución", className: "running", detail: "Procesando este caso", reason: "La solicitud de este caso se está procesando en el servidor.", job: sourceJob };
       }
       if (activeTestIndex > index) {
@@ -162,6 +284,9 @@ export default function SecurityTestsPage() {
     }
       if (isTargetOfCurrentJob && (analyzedJob?.status === "failed" || analyzedJob?.status === "timeout")) {
         return { label: "No ejecutado", className: "pending", detail: "La ejecución terminó antes de llegar a este caso", reason: analyzedJob.error?.message || "La ejecución no pudo completar todos los casos.", job: sourceJob };
+      }
+      if (isTargetOfCurrentJob && analyzedJob?.status === "cancelled") {
+        return { label: "Cancelado", className: "pending", detail: "La ejecución se canceló antes de llegar a este caso", reason: "El usuario canceló la ejecución antes de que se procesara este caso.", job: sourceJob };
       }
       return { label: "Pendiente", className: "pending", detail: "Esperando ejecución", reason: "Este caso todavía no ha sido procesado.", job: sourceJob };
   }
@@ -177,7 +302,7 @@ export default function SecurityTestsPage() {
   function getResponseDetail(resultRow) {
     if (resultRow?.detalle_respuesta) return resultRow.detalle_respuesta;
     if (resultRow) {
-      return `HTTP ${resultRow.http || "desconocido"}; ${resultRow.que_ocurrio || "sin explicación adicional"}.`;
+      return `HTTP ${resultRow.http || resultRow.http_status || "desconocido"}; ${resultRow.que_ocurrio || resultRow.details || "sin explicación adicional"}.`;
     }
     return "La prueba todavía no genera una respuesta.";
   }
@@ -367,12 +492,21 @@ export default function SecurityTestsPage() {
     return () => clearInterval(timer);
   }, [jobs]);
 
+  // Cada tipo de prueba (WAF/Bot Defense) tiene sus propios perfiles; si el
+  // perfil actual no aplica al tipo seleccionado, cae al primero disponible.
+  useEffect(() => {
+    const item = catalog.find((entry) => entry.key === testKey);
+    const list = item?.profiles || [];
+    if (list.length && !list.some((profile) => profile.key === profileKey)) {
+      setProfileKey(list[0].key);
+    }
+  }, [testKey, catalog]);
+
   async function execute(testId) {
-    if (testKey !== "waf") return;
     setRunning(true);
     setError("");
     try {
-      await api.post("/api/tools/security-tests/jobs", { scriptKey: "waf", profileKey, wafMode, ...(testId ? { testId } : {}) });
+      await api.post("/api/tools/security-tests/jobs", { scriptKey: testKey, profileKey, wafMode, ...(testId ? { testId } : {}) });
       await load();
     } catch (executeError) {
       setError(getApiErrorMessage(executeError, "No fue posible iniciar la prueba"));
@@ -413,44 +547,95 @@ export default function SecurityTestsPage() {
             <strong>WAF</strong><span>Disponible</span><small>Valida ataques, rutas sensibles y respuestas del perímetro.</small>
           </button>
           <button type="button" className={`tools-security-test-option ${testKey === "bot_defense" ? "is-selected" : ""}`} onClick={() => setTestKey("bot_defense")}>
-            <strong>Bot Defense</strong><span>Próximamente</span><small>Validará perfiles de navegación automatizada y bots.</small>
+            <strong>Bot Defense</strong><span>Disponible</span><small>Valida perfiles de navegación con y sin JavaScript, y navegadores headless, ante F5 DCS.</small>
           </button>
         </div>
         <div className="tools-security-launch-controls">
-          {testKey === "waf" ? <><label className="tools-filter-field"><span>Perfil</span><select value={profileKey} onChange={(event) => setProfileKey(event.target.value)} disabled={running || loading}>{profiles.map((profile) => <option key={profile.key} value={profile.key} disabled={!profile.configured}>{profile.title}{!profile.configured ? " (configuracion incompleta)" : ""}</option>)}</select></label>
-          <label className="tools-filter-field"><span>Modo WAF</span><select value={wafMode} onChange={(event) => setWafMode(event.target.value)} disabled={running || loading}><option value="monitoring">Monitoreo</option><option value="blocking">Bloqueo</option></select></label>
-          <button className="btn-primary" type="button" onClick={() => execute()} disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}>{running ? "Ejecutando..." : "Ejecutar prueba"}</button>
+          <div className="tools-security-launch-fields">
+            <label className="tools-filter-field"><span>Perfil</span><select value={profileKey} onChange={(event) => setProfileKey(event.target.value)} disabled={running || loading}>{profiles.map((profile) => <option key={profile.key} value={profile.key} disabled={!profile.configured}>{profile.title}{!profile.configured ? " (configuracion incompleta)" : ""}</option>)}</select></label>
+            {testKey === "waf" ? (
+              <label className="tools-filter-field"><span>Modo WAF</span><select value={wafMode} onChange={(event) => setWafMode(event.target.value)} disabled={running || loading}><option value="monitoring">Monitoreo</option><option value="blocking">Bloqueo</option></select></label>
+            ) : null}
+          </div>
+          <button className="btn-primary" type="button" onClick={() => execute()} disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}>{running ? "Ejecutando..." : "Ejecutar todas las pruebas"}</button>
           {["pending", "running"].includes(analyzedJob?.status) ? (
             <button className="btn-secondary" type="button" onClick={cancelActiveJob} disabled={cancelling}>{cancelling ? "Cancelando..." : "Cancelar"}</button>
-          ) : null}</> : <span className="tools-security-planned-message">Bot Defense estará disponible en una siguiente implementación.</span>}
+          ) : null}
         </div>
       </article>
 
       <section className="tools-security-analysis">
         <div className="tools-card-heading tools-security-analysis-heading">
           <div>
-            <h3>Análisis</h3>
+            <h3>Lista de pruebas</h3>
             {!analyzedJob ? <p>El avance de los casos aparecerá al iniciar una prueba.</p> : null}
           </div>
           {analyzedJob ? (
             <div className="tools-security-analysis-execution">
-              <div className="tools-security-analysis-execution-label">
-                <strong>Avance</strong>
-                <span>{analysisCompleted} de {analysisTotal} casos · {analysisPercent}%</span>
+              <div className="tools-security-execution-columns">
+                <div className="tools-security-execution-column">
+              {analyzedJob.options?.testId ? (
+                <>
+                  <div className="tools-security-analysis-execution-label">
+                    <strong>Solicitud</strong>
+                    <span>{activeGuide.find((test) => test.id === analyzedJob.options.testId)?.title || getTestSlug(analyzedJob.options.testId)}</span>
+                  </div>
+                  <div className="tools-security-analysis-execution-track" role="progressbar" aria-valuemin="0" aria-valuemax="1" aria-valuenow={analyzedJob.status === "completed" ? 1 : 0} aria-label="Avance de la solicitud">
+                    <span className={["pending", "running"].includes(analyzedJob.status) ? "is-indeterminate" : undefined} style={{ width: ["pending", "running"].includes(analyzedJob.status) ? "40%" : "100%" }} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="tools-security-analysis-execution-label">
+                    <strong>Solicitud</strong>
+                    <span>{analysisCompleted} de {analysisTotal} casos · {analysisPercent}%</span>
+                  </div>
+                  <div className="tools-security-analysis-execution-track" role="progressbar" aria-valuemin="0" aria-valuemax={analysisTotal} aria-valuenow={analysisCompleted} aria-label="Avance de las solicitudes">
+                    <span style={{ width: `${analysisPercent}%` }} />
+                  </div>
+                </>
+              )}
+                </div>
+                <div className="tools-security-execution-column">
+              {(() => {
+                const jobF5Progress = getJobF5Progress(analyzedJob);
+                return (
+                  <>
+                    <div className={`tools-security-analysis-execution-label${jobF5Progress.disabled ? " is-disabled" : ""}`}>
+                      <strong>F5 DCS</strong>
+                      <span>{jobF5Progress.label}</span>
+                    </div>
+                    <div className="tools-security-analysis-execution-track is-f5" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={jobF5Progress.percent} aria-label="Avance de la consulta a F5 DCS">
+                      <span className={jobF5Progress.indeterminate ? "is-indeterminate" : undefined} style={{ width: `${jobF5Progress.percent}%` }} />
+                    </div>
+                  </>
+                );
+              })()}
+                </div>
               </div>
-              <div className="tools-security-analysis-execution-track" role="progressbar" aria-valuemin="0" aria-valuemax={analysisTotal} aria-valuenow={analysisCompleted} aria-label="Avance del análisis">
-                <span style={{ width: `${analysisPercent}%` }} />
-              </div>
-              <small>{analyzedJob.status === "completed" ? "Análisis finalizado." : analyzedJob.progress?.currentTest ? `Procesando: ${analyzedJob.progress.currentTest}` : "Preparando análisis..."}</small>
+              <small>
+                {analyzedJob.status === "completed"
+                  ? "Análisis finalizado."
+                  : analyzedJob.status === "cancelled"
+                  ? "Análisis cancelado por el usuario."
+                  : analyzedJob.status === "failed" || analyzedJob.status === "timeout"
+                  ? "Análisis interrumpido antes de completarse."
+                  : f5Banner
+                  ? "Solicitudes enviadas; correlacionando con F5 DCS…"
+                  : analyzedJob.progress?.currentTest
+                  ? `Procesando: ${analyzedJob.progress.currentTest}`
+                  : "Preparando análisis..."}
+              </small>
             </div>
           ) : null}
           {analyzedJob ? <span className={`tools-state-pill is-${analyzedJob.status}`}>{analyzedJob.status}</span> : null}
         </div>
-        {WAF_TEST_GUIDE.length ? (
+        {activeGuide.length ? (
           <div className="tools-security-analysis-list">
-            {WAF_TEST_GUIDE.map((test, index) => {
+            {activeGuide.map((test, index) => {
               const state = getAnalysisState(test, index);
               const { resultRow, sourceJob } = resolveTestResult(test);
+              const rowProgress = getRowProgress(test, state);
               return (
                 <article className={`tools-security-analysis-item is-${state.className}`} key={test.id}>
                   <span className="tools-security-analysis-marker" aria-hidden="true" />
@@ -458,19 +643,48 @@ export default function SecurityTestsPage() {
                   <div>
                     <strong>{test.title}</strong>
                     <span>{getTestSlug(test.id)} · {test.method} · {test.target}</span>
-                    <small><b>Resumen:</b> {test.detail}</small>
+                    <small><b>Prueba:</b> {test.detail}</small>
+                    <small><b>Nivel de amenaza:</b> {test.threatLevel}</small>
                     <small><b>Respuesta:</b> {state.reason}</small>
+                    <div className="tools-security-item-progress-row">
+                      <div className="tools-security-item-progress">
+                        <span className="tools-security-item-progress-label">Solicitud</span>
+                        <div className="tools-security-item-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={rowProgress.requestBar.percent}>
+                          <span className={rowProgress.requestBar.indeterminate ? "is-indeterminate" : undefined} style={{ width: `${rowProgress.requestBar.percent}%` }} />
+                        </div>
+                        <small>{rowProgress.requestBar.label}</small>
+                      </div>
+                      <div className={`tools-security-item-progress${rowProgress.f5Bar.disabled ? " is-disabled" : ""}`}>
+                        <span className="tools-security-item-progress-label">F5 DCS</span>
+                        <div className="tools-security-item-progress-track is-f5" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={rowProgress.f5Bar.percent}>
+                          <span className={rowProgress.f5Bar.indeterminate ? "is-indeterminate" : undefined} style={{ width: `${rowProgress.f5Bar.percent}%` }} />
+                        </div>
+                        <small>{rowProgress.f5Bar.label}</small>
+                      </div>
+                    </div>
                   </div>
                   <b>{state.label}</b>
-                  <button
-                    className="btn-secondary tools-security-analysis-run"
-                    type="button"
-                    onClick={() => execute(test.id)}
-                    disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}
-                    title={`Ejecutar solo ${test.title}`}
-                  >
-                    Ejecutar
-                  </button>
+                  {state.className === "running" ? (
+                    <button
+                      className="btn-secondary tools-security-analysis-run is-cancel"
+                      type="button"
+                      onClick={cancelActiveJob}
+                      disabled={cancelling}
+                      title={analyzedJob?.options?.testId === test.id ? "Cancelar esta prueba" : "Cancelar la ejecución completa (afecta a todas las pruebas en curso)"}
+                    >
+                      {cancelling ? "Cancelando..." : "Cancelar"}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-secondary tools-security-analysis-run"
+                      type="button"
+                      onClick={() => execute(test.id)}
+                      disabled={running || loading || !profiles.some((profile) => profile.key === profileKey && profile.configured)}
+                      title={`Ejecutar solo ${test.title}`}
+                    >
+                      Ejecutar
+                    </button>
+                  )}
                   <button
                     className="tools-security-analysis-info"
                     type="button"
@@ -499,7 +713,7 @@ export default function SecurityTestsPage() {
             </div>
             <div className="tools-security-result-grid">
               <div><span>Resultado</span><strong>{selectedAnalysis.state.label}</strong></div>
-              <div><span>HTTP</span><strong>{selectedAnalysis.resultRow?.http || "Pendiente"}</strong></div>
+              <div><span>HTTP</span><strong>{selectedAnalysis.resultRow?.http || selectedAnalysis.resultRow?.http_status || "Pendiente"}</strong></div>
               <div><span>Evento F5</span><strong>{selectedAnalysis.resultRow?.evento_f5 || "Pendiente"}</strong></div>
               <div><span>Acción F5</span><strong>{selectedAnalysis.resultRow?.accion_f5 || "Sin acción registrada"}</strong></div>
               <div><span>Categoría F5</span><strong>{selectedAnalysis.resultRow?.categoria_f5 || "Sin categoría registrada"}</strong></div>
