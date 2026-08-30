@@ -22,39 +22,6 @@
   },
   "paths": {
     "/api/accounts/": {
-      "get": {
-        "tags": [
-          "accounts"
-        ],
-        "summary": "GET /api/accounts/",
-        "operationId": "get_api_accounts",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
       "post": {
         "tags": [
           "accounts"
@@ -7773,39 +7740,6 @@
       }
     },
     "/api/contacts/": {
-      "get": {
-        "tags": [
-          "contacts"
-        ],
-        "summary": "GET /api/contacts/",
-        "operationId": "get_api_contacts",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
       "post": {
         "tags": [
           "contacts"
@@ -10196,39 +10130,6 @@
       }
     },
     "/api/opportunities/": {
-      "get": {
-        "tags": [
-          "opportunities"
-        ],
-        "summary": "GET /api/opportunities/",
-        "operationId": "get_api_opportunities",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
       "post": {
         "tags": [
           "opportunities"

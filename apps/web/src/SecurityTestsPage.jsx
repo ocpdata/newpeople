@@ -4,6 +4,7 @@ import { api, getApiErrorMessage } from "./api";
 import "./tools/tools.css";
 
 const POLL_MS = 1000;
+const DDOS_CLOUD_DURATION_SECONDS = 120;
 
 const WAF_TEST_GUIDE = [
   {
@@ -177,68 +178,9 @@ const BOT_DEFENSE_TEST_GUIDE = [
   },
 ];
 
-const L7_DOS_TEST_GUIDE = [
-  {
-    id: "dos-baseline",
-    title: "Linea base",
-    method: "GET",
-    target: "/api/accounts/l7-dos-test",
-    detail:
-      "Genera el 10% del umbral para medir la respuesta normal del servicio.",
-    expected: "Trafico permitido sin mitigacion.",
-    kind: "legit",
-    threatLevel: "Bajo (carga controlada)",
-  },
-  {
-    id: "dos-pre-threshold",
-    title: "Preumbral",
-    method: "GET",
-    target: "/api/accounts/l7-dos-test",
-    detail:
-      "Genera el 80% del umbral para comprobar que F5 no mitigue anticipadamente.",
-    expected: "Trafico permitido sin mitigacion.",
-    kind: "legit",
-    threatLevel: "Medio (carga sostenida)",
-  },
-  {
-    id: "dos-threshold",
-    title: "Umbral",
-    method: "GET",
-    target: "/api/accounts/l7-dos-test",
-    detail:
-      "Sostiene el RPS configurado para observar el momento de activacion.",
-    expected: "Comportamiento acorde con el umbral configurado.",
-    kind: "neutral",
-    threatLevel: "Alto (umbral de mitigacion)",
-  },
-  {
-    id: "dos-over-threshold",
-    title: "Sobreumbral",
-    method: "GET",
-    target: "/api/accounts/l7-dos-test",
-    detail:
-      "Genera el 120% del umbral para validar el evento y la accion Block.",
-    expected: "Evento DoS L7 y mitigacion Block.",
-    kind: "attack",
-    threatLevel: "Alto (sobrecarga HTTP controlada)",
-  },
-  {
-    id: "dos-recovery",
-    title: "Recuperacion",
-    method: "GET",
-    target: "/api/accounts/l7-dos-test",
-    detail:
-      "Reduce la carga al 10% para verificar que el servicio vuelva a responder normalmente.",
-    expected: "Servicio estable despues de la mitigacion.",
-    kind: "legit",
-    threatLevel: "Bajo (verificacion posterior)",
-  },
-];
-
 const TEST_GUIDES = {
   waf: WAF_TEST_GUIDE,
   bot_defense: BOT_DEFENSE_TEST_GUIDE,
-  l7_dos: L7_DOS_TEST_GUIDE,
 };
 
 export default function SecurityTestsPage() {
@@ -247,8 +189,7 @@ export default function SecurityTestsPage() {
   const [profileKey, setProfileKey] = useState("f5");
   const [testKey, setTestKey] = useState("waf");
   const [wafMode, setWafMode] = useState("blocking");
-  const [dosThresholdRps, setDosThresholdRps] = useState(100);
-  const [dosConfirmed, setDosConfirmed] = useState(false);
+  const [progressNow, setProgressNow] = useState(Date.now());
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -265,6 +206,36 @@ export default function SecurityTestsPage() {
   const activeTestIndex = activeGuide.findIndex(
     (test) => test.id === currentTest || currentTest.startsWith(`${test.id}-`),
   );
+  const ddosStartedAt = Date.parse(
+    analyzedJob?.progress?.cloudTest?.startedAt || analyzedJob?.startedAt || "",
+  );
+  const ddosDurationSeconds = Number(
+    analyzedJob?.progress?.cloudTest?.durationSeconds ||
+      DDOS_CLOUD_DURATION_SECONDS,
+  );
+  const ddosElapsedSeconds = Number.isFinite(ddosStartedAt)
+    ? Math.max(
+        0,
+        Math.min(
+          ddosDurationSeconds,
+          Math.floor((progressNow - ddosStartedAt) / 1000),
+        ),
+      )
+    : 0;
+  const ddosProgressPercent = Math.round(
+    (ddosElapsedSeconds / ddosDurationSeconds) * 100,
+  );
+
+  useEffect(() => {
+    if (
+      testKey !== "l7_dos" ||
+      analyzedJob?.status !== "running" ||
+      !Number.isFinite(ddosStartedAt)
+    )
+      return undefined;
+    const timer = setInterval(() => setProgressNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [analyzedJob?.id, analyzedJob?.status, ddosStartedAt, testKey]);
 
   // La consulta a F5 suele resolverse en el primer intento (menos de un ciclo de polling),
   // asi que este banner se mantiene visible un minimo de tiempo para que sea perceptible.
@@ -306,7 +277,40 @@ export default function SecurityTestsPage() {
           ),
         )
     : 0;
-  const analysisPercent = Math.round((analysisCompleted / analysisTotal) * 100);
+  const analysisPercent = analysisTotal
+    ? Math.round((analysisCompleted / analysisTotal) * 100)
+    : 0;
+  const apiRows = testKey === "api_get" ? analyzedJob?.result?.rows || [] : [];
+  const apiTotal = Number(
+    analyzedJob?.progress?.total || analyzedJob?.result?.total || 0,
+  );
+  const apiCompleted = Math.min(
+    apiTotal,
+    Number(analyzedJob?.progress?.completed || 0),
+  );
+  const apiPercent = apiTotal ? Math.round((apiCompleted / apiTotal) * 100) : 0;
+  const apiPassed = Number(
+    analyzedJob?.progress?.apiTest?.passed ||
+      analyzedJob?.result?.byResult?.PASS ||
+      0,
+  );
+  const apiSkipped = Number(
+    analyzedJob?.progress?.apiTest?.skipped ||
+      analyzedJob?.result?.byResult?.SKIPPED_MISSING_FIXTURE ||
+      0,
+  );
+  const apiFailed = Number(
+    analyzedJob?.progress?.apiTest?.failed ||
+      Object.entries(analyzedJob?.result?.byResult || {}).reduce(
+        (total, [result, count]) =>
+          result.startsWith("FAIL") ||
+          result === "TIMEOUT" ||
+          result === "ERROR_CONNECTION"
+            ? total + Number(count)
+            : total,
+        0,
+      ),
+  );
 
   function getTestSlug(id) {
     return String(id || "").replace(/^(test|bot|dos)-(\d+-)?/, "");
@@ -968,10 +972,6 @@ export default function SecurityTestsPage() {
     if (list.length && !list.some((profile) => profile.key === profileKey)) {
       setProfileKey(list[0].key);
     }
-    if (nextTestKey === "l7_dos" && item?.defaults?.thresholdRps) {
-      setDosThresholdRps(Number(item.defaults.thresholdRps));
-      setDosConfirmed(false);
-    }
     setTestKey(nextTestKey);
   }
 
@@ -983,9 +983,6 @@ export default function SecurityTestsPage() {
         scriptKey: testKey,
         profileKey,
         wafMode,
-        ...(testKey === "l7_dos"
-          ? { dosThresholdRps, dosConfirmed: true }
-          : {}),
         ...(testId ? { testId } : {}),
       });
       await load();
@@ -1033,7 +1030,9 @@ export default function SecurityTestsPage() {
 
       {error ? <div className="toast toast-error">{error}</div> : null}
 
-      <article className="tools-security-launch-card">
+      <article
+        className={`tools-security-launch-card${testKey === "l7_dos" ? " is-ddos" : ""}`}
+      >
         <div
           className="tools-security-test-options"
           role="list"
@@ -1067,11 +1066,23 @@ export default function SecurityTestsPage() {
             className={`tools-security-test-option ${testKey === "l7_dos" ? "is-selected" : ""}`}
             onClick={() => selectTest("l7_dos")}
           >
-            <strong>DoS L7</strong>
+            <strong>DDoS L7</strong>
             <span>Disponible</span>
             <small>
-              Valida el umbral RPS, la mitigacion Block y la recuperacion ante
+              Valida carga L7 distribuida, la mitigacion y la recuperacion ante
               F5 DCS.
+            </small>
+          </button>
+          <button
+            type="button"
+            className={`tools-security-test-option ${testKey === "api_get" ? "is-selected" : ""}`}
+            onClick={() => selectTest("api_get")}
+          >
+            <strong>APIs</strong>
+            <span>Disponible</span>
+            <small>
+              Valida las operaciones GET de Swagger con el usuario de pruebas
+              configurado.
             </small>
           </button>
         </div>
@@ -1109,41 +1120,7 @@ export default function SecurityTestsPage() {
                 </select>
               </label>
             ) : null}
-            {testKey === "l7_dos" ? (
-              <label className="tools-filter-field">
-                <span>Umbral RPS</span>
-                <input
-                  type="number"
-                  min="10"
-                  max={Math.floor(
-                    Number(
-                      activeTestDefinition?.defaults?.maxRpsAllowed || 120,
-                    ) / 1.2,
-                  )}
-                  value={dosThresholdRps}
-                  onChange={(event) => {
-                    setDosThresholdRps(Number(event.target.value));
-                    setDosConfirmed(false);
-                  }}
-                  disabled={running || loading}
-                />
-              </label>
-            ) : null}
           </div>
-          {testKey === "l7_dos" ? (
-            <label className="tools-security-dos-confirmation">
-              <input
-                type="checkbox"
-                checked={dosConfirmed}
-                onChange={(event) => setDosConfirmed(event.target.checked)}
-                disabled={running || loading}
-              />
-              <span>
-                Confirmo la carga controlada hasta{" "}
-                {Math.ceil(dosThresholdRps * 1.2)} RPS
-              </span>
-            </label>
-          ) : null}
           <button
             className="btn-primary"
             type="button"
@@ -1151,13 +1128,18 @@ export default function SecurityTestsPage() {
             disabled={
               running ||
               loading ||
-              (testKey === "l7_dos" && !dosConfirmed) ||
               !profiles.some(
                 (profile) => profile.key === profileKey && profile.configured,
               )
             }
           >
-            {running ? "Ejecutando..." : "Ejecutar todas las pruebas"}
+            {running
+              ? "Ejecutando..."
+              : testKey === "l7_dos"
+                ? "Ejecutar prueba DDoS L7"
+                : testKey === "api_get"
+                  ? "Ejecutar pruebas de APIs"
+                  : "Ejecutar todas las pruebas"}
           </button>
           {["pending", "running"].includes(analyzedJob?.status) ? (
             <button
@@ -1170,21 +1152,100 @@ export default function SecurityTestsPage() {
             </button>
           ) : null}
         </div>
+        {testKey === "l7_dos" ? (
+          <div className="tools-security-ddos-explanation">
+            <div>
+              <strong>Prueba distribuida con k6 Cloud</strong>
+              <p>
+                Durante dos minutos, k6 Cloud envía tráfico HTTPS coordinado
+                desde seis regiones hacia el endpoint controlado. El perfil
+                incrementa la carga hasta 150 RPS, verifica la respuesta de F5
+                DCS y termina con una comprobación de recuperación del servicio.
+              </p>
+            </div>
+            <div>
+              <strong>Países de origen</strong>
+              <p>
+                Estados Unidos, Brasil, Alemania, Reino Unido, Sudáfrica y
+                Japón.
+              </p>
+            </div>
+          </div>
+        ) : null}
       </article>
 
       <section className="tools-security-analysis">
         <div className="tools-card-heading tools-security-analysis-heading">
           <div>
-            <h3>Lista de pruebas</h3>
+            <h3>
+              {testKey === "l7_dos"
+                ? "Ejecución k6 Cloud"
+                : testKey === "api_get"
+                  ? "Operaciones GET"
+                  : "Lista de pruebas"}
+            </h3>
             {!analyzedJob ? (
-              <p>El avance de los casos aparecerá al iniciar una prueba.</p>
+              <p>
+                {testKey === "l7_dos"
+                  ? "El avance de la ejecución Cloud aparecerá al iniciar la prueba."
+                  : testKey === "api_get"
+                    ? "Se probarán las rutas sin parámetros; las demás se omitirán hasta contar con datos de prueba."
+                    : "El avance de los casos aparecerá al iniciar una prueba."}
+              </p>
             ) : null}
           </div>
           {analyzedJob ? (
             <div className="tools-security-analysis-execution">
               <div className="tools-security-execution-columns">
                 <div className="tools-security-execution-column">
-                  {analyzedJob.options?.testId ? (
+                  {testKey === "l7_dos" ? (
+                    <>
+                      <div className="tools-security-analysis-execution-label">
+                        <strong>k6 Cloud</strong>
+                        <span>
+                          {ddosElapsedSeconds < ddosDurationSeconds &&
+                          ["pending", "running"].includes(analyzedJob.status)
+                            ? `${Math.floor(ddosElapsedSeconds / 60)}:${String(ddosElapsedSeconds % 60).padStart(2, "0")} de 2:00`
+                            : analyzedJob.status === "cancelled"
+                              ? "Ejecución cancelada"
+                              : ["failed", "timeout"].includes(
+                                    analyzedJob.status,
+                                  )
+                                ? "Ejecución interrumpida"
+                                : "Carga finalizada"}
+                        </span>
+                      </div>
+                      <div
+                        className="tools-security-analysis-execution-track"
+                        role="progressbar"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow={ddosProgressPercent}
+                        aria-label="Avance de la ejecución k6 Cloud"
+                      >
+                        <span style={{ width: `${ddosProgressPercent}%` }} />
+                      </div>
+                    </>
+                  ) : testKey === "api_get" ? (
+                    <>
+                      <div className="tools-security-analysis-execution-label">
+                        <strong>Endpoints</strong>
+                        <span>
+                          {apiCompleted} de {apiTotal} · {apiPercent}%
+                        </span>
+                      </div>
+                      <div
+                        className="tools-security-analysis-execution-track"
+                        role="progressbar"
+                        aria-valuemin="0"
+                        aria-valuemax={apiTotal}
+                        aria-valuenow={apiCompleted}
+                        aria-label="Avance de las pruebas de APIs"
+                      >
+                        <span style={{ width: `${apiPercent}%` }} />
+                      </div>
+                    </>
+                  ) : analyzedJob.options?.testId ? (
                     <>
                       <div className="tools-security-analysis-execution-label">
                         <strong>Solicitud</strong>
@@ -1242,38 +1303,40 @@ export default function SecurityTestsPage() {
                     </>
                   )}
                 </div>
-                <div className="tools-security-execution-column">
-                  {(() => {
-                    const jobF5Progress = getJobF5Progress(analyzedJob);
-                    return (
-                      <>
-                        <div
-                          className={`tools-security-analysis-execution-label${jobF5Progress.disabled ? " is-disabled" : ""}`}
-                        >
-                          <strong>F5 DCS</strong>
-                          <span>{jobF5Progress.label}</span>
-                        </div>
-                        <div
-                          className="tools-security-analysis-execution-track is-f5"
-                          role="progressbar"
-                          aria-valuemin="0"
-                          aria-valuemax="100"
-                          aria-valuenow={jobF5Progress.percent}
-                          aria-label="Avance de la consulta a F5 DCS"
-                        >
-                          <span
-                            className={
-                              jobF5Progress.indeterminate
-                                ? "is-indeterminate"
-                                : undefined
-                            }
-                            style={{ width: `${jobF5Progress.percent}%` }}
-                          />
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
+                {testKey !== "api_get" ? (
+                  <div className="tools-security-execution-column">
+                    {(() => {
+                      const jobF5Progress = getJobF5Progress(analyzedJob);
+                      return (
+                        <>
+                          <div
+                            className={`tools-security-analysis-execution-label${jobF5Progress.disabled ? " is-disabled" : ""}`}
+                          >
+                            <strong>F5 DCS</strong>
+                            <span>{jobF5Progress.label}</span>
+                          </div>
+                          <div
+                            className="tools-security-analysis-execution-track is-f5"
+                            role="progressbar"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-valuenow={jobF5Progress.percent}
+                            aria-label="Avance de la consulta a F5 DCS"
+                          >
+                            <span
+                              className={
+                                jobF5Progress.indeterminate
+                                  ? "is-indeterminate"
+                                  : undefined
+                              }
+                              style={{ width: `${jobF5Progress.percent}%` }}
+                            />
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : null}
               </div>
               <small>
                 {analyzedJob.status === "completed"
@@ -1399,7 +1462,7 @@ export default function SecurityTestsPage() {
                     >
                       {cancelling ? "Cancelando..." : "Cancelar"}
                     </button>
-                  ) : (
+                  ) : testKey !== "l7_dos" ? (
                     <button
                       className="btn-secondary tools-security-analysis-run"
                       type="button"
@@ -1407,7 +1470,6 @@ export default function SecurityTestsPage() {
                       disabled={
                         running ||
                         loading ||
-                        (testKey === "l7_dos" && !dosConfirmed) ||
                         !profiles.some(
                           (profile) =>
                             profile.key === profileKey && profile.configured,
@@ -1417,7 +1479,7 @@ export default function SecurityTestsPage() {
                     >
                       Ejecutar
                     </button>
-                  )}
+                  ) : null}
                   <button
                     className="tools-security-analysis-info"
                     type="button"
@@ -1437,6 +1499,65 @@ export default function SecurityTestsPage() {
                 </article>
               );
             })}
+          </div>
+        ) : null}
+        {testKey === "api_get" && analyzedJob ? (
+          <div className="tools-security-api-results">
+            <div
+              className="tools-security-api-summary"
+              aria-label="Resumen de APIs"
+            >
+              <span>
+                <strong>{apiPassed}</strong> aprobadas
+              </span>
+              <span>
+                <strong>{apiFailed}</strong> fallidas
+              </span>
+              <span>
+                <strong>{apiSkipped}</strong> omitidas
+              </span>
+            </div>
+            {apiRows.length ? (
+              <div className="tools-security-api-table-wrap">
+                <table className="tools-security-api-table">
+                  <thead>
+                    <tr>
+                      <th>Resultado</th>
+                      <th>Operación</th>
+                      <th>Ruta</th>
+                      <th>HTTP</th>
+                      <th>Duración</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apiRows.map((row) => (
+                      <tr key={`${row.prueba}-${row.url}`}>
+                        <td>
+                          <span
+                            className={`tools-security-api-result is-${row.resultado === "PASS" ? "pass" : row.resultado?.startsWith("SKIPPED") ? "skipped" : "fail"}`}
+                          >
+                            {row.resultado}
+                          </span>
+                        </td>
+                        <td>{row.prueba}</td>
+                        <td>
+                          <code>
+                            {row.metodo} {row.url}
+                          </code>
+                        </td>
+                        <td>{row.http}</td>
+                        <td>{row.duracion_ms} ms</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="tools-security-api-waiting">
+                Los resultados por endpoint aparecerán al finalizar la
+                ejecución.
+              </p>
+            )}
           </div>
         ) : null}
       </section>

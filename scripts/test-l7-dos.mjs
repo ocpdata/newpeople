@@ -10,22 +10,12 @@ import process from "node:process";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TARGET_URL =
   "https://newpip.digitalvs.com/api/accounts/l7-dos-test";
-const DEFAULT_THRESHOLD_RPS = 100;
-const thresholdIndex = process.argv.indexOf("--threshold-rps");
-const onlyIndex = process.argv.indexOf("--only");
 const dryRun = process.argv.includes("--dry-run");
-const thresholdRps = Number(
-  thresholdIndex >= 0
-    ? process.argv[thresholdIndex + 1]
-    : process.env.DOS_RPS_THRESHOLD || DEFAULT_THRESHOLD_RPS,
-);
-const maxAllowedRps = Number(process.env.DOS_MAX_RPS_ALLOWED || 120);
 const targetUrl =
   process.env.DOS_TARGET_URL || process.env.BASE_URL || DEFAULT_TARGET_URL;
 const localHealthUrl =
   process.env.DOS_LOCAL_HEALTH_URL || "http://127.0.0.1:4000/health";
 const outputFile = process.env.DOS_TEST_OUTPUT || "l7-dos-results.tsv";
-const onlyTest = onlyIndex >= 0 ? process.argv[onlyIndex + 1] : "";
 const f5InitialWaitMs =
   Number(process.env.XC_EVENT_INITIAL_WAIT_SECONDS || 15) * 1000;
 const f5RetryWaitMs = Number(process.env.XC_EVENT_WAIT_SECONDS || 15) * 1000;
@@ -41,17 +31,8 @@ function fail(message) {
   process.exit(2);
 }
 
-const maxThresholdRps = Math.floor(maxAllowedRps / 1.2);
-if (
-  !Number.isInteger(thresholdRps) ||
-  thresholdRps < 10 ||
-  thresholdRps > maxThresholdRps
-)
-  fail(`DOS_RPS_THRESHOLD debe ser un entero entre 10 y ${maxThresholdRps}`);
-if (thresholdIndex >= 0 && !process.argv[thresholdIndex + 1])
-  fail("Falta el valor de --threshold-rps");
-if (onlyIndex >= 0 && !process.argv[onlyIndex + 1])
-  fail("Falta el valor de --only");
+if (!dryRun && !String(process.env.K6_CLOUD_TOKEN || "").trim())
+  fail("K6_CLOUD_TOKEN es obligatorio para ejecutar DDoS L7");
 
 const parsedTarget = new URL(targetUrl);
 const allowedHosts = String(
@@ -70,47 +51,45 @@ const stages = [
   {
     id: "dos-baseline",
     title: "Linea base",
-    percent: 10,
+    rate: 50,
+    startOffset: 0,
     duration: 10,
     expectsMitigation: false,
   },
   {
     id: "dos-pre-threshold",
     title: "Preumbral",
-    percent: 80,
+    rate: 90,
+    startOffset: 10,
     duration: 15,
     expectsMitigation: false,
   },
   {
     id: "dos-threshold",
     title: "Umbral",
-    percent: 100,
+    rate: 100,
+    startOffset: 25,
     duration: 20,
     expectsMitigation: null,
   },
   {
     id: "dos-over-threshold",
     title: "Sobreumbral",
-    percent: 120,
+    rate: 150,
+    startOffset: 45,
     duration: 60,
     expectsMitigation: true,
   },
   {
     id: "dos-recovery",
     title: "Recuperacion",
-    percent: 10,
+    rate: 20,
+    startOffset: 105,
     duration: 15,
     expectsMitigation: false,
     recovery: true,
   },
-].map((stage) => ({
-  ...stage,
-  rate: Math.max(1, Math.ceil((thresholdRps * stage.percent) / 100)),
-}));
-
-function shouldRun(stage) {
-  return !onlyTest || stage.id === onlyTest;
-}
+];
 
 function escapeTsv(value) {
   return String(value ?? "").replace(/[\t\r\n]+/g, " ");
@@ -134,7 +113,11 @@ function findEventField(value, names) {
   return "";
 }
 
-function runCommand(command, args, options = {}) {
+function runCommand(
+  command,
+  args,
+  { acceptedExitCodes = [0], forwardOutput = false, ...options } = {},
+) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command, args, {
       ...options,
@@ -143,17 +126,24 @@ function runCommand(command, args, options = {}) {
     activeChild = child;
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => (stdout += String(chunk)));
-    child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+      if (forwardOutput) process.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+      if (forwardOutput) process.stderr.write(chunk);
+    });
     child.on("error", rejectPromise);
     child.on("close", (code, signal) => {
       activeChild = null;
-      if (code === 0) resolvePromise({ stdout, stderr });
+      if (acceptedExitCodes.includes(code))
+        resolvePromise({ stdout, stderr, exitCode: code });
       else
         rejectPromise(
           Object.assign(
             new Error(stderr || `${command} finalizo con codigo ${code}`),
-            { code, signal },
+            { code, signal, stdout, stderr },
           ),
         );
     });
@@ -167,10 +157,6 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     activeChild?.kill("SIGTERM");
     process.exitCode = 1;
   });
-}
-
-function metric(summary, name, key, fallback = 0) {
-  return Number(summary?.metrics?.[name]?.values?.[key] ?? fallback);
 }
 
 async function assertHealthy(
@@ -191,96 +177,102 @@ async function assertHealthy(
   }
 }
 
-async function executeStage(stage, tempDirectory) {
-  const startedAt = new Date().toISOString();
+async function executeCloudTest() {
+  const cloudStartedAt = Date.now();
   if (dryRun) {
-    const result = {
-      ...stage,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      result: "NOT_RUN",
-      requests: 0,
-      successful: 0,
-      blocked: 0,
-      errors: 0,
-      avgMs: 0,
-      p95Ms: 0,
-      p99Ms: 0,
-    };
-    results.push(result);
-    console.log(
-      `${stage.id} | ${stage.rate} RPS | ${stage.duration}s | NOT_RUN`,
-    );
+    for (const stage of stages) {
+      results.push({
+        ...stage,
+        startedAt: new Date(
+          cloudStartedAt + stage.startOffset * 1000,
+        ).toISOString(),
+        finishedAt: new Date(
+          cloudStartedAt + (stage.startOffset + stage.duration) * 1000,
+        ).toISOString(),
+        result: "NOT_RUN",
+        requests: 0,
+        successful: 0,
+        blocked: 0,
+        errors: 0,
+        avgMs: 0,
+        p95Ms: 0,
+        p99Ms: 0,
+      });
+      console.log(
+        `${stage.id} | ${stage.rate} RPS | ${stage.duration}s | NOT_RUN`,
+      );
+    }
     return;
   }
 
+  const progressTimers = stages
+    .slice(1)
+    .map((stage) =>
+      setTimeout(
+        () => console.log(`${stage.id} | iniciando ${stage.rate} RPS`),
+        stage.startOffset * 1000,
+      ),
+    );
+  console.log("K6_CLOUD: start duration_seconds=120");
+  console.log(`${stages[0].id} | iniciando ${stages[0].rate} RPS`);
+  let cloudResult;
+  try {
+    cloudResult = await runCommand(
+      "k6",
+      [
+        "cloud",
+        "run",
+        "-e",
+        `DOS_TARGET_URL=${targetUrl}`,
+        "-e",
+        "DOS_TEST_ID=dos-cloud-managed",
+        "-e",
+        `DOS_RUN_ID=${runId}`,
+        resolve(SCRIPT_DIR, "k6-cloud-l7-dos.js"),
+      ],
+      {
+        acceptedExitCodes: [0, 99],
+        forwardOutput: true,
+        env: process.env,
+      },
+    );
+  } finally {
+    for (const timer of progressTimers) clearTimeout(timer);
+  }
+
+  const combinedOutput = `${cloudResult.stdout}\n${cloudResult.stderr}`;
+  const runUrl = combinedOutput.match(/https:\/\/\S+\/runs\/\d+/)?.[0] || "";
+  let healthError = "";
   try {
     await assertHealthy(localHealthUrl, "La API local");
   } catch (error) {
-    const healthError = error instanceof Error ? error.message : String(error);
+    healthError = error instanceof Error ? error.message : String(error);
+  }
+  for (const stage of stages) {
     results.push({
       ...stage,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      result: "FAIL_ORIGIN_DEGRADED",
+      startedAt: new Date(
+        cloudStartedAt + stage.startOffset * 1000,
+      ).toISOString(),
+      finishedAt: new Date(
+        cloudStartedAt + (stage.startOffset + stage.duration) * 1000,
+      ).toISOString(),
+      result:
+        stage.recovery && healthError ? "FAIL_ORIGIN_DEGRADED" : "REVIEW_F5",
       requests: 0,
-      successful: 0,
+      successful: stage.recovery && !healthError ? 1 : 0,
       blocked: 0,
       errors: 0,
       avgMs: 0,
       p95Ms: 0,
       p99Ms: 0,
       healthError,
+      cloudExitCode: cloudResult.exitCode,
+      runUrl,
     });
-    console.log(`${stage.id} | carga omitida | FAIL_ORIGIN_DEGRADED`);
-    return;
   }
   console.log(
-    `${stage.id} | iniciando ${stage.rate} RPS durante ${stage.duration}s`,
-  );
-
-  const summaryPath = join(tempDirectory, `${stage.id}.json`);
-  await runCommand(
-    "k6",
-    ["run", "--quiet", resolve(SCRIPT_DIR, "k6-l7-dos.js")],
-    {
-      env: {
-        ...process.env,
-        DOS_TARGET_URL: targetUrl,
-        DOS_RATE_RPS: String(stage.rate),
-        DOS_DURATION: `${stage.duration}s`,
-        DOS_TEST_ID: stage.id,
-        DOS_RUN_ID: runId,
-        DOS_SUMMARY_PATH: summaryPath,
-      },
-    },
-  );
-  const summary = JSON.parse(await readFile(summaryPath, "utf8"));
-  const successful = metric(summary, "dos_successful_responses", "count");
-  const blocked = metric(summary, "dos_blocked_responses", "count");
-  const errors = metric(summary, "dos_error_responses", "count");
-  const result = {
-    ...stage,
-    startedAt,
-    finishedAt: new Date().toISOString(),
-    result: "REVIEW_F5",
-    requests: metric(summary, "http_reqs", "count"),
-    successful,
-    blocked,
-    errors,
-    avgMs: metric(summary, "http_req_duration", "avg"),
-    p95Ms: metric(summary, "http_req_duration", "p(95)"),
-    p99Ms: metric(summary, "http_req_duration", "p(99)"),
-  };
-  try {
-    await assertHealthy(localHealthUrl, "La API local");
-  } catch (error) {
-    result.result = "FAIL_ORIGIN_DEGRADED";
-    result.healthError = error instanceof Error ? error.message : String(error);
-  }
-  results.push(result);
-  console.log(
-    `${stage.id} | ${stage.rate} RPS | solicitudes=${result.requests} | bloqueadas=${blocked} | REVIEW_F5`,
+    `K6_CLOUD: done exit_code=${cloudResult.exitCode} run_url=${runUrl || "unknown"}`,
   );
 }
 
@@ -346,9 +338,23 @@ async function fetchF5Events() {
 }
 
 function isDosEvent(event) {
-  const text = JSON.stringify(event).toLowerCase();
+  const eventType = findEventField(event, [
+    "sec_event_type",
+    "event_type",
+    "type",
+  ]);
+  const category = findEventField(event, [
+    "category",
+    "attack_type",
+    "threat_type",
+  ]);
+  const message = findEventField(event, [
+    "message",
+    "summary_msg",
+    "description",
+  ]);
   return /(?:l7.?ddos|ddos|dos(?:.sec)?.?event|http.?flood|rate.?limit)/i.test(
-    text,
+    `${eventType} ${category} ${message}`,
   );
 }
 
@@ -515,7 +521,7 @@ async function writeReport(f5) {
           ])
         : "",
       match ? JSON.stringify(match.event) : f5.error?.message || "",
-      `threshold_rps=${thresholdRps}; local_health=${stage.healthError || "ok"}`,
+      `cloud_run=${stage.runUrl || "n/a"}; cloud_exit_code=${stage.cloudExitCode ?? 0}; local_health=${stage.healthError || "ok"}`,
     ]
       .map(escapeTsv)
       .join("\t");
@@ -532,18 +538,10 @@ async function run() {
         "X-DOS-Run-ID": runId,
       },
     });
-  const tempDirectory = await mkdtemp(join(tmpdir(), "l7-dos-run-"));
-  try {
-    for (const stage of stages) {
-      if (shouldRun(stage)) await executeStage(stage, tempDirectory);
-      if (results.at(-1)?.result === "FAIL_ORIGIN_DEGRADED") break;
-    }
-    const f5 = await queryF5();
-    await writeReport(f5);
-    console.log(`\nResultados guardados en: ${outputFile}`);
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true });
-  }
+  await executeCloudTest();
+  const f5 = await queryF5();
+  await writeReport(f5);
+  console.log(`\nResultados guardados en: ${outputFile}`);
 }
 
 run().catch((error) => {

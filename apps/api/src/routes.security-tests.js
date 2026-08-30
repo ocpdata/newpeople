@@ -17,8 +17,6 @@ const createSchema = z.object({
   profileKey: z.string().trim().min(1).max(80),
   wafMode: z.enum(["monitoring", "blocking"]).default("monitoring"),
   testId: z.string().trim().min(1).max(80).optional(),
-  dosThresholdRps: z.number().int().optional(),
-  dosConfirmed: z.boolean().optional(),
 });
 
 router.get("/catalog", requirePermission("pruebas.read"), (_req, res) => {
@@ -49,12 +47,20 @@ router.post("/jobs", requirePermission("pruebas.execute"), async (req, res) => {
     !req.user.permissionSet.has("pruebas.admin")
   ) {
     return res.status(403).json({
-      message: "Las pruebas DoS L7 requieren permisos administrativos",
+      message: "Las pruebas DDoS L7 requieren permisos administrativos",
     });
   }
-  if (parsed.data.scriptKey === "l7_dos" && parsed.data.dosConfirmed !== true) {
+  if (
+    parsed.data.scriptKey === "api_get" &&
+    !req.user.permissionSet.has("pruebas.admin")
+  ) {
+    return res.status(403).json({
+      message: "Las pruebas de APIs requieren permisos administrativos",
+    });
+  }
+  if (parsed.data.scriptKey === "l7_dos" && parsed.data.testId) {
     return res.status(400).json({
-      message: "Debes confirmar explicitamente la carga controlada DoS L7",
+      message: "La prueba DDoS L7 debe ejecutar el perfil Cloud completo",
     });
   }
   try {

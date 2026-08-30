@@ -60,12 +60,52 @@
   box-shadow: 0 12px 30px rgba(30, 64, 175, 0.08);
 }
 
+.tools-security-launch-card.is-ddos {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.tools-security-launch-card.is-ddos .tools-security-launch-controls {
+  align-self: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.tools-security-launch-card.is-ddos
+  .tools-security-launch-fields
+  .tools-filter-field:first-child {
+  flex-basis: 340px;
+  min-width: 340px;
+}
+
+.tools-security-ddos-explanation {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 24px;
+  width: 100%;
+  padding-top: 16px;
+  border-top: 1px solid #d7e3f3;
+  color: #334155;
+}
+
+.tools-security-ddos-explanation strong {
+  color: #13263d;
+  font-size: 14px;
+}
+
+.tools-security-ddos-explanation p {
+  max-width: 760px;
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .tools-security-test-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
   gap: 10px;
   width: 100%;
-  max-width: 720px;
+  max-width: 920px;
 }
 
 .tools-security-test-option {
@@ -158,16 +198,6 @@
   background: rgba(255, 255, 255, 0.9);
   color: #13263d;
   font-weight: 600;
-}
-
-.tools-security-dos-confirmation {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .tools-security-launch-controls .btn-primary {
@@ -326,6 +356,75 @@
   border: 1px solid #e5edf7;
   border-radius: 10px;
   background: #fff;
+}
+
+.tools-security-api-results {
+  display: grid;
+  gap: 14px;
+}
+
+.tools-security-api-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tools-security-api-summary span {
+  padding: 12px 14px;
+  border: 1px solid #dce6f4;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #61758f;
+  font-size: 12px;
+}
+
+.tools-security-api-summary strong {
+  display: block;
+  color: #13263d;
+  font-size: 20px;
+}
+
+.tools-security-api-table-wrap {
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid #dce6f4;
+  border-radius: 8px;
+}
+
+.tools-security-api-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tools-security-api-table th,
+.tools-security-api-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #e5edf7;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tools-security-api-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eef4fb;
+  color: #27425f;
+}
+
+.tools-security-api-result {
+  color: #b91c1c;
+  font-weight: 800;
+}
+
+.tools-security-api-result.is-pass {
+  color: #047857;
+}
+
+.tools-security-api-result.is-skipped,
+.tools-security-api-waiting {
+  color: #64748b;
 }
 
 .tools-security-analysis-item > div {
@@ -1074,6 +1173,10 @@
   .tools-duplicates-layout {
     grid-template-columns: 1fr;
   }
+
+  .tools-security-test-options {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -1111,7 +1214,12 @@
   }
 
   .tools-security-test-options {
+    grid-template-columns: 1fr;
     max-width: none;
+  }
+
+  .tools-security-api-summary {
+    grid-template-columns: 1fr;
   }
 
   .tools-security-launch-controls {
@@ -1123,6 +1231,17 @@
   .tools-security-launch-fields {
     flex-direction: column;
     width: 100%;
+  }
+
+  .tools-security-ddos-explanation {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .tools-security-launch-card.is-ddos
+    .tools-security-launch-fields
+    .tools-filter-field:first-child {
+    min-width: 0;
   }
 
   .tools-security-launch-controls .tools-filter-field,

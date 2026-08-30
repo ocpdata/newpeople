@@ -10,6 +10,7 @@ import { ensureSecurityTestSchema } from "./schema.js";
 const JOB_PREFIX = "securitytest_";
 const JOB_TTL_HOURS = 24;
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
+const DDOS_JOB_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_OUTPUT_LENGTH = 2_000_000;
 const SCRIPT_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -23,8 +24,6 @@ const cancelledJobs = new Set();
 const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
 const RATE_LIMIT_TOTAL_REQUESTS = 5;
 const DOS_TOTAL_STAGES = 5;
-const DEFAULT_DOS_THRESHOLD_RPS = 100;
-const DEFAULT_DOS_MAX_RPS_ALLOWED = 120;
 
 const SCRIPT_DEFINITIONS = {
   waf: {
@@ -72,22 +71,30 @@ const SCRIPT_DEFINITIONS = {
       },
     },
   },
-  l7_dos: {
-    title: "DoS L7",
+  api_get: {
+    title: "APIs",
     description:
-      "Valida de forma controlada el umbral RPS, la mitigacion y la recuperacion ante F5 DCS.",
-    script: "test-l7-dos.mjs",
-    defaults: {
-      thresholdRps: DEFAULT_DOS_THRESHOLD_RPS,
-      maxRpsAllowed: Number(
-        process.env.DOS_MAX_RPS_ALLOWED || DEFAULT_DOS_MAX_RPS_ALLOWED,
-      ),
+      "Ejecuta las operaciones GET de swagger.json con el usuario de pruebas configurado en el servidor.",
+    script: "test-api-get.mjs",
+    profiles: {
+      authenticated: {
+        title: "GET autenticados desde Swagger",
+        args: [],
+        requires: ["WAF_LOGIN_EMAIL", "WAF_LOGIN_PASSWORD"],
+      },
     },
+  },
+  l7_dos: {
+    title: "DDoS L7",
+    description:
+      "Valida con carga distribuida el umbral RPS, la mitigacion y la recuperacion ante F5 DCS.",
+    script: "test-l7-dos.mjs",
     profiles: {
       f5: {
-        title: "Prueba controlada DoS L7 con F5 DCS",
+        title: "Prueba distribuida DDoS L7 con F5 DCS",
         args: [],
         requires: [
+          "K6_CLOUD_TOKEN",
           "XC_API_URL",
           "XC_API_P12_FILE",
           "XC_P12_PASSWORD",
@@ -191,7 +198,6 @@ export async function createSecurityTestJob({
   profileKey,
   wafMode,
   testId,
-  dosThresholdRps,
   requestedByUserId,
   req,
 }) {
@@ -225,26 +231,6 @@ export async function createSecurityTestJob({
   );
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
-  const maxDosRpsAllowed = Number(
-    process.env.DOS_MAX_RPS_ALLOWED || DEFAULT_DOS_MAX_RPS_ALLOWED,
-  );
-  const maxDosThresholdRps = Math.floor(maxDosRpsAllowed / 1.2);
-  const selectedDosThresholdRps = Number(
-    dosThresholdRps || DEFAULT_DOS_THRESHOLD_RPS,
-  );
-  if (
-    scriptKey === "l7_dos" &&
-    (!Number.isInteger(selectedDosThresholdRps) ||
-      selectedDosThresholdRps < 10 ||
-      selectedDosThresholdRps > maxDosThresholdRps)
-  ) {
-    throw Object.assign(
-      new Error(
-        `El umbral DoS debe estar entre 10 y ${maxDosThresholdRps} RPS`,
-      ),
-      { status: 400 },
-    );
-  }
   const stepsTotal =
     scriptKey === "waf" && (!testId || testId === RATE_LIMIT_TEST_ID)
       ? RATE_LIMIT_TOTAL_REQUESTS
@@ -263,9 +249,6 @@ export async function createSecurityTestJob({
         wafMode,
         testId: testId || null,
         stepsTotal,
-        ...(scriptKey === "l7_dos"
-          ? { dosThresholdRps: selectedDosThresholdRps }
-          : {}),
       }),
       JOB_TTL_HOURS,
     ],
@@ -372,13 +355,12 @@ async function executeJob(job) {
   );
   const options = parseJson(job.options_json, {});
   const args = [...selected.profile.args];
-  if (job.script_key === "l7_dos")
-    args.push("--threshold-rps", String(options.dosThresholdRps));
   if (options.testId) args.push("--only", options.testId);
   const env = {
     ...process.env,
     WAF_TEST_OUTPUT: outputFile,
     BOT_TEST_OUTPUT: outputFile,
+    API_TEST_OUTPUT: outputFile,
     DOS_TEST_OUTPUT: outputFile,
     XC_WAF_MODE: options.wafMode || "monitoring",
   };
@@ -389,6 +371,8 @@ async function executeJob(job) {
       args,
       cwd: resolve(SCRIPT_ROOT, ".."),
       env,
+      timeoutMs:
+        job.script_key === "l7_dos" ? DDOS_JOB_TIMEOUT_MS : JOB_TIMEOUT_MS,
     });
     const reportText = await readFile(outputFile, "utf8").catch(() => "");
     if (cancelledJobs.has(job.public_id)) return;
@@ -431,7 +415,7 @@ async function executeJob(job) {
   }
 }
 
-function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
+function runScriptWithProgress({ job, scriptPath, args, cwd, env, timeoutMs }) {
   return new Promise((resolvePromise, rejectPromise) => {
     const needsVirtualDisplay =
       process.platform === "linux" &&
@@ -491,6 +475,73 @@ function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
           f5Correlation: { active: false, state: doneMatch[1] },
         };
       }
+      const cloudStartMatch = text.match(
+        /K6_CLOUD: start duration_seconds=(\d+)/,
+      );
+      if (cloudStartMatch) {
+        progress = {
+          ...progress,
+          cloudTest: {
+            startedAt: new Date().toISOString(),
+            durationSeconds: Number(cloudStartMatch[1]),
+            completed: false,
+          },
+        };
+      }
+      if (/K6_CLOUD: done\b/.test(text)) {
+        progress = {
+          ...progress,
+          cloudTest: {
+            ...progress.cloudTest,
+            completed: true,
+            finishedAt: new Date().toISOString(),
+          },
+        };
+      }
+      const apiStartMatch = text.match(
+        /API_TEST_START: total=(\d+) executable=(\d+) skipped=(\d+)/,
+      );
+      if (apiStartMatch) {
+        progress = {
+          ...progress,
+          completed: 0,
+          total: Number(apiStartMatch[1]),
+          apiTest: {
+            executable: Number(apiStartMatch[2]),
+            skipped: Number(apiStartMatch[3]),
+          },
+        };
+      }
+      const apiProgressMatches = [
+        ...text.matchAll(
+          /API_TEST_PROGRESS: completed=(\d+) total=(\d+) operation_id=([^\s]+)/g,
+        ),
+      ];
+      const apiProgressMatch = apiProgressMatches.at(-1);
+      if (apiProgressMatch) {
+        progress = {
+          ...progress,
+          completed: Number(apiProgressMatch[1]),
+          total: Number(apiProgressMatch[2]),
+          currentTest: apiProgressMatch[3],
+        };
+      }
+      const apiDoneMatch = text.match(
+        /API_TEST_DONE: total=(\d+) passed=(\d+) failed=(\d+) skipped=(\d+)/,
+      );
+      if (apiDoneMatch) {
+        progress = {
+          ...progress,
+          completed: Number(apiDoneMatch[1]),
+          total: Number(apiDoneMatch[1]),
+          apiTest: {
+            ...progress.apiTest,
+            passed: Number(apiDoneMatch[2]),
+            failed: Number(apiDoneMatch[3]),
+            skipped: Number(apiDoneMatch[4]),
+          },
+        };
+      }
       persistQueue = persistQueue.then(() =>
         query(
           "UPDATE security_test_jobs SET stdout_text = ?, stderr_text = ?, progress_json = ? WHERE id = ? AND status = 'running'",
@@ -501,7 +552,7 @@ function runScriptWithProgress({ job, scriptPath, args, cwd, env }) {
 
     child.stdout.on("data", (chunk) => consume(chunk, "stdout"));
     child.stderr.on("data", (chunk) => consume(chunk, "stderr"));
-    const timeout = setTimeout(() => child.kill("SIGTERM"), JOB_TIMEOUT_MS);
+    const timeout = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
     child.on("error", (error) => {
       clearTimeout(timeout);
       if (settled) return;
