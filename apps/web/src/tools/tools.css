@@ -365,7 +365,7 @@
 
 .tools-security-api-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
 }
 
@@ -425,6 +425,31 @@
 .tools-security-api-result.is-skipped,
 .tools-security-api-waiting {
   color: #64748b;
+}
+
+.tools-security-f5-status {
+  font-weight: 800;
+}
+
+.tools-security-f5-status.is-inventoried {
+  color: #047857;
+}
+
+.tools-security-f5-status.is-discovered {
+  color: #1d4ed8;
+}
+
+.tools-security-f5-status.is-shadow {
+  color: #b45309;
+}
+
+.tools-security-f5-status.is-unknown,
+.tools-security-f5-status.is-no_data {
+  color: #64748b;
+}
+
+.tools-security-f5-status.is-query_error {
+  color: #b91c1c;
 }
 
 .tools-security-analysis-item > div {

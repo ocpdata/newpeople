@@ -51,7 +51,7 @@ router.post("/jobs", requirePermission("pruebas.execute"), async (req, res) => {
     });
   }
   if (
-    parsed.data.scriptKey === "api_get" &&
+    parsed.data.scriptKey.startsWith("api_get_") &&
     !req.user.permissionSet.has("pruebas.admin")
   ) {
     return res.status(403).json({

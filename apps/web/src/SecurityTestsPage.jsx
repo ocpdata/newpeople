@@ -183,6 +183,15 @@ const TEST_GUIDES = {
   bot_defense: BOT_DEFENSE_TEST_GUIDE,
 };
 
+const API_F5_STATUS_LABELS = {
+  INVENTORIED: "Inventariada",
+  DISCOVERED: "Descubierta",
+  SHADOW: "Shadow",
+  UNKNOWN: "Desconocida",
+  NO_DATA: "Sin datos",
+  QUERY_ERROR: "Error de consulta",
+};
+
 export default function SecurityTestsPage() {
   const [catalog, setCatalog] = useState([]);
   const [jobs, setJobs] = useState([]);
@@ -200,6 +209,7 @@ export default function SecurityTestsPage() {
 
   const activeTestDefinition = catalog.find((item) => item.key === testKey);
   const profiles = activeTestDefinition?.profiles || [];
+  const isApiTest = testKey.startsWith("api_get");
   const activeGuide = TEST_GUIDES[testKey] || [];
   const analyzedJob = jobs.find((job) => job.scriptKey === testKey) || null;
   const currentTest = analyzedJob?.progress?.currentTest || "";
@@ -280,7 +290,11 @@ export default function SecurityTestsPage() {
   const analysisPercent = analysisTotal
     ? Math.round((analysisCompleted / analysisTotal) * 100)
     : 0;
-  const apiRows = testKey === "api_get" ? analyzedJob?.result?.rows || [] : [];
+  const apiRows = isApiTest
+    ? (analyzedJob?.result?.rows || []).filter(
+        (row) => row.resultado === "PASS",
+      )
+    : [];
   const apiTotal = Number(
     analyzedJob?.progress?.total || analyzedJob?.result?.total || 0,
   );
@@ -289,28 +303,12 @@ export default function SecurityTestsPage() {
     Number(analyzedJob?.progress?.completed || 0),
   );
   const apiPercent = apiTotal ? Math.round((apiCompleted / apiTotal) * 100) : 0;
-  const apiPassed = Number(
-    analyzedJob?.progress?.apiTest?.passed ||
-      analyzedJob?.result?.byResult?.PASS ||
-      0,
-  );
-  const apiSkipped = Number(
-    analyzedJob?.progress?.apiTest?.skipped ||
-      analyzedJob?.result?.byResult?.SKIPPED_MISSING_FIXTURE ||
-      0,
-  );
-  const apiFailed = Number(
-    analyzedJob?.progress?.apiTest?.failed ||
-      Object.entries(analyzedJob?.result?.byResult || {}).reduce(
-        (total, [result, count]) =>
-          result.startsWith("FAIL") ||
-          result === "TIMEOUT" ||
-          result === "ERROR_CONNECTION"
-            ? total + Number(count)
-            : total,
-        0,
-      ),
-  );
+  const apiPassed = apiRows.length;
+  const apiF5Counts = apiRows.reduce((counts, row) => {
+    const status = row.estado_f5 || "UNKNOWN";
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
 
   function getTestSlug(id) {
     return String(id || "").replace(/^(test|bot|dos)-(\d+-)?/, "");
@@ -1075,14 +1073,25 @@ export default function SecurityTestsPage() {
           </button>
           <button
             type="button"
-            className={`tools-security-test-option ${testKey === "api_get" ? "is-selected" : ""}`}
-            onClick={() => selectTest("api_get")}
+            className={`tools-security-test-option ${testKey === "api_get_outside_inventory" ? "is-selected" : ""}`}
+            onClick={() => selectTest("api_get_outside_inventory")}
           >
-            <strong>APIs</strong>
+            <strong>APIs fuera del inventario</strong>
             <span>Disponible</span>
             <small>
-              Valida las operaciones GET de Swagger con el usuario de pruebas
-              configurado.
+              Ejecuta los GET de cuentas, contactos y oportunidades que no están
+              declarados en el inventario F5.
+            </small>
+          </button>
+          <button
+            type="button"
+            className={`tools-security-test-option ${testKey === "api_get_inventory" ? "is-selected" : ""}`}
+            onClick={() => selectTest("api_get_inventory")}
+          >
+            <strong>APIs dentro del inventario</strong>
+            <span>Disponible</span>
+            <small>
+              Ejecuta únicamente los GET declarados en swagger-pruebas.json.
             </small>
           </button>
         </div>
@@ -1137,7 +1146,7 @@ export default function SecurityTestsPage() {
               ? "Ejecutando..."
               : testKey === "l7_dos"
                 ? "Ejecutar prueba DDoS L7"
-                : testKey === "api_get"
+                : isApiTest
                   ? "Ejecutar pruebas de APIs"
                   : "Ejecutar todas las pruebas"}
           </button>
@@ -1180,7 +1189,7 @@ export default function SecurityTestsPage() {
             <h3>
               {testKey === "l7_dos"
                 ? "Ejecución k6 Cloud"
-                : testKey === "api_get"
+                : isApiTest
                   ? "Operaciones GET"
                   : "Lista de pruebas"}
             </h3>
@@ -1188,8 +1197,8 @@ export default function SecurityTestsPage() {
               <p>
                 {testKey === "l7_dos"
                   ? "El avance de la ejecución Cloud aparecerá al iniciar la prueba."
-                  : testKey === "api_get"
-                    ? "Se probarán las rutas sin parámetros; las demás se omitirán hasta contar con datos de prueba."
+                  : isApiTest
+                    ? "Se probarán únicamente las operaciones GET ejecutables sin parámetros de ruta."
                     : "El avance de los casos aparecerá al iniciar una prueba."}
               </p>
             ) : null}
@@ -1226,7 +1235,7 @@ export default function SecurityTestsPage() {
                         <span style={{ width: `${ddosProgressPercent}%` }} />
                       </div>
                     </>
-                  ) : testKey === "api_get" ? (
+                  ) : isApiTest ? (
                     <>
                       <div className="tools-security-analysis-execution-label">
                         <strong>Endpoints</strong>
@@ -1303,7 +1312,7 @@ export default function SecurityTestsPage() {
                     </>
                   )}
                 </div>
-                {testKey !== "api_get" ? (
+                {!isApiTest || analyzedJob?.profileKey === "f5" ? (
                   <div className="tools-security-execution-column">
                     {(() => {
                       const jobF5Progress = getJobF5Progress(analyzedJob);
@@ -1501,7 +1510,7 @@ export default function SecurityTestsPage() {
             })}
           </div>
         ) : null}
-        {testKey === "api_get" && analyzedJob ? (
+        {isApiTest && analyzedJob ? (
           <div className="tools-security-api-results">
             <div
               className="tools-security-api-summary"
@@ -1511,10 +1520,16 @@ export default function SecurityTestsPage() {
                 <strong>{apiPassed}</strong> aprobadas
               </span>
               <span>
-                <strong>{apiFailed}</strong> fallidas
+                <strong>{apiF5Counts.INVENTORIED || 0}</strong> inventariadas
               </span>
               <span>
-                <strong>{apiSkipped}</strong> omitidas
+                <strong>{apiF5Counts.DISCOVERED || 0}</strong> descubiertas
+              </span>
+              <span>
+                <strong>{apiF5Counts.SHADOW || 0}</strong> shadow
+              </span>
+              <span>
+                <strong>{apiF5Counts.UNKNOWN || 0}</strong> desconocidas
               </span>
             </div>
             {apiRows.length ? (
@@ -1527,6 +1542,8 @@ export default function SecurityTestsPage() {
                       <th>Ruta</th>
                       <th>HTTP</th>
                       <th>Duración</th>
+                      <th>Estado F5</th>
+                      <th>Última observación F5</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1547,6 +1564,17 @@ export default function SecurityTestsPage() {
                         </td>
                         <td>{row.http}</td>
                         <td>{row.duracion_ms} ms</td>
+                        <td>
+                          <span
+                            className={`tools-security-f5-status is-${String(row.estado_f5 || "UNKNOWN").toLowerCase()}`}
+                            title={row.categorias_f5 || "Sin categoría F5"}
+                          >
+                            {API_F5_STATUS_LABELS[row.estado_f5] ||
+                              row.estado_f5 ||
+                              "Desconocida"}
+                          </span>
+                        </td>
+                        <td>{row.ultima_observacion_f5 || "-"}</td>
                       </tr>
                     ))}
                   </tbody>

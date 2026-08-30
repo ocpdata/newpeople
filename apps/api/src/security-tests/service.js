@@ -71,16 +71,45 @@ const SCRIPT_DEFINITIONS = {
       },
     },
   },
-  api_get: {
-    title: "APIs",
+  api_get_inventory: {
+    title: "APIs dentro del inventario",
     description:
-      "Ejecuta las operaciones GET de swagger.json con el usuario de pruebas configurado en el servidor.",
+      "Ejecuta las operaciones GET incluidas en swagger-pruebas.json.",
     script: "test-api-get.mjs",
     profiles: {
-      authenticated: {
-        title: "GET autenticados desde Swagger",
-        args: [],
-        requires: ["WAF_LOGIN_EMAIL", "WAF_LOGIN_PASSWORD"],
+      f5: {
+        title: "GET incluidos en el inventario F5",
+        args: ["--scope", "inventory"],
+        requires: [
+          "WAF_LOGIN_EMAIL",
+          "WAF_LOGIN_PASSWORD",
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
+      },
+    },
+  },
+  api_get_outside_inventory: {
+    title: "APIs fuera del inventario",
+    description:
+      "Ejecuta los GET de cuentas, contactos y oportunidades excluidos de swagger-pruebas.json.",
+    script: "test-api-get.mjs",
+    profiles: {
+      f5: {
+        title: "GET fuera del inventario F5",
+        args: ["--scope", "outside-inventory"],
+        requires: [
+          "WAF_LOGIN_EMAIL",
+          "WAF_LOGIN_PASSWORD",
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
       },
     },
   },
