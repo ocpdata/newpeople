@@ -322,6 +322,15 @@ function classifyWithF5(result, inventory) {
   const categories = Array.isArray(discoveredEndpoint?.category)
     ? discoveredEndpoint.category.map(String)
     : [];
+  if (scope === "outside-inventory") {
+    return {
+      ...result,
+      f5Status: discoveredEndpoint ? "DISCOVERED" : "UNKNOWN",
+      f5Categories: categories,
+      f5Confidence: discoveredEndpoint ? "Alta" : "Ninguna",
+      f5ObservedAt: discoveredEndpoint?.access_discovery_time || "",
+    };
+  }
   if (
     inventoryIndex.has(key) ||
     categories.some((category) =>
