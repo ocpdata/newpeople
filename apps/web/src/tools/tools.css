@@ -147,6 +147,21 @@
   opacity: 0.78;
 }
 
+.tools-security-topology-option {
+  border-style: dashed;
+  background: #f0fdfa;
+}
+
+.tools-security-topology-option:hover,
+.tools-security-topology-option:focus-visible {
+  border-color: #0f766e;
+  opacity: 1;
+}
+
+.tools-security-topology-option span {
+  color: #0f766e;
+}
+
 .tools-security-planned-message {
   color: #61758f;
   font-size: 13px;
@@ -880,6 +895,150 @@
   align-items: end;
 }
 
+.tools-security-topology-modal {
+  display: grid;
+  gap: 28px;
+  width: min(1100px, 100%);
+}
+
+.tools-security-topology {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 0.8fr) minmax(100px, 0.55fr) minmax(210px, 1fr)
+    minmax(130px, 0.7fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+  border: 1px solid #dce6f4;
+  border-radius: 12px;
+  background-color: #f8fafc;
+  background-image: radial-gradient(#cbd5e1 0.8px, transparent 0.8px);
+  background-size: 16px 16px;
+}
+
+.tools-security-topology-node {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+  min-height: 210px;
+  padding: 22px 16px;
+  border: 1px solid #cbd9ed;
+  border-radius: 8px;
+  background: #fff;
+  text-align: center;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.tools-security-topology-node.is-f5 {
+  border-top: 4px solid #dc2626;
+}
+
+.tools-security-topology-node.is-aws {
+  border-top: 4px solid #f59e0b;
+}
+
+.tools-security-topology-node.is-user {
+  border-top: 4px solid #0f766e;
+}
+
+.tools-security-topology-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: #eef2f7;
+  color: #27425f;
+}
+
+.tools-security-topology-icon svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tools-security-topology-node small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tools-security-topology-node strong {
+  margin-top: 5px;
+  color: #13263d;
+  font-size: 16px;
+}
+
+.tools-security-topology-node > span:last-child,
+.tools-security-topology-node code {
+  align-self: end;
+  max-width: 100%;
+  margin-top: 16px;
+  color: #4f647f;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.tools-security-topology-link {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: #4f647f;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.tools-security-topology-link i {
+  position: relative;
+  display: block;
+  height: 2px;
+  background: #64748b;
+}
+
+.tools-security-topology-link i::after {
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid #64748b;
+  border-right: 2px solid #64748b;
+  content: "";
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.tools-security-topology-caption {
+  display: grid;
+  grid-template-columns: 28px 1fr 28px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: #4f647f;
+  font-size: 13px;
+}
+
+.tools-security-topology-caption span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #13263d;
+  color: #fff;
+  font-weight: 800;
+}
+
+.tools-security-topology-caption p {
+  margin: 0;
+}
+
 .tools-security-execution-note {
   display: grid;
   gap: 5px;
@@ -1201,6 +1360,42 @@
 
   .tools-security-test-options {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .tools-security-topology {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 24px;
+  }
+
+  .tools-security-topology-node {
+    width: min(100%, 420px);
+    min-height: 190px;
+    justify-self: center;
+  }
+
+  .tools-security-topology-link {
+    width: 160px;
+    min-height: 70px;
+    justify-self: center;
+  }
+
+  .tools-security-topology-link i {
+    width: 2px;
+    height: 44px;
+    justify-self: center;
+  }
+
+  .tools-security-topology-link i::after {
+    top: auto;
+    right: 50%;
+    bottom: -1px;
+    transform: translateX(50%) rotate(135deg);
+  }
+
+  .tools-security-topology-caption {
+    grid-template-columns: 28px minmax(0, 1fr);
   }
 }
 

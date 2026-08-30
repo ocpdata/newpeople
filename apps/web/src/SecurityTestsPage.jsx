@@ -204,6 +204,7 @@ export default function SecurityTestsPage() {
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
+  const [topologyOpen, setTopologyOpen] = useState(false);
   const [f5Banner, setF5Banner] = useState(null);
   const stepProgressMaxRef = useRef({});
 
@@ -1094,6 +1095,19 @@ export default function SecurityTestsPage() {
               Ejecuta únicamente los GET declarados en swagger-pruebas.json.
             </small>
           </button>
+          <button
+            type="button"
+            className="tools-security-test-option tools-security-topology-option"
+            onClick={() => setTopologyOpen(true)}
+            aria-haspopup="dialog"
+          >
+            <strong>Topología de prueba</strong>
+            <span>Ver diagrama</span>
+            <small>
+              Muestra el recorrido del tráfico desde Internet hasta AWS a través
+              de F5 DCS.
+            </small>
+          </button>
         </div>
         <div className="tools-security-launch-controls">
           <div className="tools-security-launch-fields">
@@ -1589,6 +1603,110 @@ export default function SecurityTestsPage() {
           </div>
         ) : null}
       </section>
+
+      {topologyOpen ? (
+        <div
+          className="tools-security-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setTopologyOpen(false)
+          }
+        >
+          <div
+            className="tools-security-modal tools-security-topology-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="security-topology-title"
+          >
+            <div className="tools-security-modal-header">
+              <div>
+                <h3 id="security-topology-title">Topología de prueba</h3>
+                <p>
+                  Flujo de las solicitudes durante las pruebas de seguridad.
+                </p>
+              </div>
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setTopologyOpen(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div
+              className="tools-security-topology"
+              role="img"
+              aria-label="Un usuario se conecta por Internet a F5 DCS en newpip.digitalvs.com y F5 envía la solicitud al servidor newpeople.digitalvs.com alojado en AWS"
+            >
+              <div className="tools-security-topology-node is-user">
+                <span
+                  className="tools-security-topology-icon"
+                  aria-hidden="true"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <circle cx="12" cy="7" r="4" />
+                    <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
+                  </svg>
+                </span>
+                <small>Origen</small>
+                <strong>Usuario</strong>
+                <span>Navegador o cliente API</span>
+              </div>
+
+              <div className="tools-security-topology-link">
+                <span>Internet</span>
+                <i aria-hidden="true" />
+              </div>
+
+              <div className="tools-security-topology-node is-f5">
+                <span
+                  className="tools-security-topology-icon"
+                  aria-hidden="true"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M7 18h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.24 8.3 5 5 0 0 0 7 18Z" />
+                  </svg>
+                </span>
+                <small>Perímetro HTTPS</small>
+                <strong>Nube F5 DCS</strong>
+                <code>https://newpip.digitalvs.com</code>
+              </div>
+
+              <div className="tools-security-topology-link">
+                <span>Tráfico inspeccionado</span>
+                <i aria-hidden="true" />
+              </div>
+
+              <div className="tools-security-topology-node is-aws">
+                <span
+                  className="tools-security-topology-icon"
+                  aria-hidden="true"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <rect x="5" y="3" width="14" height="7" rx="1" />
+                    <rect x="5" y="14" width="14" height="7" rx="1" />
+                    <path d="M8 6.5h.01M8 17.5h.01" />
+                  </svg>
+                </span>
+                <small>Origen en AWS</small>
+                <strong>Servidor Newpeople</strong>
+                <code>http://newpeople.digitalvs.com</code>
+              </div>
+            </div>
+
+            <div className="tools-security-topology-caption">
+              <span>1</span>
+              <p>El usuario envía la solicitud al dominio público protegido.</p>
+              <span>2</span>
+              <p>
+                F5 DCS inspecciona el tráfico y lo reenvía al servidor origen en
+                AWS.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {selectedAnalysis ? (
         <div
