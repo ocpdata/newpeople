@@ -52,30 +52,57 @@
 }
 
 .tools-security-launch-card {
-  display: flex;
-  align-items: end;
+  display: grid;
   gap: 18px;
+  width: 100%;
   padding: 18px 20px;
+  border: 1px solid #dce6f4;
+  border-radius: 18px;
   background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
   box-shadow: 0 12px 30px rgba(30, 64, 175, 0.08);
+  box-sizing: border-box;
 }
 
-.tools-security-launch-card.is-ddos {
+.tools-security-test-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.tools-security-launch-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
-  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding-top: 14px;
+  border-top: 1px solid #dce6f4;
+}
+
+.tools-security-launch-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid #dce6f4;
+  border-radius: 10px;
+  background: #f8fafc;
 }
 
 .tools-security-launch-card.is-ddos .tools-security-launch-controls {
-  align-self: center;
+  align-self: auto;
   justify-content: flex-end;
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .tools-security-launch-card.is-ddos
   .tools-security-launch-fields
   .tools-filter-field:first-child {
-  flex-basis: 340px;
-  min-width: 340px;
+  flex-basis: auto;
+  min-width: 220px;
 }
 
 .tools-security-ddos-explanation {
@@ -86,26 +113,6 @@
   padding-top: 16px;
   border-top: 1px solid #d7e3f3;
   color: #334155;
-}
-
-.tools-security-ddos-explanation strong {
-  color: #13263d;
-  font-size: 14px;
-}
-
-.tools-security-ddos-explanation p {
-  max-width: 760px;
-  margin-top: 5px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.tools-security-test-options {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
-  gap: 10px;
-  width: 100%;
-  max-width: 920px;
 }
 
 .tools-security-test-option {
@@ -897,64 +904,81 @@
 
 .tools-security-topology-modal {
   display: grid;
-  gap: 28px;
-  width: min(1100px, 100%);
+  gap: 24px;
+  width: min(1200px, 100%);
 }
 
-.tools-security-topology {
+.tools-arch-topology {
   display: grid;
-  grid-template-columns:
-    minmax(150px, 0.8fr) minmax(100px, 0.55fr) minmax(210px, 1fr)
-    minmax(130px, 0.7fr) minmax(220px, 1fr);
+  grid-template-columns: minmax(130px, 0.75fr) minmax(90px, 0.5fr) minmax(340px, 1.6fr) minmax(140px, 0.75fr) minmax(170px, 0.9fr);
   align-items: center;
   gap: 12px;
-  padding: 32px 24px;
+  padding: 26px 20px;
   border: 1px solid #dce6f4;
-  border-radius: 12px;
+  border-radius: 14px;
   background-color: #f8fafc;
   background-image: radial-gradient(#cbd5e1 0.8px, transparent 0.8px);
   background-size: 16px 16px;
 }
 
-.tools-security-topology-node {
+.tools-arch-col {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.tools-arch-col.is-client {
+  align-self: center;
+}
+
+.tools-arch-col.is-destinations {
+  display: grid;
+  gap: 20px;
+  height: 100%;
+  justify-content: space-between;
+}
+
+.tools-arch-node {
   display: grid;
   justify-items: center;
   min-width: 0;
-  min-height: 210px;
-  padding: 22px 16px;
+  padding: 18px 14px;
   border: 1px solid #cbd9ed;
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
   text-align: center;
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
-.tools-security-topology-node.is-f5 {
-  border-top: 4px solid #dc2626;
-}
-
-.tools-security-topology-node.is-aws {
-  border-top: 4px solid #f59e0b;
-}
-
-.tools-security-topology-node.is-user {
+.tools-arch-node.is-user {
   border-top: 4px solid #0f766e;
+  min-height: 190px;
 }
 
-.tools-security-topology-icon {
+.tools-arch-node.is-aws {
+  border-top: 4px solid #f59e0b;
+  min-height: 145px;
+}
+
+.tools-arch-node.is-openai {
+  border-top: 4px solid #7c3aed;
+  min-height: 145px;
+}
+
+.tools-arch-icon {
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
-  margin-bottom: 12px;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 8px;
   border-radius: 50%;
   background: #eef2f7;
   color: #27425f;
 }
 
-.tools-security-topology-icon svg {
-  width: 30px;
-  height: 30px;
+.tools-arch-icon svg {
+  width: 24px;
+  height: 24px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -962,81 +986,296 @@
   stroke-linejoin: round;
 }
 
-.tools-security-topology-node small {
+.tools-arch-node small {
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
 }
 
-.tools-security-topology-node strong {
-  margin-top: 5px;
+.tools-arch-node strong {
+  margin-top: 4px;
   color: #13263d;
-  font-size: 16px;
+  font-size: 15px;
 }
 
-.tools-security-topology-node > span:last-child,
-.tools-security-topology-node code {
-  align-self: end;
-  max-width: 100%;
-  margin-top: 16px;
+.tools-arch-node > span:last-child,
+.tools-arch-node code {
+  margin-top: 10px;
   color: #4f647f;
   font-size: 11px;
   overflow-wrap: anywhere;
-  white-space: normal;
 }
 
-.tools-security-topology-link {
+/* Conectores */
+.tools-arch-connector {
   display: grid;
-  gap: 8px;
-  min-width: 0;
-  color: #4f647f;
-  font-size: 11px;
-  font-weight: 700;
+  justify-items: center;
+  gap: 6px;
   text-align: center;
 }
 
-.tools-security-topology-link i {
+.tools-arch-conn-label {
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.tools-arch-badge-step {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #1e3a8a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tools-arch-line {
   position: relative;
-  display: block;
+  width: 100%;
   height: 2px;
   background: #64748b;
 }
 
-.tools-security-topology-link i::after {
+.tools-arch-line i {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tools-arch-line i::after {
   position: absolute;
   top: 50%;
   right: -1px;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-top: 2px solid #64748b;
   border-right: 2px solid #64748b;
   content: "";
   transform: translateY(-50%) rotate(45deg);
 }
 
-.tools-security-topology-caption {
+.tools-arch-line.is-reverse i::after {
+  right: auto;
+  left: -1px;
+  transform: translateY(-50%) rotate(-135deg);
+}
+
+/* Nube Central F5 */
+.tools-arch-cloud {
   display: grid;
-  grid-template-columns: 28px 1fr 28px 1fr;
+  gap: 12px;
+  padding: 16px 14px;
+  border: 2px solid #dc2626;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(254, 242, 242, 0.6) 0%, #ffffff 100%);
+  box-shadow: 0 10px 24px rgba(220, 38, 38, 0.08);
+}
+
+.tools-arch-cloud-header {
+  display: flex;
   align-items: center;
   gap: 10px;
-  color: #4f647f;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #fecaca;
+}
+
+.tools-arch-cloud-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.tools-arch-cloud-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tools-arch-cloud-header small {
+  display: block;
+  color: #991b1b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tools-arch-cloud-header strong {
+  color: #13263d;
+  font-size: 15px;
+}
+
+.tools-arch-cloud-services {
+  display: grid;
+  gap: 10px;
+}
+
+.tools-arch-service {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tools-arch-service.is-ingress {
+  border-left: 3px solid #dc2626;
+}
+
+.tools-arch-service.is-egress {
+  border-left: 3px solid #2563eb;
+}
+
+.tools-arch-service-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.tools-arch-service-head strong {
+  color: #1e293b;
   font-size: 13px;
 }
 
-.tools-security-topology-caption span {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #13263d;
-  color: #fff;
+.tools-arch-pill {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
   font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.tools-security-topology-caption p {
-  margin: 0;
+.tools-arch-pill.is-waf {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.tools-arch-pill.is-ai {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.tools-arch-service code {
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.tools-arch-service small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+/* Puente de conectores hacia backends */
+.tools-arch-bridge {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  padding: 4px 0;
+  gap: 16px;
+}
+
+.tools-arch-bridge-group {
+  display: grid;
+  gap: 10px;
+}
+
+.tools-arch-bridge-group.is-app {
+  padding-bottom: 4px;
+}
+
+.tools-arch-bridge-group.is-ai {
+  padding-top: 6px;
+}
+
+.tools-arch-bridge-item {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.tools-arch-badge-step.is-ai-step {
+  background: #2563eb;
+}
+
+.tools-arch-bridge-item.is-reverse-flow .tools-arch-line {
+  background: #2563eb;
+}
+
+.tools-arch-bridge-item.is-reverse-flow .tools-arch-line i::after {
+  border-top-color: #2563eb;
+  border-right-color: #2563eb;
+}
+
+.tools-arch-bridge-item.is-reverse-flow .tools-arch-conn-label {
+  color: #1d4ed8;
+}
+
+/* Caption Grid */
+.tools-arch-caption-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  padding-top: 6px;
+}
+
+.tools-arch-caption-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tools-arch-caption-item .tools-arch-badge-step {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.tools-arch-caption-item strong {
+  color: #0f172a;
+}
+
+.tools-arch-caption-item code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  font-size: 11px;
+}
+
+@media (max-width: 980px) {
+  .tools-arch-topology {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .tools-arch-bridge {
+    flex-direction: row;
+  }
+
+  .tools-arch-caption-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tools-security-execution-note {

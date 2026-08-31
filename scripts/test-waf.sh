@@ -12,8 +12,9 @@ OUTPUT_FILE="${WAF_TEST_OUTPUT:-waf-test-results.tsv}"
 DRY_RUN=0
 INCLUDE_RATE_LIMIT=0
 ORIGIN_IP="${ORIGIN_IP:-}"
-RATE_LIMIT_REQUESTS=5
-RATE_LIMIT_DELAY=1
+RATE_LIMIT_REQUESTS="${RATE_LIMIT_REQUESTS:-120}"
+RATE_LIMIT_RPS="${RATE_LIMIT_RPS:-120}"
+RATE_LIMIT_DELAY=0
 XC_API_URL="${XC_API_URL:-}"
 XC_API_P12_FILE="${XC_API_P12_FILE:-}"
 XC_P12_PASSWORD="${XC_P12_PASSWORD:-}"
@@ -812,13 +813,90 @@ else
 fi
 
 if [[ "$INCLUDE_RATE_LIMIT" -eq 1 ]] && should_run "test-21-rate-limit"; then
-  printf '\nRate limiting: %s solicitudes con %ss entre cada una.\n' "$RATE_LIMIT_REQUESTS" "$RATE_LIMIT_DELAY"
-  for request_number in $(seq 1 "$RATE_LIMIT_REQUESTS"); do
-    request_get "test-21-rate-limit-$request_number" "Umbral configurado" "$BASE_URL/"
-    if [[ "$request_number" -lt "$RATE_LIMIT_REQUESTS" ]]; then
-      sleep "$RATE_LIMIT_DELAY"
-    fi
-  done
+  printf '\nRate limiting: %s solicitudes a ~%s RPS.\n' "$RATE_LIMIT_REQUESTS" "$RATE_LIMIT_RPS"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    for request_number in $(seq 1 "$RATE_LIMIT_REQUESTS"); do
+      request_get "test-21-rate-limit-$request_number" "Umbral configurado (120 RPS)" "$BASE_URL/"
+    done
+  else
+    RUN_ID="$RUN_ID" RAW_OUTPUT="$RAW_OUTPUT" RATE_LIMIT_REQUESTS="$RATE_LIMIT_REQUESTS" RATE_LIMIT_RPS="$RATE_LIMIT_RPS" BASE_URL="$BASE_URL" node -e '
+      const total = Number(process.env.RATE_LIMIT_REQUESTS || 120);
+      const targetUrl = process.env.BASE_URL || "https://newpip.digitalvs.com/";
+      const runId = process.env.RUN_ID || "";
+      const rawOutput = process.env.RAW_OUTPUT || "";
+      const fs = require("node:fs");
+
+      const rps = Number(process.env.RATE_LIMIT_RPS || 120);
+      const delayBetweenRequestsMs = rps > 0 ? 1000 / rps : 0;
+
+      async function sendRequest(index) {
+        const testId = `test-21-rate-limit-${index}`;
+        const startTime = new Date().toISOString();
+        const scenario = "Umbral configurado (120 RPS)";
+        const expected = "HTTP 429 o evento de limitacion";
+        const method = "GET";
+
+        try {
+          const res = await fetch(targetUrl, {
+            method: "GET",
+            headers: {
+              "X-WAF-Test-ID": testId,
+              "X-WAF-Run-ID": runId,
+              "User-Agent": "waf-rate-limit-test-120rps"
+            },
+            signal: AbortSignal.timeout(10000)
+          });
+          const text = await res.text().catch(() => "");
+          const finishedAt = new Date().toISOString();
+          const status = String(res.status);
+          const rejected = /Request Rejected|The requested URL was rejected|Your support ID is/i.test(text);
+          let result = "REVISAR";
+          let classification = "exito";
+          let notes = `bytes=${text.length}; status=${status}`;
+
+          if (rejected) {
+            notes += "; response_f5_rejected";
+          }
+          if (status === "429" || status === "403" || status === "405" || status === "406" || rejected) {
+            result = "BLOQUEO_O_LIMITE";
+            classification = "bloqueo_o_limite";
+            notes += "; se activo una proteccion perimetral o limite de frecuencia";
+          } else if (/^2/.test(status)) {
+            result = "REVISAR";
+            classification = "exito";
+            notes += "; la solicitud llego al origen o respondio la aplicacion";
+          } else {
+            result = "REVISAR";
+            classification = "estado_inesperado";
+          }
+
+          console.log(`${testId} | HTTP ${status} | ${scenario} | esperado: ${expected} | ${result} | ${classification}`);
+          const row = `${runId}\t${testId}\t${startTime}\t${finishedAt}\t${method}\t${targetUrl}\t${scenario}\t${expected}\t${status}\t${result}\t${classification}\t${notes}\n`;
+          fs.appendFileSync(rawOutput, row);
+        } catch (err) {
+          const finishedAt = new Date().toISOString();
+          const status = "000";
+          const result = "ERROR";
+          const classification = "sin_respuesta";
+          const notes = `error=${err.message}`;
+          console.log(`${testId} | HTTP 000 | ${scenario} | esperado: ${expected} | ERROR | sin_respuesta`);
+          const row = `${runId}\t${testId}\t${startTime}\t${finishedAt}\t${method}\t${targetUrl}\t${scenario}\t${expected}\t${status}\t${result}\t${classification}\t${notes}\n`;
+          fs.appendFileSync(rawOutput, row);
+        }
+      }
+
+      (async () => {
+        const promises = [];
+        for (let i = 1; i <= total; i++) {
+          promises.push(sendRequest(i));
+          if (i < total && delayBetweenRequestsMs > 0) {
+            await new Promise(r => setTimeout(r, delayBetweenRequestsMs));
+          }
+        }
+        await Promise.all(promises);
+      })();
+    '
+  fi
 else
   printf '[SKIP] rate limiting: usa --rate-limit para habilitar una prueba corta\n'
 fi

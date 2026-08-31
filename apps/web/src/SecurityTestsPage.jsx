@@ -128,14 +128,17 @@ const WAF_TEST_GUIDE = [
     kind: "neutral",
     threatLevel: "Medio (automatizacion no autorizada)",
   },
+];
+
+const RATE_LIMIT_TEST_GUIDE = [
   {
     id: "test-21-rate-limit",
-    title: "Limite de frecuencia",
+    title: "Límite de frecuencia (120 RPS)",
     method: "GET",
     target: "/",
     detail:
-      "Envia varias solicitudes seguidas para comprobar si existe un limite que frene abusos o fuerza bruta.",
-    expected: "HTTP 429 o evento de limitacion.",
+      "Envía una ráfaga a una tasa de 120 solicitudes por segundo (120 RPS) para comprobar si el límite de frecuencia de F5 DCS o del servidor mitiga la sobrecarga.",
+    expected: "HTTP 429 o evento de limitación en F5 DCS.",
     kind: "attack",
     threatLevel: "Medio (agotamiento de recursos o fuerza bruta)",
   },
@@ -180,6 +183,7 @@ const BOT_DEFENSE_TEST_GUIDE = [
 
 const TEST_GUIDES = {
   waf: WAF_TEST_GUIDE,
+  rate_limit: RATE_LIMIT_TEST_GUIDE,
   bot_defense: BOT_DEFENSE_TEST_GUIDE,
 };
 
@@ -211,6 +215,7 @@ export default function SecurityTestsPage() {
   const activeTestDefinition = catalog.find((item) => item.key === testKey);
   const profiles = activeTestDefinition?.profiles || [];
   const isApiTest = testKey.startsWith("api_get");
+  const isApiOwaspTest = testKey === "api_get_owasp";
   const activeGuide = TEST_GUIDES[testKey] || [];
   const analyzedJob = jobs.find((job) => job.scriptKey === testKey) || null;
   const currentTest = analyzedJob?.progress?.currentTest || "";
@@ -292,9 +297,11 @@ export default function SecurityTestsPage() {
     ? Math.round((analysisCompleted / analysisTotal) * 100)
     : 0;
   const apiRows = isApiTest
-    ? (analyzedJob?.result?.rows || []).filter(
-        (row) => row.resultado === "PASS",
-      )
+    ? isApiOwaspTest
+      ? analyzedJob?.result?.rows || []
+      : (analyzedJob?.result?.rows || []).filter(
+          (row) => row.resultado === "PASS",
+        )
     : [];
   const apiTotal = Number(
     analyzedJob?.progress?.total || analyzedJob?.result?.total || 0,
@@ -304,7 +311,7 @@ export default function SecurityTestsPage() {
     Number(analyzedJob?.progress?.completed || 0),
   );
   const apiPercent = apiTotal ? Math.round((apiCompleted / apiTotal) * 100) : 0;
-  const apiPassed = apiRows.length;
+  const apiPassed = apiRows.filter((row) => row.resultado === "PASS").length;
   const apiF5Counts = apiRows.reduce((counts, row) => {
     const status = row.estado_f5 || "UNKNOWN";
     counts[status] = (counts[status] || 0) + 1;
@@ -1062,6 +1069,17 @@ export default function SecurityTestsPage() {
           </button>
           <button
             type="button"
+            className={`tools-security-test-option ${testKey === "rate_limit" ? "is-selected" : ""}`}
+            onClick={() => selectTest("rate_limit")}
+          >
+            <strong>Rate limit</strong>
+            <span>Disponible</span>
+            <small>
+              Ejecuta una ráfaga a 120 RPS para validar umbrales de limitación de frecuencia.
+            </small>
+          </button>
+          <button
+            type="button"
             className={`tools-security-test-option ${testKey === "l7_dos" ? "is-selected" : ""}`}
             onClick={() => selectTest("l7_dos")}
           >
@@ -1093,6 +1111,17 @@ export default function SecurityTestsPage() {
             <span>Disponible</span>
             <small>
               Ejecuta únicamente los GET declarados en swagger-pruebas.json.
+            </small>
+          </button>
+          <button
+            type="button"
+            className={`tools-security-test-option ${testKey === "api_get_owasp" ? "is-selected" : ""}`}
+            onClick={() => selectTest("api_get_owasp")}
+          >
+            <strong>APIs OWASP</strong>
+            <span>Disponible</span>
+            <small>
+              Ejecuta amenazas OWASP (SQLi, XSS, Traversal, RCE, SSRF) sobre los GET inventariados.
             </small>
           </button>
           <button
@@ -1130,7 +1159,7 @@ export default function SecurityTestsPage() {
                 ))}
               </select>
             </label>
-            {testKey === "waf" ? (
+            {testKey === "waf" || testKey === "rate_limit" || testKey === "api_get_owasp" ? (
               <label className="tools-filter-field">
                 <span>Modo WAF</span>
                 <select
@@ -1160,9 +1189,11 @@ export default function SecurityTestsPage() {
               ? "Ejecutando..."
               : testKey === "l7_dos"
                 ? "Ejecutar prueba DDoS L7"
-                : isApiTest
-                  ? "Ejecutar pruebas de APIs"
-                  : "Ejecutar todas las pruebas"}
+                : testKey === "rate_limit"
+                  ? "Ejecutar prueba Rate limit"
+                  : isApiTest
+                    ? "Ejecutar pruebas de APIs"
+                    : "Ejecutar todas las pruebas"}
           </button>
           {["pending", "running"].includes(analyzedJob?.status) ? (
             <button
@@ -1526,43 +1557,86 @@ export default function SecurityTestsPage() {
         ) : null}
         {isApiTest && analyzedJob ? (
           <div className="tools-security-api-results">
-            <div
-              className="tools-security-api-summary"
-              aria-label="Resumen de APIs"
-            >
-              <span>
-                <strong>{apiPassed}</strong> aprobadas
-              </span>
-              <span>
-                <strong>{apiF5Counts.INVENTORIED || 0}</strong> inventariadas
-              </span>
-              <span>
-                <strong>{apiF5Counts.DISCOVERED || 0}</strong> descubiertas
-              </span>
-              <span>
-                <strong>{apiF5Counts.SHADOW || 0}</strong> shadow
-              </span>
-              <span>
-                <strong>{apiF5Counts.UNKNOWN || 0}</strong> desconocidas
-              </span>
-            </div>
+            {isApiOwaspTest ? (
+              <div
+                className="tools-security-api-summary"
+                aria-label="Resumen de APIs OWASP"
+              >
+                <span>
+                  <strong>{apiRows.length}</strong> pruebas totales
+                </span>
+                <span>
+                  <strong>{apiPassed}</strong> validadas (PASS)
+                </span>
+                <span>
+                  <strong>
+                    {
+                      apiRows.filter(
+                        (row) =>
+                          row.estado_f5 === "Bloqueado" ||
+                          row.accion_f5 === "Bloqueada",
+                      ).length
+                    }
+                  </strong>{" "}
+                  bloqueadas por F5
+                </span>
+                <span>
+                  <strong>
+                    {
+                      apiRows.filter(
+                        (row) =>
+                          row.estado_f5 === "Detectado" ||
+                          row.accion_f5 === "Detectada",
+                      ).length
+                    }
+                  </strong>{" "}
+                  detectadas por F5
+                </span>
+              </div>
+            ) : (
+              <div
+                className="tools-security-api-summary"
+                aria-label="Resumen de APIs"
+              >
+                <span>
+                  <strong>{apiPassed}</strong> aprobadas
+                </span>
+                <span>
+                  <strong>{apiF5Counts.INVENTORIED || 0}</strong> inventariadas
+                </span>
+                <span>
+                  <strong>{apiF5Counts.DISCOVERED || 0}</strong> descubiertas
+                </span>
+                <span>
+                  <strong>{apiF5Counts.SHADOW || 0}</strong> shadow
+                </span>
+                <span>
+                  <strong>{apiF5Counts.UNKNOWN || 0}</strong> desconocidas
+                </span>
+              </div>
+            )}
             {apiRows.length ? (
               <div className="tools-security-api-table-wrap">
                 <table className="tools-security-api-table">
                   <thead>
                     <tr>
                       <th>Resultado</th>
+                      {isApiOwaspTest ? <th>Vector OWASP</th> : null}
                       <th>Operación</th>
                       <th>Ruta</th>
                       <th>HTTP</th>
                       <th>Duración</th>
                       <th>Estado F5</th>
-                      <th>Última observación F5</th>
+                      {isApiOwaspTest ? (
+                        <th>Categoría F5</th>
+                      ) : (
+                        <th>Última observación F5</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {apiRows.map((row) => (
-                      <tr key={`${row.prueba}-${row.url}`}>
+                      <tr key={`${row.prueba}-${row.url}-${row.vector_owasp || ""}`}>
                         <td>
                           <span
                             className={`tools-security-api-result is-${row.resultado === "PASS" ? "pass" : row.resultado?.startsWith("SKIPPED") ? "skipped" : "fail"}`}
@@ -1570,6 +1644,11 @@ export default function SecurityTestsPage() {
                             {row.resultado}
                           </span>
                         </td>
+                        {isApiOwaspTest ? (
+                          <td>
+                            <strong>{row.vector_owasp || "-"}</strong>
+                          </td>
+                        ) : null}
                         <td>{row.prueba}</td>
                         <td>
                           <code>
@@ -1581,14 +1660,18 @@ export default function SecurityTestsPage() {
                         <td>
                           <span
                             className={`tools-security-f5-status is-${String(row.estado_f5 || "UNKNOWN").toLowerCase()}`}
-                            title={row.categorias_f5 || "Sin categoría F5"}
+                            title={row.categorias_f5 || row.categoria_f5 || "Sin categoría F5"}
                           >
                             {API_F5_STATUS_LABELS[row.estado_f5] ||
                               row.estado_f5 ||
                               "Desconocida"}
                           </span>
                         </td>
-                        <td>{row.ultima_observacion_f5 || "-"}</td>
+                        <td>
+                          {isApiOwaspTest
+                            ? row.categoria_f5 || row.accion_f5 || "-"
+                            : row.ultima_observacion_f5 || "-"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1635,74 +1718,159 @@ export default function SecurityTestsPage() {
             </div>
 
             <div
-              className="tools-security-topology"
+              className="tools-arch-topology"
               role="img"
-              aria-label="Un usuario se conecta por Internet a F5 DCS en newpip.digitalvs.com y F5 envía la solicitud al servidor newpeople.digitalvs.com alojado en AWS"
+              aria-label="Diagrama de arquitectura unificada: una sola nube F5 DCS protegiendo el tráfico de usuario hacia Newpeople y las llamadas de backend hacia OpenAI."
             >
-              <div className="tools-security-topology-node is-user">
-                <span
-                  className="tools-security-topology-icon"
-                  aria-hidden="true"
-                >
-                  <svg viewBox="0 0 24 24">
-                    <circle cx="12" cy="7" r="4" />
-                    <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
-                  </svg>
-                </span>
-                <small>Origen</small>
-                <strong>Usuario</strong>
-                <span>Navegador o cliente API</span>
+              {/* Columna 1: Usuario */}
+              <div className="tools-arch-col is-client">
+                <div className="tools-arch-node is-user">
+                  <span className="tools-arch-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="12" cy="7" r="4" />
+                      <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
+                    </svg>
+                  </span>
+                  <small>Cliente</small>
+                  <strong>Usuario</strong>
+                  <span>Navegador / Cliente API</span>
+                </div>
               </div>
 
-              <div className="tools-security-topology-link">
-                <span>Internet</span>
-                <i aria-hidden="true" />
+              {/* Conector 1: Usuario -> F5 DCS */}
+              <div className="tools-arch-connector is-entry">
+                <div className="tools-arch-badge-step">1</div>
+                <span className="tools-arch-conn-label">HTTPS público</span>
+                <div className="tools-arch-line">
+                  <i aria-hidden="true" />
+                </div>
               </div>
 
-              <div className="tools-security-topology-node is-f5">
-                <span
-                  className="tools-security-topology-icon"
-                  aria-hidden="true"
-                >
-                  <svg viewBox="0 0 24 24">
-                    <path d="M7 18h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.24 8.3 5 5 0 0 0 7 18Z" />
-                  </svg>
-                </span>
-                <small>Perímetro HTTPS</small>
-                <strong>Nube F5 DCS</strong>
-                <code>https://newpip.digitalvs.com</code>
+              {/* Columna 2: Nube F5 DCS única */}
+              <div className="tools-arch-cloud">
+                <div className="tools-arch-cloud-header">
+                  <span className="tools-arch-cloud-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M7 18h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.24 8.3 5 5 0 0 0 7 18Z" />
+                    </svg>
+                  </span>
+                  <div>
+                    <small>Perímetro de seguridad central</small>
+                    <strong>Nube F5 Distributed Cloud (DCS)</strong>
+                  </div>
+                </div>
+
+                <div className="tools-arch-cloud-services">
+                  <div className="tools-arch-service is-ingress">
+                    <div className="tools-arch-service-head">
+                      <span className="tools-arch-pill is-waf">WAF & Bot Defense</span>
+                      <strong>Entrada pública</strong>
+                    </div>
+                    <code>https://newpip.digitalvs.com</code>
+                    <small>Inspección L7, mitigación DDoS y bloqueo de ataques</small>
+                  </div>
+
+                  <div className="tools-arch-service is-egress">
+                    <div className="tools-arch-service-head">
+                      <span className="tools-arch-pill is-ai">AI Proxy Gateway</span>
+                      <strong>Proxy OpenAI</strong>
+                    </div>
+                    <code>https://openai.digitalvs.com/v1</code>
+                    <small>Inspección de salida, control de cuota y seguridad de API</small>
+                  </div>
+                </div>
               </div>
 
-              <div className="tools-security-topology-link">
-                <span>Tráfico inspeccionado</span>
-                <i aria-hidden="true" />
+              {/* Columna 3: Conectores hacia backends */}
+              <div className="tools-arch-bridge">
+                {/* Conexiones con Newpeople (Entrada Web + Salida IA) */}
+                <div className="tools-arch-bridge-group is-app">
+                  {/* 2: F5 -> Newpeople */}
+                  <div className="tools-arch-bridge-item">
+                    <div className="tools-arch-badge-step">2</div>
+                    <span className="tools-arch-conn-label">Tráfico limpio</span>
+                    <div className="tools-arch-line">
+                      <i aria-hidden="true" />
+                    </div>
+                  </div>
+
+                  {/* 3: Newpeople -> F5 (Llamada IA) */}
+                  <div className="tools-arch-bridge-item is-reverse-flow">
+                    <div className="tools-arch-badge-step is-ai-step">3</div>
+                    <span className="tools-arch-conn-label">Consulta IA (openai.digitalvs.com)</span>
+                    <div className="tools-arch-line is-reverse">
+                      <i aria-hidden="true" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Conexión con OpenAI (Salida protegida F5 -> OpenAI) */}
+                <div className="tools-arch-bridge-group is-ai">
+                  {/* 4: F5 -> OpenAI */}
+                  <div className="tools-arch-bridge-item">
+                    <div className="tools-arch-badge-step is-ai-step">4</div>
+                    <span className="tools-arch-conn-label">Salida a OpenAI (api.openai.com)</span>
+                    <div className="tools-arch-line">
+                      <i aria-hidden="true" />
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="tools-security-topology-node is-aws">
-                <span
-                  className="tools-security-topology-icon"
-                  aria-hidden="true"
-                >
-                  <svg viewBox="0 0 24 24">
-                    <rect x="5" y="3" width="14" height="7" rx="1" />
-                    <rect x="5" y="14" width="14" height="7" rx="1" />
-                    <path d="M8 6.5h.01M8 17.5h.01" />
-                  </svg>
-                </span>
-                <small>Origen en AWS</small>
-                <strong>Servidor Newpeople</strong>
-                <code>http://newpeople.digitalvs.com</code>
+              {/* Columna 4: Destinos (Newpeople y OpenAI) */}
+              <div className="tools-arch-col is-destinations">
+                <div className="tools-arch-node is-aws">
+                  <span className="tools-arch-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <rect x="5" y="3" width="14" height="7" rx="1" />
+                      <rect x="5" y="14" width="14" height="7" rx="1" />
+                      <path d="M8 6.5h.01M8 17.5h.01" />
+                    </svg>
+                  </span>
+                  <small>Servidor en AWS</small>
+                  <strong>Newpeople CRM</strong>
+                  <code>newpeople.digitalvs.com</code>
+                </div>
+
+                <div className="tools-arch-node is-openai">
+                  <span className="tools-arch-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M12 3 4 7v6c0 5 3.4 8.3 8 10 4.6-1.7 8-5 8-10V7l-8-4Z" />
+                      <path d="M9.5 12.5 11 14l3.5-4" />
+                    </svg>
+                  </span>
+                  <small>Proveedor externo</small>
+                  <strong>OpenAI API</strong>
+                  <code>api.openai.com</code>
+                </div>
               </div>
             </div>
 
-            <div className="tools-security-topology-caption">
-              <span>1</span>
-              <p>El usuario envía la solicitud al dominio público protegido.</p>
-              <span>2</span>
-              <p>
-                F5 DCS inspecciona el tráfico y lo reenvía al servidor origen en
-                AWS.
-              </p>
+            <div className="tools-arch-caption-grid">
+              <div className="tools-arch-caption-item">
+                <span className="tools-arch-badge-step">1</span>
+                <div>
+                  <strong>Acceso de usuario:</strong> El navegador o cliente envía peticiones a <code>newpip.digitalvs.com</code>.
+                </div>
+              </div>
+              <div className="tools-arch-caption-item">
+                <span className="tools-arch-badge-step">2</span>
+                <div>
+                  <strong>Reenvío al origen:</strong> F5 DCS aplica reglas WAF/Bot Defense y reenvía el tráfico limpio a <code>newpeople.digitalvs.com</code> en AWS.
+                </div>
+              </div>
+              <div className="tools-arch-caption-item">
+                <span className="tools-arch-badge-step">3</span>
+                <div>
+                  <strong>Llamadas de IA:</strong> Cuando el backend necesita IA, consulta al endpoint proxy <code>openai.digitalvs.com/v1</code> en F5 DCS.
+                </div>
+              </div>
+              <div className="tools-arch-caption-item">
+                <span className="tools-arch-badge-step">4</span>
+                <div>
+                  <strong>Salida segura a OpenAI:</strong> F5 DCS inspecciona y reenvía la llamada a <code>api.openai.com</code>, protegiendo credenciales y tráfico.
+                </div>
+              </div>
             </div>
           </div>
         </div>

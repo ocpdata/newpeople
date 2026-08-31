@@ -22,7 +22,7 @@ const cancelledJobs = new Set();
 
 // Debe coincidir con RATE_LIMIT_REQUESTS en scripts/test-waf.sh.
 const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
-const RATE_LIMIT_TOTAL_REQUESTS = 5;
+const RATE_LIMIT_TOTAL_REQUESTS = 120;
 const DOS_TOTAL_STAGES = 5;
 
 const SCRIPT_DEFINITIONS = {
@@ -34,12 +34,36 @@ const SCRIPT_DEFINITIONS = {
     profiles: {
       basic: {
         title: "Pruebas sin validación F5 DCS",
-        args: ["--skip-f5", "--rate-limit"],
+        args: ["--skip-f5"],
         requires: [],
       },
       f5: {
         title: "Pruebas con validación F5 DCS",
-        args: ["--rate-limit"],
+        args: [],
+        requires: [
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
+      },
+    },
+  },
+  rate_limit: {
+    title: "Rate limit",
+    description:
+      "Valida umbrales de frecuencia a 120 RPS y comportamiento ante ráfagas de solicitudes.",
+    script: "test-waf.sh",
+    profiles: {
+      basic: {
+        title: "Pruebas sin validación F5 DCS",
+        args: ["--skip-f5", "--rate-limit", "--only", "test-21-rate-limit"],
+        requires: [],
+      },
+      f5: {
+        title: "Pruebas con validación F5 DCS",
+        args: ["--rate-limit", "--only", "test-21-rate-limit"],
         requires: [
           "XC_API_URL",
           "XC_API_P12_FILE",
@@ -80,6 +104,32 @@ const SCRIPT_DEFINITIONS = {
       f5: {
         title: "GET incluidos en el inventario F5",
         args: ["--scope", "inventory"],
+        requires: [
+          "WAF_LOGIN_EMAIL",
+          "WAF_LOGIN_PASSWORD",
+          "XC_API_URL",
+          "XC_API_P12_FILE",
+          "XC_P12_PASSWORD",
+          "XC_NAMESPACE",
+          "XC_LB_NAME",
+        ],
+      },
+    },
+  },
+  api_get_owasp: {
+    title: "APIs OWASP",
+    description:
+      "Ejecuta amenazas OWASP (SQLi, XSS, Path Traversal, RCE, SSRF) sobre operaciones GET del inventario F5.",
+    script: "test-api-owasp.mjs",
+    profiles: {
+      basic: {
+        title: "Pruebas directas sin validación F5 DCS",
+        args: ["--skip-f5"],
+        requires: ["WAF_LOGIN_EMAIL", "WAF_LOGIN_PASSWORD"],
+      },
+      f5: {
+        title: "Pruebas con validación F5 DCS",
+        args: [],
         requires: [
           "WAF_LOGIN_EMAIL",
           "WAF_LOGIN_PASSWORD",
@@ -261,7 +311,7 @@ export async function createSecurityTestJob({
 
   const publicId = `${JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
   const stepsTotal =
-    scriptKey === "waf" && (!testId || testId === RATE_LIMIT_TEST_ID)
+    (scriptKey === "rate_limit" || (scriptKey === "waf" && testId === RATE_LIMIT_TEST_ID))
       ? RATE_LIMIT_TOTAL_REQUESTS
       : scriptKey === "l7_dos"
         ? DOS_TOTAL_STAGES

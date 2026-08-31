@@ -34,7 +34,7 @@ router.post("/jobs", requirePermission("pruebas.execute"), async (req, res) => {
       .status(400)
       .json({ message: "Datos invalidos", errors: parsed.error.flatten() });
   if (
-    parsed.data.scriptKey === "waf" &&
+    (parsed.data.scriptKey === "waf" || parsed.data.scriptKey === "rate_limit") &&
     (parsed.data.profileKey === "f5" || parsed.data.wafMode === "blocking") &&
     !req.user.permissionSet.has("pruebas.admin")
   ) {
