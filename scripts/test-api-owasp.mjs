@@ -20,6 +20,11 @@ const baseUrl = String(
     process.env.API_TEST_BASE_URL ||
     DEFAULT_BASE_URL,
 ).replace(/\/$/, "");
+const authBaseUrl = String(
+  process.env.API_AUTH_URL ||
+    process.env.LOCAL_API_URL ||
+    `http://127.0.0.1:${process.env.PORT || 4000}`,
+).replace(/\/$/, "");
 const email = String(process.env.WAF_LOGIN_EMAIL || "").trim();
 const password = String(process.env.WAF_LOGIN_PASSWORD || "");
 const outputFile =
@@ -114,27 +119,40 @@ async function loadOperations() {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
+async function requestToken(targetHost) {
+  try {
+    const response = await fetch(`${targetHost}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+    const text = await response.text().catch(() => "");
+    if (!text) return null;
+    try {
+      const payload = JSON.parse(text);
+      return payload?.token ? String(payload.token) : null;
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
 async function login() {
   if (!email || !password) {
     throw new Error(
       "WAF_LOGIN_EMAIL y WAF_LOGIN_PASSWORD son obligatorios para la prueba APIs OWASP",
     );
   }
-  const response = await fetch(`${baseUrl}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-    signal: AbortSignal.timeout(requestTimeoutMs),
-  });
-  if (!response.ok) {
-    await response.body?.cancel();
+  const token =
+    (await requestToken(authBaseUrl)) || (await requestToken(baseUrl));
+  if (!token) {
     throw new Error(
-      `No fue posible autenticar el usuario de pruebas: HTTP ${response.status}`,
+      "No fue posible autenticar el usuario de pruebas para generar el token JWT",
     );
   }
-  const payload = await response.json();
-  const token = String(payload?.token || "");
-  if (!token) throw new Error("El login no devolvió un token");
   return token;
 }
 
