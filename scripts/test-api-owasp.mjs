@@ -10,14 +10,15 @@ import process from "node:process";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(SCRIPT_DIR, "..");
+const DEFAULT_BASE_URL = "https://newpip.digitalvs.com";
 const swaggerPath = resolve(
   process.env.API_TEST_SWAGGER_PATH ||
     resolve(PROJECT_ROOT, "apps/api/swagger-pruebas.json"),
 );
 const baseUrl = String(
-  process.env.API_TEST_BASE_URL ||
-    process.env.BASE_URL ||
-    `http://127.0.0.1:${process.env.PORT || 4000}`,
+  process.env.BASE_URL ||
+    process.env.API_TEST_BASE_URL ||
+    DEFAULT_BASE_URL,
 ).replace(/\/$/, "");
 const email = String(process.env.WAF_LOGIN_EMAIL || "").trim();
 const password = String(process.env.WAF_LOGIN_PASSWORD || "");
@@ -163,6 +164,8 @@ async function executeOwaspCase(testCase, token) {
         Authorization: `Bearer ${token}`,
         "X-API-Test-ID": testCase.id,
         "X-API-Run-ID": runId,
+        "X-WAF-Test-ID": testCase.id,
+        "X-WAF-Run-ID": runId,
         "User-Agent": "newpeople-owasp-api-scanner/1.0",
       },
       redirect: "manual",
@@ -277,9 +280,9 @@ async function fetchF5Events() {
       { mode: 0o600 },
     );
 
-    const startEpoch = Math.floor(new Date(runStartedAt).getTime() / 1000);
-    const endEpoch = Math.floor(Date.now() / 1000) + 15;
-    const query = `{vh_name="ves-io-http-loadbalancer-${process.env.XC_LB_NAME}",sec_event_type=~"waf_sec_event|api_sec_event"}`;
+    const startEpoch = Math.floor(new Date(runStartedAt).getTime() / 1000) - 10;
+    const endEpoch = Math.floor(Date.now() / 1000) + 30;
+    const query = `{vh_name="ves-io-http-loadbalancer-${process.env.XC_LB_NAME}",sec_event_type=~"waf_sec_event|bot_defense_sec_event|api_sec_event|svc_policy_sec_event"}`;
 
     await writeFile(
       bodyPath,
