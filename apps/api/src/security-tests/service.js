@@ -22,7 +22,7 @@ const cancelledJobs = new Set();
 
 // Debe coincidir con RATE_LIMIT_REQUESTS en scripts/test-waf.sh y test-rate-limit.mjs.
 const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
-const RATE_LIMIT_TOTAL_REQUESTS = 1200;
+const RATE_LIMIT_TOTAL_REQUESTS = 3500;
 const DOS_TOTAL_STAGES = 5;
 
 const SCRIPT_DEFINITIONS = {
@@ -53,7 +53,7 @@ const SCRIPT_DEFINITIONS = {
   rate_limit: {
     title: "Rate limit",
     description:
-      "Valida umbrales de frecuencia a 120 RPS con k6 Cloud (Estados Unidos) y comportamiento ante ráfagas de solicitudes.",
+      "Valida umbrales de frecuencia a 350 RPS con k6 Cloud (Estados Unidos) y comportamiento ante ráfagas de solicitudes.",
     script: "test-rate-limit.mjs",
     profiles: {
       basic: {

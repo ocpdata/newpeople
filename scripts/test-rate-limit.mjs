@@ -18,7 +18,7 @@ let outputFile =
 const dryRun = process.argv.includes("--dry-run");
 const skipF5 = process.argv.includes("--skip-f5");
 const duration = process.env.RATE_LIMIT_DURATION || "10s";
-const rps = Math.max(1, Number(process.env.RATE_LIMIT_RPS || 120));
+const rps = Math.max(1, Number(process.env.RATE_LIMIT_RPS || 350));
 const parsedDurationSeconds =
   Number(duration.replace(/[^0-9.]/g, "")) || 10;
 const defaultCalculatedRequests = Math.max(
@@ -57,9 +57,9 @@ Opciones:
 
 Variables de entorno:
   BASE_URL                       URL objetivo (default: ${DEFAULT_BASE_URL})
-  RATE_LIMIT_RPS                 Tasa de peticiones por segundo (default: 120)
+  RATE_LIMIT_RPS                 Tasa de peticiones por segundo (default: 350)
   RATE_LIMIT_DURATION            Duración de la ráfaga (default: 10s)
-  RATE_LIMIT_REQUESTS            Cantidad total de solicitudes (default: 1200)
+  RATE_LIMIT_REQUESTS            Cantidad total de solicitudes (default: 3500)
   RATE_LIMIT_TEST_OUTPUT         Ruta del archivo TSV de salida
   XC_API_URL, XC_API_P12_FILE, XC_P12_PASSWORD, XC_NAMESPACE, XC_LB_NAME
 

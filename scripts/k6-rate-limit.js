@@ -7,7 +7,7 @@ const targetUrl =
   __ENV.BASE_URL ||
   "https://newpip.digitalvs.com/";
 const runId = __ENV.RUN_ID || `rl-${Date.now()}`;
-const rps = Number(__ENV.RATE_LIMIT_RPS || 120);
+const rps = Number(__ENV.RATE_LIMIT_RPS || 350);
 const duration = __ENV.RATE_LIMIT_DURATION || "10s";
 const cloudProjectID =
   __ENV.K6_CLOUD_PROJECT_ID && !Number.isNaN(Number(__ENV.K6_CLOUD_PROJECT_ID))
@@ -31,8 +31,8 @@ export const options = {
       rate: rps,
       timeUnit: "1s",
       duration,
-      preAllocatedVUs: Math.max(20, Math.ceil(rps / 4)),
-      maxVUs: 150,
+      preAllocatedVUs: Math.max(30, Math.ceil(rps / 3)),
+      maxVUs: 200,
       gracefulStop: "0s",
     },
   },
@@ -46,7 +46,7 @@ export default function () {
   const headers = {
     "X-WAF-Test-ID": testId,
     "X-WAF-Run-ID": runId,
-    "User-Agent": "waf-rate-limit-k6-120rps",
+    "User-Agent": "waf-rate-limit-k6-350rps",
   };
 
   const res = http.get(targetUrl, {
