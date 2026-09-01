@@ -133,11 +133,11 @@ const WAF_TEST_GUIDE = [
 const RATE_LIMIT_TEST_GUIDE = [
   {
     id: "test-21-rate-limit",
-    title: "Límite de frecuencia (350 RPS / 10s)",
+    title: "Límite de frecuencia (120 RPS / 10s)",
     method: "GET",
     target: "/",
     detail:
-      "Envía una ráfaga sostenida de 10 segundos desde k6 Cloud (Estados Unidos - Columbus) a una tasa de 350 solicitudes por segundo (~3,500 solicitudes) para comprobar si el límite de frecuencia de F5 DCS mitiga la sobrecarga.",
+      "Envía una ráfaga sostenida de 10 segundos con k6 desde una IP única a una tasa de 120 solicitudes por segundo (~1,200 solicitudes) para comprobar si el límite de frecuencia de F5 DCS mitiga la sobrecarga.",
     expected: "HTTP 429 o evento de limitación en F5 DCS.",
     kind: "attack",
     threatLevel: "Medio (agotamiento de recursos o fuerza bruta)",
@@ -244,7 +244,7 @@ export default function SecurityTestsPage() {
 
   useEffect(() => {
     if (
-      (testKey !== "l7_dos" && testKey !== "rate_limit") ||
+      testKey !== "l7_dos" ||
       analyzedJob?.status !== "running" ||
       !Number.isFinite(ddosStartedAt)
     )
@@ -1075,7 +1075,7 @@ export default function SecurityTestsPage() {
             <strong>Rate limit</strong>
             <span>Disponible</span>
             <small>
-              Ejecuta una ráfaga a 350 RPS para validar umbrales de limitación de frecuencia.
+              Ejecuta una ráfaga a 120 RPS con k6 para validar umbrales de limitación de frecuencia.
             </small>
           </button>
           <button
@@ -1228,17 +1228,18 @@ export default function SecurityTestsPage() {
         ) : testKey === "rate_limit" ? (
           <div className="tools-security-ddos-explanation">
             <div>
-              <strong>Ráfaga con k6 Cloud</strong>
+              <strong>Ráfaga con k6 (IP única)</strong>
               <p>
-                k6 Cloud envía una ráfaga sostenida de 350 solicitudes por
-                segundo durante 10 segundos (~3,500 solicitudes) hacia el Load
-                Balancer para validar los umbrales de limitación de frecuencia.
+                k6 envía una ráfaga sostenida de 120 solicitudes por
+                segundo durante 10 segundos (~1,200 solicitudes) desde una
+                única dirección IP de origen para saturar el umbral de limitación
+                de 80 RPS configurado en F5 DCS.
               </p>
             </div>
             <div>
-              <strong>País de origen</strong>
+              <strong>Origen</strong>
               <p>
-                Estados Unidos (Columbus - amazon:us:columbus).
+                Dirección IP única de la máquina local / VM.
               </p>
             </div>
           </div>
@@ -1249,7 +1250,7 @@ export default function SecurityTestsPage() {
         <div className="tools-card-heading tools-security-analysis-heading">
           <div>
             <h3>
-              {testKey === "l7_dos" || testKey === "rate_limit"
+              {testKey === "l7_dos"
                 ? "Ejecución k6 Cloud"
                 : isApiTest
                   ? "Operaciones GET"
@@ -1257,7 +1258,7 @@ export default function SecurityTestsPage() {
             </h3>
             {!analyzedJob ? (
               <p>
-                {testKey === "l7_dos" || testKey === "rate_limit"
+                {testKey === "l7_dos"
                   ? "El avance de la ejecución Cloud aparecerá al iniciar la prueba."
                   : isApiTest
                     ? "Se probarán únicamente las operaciones GET ejecutables sin parámetros de ruta."
@@ -1269,7 +1270,7 @@ export default function SecurityTestsPage() {
             <div className="tools-security-analysis-execution">
               <div className="tools-security-execution-columns">
                 <div className="tools-security-execution-column">
-                  {testKey === "l7_dos" || testKey === "rate_limit" ? (
+                  {testKey === "l7_dos" ? (
                     <>
                       <div className="tools-security-analysis-execution-label">
                         <strong>k6 Cloud</strong>

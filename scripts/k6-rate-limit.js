@@ -7,32 +7,18 @@ const targetUrl =
   __ENV.BASE_URL ||
   "https://newpip.digitalvs.com/";
 const runId = __ENV.RUN_ID || `rl-${Date.now()}`;
-const rps = Number(__ENV.RATE_LIMIT_RPS || 350);
+const rps = Number(__ENV.RATE_LIMIT_RPS || 120);
 const duration = __ENV.RATE_LIMIT_DURATION || "10s";
-const cloudProjectID =
-  __ENV.K6_CLOUD_PROJECT_ID && !Number.isNaN(Number(__ENV.K6_CLOUD_PROJECT_ID))
-    ? Number(__ENV.K6_CLOUD_PROJECT_ID)
-    : undefined;
 
 export const options = {
-  cloud: {
-    name: "NewPeople - Rate Limit",
-    ...(cloudProjectID ? { projectID: cloudProjectID } : {}),
-    distribution: {
-      "amazon:us:columbus": {
-        loadZone: "amazon:us:columbus",
-        percent: 100,
-      },
-    },
-  },
   scenarios: {
     rate_limit_burst: {
       executor: "constant-arrival-rate",
       rate: rps,
       timeUnit: "1s",
       duration,
-      preAllocatedVUs: Math.max(30, Math.ceil(rps / 3)),
-      maxVUs: 200,
+      preAllocatedVUs: Math.max(20, Math.ceil(rps / 4)),
+      maxVUs: 100,
       gracefulStop: "0s",
     },
   },
@@ -46,7 +32,7 @@ export default function () {
   const headers = {
     "X-WAF-Test-ID": testId,
     "X-WAF-Run-ID": runId,
-    "User-Agent": "waf-rate-limit-k6-350rps",
+    "User-Agent": "waf-rate-limit-k6-120rps",
   };
 
   const res = http.get(targetUrl, {
@@ -58,6 +44,14 @@ export default function () {
       run_id: runId,
     },
   });
+
+  const bodyText = res.body || "";
+  const isRejected = /Request Rejected|The requested URL was rejected|Your support ID is/i.test(
+    bodyText,
+  );
+
+  console.log(`${testId} | HTTP ${res.status} | rejected=${isRejected} | bytes=${bodyText.length}`);
+}
 
   const bodyText = res.body || "";
   const isRejected = /Request Rejected|The requested URL was rejected|Your support ID is/i.test(

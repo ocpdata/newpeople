@@ -18,7 +18,7 @@ let outputFile =
 const dryRun = process.argv.includes("--dry-run");
 const skipF5 = process.argv.includes("--skip-f5");
 const duration = process.env.RATE_LIMIT_DURATION || "10s";
-const rps = Math.max(1, Number(process.env.RATE_LIMIT_RPS || 350));
+const rps = Math.max(1, Number(process.env.RATE_LIMIT_RPS || 120));
 const parsedDurationSeconds =
   Number(duration.replace(/[^0-9.]/g, "")) || 10;
 const defaultCalculatedRequests = Math.max(
@@ -57,24 +57,17 @@ Opciones:
 
 Variables de entorno:
   BASE_URL                       URL objetivo (default: ${DEFAULT_BASE_URL})
-  RATE_LIMIT_RPS                 Tasa de peticiones por segundo (default: 350)
+  RATE_LIMIT_RPS                 Tasa de peticiones por segundo (default: 120)
   RATE_LIMIT_DURATION            Duración de la ráfaga (default: 10s)
-  RATE_LIMIT_REQUESTS            Cantidad total de solicitudes (default: 3500)
+  RATE_LIMIT_REQUESTS            Cantidad total de solicitudes (default: 1200)
   RATE_LIMIT_TEST_OUTPUT         Ruta del archivo TSV de salida
   XC_API_URL, XC_API_P12_FILE, XC_P12_PASSWORD, XC_NAMESPACE, XC_LB_NAME
-
-La carga se genera desde k6 Cloud en Estados Unidos (Columbus - amazon:us:columbus).
 `);
 }
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   usage();
   process.exit(0);
-}
-
-if (!dryRun && !String(process.env.K6_CLOUD_TOKEN || "").trim()) {
-  console.error("K6_CLOUD_TOKEN es obligatorio para ejecutar Rate Limit en k6 Cloud");
-  process.exit(2);
 }
 
 function escapeTsv(value) {
@@ -238,7 +231,7 @@ function translateF5Category(category) {
 }
 
 async function main() {
-  console.log(`\nRate limiting: ${totalRequests} solicitudes a ~${rps} RPS con k6 Cloud (Origen: Estados Unidos - Columbus).\n`);
+  console.log(`\nRate limiting: ${totalRequests} solicitudes a ~${rps} RPS con k6 (Origen: IP única local).\n`);
   const targetUrl = new URL("/", baseUrl).toString();
   const rawRows = [];
 
@@ -258,69 +251,78 @@ async function main() {
       });
     }
   } else {
-    console.log(`K6_CLOUD: start duration_seconds=${parsedDurationSeconds}`);
-    const k6Script = resolve(SCRIPT_DIR, "k6-rate-limit.js");
-    const k6Args = [
-      "cloud",
-      "run",
-      "-e",
-      `TARGET_URL=${targetUrl}`,
-      "-e",
-      `RUN_ID=${runId}`,
-      "-e",
-      `RATE_LIMIT_RPS=${rps}`,
-      "-e",
-      `RATE_LIMIT_DURATION=${duration}`,
-    ];
-    if (process.env.K6_CLOUD_PROJECT_ID) {
-      k6Args.push("-e", `K6_CLOUD_PROJECT_ID=${process.env.K6_CLOUD_PROJECT_ID}`);
-    }
-    k6Args.push(k6Script);
+    const tempDir = await mkdtemp(join(tmpdir(), "k6-rl-"));
+    const jsonOutput = join(tempDir, "k6-results.json");
+    try {
+      const k6Script = resolve(SCRIPT_DIR, "k6-rate-limit.js");
+      await runCommand(
+        "k6",
+        [
+          "run",
+          "--out",
+          `json=${jsonOutput}`,
+          "-e",
+          `TARGET_URL=${targetUrl}`,
+          "-e",
+          `RUN_ID=${runId}`,
+          "-e",
+          `RATE_LIMIT_RPS=${rps}`,
+          "-e",
+          `RATE_LIMIT_DURATION=${duration}`,
+          k6Script,
+        ],
+        {
+          acceptedExitCodes: [0, 99],
+          forwardOutput: true,
+          env: process.env,
+        },
+      );
 
-    const cloudResult = await runCommand("k6", k6Args, {
-      acceptedExitCodes: [0, 99],
-      forwardOutput: true,
-      env: process.env,
-    });
+      const jsonContent = await readFile(jsonOutput, "utf8").catch(() => "");
+      const lines = jsonContent.trim().split("\n").filter(Boolean);
+      const pointsByTestId = new Map();
 
-    const combinedOutput = `${cloudResult.stdout}\n${cloudResult.stderr}`;
-    const runUrl = combinedOutput.match(/https:\/\/\S+\/runs\/\d+/)?.[0] || "";
-    console.log(
-      `K6_CLOUD: done exit_code=${cloudResult.exitCode} run_url=${runUrl || "unknown"}`,
-    );
-
-    const loggedPoints = new Map();
-    for (const match of combinedOutput.matchAll(
-      /test-21-rate-limit-(\d+)\s*\|\s*HTTP\s*(\d+)(?:\s*\|\s*rejected=(true|false))?/gi,
-    )) {
-      const idx = Number(match[1]);
-      const status = String(match[2]);
-      const rejected = match[3] === "true";
-      loggedPoints.set(`test-21-rate-limit-${idx}`, {
-        testId: `test-21-rate-limit-${idx}`,
-        time: new Date().toISOString(),
-        status,
-        rejected,
-        durationMs: 0,
-        dry: false,
-      });
-    }
-
-    for (let i = 1; i <= totalRequests; i += 1) {
-      const testId = `test-21-rate-limit-${i}`;
-      const found = loggedPoints.get(testId);
-      if (found) {
-        rawRows.push(found);
-      } else {
-        rawRows.push({
-          testId,
-          time: new Date().toISOString(),
-          status: cloudResult.exitCode === 0 ? "200" : "000",
-          rejected: false,
-          durationMs: 0,
-          dry: false,
-        });
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line);
+          if (
+            parsed.type === "Point" &&
+            (parsed.metric === "http_req_duration" || parsed.metric === "http_reqs")
+          ) {
+            const tags = parsed.data?.tags || {};
+            const testId = tags.test_id;
+            if (testId && !pointsByTestId.has(testId)) {
+              pointsByTestId.set(testId, {
+                testId,
+                time: parsed.data.time,
+                status: String(tags.status || "000"),
+                rejected: tags.rejected === "true",
+                durationMs: Math.round(Number(parsed.data.value || 0)),
+                dry: false,
+              });
+            }
+          }
+        } catch {}
       }
+
+      for (let i = 1; i <= totalRequests; i += 1) {
+        const testId = `test-21-rate-limit-${i}`;
+        const found = pointsByTestId.get(testId);
+        if (found) {
+          rawRows.push(found);
+        } else {
+          rawRows.push({
+            testId,
+            time: new Date().toISOString(),
+            status: "000",
+            rejected: false,
+            durationMs: 0,
+            dry: false,
+          });
+        }
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 
