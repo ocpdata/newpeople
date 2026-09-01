@@ -20,9 +20,9 @@ const SCRIPT_ROOT = resolve(
 const activeProcesses = new Map();
 const cancelledJobs = new Set();
 
-// Debe coincidir con RATE_LIMIT_REQUESTS en scripts/test-waf.sh.
+// Debe coincidir con RATE_LIMIT_REQUESTS en scripts/test-waf.sh y test-rate-limit.mjs.
 const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
-const RATE_LIMIT_TOTAL_REQUESTS = 120;
+const RATE_LIMIT_TOTAL_REQUESTS = 1200;
 const DOS_TOTAL_STAGES = 5;
 
 const SCRIPT_DEFINITIONS = {

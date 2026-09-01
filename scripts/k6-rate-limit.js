@@ -7,7 +7,7 @@ const targetUrl =
   "https://newpip.digitalvs.com/";
 const runId = __ENV.RUN_ID || `rl-${Date.now()}`;
 const rps = Number(__ENV.RATE_LIMIT_RPS || 120);
-const duration = __ENV.RATE_LIMIT_DURATION || "1s";
+const duration = __ENV.RATE_LIMIT_DURATION || "10s";
 
 export const options = {
   scenarios: {
@@ -17,7 +17,7 @@ export const options = {
       timeUnit: "1s",
       duration,
       preAllocatedVUs: Math.max(20, Math.ceil(rps / 4)),
-      maxVUs: 100,
+      maxVUs: 150,
       gracefulStop: "0s",
     },
   },

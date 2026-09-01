@@ -133,11 +133,11 @@ const WAF_TEST_GUIDE = [
 const RATE_LIMIT_TEST_GUIDE = [
   {
     id: "test-21-rate-limit",
-    title: "Límite de frecuencia (120 RPS)",
+    title: "Límite de frecuencia (120 RPS / 10s)",
     method: "GET",
     target: "/",
     detail:
-      "Envía una ráfaga a una tasa de 120 solicitudes por segundo (120 RPS) para comprobar si el límite de frecuencia de F5 DCS o del servidor mitiga la sobrecarga.",
+      "Envía una ráfaga sostenida de 10 segundos a una tasa de 120 solicitudes por segundo (~1,200 solicitudes) para comprobar si el límite de frecuencia de F5 DCS mitiga la sobrecarga.",
     expected: "HTTP 429 o evento de limitación en F5 DCS.",
     kind: "attack",
     threatLevel: "Medio (agotamiento de recursos o fuerza bruta)",
