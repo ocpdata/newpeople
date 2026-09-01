@@ -54,16 +54,16 @@ const SCRIPT_DEFINITIONS = {
     title: "Rate limit",
     description:
       "Valida umbrales de frecuencia a 120 RPS y comportamiento ante ráfagas de solicitudes.",
-    script: "test-waf.sh",
+    script: "test-rate-limit.mjs",
     profiles: {
       basic: {
         title: "Pruebas sin validación F5 DCS",
-        args: ["--skip-f5", "--rate-limit", "--only", "test-21-rate-limit"],
+        args: ["--skip-f5"],
         requires: [],
       },
       f5: {
         title: "Pruebas con validación F5 DCS",
-        args: ["--rate-limit", "--only", "test-21-rate-limit"],
+        args: [],
         requires: [
           "XC_API_URL",
           "XC_API_P12_FILE",
