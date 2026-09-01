@@ -137,7 +137,7 @@ const RATE_LIMIT_TEST_GUIDE = [
     method: "GET",
     target: "/",
     detail:
-      "Envía una ráfaga sostenida de 10 segundos a una tasa de 120 solicitudes por segundo (~1,200 solicitudes) para comprobar si el límite de frecuencia de F5 DCS mitiga la sobrecarga.",
+      "Envía una ráfaga sostenida de 10 segundos desde k6 Cloud (Estados Unidos - Columbus) a una tasa de 120 solicitudes por segundo (~1,200 solicitudes) para comprobar si el límite de frecuencia de F5 DCS mitiga la sobrecarga.",
     expected: "HTTP 429 o evento de limitación en F5 DCS.",
     kind: "attack",
     threatLevel: "Medio (agotamiento de recursos o fuerza bruta)",
@@ -244,7 +244,7 @@ export default function SecurityTestsPage() {
 
   useEffect(() => {
     if (
-      testKey !== "l7_dos" ||
+      (testKey !== "l7_dos" && testKey !== "rate_limit") ||
       analyzedJob?.status !== "running" ||
       !Number.isFinite(ddosStartedAt)
     )
@@ -1225,6 +1225,23 @@ export default function SecurityTestsPage() {
               </p>
             </div>
           </div>
+        ) : testKey === "rate_limit" ? (
+          <div className="tools-security-ddos-explanation">
+            <div>
+              <strong>Ráfaga con k6 Cloud</strong>
+              <p>
+                k6 Cloud envía una ráfaga sostenida de 120 solicitudes por
+                segundo durante 10 segundos (~1,200 solicitudes) hacia el Load
+                Balancer para validar los umbrales de limitación de frecuencia.
+              </p>
+            </div>
+            <div>
+              <strong>País de origen</strong>
+              <p>
+                Estados Unidos (Columbus - amazon:us:columbus).
+              </p>
+            </div>
+          </div>
         ) : null}
       </article>
 
@@ -1232,7 +1249,7 @@ export default function SecurityTestsPage() {
         <div className="tools-card-heading tools-security-analysis-heading">
           <div>
             <h3>
-              {testKey === "l7_dos"
+              {testKey === "l7_dos" || testKey === "rate_limit"
                 ? "Ejecución k6 Cloud"
                 : isApiTest
                   ? "Operaciones GET"
@@ -1240,7 +1257,7 @@ export default function SecurityTestsPage() {
             </h3>
             {!analyzedJob ? (
               <p>
-                {testKey === "l7_dos"
+                {testKey === "l7_dos" || testKey === "rate_limit"
                   ? "El avance de la ejecución Cloud aparecerá al iniciar la prueba."
                   : isApiTest
                     ? "Se probarán únicamente las operaciones GET ejecutables sin parámetros de ruta."
@@ -1252,14 +1269,14 @@ export default function SecurityTestsPage() {
             <div className="tools-security-analysis-execution">
               <div className="tools-security-execution-columns">
                 <div className="tools-security-execution-column">
-                  {testKey === "l7_dos" ? (
+                  {testKey === "l7_dos" || testKey === "rate_limit" ? (
                     <>
                       <div className="tools-security-analysis-execution-label">
                         <strong>k6 Cloud</strong>
                         <span>
                           {ddosElapsedSeconds < ddosDurationSeconds &&
                           ["pending", "running"].includes(analyzedJob.status)
-                            ? `${Math.floor(ddosElapsedSeconds / 60)}:${String(ddosElapsedSeconds % 60).padStart(2, "0")} de 2:00`
+                            ? `${Math.floor(ddosElapsedSeconds / 60)}:${String(ddosElapsedSeconds % 60).padStart(2, "0")} de ${Math.floor(ddosDurationSeconds / 60)}:${String(ddosDurationSeconds % 60).padStart(2, "0")}`
                             : analyzedJob.status === "cancelled"
                               ? "Ejecución cancelada"
                               : ["failed", "timeout"].includes(

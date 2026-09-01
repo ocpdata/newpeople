@@ -1,5 +1,6 @@
-import http from "k6/http";
+import { fail } from "k6";
 import execution from "k6/execution";
+import http from "k6/http";
 
 const targetUrl =
   __ENV.TARGET_URL ||
@@ -8,8 +9,22 @@ const targetUrl =
 const runId = __ENV.RUN_ID || `rl-${Date.now()}`;
 const rps = Number(__ENV.RATE_LIMIT_RPS || 120);
 const duration = __ENV.RATE_LIMIT_DURATION || "10s";
+const cloudProjectID =
+  __ENV.K6_CLOUD_PROJECT_ID && !Number.isNaN(Number(__ENV.K6_CLOUD_PROJECT_ID))
+    ? Number(__ENV.K6_CLOUD_PROJECT_ID)
+    : undefined;
 
 export const options = {
+  cloud: {
+    name: "NewPeople - Rate Limit",
+    ...(cloudProjectID ? { projectID: cloudProjectID } : {}),
+    distribution: {
+      "amazon:us:columbus": {
+        loadZone: "amazon:us:columbus",
+        percent: 100,
+      },
+    },
+  },
   scenarios: {
     rate_limit_burst: {
       executor: "constant-arrival-rate",

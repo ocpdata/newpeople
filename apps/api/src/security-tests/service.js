@@ -53,18 +53,19 @@ const SCRIPT_DEFINITIONS = {
   rate_limit: {
     title: "Rate limit",
     description:
-      "Valida umbrales de frecuencia a 120 RPS y comportamiento ante ráfagas de solicitudes.",
+      "Valida umbrales de frecuencia a 120 RPS con k6 Cloud (Estados Unidos) y comportamiento ante ráfagas de solicitudes.",
     script: "test-rate-limit.mjs",
     profiles: {
       basic: {
-        title: "Pruebas sin validación F5 DCS",
+        title: "Pruebas en k6 Cloud sin validación F5 DCS",
         args: ["--skip-f5"],
-        requires: [],
+        requires: ["K6_CLOUD_TOKEN"],
       },
       f5: {
-        title: "Pruebas con validación F5 DCS",
+        title: "Pruebas en k6 Cloud con validación F5 DCS",
         args: [],
         requires: [
+          "K6_CLOUD_TOKEN",
           "XC_API_URL",
           "XC_API_P12_FILE",
           "XC_P12_PASSWORD",
