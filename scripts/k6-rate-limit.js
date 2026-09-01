@@ -52,11 +52,3 @@ export default function () {
 
   console.log(`${testId} | HTTP ${res.status} | rejected=${isRejected} | bytes=${bodyText.length}`);
 }
-
-  const bodyText = res.body || "";
-  const isRejected = /Request Rejected|The requested URL was rejected|Your support ID is/i.test(
-    bodyText,
-  );
-
-  console.log(`${testId} | HTTP ${res.status} | rejected=${isRejected} | bytes=${bodyText.length}`);
-}

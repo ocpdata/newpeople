@@ -1420,6 +1420,8 @@ export default function SecurityTestsPage() {
                       ? String(analyzedJob.stderr || "")
                           .trim()
                           .split("\n")
+                          .map((line) => line.trim())
+                          .filter((line) => line && line !== "}" && line !== "{")
                           .at(-1) ||
                         "Análisis interrumpido antes de completarse."
                       : f5Banner
