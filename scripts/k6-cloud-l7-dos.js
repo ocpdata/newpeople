@@ -13,6 +13,10 @@ const successfulResponses = new Counter("dos_successful_responses");
 const blockedResponses = new Counter("dos_blocked_responses");
 const serverErrorResponses = new Counter("dos_server_error_responses");
 const unexpectedResponses = new Counter("dos_unexpected_responses");
+const cloudProjectID =
+  __ENV.K6_CLOUD_PROJECT_ID && !Number.isNaN(Number(__ENV.K6_CLOUD_PROJECT_ID))
+    ? Number(__ENV.K6_CLOUD_PROJECT_ID)
+    : undefined;
 
 function rateScenario(rate, duration, startTime) {
   return {
@@ -31,6 +35,7 @@ function rateScenario(rate, duration, startTime) {
 export const options = {
   cloud: {
     name: "NewPeople - DDoS L7 distribuido",
+    ...(cloudProjectID ? { projectID: cloudProjectID } : {}),
     distribution: {
       "amazon:us:columbus": {
         loadZone: "amazon:us:columbus",

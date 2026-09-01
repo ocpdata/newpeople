@@ -215,21 +215,26 @@ async function executeCloudTest() {
     );
   console.log("K6_CLOUD: start duration_seconds=120");
   console.log(`${stages[0].id} | iniciando ${stages[0].rate} RPS`);
+  const k6Args = [
+    "cloud",
+    "run",
+    "-e",
+    `DOS_TARGET_URL=${targetUrl}`,
+    "-e",
+    "DOS_TEST_ID=dos-cloud-managed",
+    "-e",
+    `DOS_RUN_ID=${runId}`,
+  ];
+  if (process.env.K6_CLOUD_PROJECT_ID) {
+    k6Args.push("-e", `K6_CLOUD_PROJECT_ID=${process.env.K6_CLOUD_PROJECT_ID}`);
+  }
+  k6Args.push(resolve(SCRIPT_DIR, "k6-cloud-l7-dos.js"));
+
   let cloudResult;
   try {
     cloudResult = await runCommand(
       "k6",
-      [
-        "cloud",
-        "run",
-        "-e",
-        `DOS_TARGET_URL=${targetUrl}`,
-        "-e",
-        "DOS_TEST_ID=dos-cloud-managed",
-        "-e",
-        `DOS_RUN_ID=${runId}`,
-        resolve(SCRIPT_DIR, "k6-cloud-l7-dos.js"),
-      ],
+      k6Args,
       {
         acceptedExitCodes: [0, 99],
         forwardOutput: true,
