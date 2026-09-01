@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { app } from "./app.js";
@@ -55,6 +56,9 @@ import { startSecurityTestWorker } from "./security-tests/async.js";
 
 export async function startServer() {
   validateConfig();
+  const server = app.listen(config.port, () => {
+    console.log(`API running on http://localhost:${config.port}`);
+  });
   const autoAssignRoles = await isInitialRoleAssignmentRequired();
   await ensureCorePermissions({ autoAssignRoles });
   await ensureAiUsageSchema();
@@ -103,14 +107,16 @@ export async function startServer() {
   await startLandingWorker();
   await startCampaignEmailDispatchWorker();
   startSecurityTestWorker();
-  return app.listen(config.port, () => {
-    console.log(`API running on http://localhost:${config.port}`);
-  });
+  return server;
 }
 
 const isDirectRun =
-  process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+  Boolean(process.argv[1]) &&
+  fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isDirectRun) {
-  startServer();
+  startServer().catch((error) => {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  });
 }
