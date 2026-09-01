@@ -239,17 +239,38 @@ function summarizeReport(reportText) {
     .filter(Boolean);
   if (lines.length < 2) return { total: 0, byResult: {}, rows: [] };
   const headers = lines[0].split("\t");
-  const rows = lines.slice(1).map((line) => {
+  const rawRows = lines.slice(1).map((line) => {
     const values = line.split("\t");
     return Object.fromEntries(
       headers.map((header, index) => [header, values[index] || ""]),
     );
   });
   const byResult = {};
-  for (const row of rows)
+  for (const row of rawRows)
     byResult[row.resultado || row.result || "UNKNOWN"] =
       (byResult[row.resultado || row.result || "UNKNOWN"] || 0) + 1;
-  return { total: rows.length, byResult, rows };
+
+  // Compact grouped burst rows (e.g., test-21-rate-limit-1..1200) into a single representative row
+  // so result_json remains lightweight (<5KB) and doesn't overload list jobs / API network transfers.
+  const rateLimitRows = rawRows.filter((row) =>
+    String(row.prueba || row.test_id || "").startsWith("test-21-rate-limit"),
+  );
+  let rows = rawRows;
+  if (rateLimitRows.length > 1) {
+    const rep =
+      rateLimitRows.find((r) =>
+        String(r.resultado || r.result || "").toUpperCase().includes("PAS"),
+      ) || rateLimitRows[rateLimitRows.length - 1];
+    rows = [
+      ...rawRows.filter(
+        (row) =>
+          !String(row.prueba || row.test_id || "").startsWith("test-21-rate-limit"),
+      ),
+      rep,
+    ];
+  }
+
+  return { total: rawRows.length, byResult, rows };
 }
 
 export function listSecurityTestCatalog() {
