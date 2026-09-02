@@ -16,7 +16,6 @@ let outputFile =
   "waf-rate-limit.tsv";
 
 const dryRun = process.argv.includes("--dry-run");
-const skipF5 = process.argv.includes("--skip-f5");
 const duration = process.env.RATE_LIMIT_DURATION || "10s";
 const rps = Math.max(1, Number(process.env.RATE_LIMIT_RPS || 120));
 const parsedDurationSeconds =
@@ -29,12 +28,6 @@ const totalRequests = Math.max(
   1,
   Number(process.env.RATE_LIMIT_REQUESTS || defaultCalculatedRequests),
 );
-
-const f5InitialWaitMs =
-  Math.max(0, Number(process.env.XC_EVENT_INITIAL_WAIT_SECONDS || 15)) * 1000;
-const f5RetryWaitMs =
-  Math.max(0, Number(process.env.XC_EVENT_WAIT_SECONDS || 15)) * 1000;
-const f5Retries = Math.max(1, Number(process.env.XC_EVENT_RETRIES || 4));
 
 const outputIndex = process.argv.indexOf("--output");
 if (outputIndex >= 0 && process.argv[outputIndex + 1]) {
@@ -51,7 +44,6 @@ function usage() {
 
 Opciones:
   --dry-run      Simula la prueba sin ejecutar solicitudes k6
-  --skip-f5      Omite la consulta de eventos a F5 Distributed Cloud
   --output FILE  Ruta del archivo TSV de reporte
   -h, --help     Muestra esta ayuda
 
@@ -61,7 +53,6 @@ Variables de entorno:
   RATE_LIMIT_DURATION            Duración de la ráfaga (default: 10s)
   RATE_LIMIT_REQUESTS            Cantidad total de solicitudes (default: 1200)
   RATE_LIMIT_TEST_OUTPUT         Ruta del archivo TSV de salida
-  XC_API_URL, XC_API_P12_FILE, XC_P12_PASSWORD, XC_NAMESPACE, XC_LB_NAME
 `);
 }
 
@@ -149,67 +140,6 @@ function findEventField(value, names) {
     }
   }
   return "";
-}
-
-async function fetchF5Events() {
-  if (process.env.XC_EVENTS_FILE) {
-    const payload = JSON.parse(
-      await readFile(process.env.XC_EVENTS_FILE, "utf8"),
-    );
-    const events = Array.isArray(payload) ? payload : payload.events || [];
-    return events.map((event) =>
-      typeof event === "string" ? JSON.parse(event) : event,
-    );
-  }
-  const directory = await mkdtemp(join(tmpdir(), "rate-limit-f5-"));
-  try {
-    const outputPath = join(directory, "events.json");
-    const configPath = join(directory, "curl.conf");
-    const eventsPath =
-      process.env.XC_SECURITY_EVENTS_PATH ||
-      `/api/data/namespaces/${process.env.XC_NAMESPACE}/app_security/events`;
-    const requestBody = JSON.stringify({
-      aggs: {},
-      end_time: String(Math.floor(Date.now() / 1000) + 10),
-      limit: 0,
-      namespace: process.env.XC_NAMESPACE,
-      query: `{vh_name="ves-io-http-loadbalancer-${process.env.XC_LB_NAME}"}`,
-      sort: "DESCENDING",
-      start_time: String(Math.floor((Date.parse(runStartedAt) - 5000) / 1000)),
-      scroll: true,
-    });
-    await writeFile(
-      configPath,
-      `cert = ${JSON.stringify(process.env.XC_API_P12_FILE)}\ncert-type = "P12"\npass = ${JSON.stringify(process.env.XC_P12_PASSWORD)}\n`,
-      { mode: 0o600 },
-    );
-    const { stdout } = await runCommand("curl", [
-      "-sS",
-      "--config",
-      configPath,
-      "--max-time",
-      "30",
-      "-o",
-      outputPath,
-      "-w",
-      "%{http_code}",
-      "-X",
-      "POST",
-      "-H",
-      "Content-Type: application/json",
-      "--data-binary",
-      requestBody,
-      `${process.env.XC_API_URL.replace(/\/$/, "")}${eventsPath}`,
-    ]);
-    if (!/^2/.test(stdout))
-      throw new Error(`F5 API respondio HTTP ${stdout || "000"}`);
-    const payload = JSON.parse(await readFile(outputPath, "utf8"));
-    return (payload.events || []).map((event) =>
-      typeof event === "string" ? JSON.parse(event) : event,
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 }
 
 function translateF5Action(action) {
@@ -326,45 +256,8 @@ async function main() {
     }
   }
 
-  // F5 Correlation
-  const hasXcConfig =
-    Boolean(process.env.XC_EVENTS_FILE) ||
-    Boolean(
-      process.env.XC_API_URL &&
-        process.env.XC_API_P12_FILE &&
-        process.env.XC_P12_PASSWORD &&
-        process.env.XC_NAMESPACE &&
-        process.env.XC_LB_NAME,
-    );
-
-  let f5State = "SKIPPED";
-  let f5Events = [];
-  if (!dryRun && !skipF5 && hasXcConfig) {
-    if (f5InitialWaitMs > 0) {
-      console.log(
-        `Esperando ${f5InitialWaitMs / 1000}s para que F5 indexe los eventos antes de consultar...`,
-      );
-      await new Promise((r) => setTimeout(r, f5InitialWaitMs));
-    }
-    for (let attempt = 1; attempt <= f5Retries; attempt += 1) {
-      console.log(`F5_CORRELATION: attempt=${attempt} total=${f5Retries}`);
-      try {
-        f5Events = await fetchF5Events();
-        f5State = "QUERIED";
-        break;
-      } catch (err) {
-        if (attempt === f5Retries) {
-          console.error(`F5_CORRELATION: error=${err.message}`);
-          f5State = "ERROR";
-        } else {
-          await new Promise((r) => setTimeout(r, f5RetryWaitMs));
-        }
-      }
-    }
-    console.log(`F5_CORRELATION: done state=${f5State}`);
-  } else if (skipF5) {
-    console.log("F5_CORRELATION: done state=SKIPPED");
-  }
+  const f5State = "SKIPPED";
+  const f5Events = [];
 
   // Generate TSV
   const tsvHeader = [
