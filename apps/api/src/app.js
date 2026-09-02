@@ -74,7 +74,14 @@ export function createApp() {
   }
 
   app.use(cors());
-  app.use(express.json({ limit: requestBodyLimit }));
+  app.use(
+    express.json({
+      limit: requestBodyLimit,
+      verify: (req, _res, buffer) => {
+        req.rawBody = Buffer.from(buffer);
+      },
+    }),
+  );
   app.use(express.urlencoded({ extended: true, limit: requestBodyLimit }));
 
   app.get("/health", async (_req, res) => {

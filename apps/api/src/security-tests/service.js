@@ -321,9 +321,13 @@ async function dispatchGithubRateLimit(job) {
   }
 }
 
-export async function handleGithubRateLimitCallback({ payload, signature }) {
+export async function handleGithubRateLimitCallback({
+  payload,
+  rawBody,
+  signature,
+}) {
   const github = getGithubRateLimitConfig();
-  const body = JSON.stringify(payload);
+  const body = rawBody || Buffer.from(JSON.stringify(payload));
   const expected = createHmac("sha256", github.callbackSecret)
     .update(body)
     .digest("hex");

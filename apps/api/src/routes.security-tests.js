@@ -24,6 +24,7 @@ export async function githubRateLimitCallback(req, res) {
   try {
     const accepted = await handleGithubRateLimitCallback({
       payload: req.body || {},
+      rawBody: req.rawBody,
       signature: req.get("X-Security-Test-Signature"),
     });
     return res.json({ accepted: accepted !== false });
