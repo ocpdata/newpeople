@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { query } from "../db.js";
 import { logAuditEvent } from "../audit.js";
+import { config } from "../config.js";
 import { ensureSecurityTestSchema } from "./schema.js";
 
 const JOB_PREFIX = "securitytest_";
