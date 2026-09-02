@@ -23,7 +23,9 @@ import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.
 import settingsRoutes from "./routes.settings.js";
 import documentationRoutes from "./routes.documentation.js";
 import toolsRoutes from "./routes.tools.js";
-import securityTestRoutes from "./routes.security-tests.js";
+import securityTestRoutes, {
+  githubRateLimitCallback,
+} from "./routes.security-tests.js";
 import aiRoutes from "./routes.ai.js";
 import chatbotRoutes from "./routes.chatbot.js";
 import landingRoutes, {
@@ -136,6 +138,10 @@ export function createApp() {
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
   app.use("/api/documentation", authRequired, loadUser, documentationRoutes);
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
+  app.post(
+    "/api/internal/security-tests/github-callback",
+    githubRateLimitCallback,
+  );
   app.use(
     "/api/tools/security-tests",
     authRequired,

@@ -57,6 +57,17 @@ export const config = {
       process.env.APP_CALENDAR_REMINDER_LEAD_MINUTES || 60,
     ),
   },
+  securityTests: {
+    githubRateLimit: {
+      token: process.env.GH_RATE_LIMIT_TOKEN || "",
+      repository:
+        process.env.GITHUB_RATE_LIMIT_REPOSITORY || "ocpdata/test-rate-limit",
+      workflow:
+        process.env.GITHUB_RATE_LIMIT_WORKFLOW || "rate-limit.yml",
+      callbackUrl: process.env.GH_RATE_LIMIT_CALLBACK_URL || "",
+      callbackSecret: process.env.SECURITY_TEST_CALLBACK_SECRET || "",
+    },
+  },
   mail: {
     host: process.env.SMTP_HOST || "",
     port: Number(process.env.SMTP_PORT || 587),

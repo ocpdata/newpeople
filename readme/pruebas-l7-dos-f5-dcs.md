@@ -70,6 +70,10 @@ DoS. La respuesta esperada del preflight es `204`.
 Al finalizar se consulta `DOS_LOCAL_HEALTH_URL`. Si la API local se degrada, el
 script marca la recuperacion como `FAIL_ORIGIN_DEGRADED`.
 
+La prueba Rate Limit se ejecuta desde el repositorio independiente
+`ocpdata/test-rate-limit` mediante un runner efimero de GitHub Actions. No se
+ejecuta desde la VM de origen.
+
 ## 4. Simulacion y ejecucion
 
 La simulacion valida configuracion y muestra las cinco fases sin enviar carga:

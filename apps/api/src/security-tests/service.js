@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -59,17 +59,19 @@ const SCRIPT_DEFINITIONS = {
       basic: {
         title: "Pruebas sin validación F5 DCS",
         args: ["--skip-f5"],
-        requires: [],
+        requires: [
+          "GH_RATE_LIMIT_TOKEN",
+          "GH_RATE_LIMIT_CALLBACK_URL",
+          "SECURITY_TEST_CALLBACK_SECRET",
+        ],
       },
       f5: {
         title: "Pruebas con validación F5 DCS",
         args: [],
         requires: [
-          "XC_API_URL",
-          "XC_API_P12_FILE",
-          "XC_P12_PASSWORD",
-          "XC_NAMESPACE",
-          "XC_LB_NAME",
+          "GH_RATE_LIMIT_TOKEN",
+          "GH_RATE_LIMIT_CALLBACK_URL",
+          "SECURITY_TEST_CALLBACK_SECRET",
         ],
       },
     },
@@ -207,7 +209,7 @@ function serialize(row) {
       total: null,
       currentTest: null,
     }),
-    reportAvailable: Boolean(row.report_text),
+    reportAvailable: Boolean(row.report_available ?? row.report_text),
     stdout: String(row.stdout_text || "").slice(-10000),
     stderr: String(row.stderr_text || "").slice(-10000),
     exitCode: row.exit_code === null ? null : Number(row.exit_code),
@@ -271,6 +273,109 @@ function summarizeReport(reportText) {
   }
 
   return { total: rawRows.length, byResult, rows };
+}
+
+function getGithubRateLimitConfig() {
+  return config.securityTests.githubRateLimit;
+}
+
+async function dispatchGithubRateLimit(job) {
+  const github = getGithubRateLimitConfig();
+  if (!github.token || !github.callbackUrl || !github.callbackSecret) {
+    throw Object.assign(
+      new Error(
+        "La prueba Rate Limit remota requiere GH_RATE_LIMIT_TOKEN, GH_RATE_LIMIT_CALLBACK_URL y SECURITY_TEST_CALLBACK_SECRET",
+      ),
+      { code: "GITHUB_RATE_LIMIT_NOT_CONFIGURED" },
+    );
+  }
+
+  const endpoint = `https://api.github.com/repos/${github.repository}/actions/workflows/${github.workflow}/dispatches`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${github.token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+      "User-Agent": "newpeople-security-tests",
+    },
+    body: JSON.stringify({
+      ref: "main",
+      inputs: {
+        job_id: job.public_id,
+        callback_url: github.callbackUrl,
+        target_url: "https://newpip.digitalvs.com",
+        rps: "120",
+        duration: "10s",
+        skip_f5: "false",
+      },
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `GitHub Actions rechazo el dispatch (${response.status}): ${detail.slice(0, 500)}`,
+    );
+  }
+}
+
+export async function handleGithubRateLimitCallback({ payload, signature }) {
+  const github = getGithubRateLimitConfig();
+  const body = JSON.stringify(payload);
+  const expected = createHmac("sha256", github.callbackSecret)
+    .update(body)
+    .digest("hex");
+  const received = String(signature || "").replace(/^sha256=/, "");
+  if (
+    !github.callbackSecret ||
+    !/^[a-f0-9]{64}$/i.test(received) ||
+    !timingSafeEqual(Buffer.from(received, "hex"), Buffer.from(expected, "hex"))
+  ) {
+    throw Object.assign(new Error("Firma de callback invalida"), { status: 401 });
+  }
+
+  const jobId = String(payload?.job_id || "").trim();
+  const status = String(payload?.status || "").toLowerCase();
+  const statusMap = {
+    success: "completed",
+    completed: "completed",
+    failure: "failed",
+    failed: "failed",
+    timeout: "timeout",
+    cancelled: "cancelled",
+  };
+  const mappedStatus = statusMap[status];
+  if (!jobId || !mappedStatus) {
+    throw Object.assign(new Error("Payload de callback invalido"), { status: 400 });
+  }
+  const rows = await query(
+    "SELECT id, status FROM security_test_jobs WHERE public_id = ? AND script_key = 'rate_limit' LIMIT 1",
+    [jobId],
+  );
+  if (!rows.length) {
+    throw Object.assign(new Error("Ejecucion no encontrada"), { status: 404 });
+  }
+  if (!["pending", "running"].includes(String(rows[0].status))) {
+    return false;
+  }
+  const reportText = String(payload.report_tsv || "");
+  if (reportText.length > 2_000_000) {
+    throw Object.assign(new Error("Reporte demasiado grande"), { status: 413 });
+  }
+  await query(
+    "UPDATE security_test_jobs SET status = ?, report_text = ?, result_json = ?, stdout_text = ?, stderr_text = ?, exit_code = ?, finished_at = NOW(3) WHERE id = ? AND status IN ('pending', 'running')",
+    [
+      mappedStatus,
+      reportText,
+      JSON.stringify(summarizeReport(reportText)),
+      String(payload.stdout || "").slice(-MAX_OUTPUT_LENGTH),
+      String(payload.stderr || "").slice(-MAX_OUTPUT_LENGTH),
+      Number.isInteger(payload.exit_code) ? payload.exit_code : null,
+      rows[0].id,
+    ],
+  );
+  return true;
 }
 
 export function listSecurityTestCatalog() {
@@ -380,7 +485,12 @@ export async function getSecurityTestJob(publicId, includePrivate = false) {
 export async function listSecurityTestJobs(limit = 30) {
   await ensureSecurityTestSchema();
   const rows = await query(
-    "SELECT * FROM security_test_jobs ORDER BY created_at DESC LIMIT ?",
+    `SELECT id, public_id, script_key, profile_key, status,
+            requested_by_user_id, options_json, result_json, progress_json,
+            stdout_text, stderr_text, exit_code, process_signal,
+            error_code, error_message, started_at, finished_at, expires_at,
+            created_at, updated_at, (report_text IS NOT NULL) AS report_available
+     FROM security_test_jobs ORDER BY created_at DESC LIMIT ?`,
     [Number(limit)],
   );
   return rows.map(serialize);
@@ -448,6 +558,22 @@ async function executeJob(job) {
     [job.id],
   );
   if (!claimed.affectedRows) return;
+  if (job.script_key === "rate_limit") {
+    try {
+      await dispatchGithubRateLimit(job);
+    } catch (error) {
+      await query(
+        "UPDATE security_test_jobs SET status = 'failed', stderr_text = ?, error_code = ?, error_message = ?, finished_at = NOW(3) WHERE id = ? AND status = 'running'",
+        [
+          String(error?.message || error),
+          String(error?.code || "github_dispatch_failed"),
+          String(error?.message || error).slice(0, 500),
+          job.id,
+        ],
+      );
+    }
+    return;
+  }
   const selected = getDefinition(job.script_key, job.profile_key);
   const outputFile = resolve(
     SCRIPT_ROOT,

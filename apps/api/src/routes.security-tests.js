@@ -6,6 +6,7 @@ import {
   createSecurityTestJob,
   deleteSecurityTestJob,
   getSecurityTestJob,
+  handleGithubRateLimitCallback,
   listSecurityTestCatalog,
   listSecurityTestJobs,
 } from "./security-tests/service.js";
@@ -18,6 +19,20 @@ const createSchema = z.object({
   wafMode: z.enum(["monitoring", "blocking"]).default("monitoring"),
   testId: z.string().trim().min(1).max(80).optional(),
 });
+
+export async function githubRateLimitCallback(req, res) {
+  try {
+    const accepted = await handleGithubRateLimitCallback({
+      payload: req.body || {},
+      signature: req.get("X-Security-Test-Signature"),
+    });
+    return res.json({ accepted: accepted !== false });
+  } catch (error) {
+    return res
+      .status(Number(error?.status) || 500)
+      .json({ message: error?.message || "Callback invalido" });
+  }
+}
 
 router.get("/catalog", requirePermission("pruebas.read"), (_req, res) => {
   res.json({ items: listSecurityTestCatalog() });

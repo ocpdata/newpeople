@@ -111,6 +111,18 @@ export function validateConfig() {
     if (!hasValue(config.db.password)) {
       errors.push("DB_PASSWORD es obligatorio en produccion");
     }
+    if (hasValue(config.securityTests.githubRateLimit.token)) {
+      if (!hasValue(config.securityTests.githubRateLimit.callbackUrl)) {
+        errors.push(
+          "GH_RATE_LIMIT_CALLBACK_URL es obligatorio cuando se configura GH_RATE_LIMIT_TOKEN",
+        );
+      }
+      if (!hasValue(config.securityTests.githubRateLimit.callbackSecret)) {
+        errors.push(
+          "SECURITY_TEST_CALLBACK_SECRET es obligatorio cuando se configura GH_RATE_LIMIT_TOKEN",
+        );
+      }
+    }
   } else if (config.jwtSecret === "change-this-secret") {
     warnings.push(
       "JWT_SECRET usa valor por defecto; cambia este valor antes de subir a nube",
