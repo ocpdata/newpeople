@@ -72,7 +72,8 @@ script marca la recuperacion como `FAIL_ORIGIN_DEGRADED`.
 
 La prueba Rate Limit se ejecuta desde el repositorio independiente
 `ocpdata/test-rate-limit` mediante un runner efimero de GitHub Actions. No se
-ejecuta desde la VM de origen.
+ejecuta desde la VM de origen ni consulta eventos administrativos de F5; valida
+la aplicacion del limite mediante la respuesta HTTP `429`.
 
 ## 4. Simulacion y ejecucion
 

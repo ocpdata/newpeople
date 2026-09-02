@@ -58,7 +58,7 @@ const SCRIPT_DEFINITIONS = {
     script: "test-rate-limit.mjs",
     profiles: {
       basic: {
-        title: "Pruebas sin validación F5 DCS",
+        title: "Pruebas HTTP desde runner externo",
         args: ["--skip-f5"],
         requires: [
           "GH_RATE_LIMIT_TOKEN",
@@ -67,7 +67,7 @@ const SCRIPT_DEFINITIONS = {
         ],
       },
       f5: {
-        title: "Pruebas con validación F5 DCS",
+        title: "Pruebas HTTP desde runner externo",
         args: [],
         requires: [
           "GH_RATE_LIMIT_TOKEN",
@@ -309,7 +309,6 @@ async function dispatchGithubRateLimit(job) {
         target_url: "https://newpip.digitalvs.com",
         rps: "120",
         duration: "10s",
-        skip_f5: "false",
       },
     }),
   });

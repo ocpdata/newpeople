@@ -138,7 +138,7 @@ const RATE_LIMIT_TEST_GUIDE = [
     target: "/",
     detail:
       "Envía una ráfaga sostenida de 10 segundos con k6 desde una IP única a una tasa de 120 solicitudes por segundo (~1,200 solicitudes) para comprobar si el límite de frecuencia de F5 DCS mitiga la sobrecarga.",
-    expected: "HTTP 429 o evento de limitación en F5 DCS.",
+    expected: "HTTP 429 del límite de frecuencia en F5 DCS.",
     kind: "attack",
     threatLevel: "Medio (agotamiento de recursos o fuerza bruta)",
   },
@@ -543,7 +543,7 @@ export default function SecurityTestsPage() {
           : { percent: 100, label: "Solicitud enviada y respondida" };
 
     const profileKeyForRow = state.job?.profileKey || profileKey;
-    const f5Applicable = profileKeyForRow === "f5";
+    const f5Applicable = profileKeyForRow === "f5" && testKey !== "rate_limit";
     let f5Bar;
     if (!f5Applicable) {
       f5Bar = {
@@ -1375,7 +1375,8 @@ export default function SecurityTestsPage() {
                     </>
                   )}
                 </div>
-                {!isApiTest || analyzedJob?.profileKey === "f5" ? (
+                {testKey !== "rate_limit" &&
+                (!isApiTest || analyzedJob?.profileKey === "f5") ? (
                   <div className="tools-security-execution-column">
                     {(() => {
                       const jobF5Progress = getJobF5Progress(analyzedJob);
