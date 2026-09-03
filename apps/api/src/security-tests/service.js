@@ -309,11 +309,25 @@ async function dispatchGithubRateLimit(job) {
     );
   }
 
-  const workflow =
-    job.script_key === "client_side_defense"
-      ? github.clientSideDefenseWorkflow
-      : github.workflow;
+  const isClientSideDefense = job.script_key === "client_side_defense";
+  const workflow = isClientSideDefense
+    ? github.clientSideDefenseWorkflow
+    : github.workflow;
   const endpoint = `https://api.github.com/repos/${github.repository}/actions/workflows/${workflow}/dispatches`;
+  // Each workflow only accepts the inputs declared in its own workflow_dispatch.
+  const inputs = isClientSideDefense
+    ? {
+        job_id: job.public_id,
+        callback_url: github.callbackUrl,
+        target_url: "https://newpip.digitalvs.com",
+      }
+    : {
+        job_id: job.public_id,
+        callback_url: github.callbackUrl,
+        target_url: "https://newpip.digitalvs.com",
+        rps: "120",
+        duration: "10s",
+      };
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -323,17 +337,7 @@ async function dispatchGithubRateLimit(job) {
       "Content-Type": "application/json",
       "User-Agent": "newpeople-security-tests",
     },
-    body: JSON.stringify({
-      ref: "main",
-      inputs: {
-        job_id: job.public_id,
-        callback_url: github.callbackUrl,
-        target_url: "https://newpip.digitalvs.com",
-        rps: "120",
-        duration: "10s",
-        test_type: job.script_key,
-      },
-    }),
+    body: JSON.stringify({ ref: "main", inputs }),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
