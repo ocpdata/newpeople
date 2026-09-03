@@ -97,6 +97,11 @@ export function createApp() {
     return res.set("Cache-Control", "no-store").status(204).end();
   });
 
+  app.post(
+    "/api/internal/security-tests/github-callback",
+    githubRateLimitCallback,
+  );
+
   app.use("/api/public", quotationPublicRoutes);
   app.use("/api/public", publicCampaignEmailRoutes);
   app.use("/", publicLandingRoutes);
@@ -145,10 +150,6 @@ export function createApp() {
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
   app.use("/api/documentation", authRequired, loadUser, documentationRoutes);
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
-  app.post(
-    "/api/internal/security-tests/github-callback",
-    githubRateLimitCallback,
-  );
   app.use(
     "/api/tools/security-tests",
     authRequired,
