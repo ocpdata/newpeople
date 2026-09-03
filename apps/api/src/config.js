@@ -64,6 +64,9 @@ export const config = {
         process.env.GITHUB_RATE_LIMIT_REPOSITORY || "ocpdata/test-rate-limit",
       workflow:
         process.env.GITHUB_RATE_LIMIT_WORKFLOW || "rate-limit.yml",
+      clientSideDefenseWorkflow:
+        process.env.GITHUB_CLIENT_SIDE_DEFENSE_WORKFLOW ||
+        "client-side-defense.yml",
       callbackUrl: process.env.GH_RATE_LIMIT_CALLBACK_URL || "",
       callbackSecret: process.env.SECURITY_TEST_CALLBACK_SECRET || "",
     },

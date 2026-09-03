@@ -75,6 +75,9 @@ La prueba Rate Limit se ejecuta desde el repositorio independiente
 ejecuta desde la VM de origen ni consulta eventos administrativos de F5; valida
 la aplicacion del limite mediante la respuesta HTTP `429`.
 
+Client-Side Defense se valida por separado mediante Playwright desde el
+workflow `client-side-defense.yml`; no reutiliza Bot Defense.
+
 ## 4. Simulacion y ejecucion
 
 La simulacion valida configuracion y muestra las cinco fases sin enviar carga:

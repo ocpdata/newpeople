@@ -144,6 +144,20 @@ const RATE_LIMIT_TEST_GUIDE = [
   },
 ];
 
+const CLIENT_SIDE_DEFENSE_TEST_GUIDE = [
+  {
+    id: "client-side-defense-page",
+    title: "JavaScript Injection y Client-Side Defense",
+    method: "GET",
+    target: "/",
+    detail:
+      "Carga la página pública desde un runner externo, verifica la inserción de JavaScript, observa la inicialización de Client-Side Defense y completa una interacción numérica canario sin capturar teclas reales.",
+    expected: "JavaScript insertado, sensor inicializado y navegación sin errores.",
+    kind: "legit",
+    threatLevel: "Ninguna (navegación controlada)",
+  },
+];
+
 const BOT_DEFENSE_TEST_GUIDE = [
   {
     id: "bot-headed-browser",
@@ -184,6 +198,7 @@ const BOT_DEFENSE_TEST_GUIDE = [
 const TEST_GUIDES = {
   waf: WAF_TEST_GUIDE,
   rate_limit: RATE_LIMIT_TEST_GUIDE,
+  client_side_defense: CLIENT_SIDE_DEFENSE_TEST_GUIDE,
   bot_defense: BOT_DEFENSE_TEST_GUIDE,
 };
 
@@ -1080,6 +1095,17 @@ export default function SecurityTestsPage() {
           </button>
           <button
             type="button"
+            className={`tools-security-test-option ${testKey === "client_side_defense" ? "is-selected" : ""}`}
+            onClick={() => selectTest("client_side_defense")}
+          >
+            <strong>Client-Side Defense</strong>
+            <span>Disponible</span>
+            <small>
+              Verifica JavaScript Injection, sensor y navegación segura desde un runner externo.
+            </small>
+          </button>
+          <button
+            type="button"
             className={`tools-security-test-option ${testKey === "l7_dos" ? "is-selected" : ""}`}
             onClick={() => selectTest("l7_dos")}
           >
@@ -1241,6 +1267,21 @@ export default function SecurityTestsPage() {
               <p>
                 Dirección IP única de la máquina local / VM.
               </p>
+            </div>
+          </div>
+        ) : testKey === "client_side_defense" ? (
+          <div className="tools-security-ddos-explanation">
+            <div>
+              <strong>Validación de Client-Side Defense</strong>
+              <p>
+                Un runner externo abre la página pública, verifica JavaScript
+                Injection y la inicialización de la política, y completa una
+                interacción numérica canario sin capturar teclas reales.
+              </p>
+            </div>
+            <div>
+              <strong>Alcance</strong>
+              <p>JavaScript insertado en todas las páginas.</p>
             </div>
           </div>
         ) : null}

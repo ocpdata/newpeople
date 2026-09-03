@@ -25,6 +25,7 @@ const cancelledJobs = new Set();
 const RATE_LIMIT_TEST_ID = "test-21-rate-limit";
 const RATE_LIMIT_TOTAL_REQUESTS = 1200;
 const DOS_TOTAL_STAGES = 5;
+const CLIENT_SIDE_DEFENSE_TOTAL_STAGES = 1;
 
 const SCRIPT_DEFINITIONS = {
   waf: {
@@ -68,6 +69,23 @@ const SCRIPT_DEFINITIONS = {
       },
       f5: {
         title: "Pruebas HTTP desde runner externo",
+        args: [],
+        requires: [
+          "GH_RATE_LIMIT_TOKEN",
+          "GH_RATE_LIMIT_CALLBACK_URL",
+          "SECURITY_TEST_CALLBACK_SECRET",
+        ],
+      },
+    },
+  },
+  client_side_defense: {
+    title: "Client-Side Defense",
+    description:
+      "Verifica la inserción y ejecución de JavaScript de Client-Side Defense desde un navegador externo.",
+    script: "test-client-side-defense.mjs",
+    profiles: {
+      basic: {
+        title: "Prueba de navegador desde runner externo",
         args: [],
         requires: [
           "GH_RATE_LIMIT_TOKEN",
@@ -291,7 +309,11 @@ async function dispatchGithubRateLimit(job) {
     );
   }
 
-  const endpoint = `https://api.github.com/repos/${github.repository}/actions/workflows/${github.workflow}/dispatches`;
+  const workflow =
+    job.script_key === "client_side_defense"
+      ? github.clientSideDefenseWorkflow
+      : github.workflow;
+  const endpoint = `https://api.github.com/repos/${github.repository}/actions/workflows/${workflow}/dispatches`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -309,6 +331,7 @@ async function dispatchGithubRateLimit(job) {
         target_url: "https://newpip.digitalvs.com",
         rps: "120",
         duration: "10s",
+        test_type: job.script_key,
       },
     }),
   });
@@ -354,7 +377,7 @@ export async function handleGithubRateLimitCallback({
     throw Object.assign(new Error("Payload de callback invalido"), { status: 400 });
   }
   const rows = await query(
-    "SELECT id, status FROM security_test_jobs WHERE public_id = ? AND script_key = 'rate_limit' LIMIT 1",
+    "SELECT id, status FROM security_test_jobs WHERE public_id = ? AND script_key IN ('rate_limit', 'client_side_defense') LIMIT 1",
     [jobId],
   );
   if (!rows.length) {
@@ -443,6 +466,8 @@ export async function createSecurityTestJob({
   const stepsTotal =
     (scriptKey === "rate_limit" || (scriptKey === "waf" && testId === RATE_LIMIT_TEST_ID))
       ? RATE_LIMIT_TOTAL_REQUESTS
+      : scriptKey === "client_side_defense"
+        ? CLIENT_SIDE_DEFENSE_TOTAL_STAGES
       : scriptKey === "l7_dos"
         ? DOS_TOTAL_STAGES
         : undefined;
@@ -562,7 +587,10 @@ async function executeJob(job) {
     [job.id],
   );
   if (!claimed.affectedRows) return;
-  if (job.script_key === "rate_limit") {
+  if (
+    job.script_key === "rate_limit" ||
+    job.script_key === "client_side_defense"
+  ) {
     try {
       await dispatchGithubRateLimit(job);
     } catch (error) {
