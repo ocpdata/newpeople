@@ -13,7 +13,7 @@ const outputFile =
   "client-side-defense-results.tsv";
 const testId =
   process.env.CLIENT_SIDE_DEFENSE_TEST_ID ||
-  `client-side-defense-${Date.now()}`;
+  "client-side-defense-page";
 const canaryValue = "735190";
 const scriptPattern = new RegExp(
   process.env.CLIENT_SIDE_DEFENSE_SCRIPT_PATTERN ||
