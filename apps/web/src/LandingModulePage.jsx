@@ -1256,32 +1256,35 @@ export default function LandingModulePage() {
     }
   }, [pushError]);
 
-  const loadLandingList = useCallback(async () => {
-    try {
-      setIsLoadingList(true);
-      const { data } = await api.get("/api/landing/v1/landing-pages", {
-        params: {
-          page: 1,
-          page_size: 100,
-          status: statusFilter || undefined,
-          search: searchText || undefined,
-        },
-      });
-      const items = Array.isArray(data?.items) ? data.items : [];
-      setLandingItems(items);
+  const loadLandingList = useCallback(
+    async (nextStatusFilter = statusFilter, nextSearchText = searchText) => {
+      try {
+        setIsLoadingList(true);
+        const { data } = await api.get("/api/landing/v1/landing-pages", {
+          params: {
+            page: 1,
+            page_size: 100,
+            status: nextStatusFilter || undefined,
+            search: nextSearchText || undefined,
+          },
+        });
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setLandingItems(items);
 
-      if (!selectedLandingId && items[0]?.id) {
-        setSelectedLandingId(Number(items[0].id));
-        setSelectedEventId(Number(items[0].event_id));
+        if (!selectedLandingId && items[0]?.id) {
+          setSelectedLandingId(Number(items[0].id));
+          setSelectedEventId(Number(items[0].event_id));
+        }
+      } catch (error) {
+        pushError(
+          getApiErrorMessage(error, "No fue posible cargar las landings"),
+        );
+      } finally {
+        setIsLoadingList(false);
       }
-    } catch (error) {
-      pushError(
-        getApiErrorMessage(error, "No fue posible cargar las landings"),
-      );
-    } finally {
-      setIsLoadingList(false);
-    }
-  }, [pushError, searchText, selectedLandingId, statusFilter]);
+    },
+    [pushError, searchText, selectedLandingId, statusFilter],
+  );
 
   const loadLandingDetail = useCallback(
     async (landingId) => {
@@ -1464,6 +1467,14 @@ export default function LandingModulePage() {
     setSubmissionEventQuery(option?.label || String(selectedEventId));
   }, [selectedEventId, submissionEventOptions]);
 
+  function handleTabChange(nextTab) {
+    setActiveTab(nextTab);
+    if (nextTab === "events") {
+      setStatusFilter("");
+      setSearchText("");
+    }
+  }
+
   function onSelectLanding(item) {
     setSelectedLandingId(Number(item.id));
     setSelectedEventId(Number(item.event_id));
@@ -1558,10 +1569,12 @@ export default function LandingModulePage() {
           return [savedItem, ...filtered];
         });
 
+        setStatusFilter("");
+        setSearchText("");
         setSelectedLandingId(landingId);
         setSelectedEventId(savedEventId);
         setActiveTab("events");
-        await loadLandingList();
+        await loadLandingList("", "");
         await loadLandingDetail(landingId);
       }
 
@@ -2759,25 +2772,25 @@ export default function LandingModulePage() {
       >
         <button
           className={activeTab === "events" ? "is-active" : ""}
-          onClick={() => setActiveTab("events")}
+          onClick={() => handleTabChange("events")}
         >
           Eventos / Landings
         </button>
         <button
           className={activeTab === "editor" ? "is-active" : ""}
-          onClick={() => setActiveTab("editor")}
+          onClick={() => handleTabChange("editor")}
         >
           Editor / Publicación
         </button>
         <button
           className={activeTab === "security" ? "is-active" : ""}
-          onClick={() => setActiveTab("security")}
+          onClick={() => handleTabChange("security")}
         >
           Seguridad
         </button>
         <button
           className={activeTab === "submissions" ? "is-active" : ""}
-          onClick={() => setActiveTab("submissions")}
+          onClick={() => handleTabChange("submissions")}
         >
           Registros por evento
         </button>

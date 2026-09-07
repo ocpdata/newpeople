@@ -6,6 +6,7 @@ import { ensureCommercialEnablementPermissions } from "../src/commercial-enablem
 import { ensureCommercialTrackingPermissions } from "../src/commercial-tracking/permissions.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
+import { ensureLandingPermissions } from "../src/landing/permissions.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-registrations/permissions.js";
 import { ensureManufacturerRegistrationsSchema } from "../src/manufacturer-registrations/schema.js";
@@ -3513,6 +3514,33 @@ describe("API integration baseline", () => {
         [adminRoleId, permissionId],
       );
     }
+  });
+
+  test("ensureLandingPermissions vuelve a asignar landing.read a roles comerciales existentes", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_landing_sync_role`,
+      permissionCodes: ["desarrollo_comercial.read"],
+    });
+    cleanup.roleIds.push(roleId);
+
+    const landingReadPermissionId = await query(
+      "SELECT id FROM permissions WHERE code = 'landing.read' LIMIT 1",
+    ).then((rows) => Number(rows[0]?.id));
+    expect(landingReadPermissionId).toBeGreaterThan(0);
+
+    await query(
+      "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
+      [roleId, landingReadPermissionId],
+    );
+
+    await ensureLandingPermissions({ autoAssignRoles: false });
+
+    const [rows] = await query(
+      "SELECT COUNT(*) AS total FROM role_permissions WHERE role_id = ? AND permission_id = ?",
+      [roleId, landingReadPermissionId],
+    );
+
+    expect(Number(rows.total)).toBe(1);
   });
 
   test("usuarios.update bloquea desactivacion si dejaria cuentas activas sin propietarios activos", async () => {
