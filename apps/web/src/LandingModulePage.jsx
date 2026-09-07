@@ -1538,7 +1538,7 @@ export default function LandingModulePage() {
       if (landingId > 0) {
         setSelectedLandingId(landingId);
         setSelectedEventId(Number(data?.landing_page?.event_id || eventId));
-        setActiveTab("editor");
+        setActiveTab("events");
         await loadLandingList();
         await loadLandingDetail(landingId);
       }
