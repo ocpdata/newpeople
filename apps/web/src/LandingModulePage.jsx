@@ -1536,8 +1536,30 @@ export default function LandingModulePage() {
 
       const landingId = Number(data?.landing_page?.id || 0);
       if (landingId > 0) {
+        const savedEventId = Number(data?.landing_page?.event_id || eventId);
+        const savedItem = {
+          id: landingId,
+          event_id: savedEventId,
+          event_name: String(newEventName || "").trim(),
+          slug: normalizedSlug,
+          status: "draft",
+          current_version_id: Number(
+            data?.landing_page?.current_version_id || 0,
+          ),
+          current_version_number: 1,
+          published_at: null,
+          updated_at: new Date().toISOString(),
+        };
+
+        setLandingItems((prev) => {
+          const filtered = prev.filter(
+            (item) => Number(item?.id || 0) !== landingId,
+          );
+          return [savedItem, ...filtered];
+        });
+
         setSelectedLandingId(landingId);
-        setSelectedEventId(Number(data?.landing_page?.event_id || eventId));
+        setSelectedEventId(savedEventId);
         setActiveTab("events");
         await loadLandingList();
         await loadLandingDetail(landingId);
