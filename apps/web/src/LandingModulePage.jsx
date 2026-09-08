@@ -1275,10 +1275,12 @@ export default function LandingModulePage() {
           setSelectedLandingId(Number(items[0].id));
           setSelectedEventId(Number(items[0].event_id));
         }
+        return items;
       } catch (error) {
         pushError(
           getApiErrorMessage(error, "No fue posible cargar las landings"),
         );
+        return null;
       } finally {
         setIsLoadingList(false);
       }
@@ -1574,8 +1576,32 @@ export default function LandingModulePage() {
         setSelectedLandingId(landingId);
         setSelectedEventId(savedEventId);
         setActiveTab("events");
-        await loadLandingList("", "");
+        const refreshedItems = await loadLandingList("", "");
         await loadLandingDetail(landingId);
+
+        if (
+          refreshedItems &&
+          !refreshedItems.some((item) => Number(item?.id || 0) === landingId)
+        ) {
+          // El backend confirmo el guardado pero el listado recargado no lo incluye:
+          // conservamos la fila optimista para no perder visibilidad del registro.
+          setLandingItems((prev) =>
+            prev.some((item) => Number(item?.id || 0) === landingId)
+              ? prev
+              : [savedItem, ...prev],
+          );
+          pushSuccess(
+            "Landing guardada correctamente, pero el listado no la mostro de inmediato. Verifica el listado o recarga la pagina.",
+          );
+          return;
+        }
+
+        if (refreshedItems === null) {
+          pushSuccess(
+            "Landing guardada correctamente, pero no fue posible actualizar el listado. Recarga la pagina.",
+          );
+          return;
+        }
       }
 
       pushSuccess("Landing guardada correctamente");

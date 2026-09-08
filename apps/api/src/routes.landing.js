@@ -2919,6 +2919,7 @@ privateRouter.get(
   "/landing-pages",
   requireAnyPermission(landingReadPermissions),
   async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const page = Math.max(1, Number(req.query.page || 1));
     const pageSize = Math.min(
       200,
