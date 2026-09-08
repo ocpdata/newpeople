@@ -1,23 +1,31 @@
 .landing-module-page {
   display: grid;
-  gap: 16px;
+  gap: 18px;
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 8px 18px 28px;
 }
 
 .landing-module-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  padding: 8px 0 0;
 }
 
 .landing-module-head h2 {
   margin: 0;
   color: #173d72;
-  font-size: 24px;
+  font-size: clamp(2rem, 2.4vw, 2.7rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
 }
 
 .landing-module-head p {
-  margin: 6px 0 0;
+  margin: 10px 0 0;
   color: #3f5f88;
+  font-size: 1.08rem;
+  line-height: 1.5;
 }
 
 .landing-module-tabs {
@@ -59,28 +67,31 @@
 .landing-card {
   background: linear-gradient(180deg, #ffffff, #f8fbff);
   border: 1px solid #d4e2f8;
-  border-radius: 14px;
+  border-radius: 18px;
   box-shadow: 0 10px 28px rgba(18, 57, 119, 0.08);
-  padding: 16px;
+  padding: 20px 22px 18px;
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .landing-card-with-badge {
   position: relative;
-  padding-top: 52px;
+  padding-top: 58px;
 }
 
 .landing-events-form-head {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #e5eefc;
 }
 
 .landing-events-form-head p {
   margin: 0;
   color: #4d6d94;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .landing-event-id-badge {
@@ -96,42 +107,48 @@
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .landing-card h3 {
   margin: 0;
   color: #173d72;
+  font-size: clamp(1.5rem, 2vw, 2rem);
+  line-height: 1.2;
 }
 
 .landing-form-grid {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .landing-form-grid-events {
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(260px, 1.2fr) minmax(220px, 0.8fr);
+  gap: 16px 18px;
   align-items: start;
 }
 
 .landing-form-grid-events .landing-form-actions {
   grid-column: 1 / -1;
   justify-content: flex-end;
+  padding-top: 10px;
 }
 
 .landing-form-grid label,
 .landing-label-block {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   color: #274d7a;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 1.05rem;
 }
 
 .landing-field-detail {
   color: #5e7698;
-  font-size: 12px;
-  line-height: 1.35;
+  font-size: 12.5px;
+  line-height: 1.45;
   font-weight: 500;
+  margin-top: 2px;
 }
 
 .landing-form-grid input,
@@ -140,12 +157,24 @@
 .landing-inline-actions select,
 .landing-label-block textarea,
 .landing-label-block input {
-  border: 1px solid #b8cce8;
-  border-radius: 10px;
+  border: 1px solid #bfd1ef;
+  border-radius: 12px;
   background: #fff;
   color: #14365f;
-  padding: 9px 10px;
+  padding: 12px 14px;
+  min-height: 52px;
   font: inherit;
+  box-shadow: inset 0 1px 2px rgba(19, 54, 95, 0.02);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.landing-form-grid input:focus,
+.landing-form-grid select:focus,
+.landing-label-block textarea:focus,
+.landing-label-block input:focus {
+  outline: none;
+  border-color: #2d79d4;
+  box-shadow: 0 0 0 3px rgba(45, 121, 212, 0.12);
 }
 
 .landing-label-block textarea {
@@ -162,12 +191,22 @@
 }
 
 .landing-form-actions button {
-  background: #1f5fb0;
+  background: linear-gradient(180deg, #1e66be, #1857a2);
   color: #fff;
-  border-radius: 10px;
-  padding: 8px 12px;
-  font-weight: 600;
+  border: none;
+  border-radius: 14px;
+  padding: 0 28px;
+  min-height: 52px;
+  font-weight: 800;
+  font-size: 1.05rem;
   cursor: pointer;
+  box-shadow: 0 10px 18px rgba(26, 90, 167, 0.2);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.landing-form-actions button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 22px rgba(26, 90, 167, 0.26);
 }
 
 .landing-inline-actions a {
