@@ -3060,6 +3060,54 @@ privateRouter.get(
   },
 );
 
+privateRouter.delete(
+  "/landing-pages/:landingPageId",
+  requireAnyPermission(landingUpdatePermissions),
+  async (req, res) => {
+    const landingPageId = Number(req.params.landingPageId);
+    if (!Number.isInteger(landingPageId) || landingPageId <= 0) {
+      return res.status(400).json({ message: "landingPageId invalido" });
+    }
+
+    const rows = await query(
+      `SELECT id, event_id, slug, status
+       FROM landing_pages
+       WHERE id = ?
+       LIMIT 1`,
+      [landingPageId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Landing no encontrada" });
+    }
+    if (String(rows[0].status) !== "draft") {
+      return res.status(409).json({
+        message: "Solo se puede eliminar una landing en estado borrador",
+      });
+    }
+
+    await query(`DELETE FROM landing_pages WHERE id = ?`, [landingPageId]);
+
+    await logAuditEvent({
+      req,
+      module: "landing",
+      action: "deleted",
+      entityType: "landing_page",
+      entityId: landingPageId,
+      detail: `Landing eliminada ${landingPageId}`,
+      before: {
+        event_id: Number(rows[0].event_id || 0) || null,
+        slug: rows[0].slug || null,
+        status: rows[0].status || null,
+      },
+    });
+
+    return res.json({
+      landing_page_id: landingPageId,
+      deleted: true,
+    });
+  },
+);
+
 privateRouter.get(
   "/events/:eventId/submissions",
   requireAnyPermission(landingSubmissionsReadPermissions),

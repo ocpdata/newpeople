@@ -850,6 +850,7 @@ export default function LandingModulePage() {
   );
   const [sendingSubmissionById, setSendingSubmissionById] = useState({});
   const [deletingSubmissionById, setDeletingSubmissionById] = useState({});
+  const [deletingLandingById, setDeletingLandingById] = useState({});
   const [crmStatusFilter, setCrmStatusFilter] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -1483,6 +1484,40 @@ export default function LandingModulePage() {
     setActiveTab("editor");
     setGlobalError("");
     setGlobalSuccess("");
+  }
+
+  async function handleDeleteLanding(item) {
+    const landingId = Number(item?.id || 0);
+    if (!landingId) return;
+    if (String(item?.status) !== "draft") {
+      pushError("Solo se puede eliminar una landing en estado borrador");
+      return;
+    }
+    if (deletingLandingById[landingId]) return;
+
+    const shouldDelete = window.confirm(
+      "¿Eliminar esta landing? Esta acción no se puede deshacer.",
+    );
+    if (!shouldDelete) return;
+
+    setDeletingLandingById((prev) => ({ ...prev, [landingId]: true }));
+
+    try {
+      await api.delete(`/api/landing/v1/landing-pages/${landingId}`);
+      setLandingItems((prev) =>
+        prev.filter((row) => Number(row?.id || 0) !== landingId),
+      );
+      if (Number(selectedLandingId) === landingId) {
+        setSelectedLandingId(null);
+        setLandingDetail(null);
+      }
+      pushSuccess("Landing eliminada");
+      await loadLandingList();
+    } catch (error) {
+      pushError(getApiErrorMessage(error, "No fue posible eliminar la landing"));
+    } finally {
+      setDeletingLandingById((prev) => ({ ...prev, [landingId]: false }));
+    }
   }
 
   function toggleSubmissionSort(key) {
@@ -2851,7 +2886,7 @@ export default function LandingModulePage() {
 
       {activeTab === "events" ? (
         <section className="landing-panel">
-          <div className="landing-grid-two">
+          <div className="landing-stack">
             <article className="landing-card landing-card-with-badge">
               <div className="landing-event-id-badge">
                 ID: {nextAutoEventId}
@@ -2996,6 +3031,8 @@ export default function LandingModulePage() {
                               ? "is-selected"
                               : ""
                           }
+                          onDoubleClick={() => onSelectLanding(item)}
+                          title="Doble clic para abrir en Editor / Publicación"
                         >
                           <td>
                             <strong>{item.event_name}</strong>
@@ -3004,19 +3041,52 @@ export default function LandingModulePage() {
                             </div>
                           </td>
                           <td>{item.slug}</td>
-                          <td>{formatLandingStatus(item.status)}</td>
+                          <td>
+                            <span
+                              className={`landing-status-badge landing-status-${
+                                String(item.status || "").trim().toLowerCase() ||
+                                "unknown"
+                              }`}
+                            >
+                              {formatLandingStatus(item.status)}
+                            </span>
+                          </td>
                           <td>
                             {item.current_version_number
                               ? `v${item.current_version_number}`
                               : "-"}
                           </td>
                           <td>
-                            <button
-                              type="button"
-                              onClick={() => onSelectLanding(item)}
-                            >
-                              Abrir
-                            </button>
+                            {item.status === "draft" ? (
+                              <button
+                                type="button"
+                                className="landing-icon-button landing-delete-icon-button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleDeleteLanding(item);
+                                }}
+                                disabled={Boolean(
+                                  deletingLandingById[Number(item.id)],
+                                )}
+                                aria-label="Eliminar landing"
+                                title="Eliminar landing"
+                              >
+                                {deletingLandingById[Number(item.id)] ? (
+                                  <span
+                                    className="landing-icon-button-spinner"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    focusable="false"
+                                    aria-hidden="true"
+                                  >
+                                    <path d="M9 3a1 1 0 0 0-1 1v1H4.5a1 1 0 0 0 0 2H5v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7h.5a1 1 0 1 0 0-2H16V4a1 1 0 0 0-1-1H9zm1 2h4v0h-4zM7 7h10v12H7V7zm3 2a1 1 0 0 0-1 1v7a1 1 0 1 0 2 0v-7a1 1 0 0 0-1-1zm4 0a1 1 0 0 0-1 1v7a1 1 0 1 0 2 0v-7a1 1 0 0 0-1-1z" />
+                                  </svg>
+                                )}
+                              </button>
+                            ) : null}
                           </td>
                         </tr>
                       ))
