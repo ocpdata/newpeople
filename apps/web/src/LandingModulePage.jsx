@@ -2815,7 +2815,11 @@ export default function LandingModulePage() {
   }
 
   return (
-    <div className="landing-module-page">
+    <div
+      className={`landing-module-page${
+        activeTab === "submissions" ? " landing-module-page-wide" : ""
+      }`}
+    >
       <header className="landing-module-head">
         <div>
           <h2>Landing por evento</h2>
