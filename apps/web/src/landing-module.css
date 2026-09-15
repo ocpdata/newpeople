@@ -358,7 +358,7 @@
 }
 
 .landing-submission-table {
-  min-width: 1380px;
+  min-width: 1740px;
   table-layout: fixed;
 }
 
@@ -388,9 +388,10 @@
   width: 118px;
 }
 
-.landing-submission-data-cell {
-  min-width: 132px;
+.landing-submission-table .landing-submission-data-cell {
+  width: 154px;
   overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .landing-icon-button {
