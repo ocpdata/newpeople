@@ -1,3 +1,4 @@
+import { listProposalFormats } from "../../../shared/proposal-formats.js";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ let ensureAiParametersSchemaPromise;
 let ensureInstitutionalAssetsSchemaPromise;
 let ensureProposalContentSchemaPromise;
 let ensureProposalContentClonesSchemaPromise;
+let ensureCommercialProposalTemplateSchemaPromise;
 
 const PROPOSAL_LAYOUT_MODES = ["stack", "horizontal-gallery", "manual-rows"];
 const PROPOSAL_COMPONENT_KINDS = ["system", "custom"];
@@ -1090,6 +1092,207 @@ async function ensureProposalContentSchema() {
   }
 
   await ensureProposalContentSchemaPromise;
+}
+
+async function ensureCommercialProposalTemplateSchema() {
+  if (!ensureCommercialProposalTemplateSchemaPromise) {
+    ensureCommercialProposalTemplateSchemaPromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS commercial_proposal_templates (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          singleton_key VARCHAR(40) NOT NULL,
+          name VARCHAR(190) NOT NULL DEFAULT 'Genérica',
+          content_json JSON NOT NULL,
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          is_system TINYINT(1) NOT NULL DEFAULT 0,
+          updated_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          CONSTRAINT uq_commercial_proposal_templates_singleton UNIQUE (singleton_key),
+          CONSTRAINT fk_commercial_proposal_templates_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`,
+      );
+      await query(
+        `ALTER TABLE commercial_proposal_templates
+         ADD COLUMN name VARCHAR(190) NOT NULL DEFAULT 'Genérica' AFTER singleton_key`,
+      ).catch(() => {});
+      await query(
+        `ALTER TABLE commercial_proposal_templates
+         ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER content_json`,
+      ).catch(() => {});
+      await query(
+        `ALTER TABLE commercial_proposal_templates
+         ADD COLUMN is_system TINYINT(1) NOT NULL DEFAULT 0 AFTER is_active`,
+      ).catch(() => {});
+      await query(
+        `INSERT INTO commercial_proposal_templates
+          (singleton_key, name, content_json, is_active, is_system, updated_by_user_id, created_at, updated_at)
+         SELECT 'generica', 'Genérica', ?, 1, 1, NULL, NOW(3), NOW(3)
+         WHERE NOT EXISTS (
+           SELECT 1 FROM commercial_proposal_templates WHERE singleton_key IN ('default', 'generica')
+         )`,
+        [JSON.stringify({
+          schema_version: 3,
+          document: {
+            type: "doc",
+            content: [{
+              type: "proposalSection",
+              content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Nueva sección" }] }],
+            }],
+          },
+        })],
+      );
+      await query(
+        `UPDATE commercial_proposal_templates
+         SET singleton_key = 'generica', name = 'Genérica', is_system = 1
+         WHERE singleton_key = 'default'`,
+      ).catch(() => {});
+    })().catch((error) => {
+      ensureCommercialProposalTemplateSchemaPromise = undefined;
+      throw error;
+    });
+  }
+  await ensureCommercialProposalTemplateSchemaPromise;
+}
+
+let ensureProposalVisualFormatsPromise;
+
+async function ensureProposalVisualFormatsSchema() {
+  if (!ensureProposalVisualFormatsPromise) {
+    ensureProposalVisualFormatsPromise = (async () => {
+      await query(`CREATE TABLE IF NOT EXISTS proposal_visual_formats (
+        code VARCHAR(40) PRIMARY KEY,
+        name VARCHAR(190) NOT NULL,
+        config_json JSON NOT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        is_system TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME(3) NOT NULL,
+        updated_at DATETIME(3) NOT NULL
+      )`);
+      for (const format of listProposalFormats()) {
+        await query(`INSERT IGNORE INTO proposal_visual_formats
+          (code, name, config_json, is_active, is_system, created_at, updated_at)
+          VALUES (?, ?, ?, 1, ?, NOW(3), NOW(3))`,
+          [format.code, format.name, JSON.stringify(format), format.code === "basic" ? 1 : 0]);
+      }
+    })();
+  }
+  await ensureProposalVisualFormatsPromise;
+}
+
+export async function listCommercialProposalFormats({ activeOnly = false } = {}) {
+  await ensureProposalVisualFormatsSchema();
+  const rows = await query(`SELECT code, name, config_json, is_active, is_system FROM proposal_visual_formats ${activeOnly ? "WHERE is_active = 1" : ""} ORDER BY is_system DESC, name ASC`);
+  return rows.map((row) => ({ ...(typeof row.config_json === "string" ? JSON.parse(row.config_json) : row.config_json), code: row.code, name: row.name, isActive: Boolean(Number(row.is_active)), isSystem: Boolean(Number(row.is_system)) }));
+}
+
+export async function deleteCommercialProposalFormat(code) {
+  await ensureProposalVisualFormatsSchema();
+  const rows = await query(`SELECT is_system FROM proposal_visual_formats WHERE code = ? LIMIT 1`, [code]);
+  if (!rows.length) return false;
+  if (Number(rows[0].is_system)) throw new Error("El formato básico no se puede eliminar");
+  await query(`UPDATE proposal_visual_formats SET is_active = 0, updated_at = NOW(3) WHERE code = ?`, [code]);
+  return true;
+}
+
+export async function listCommercialProposalTemplates({ activeOnly = false } = {}) {
+  await ensureCommercialProposalTemplateSchema();
+  const rows = await query(
+    `SELECT singleton_key, name, is_active, is_system, updated_at, updated_by_user_id
+     FROM commercial_proposal_templates
+     ${activeOnly ? "WHERE is_active = 1" : ""}
+     ORDER BY is_system DESC, name ASC`,
+  );
+  return rows.map((row) => ({
+    code: row.singleton_key,
+    name: row.name,
+    isActive: Boolean(Number(row.is_active)),
+    isSystem: Boolean(Number(row.is_system)),
+    updatedAt: row.updated_at || null,
+    updatedByUserId: row.updated_by_user_id ? Number(row.updated_by_user_id) : null,
+  }));
+}
+
+export async function getCommercialProposalTemplate(code = "generica") {
+  await ensureCommercialProposalTemplateSchema();
+  const rows = await query(
+    `SELECT singleton_key, name, content_json, is_active, is_system, updated_at, updated_by_user_id
+     FROM commercial_proposal_templates WHERE singleton_key = ? LIMIT 1`,
+    [String(code || "generica").trim() || "generica"],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const content = typeof row?.content_json === "string" ? JSON.parse(row.content_json) : row?.content_json;
+  return {
+    code: row.singleton_key,
+    name: row.name,
+    content: content || {},
+    isActive: Boolean(Number(row.is_active)),
+    isSystem: Boolean(Number(row.is_system)),
+    updatedAt: row.updated_at || null,
+  };
+}
+
+export async function createCommercialProposalTemplate({ name, base_code: baseCode, content, actorUserId }) {
+  await ensureCommercialProposalTemplateSchema();
+  const normalizedName = String(name || "").trim();
+  const code = normalizedName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 36);
+  if (!code || code === "generica" || code === "default") {
+    throw Object.assign(new Error("Nombre de plantilla no válido"), { code: "INVALID_TEMPLATE_NAME" });
+  }
+  const baseTemplate = baseCode ? await getCommercialProposalTemplate(baseCode) : null;
+  const templateContent = baseTemplate?.content || content;
+  await query(
+    `INSERT INTO commercial_proposal_templates
+      (singleton_key, name, content_json, is_active, is_system, updated_by_user_id, created_at, updated_at)
+     VALUES (?, ?, ?, 1, 0, ?, NOW(3), NOW(3))`,
+    [code, normalizedName, JSON.stringify(templateContent), actorUserId || null],
+  );
+  return getCommercialProposalTemplate(code);
+}
+
+export async function saveCommercialProposalTemplate({ code = "generica", name, content, actorUserId }) {
+  await ensureCommercialProposalTemplateSchema();
+  await query(
+    `UPDATE commercial_proposal_templates
+     SET name = COALESCE(?, name), content_json = ?, updated_by_user_id = ?, updated_at = NOW(3)
+     WHERE singleton_key = ?`,
+    [name ? String(name).trim() : null, JSON.stringify(content), actorUserId || null, String(code || "generica")],
+  );
+  return getCommercialProposalTemplate(code);
+}
+
+export async function setCommercialProposalTemplateStatus({ code, isActive, actorUserId }) {
+  await ensureCommercialProposalTemplateSchema();
+  const template = await getCommercialProposalTemplate(code);
+  if (!template) return null;
+  if (template.isSystem && !isActive) {
+    throw Object.assign(new Error("La plantilla genérica no se puede desactivar"), { code: "SYSTEM_TEMPLATE_REQUIRED" });
+  }
+  await query(
+    `UPDATE commercial_proposal_templates
+     SET is_active = ?, updated_by_user_id = ?, updated_at = NOW(3)
+     WHERE singleton_key = ?`,
+    [isActive ? 1 : 0, actorUserId || null, code],
+  );
+  return getCommercialProposalTemplate(code);
+}
+
+export async function deleteCommercialProposalTemplate({ code }) {
+  await ensureCommercialProposalTemplateSchema();
+  const template = await getCommercialProposalTemplate(code);
+  if (!template) return false;
+  if (template.isSystem) {
+    throw Object.assign(new Error("La plantilla genérica no se puede eliminar"), { code: "SYSTEM_TEMPLATE_REQUIRED" });
+  }
+  await query(`DELETE FROM commercial_proposal_templates WHERE singleton_key = ?`, [code]);
+  return true;
 }
 
 async function ensureProposalContentClonesSchema() {

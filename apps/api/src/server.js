@@ -46,6 +46,7 @@ import { startChatbotWorker } from "./routes.chatbot.js";
 import { ensureLandingPermissions } from "./landing/permissions.js";
 import { ensureLandingSchema } from "./landing/schema.js";
 import { startLandingWorker } from "./routes.landing.js";
+import { ensureProposalDocumentSchema } from "./proposal-documents/schema.js";
 import { ensureCampaignPermissions } from "./campaigns/permissions.js";
 import { ensureCampaignsSchema } from "./campaigns/schema.js";
 import { startCampaignEmailDispatchWorker } from "./routes.campaign-emails.js";
@@ -91,6 +92,7 @@ export async function startServer() {
   await ensureCommercialPlanningSchema();
   await ensureManufacturerRegistrationsSchema();
   await ensureLandingSchema();
+  await ensureProposalDocumentSchema();
   await ensureCampaignsSchema();
   await ensureCampaignEmailDispatchSchema();
   await ensureSecurityTestSchema();

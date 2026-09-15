@@ -50,6 +50,7 @@ const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
 const ProposalsPage = lazy(() => import("./ProposalsPage"));
 const ProposalPrintPage = lazy(() => import("./ProposalPrintPage"));
+const ProposalDocumentsPage = lazy(() => import("./ProposalDocumentsPage"));
 const LandingModulePage = lazy(() => import("./LandingModulePage"));
 const CampaignsPage = lazy(() => import("./CampaignsPage"));
 const CampaignEmailModulePage = lazy(() => import("./CampaignEmailModulePage"));
@@ -545,6 +546,12 @@ export default function AppShell({
           }
         />
         <Route
+          path="/proposals-new"
+          element={
+            canAccessProposals ? <ProposalDocumentsPage /> : <Navigate to="/" />
+          }
+        />
+        <Route
           path="/accept-order"
           element={
             canAccessAcceptOrder ? <AcceptOrderPage /> : <Navigate to="/" />
@@ -699,6 +706,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Propuestas
+                  </GuardedNavLink>
+                )}
+                {canAccessProposals && (
+                  <GuardedNavLink
+                    to="/proposals-new"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Propuestas (nuevo)
                   </GuardedNavLink>
                 )}
               </SidebarNavGroup>

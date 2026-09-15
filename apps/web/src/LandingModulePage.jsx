@@ -4258,8 +4258,8 @@ export default function LandingModulePage() {
               </div>
             </div>
 
-            <div className="landing-list-wrap">
-              <table className="landing-table">
+            <div className="landing-list-wrap landing-submission-list-wrap">
+              <table className="landing-table landing-submission-table">
                 <thead>
                   <tr>
                     <th>
@@ -4372,12 +4372,12 @@ export default function LandingModulePage() {
                           key={submissionId}
                           className={isSentToLeads ? "is-processed" : ""}
                         >
-                          <td>
+                          <td className="landing-submission-date-cell">
                             {formatBusinessDateTime(submission.submitted_at, {
                               fallback: "-",
                             })}
                           </td>
-                          <td>
+                          <td className="landing-submission-owner-cell">
                             <div className="landing-submission-seller-cell">
                               <select
                                 value={String(
@@ -4421,6 +4421,7 @@ export default function LandingModulePage() {
                           </td>
                           {submissionFieldColumns.map((column) => (
                             <td
+                              className="landing-submission-data-cell"
                               key={`${submission.submission_id}-${column.key}`}
                             >
                               {fieldByKey.get(column.key) || "-"}

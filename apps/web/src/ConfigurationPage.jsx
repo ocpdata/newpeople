@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConfigurationPage } from "./configuration/useConfigurationPage";
+import CommercialProposalTemplatePanel from "./CommercialProposalTemplatePanel";
 import "./configuration/configuration.css";
 
 const PROPOSAL_ASSET_CATEGORIES = [
@@ -4591,6 +4592,10 @@ export default function ConfigurationPage() {
     activatingWorkspaceVersionId,
     savingWorkspacePlaybookKey,
     proposalContentConfig,
+    commercialProposalTemplate,
+    commercialProposalTemplates,
+    commercialProposalFormats,
+    selectedCommercialProposalTemplateCode,
     proposalContentLoadError,
     proposalComponentDefinitions,
     institutionalAssets,
@@ -4616,6 +4621,7 @@ export default function ConfigurationPage() {
     validatingAiParameters,
     restoringAiParameterKey,
     savingProposalContent,
+    savingCommercialProposalTemplate,
     publishingProposalContent,
     assetActionKey,
     fieldErrors,
@@ -4692,6 +4698,12 @@ export default function ConfigurationPage() {
     closeAiPricingRate,
     syncAiPricingRates,
     saveProposalContentComponent,
+    saveCommercialProposalTemplate,
+    previewCommercialProposalTemplate,
+    selectCommercialProposalTemplate,
+    createCommercialProposalTemplate,
+    deleteCommercialProposalTemplate,
+    deleteCommercialProposalFormat,
     createProposalContentComponent,
     reorderProposalContent,
     archiveProposalContentComponent,
@@ -4999,27 +5011,6 @@ export default function ConfigurationPage() {
         </div>
 
         <div className="configuration-header-actions">
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => changeSection("audit")}
-          >
-            Ver auditoria
-          </button>
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={
-              activeSection === "company"
-                ? !isDirty || saving
-                : activeSection === "ai_parameters"
-                  ? !aiParametersDirty || savingAiParameters
-                  : false
-            }
-            onClick={discardChanges}
-          >
-            Descartar cambios
-          </button>
           {activeSection === "company" ? (
             <button
               type="button"
@@ -5078,10 +5069,33 @@ export default function ConfigurationPage() {
               {publishingProposalContent ? "Publicando..." : "Publicar"}
             </button>
           ) : null}
+
         </div>
       </header>
 
-      <div className="configuration-layout">
+      {activeSection === "commercial_proposal_template" ? (
+        <CommercialProposalTemplatePanel
+          content={commercialProposalTemplate}
+          templates={commercialProposalTemplates}
+          formats={commercialProposalFormats}
+          selectedCode={selectedCommercialProposalTemplateCode}
+          saving={savingCommercialProposalTemplate}
+          onSelectTemplate={(code) => { void selectCommercialProposalTemplate(code); }}
+          onCreateTemplate={(name, baseCode) => { void createCommercialProposalTemplate(name, baseCode); }}
+          onDeleteTemplate={(code) => { void deleteCommercialProposalTemplate(code); }}
+          onDeleteFormat={(code) => { void deleteCommercialProposalFormat(code); }}
+          onChange={(nextContent) => { void saveCommercialProposalTemplate(nextContent); }}
+          onPreview={(nextContent) => { void previewCommercialProposalTemplate(nextContent); }}
+        />
+      ) : null}
+
+      <div
+        className={`configuration-layout${
+          activeSection === "commercial_proposal_template"
+            ? " is-commercial-proposal-template"
+            : ""
+        }`}
+      >
         <aside className="configuration-sidebar">
           <div className="configuration-sidebar-title">
             Configuracion general

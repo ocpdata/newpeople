@@ -31,6 +31,7 @@ import chatbotRoutes from "./routes.chatbot.js";
 import landingRoutes, {
   publicRouter as publicLandingRoutes,
 } from "./routes.landing.js";
+import proposalDocumentRoutes from "./routes.proposal-documents.js";
 import campaignRoutes from "./routes.campaigns.js";
 import campaignEmailRoutes, {
   publicRouter as publicCampaignEmailRoutes,
@@ -159,6 +160,12 @@ export function createApp() {
   app.use("/api", authRequired, loadUser, aiRoutes);
   app.use("/api/chatbot", authRequired, loadUser, chatbotRoutes);
   app.use("/api/landing/v1", authRequired, loadUser, landingRoutes);
+  app.use(
+    "/api/proposal-documents/v1",
+    authRequired,
+    loadUser,
+    proposalDocumentRoutes,
+  );
   app.use("/api/campaigns", authRequired, loadUser, campaignRoutes);
   app.use("/api/campaign-emails", authRequired, loadUser, campaignEmailRoutes);
 

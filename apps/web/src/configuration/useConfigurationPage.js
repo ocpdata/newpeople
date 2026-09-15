@@ -237,6 +237,33 @@ const EMPTY_PROPOSAL_CONTENT_CONFIG = {
   components: [],
 };
 
+const EMPTY_COMMERCIAL_PROPOSAL_TEMPLATE = {
+  schema_version: 3,
+  document: { type: "doc", content: [] },
+};
+
+const DEFAULT_COMMERCIAL_PROPOSAL_TEMPLATES = [
+  { code: "generica", name: "Genérica", isActive: true, isSystem: true },
+];
+
+const INITIAL_COMMERCIAL_PROPOSAL_DOCUMENT = {
+  schema_version: 3,
+  document: {
+    type: "doc",
+    content: [{
+      type: "proposalSection",
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 2 },
+          content: [{ type: "text", text: "Nueva sección" }],
+        },
+        { type: "paragraph" },
+      ],
+    }],
+  },
+};
+
 const EMPTY_PROPOSAL_CONTENT_COMPONENT = {
   id: null,
   componentCode: "",
@@ -1099,6 +1126,11 @@ export function useConfigurationPage() {
   const [validatingAiParameters, setValidatingAiParameters] = useState(false);
   const [restoringAiParameterKey, setRestoringAiParameterKey] = useState("");
   const [savingProposalContent, setSavingProposalContent] = useState(false);
+  const [commercialProposalTemplate, setCommercialProposalTemplate] = useState(EMPTY_COMMERCIAL_PROPOSAL_TEMPLATE);
+  const [commercialProposalTemplates, setCommercialProposalTemplates] = useState([]);
+  const [commercialProposalFormats, setCommercialProposalFormats] = useState([]);
+  const [selectedCommercialProposalTemplateCode, setSelectedCommercialProposalTemplateCode] = useState("generica");
+  const [savingCommercialProposalTemplate, setSavingCommercialProposalTemplate] = useState(false);
   const [publishingProposalContent, setPublishingProposalContent] =
     useState(false);
   const [assetActionKey, setAssetActionKey] = useState("");
@@ -1121,6 +1153,9 @@ export function useConfigurationPage() {
           auditResponse,
           playbooksResponse,
           proposalContentResponse,
+          commercialProposalTemplateResponse,
+          commercialProposalTemplatesResponse,
+          commercialProposalFormatsResponse,
           institutionalAssetsResponse,
           aiParametersResponse,
           aiWalletsResponse,
@@ -1157,6 +1192,9 @@ export function useConfigurationPage() {
               "No fue posible cargar la configuracion de propuestas",
             ),
           })),
+          api.get("/api/settings/commercial-proposal-template").catch(() => ({ data: { template: { content: EMPTY_COMMERCIAL_PROPOSAL_TEMPLATE } } })),
+          api.get("/api/settings/commercial-proposal-templates").catch(() => ({ data: { templates: [] } })),
+          api.get("/api/settings/commercial-proposal-formats").catch(() => ({ data: { formats: [] } })),
           api
             .get("/api/settings/institutional-assets")
             .catch(() => ({ data: { items: [] } })),
@@ -1230,6 +1268,13 @@ export function useConfigurationPage() {
         setProposalContentLoadError(
           String(proposalContentResponse.loadError || ""),
         );
+        setCommercialProposalTemplate(commercialProposalTemplateResponse.data?.template?.content || EMPTY_COMMERCIAL_PROPOSAL_TEMPLATE);
+        const nextTemplates = Array.isArray(commercialProposalTemplatesResponse.data?.templates) && commercialProposalTemplatesResponse.data.templates.length
+          ? commercialProposalTemplatesResponse.data.templates
+          : DEFAULT_COMMERCIAL_PROPOSAL_TEMPLATES;
+        setCommercialProposalTemplates(nextTemplates);
+        setCommercialProposalFormats(Array.isArray(commercialProposalFormatsResponse.data?.formats) ? commercialProposalFormatsResponse.data.formats : []);
+        setSelectedCommercialProposalTemplateCode(nextTemplates[0]?.code || "generica");
         setProposalComponentDefinitions(
           Array.isArray(proposalContentResponse.data?.componentDefinitions)
             ? proposalContentResponse.data.componentDefinitions
@@ -2757,6 +2802,87 @@ export function useConfigurationPage() {
     }
   }
 
+  async function saveCommercialProposalTemplate(content) {
+    setSavingCommercialProposalTemplate(true);
+    setError("");
+    try {
+      const response = await api.put(`/api/settings/commercial-proposal-template/${selectedCommercialProposalTemplateCode}`, { content });
+      setCommercialProposalTemplate(response.data?.template?.content || content);
+      setSuccess("Plantilla comercial guardada");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible guardar la plantilla comercial"));
+      throw err;
+    } finally {
+      setSavingCommercialProposalTemplate(false);
+    }
+  }
+
+  async function previewCommercialProposalTemplate(content) {
+    try {
+      const response = await api.post(
+        "/api/settings/commercial-proposal-template/preview-pdf",
+        { content },
+        { responseType: "blob" },
+      );
+      const objectUrl = window.URL.createObjectURL(response.data);
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible generar el PDF de vista previa"));
+    }
+  }
+
+  async function selectCommercialProposalTemplate(code) {
+    try {
+      const response = await api.get(`/api/settings/commercial-proposal-template/${code}`);
+      setSelectedCommercialProposalTemplateCode(code);
+      setCommercialProposalTemplate(response.data?.template?.content || EMPTY_COMMERCIAL_PROPOSAL_TEMPLATE);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible cargar la plantilla"));
+    }
+  }
+
+  async function createCommercialProposalTemplate(name, baseCode = null) {
+    try {
+      const response = await api.post("/api/settings/commercial-proposal-templates", {
+        name,
+        base_code: baseCode,
+        content: INITIAL_COMMERCIAL_PROPOSAL_DOCUMENT,
+      });
+      const template = response.data?.template;
+      if (!template?.code) {
+        throw new Error("El servidor no devolvió la plantilla creada");
+      }
+      setCommercialProposalTemplates((current) => [...current, {
+        code: template.code,
+        name: template.name,
+        isActive: template.isActive,
+        isSystem: template.isSystem,
+      }]);
+      await selectCommercialProposalTemplate(template.code);
+      setSuccess("Plantilla creada");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible crear la plantilla"));
+    }
+  }
+
+  async function deleteCommercialProposalTemplate(code) {
+    await api.delete(`/api/settings/commercial-proposal-templates/${code}`);
+    const nextTemplates = commercialProposalTemplates.filter((template) => template.code !== code);
+    setCommercialProposalTemplates(nextTemplates);
+    await selectCommercialProposalTemplate(nextTemplates[0]?.code || "generica");
+  }
+
+  async function deleteCommercialProposalFormat(code) {
+    try {
+      await api.delete(`/api/settings/commercial-proposal-formats/${code}`);
+      setCommercialProposalFormats((current) => current.filter((format) => format.code !== code));
+      setSuccess("Formato eliminado");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "No fue posible eliminar el formato"));
+    }
+  }
+
   async function createProposalContentComponent(payload) {
     setSavingProposalContent(true);
     setError("");
@@ -3006,6 +3132,12 @@ export function useConfigurationPage() {
         dirty: false,
       },
       {
+        id: "commercial_proposal_template",
+        title: "Propuesta comercial (nuevo)",
+        description: "Plantilla WYSIWYG base para nuevas propuestas comerciales",
+        dirty: false,
+      },
+      {
         id: "modules",
         title: "Parámetros por módulo",
         description: "Reglas específicas por área funcional",
@@ -3051,6 +3183,10 @@ export function useConfigurationPage() {
     activatingWorkspaceVersionId,
     savingWorkspacePlaybookKey,
     proposalContentConfig,
+    commercialProposalTemplate,
+    commercialProposalTemplates,
+    commercialProposalFormats,
+    selectedCommercialProposalTemplateCode,
     proposalContentLoadError,
     proposalComponentDefinitions,
     institutionalAssets,
@@ -3076,6 +3212,7 @@ export function useConfigurationPage() {
     validatingAiParameters,
     restoringAiParameterKey,
     savingProposalContent,
+    savingCommercialProposalTemplate,
     publishingProposalContent,
     assetActionKey,
     fieldErrors: saveAttempted ? validationErrors : {},
@@ -3157,6 +3294,12 @@ export function useConfigurationPage() {
     publishAiParameters,
     restoreAiParameterRevision,
     saveProposalContentComponent,
+    saveCommercialProposalTemplate,
+    previewCommercialProposalTemplate,
+    selectCommercialProposalTemplate,
+    createCommercialProposalTemplate,
+    deleteCommercialProposalTemplate,
+    deleteCommercialProposalFormat,
     createProposalContentComponent,
     reorderProposalContent,
     archiveProposalContentComponent,

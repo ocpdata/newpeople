@@ -3,6 +3,10 @@ import { z } from "zod";
 import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import { query } from "./db.js";
+import { renderProposalDocumentHtmlPdfBuffer } from "./proposal-documents/html-pdf.js";
+import { renderProposalDocumentPdfBuffer } from "./proposal-documents/pdf.js";
+import { getEmbeddedPdfNodes } from "./proposal-documents/embedded-pdf.js";
+import { addInstitutionalLogo } from "./proposal-documents/page-branding.js";
 import {
   AI_PARAMETER_CAPABILITY_KEYS,
   CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES,
@@ -23,6 +27,13 @@ import {
   getInstitutionalAsset,
   getPublishedAiParameterEntryByCapabilityKey,
   getProposalContentConfiguration,
+  getCommercialProposalTemplate,
+  listCommercialProposalTemplates,
+  createCommercialProposalTemplate,
+  setCommercialProposalTemplateStatus,
+  deleteCommercialProposalTemplate,
+  listCommercialProposalFormats,
+  deleteCommercialProposalFormat,
   listInstitutionalAssets,
   listAiParameterEntryRevisions,
   PROPOSAL_CONTENT_COMPONENT_DEFINITIONS,
@@ -32,6 +43,7 @@ import {
   restoreAiParameterEntryRevision,
   saveAiParameterEntryDraft,
   saveProposalContentComponent,
+  saveCommercialProposalTemplate,
   setProposalContentComponentStatus,
   getTemporaryFeatureSettings,
   saveChatbotSettings,
@@ -42,6 +54,24 @@ import {
 } from "./settings.js";
 
 const router = express.Router();
+
+const commercialProposalTemplateSchema = z.object({
+  content: z.object({
+    schema_version: z.literal(3),
+    document: z.object({ type: z.literal("doc"), content: z.array(z.any()).max(300) }),
+    format_code: z.string().trim().max(40).optional().default("basic"),
+  }),
+});
+
+const commercialProposalTemplateCreateSchema = z.object({
+  name: z.string().trim().min(2).max(190),
+  base_code: z.string().trim().max(40).nullable().optional(),
+  content: commercialProposalTemplateSchema.shape.content,
+});
+
+const commercialProposalTemplateStatusSchema = z.object({
+  is_active: z.boolean(),
+});
 
 const optionalTrimmedString = (maxLength) =>
   z.preprocess((value) => {
@@ -902,6 +932,142 @@ router.post(
       message: "Asset archivado",
       asset,
     });
+  },
+);
+
+router.get(
+  "/commercial-proposal-template",
+  requirePermission("configuracion.read"),
+  async (_req, res) => res.json({ template: await getCommercialProposalTemplate() }),
+);
+
+router.get(
+  "/commercial-proposal-templates",
+  requirePermission("configuracion.read"),
+  async (req, res) => res.json({ templates: await listCommercialProposalTemplates({ activeOnly: String(req.query.active_only || "") === "1" }) }),
+);
+
+router.get(
+  "/commercial-proposal-formats",
+  requirePermission("configuracion.read"),
+  async (_req, res) => res.json({ formats: await listCommercialProposalFormats() }),
+);
+
+router.delete(
+  "/commercial-proposal-formats/:code",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    try {
+      const deleted = await deleteCommercialProposalFormat(req.params.code);
+      return deleted ? res.json({ deleted: true }) : res.status(404).json({ message: "Formato no encontrado" });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || "No fue posible eliminar el formato" });
+    }
+  },
+);
+
+router.post(
+  "/commercial-proposal-templates",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = commercialProposalTemplateCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    try {
+      const template = await createCommercialProposalTemplate({ ...parsed.data, actorUserId: Number(req.user?.id) || null });
+      return res.status(201).json({ template });
+    } catch (error) {
+      if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "Ya existe una plantilla con ese nombre" });
+      return res.status(400).json({ message: error.message || "No fue posible crear la plantilla" });
+    }
+  },
+);
+
+router.patch(
+  "/commercial-proposal-templates/:code/status",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = commercialProposalTemplateStatusSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    try {
+      const template = await setCommercialProposalTemplateStatus({ code: req.params.code, isActive: parsed.data.is_active, actorUserId: Number(req.user?.id) || null });
+      return template ? res.json({ template }) : res.status(404).json({ message: "Plantilla no encontrada" });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || "No fue posible cambiar el estado" });
+    }
+  },
+);
+
+router.delete(
+  "/commercial-proposal-templates/:code",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    try {
+      const deleted = await deleteCommercialProposalTemplate({ code: req.params.code });
+      return deleted ? res.json({ deleted: true }) : res.status(404).json({ message: "Plantilla no encontrada" });
+    } catch (error) {
+      return res.status(400).json({ message: error.message || "No fue posible eliminar la plantilla" });
+    }
+  },
+);
+
+router.put(
+  "/commercial-proposal-template",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = commercialProposalTemplateSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    const template = await saveCommercialProposalTemplate({ content: parsed.data.content, actorUserId: Number(req.user?.id) || null });
+    await logAuditEvent({ req, module: "configuracion", action: "updated_commercial_proposal_template", entityType: "commercial_proposal_template", entityId: null, detail: "Plantilla comercial WYSIWYG actualizada" });
+    return res.json({ template });
+  },
+);
+
+router.post(
+  "/commercial-proposal-template/preview-pdf",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const parsed = commercialProposalTemplateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
+    const previewDocument = {
+      title: "Propuesta comercial base",
+      content: {
+        ...parsed.data.content,
+        metadata: {
+          format_code: parsed.data.content.format_code || "basic",
+        },
+      },
+    };
+    let buffer = getEmbeddedPdfNodes(previewDocument.content).length
+      ? await renderProposalDocumentPdfBuffer(previewDocument)
+      : await renderProposalDocumentHtmlPdfBuffer(previewDocument);
+    const companyProfile = await getCompanyProfile();
+    buffer = await addInstitutionalLogo(buffer, companyProfile?.logoUrl);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "inline; filename=propuesta-comercial-base.pdf");
+    return res.send(buffer);
+  },
+);
+
+router.get(
+  "/commercial-proposal-template/:code",
+  requirePermission("configuracion.read"),
+  async (req, res) => {
+    const template = await getCommercialProposalTemplate(req.params.code);
+    return template ? res.json({ template }) : res.status(404).json({ message: "Plantilla no encontrada" });
+  },
+);
+
+router.put(
+  "/commercial-proposal-template/:code",
+  requirePermission("configuracion.update"),
+  async (req, res) => {
+    const parsed = commercialProposalTemplateSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    const template = await saveCommercialProposalTemplate({ code: req.params.code, content: parsed.data.content, actorUserId: Number(req.user?.id) || null });
+    return res.json({ template });
   },
 );
 

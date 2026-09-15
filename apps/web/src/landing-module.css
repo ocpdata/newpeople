@@ -307,6 +307,10 @@
   scrollbar-gutter: stable;
 }
 
+.landing-submission-list-wrap {
+  max-height: min(58vh, 560px);
+}
+
 .landing-table {
   width: 100%;
   border-collapse: collapse;
@@ -351,6 +355,42 @@
 
 .landing-table tbody tr.is-processed {
   background: #e9f8ee;
+}
+
+.landing-submission-table {
+  min-width: 1380px;
+  table-layout: fixed;
+}
+
+.landing-submission-table th,
+.landing-submission-table td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.landing-submission-table th:first-child,
+.landing-submission-date-cell {
+  width: 112px;
+}
+
+.landing-submission-table th:nth-child(2),
+.landing-submission-owner-cell {
+  width: 270px;
+}
+
+.landing-submission-table th:nth-last-child(2),
+.landing-submission-table td:nth-last-child(2) {
+  width: 312px;
+}
+
+.landing-submission-table th:last-child,
+.landing-submission-table td:last-child {
+  width: 118px;
+}
+
+.landing-submission-data-cell {
+  min-width: 132px;
+  overflow-wrap: anywhere;
 }
 
 .landing-icon-button {
