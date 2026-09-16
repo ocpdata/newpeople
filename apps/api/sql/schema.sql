@@ -455,6 +455,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   state_region VARCHAR(120) NULL,
   country_id BIGINT UNSIGNED NOT NULL,
   description TEXT NULL,
+  client_logo_url LONGTEXT NULL,
   address_line VARCHAR(255) NULL,
   postal_code VARCHAR(20) NULL,
   activation_status_id BIGINT UNSIGNED NOT NULL,

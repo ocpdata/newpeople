@@ -161,17 +161,43 @@ function renderLegacyBlock(block, context) {
   return "";
 }
 
-function renderProposalCover({ title, context, format }) {
+function renderProposalCover({ title, context, format, cover }) {
   const formatClass = format.code === "enterprise" ? "is-enterprise" : "is-basic";
-  return `<section class="proposal-print-cover ${formatClass}" style="--proposal-format-accent:${escapeHtml(format.accent)};--proposal-format-heading:${escapeHtml(format.heading)}">
+  const coverImage = String(cover?.image_url || "").trim();
+  const coverClass = coverImage ? " has-photo" : "";
+  const coverStyle = coverImage
+    ? `background-image:url(&quot;${escapeHtml(coverImage)}&quot;);`
+    : "";
+  return `<section class="proposal-print-cover ${formatClass}${coverClass}" style="--proposal-format-accent:${escapeHtml(format.accent)};--proposal-format-heading:${escapeHtml(format.heading)};${coverStyle}">
     <div class="proposal-print-cover-accent"></div>
+    ${coverImage ? '<div class="proposal-print-cover-photo-overlay"></div>' : ""}
     <div class="proposal-print-cover-content">
       <span class="proposal-print-cover-eyebrow">Propuesta comercial</span>
       <h1>${escapeHtml(title || "Propuesta")}</h1>
-      <p class="proposal-print-cover-client">${escapeHtml(context.client_name || "Cliente")}</p>
-      <p class="proposal-print-cover-company">${escapeHtml(context.company_name || "")}</p>
-      <p class="proposal-print-cover-date">${new Date().toLocaleDateString("es-MX")}</p>
+      <div class="proposal-print-cover-parties">
+        <div>
+          <span>Preparado para</span>
+          <strong>${escapeHtml(context.client_name || "Cliente")}</strong>
+          <p>${escapeHtml(context.client_address || "Dirección del cliente")}</p>
+        </div>
+        <div>
+          <span>Preparado por</span>
+          <strong>${escapeHtml(context.company_name || "Nuestra empresa")}</strong>
+          <p>${escapeHtml(context.company_address || "")}</p>
+        </div>
+      </div>
+      <p class="proposal-print-cover-date">Propuesta diseñada el ${new Date().toLocaleDateString("es-MX")}</p>
     </div>
+    <section class="proposal-print-cover-focus">
+      <div>
+        <p>Mejorar el core de la red con <strong>DDI (DNS, DHCP, IPAM)</strong>.</p>
+        <p>Visibilidad y control del tráfico DNS para evitar fuga de información y amenazas.</p>
+        <p>Optimizar y asegurar la entrega de aplicaciones.</p>
+        <p>Brindar servicios de migración a nube y optimización.</p>
+        <p>Mejorar la seguridad de las comunicaciones con la nube.</p>
+        <p>Brindar la máxima seguridad y confidencialidad para las transacciones.</p>
+      </div>
+    </section>
   </section>`;
 }
 
@@ -181,8 +207,13 @@ export function renderProposalDocumentHtml({ title, content, tocPages = {} }) {
     client_name: sourceContext.account_name || "cliente",
     contact_name: sourceContext.contact_name || "contacto",
     company_name: sourceContext.company_name || "nuestra empresa",
+    client_address: sourceContext.client_address || "",
+    company_address: sourceContext.company_address || "",
+    company_logo_url: sourceContext.company_logo_url || "",
+    client_logo_url: sourceContext.client_logo_url || "",
   };
   const format = content?.metadata?.format_snapshot || getProposalFormat(content?.metadata?.format_code);
+  const cover = content?.metadata?.cover || {};
   const documentNodes = content?.schema_version >= 3 && content?.document?.type === "doc"
     ? content.document.content || []
     : null;
@@ -209,7 +240,7 @@ export function renderProposalDocumentHtml({ title, content, tocPages = {} }) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     html, body { margin: 0; padding: 0; }
     ${PRINT_STYLES}
-  </style></head><body><main class="proposal-print-page" style="--proposal-format-accent:${escapeHtml(format.accent)};--proposal-format-heading:${escapeHtml(format.heading)};--proposal-format-text:${escapeHtml(format.text)};--proposal-format-border:${escapeHtml(format.border)};--proposal-format-surface:${escapeHtml(format.surface)};--proposal-format-spacing:${escapeHtml(format.spacing)};--proposal-format-heading-font:${escapeHtml(format.headingFont)};--proposal-format-body-font:${escapeHtml(format.bodyFont)};--proposal-format-margin:${escapeHtml(format.margin)}">${renderProposalCover({ title, context, format })}${renderTableOfContents(getDocumentSections(content).map((entry) => ({ ...entry, page: tocPages[entry.id] })))}<div class="proposal-print-content">${body}</div></main></body></html>`;
+  </style></head><body><main class="proposal-print-page" style="--proposal-format-accent:${escapeHtml(format.accent)};--proposal-format-heading:${escapeHtml(format.heading)};--proposal-format-text:${escapeHtml(format.text)};--proposal-format-border:${escapeHtml(format.border)};--proposal-format-surface:${escapeHtml(format.surface)};--proposal-format-spacing:${escapeHtml(format.spacing)};--proposal-format-heading-font:${escapeHtml(format.headingFont)};--proposal-format-body-font:${escapeHtml(format.bodyFont)};--proposal-format-margin:${escapeHtml(format.margin)}">${renderProposalCover({ title, context, format, cover })}${renderTableOfContents(getDocumentSections(content).map((entry) => ({ ...entry, page: tocPages[entry.id] })))}<div class="proposal-print-content">${body}</div></main></body></html>`;
 }
 
 export async function renderProposalDocumentHtmlPdfBuffer(document) {

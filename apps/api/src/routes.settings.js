@@ -6,7 +6,7 @@ import { query } from "./db.js";
 import { renderProposalDocumentHtmlPdfBuffer } from "./proposal-documents/html-pdf.js";
 import { renderProposalDocumentPdfBuffer } from "./proposal-documents/pdf.js";
 import { getEmbeddedPdfNodes } from "./proposal-documents/embedded-pdf.js";
-import { addInstitutionalLogo } from "./proposal-documents/page-branding.js";
+import { addInstitutionalLogo, addProposalCoverLogos } from "./proposal-documents/page-branding.js";
 import {
   AI_PARAMETER_CAPABILITY_KEYS,
   CAMPAIGN_MATRIX_EMAIL_TYPE_VALUES,
@@ -60,6 +60,13 @@ const commercialProposalTemplateSchema = z.object({
     schema_version: z.literal(3),
     document: z.object({ type: z.literal("doc"), content: z.array(z.any()).max(300) }),
     format_code: z.string().trim().max(40).optional().default("basic"),
+    metadata: z.object({
+      cover: z.object({
+        image_url: z.string().max(12_000_000).optional(),
+        image_name: z.string().max(255).optional(),
+        show_client_logo: z.boolean().optional(),
+      }).partial().optional(),
+    }).partial().optional(),
   }),
 });
 
@@ -1035,7 +1042,13 @@ router.post(
       content: {
         ...parsed.data.content,
         metadata: {
+          ...parsed.data.content.metadata,
           format_code: parsed.data.content.format_code || "basic",
+          source_context: {
+            account_name: "Cliente",
+            client_name: "Cliente",
+            client_address: "Dirección del cliente",
+          },
         },
       },
     };
@@ -1043,6 +1056,20 @@ router.post(
       ? await renderProposalDocumentPdfBuffer(previewDocument)
       : await renderProposalDocumentHtmlPdfBuffer(previewDocument);
     const companyProfile = await getCompanyProfile();
+    previewDocument.content.metadata.source_context = {
+      ...previewDocument.content.metadata.source_context,
+      company_name: companyProfile?.commercialName || companyProfile?.legalName || "Nuestra empresa",
+      company_address: [
+        companyProfile?.addressLine1,
+        companyProfile?.addressLine2,
+        [companyProfile?.city, companyProfile?.stateRegion].filter(Boolean).join(", "),
+        companyProfile?.postalCode,
+        companyProfile?.countryName,
+      ].filter(Boolean).join(" · "),
+    };
+    buffer = await addProposalCoverLogos(buffer, {
+      companyLogoUrl: companyProfile?.logoUrl,
+    });
     buffer = await addInstitutionalLogo(buffer, companyProfile?.logoUrl);
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "application/pdf");

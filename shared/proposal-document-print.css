@@ -30,11 +30,30 @@
 .proposal-print-toc-leader { flex: 1; border-bottom: 1px dotted var(--proposal-format-border, var(--proposal-rule-color)); }
 .proposal-print-cover { min-height: calc(var(--proposal-page-height) - var(--proposal-format-margin, var(--proposal-page-margin)) * 2); margin: calc(var(--proposal-format-margin, var(--proposal-page-margin)) * -1); margin-bottom: var(--proposal-format-spacing, 28px); padding: var(--proposal-format-margin, var(--proposal-page-margin)); position: relative; overflow: hidden; break-after: page; background: var(--proposal-format-surface, #fff); color: var(--proposal-format-heading, var(--proposal-heading-color)); font-family: var(--proposal-format-heading-font, Helvetica, Arial, sans-serif); }
 .proposal-print-cover-accent { position: absolute; inset: 0 0 auto; height: 18%; background: var(--proposal-format-accent, #173d72); }
+.proposal-print-cover-logos { position: absolute; top: 34px; left: var(--proposal-format-margin, var(--proposal-page-margin)); right: var(--proposal-format-margin, var(--proposal-page-margin)); display: flex; align-items: center; justify-content: space-between; gap: 24px; z-index: 1; }
+.proposal-print-cover-logos img { display: block; max-width: 132px; max-height: 42px; object-fit: contain; }
+.proposal-print-cover.has-photo { background-position: center; background-repeat: no-repeat; background-size: cover; color: #fff; }
+.proposal-print-cover.has-photo .proposal-print-cover-accent { display: none; }
+.proposal-print-cover-photo-overlay { position: absolute; inset: 0; background: rgba(9, 30, 59, 0.66); }
+.proposal-print-cover.has-photo .proposal-print-cover-content { z-index: 1; }
+.proposal-print-cover.has-photo .proposal-print-cover-eyebrow, .proposal-print-cover.has-photo h1, .proposal-print-cover.has-photo .proposal-print-cover-parties strong { color: #fff; }
+.proposal-print-cover.has-photo .proposal-print-cover-parties span, .proposal-print-cover.has-photo .proposal-print-cover-parties p, .proposal-print-cover.has-photo .proposal-print-cover-date { color: #e8f1ff; }
 .proposal-print-cover-content { position: relative; padding-top: 25%; max-width: 80%; }
 .proposal-print-cover-eyebrow { display: block; margin-bottom: 18px; color: var(--proposal-format-accent, #173d72); font-family: var(--proposal-format-body-font, Helvetica, Arial, sans-serif); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
 .proposal-print-cover h1 { margin: 0; color: var(--proposal-format-heading, var(--proposal-heading-color)); font-size: 42px; line-height: 1.05; }
-.proposal-print-cover-client { margin: 28px 0 0; font-size: 24px; font-weight: 700; }
-.proposal-print-cover-company, .proposal-print-cover-date { margin: 8px 0 0; color: var(--proposal-format-text, var(--proposal-text-color)); font-family: var(--proposal-format-body-font, Helvetica, Arial, sans-serif); font-size: 14px; }
+.proposal-print-cover-parties { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-top: 36px; font-family: var(--proposal-format-body-font, Helvetica, Arial, sans-serif); }
+.proposal-print-cover-parties > div { display: grid; gap: 5px; }
+.proposal-print-cover-parties span { color: var(--proposal-format-text, var(--proposal-text-color)); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.proposal-print-cover-parties strong { color: var(--proposal-format-heading, var(--proposal-heading-color)); font-size: 18px; line-height: 1.2; }
+.proposal-print-cover-parties p, .proposal-print-cover-date { margin: 0; color: var(--proposal-format-text, var(--proposal-text-color)); font-family: var(--proposal-format-body-font, Helvetica, Arial, sans-serif); font-size: 12px; line-height: 1.4; }
+.proposal-print-cover-date { margin-top: 30px; }
+.proposal-print-cover-focus { position: absolute; right: var(--proposal-format-margin, var(--proposal-page-margin)); bottom: 32px; left: var(--proposal-format-margin, var(--proposal-page-margin)); z-index: 1; font-family: var(--proposal-format-body-font, Helvetica, Arial, sans-serif); }
+.proposal-print-cover-focus > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.proposal-print-cover-focus p { min-height: 58px; margin: 0; padding: 6px 15px; border-left: 1px solid var(--proposal-format-border, #c4d4e7); color: var(--proposal-format-text, var(--proposal-text-color)); font-size: 10.5px; line-height: 1.35; text-align: center; }
+.proposal-print-cover-focus p:nth-child(3n + 1) { border-left: 0; }
+.proposal-print-cover-focus p strong { font-weight: 800; }
+.proposal-print-cover.has-photo .proposal-print-cover-focus p { color: #fff; }
+.proposal-print-cover.has-photo .proposal-print-cover-focus p { border-left-color: rgba(232, 241, 255, 0.45); }
 .proposal-print-cover.is-enterprise { background: linear-gradient(135deg, var(--proposal-format-surface, #f7f9fc) 0%, #ffffff 65%); }
 .proposal-print-cover.is-enterprise .proposal-print-cover-accent { height: 100%; width: 34%; inset: 0 auto 0 0; }
 .proposal-print-cover.is-enterprise .proposal-print-cover-content { margin-left: 34%; padding-top: 30%; max-width: 58%; }

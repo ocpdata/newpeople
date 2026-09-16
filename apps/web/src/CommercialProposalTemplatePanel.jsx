@@ -18,6 +18,15 @@ function createSection() {
   };
 }
 
+function readCoverImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No fue posible leer la fotografía"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function normalizeSectionNode(node) {
   const allowedBlockTypes = new Set([
     "heading",
@@ -121,6 +130,7 @@ export default function CommercialProposalTemplatePanel({
   const editorRef = useRef(null);
   const savedDocument = normalizeTemplateDocument(content?.document);
   const [formatCode, setFormatCode] = useState(content?.format_code || "basic");
+  const [cover, setCover] = useState(content?.metadata?.cover || {});
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateBaseCode, setNewTemplateBaseCode] = useState("");
@@ -130,7 +140,9 @@ export default function CommercialProposalTemplatePanel({
   const [draftDocument, setDraftDocument] = useState(savedDocument);
   const [hasDraftChanges, setHasDraftChanges] = useState(false);
   const isDirty = !ignoreEditorUpdateRef.current && (
-    hasDraftChanges || JSON.stringify(draftDocument) !== JSON.stringify(savedDocument)
+    hasDraftChanges ||
+    JSON.stringify(draftDocument) !== JSON.stringify(savedDocument) ||
+    JSON.stringify(cover) !== JSON.stringify(content?.metadata?.cover || {})
   );
 
   useEffect(() => {
@@ -140,6 +152,7 @@ export default function CommercialProposalTemplatePanel({
     ignoreEditorUpdateRef.current = false;
     setHasDraftChanges(false);
     setFormatCode(content?.format_code || "basic");
+    setCover(content?.metadata?.cover || {});
   }, [content]);
 
   function save() {
@@ -149,7 +162,12 @@ export default function CommercialProposalTemplatePanel({
     draftDocumentRef.current = documentToSave;
     setDraftDocument(documentToSave);
     setHasDraftChanges(false);
-    onChange({ schema_version: 3, format_code: formatCode, document: documentToSave });
+    onChange({
+      schema_version: 3,
+      format_code: formatCode,
+      metadata: { cover },
+      document: documentToSave,
+    });
   }
 
   function addSection() {
@@ -188,7 +206,40 @@ export default function CommercialProposalTemplatePanel({
 
   function preview() {
     const documentToPreview = editorRef.current?.getDocument() || draftDocumentRef.current;
-    onPreview?.({ schema_version: 3, format_code: formatCode, document: documentToPreview });
+    onPreview?.({
+      schema_version: 3,
+      format_code: formatCode,
+      metadata: { cover },
+      document: documentToPreview,
+    });
+  }
+
+  async function handleCoverImageChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g)$/i.test(file.type)) {
+      window.alert("La fotografía debe ser PNG o JPEG.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      window.alert("La fotografía no puede exceder 8 MB.");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const imageUrl = await readCoverImage(file);
+      setCover((current) => ({
+        ...current,
+        image_url: imageUrl,
+        image_name: file.name,
+        show_client_logo: current.show_client_logo !== false,
+      }));
+    } catch (error) {
+      window.alert(error.message || "No fue posible cargar la fotografía.");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   return (
@@ -246,6 +297,48 @@ export default function CommercialProposalTemplatePanel({
             </div>
           </form>
         ) : null}
+        <section className="configuration-cover-photo-panel">
+          <div>
+            <strong>Portada de impacto fotográfico</strong>
+            <p>Esta fotografía se aplicará a las nuevas propuestas creadas con esta plantilla.</p>
+          </div>
+          <div className="configuration-cover-photo-layout">
+            <div className="configuration-cover-photo-source">
+              <span className="configuration-cover-photo-label">Fotografía de fondo</span>
+              <div className="configuration-cover-photo-preview">
+                {cover.image_url ? (
+                  <img src={cover.image_url} alt="Fotografía de portada" />
+                ) : (
+                  <span>Sin fotografía</span>
+                )}
+              </div>
+              <div className="configuration-cover-photo-actions">
+                <label className="btn-secondary configuration-cover-photo-upload">
+                  Cargar fotografía
+                  <input type="file" accept="image/png,image/jpeg" onChange={handleCoverImageChange} />
+                </label>
+                {cover.image_url ? (
+                  <button type="button" className="btn-secondary" onClick={() => setCover((current) => ({ ...current, image_url: "", image_name: "" }))}>
+                    Quitar fotografía
+                  </button>
+                ) : null}
+                <span>PNG o JPEG, máximo 8 MB. Recomendado: horizontal, 2400 × 1650 px; mínimo 1600 × 1100 px.</span>
+              </div>
+            </div>
+            <div className="configuration-client-logo-option">
+              <span className="configuration-cover-photo-label">Marca del cliente</span>
+              <label className="configuration-cover-photo-toggle">
+                <input
+                  type="checkbox"
+                  checked={cover.show_client_logo !== false}
+                  onChange={(event) => setCover((current) => ({ ...current, show_client_logo: event.target.checked }))}
+                />
+                Mostrar logo del cliente
+              </label>
+              <p>Usa el logo cargado en la ficha de la Cuenta asociada a cada propuesta.</p>
+            </div>
+          </div>
+        </section>
         <div className="proposal-document-canvas configuration-commercial-proposal-canvas">
           <article className="proposal-document-wysiwyg-page">
             <CommercialProposalTemplateErrorBoundary key={`${selectedCode}:${formatCode}`}>

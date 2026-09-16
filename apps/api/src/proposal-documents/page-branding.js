@@ -32,13 +32,50 @@ async function resolveImageSource(value) {
   return null;
 }
 
+async function embedImage(pdf, source) {
+  return source.type === "png"
+    ? pdf.embedPng(source.buffer)
+    : pdf.embedJpg(source.buffer);
+}
+
+export async function addProposalCoverLogos(buffer, { companyLogoUrl, clientLogoUrl } = {}) {
+  const [companySource, clientSource] = await Promise.all([
+    resolveImageSource(companyLogoUrl),
+    resolveImageSource(clientLogoUrl),
+  ]);
+  if (!companySource && !clientSource) return buffer;
+
+  const pdf = await PDFDocument.load(buffer);
+  const page = pdf.getPage(0);
+  const { width: pageWidth, height: pageHeight } = page.getSize();
+  const logos = [
+    { source: companySource, x: 54 },
+    { source: clientSource, x: null },
+  ];
+
+  for (const logo of logos) {
+    if (!logo.source) continue;
+    const image = await embedImage(pdf, logo.source);
+    const scale = Math.min(128 / image.width, 42 / image.height, 1);
+    const width = image.width * scale;
+    const height = image.height * scale;
+    page.drawImage(image, {
+      x: logo.x === null ? pageWidth - 54 - width : logo.x,
+      y: pageHeight - 64 - height,
+      width,
+      height,
+      opacity: 0.96,
+    });
+  }
+
+  return Buffer.from(await pdf.save());
+}
+
 export async function addInstitutionalLogo(buffer, logoUrl, { skipFirstPage = true } = {}) {
   const source = await resolveImageSource(logoUrl);
   if (!source) return buffer;
   const pdf = await PDFDocument.load(buffer);
-  const image = source.type === "png"
-    ? await pdf.embedPng(source.buffer)
-    : await pdf.embedJpg(source.buffer);
+  const image = await embedImage(pdf, source);
   const totalPages = pdf.getPageCount();
   const maxWidth = 112;
   const maxHeight = 32;

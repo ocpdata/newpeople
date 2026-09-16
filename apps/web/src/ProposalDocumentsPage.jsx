@@ -88,7 +88,7 @@ function normalizeContent(content) {
 }
 
 function formatStatus(status) {
-  if (status === "published") return "Publicada";
+  if (status === "published") return "Finalizada";
   return "Borrador";
 }
 
@@ -1157,7 +1157,7 @@ export default function ProposalDocumentsPage() {
   const isPublished = documentMeta?.status === "published";
 
   return (
-    <div className="proposal-document-module-page">
+    <div className={`proposal-document-module-page${selectedDocumentId ? "" : " is-list-view"}`}>
       <header className="proposal-document-module-head">
         <div>
           <h2>Propuestas (nuevo)</h2>
@@ -1243,15 +1243,17 @@ export default function ProposalDocumentsPage() {
               <thead>
                 <tr>
                   <th>Título</th>
+                  <th>Cliente</th>
+                  <th>Vendedor</th>
                   <th>Estado</th>
                   <th>Actualizada</th>
-                  <th />
+                  <th className="proposal-document-actions-column">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {documents.length === 0 ? (
                   <tr>
-                    <td colSpan={4}>No hay propuestas registradas</td>
+                    <td colSpan={6}>No hay propuestas registradas</td>
                   </tr>
                 ) : (
                   documents.map((item) => (
@@ -1261,6 +1263,8 @@ export default function ProposalDocumentsPage() {
                       title="Doble clic para abrir"
                     >
                       <td>{item.title}</td>
+                      <td>{item.client_name || "-"}</td>
+                      <td>{item.seller_name || "-"}</td>
                       <td>
                         <span
                           className={`proposal-document-status-badge proposal-document-status-${item.status}`}
@@ -1268,12 +1272,12 @@ export default function ProposalDocumentsPage() {
                           {formatStatus(item.status)}
                         </span>
                       </td>
-                      <td>
+                      <td className="proposal-document-updated-cell">
                         {item.updated_at
                           ? new Date(item.updated_at).toLocaleString()
                           : "-"}
                       </td>
-                      <td>
+                      <td className="proposal-document-actions-cell">
                         {item.status === "draft" ? (
                           <button
                             type="button"
@@ -1312,57 +1316,52 @@ export default function ProposalDocumentsPage() {
           ) : (
             <div className="proposal-document-editor-layout">
               <div className="proposal-document-editor-actions">
-                <div className="proposal-document-sidebar-status">
-                  <span
-                    className={`proposal-document-status-badge proposal-document-status-${documentMeta.status}`}
-                  >
-                    {formatStatus(documentMeta.status)}
-                  </span>
-                  <span className="proposal-document-save-indicator">
-                    {isSaving
-                      ? "Guardando..."
-                      : hasUnsavedChanges
-                        ? "Cambios sin guardar"
-                        : "Guardado"}
-                  </span>
+                <div className="proposal-document-toolbar-summary">
+                  <div className="proposal-document-sidebar-status">
+                    <span
+                      className={`proposal-document-status-badge proposal-document-status-${documentMeta.status}`}
+                    >
+                      {formatStatus(documentMeta.status)}
+                    </span>
+                    <span className="proposal-document-save-indicator">
+                      {isSaving
+                        ? "Guardando..."
+                        : hasUnsavedChanges
+                          ? "Cambios sin guardar"
+                          : "Guardado"}
+                    </span>
+                  </div>
+                  <label className="proposal-document-format-field">
+                    <span>Formato</span>
+                    <select value={content?.metadata?.format_code || "basic"} onChange={(event) => updateContent((draft) => ({ ...draft, metadata: { ...draft.metadata, format_code: event.target.value, format_snapshot: getProposalFormat(event.target.value) } }))} aria-label="Formato visual">
+                      {proposalFormats.map((format) => <option key={format.code} value={format.code}>{format.name}</option>)}
+                    </select>
+                  </label>
                 </div>
                 <div className="proposal-document-sidebar-actions">
-                  {content?.schema_version >= 3 && content.document?.type === "doc" ? (
-                    <button type="button" onClick={handleAddSection}>
-                      Agregar sección
+                  <div className="proposal-document-action-group">
+                    <span>Edición</span>
+                    {content?.schema_version >= 3 && content.document?.type === "doc" ? (
+                      <button type="button" className="proposal-document-action-secondary" onClick={handleAddSection}>
+                        Agregar sección
+                      </button>
+                    ) : null}
+                    <button type="button" className="proposal-document-action-primary" onClick={handleSaveChanges} disabled={isSaving}>
+                      {isSaving ? "Guardando..." : "Guardar cambios"}
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={handleSaveChanges}
-                    disabled={isSaving}
-                  >
-                    {isSaving ? "Guardando..." : "Guardar cambios"}
-                  </button>
-                  <select value={content?.metadata?.format_code || "basic"} onChange={(event) => updateContent((draft) => ({ ...draft, metadata: { ...draft.metadata, format_code: event.target.value, format_snapshot: getProposalFormat(event.target.value) } }))} aria-label="Formato visual">
-                    {proposalFormats.map((format) => <option key={format.code} value={format.code}>{format.name}</option>)}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleViewPdf}
-                    disabled={isLoadingPdf}
-                  >
-                    {isLoadingPdf ? "Generando..." : "Ver PDF"}
-                  </button>
-                  <button type="button" onClick={handleOpenEmailModal}>
-                    Enviar por correo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handlePublish}
-                    disabled={isPublishing || isPublished}
-                  >
-                    {isPublished
-                      ? "Publicada"
-                      : isPublishing
-                        ? "Publicando..."
-                        : "Publicar"}
-                  </button>
+                  </div>
+                  <div className="proposal-document-action-group">
+                    <span>Entrega</span>
+                    <button type="button" className="proposal-document-action-secondary" onClick={handleViewPdf} disabled={isLoadingPdf}>
+                      {isLoadingPdf ? "Generando..." : "Ver PDF"}
+                    </button>
+                    <button type="button" className="proposal-document-action-secondary" onClick={handleOpenEmailModal}>
+                      Enviar por correo
+                    </button>
+                    <button type="button" className="proposal-document-action-publish" onClick={handlePublish} disabled={isPublishing || isPublished}>
+                      {isPublished ? "Finalizada" : isPublishing ? "Finalizando..." : "Finalizar propuesta"}
+                    </button>
+                  </div>
                 </div>
               </div>
 

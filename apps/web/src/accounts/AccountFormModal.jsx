@@ -56,6 +56,15 @@ function collapseAccountNameWhitespace(value) {
     .replace(/\s{2,}/g, " ");
 }
 
+function readClientLogoFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No fue posible leer el logo"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function normalizeAccountNameKey(value) {
   return String(value || "")
     .toLowerCase()
@@ -549,6 +558,29 @@ function AccountFormModal({
     }
   }
 
+  async function handleClientLogoChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g)$/i.test(file.type)) {
+      window.alert("Selecciona una imagen PNG o JPEG.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      window.alert("El logo no puede exceder 5 MB.");
+      event.target.value = "";
+      return;
+    }
+    try {
+      const clientLogoUrl = await readClientLogoFile(file);
+      setForm((current) => ({ ...current, clientLogoUrl }));
+    } catch (error) {
+      window.alert(error.message || "No fue posible cargar el logo.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
   function buildNextFormForSubmit() {
     const normalizationState = getAccountNameNormalizationState(form.name);
     const nextName =
@@ -960,6 +992,44 @@ function AccountFormModal({
                       })
                     }
                   />
+                </div>
+              </section>
+
+              <section className="account-form-section account-modal-section account-client-logo-section">
+                <h4>Logo del cliente</h4>
+                <p className="field-hint">
+                  Se usará opcionalmente en la portada de las propuestas comerciales de esta cuenta.
+                </p>
+                <div className="account-client-logo-control">
+                  <div className="account-client-logo-preview">
+                    {form.clientLogoUrl ? (
+                      <img src={form.clientLogoUrl} alt={`Logo de ${form.name || "cliente"}`} />
+                    ) : (
+                      <span>Sin logo</span>
+                    )}
+                  </div>
+                  <div className="account-client-logo-actions">
+                    <label className="btn-secondary account-client-logo-upload">
+                      Cargar logo
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        onChange={handleClientLogoChange}
+                      />
+                    </label>
+                    {form.clientLogoUrl ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() =>
+                          setForm((current) => ({ ...current, clientLogoUrl: "" }))
+                        }
+                      >
+                        Quitar logo
+                      </button>
+                    ) : null}
+                    <span className="field-hint">PNG o JPEG, hasta 5 MB</span>
+                  </div>
                 </div>
               </section>
 

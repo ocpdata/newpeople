@@ -30,6 +30,10 @@ async function ensureAccountsSchema() {
         `ALTER TABLE accounts
          MODIFY COLUMN registration_code VARCHAR(80) NULL`,
       ).catch(() => null);
+      await query(
+        `ALTER TABLE accounts
+         ADD COLUMN client_logo_url LONGTEXT NULL`,
+      ).catch(() => null);
     })().catch((error) => {
       ensureAccountsSchemaPromise = null;
       throw error;
@@ -66,6 +70,14 @@ const accountSchema = z.object({
   countryId: z.number().int().positive(),
   companyDescription: z.string().max(10000).optional(),
   description: z.string().max(10000).optional(),
+  clientLogoUrl: z
+    .string()
+    .max(7_000_000)
+    .optional()
+    .refine(
+      (value) => !value || /^data:image\/(png|jpe?g);base64,/i.test(value),
+      "El logo debe ser una imagen PNG o JPEG",
+    ),
   addressLine: z.string().max(255).optional(),
   postalCode: z.string().max(20).optional(),
   activationStatusId: z.number().int().positive(),
@@ -79,6 +91,7 @@ function normalizeAccountPayload(body) {
     companyDescription: String(
       body.companyDescription || body.description || "",
     ).trim(),
+    clientLogoUrl: String(body.clientLogoUrl || "").trim() || null,
   };
 }
 
@@ -660,9 +673,9 @@ router.post(
         const [insertResult] = await conn.query(
           `INSERT INTO accounts
           (name, account_type_id, registration_code, phone, economic_sector_id, website, city, state_region,
-           country_id, description, address_line, postal_code, activation_status_id,
+           country_id, description, client_logo_url, address_line, postal_code, activation_status_id,
            created_by, created_at, updated_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             body.name,
             body.accountTypeId,
@@ -674,6 +687,7 @@ router.post(
             body.stateRegion || null,
             body.countryId,
             body.companyDescription || null,
+            body.clientLogoUrl,
             body.addressLine || null,
             body.postalCode || null,
             activationStatusId,
@@ -712,6 +726,7 @@ router.post(
           state_region: body.stateRegion || null,
           country_id: body.countryId,
           description: body.companyDescription || null,
+          client_logo_url: body.clientLogoUrl,
           address_line: body.addressLine || null,
           postal_code: body.postalCode || null,
           activation_status_id: activationStatusId,
@@ -776,7 +791,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
   const beforeRows = await query(
     `SELECT id, name, account_type_id, registration_code, phone, economic_sector_id,
             website, city, state_region, country_id, description, address_line,
-            postal_code, activation_status_id
+            postal_code, client_logo_url, activation_status_id
      FROM accounts WHERE id = ? LIMIT 1`,
     [id],
   );
@@ -852,7 +867,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
         `UPDATE accounts
          SET name = ?, account_type_id = ?, registration_code = ?, phone = ?, economic_sector_id = ?,
              website = ?, city = ?, state_region = ?, country_id = ?, description = ?, address_line = ?,
-             postal_code = ?, activation_status_id = ?, updated_by = ?, updated_at = ?
+           postal_code = ?, client_logo_url = ?, activation_status_id = ?, updated_by = ?, updated_at = ?
          WHERE id = ?`,
         [
           body.name,
@@ -867,6 +882,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
           body.companyDescription || null,
           body.addressLine || null,
           body.postalCode || null,
+          body.clientLogoUrl,
           body.activationStatusId,
           req.user.id,
           now,
@@ -897,7 +913,7 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
   const afterRows = await query(
     `SELECT id, name, account_type_id, registration_code, phone, economic_sector_id,
             website, city, state_region, country_id, description, address_line,
-            postal_code, activation_status_id
+            postal_code, client_logo_url, activation_status_id
      FROM accounts WHERE id = ? LIMIT 1`,
     [id],
   );

@@ -20,7 +20,7 @@ import { renderProposalDocumentPdfBuffer } from "./proposal-documents/pdf.js";
 import { renderProposalDocumentHtmlPdfBuffer } from "./proposal-documents/html-pdf.js";
 import { getProposalFormat, listProposalFormats, DEFAULT_PROPOSAL_FORMAT_CODE } from "../../../shared/proposal-formats.js";
 import { getEmbeddedPdfNodes, hasGraphicNodes } from "./proposal-documents/embedded-pdf.js";
-import { addInstitutionalLogo } from "./proposal-documents/page-branding.js";
+import { addInstitutionalLogo, addProposalCoverLogos } from "./proposal-documents/page-branding.js";
 import {
   hasGoogleMailSendScope,
   decryptOpaqueSecret,
@@ -90,6 +90,11 @@ const proposalDocumentContentSchema = z.object({
       source_context: z.record(z.string(), z.any()).nullable().optional(),
       format_code: z.string().trim().max(40).nullable().optional(),
       format_snapshot: z.record(z.string(), z.any()).nullable().optional(),
+      cover: z.object({
+        image_url: z.string().max(12_000_000).optional(),
+        image_name: z.string().max(255).optional(),
+        show_client_logo: z.boolean().optional(),
+      }).partial().optional(),
     })
     .partial()
     .default({}),
@@ -277,6 +282,8 @@ function serializeProposalDocumentRow(row) {
     quotation_id: row.quotation_id === null ? null : Number(row.quotation_id),
     current_version_id:
       row.current_version_id === null ? null : Number(row.current_version_id),
+    client_name: row.client_name || "",
+    seller_name: row.seller_name || "",
     updated_at: row.updated_at,
     created_at: row.created_at,
   };
@@ -394,7 +401,9 @@ async function loadAccessibleOpportunityContext({ user, opportunityId }) {
 
   const rows = await query(
     `SELECT o.id AS opportunity_id, o.name AS opportunity_name, o.account_id, o.contact_id,
-            a.name AS account_name,
+            a.name AS account_name, a.client_logo_url, a.address_line AS account_address_line,
+            a.city AS account_city, a.state_region AS account_state_region,
+            a.postal_code AS account_postal_code, ctry.name AS account_country_name,
             CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
             c.email AS contact_email,
             latest_quotation.quotation_id, latest_quotation.quotation_version_id,
@@ -403,6 +412,7 @@ async function loadAccessibleOpportunityContext({ user, opportunityId }) {
      FROM opportunities o
      INNER JOIN accounts a ON a.id = o.account_id
      INNER JOIN contacts c ON c.id = o.contact_id
+    INNER JOIN countries ctry ON ctry.id = a.country_id
      ${ownershipJoin}
      LEFT JOIN (
        SELECT q.opportunity_id, q.id AS quotation_id, qv2.id AS quotation_version_id
@@ -460,10 +470,25 @@ async function buildProposalSourceContext({ user, opportunityId }) {
     context: {
       account_name: opportunity.account_name || "",
       client_name: opportunity.account_name || "",
+      client_logo_url: opportunity.client_logo_url || "",
+      client_address: [
+        opportunity.account_address_line,
+        [opportunity.account_city, opportunity.account_state_region].filter(Boolean).join(", "),
+        opportunity.account_postal_code,
+        opportunity.account_country_name,
+      ].filter(Boolean).join(" · "),
       company_name:
         companyProfile?.commercialName ||
         companyProfile?.legalName ||
         "nuestra empresa",
+      company_logo_url: companyProfile?.logoUrl || "",
+      company_address: [
+        companyProfile?.addressLine1,
+        companyProfile?.addressLine2,
+        [companyProfile?.city, companyProfile?.stateRegion].filter(Boolean).join(", "),
+        companyProfile?.postalCode,
+        companyProfile?.countryName,
+      ].filter(Boolean).join(" · "),
       opportunity_name: opportunity.opportunity_name || "",
       contact_name: String(opportunity.contact_name || "").trim(),
       contact_email: opportunity.contact_email || "",
@@ -503,10 +528,19 @@ router.get(
     }
 
     const items = await query(
-      `SELECT pd.id, pd.title, pd.status, pd.account_id, pd.contact_id,
+            `SELECT pd.id, pd.title, pd.status, pd.account_id, pd.contact_id,
               pd.opportunity_id, pd.quotation_id, pd.current_version_id,
-              pd.created_at, pd.updated_at
+          pd.created_at, pd.updated_at, a.name AS client_name,
+          COALESCE(owners.seller_name, '') AS seller_name
        FROM proposal_documents pd
+        LEFT JOIN accounts a ON a.id = pd.account_id
+        LEFT JOIN (
+          SELECT ao.account_id,
+            GROUP_CONCAT(DISTINCT u.full_name ORDER BY u.full_name SEPARATOR ', ') AS seller_name
+          FROM account_owners ao
+          INNER JOIN users u ON u.id = ao.user_id
+          GROUP BY ao.account_id
+        ) owners ON owners.account_id = pd.account_id
        WHERE ${where.join(" AND ")}
        ORDER BY pd.updated_at DESC, pd.id DESC
        LIMIT ? OFFSET ?`,
@@ -604,6 +638,7 @@ router.post(
       template_code: template.code,
       format_code: format.code,
       format_snapshot: format,
+      cover: content.metadata?.cover || {},
       source_context: context,
     };
 
@@ -837,7 +872,7 @@ router.post(
       action: "published",
       entityType: "proposal_document",
       entityId: proposalDocumentId,
-      detail: `Propuesta publicada ${proposalDocumentId}`,
+      detail: `Propuesta finalizada ${proposalDocumentId}`,
     });
 
     return res.json({ proposal_document_id: proposalDocumentId, status: "published" });
@@ -1589,9 +1624,10 @@ router.post(
 
 async function loadProposalDocumentForOutput(proposalDocumentId) {
   const documentRows = await query(
-    `SELECT id, title
-     FROM proposal_documents
-     WHERE id = ?
+    `SELECT pd.id, pd.title, a.client_logo_url
+     FROM proposal_documents pd
+     LEFT JOIN accounts a ON a.id = pd.account_id
+     WHERE pd.id = ?
      LIMIT 1`,
     [proposalDocumentId],
   );
@@ -1609,7 +1645,11 @@ async function loadProposalDocumentForOutput(proposalDocumentId) {
   const content =
     typeof contentRaw === "string" ? JSON.parse(contentRaw) : contentRaw;
 
-  return { title: documentRows[0].title, content: content || {} };
+  return {
+    title: documentRows[0].title,
+    content: content || {},
+    clientLogoUrl: documentRows[0].client_logo_url || "",
+  };
 }
 
 router.get(
@@ -1626,17 +1666,38 @@ router.get(
       return res.status(404).json({ message: "Propuesta no encontrada" });
     }
 
+    const companyProfile = await getCompanyProfile();
+    const sourceContext = document.content?.metadata?.source_context || {};
+    const renderDocument = {
+      ...document,
+      content: {
+        ...document.content,
+        metadata: {
+          ...document.content?.metadata,
+          source_context: {
+            ...sourceContext,
+            company_logo_url: companyProfile?.logoUrl || sourceContext.company_logo_url || "",
+            client_logo_url: document.clientLogoUrl || sourceContext.client_logo_url || "",
+          },
+        },
+      },
+    };
     let buffer;
     try {
-      const hasEmbeddedPdf = getEmbeddedPdfNodes(document.content).length > 0;
-      const hasGraphics = hasGraphicNodes(document.content);
+      const hasEmbeddedPdf = getEmbeddedPdfNodes(renderDocument.content).length > 0;
+      const hasGraphics = hasGraphicNodes(renderDocument.content);
       buffer = hasEmbeddedPdf || hasGraphics
-        ? await renderProposalDocumentPdfBuffer(document)
-        : await renderProposalDocumentHtmlPdfBuffer(document);
+        ? await renderProposalDocumentPdfBuffer(renderDocument)
+        : await renderProposalDocumentHtmlPdfBuffer(renderDocument);
     } catch (error) {
-      buffer = await renderProposalDocumentPdfBuffer(document);
+      buffer = await renderProposalDocumentPdfBuffer(renderDocument);
     }
-    const companyProfile = await getCompanyProfile();
+    buffer = await addProposalCoverLogos(buffer, {
+      companyLogoUrl: companyProfile?.logoUrl,
+      clientLogoUrl: renderDocument.content.metadata?.cover?.show_client_logo === false
+        ? ""
+        : document.clientLogoUrl,
+    });
     buffer = await addInstitutionalLogo(buffer, companyProfile?.logoUrl);
     res.setHeader("Cache-Control", "no-store, max-age=0");
     res.setHeader("Content-Type", "application/pdf");

@@ -58,6 +58,37 @@ function asText(value) {
   return String(value ?? "").trim();
 }
 
+function renderCoverParty(doc, { label, name, address, x, y, width, textColor, mutedColor }) {
+  doc.font("Helvetica-Bold").fontSize(8).fillColor(mutedColor).text(label.toUpperCase(), x, y, { width, characterSpacing: 1 });
+  doc.font("Helvetica-Bold").fontSize(15).fillColor(textColor).text(name, x, y + 17, { width });
+  if (address) {
+    doc.font("Helvetica").fontSize(9.5).fillColor(mutedColor).text(address, x, y + 39, { width, lineGap: 2 });
+  }
+}
+
+function renderCoverFocus(doc, { textColor, dividerColor, pageWidth, pageHeight }) {
+  const items = [
+    "Mejorar el core de la red con DDI (DNS, DHCP, IPAM).",
+    "Visibilidad y control del tráfico DNS para evitar fuga de información y amenazas.",
+    "Optimizar y asegurar la entrega de aplicaciones.",
+    "Brindar servicios de migración a nube y optimización.",
+    "Mejorar la seguridad de las comunicaciones con la nube.",
+    "Brindar la máxima seguridad y confidencialidad para las transacciones.",
+  ];
+  const startY = pageHeight - 158;
+  const columnWidth = (pageWidth - PAGE_MARGIN * 2) / 3;
+  items.forEach((item, index) => {
+    const column = index % 3;
+    const row = Math.floor(index / 3);
+    const x = PAGE_MARGIN + column * columnWidth;
+    const y = startY + row * 64;
+    if (column > 0) {
+      doc.moveTo(x - 14, y).lineTo(x - 14, y + 44).strokeColor(dividerColor).lineWidth(0.6).stroke();
+    }
+    doc.font("Helvetica").fontSize(10).fillColor(textColor).text(item, x, y + 2, { width: columnWidth - 22, align: "center", lineGap: 1 });
+  });
+}
+
 function resolveTemplateText(text, templateContext) {
   return asText(text).replace(
     /\{\{\s*(client_name|contact_name|company_name)\s*\}\}/g,
@@ -151,6 +182,21 @@ function renderTiptapImage(doc, node, x, y, width, height) {
     return false;
   }
   return false;
+}
+
+function renderCoverPhoto(doc, source) {
+  const match = asText(source).match(/^data:image\/(png|jpe?g);base64,(.+)$/i);
+  if (!match) return false;
+  try {
+    doc.image(Buffer.from(match[2], "base64"), 0, 0, {
+      cover: [doc.page.width, doc.page.height],
+      align: "center",
+      valign: "center",
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function renderTiptapImageRowNode(doc, node) {
@@ -289,6 +335,8 @@ export async function renderProposalDocumentPdfBuffer({ title, content }) {
       asText(sourceContext.company_name) ||
       asText(content?.metadata?.company_name) ||
       "nuestra empresa",
+    client_address: asText(sourceContext.client_address),
+    company_address: asText(sourceContext.company_address),
   };
   const doc = new PDFDocument({
     size: "LETTER",
@@ -307,18 +355,52 @@ export async function renderProposalDocumentPdfBuffer({ title, content }) {
 
   const pageWidth = doc.page.width - PAGE_MARGIN * 2;
   const pageHeight = doc.page.height - PAGE_MARGIN * 2;
+  const cover = content?.metadata?.cover || {};
   doc.save();
-  doc.rect(0, 0, doc.page.width, doc.page.height).fill(format.surface);
-  if (format.code === "enterprise") {
-    doc.rect(0, 0, doc.page.width * 0.34, doc.page.height).fill(format.accent);
-    doc.fillColor(format.heading).font("Helvetica-Bold").fontSize(22).text("PROPUESTA COMERCIAL", PAGE_MARGIN + pageWidth * 0.34, PAGE_MARGIN + pageHeight * 0.28, { width: pageWidth * 0.58 });
-  } else {
-    doc.rect(0, 0, doc.page.width, doc.page.height * 0.18).fill(format.accent);
-    doc.fillColor(format.accent).font("Helvetica-Bold").fontSize(12).text("PROPUESTA COMERCIAL", PAGE_MARGIN, PAGE_MARGIN + pageHeight * 0.25);
+  const hasCoverPhoto = renderCoverPhoto(doc, cover.image_url);
+  if (!hasCoverPhoto) doc.rect(0, 0, doc.page.width, doc.page.height).fill(format.surface);
+  if (hasCoverPhoto) {
+    doc.fillOpacity(0.66).rect(0, 0, doc.page.width, doc.page.height).fill("#091e3b").fillOpacity(1);
   }
-  doc.fillColor(format.heading).font("Helvetica-Bold").fontSize(format.code === "enterprise" ? 30 : 26).text(asText(title) || "Propuesta", PAGE_MARGIN + (format.code === "enterprise" ? pageWidth * 0.34 : 0), PAGE_MARGIN + pageHeight * 0.34, { width: format.code === "enterprise" ? pageWidth * 0.58 : pageWidth });
-  doc.fillColor(format.text).font("Helvetica").fontSize(14).text(asText(sourceContext.account_name) || "Cliente", PAGE_MARGIN + (format.code === "enterprise" ? pageWidth * 0.34 : 0), PAGE_MARGIN + pageHeight * 0.55);
-  doc.fontSize(11).text(asText(sourceContext.company_name) || "", PAGE_MARGIN + (format.code === "enterprise" ? pageWidth * 0.34 : 0), PAGE_MARGIN + pageHeight * 0.59);
+  if (format.code === "enterprise") {
+    if (!hasCoverPhoto) doc.rect(0, 0, doc.page.width * 0.34, doc.page.height).fill(format.accent);
+    doc.fillColor(hasCoverPhoto ? "#ffffff" : format.heading).font("Helvetica-Bold").fontSize(22).text("PROPUESTA COMERCIAL", PAGE_MARGIN + pageWidth * 0.34, PAGE_MARGIN + pageHeight * 0.28, { width: pageWidth * 0.58 });
+  } else {
+    if (!hasCoverPhoto) doc.rect(0, 0, doc.page.width, doc.page.height * 0.18).fill(format.accent);
+    doc.fillColor(hasCoverPhoto ? "#ffffff" : format.accent).font("Helvetica-Bold").fontSize(12).text("PROPUESTA COMERCIAL", PAGE_MARGIN, PAGE_MARGIN + pageHeight * 0.25);
+  }
+  const coverTextX = PAGE_MARGIN + (format.code === "enterprise" ? pageWidth * 0.34 : 0);
+  const coverTextWidth = format.code === "enterprise" ? pageWidth * 0.58 : pageWidth;
+  const coverTextColor = hasCoverPhoto ? "#ffffff" : format.heading;
+  const coverMutedColor = hasCoverPhoto ? "#e8f1ff" : format.text;
+  doc.fillColor(coverTextColor).font("Helvetica-Bold").fontSize(format.code === "enterprise" ? 30 : 26).text(asText(title) || "Propuesta", coverTextX, PAGE_MARGIN + pageHeight * 0.34, { width: coverTextWidth });
+  renderCoverParty(doc, {
+    label: "Preparado para",
+    name: templateContext.client_name,
+    address: templateContext.client_address || "Dirección del cliente",
+    x: coverTextX,
+    y: PAGE_MARGIN + pageHeight * 0.55,
+    width: coverTextWidth * 0.46,
+    textColor: coverTextColor,
+    mutedColor: coverMutedColor,
+  });
+  renderCoverParty(doc, {
+    label: "Preparado por",
+    name: templateContext.company_name,
+    address: templateContext.company_address,
+    x: coverTextX + coverTextWidth * 0.54,
+    y: PAGE_MARGIN + pageHeight * 0.55,
+    width: coverTextWidth * 0.46,
+    textColor: coverTextColor,
+    mutedColor: coverMutedColor,
+  });
+  doc.fillColor(coverMutedColor).font("Helvetica").fontSize(9.5).text(`Propuesta diseñada el ${new Date().toLocaleDateString("es-MX")}`, coverTextX, PAGE_MARGIN + pageHeight * 0.76);
+  renderCoverFocus(doc, {
+    textColor: hasCoverPhoto ? "#ffffff" : format.heading,
+    dividerColor: hasCoverPhoto ? "#a8b9cf" : format.border,
+    pageWidth: doc.page.width,
+    pageHeight: doc.page.height,
+  });
   doc.restore();
   doc.addPage();
   doc.y += PAGE_HEADER_CLEARANCE;
