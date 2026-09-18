@@ -4,7 +4,7 @@ import ProposalRichTextEditor from "./ProposalRichTextEditor";
 import { legacyBlocksToTiptap } from "./proposalRichText";
 import "./proposal-document-module.css";
 import "../../../shared/proposal-document-print.css";
-import { listProposalFormats, getProposalFormat } from "../../../shared/proposal-formats.js";
+import { getProposalFormat } from "../../../shared/proposal-formats.js";
 
 const BLOCK_TYPE_LABELS = {
   heading: "Encabezado",
@@ -60,27 +60,35 @@ function normalizeContent(content) {
         }, []),
       }
     : sourceDocument;
+  const usedSectionIds = new Set();
+  const normalizedSections = sections.map((section, sectionIndex) => {
+    const requestedId = String(section?.id || "").trim();
+    const sectionId = requestedId && !usedSectionIds.has(requestedId)
+      ? requestedId
+      : makeId(`section-${sectionIndex}`);
+    usedSectionIds.add(sectionId);
+    const sectionContent = section.content || legacyBlocksToTiptap(section.blocks);
+    const content =
+      section.source_code === "certifications" && sectionContent?.type === "doc"
+        ? {
+            ...sectionContent,
+            content: (sectionContent.content || []).filter(
+              (node) => node.type !== "proposalRowBreak",
+            ),
+          }
+        : sectionContent;
+    return {
+      ...section,
+      id: sectionId,
+      blocks: Array.isArray(section.blocks) ? section.blocks : [],
+      content,
+    };
+  });
   return {
     schema_version: Number(safe.schema_version || 1),
     metadata: safe.metadata && typeof safe.metadata === "object" ? safe.metadata : {},
     document,
-    sections: sections.map((section) => {
-      const sectionContent = section.content || legacyBlocksToTiptap(section.blocks);
-      const content =
-        section.source_code === "certifications" && sectionContent?.type === "doc"
-          ? {
-              ...sectionContent,
-              content: (sectionContent.content || []).filter(
-                (node) => node.type !== "proposalRowBreak",
-              ),
-            }
-          : sectionContent;
-      return {
-        ...section,
-        blocks: Array.isArray(section.blocks) ? section.blocks : [],
-        content,
-      };
-    }),
+    sections: normalizedSections,
     removed_sections: Array.isArray(safe.removed_sections)
       ? safe.removed_sections
       : [],
@@ -303,7 +311,6 @@ export default function ProposalDocumentsPage() {
     useState(false);
   const [proposalTemplates, setProposalTemplates] = useState([]);
   const [createTemplateCode, setCreateTemplateCode] = useState("generica");
-  const [proposalFormats] = useState(listProposalFormats());
   const [createFormatCode, setCreateFormatCode] = useState("basic");
 
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
@@ -445,13 +452,25 @@ export default function ProposalDocumentsPage() {
   }
 
   async function handleMoveCatalogEntry(code, direction) {
+    setSectionCatalog((currentCatalog) => {
+      const currentIndex = currentCatalog.findIndex((entry) => entry.code === code);
+      const targetIndex = currentIndex + (direction === "up" ? -1 : 1);
+      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= currentCatalog.length) {
+        return currentCatalog;
+      }
+      const reorderedCatalog = [...currentCatalog];
+      const [movedEntry] = reorderedCatalog.splice(currentIndex, 1);
+      reorderedCatalog.splice(targetIndex, 0, movedEntry);
+      return reorderedCatalog;
+    });
+
     try {
       await api.patch(
         `/api/proposal-documents/v1/proposal-document-sections/catalog/${code}`,
         { direction },
       );
-      await loadSectionCatalog();
     } catch (error) {
+      await loadSectionCatalog();
       pushError(
         getApiErrorMessage(error, "No fue posible reordenar la sección"),
       );
@@ -673,10 +692,6 @@ export default function ProposalDocumentsPage() {
     }
   }, [selectedDocumentId, loadDocumentDetail]);
 
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-
   function updateContent(updater) {
     const draft = normalizeContent(contentRef.current || content);
     const next = updater(draft);
@@ -819,7 +834,7 @@ export default function ProposalDocumentsPage() {
       const reason = String(error?.response?.data?.reason || "");
       if (reason === "google_reconnect_required") {
         pushError(
-          "Debes conectar tu cuenta de Google (Cuenta de usuario) antes de enviar propuestas por correo.",
+          "Debes conectar Google Mail desde tu perfil, arriba a la derecha, antes de enviar propuestas por correo.",
         );
       } else if (reason === "google_scope_missing") {
         pushError(
@@ -934,17 +949,19 @@ export default function ProposalDocumentsPage() {
     });
   }
 
-  function handleMoveSection(sectionId, direction) {
+  function handleMoveSection(sectionIndex, direction) {
     updateContent((draft) => {
-      const index = draft.sections.findIndex(
-        (section) => section.id === sectionId,
-      );
-      const targetIndex = index + direction;
-      if (index < 0 || targetIndex < 0 || targetIndex >= draft.sections.length) {
+      const targetIndex = sectionIndex + direction;
+      if (
+        sectionIndex < 0 ||
+        sectionIndex >= draft.sections.length ||
+        targetIndex < 0 ||
+        targetIndex >= draft.sections.length
+      ) {
         return draft;
       }
       const sections = [...draft.sections];
-      const [moved] = sections.splice(index, 1);
+      const [moved] = sections.splice(sectionIndex, 1);
       sections.splice(targetIndex, 0, moved);
       return { ...draft, sections };
     });
@@ -1192,20 +1209,6 @@ export default function ProposalDocumentsPage() {
             <div className="proposal-document-list-head-actions">
               <button
                 type="button"
-                className="proposal-document-secondary-button"
-                onClick={handleOpenCatalogModal}
-              >
-                Configurar secciones
-              </button>
-              <button
-                type="button"
-                className="proposal-document-secondary-button"
-                onClick={handleOpenImportModal}
-              >
-                Importar Word/PDF
-              </button>
-              <button
-                type="button"
                 className="proposal-document-primary-button"
                 onClick={handleOpenCreateModal}
               >
@@ -1333,8 +1336,8 @@ export default function ProposalDocumentsPage() {
                   </div>
                   <label className="proposal-document-format-field">
                     <span>Formato</span>
-                    <select value={content?.metadata?.format_code || "basic"} onChange={(event) => updateContent((draft) => ({ ...draft, metadata: { ...draft.metadata, format_code: event.target.value, format_snapshot: getProposalFormat(event.target.value) } }))} aria-label="Formato visual">
-                      {proposalFormats.map((format) => <option key={format.code} value={format.code}>{format.name}</option>)}
+                    <select value="basic" onChange={() => updateContent((draft) => ({ ...draft, metadata: { ...draft.metadata, format_code: "basic", format_snapshot: getProposalFormat("basic") } }))} aria-label="Formato visual">
+                      <option value="basic">Básico</option>
                     </select>
                   </label>
                 </div>
@@ -1350,14 +1353,23 @@ export default function ProposalDocumentsPage() {
                       {isSaving ? "Guardando..." : "Guardar cambios"}
                     </button>
                   </div>
-                  <div className="proposal-document-action-group">
-                    <span>Entrega</span>
+                  <div className="proposal-document-action-group proposal-document-action-group-review">
+                    <span>Revisar y enviar</span>
                     <button type="button" className="proposal-document-action-secondary" onClick={handleViewPdf} disabled={isLoadingPdf}>
                       {isLoadingPdf ? "Generando..." : "Ver PDF"}
                     </button>
-                    <button type="button" className="proposal-document-action-secondary" onClick={handleOpenEmailModal}>
+                    <button
+                      type="button"
+                      className="proposal-document-action-secondary"
+                      onClick={handleOpenEmailModal}
+                      disabled={hasUnsavedChanges || isSaving || isSendingEmail}
+                      title={hasUnsavedChanges ? "Guarda los cambios antes de enviar por correo" : "Enviar por correo"}
+                    >
                       Enviar por correo
                     </button>
+                  </div>
+                  <div className="proposal-document-action-group proposal-document-action-group-close">
+                    <span>Cierre</span>
                     <button type="button" className="proposal-document-action-publish" onClick={handlePublish} disabled={isPublishing || isPublished}>
                       {isPublished ? "Finalizada" : isPublishing ? "Finalizando..." : "Finalizar propuesta"}
                     </button>
@@ -1389,7 +1401,7 @@ export default function ProposalDocumentsPage() {
                 ) : (
                   sections.map((section, sectionIndex) => (
                     <article
-                      key={section.id}
+                      key={`${section.id}-${sectionIndex}`}
                       id={`proposal-section-${section.id}`}
                       className={`proposal-document-section${section.source_code === "certifications" ? " is-certifications-section" : ""}`}
                       draggable
@@ -1425,7 +1437,7 @@ export default function ProposalDocumentsPage() {
                         <div className="proposal-document-section-controls">
                           <button
                             type="button"
-                            onClick={() => handleMoveSection(section.id, -1)}
+                            onClick={() => handleMoveSection(sectionIndex, -1)}
                             disabled={sectionIndex === 0}
                             aria-label="Mover sección arriba"
                             title="Mover arriba"
@@ -1434,7 +1446,7 @@ export default function ProposalDocumentsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleMoveSection(section.id, 1)}
+                            onClick={() => handleMoveSection(sectionIndex, 1)}
                             disabled={sectionIndex === sections.length - 1}
                             aria-label="Mover sección abajo"
                             title="Mover abajo"
@@ -1444,7 +1456,11 @@ export default function ProposalDocumentsPage() {
                           <button
                             type="button"
                             className="proposal-document-remove-section-button"
-                            onClick={() => handleRemoveSection(section.id)}
+                            onClick={() => {
+                              if (window.confirm("¿Eliminar esta sección? Esta acción no se puede deshacer.")) {
+                                handleRemoveSection(section.id);
+                              }
+                            }}
                             aria-label="Quitar sección"
                             title="Quitar sección"
                           >
@@ -1789,7 +1805,7 @@ export default function ProposalDocumentsPage() {
               <label>
                 Formato visual
                 <select value={createFormatCode} onChange={(event) => setCreateFormatCode(event.target.value)} required>
-                  {proposalFormats.map((format) => <option key={format.code} value={format.code}>{format.name}</option>)}
+                  <option value="basic">Básico</option>
                 </select>
               </label>
               <div className="proposal-document-modal-actions">

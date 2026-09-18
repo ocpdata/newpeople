@@ -323,6 +323,12 @@
   gap: 8px;
 }
 
+.proposal-document-action-group-review,
+.proposal-document-action-group-close {
+  padding-left: 18px;
+  border-left: 1px solid #e5eefc;
+}
+
 .proposal-document-action-group > span,
 .proposal-document-format-field > span {
   color: #5b7598;
@@ -609,11 +615,22 @@
 
 .proposal-editor-section {
   display: block;
-  margin: 0 0 var(--proposal-format-spacing, 28px);
+  margin: 0;
   border: 1px solid var(--proposal-format-border, #d4e2f8);
   border-radius: 6px;
   background: var(--proposal-format-surface, #fff);
   overflow: hidden;
+}
+
+.proposal-editor-section + .proposal-editor-section {
+  margin-top: var(--proposal-format-spacing, 28px);
+}
+
+.proposal-editor-section::after {
+  content: "";
+  display: block;
+  height: 1px;
+  pointer-events: none;
 }
 
 .proposal-editor-section[data-start-on-new-page="true"] {

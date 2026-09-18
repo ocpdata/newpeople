@@ -1,8 +1,11 @@
 import { chromium } from "playwright-core";
+import { PDFDocument } from "pdf-lib";
+import { PDFParse } from "pdf-parse";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { getProposalFormat } from "../../../../shared/proposal-formats.js";
 import { addProposalPageNumbers } from "./page-numbers.js";
+import { dataUrlToBuffer, getEmbeddedPdfNodes, replacePdfPlaceholders } from "./embedded-pdf.js";
 
 const CHROME_EXECUTABLE_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PRINT_STYLES = readFileSync(
@@ -62,15 +65,12 @@ function renderImageRow(node) {
   return `<div class="proposal-print-image-row" style="--proposal-image-row-columns:${columns}">${images.map((image) => image?.src ? `<figure><img src="${escapeHtml(image.src)}" alt="${escapeHtml(image.alt || "Imagen de propuesta")}" /></figure>` : "<figure></figure>").join("")}</div>`;
 }
 
-function renderPdf(node) {
+function renderPdf(node, index) {
   const attrs = node.attrs || {};
   const fileName = escapeHtml(attrs.fileName || "documento.pdf");
-  return `<figure class="proposal-print-pdf">
-    <object data="${escapeHtml(attrs.src || "")}" type="application/pdf" aria-label="${fileName}">
-      <a href="${escapeHtml(attrs.src || "")}">${fileName}</a>
-    </object>
-    <figcaption>${fileName}</figcaption>
-  </figure>`;
+  return `<div class="proposal-print-pdf-placeholder" data-embedded-pdf-index="${index}" aria-label="${fileName}">
+    <span>Documento adjunto ${index + 1}: ${fileName}</span>
+  </div>`;
 }
 
 function getNodeText(node) {
@@ -107,11 +107,24 @@ function renderNode(node, context) {
     });
     if (!hasRenderableContent) return "";
     const pageBreakClass = node.attrs?.startOnNewPage ? " starts-new-page" : "";
-    return `<section id="${escapeHtml(context.sectionId || "")}" class="proposal-document-section${pageBreakClass}">${children.map((child) => renderNode(child, context)).join("")}</section>`;
+    const embeddedPdfClass = children.some((child) => child?.type === "proposalPdf")
+      ? " has-embedded-pdf"
+      : "";
+    const firstPdfIndex = children.findIndex((child) => child?.type === "proposalPdf");
+    const contentBeforeFirstPdf = firstPdfIndex >= 0 ? children.slice(0, firstPdfIndex) : [];
+    const hasOnlySectionHeadingBeforePdf = firstPdfIndex >= 0 && contentBeforeFirstPdf.length === 1 && contentBeforeFirstPdf[0]?.type === "heading";
+    const sectionChildren = hasOnlySectionHeadingBeforePdf
+      ? children.filter((child) => child?.type !== "heading")
+      : children;
+    return `<section id="${escapeHtml(context.sectionId || "")}" class="proposal-document-section${pageBreakClass}${embeddedPdfClass}">${sectionChildren.map((child) => renderNode(child, context)).join("")}</section>`;
   }
   if (node.type === "image") return renderImage(node);
   if (node.type === "proposalImageRow") return renderImageRow(node);
-  if (node.type === "proposalPdf") return renderPdf(node);
+  if (node.type === "proposalPdf") {
+    const index = context.pdfIndex || 0;
+    context.pdfIndex = index + 1;
+    return renderPdf(node, index);
+  }
   if (node.type === "proposalRowBreak") return '<div class="proposal-print-row-break"></div>';
   if (node.type === "proposalPageBreak") return '<div data-proposal-page-break></div>';
   if (node.type === "heading") {
@@ -229,12 +242,14 @@ export function renderProposalDocumentHtml({ title, content, tocPages = {} }) {
     })
     .join("");
 
+  const renderContext = { ...context, pdfIndex: 0 };
   const body = documentNodes
     ? documentNodes.map((node, index) => {
         if (node?.type === "proposalPageBreak" && documentNodes[index + 1]?.type === "proposalSection" && documentNodes[index + 1]?.attrs?.startOnNewPage) {
           return "";
         }
-        return renderNode(node, { ...context, sectionId: node?.type === "proposalSection" ? `proposal-section-${index}` : "" });
+        renderContext.sectionId = node?.type === "proposalSection" ? `proposal-section-${index}` : "";
+        return renderNode(node, renderContext);
       }).join("")
     : sections;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -262,13 +277,28 @@ export async function renderProposalDocumentHtmlPdfBuffer(document) {
       null,
       { timeout: 15000 },
     ).catch(() => {});
+    await page.emulateMedia({ media: "print" });
     const baseBuffer = await page.pdf({
       format: "Letter",
       printBackground: true,
       preferCSSPageSize: true,
     });
+    const embeddedNodes = getEmbeddedPdfNodes(document.content);
+    const parser = new PDFParse({ data: baseBuffer });
+    const textResult = await parser.getText();
+    await parser.destroy();
+    const embeddedPlaceholders = embeddedNodes.map((node, index) => {
+      const fileName = String(node.attrs?.fileName || "documento.pdf");
+      const marker = `Documento adjunto ${index + 1}: ${fileName}`;
+      const page = textResult.pages.find((entry) => entry.text.includes(marker));
+      return {
+        pageIndex: page ? page.num - 1 : null,
+        sourceBuffer: dataUrlToBuffer(node.attrs?.src),
+      };
+    }).filter((placeholder) => Number.isInteger(placeholder.pageIndex) && placeholder.sourceBuffer);
+    const withEmbeddedPdfs = await replacePdfPlaceholders(baseBuffer, embeddedPlaceholders);
     const sourceContext = document.content?.metadata?.format_snapshot || getProposalFormat(document.content?.metadata?.format_code);
-    return addProposalPageNumbers(baseBuffer, { format: sourceContext });
+    return addProposalPageNumbers(withEmbeddedPdfs, { format: sourceContext });
   } finally {
     await browser.close();
   }

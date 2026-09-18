@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import TextAlign from "@tiptap/extension-text-align";
@@ -124,6 +125,31 @@ const ProposalRichTextEditor = forwardRef(function ProposalRichTextEditor({ cont
         const childIndex = $from.index($from.depth);
         const previousNode = childIndex > 0 ? container.child(childIndex - 1) : null;
 
+        let proposalSectionDepth = -1;
+        for (let depth = $from.depth; depth > 0; depth -= 1) {
+          if ($from.node(depth).type.name === "proposalSection") {
+            proposalSectionDepth = depth;
+            break;
+          }
+        }
+
+        if (
+          event.key === "Enter" &&
+          parent.type.name === "paragraph" &&
+          parent.content.size === 0 &&
+          proposalSectionDepth > 0
+        ) {
+          event.preventDefault();
+          const paragraph = _view.state.schema.nodes.paragraph.create();
+          const insertPosition = $from.after($from.depth);
+          const transaction = _view.state.tr.insert(insertPosition, paragraph);
+          transaction.setSelection(
+            TextSelection.near(transaction.doc.resolve(insertPosition + 1)),
+          );
+          _view.dispatch(transaction.scrollIntoView());
+          return true;
+        }
+
         const atStartOfSectionHeading =
           event.key === "Enter" &&
           parent.type.name === "heading" &&
@@ -177,6 +203,61 @@ const ProposalRichTextEditor = forwardRef(function ProposalRichTextEditor({ cont
 
         return false;
       },
+      handleDOMEvents: {
+        contextmenu: (view, event) => {
+          const selection = view.state.selection;
+          const nativeSelection = window.getSelection();
+          const activeSection = nativeSelection?.anchorNode instanceof Node
+            ? nativeSelection.anchorNode.parentElement?.closest(".proposal-editor-section")
+            : null;
+          if (nativeSelection && activeSection && nativeSelection.rangeCount > 0) {
+            const contentRoot = activeSection.querySelector(".proposal-editor-section-content");
+            if (contentRoot) {
+              nativeSelection.removeAllRanges();
+              const safeRange = document.createRange();
+              const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
+              const safePosition = coords?.pos ?? selection.$from.pos;
+              const resolvedSafePosition = view.state.doc.resolve(safePosition);
+              safeRange.setStart(contentRoot, 0);
+              safeRange.collapse(true);
+              nativeSelection.addRange(safeRange);
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.near(resolvedSafePosition)),
+              );
+            }
+          }
+          window.setTimeout(() => {
+            if (view.isDestroyed) return;
+            const delayedSelection = window.getSelection();
+            if (!delayedSelection || !activeSection) return;
+            delayedSelection.removeAllRanges();
+            const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
+            if (coords) {
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(coords.pos))),
+              );
+            }
+          }, 0);
+          const getSectionDepth = (resolvedPosition) => {
+            for (let depth = resolvedPosition.depth; depth > 0; depth -= 1) {
+              if (resolvedPosition.node(depth).type.name === "proposalSection") {
+                return depth;
+              }
+            }
+            return -1;
+          };
+          const fromDepth = getSectionDepth(selection.$from);
+          const toDepth = getSectionDepth(selection.$to);
+          if (fromDepth > 0 && toDepth !== fromDepth) {
+            view.dispatch(
+              view.state.tr.setSelection(
+                TextSelection.near(view.state.doc.resolve(selection.$from.pos)),
+              ),
+            );
+          }
+          return false;
+        },
+      },
       handlePaste: (_view, event) => {
         const selectionParent = _view.state.selection.$from.parent;
         const isSectionTitle =
@@ -192,6 +273,19 @@ const ProposalRichTextEditor = forwardRef(function ProposalRichTextEditor({ cont
         }
 
         if (keepPastedContentInSection) {
+          const getSectionContext = (resolvedPosition) => {
+            for (let depth = resolvedPosition.depth; depth > 0; depth -= 1) {
+              if (resolvedPosition.node(depth).type.name === "proposalSection") {
+                return {
+                  depth,
+                  position: resolvedPosition.before(depth),
+                };
+              }
+            }
+            return null;
+          };
+          const fromSection = getSectionContext(_view.state.selection.$from);
+          const toSection = getSectionContext(_view.state.selection.$to);
           const selectionParentNames = [];
           for (let depth = _view.state.selection.$from.depth; depth >= 0; depth -= 1) {
             selectionParentNames.push(_view.state.selection.$from.node(depth).type.name);
@@ -209,6 +303,18 @@ const ProposalRichTextEditor = forwardRef(function ProposalRichTextEditor({ cont
             container.querySelectorAll("section[data-proposal-section]").forEach((section) => {
               section.replaceWith(...section.childNodes);
             });
+
+            if (
+              !fromSection ||
+              !toSection ||
+              fromSection.position !== toSection.position
+            ) {
+              _view.dispatch(
+                _view.state.tr.setSelection(
+                  TextSelection.near(_view.state.doc.resolve(_view.state.selection.$from.pos)),
+                ),
+              );
+            }
             editor?.chain().focus().insertContent(container.innerHTML).run();
             return true;
           }

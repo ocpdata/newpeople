@@ -5077,7 +5077,6 @@ export default function ConfigurationPage() {
         <CommercialProposalTemplatePanel
           content={commercialProposalTemplate}
           templates={commercialProposalTemplates}
-          formats={commercialProposalFormats}
           selectedCode={selectedCommercialProposalTemplateCode}
           saving={savingCommercialProposalTemplate}
           onSelectTemplate={(code) => { void selectCommercialProposalTemplate(code); }}

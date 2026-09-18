@@ -19,7 +19,6 @@ import {
 import { renderProposalDocumentPdfBuffer } from "./proposal-documents/pdf.js";
 import { renderProposalDocumentHtmlPdfBuffer } from "./proposal-documents/html-pdf.js";
 import { getProposalFormat, listProposalFormats, DEFAULT_PROPOSAL_FORMAT_CODE } from "../../../shared/proposal-formats.js";
-import { getEmbeddedPdfNodes, hasGraphicNodes } from "./proposal-documents/embedded-pdf.js";
 import { addInstitutionalLogo, addProposalCoverLogos } from "./proposal-documents/page-branding.js";
 import {
   hasGoogleMailSendScope,
@@ -1029,26 +1028,30 @@ router.patch(
     }
 
     if (payload.direction) {
-      const neighborRows = await query(
-        `SELECT id, display_order
-         FROM proposal_document_section_catalog
-         WHERE display_order ${payload.direction === "up" ? "<" : ">"} ?
-         ORDER BY display_order ${payload.direction === "up" ? "DESC" : "ASC"}
-         LIMIT 1`,
-        [rows[0].display_order],
-      );
-      if (neighborRows.length) {
-        await withTransaction(async (conn) => {
-          await conn.query(
-            `UPDATE proposal_document_section_catalog SET display_order = ? WHERE id = ?`,
-            [neighborRows[0].display_order, rows[0].id],
-          );
-          await conn.query(
-            `UPDATE proposal_document_section_catalog SET display_order = ? WHERE id = ?`,
-            [rows[0].display_order, neighborRows[0].id],
-          );
-        });
-      }
+      await withTransaction(async (conn) => {
+        const [catalogRows] = await conn.query(
+          `SELECT id, code
+           FROM proposal_document_section_catalog
+           ORDER BY display_order ASC, id ASC
+           FOR UPDATE`,
+        );
+        const currentIndex = catalogRows.findIndex((entry) => entry.code === code);
+        const targetIndex = currentIndex + (payload.direction === "up" ? -1 : 1);
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= catalogRows.length) {
+          return;
+        }
+        const reorderedRows = [...catalogRows];
+        const [movedRow] = reorderedRows.splice(currentIndex, 1);
+        reorderedRows.splice(targetIndex, 0, movedRow);
+          for (const [index, entry] of reorderedRows.entries()) {
+            await conn.query(
+              `UPDATE proposal_document_section_catalog
+               SET display_order = ?
+               WHERE id = ?`,
+              [(index + 1) * 10, entry.id],
+            );
+          }
+      });
     }
 
     if (payload.title !== undefined || payload.is_active !== undefined) {
@@ -1652,6 +1655,39 @@ async function loadProposalDocumentForOutput(proposalDocumentId) {
   };
 }
 
+async function renderProposalDocumentOutput(document) {
+  const companyProfile = await getCompanyProfile();
+  const sourceContext = document.content?.metadata?.source_context || {};
+  const renderDocument = {
+    ...document,
+    content: {
+      ...document.content,
+      metadata: {
+        ...document.content?.metadata,
+        source_context: {
+          ...sourceContext,
+          company_logo_url: companyProfile?.logoUrl || sourceContext.company_logo_url || "",
+          client_logo_url: document.clientLogoUrl || sourceContext.client_logo_url || "",
+        },
+      },
+    },
+  };
+  let buffer;
+  try {
+    buffer = await renderProposalDocumentHtmlPdfBuffer(renderDocument);
+  } catch (error) {
+    buffer = await renderProposalDocumentPdfBuffer(renderDocument);
+  }
+  buffer = await addProposalCoverLogos(buffer, {
+    companyLogoUrl: companyProfile?.logoUrl,
+    clientLogoUrl: renderDocument.content.metadata?.cover?.show_client_logo === false
+      ? ""
+      : document.clientLogoUrl,
+  });
+  buffer = await addInstitutionalLogo(buffer, companyProfile?.logoUrl);
+  return buffer;
+}
+
 router.get(
   "/proposal-documents/:proposalDocumentId/pdf",
   requireAnyPermission(proposalDocumentReadPermissions),
@@ -1666,39 +1702,7 @@ router.get(
       return res.status(404).json({ message: "Propuesta no encontrada" });
     }
 
-    const companyProfile = await getCompanyProfile();
-    const sourceContext = document.content?.metadata?.source_context || {};
-    const renderDocument = {
-      ...document,
-      content: {
-        ...document.content,
-        metadata: {
-          ...document.content?.metadata,
-          source_context: {
-            ...sourceContext,
-            company_logo_url: companyProfile?.logoUrl || sourceContext.company_logo_url || "",
-            client_logo_url: document.clientLogoUrl || sourceContext.client_logo_url || "",
-          },
-        },
-      },
-    };
-    let buffer;
-    try {
-      const hasEmbeddedPdf = getEmbeddedPdfNodes(renderDocument.content).length > 0;
-      const hasGraphics = hasGraphicNodes(renderDocument.content);
-      buffer = hasEmbeddedPdf || hasGraphics
-        ? await renderProposalDocumentPdfBuffer(renderDocument)
-        : await renderProposalDocumentHtmlPdfBuffer(renderDocument);
-    } catch (error) {
-      buffer = await renderProposalDocumentPdfBuffer(renderDocument);
-    }
-    buffer = await addProposalCoverLogos(buffer, {
-      companyLogoUrl: companyProfile?.logoUrl,
-      clientLogoUrl: renderDocument.content.metadata?.cover?.show_client_logo === false
-        ? ""
-        : document.clientLogoUrl,
-    });
-    buffer = await addInstitutionalLogo(buffer, companyProfile?.logoUrl);
+    const buffer = await renderProposalDocumentOutput(document);
     res.setHeader("Cache-Control", "no-store, max-age=0");
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
@@ -1760,9 +1764,7 @@ router.post(
     }
 
     try {
-      const buffer = await renderProposalDocumentPdfBuffer(document);
-      const companyProfile = await getCompanyProfile();
-      const brandedBuffer = await addInstitutionalLogo(buffer, companyProfile?.logoUrl);
+      const brandedBuffer = await renderProposalDocumentOutput(document);
       const refreshToken = decryptOpaqueSecret(
         connection.refresh_token_encrypted,
       );

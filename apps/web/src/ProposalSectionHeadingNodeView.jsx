@@ -143,27 +143,34 @@ export default function ProposalSectionHeadingNodeView({ node, editor, getPos })
   }
 
   function moveSection(direction) {
-    if (!section || sectionPosition === null) return;
+    const currentPosition = getSectionPosition();
+    const currentSection = currentPosition === null
+      ? null
+      : editor.state.doc.nodeAt(currentPosition);
+    if (!currentSection || currentSection.type.name !== "proposalSection") return;
     const sections = [];
     editor.state.doc.forEach((child, position) => {
       if (child.type.name === "proposalSection") sections.push({ child, position });
     });
-    const currentIndex = sections.findIndex((entry) => entry.position === sectionPosition);
+    const currentIndex = sections.findIndex((entry) => entry.position === currentPosition);
     const target = sections[currentIndex + direction];
     if (!target) return;
     const transaction = editor.state.tr.delete(
-      sectionPosition,
-      sectionPosition + section.nodeSize,
+      currentPosition,
+      currentPosition + currentSection.nodeSize,
     );
     const rawPosition = direction < 0
       ? target.position
       : target.position + target.child.nodeSize;
     const insertPosition = transaction.mapping.map(rawPosition, -1);
-    transaction.insert(insertPosition, section);
+    transaction.insert(insertPosition, currentSection);
     editor.view.dispatch(transaction.scrollIntoView());
   }
 
   function deleteSection() {
+    if (!window.confirm("¿Eliminar esta sección? Esta acción no se puede deshacer.")) {
+      return;
+    }
     const currentPosition = getSectionPosition();
     const currentSection = currentPosition === null
       ? null

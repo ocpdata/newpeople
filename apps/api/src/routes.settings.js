@@ -4,8 +4,6 @@ import { requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
 import { query } from "./db.js";
 import { renderProposalDocumentHtmlPdfBuffer } from "./proposal-documents/html-pdf.js";
-import { renderProposalDocumentPdfBuffer } from "./proposal-documents/pdf.js";
-import { getEmbeddedPdfNodes } from "./proposal-documents/embedded-pdf.js";
 import { addInstitutionalLogo, addProposalCoverLogos } from "./proposal-documents/page-branding.js";
 import {
   AI_PARAMETER_CAPABILITY_KEYS,
@@ -1052,9 +1050,7 @@ router.post(
         },
       },
     };
-    let buffer = getEmbeddedPdfNodes(previewDocument.content).length
-      ? await renderProposalDocumentPdfBuffer(previewDocument)
-      : await renderProposalDocumentHtmlPdfBuffer(previewDocument);
+    let buffer = await renderProposalDocumentHtmlPdfBuffer(previewDocument);
     const companyProfile = await getCompanyProfile();
     previewDocument.content.metadata.source_context = {
       ...previewDocument.content.metadata.source_context,

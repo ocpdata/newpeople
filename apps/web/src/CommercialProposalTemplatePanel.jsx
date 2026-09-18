@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import ProposalRichTextEditor from "./ProposalRichTextEditor";
 import "./proposal-document-module.css";
 import "../../../shared/proposal-document-print.css";
-import { listProposalFormats } from "../../../shared/proposal-formats.js";
 
 function createSection() {
   return {
@@ -117,7 +116,6 @@ function normalizeTemplateDocument(document) {
 export default function CommercialProposalTemplatePanel({
   content,
   templates = [],
-  formats = [],
   selectedCode = "generica",
   saving,
   onSelectTemplate,
@@ -129,7 +127,7 @@ export default function CommercialProposalTemplatePanel({
 }) {
   const editorRef = useRef(null);
   const savedDocument = normalizeTemplateDocument(content?.document);
-  const [formatCode, setFormatCode] = useState(content?.format_code || "basic");
+  const [formatCode, setFormatCode] = useState("basic");
   const [cover, setCover] = useState(content?.metadata?.cover || {});
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
@@ -151,7 +149,7 @@ export default function CommercialProposalTemplatePanel({
     savedSnapshotRef.current = JSON.stringify(savedDocument);
     ignoreEditorUpdateRef.current = false;
     setHasDraftChanges(false);
-    setFormatCode(content?.format_code || "basic");
+    setFormatCode("basic");
     setCover(content?.metadata?.cover || {});
   }, [content]);
 
@@ -204,6 +202,15 @@ export default function CommercialProposalTemplatePanel({
     setIsCreatingTemplate(false);
   }
 
+  function confirmDeleteTemplate() {
+    const template = templates.find((entry) => entry.code === selectedCode);
+    const templateName = template?.name || selectedCode;
+    if (!window.confirm(`¿Eliminar la plantilla "${templateName}"? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    onDeleteTemplate?.(selectedCode);
+  }
+
   function preview() {
     const documentToPreview = editorRef.current?.getDocument() || draftDocumentRef.current;
     onPreview?.({
@@ -242,6 +249,13 @@ export default function CommercialProposalTemplatePanel({
     }
   }
 
+  function confirmRemoveCoverImage() {
+    if (!window.confirm("¿Quitar la fotografía de portada? Esta acción no se puede deshacer.")) {
+      return;
+    }
+    setCover((current) => ({ ...current, image_url: "", image_name: "" }));
+  }
+
   return (
     <div className="configuration-section-stack configuration-commercial-proposal-template">
       <section className="configuration-card">
@@ -261,7 +275,7 @@ export default function CommercialProposalTemplatePanel({
               <label>
                 Formato visual
                 <select value={formatCode} onChange={(event) => { setFormatCode(event.target.value); setHasDraftChanges(true); }} aria-label="Formato visual de la plantilla">
-                  {(formats.length ? formats : listProposalFormats()).map((format) => <option key={format.code} value={format.code}>{format.name}</option>)}
+                  <option value="basic">Básico</option>
                 </select>
               </label>
               <span className="configuration-inline-pill configuration-template-status">{saving ? "Guardando..." : isDirty ? "Cambios sin guardar" : "Guardada"}</span>
@@ -272,7 +286,7 @@ export default function CommercialProposalTemplatePanel({
               <button type="button" className="btn-primary" disabled={saving} onClick={save}>{saving ? "Guardando..." : "Guardar cambios"}</button>
               <button type="button" className="btn-secondary" disabled={saving} onClick={preview}>Ver PDF</button>
             {selectedCode !== "generica" ? (
-              <button type="button" className="btn-secondary" onClick={() => onDeleteTemplate?.(selectedCode)}>Eliminar plantilla</button>
+              <button type="button" className="btn-secondary" onClick={confirmDeleteTemplate}>Eliminar plantilla</button>
             ) : null}
             {formatCode !== "basic" ? <button type="button" className="btn-secondary" onClick={() => onDeleteFormat?.(formatCode)}>Eliminar formato</button> : null}
           </div>
@@ -318,7 +332,7 @@ export default function CommercialProposalTemplatePanel({
                   <input type="file" accept="image/png,image/jpeg" onChange={handleCoverImageChange} />
                 </label>
                 {cover.image_url ? (
-                  <button type="button" className="btn-secondary" onClick={() => setCover((current) => ({ ...current, image_url: "", image_name: "" }))}>
+                  <button type="button" className="btn-secondary" onClick={confirmRemoveCoverImage}>
                     Quitar fotografía
                   </button>
                 ) : null}

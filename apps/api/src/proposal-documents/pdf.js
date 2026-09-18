@@ -7,7 +7,7 @@ import { addProposalPageNumbers } from "./page-numbers.js";
 
 const PAGE_MARGIN = 54;
 const SECTION_GAP = 20;
-const PAGE_HEADER_CLEARANCE = 56;
+const PAGE_HEADER_CLEARANCE = 24;
 
 function bufferPdfDocument(doc) {
   return new Promise((resolve, reject) => {
@@ -137,6 +137,46 @@ function renderTiptapInlineText(node, templateContext) {
     return node.content.map((child) => renderTiptapInlineText(child, templateContext)).join("");
   }
   return "";
+}
+
+function getTiptapInlineRuns(node, templateContext, runs = []) {
+  if (node?.type === "text") {
+    const text = resolveTemplateText(node.text, templateContext);
+    if (text) {
+      const marks = node.marks || [];
+      runs.push({
+        text,
+        bold: marks.some((mark) => mark.type === "bold"),
+        italic: marks.some((mark) => mark.type === "italic"),
+      });
+    }
+    return runs;
+  }
+  for (const child of node?.content || []) {
+    getTiptapInlineRuns(child, templateContext, runs);
+  }
+  return runs;
+}
+
+function getPdfFont({ bold, italic }) {
+  if (bold && italic) return "Helvetica-BoldOblique";
+  if (bold) return "Helvetica-Bold";
+  if (italic) return "Helvetica-Oblique";
+  return "Helvetica";
+}
+
+function renderTiptapInlineRuns(doc, node, templateContext, options = {}) {
+  const runs = getTiptapInlineRuns(node, templateContext);
+  if (!runs.length) return false;
+  runs.forEach((run, index) => {
+    doc
+      .font(getPdfFont(run))
+      .text(run.text, {
+        ...options,
+        continued: index < runs.length - 1,
+      });
+  });
+  return true;
 }
 
 function getTiptapImageBox(doc, node) {
@@ -290,33 +330,55 @@ function renderTiptapNode(doc, node, templateContext, embeddedPlaceholders, form
     return;
   }
   if (node.type === "bulletList" || node.type === "orderedList") {
-    const items = (node.content || [])
-      .map((item) => renderTiptapInlineText(item, templateContext))
-      .filter(Boolean);
-    if (items.length) {
-      doc.font("Helvetica").fontSize(format.code === "technical" ? 9.5 : 10.5).fillColor(format.text);
-      doc.list(items, { bulletRadius: 2, textIndent: 12 });
-    }
+    const items = node.content || [];
+    const fontSize = format.code === "technical" ? 9.5 : 10.5;
+    items.forEach((item, index) => {
+      const contentNode = (item.content || []).find((child) => child.type === "paragraph") || item;
+      if (!getTiptapInlineRuns(contentNode, templateContext).length) return;
+      const x = doc.x;
+      const y = doc.y + 2;
+      doc.font("Helvetica").fontSize(fontSize).fillColor(format.text);
+      if (node.type === "orderedList") {
+        doc.text(`${index + 1}.`, x, y, { width: 14 });
+      } else {
+        doc.circle(x + 4, y + 5, 1.8).fill(format.text);
+      }
+      doc.x = x + 14;
+      renderTiptapInlineRuns(doc, contentNode, templateContext, {
+        width: doc.page.width - PAGE_MARGIN - doc.x,
+        align: "left",
+        lineGap: 2,
+      });
+      doc.x = x;
+      doc.moveDown(0.15);
+    });
     return;
   }
   if (node.type === "heading") {
+    const isSectionHeading = Number(node.attrs?.level) === 2;
     doc
       .moveDown(format.code === "technical" ? 0.2 : format.code === "premium" ? 0.7 : 0.4)
       .font("Helvetica-Bold")
       .fontSize(format.code === "technical" ? 10.5 : format.code === "premium" ? 14 : 12)
       .fillColor(format.heading)
       .text(renderTiptapInlineText(node, templateContext));
+    if (isSectionHeading) {
+      doc
+        .moveTo(PAGE_MARGIN, doc.y + 3)
+        .lineTo(doc.page.width - PAGE_MARGIN, doc.y + 3)
+        .strokeColor(format.border)
+        .lineWidth(0.7)
+        .stroke();
+      doc.y += 9;
+    }
     return;
   }
   if (node.type === "paragraph") {
-    const text = renderTiptapInlineText(node, templateContext);
-    if (text) {
+    if (getTiptapInlineRuns(node, templateContext).length) {
       doc
-        .moveDown(format.code === "technical" ? 0.1 : format.code === "premium" ? 0.35 : 0.2)
-        .font("Helvetica")
-        .fontSize(format.code === "technical" ? 9.5 : format.code === "premium" ? 11 : 10.5)
-        .fillColor(format.text)
-        .text(text, { align: "justify", lineGap: 2 });
+        .moveDown(format.code === "technical" ? 0.1 : format.code === "premium" ? 0.35 : 0.2);
+      doc.fontSize(format.code === "technical" ? 9.5 : format.code === "premium" ? 11 : 10.5).fillColor(format.text);
+      renderTiptapInlineRuns(doc, node, templateContext, { align: "justify", lineGap: 2 });
     }
     return;
   }
@@ -404,13 +466,6 @@ export async function renderProposalDocumentPdfBuffer({ title, content }) {
   doc.restore();
   doc.addPage();
   doc.y += PAGE_HEADER_CLEARANCE;
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(format.code === "technical" ? 17 : format.code === "minimal" ? 19 : 22)
-    .fillColor(format.heading)
-    .text(asText(title) || "Propuesta técnica");
-  doc.moveDown(0.8);
 
   const sections = Array.isArray(content?.sections) ? content.sections : [];
   const documentNodes = content?.schema_version >= 3 && content?.document?.type === "doc"
