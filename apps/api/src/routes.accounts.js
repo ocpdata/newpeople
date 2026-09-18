@@ -23,7 +23,7 @@ const router = express.Router();
 
 let ensureAccountsSchemaPromise = null;
 
-async function ensureAccountsSchema() {
+export async function ensureAccountsSchema() {
   if (!ensureAccountsSchemaPromise) {
     ensureAccountsSchemaPromise = (async () => {
       await query(

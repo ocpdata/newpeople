@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { app } from "./app.js";
 import { startAccountDraftAnalysisWorker } from "./accounts/draft-analysis/async.js";
 import { ensureAccountDraftAnalysisJobSchema } from "./accounts/draft-analysis/jobs-schema.js";
+import { ensureAccountsSchema } from "./routes.accounts.js";
 import { ensureCommercialNarrativeJobSchema } from "./commercial-development/narrative-jobs-schema.js";
 import { ensureAccountInteractionsSchema } from "./account-interactions/schema.js";
 import { ensureInteractionPermissions } from "./interactions/permissions.js";
@@ -62,6 +63,7 @@ export async function startServer() {
   });
   const autoAssignRoles = await isInitialRoleAssignmentRequired();
   await ensureCorePermissions({ autoAssignRoles });
+  await ensureAccountsSchema();
   await ensureAiUsageSchema();
   await ensureChatbotSchema();
   await ensureInteractionPermissions({ autoAssignRoles });
