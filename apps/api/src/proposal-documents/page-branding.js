@@ -1,7 +1,28 @@
 import { PDFDocument } from "pdf-lib";
 import { chromium } from "playwright-core";
+import { existsSync } from "node:fs";
+import process from "node:process";
 
-const CHROME_EXECUTABLE_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME_EXECUTABLE_CANDIDATES = [
+  process.env.CHROME_EXECUTABLE_PATH,
+  process.env.CHROME_BIN,
+  process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : null,
+  process.platform === "darwin" ? "/Applications/Chromium.app/Contents/MacOS/Chromium" : null,
+  process.platform === "linux" ? "/usr/bin/google-chrome" : null,
+  process.platform === "linux" ? "/usr/bin/google-chrome-stable" : null,
+  process.platform === "linux" ? "/usr/bin/chromium" : null,
+  process.platform === "linux" ? "/usr/bin/chromium-browser" : null,
+  process.platform === "win32" ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : null,
+  process.platform === "win32" ? "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe" : null,
+].filter((candidate) => candidate && existsSync(candidate));
+
+function getChromeExecutablePath() {
+  const executablePath = CHROME_EXECUTABLE_CANDIDATES[0];
+  if (!executablePath) {
+    throw new Error("No se encontró Chrome o Chromium para procesar logos PDF. Configura CHROME_EXECUTABLE_PATH o CHROME_BIN.");
+  }
+  return executablePath;
+}
 
 function dataImageToBuffer(value) {
   const match = String(value || "").match(/^data:image\/(png|jpe?g);base64,(.+)$/i);
@@ -15,7 +36,7 @@ async function resolveImageSource(value) {
   const source = String(value || "").trim();
   if (source.startsWith("data:image/") || /^https?:\/\//i.test(source)) {
     try {
-      const browser = await chromium.launch({ executablePath: CHROME_EXECUTABLE_PATH, headless: true, args: ["--no-sandbox"] });
+      const browser = await chromium.launch({ executablePath: getChromeExecutablePath(), headless: true, args: ["--no-sandbox"] });
       const page = await browser.newPage({ viewport: { width: 240, height: 90 }, deviceScaleFactor: 2 });
       await page.setContent(`<img id="logo" src="${source.replaceAll('"', '&quot;')}" style="max-width:240px;max-height:90px;object-fit:contain" />`, { waitUntil: "networkidle" });
       await page.waitForFunction(() => {

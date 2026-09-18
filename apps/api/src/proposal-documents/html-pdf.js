@@ -2,12 +2,33 @@ import { chromium } from "playwright-core";
 import { PDFDocument } from "pdf-lib";
 import { PDFParse } from "pdf-parse";
 import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import process from "node:process";
 import { getProposalFormat } from "../../../../shared/proposal-formats.js";
 import { addProposalPageNumbers } from "./page-numbers.js";
 import { dataUrlToBuffer, getEmbeddedPdfNodes, replacePdfPlaceholders } from "./embedded-pdf.js";
 
-const CHROME_EXECUTABLE_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME_EXECUTABLE_CANDIDATES = [
+  process.env.CHROME_EXECUTABLE_PATH,
+  process.env.CHROME_BIN,
+  process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : null,
+  process.platform === "darwin" ? "/Applications/Chromium.app/Contents/MacOS/Chromium" : null,
+  process.platform === "linux" ? "/usr/bin/google-chrome" : null,
+  process.platform === "linux" ? "/usr/bin/google-chrome-stable" : null,
+  process.platform === "linux" ? "/usr/bin/chromium" : null,
+  process.platform === "linux" ? "/usr/bin/chromium-browser" : null,
+  process.platform === "win32" ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : null,
+  process.platform === "win32" ? "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe" : null,
+].filter((candidate) => candidate && existsSync(candidate));
+
+function getChromeExecutablePath() {
+  const executablePath = CHROME_EXECUTABLE_CANDIDATES[0];
+  if (!executablePath) {
+    throw new Error("No se encontró Chrome o Chromium para generar PDFs. Configura CHROME_EXECUTABLE_PATH o CHROME_BIN.");
+  }
+  return executablePath;
+}
 const PRINT_STYLES = readFileSync(
   fileURLToPath(new URL("../../../../shared/proposal-document-print.css", import.meta.url)),
   "utf8",
@@ -260,7 +281,7 @@ export function renderProposalDocumentHtml({ title, content, tocPages = {} }) {
 
 export async function renderProposalDocumentHtmlPdfBuffer(document) {
   const browser = await chromium.launch({
-    executablePath: CHROME_EXECUTABLE_PATH,
+    executablePath: getChromeExecutablePath(),
     headless: true,
     args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
