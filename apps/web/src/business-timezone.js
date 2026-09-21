@@ -32,6 +32,85 @@ function getFormatterParts(formatter, value) {
   return lookup;
 }
 
+function parsePlainDateTimeText(value) {
+  const text = String(value || "").trim();
+  const match = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/,
+  );
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] || 0);
+  const millisecond = Number(String(match[7] || "0").padEnd(3, "0"));
+
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    !Number.isInteger(second) ||
+    !Number.isInteger(millisecond)
+  ) {
+    return null;
+  }
+
+  return { year, month, day, hour, minute, second, millisecond };
+}
+
+function toBusinessTimezoneDate(value, timezone = getActiveBusinessTimezone()) {
+  if (value instanceof Date) return value;
+  if (typeof value !== "string") return new Date(value);
+
+  const plainLocal = parsePlainDateTimeText(value);
+  if (!plainLocal) {
+    return new Date(value);
+  }
+
+  const baseUtcMs = Date.UTC(
+    plainLocal.year,
+    plainLocal.month - 1,
+    plainLocal.day,
+    plainLocal.hour,
+    plainLocal.minute,
+    plainLocal.second,
+    plainLocal.millisecond,
+  );
+
+  const offsetFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: normalizeBusinessTimezone(timezone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+
+  const offsetParts = offsetFormatter.formatToParts(new Date(baseUtcMs));
+  const lookup = {};
+  for (const part of offsetParts) {
+    if (part.type !== "literal") {
+      lookup[part.type] = Number(part.value);
+    }
+  }
+  const offsetUtc = Date.UTC(
+    lookup.year,
+    lookup.month - 1,
+    lookup.day,
+    lookup.hour,
+    lookup.minute,
+    lookup.second,
+  );
+  const offsetMinutes = (offsetUtc - baseUtcMs) / 60000;
+  return new Date(baseUtcMs - offsetMinutes * 60000);
+}
+
 function parseDateOnlyText(value) {
   const text = String(value || "").trim();
   const match = DATE_ONLY_REGEX.exec(text);
@@ -91,7 +170,7 @@ export function getBusinessDateParts(value, timezone = getActiveBusinessTimezone
     second: "2-digit",
     hour12: false,
   });
-  const parts = getFormatterParts(formatter, value);
+  const parts = getFormatterParts(formatter, toBusinessTimezoneDate(value, timezone));
   if (!parts) return null;
   return {
     year: Number(parts.year),
@@ -151,7 +230,7 @@ export function formatBusinessDate(
       timeZone: "UTC",
     });
   }
-  const parsed = value instanceof Date ? value : new Date(value);
+  const parsed = toBusinessTimezoneDate(value, timezone);
   if (Number.isNaN(parsed.getTime())) return fallback;
   return parsed.toLocaleDateString(locale, {
     ...options,
@@ -175,7 +254,7 @@ export function formatBusinessDateTime(
   } = {},
 ) {
   if (!value) return fallback;
-  const parsed = value instanceof Date ? value : new Date(value);
+  const parsed = toBusinessTimezoneDate(value, timezone);
   if (Number.isNaN(parsed.getTime())) return fallback;
   return parsed.toLocaleString(locale, {
     ...options,
@@ -193,7 +272,7 @@ export function formatBusinessTime(
   } = {},
 ) {
   if (!value) return fallback;
-  const parsed = value instanceof Date ? value : new Date(value);
+  const parsed = toBusinessTimezoneDate(value, timezone);
   if (Number.isNaN(parsed.getTime())) return fallback;
   return parsed.toLocaleTimeString(locale, {
     ...options,

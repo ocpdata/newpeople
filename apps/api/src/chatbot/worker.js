@@ -146,6 +146,51 @@ async function finalizeChatbotJob({
       ],
     );
   }
+
+  if (
+    status === "completed" &&
+    result?.operation?.requiresApproval &&
+    Array.isArray(result.operation.changes) &&
+    result.operation.changes.length > 0
+  ) {
+    const operation = result.operation;
+    const operationPublicId = buildPublicId("opdraft");
+    await query(
+      `INSERT INTO chatbot_operation_drafts
+         (public_id, session_id, user_id, job_id, status, intent,
+          target_entity, target_entity_id, draft_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        operationPublicId,
+        Number(row.session_id),
+        Number(row.user_id),
+        Number(row.id),
+        String(operation.status || "drafted"),
+        String(operation.intent || "").trim(),
+        String(operation.target?.entity || "none").trim(),
+        operation.target?.id ? Number(operation.target.id) : null,
+        JSON.stringify(operation),
+      ],
+    );
+    result.operationDraftId = operationPublicId;
+    await query(
+      `UPDATE chatbot_jobs SET result_json = ? WHERE id = ?`,
+      [JSON.stringify(result), Number(row.id)],
+    );
+    await query(
+      `UPDATE chatbot_messages
+       SET source_json = JSON_SET(COALESCE(source_json, JSON_OBJECT()),
+         '$.operationDraftId', ?, '$.operation', ?)
+       WHERE session_id = ? AND user_id = ? AND role = 'assistant'
+       ORDER BY id DESC LIMIT 1`,
+      [
+        operationPublicId,
+        JSON.stringify(operation),
+        Number(row.session_id),
+        Number(row.user_id),
+      ],
+    );
+  }
 }
 
 async function processChatbotJob(row) {

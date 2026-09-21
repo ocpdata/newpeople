@@ -1,0 +1,2131 @@
+import express from "express";
+import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { requirePermission } from "./auth.js";
+import { assertAiBudgetAvailable, recordAiUsageFromOpenAiResponse } from "./ai-usage/service.js";
+import { config } from "./config.js";
+import { query } from "./db.js";
+import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
+import { logAuditEvent, parseAuditChangedFields } from "./audit.js";
+
+const router = express.Router();
+const FEATURE_CODE = "mi_agent.analysis";
+const ANALYSIS_TIMEOUT_MS = 30000;
+const PROCESS_GUIDE_URL = new URL("../../../readme/proceso-comercial.md", import.meta.url);
+let processGuideTextPromise;
+let ensureMiAgentSchemaPromise;
+
+async function loadProcessGuide() {
+  if (!processGuideTextPromise) {
+    processGuideTextPromise = readFile(PROCESS_GUIDE_URL, "utf8").catch((error) => {
+      processGuideTextPromise = undefined;
+      throw error;
+    });
+  }
+  return processGuideTextPromise;
+}
+
+async function ensureMiAgentSchema() {
+  if (!ensureMiAgentSchemaPromise) {
+    ensureMiAgentSchemaPromise = query(
+      `CREATE TABLE IF NOT EXISTS mi_agent_analysis_jobs (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        created_by_user_id BIGINT UNSIGNED NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        result_json JSON NULL,
+        error_message VARCHAR(1000) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+        CONSTRAINT fk_mi_agent_analysis_jobs_user FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_mi_agent_analysis_jobs_user_status (created_by_user_id, status, updated_at)
+      )`,
+    ).catch((error) => {
+      ensureMiAgentSchemaPromise = undefined;
+      throw error;
+    });
+  }
+  await ensureMiAgentSchemaPromise;
+  for (const [column, definition] of [
+    ["job_kind", "VARCHAR(30) NOT NULL DEFAULT 'analysis' AFTER created_by_user_id"],
+    ["question", "TEXT NULL AFTER status"],
+    ["context_snapshot", "JSON NULL AFTER question"],
+  ]) {
+    const rows = await query(`SHOW COLUMNS FROM mi_agent_analysis_jobs LIKE '${column}'`);
+    if (!rows.length) {
+      await query(`ALTER TABLE mi_agent_analysis_jobs ADD COLUMN ${column} ${definition}`);
+    }
+  }
+}
+const QUALIFIED_STAGE_CODES = [
+  "desarrollo",
+  "cotizacion",
+  "demostracion",
+  "negociacion",
+  "waiting",
+];
+
+function buildInClause(values) {
+  return values.map(() => "?").join(", ");
+}
+
+function clip(value, max = 3000) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
+  const accountId = Number(selectedContext?.accountId || 0);
+  const opportunityId = Number(selectedContext?.opportunityId || 0);
+  const contactId = Number(selectedContext?.contactId || 0);
+  const contactAccountId = contactId > 0
+    ? Number((Array.isArray(snapshot?.contactMappings) ? snapshot.contactMappings : [])
+        .find((contact) => Number(contact?.id) === contactId)?.accountId || 0)
+    : 0;
+  const scopedAccountId = accountId || contactAccountId;
+  const hasSelection = accountId > 0 || opportunityId > 0 || contactId > 0;
+  if (!hasSelection) return snapshot;
+
+  const opportunities = Array.isArray(snapshot?.pipeline?.opportunities)
+    ? snapshot.pipeline.opportunities.filter((item) => {
+        if (opportunityId > 0) return Number(item.id) === opportunityId;
+        if (scopedAccountId > 0) return Number(item.account?.id || item.accountId) === scopedAccountId;
+        return Number(item.contact?.id || item.contactId) === contactId;
+      })
+    : [];
+  const opportunityIds = new Set(opportunities.map((item) => Number(item.id)));
+  const leads = Array.isArray(snapshot?.leads)
+    ? snapshot.leads.filter((lead) =>
+        (opportunityId > 0 && Number(lead.opportunityId) === opportunityId) ||
+        (scopedAccountId > 0 && Number(lead.accountId) === scopedAccountId),
+      )
+    : [];
+  const contactMappings = Array.isArray(snapshot?.contactMappings)
+    ? snapshot.contactMappings.filter((contact) =>
+        (scopedAccountId > 0 && Number(contact.accountId) === scopedAccountId) ||
+        (contactId > 0 && Number(contact.id) === contactId),
+      )
+    : [];
+
+  return {
+    ...snapshot,
+    pipeline: {
+      ...(snapshot?.pipeline || {}),
+      qualifiedAmount: opportunities.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0),
+      qualifiedCount: opportunities.length,
+      opportunities,
+    },
+    workboard: opportunities,
+    leads,
+    contactMappings,
+    selectedContext: {
+      accountId: scopedAccountId || null,
+      opportunityId: opportunityId || null,
+      contactId: contactId || null,
+      opportunityIds: [...opportunityIds],
+    },
+  };
+}
+
+function getQuarterSelection() {
+  const now = new Date();
+  const quarter = Math.floor(now.getMonth() / 3) + 1;
+  const start = new Date(Date.UTC(now.getFullYear(), (quarter - 1) * 3, 1));
+  const end = new Date(Date.UTC(now.getFullYear(), quarter * 3, 0));
+  return {
+    year: now.getFullYear(),
+    quarter,
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+    label: `Q${quarter} ${now.getFullYear()}`,
+  };
+}
+
+function hasMiAgentGlobalScope(user) {
+  return Boolean(
+    user?.permissionSet?.has("oportunidades.read_all") ||
+      (Array.isArray(user?.roles) &&
+        user.roles.some(
+          (role) => role?.is_system || role?.name === "Administrador",
+        )),
+  );
+}
+
+function buildOpportunityScope(user, params) {
+  if (hasMiAgentGlobalScope(user)) {
+    return "";
+  }
+  params.push(Number(user.id));
+  return "LEFT JOIN account_owners ao_scope ON ao_scope.account_id = o.account_id AND ao_scope.user_id = ?";
+}
+
+async function getMiAgentContext(user) {
+  await ensureOpportunityWorkspaceSchema();
+  const period = getQuarterSelection();
+  const stageParams = [...QUALIFIED_STAGE_CODES];
+  const opportunityParams = [];
+  const scopeJoin = buildOpportunityScope(user, opportunityParams);
+  const stagePlaceholders = QUALIFIED_STAGE_CODES.map(() => "?").join(", ");
+
+  const targetParams = [period.year, period.quarter, Number(user.id)];
+  const [targetRows, opportunityRows] = await Promise.all([
+    query(
+      `SELECT t.sales_quota_amount, t.currency_code
+       FROM commercial_planning_periods p
+       INNER JOIN commercial_planning_versions v ON v.period_id = p.id AND v.status = 'active'
+       INNER JOIN commercial_planning_targets t ON t.version_id = v.id
+       WHERE p.plan_year = ? AND p.plan_quarter = ?
+         AND t.seller_user_id = ? AND t.status <> 'void'
+       ORDER BY v.version_number DESC, v.id DESC
+       LIMIT 1`,
+      targetParams,
+    ).catch((error) => {
+      console.error("[mi-agent] No fue posible cargar la cuota:", error?.message || error);
+      return [];
+    }),
+    query(
+            `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+              o.sales_stage_id,
+              o.updated_at, oss.code AS stage_code, oss.name AS stage_name,
+              ocs.code AS commercial_status_code,
+              a.name AS account_name, a.registration_code AS account_registration_code,
+              a.phone AS account_phone, a.website AS account_website,
+              a.city AS account_city, a.state_region AS account_state_region,
+              a.description AS account_description,
+              CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+              c.email AS contact_email, c.phone AS contact_phone,
+              c.mobile AS contact_mobile, c.position_title AS contact_position,
+              c.department AS contact_department,
+              COALESCE(
+                (SELECT MAX(a1.updated_at)
+                 FROM opportunity_workspace_actions a1
+                 WHERE a1.opportunity_id = o.id), o.updated_at
+              ) AS last_activity_at,
+              (SELECT a2.title
+               FROM opportunity_workspace_actions a2
+               WHERE a2.opportunity_id = o.id
+                 AND a2.status IN ('pending', 'in_progress', 'blocked')
+               ORDER BY a2.is_primary_next_step DESC, a2.due_date IS NULL,
+                        a2.due_date ASC, a2.id ASC
+               LIMIT 1) AS next_action_title,
+              (SELECT a3.due_date
+               FROM opportunity_workspace_actions a3
+               WHERE a3.opportunity_id = o.id
+                 AND a3.status IN ('pending', 'in_progress', 'blocked')
+               ORDER BY a3.is_primary_next_step DESC, a3.due_date IS NULL,
+                        a3.due_date ASC, a3.id ASC
+               LIMIT 1) AS next_action_due_date
+       FROM opportunities o
+       ${scopeJoin}
+       INNER JOIN accounts a ON a.id = o.account_id
+        LEFT JOIN contacts c ON c.id = o.contact_id
+       INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+       INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+       INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+       WHERE oas.code = 'activada'
+         AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')
+         AND oss.code IN (${stagePlaceholders})
+         ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
+       ORDER BY o.close_date IS NULL, o.close_date ASC, o.amount_usd DESC`,
+      [...opportunityParams, ...stageParams, ...(hasMiAgentGlobalScope(user) ? [] : [Number(user.id), Number(user.id)])],
+    ).catch((error) => {
+      console.error("[mi-agent] No fue posible consultar oportunidades:", error?.message || error);
+      return [];
+    }),
+  ]);
+
+  const quotaAmount = Number(targetRows[0]?.sales_quota_amount || 0);
+  const opportunityIds = opportunityRows.map((row) => Number(row.id));
+  const wonParams = [];
+  const wonScopeJoin = buildOpportunityScope(user, wonParams);
+  const wonRows = await query(
+    `SELECT COALESCE(SUM(o.amount_usd), 0) AS actual_amount
+     FROM opportunities o
+     ${wonScopeJoin}
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+     INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+     WHERE oas.code = 'activada' AND ocs.code = 'ganada'
+       AND o.close_date BETWEEN ? AND ?
+       ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}`,
+     [...wonParams, period.startDate, period.endDate, ...(hasMiAgentGlobalScope(user) ? [] : [Number(user.id), Number(user.id)])],
+  ).catch(() => []);
+
+  const actualAmount = Number(wonRows[0]?.actual_amount || 0);
+  const leadParams = [];
+  const leadScopeJoin = hasMiAgentGlobalScope(user)
+    ? ""
+    : "LEFT JOIN account_owners ao_lead_scope ON ao_lead_scope.account_id = i.account_id AND ao_lead_scope.user_id = ?";
+  if (!hasMiAgentGlobalScope(user)) leadParams.push(Number(user.id));
+  const leads = await query(
+    `SELECT i.id, i.title, i.lead_source, i.analysis_status, i.processing_status,
+            i.summary, i.source_notes, i.account_id, i.primary_opportunity_id,
+            i.seller_user_id, i.lead_substatus_code, i.lead_reason_code,
+            i.lead_required_action_code, i.lead_commercial_comment,
+            i.lead_next_action_due_at, i.created_at, i.updated_at,
+            a.name AS account_name, o.name AS opportunity_name
+     FROM interactions i
+     ${leadScopeJoin}
+     LEFT JOIN accounts a ON a.id = i.account_id
+     LEFT JOIN opportunities o ON o.id = i.primary_opportunity_id
+     WHERE ${hasMiAgentGlobalScope(user) ? "1 = 1" : "(ao_lead_scope.user_id IS NOT NULL OR i.seller_user_id = ? OR i.created_by = ?)"}
+     ORDER BY i.updated_at DESC
+     LIMIT 100`,
+    hasMiAgentGlobalScope(user) ? [] : [...leadParams, Number(user.id), Number(user.id)],
+  ).catch(() => []);
+  const accessibleAccountIds = Array.from(
+    new Set(opportunityRows.map((row) => Number(row.account_id)).filter((id) => id > 0)),
+  );
+  const contactMappings = accessibleAccountIds.length
+    ? await query(
+        `SELECT c.id, c.account_id, c.first_name, c.last_name, c.email,
+                c.phone, c.mobile, c.position_title, c.department,
+                c.manager_contact_id, c.influences_contact_id,
+                h.name AS hierarchy_level, r.name AS relationship_type,
+                i.name AS influence_level
+         FROM contacts c
+         LEFT JOIN contact_hierarchy_levels h ON h.id = c.hierarchy_level_id
+         LEFT JOIN contact_relationship_types r ON r.id = c.relationship_type_id
+         LEFT JOIN contact_influence_levels i ON i.id = c.influence_level_id
+         WHERE c.account_id IN (${accessibleAccountIds.map(() => "?").join(", ")})
+         ORDER BY c.account_id, c.first_name, c.last_name
+         LIMIT 500`,
+        accessibleAccountIds,
+      ).catch(() => [])
+    : [];
+  const opportunities = opportunityRows.map((row) => {
+    const lastActivity = row.last_activity_at ? new Date(row.last_activity_at) : null;
+    const daysSinceActivity = lastActivity
+      ? Math.max(0, Math.floor((Date.now() - lastActivity.getTime()) / 86400000))
+      : 0;
+    const riskReasons = [];
+    if (!row.next_action_title) riskReasons.push("No existe un siguiente paso registrado");
+    if (daysSinceActivity > 14) riskReasons.push(`${daysSinceActivity} días sin actividad`);
+    return {
+      id: Number(row.id),
+      name: row.name || "",
+      accountName: row.account_name || "",
+      account: {
+        id: Number(row.account_id),
+        name: row.account_name || "",
+        registrationCode: row.account_registration_code || "",
+        phone: row.account_phone || "",
+        website: row.account_website || "",
+        city: row.account_city || "",
+        stateRegion: row.account_state_region || "",
+        description: clip(row.account_description, 1800),
+      },
+      contact: {
+        id: Number(row.contact_id),
+        name: row.contact_name || "",
+        email: row.contact_email || "",
+        phone: row.contact_phone || "",
+        mobile: row.contact_mobile || "",
+        position: row.contact_position || "",
+        department: row.contact_department || "",
+      },
+      amountUsd: Number(row.amount_usd || 0),
+      closeDate: row.close_date || null,
+      updatedAt: row.updated_at || null,
+      stageCode: row.stage_code || "",
+      stageName: row.stage_name || "",
+      salesStageId: Number(row.sales_stage_id || 0) || null,
+      commercialStatusCode: row.commercial_status_code || null,
+      riskLevel: riskReasons.length > 1 ? "high" : riskReasons.length ? "medium" : "low",
+      riskReasons,
+      daysSinceActivity,
+      currentStageValidated: false,
+      openWeaknesses: [],
+      nextStep: row.next_action_title ? { title: row.next_action_title, dueDate: row.next_action_due_date || null } : null,
+      nextPendingAction: row.next_action_title || null,
+    };
+  });
+
+  const qualifiedAmount = opportunities.reduce((sum, item) => sum + item.amountUsd, 0);
+  return {
+    period: { ...period, baseCurrencyCode: targetRows[0]?.currency_code || "USD" },
+    quota: {
+      assignedAmount: quotaAmount,
+      actualAmount,
+      gapAmount: Math.max(quotaAmount - actualAmount, 0),
+      committedOpenAmount: opportunities
+        .filter((item) => ["negociacion", "waiting"].includes(item.stageCode))
+        .reduce((sum, item) => sum + item.amountUsd, 0),
+      weightedOpenAmount: qualifiedAmount,
+      currencyCode: targetRows[0]?.currency_code || "USD",
+    },
+    workboard: opportunities,
+    leads: leads.map((lead) => ({
+      id: Number(lead.id),
+      title: lead.title || "",
+      source: lead.lead_source || "",
+      analysisStatus: lead.analysis_status || "",
+      processingStatus: lead.processing_status || "",
+      summary: clip(lead.summary, 1800),
+      sourceNotes: clip(lead.source_notes, 1800),
+      accountId: Number(lead.account_id || 0) || null,
+      accountName: lead.account_name || "",
+      opportunityId: Number(lead.primary_opportunity_id || 0) || null,
+      opportunityName: lead.opportunity_name || "",
+      sellerUserId: Number(lead.seller_user_id || 0) || null,
+      substatusCode: lead.lead_substatus_code || "",
+      reasonCode: lead.lead_reason_code || "",
+      requiredActionCode: lead.lead_required_action_code || "",
+      commercialComment: clip(lead.lead_commercial_comment, 1200),
+      nextActionDueAt: lead.lead_next_action_due_at || null,
+      updatedAt: lead.updated_at || lead.created_at || null,
+    })),
+    contactMappings: contactMappings.map((contact) => ({
+      id: Number(contact.id),
+      accountId: Number(contact.account_id),
+      name: [contact.first_name, contact.last_name].filter(Boolean).join(" ").trim(),
+      email: contact.email || "",
+      phone: contact.phone || "",
+      mobile: contact.mobile || "",
+      positionTitle: contact.position_title || "",
+      department: contact.department || "",
+      managerContactId: Number(contact.manager_contact_id || 0) || null,
+      influencesContactId: Number(contact.influences_contact_id || 0) || null,
+      hierarchyLevel: contact.hierarchy_level || "",
+      relationshipType: contact.relationship_type || "",
+      influenceLevel: contact.influence_level || "",
+    })),
+    summary: {
+      openOpportunities: opportunities.length,
+      riskyOpportunities: opportunities.filter((item) => item.riskLevel !== "low").length,
+    },
+  };
+}
+
+async function getMiAgentEnrichedContext(user, baseContext) {
+  const opportunities = Array.isArray(baseContext?.workboard)
+    ? baseContext.workboard
+    : [];
+  const ids = opportunities.map((item) => Number(item.id)).filter(Boolean);
+  if (!ids.length) {
+    return { ...baseContext, enriched: true, source: "mi_agent" };
+  }
+
+  const placeholders = buildInClause(ids);
+  const [stageAnswers, documents, actions, weaknesses, stakeholders, themes, deliverables, strategies, validations, interactions, narratives] = await Promise.all([
+    query(
+      `SELECT a.opportunity_id, a.question_id, a.sales_stage_id, q.code, q.prompt,
+              a.answer_value, a.answered_at, q.is_required
+       FROM opportunity_stage_question_answers a
+       INNER JOIN opportunity_stage_questions q ON q.id = a.question_id
+       WHERE a.opportunity_id IN (${placeholders})
+         AND a.id = (SELECT a2.id FROM opportunity_stage_question_answers a2
+                     WHERE a2.opportunity_id = a.opportunity_id
+                       AND a2.question_id = a.question_id
+                     ORDER BY a2.id DESC LIMIT 1)
+       ORDER BY a.opportunity_id, a.sales_stage_id, q.display_order`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT odl.opportunity_id, d.public_id, d.original_file_name,
+              dc.content_summary, dc.transcript_text, dc.normalized_text,
+              dc.raw_text, da.stage_suggestions_json, da.entities_json,
+              da.evidence_json
+       FROM opportunity_document_links odl
+       INNER JOIN documents d ON d.id = odl.document_id AND d.is_deleted = 0
+       LEFT JOIN document_contents dc ON dc.document_id = d.id
+       LEFT JOIN document_analyses da ON da.id = (SELECT da2.id FROM document_analyses da2
+         WHERE da2.document_id = d.id AND da2.analysis_scope = 'opportunity_draft'
+         ORDER BY da2.id DESC LIMIT 1)
+       WHERE odl.opportunity_id IN (${placeholders})
+       ORDER BY odl.opportunity_id, d.created_at DESC`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, id, title, action_type, status, priority,
+              due_date, scheduled_at, success_criteria, notes,
+              linked_theme_code, is_primary_next_step, updated_at
+       FROM opportunity_workspace_actions
+       WHERE opportunity_id IN (${placeholders})
+       ORDER BY opportunity_id, due_date IS NULL, due_date, updated_at DESC`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, title, category, severity, status, detail,
+              mitigation_plan, due_date, updated_at
+       FROM opportunity_workspace_weaknesses
+       WHERE opportunity_id IN (${placeholders})
+       ORDER BY opportunity_id, FIELD(severity, 'high', 'medium', 'low'), updated_at DESC`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, name, role_code, role_label, influence_level,
+              support_level, status, priorities, concerns, next_action,
+              last_contact_at, updated_at
+       FROM opportunity_workspace_stakeholders
+       WHERE opportunity_id IN (${placeholders})
+       ORDER BY opportunity_id, updated_at DESC`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, theme_code, claim, status, confidence,
+              source_type, evidence_excerpt, updated_at
+       FROM opportunity_workspace_theme_entries
+       WHERE opportunity_id IN (${placeholders})
+       ORDER BY opportunity_id, updated_at DESC`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, deliverable_type, title, audience, status,
+              version_label, sent_at, outcome_summary, updated_at
+       FROM opportunity_workspace_deliverables
+       WHERE opportunity_id IN (${placeholders})
+       ORDER BY opportunity_id, updated_at DESC`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, heading, route, final_objective, steps_json,
+              derived_from_stage_code, updated_at
+       FROM opportunity_workspace_recommended_strategy
+       WHERE opportunity_id IN (${placeholders})`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, criterion_code, sales_stage_id, status, score,
+              confidence, summary, evidence_count, updated_at
+       FROM opportunity_workspace_criterion_assessments
+       WHERE opportunity_id IN (${placeholders})`, ids,
+    ).catch(() => []),
+    query(
+      `SELECT COALESCE(i.primary_opportunity_id, iol.opportunity_id) AS opportunity_id,
+              i.id, i.title,
+              i.summary, i.source_notes, i.topics_json, i.actions_taken_json,
+              i.next_steps_json, i.analysis_status, i.analyzed_at,
+              i.created_at, i.updated_at
+       FROM interactions i
+       LEFT JOIN interaction_opportunity_links iol
+         ON iol.interaction_id = i.id
+        AND iol.opportunity_id IN (${placeholders})
+       WHERE i.primary_opportunity_id IN (${placeholders})
+          OR iol.opportunity_id IS NOT NULL
+      ORDER BY i.created_at DESC`, [...ids, ...ids],
+    ).catch(() => []),
+    query(
+      `SELECT opportunity_id, status, result_json, fallback_json,
+              created_at, finished_at
+       FROM commercial_opportunity_narrative_jobs
+       WHERE opportunity_id IN (${placeholders})
+       ORDER BY opportunity_id, created_at DESC`, ids,
+    ).catch(() => []),
+  ]);
+
+  const groupByOpportunity = (rows) => rows.reduce((groups, row) => {
+    const id = Number(row.opportunity_id);
+    const list = groups.get(id) || [];
+    list.push(row);
+    groups.set(id, list);
+    return groups;
+  }, new Map());
+  const grouped = {
+    stageAnswers: groupByOpportunity(stageAnswers),
+    documents: groupByOpportunity(documents),
+    actions: groupByOpportunity(actions),
+    weaknesses: groupByOpportunity(weaknesses),
+    stakeholders: groupByOpportunity(stakeholders),
+    themes: groupByOpportunity(themes),
+    deliverables: groupByOpportunity(deliverables),
+    strategies: groupByOpportunity(strategies),
+    validations: groupByOpportunity(validations),
+    interactions: groupByOpportunity(interactions),
+    narratives: groupByOpportunity(narratives),
+  };
+
+  return {
+    ...baseContext,
+    enriched: true,
+    source: "mi_agent",
+    workboard: opportunities.map((item) => {
+      const id = Number(item.id);
+      const strategy = grouped.strategies.get(id)?.[0] || null;
+      const narrativeRow = grouped.narratives.get(id)?.[0] || null;
+      const parseJson = (value) => {
+        if (!value) return null;
+        if (typeof value === "object") return value;
+        try {
+          return JSON.parse(value);
+        } catch {
+          return null;
+        }
+      };
+      const narrative =
+        parseJson(narrativeRow?.result_json) ||
+        parseJson(narrativeRow?.fallback_json) ||
+        null;
+      let strategySteps = [];
+      try {
+        strategySteps = strategy?.steps_json ? JSON.parse(strategy.steps_json) : [];
+      } catch {
+        strategySteps = [];
+      }
+      return {
+        ...item,
+        stageAnswers: (grouped.stageAnswers.get(id) || []).map((row) => ({
+          questionId: Number(row.question_id), stageId: Number(row.sales_stage_id), code: row.code || "",
+          prompt: clip(row.prompt, 500), answer: clip(row.answer_value, 2200),
+          required: Boolean(row.is_required), answeredAt: row.answered_at || null,
+        })),
+        documents: (grouped.documents.get(id) || []).slice(0, 4).map((row) => ({
+          publicId: row.public_id, fileName: row.original_file_name || "",
+          summary: clip(row.content_summary, 1200),
+          text: clip(row.normalized_text || row.transcript_text || row.raw_text, 1400),
+          analysis: clip(
+            [row.stage_suggestions_json, row.entities_json, row.evidence_json]
+              .filter(Boolean)
+              .join(" "),
+            1800,
+          ),
+        })),
+        activities: (grouped.interactions.get(id) || []).slice(0, 6).map((row) => ({
+          id: Number(row.id), title: row.title || "", summary: clip(row.summary, 900),
+          notes: clip(row.source_notes, 600), topics: clip(row.topics_json, 400),
+          actionsTaken: clip(row.actions_taken_json, 500), nextSteps: clip(row.next_steps_json, 500),
+          status: row.analysis_status || "", occurredAt: row.analyzed_at || row.created_at || null,
+        })),
+        workspace: {
+          developmentNarrative: narrative
+            ? {
+                jobStatus: narrativeRow?.status || "",
+                source: narrative?.aiNarrativeSource ||
+                  (narrativeRow?.result_json ? "openai" : "fallback"),
+                generatedAt:
+                  narrative?.aiNarrativeGeneratedAt ||
+                  narrativeRow?.finished_at ||
+                  narrativeRow?.created_at ||
+                  null,
+                statusSummary: clip(narrative?.aiStatusSummary, 1800),
+                nextStepRecommendation: clip(
+                  narrative?.aiNextStepRecommendation,
+                  1800,
+                ),
+                contract: narrative?.aiContract
+                  ? {
+                      descriptionSituationText: clip(
+                        narrative.aiContract.descriptionSituationText,
+                        1600,
+                      ),
+                      salesStrategyText: clip(
+                        narrative.aiContract.salesStrategyText,
+                        1600,
+                      ),
+                      nextBestStepText: clip(
+                        narrative.aiContract.nextBestStepText,
+                        1600,
+                      ),
+                      alternativeStepText: clip(
+                        narrative.aiContract.alternativeStepText,
+                        1600,
+                      ),
+                    }
+                  : null,
+              }
+            : null,
+          actions: (grouped.actions.get(id) || []).slice(0, 10).map((row) => ({
+            id: Number(row.id), title: row.title || "", type: row.action_type || "",
+            status: row.status || "", priority: row.priority || "", dueDate: row.due_date || null,
+            scheduledAt: row.scheduled_at || null, successCriteria: clip(row.success_criteria, 900),
+            notes: clip(row.notes, 900), theme: row.linked_theme_code || null,
+            primary: Boolean(row.is_primary_next_step),
+          })),
+          weaknesses: (grouped.weaknesses.get(id) || []).slice(0, 8).map((row) => ({
+            title: row.title || "", category: row.category || "", severity: row.severity || "",
+            status: row.status || "", detail: clip(row.detail, 1000), mitigation: clip(row.mitigation_plan, 1000),
+            dueDate: row.due_date || null,
+          })),
+          stakeholders: (grouped.stakeholders.get(id) || []).slice(0, 8).map((row) => ({
+            name: row.name || "", role: row.role_label || row.role_code || "",
+            influence: row.influence_level || "", support: row.support_level || "",
+            status: row.status || "", priorities: clip(row.priorities, 800),
+            concerns: clip(row.concerns, 800), nextAction: clip(row.next_action, 800),
+          })),
+          themes: (grouped.themes.get(id) || []).slice(0, 10).map((row) => ({
+            theme: row.theme_code || "", claim: clip(row.claim, 1000), status: row.status || "",
+            confidence: row.confidence || "", evidence: clip(row.evidence_excerpt, 1200),
+          })),
+          deliverables: (grouped.deliverables.get(id) || []).slice(0, 6).map((row) => ({
+            type: row.deliverable_type || "", title: row.title || "", audience: row.audience || "",
+            status: row.status || "", sentAt: row.sent_at || null, outcome: clip(row.outcome_summary, 1000),
+          })),
+          strategy: strategy ? { heading: clip(strategy.heading, 1200), route: clip(strategy.route, 800),
+            finalObjective: clip(strategy.final_objective, 1000), steps: strategySteps.slice(0, 8) } : null,
+          criteria: (grouped.validations.get(id) || []).map((row) => ({
+            code: row.criterion_code || "", stageId: Number(row.sales_stage_id || 0),
+            status: row.status || "", score: Number(row.score || 0), confidence: row.confidence || "",
+            summary: clip(row.summary, 1000), evidenceCount: Number(row.evidence_count || 0),
+          })),
+        },
+      };
+    }),
+  };
+}
+
+function extractOutputText(payload) {
+  const direct = String(payload?.output_text || "").trim();
+  if (direct) return direct;
+
+  return (
+    (Array.isArray(payload?.output) ? payload.output : [])
+      .flatMap((entry) => (Array.isArray(entry?.content) ? entry.content : []))
+      .filter((part) => part?.type === "output_text")
+      .map((part) => String(part?.text || "").trim())
+      .find(Boolean) || ""
+  );
+}
+
+function parseJson(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return null;
+  try {
+    return JSON.parse(normalized);
+  } catch {
+    const start = normalized.indexOf("{");
+    const end = normalized.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(normalized.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+const COACH_INTENTS = new Set([
+  "seller_status",
+  "today_priorities",
+  "at_risk_opportunities",
+  "neglected_accounts",
+  "pipeline_coverage",
+  "opportunity_preparation",
+  "freeform",
+]);
+
+export function normalizeCoachResult(result, snapshot, question = "", selectedContext = {}) {
+  const source = result && typeof result === "object" ? result : {};
+  const opportunities = [
+    ...(Array.isArray(snapshot?.pipeline?.opportunities)
+      ? snapshot.pipeline.opportunities
+      : []),
+    ...(Array.isArray(snapshot?.workboard) ? snapshot.workboard : []),
+  ];
+  const opportunityIds = new Set(
+    opportunities.map((item) => Number(item?.id)).filter((id) => id > 0),
+  );
+  const accountIds = new Set(
+    opportunities.map((item) => Number(item?.account?.id)).filter((id) => id > 0),
+  );
+  const contactIds = new Set(
+    opportunities.map((item) => Number(item?.contact?.id)).filter((id) => id > 0),
+  );
+  const leads = Array.isArray(snapshot?.leads) ? snapshot.leads : [];
+  const leadIds = new Set(leads.map((item) => Number(item?.id)).filter((id) => id > 0));
+  const contactMappings = Array.isArray(snapshot?.contactMappings)
+    ? snapshot.contactMappings
+    : [];
+  const stageAnswers = opportunities.flatMap((item) =>
+    (Array.isArray(item?.stageAnswers) ? item.stageAnswers : []).map((answer) => ({
+      ...answer,
+      opportunityId: Number(item.id),
+    })),
+  );
+  const activityIdsByOpportunity = new Map(
+    opportunities.map((item) => [
+      Number(item.id),
+      new Set(
+        (Array.isArray(item?.workspace?.actions) ? item.workspace.actions : [])
+          .map((action) => Number(action?.id || 0))
+          .filter((id) => id > 0),
+      ),
+    ]),
+  );
+  contactMappings.forEach((contact) => {
+    const contactId = Number(contact?.id || 0);
+    const accountId = Number(contact?.accountId || 0);
+    if (contactId > 0) contactIds.add(contactId);
+    if (accountId > 0) accountIds.add(accountId);
+  });
+  leads.forEach((lead) => {
+    const accountId = Number(lead?.accountId || 0);
+    if (accountId > 0) accountIds.add(accountId);
+  });
+  const rawAction = source.action && typeof source.action === "object"
+    ? source.action
+    : null;
+  const actionOpportunityId = Number(rawAction?.opportunityId || 0);
+  const entities = source.entities && typeof source.entities === "object"
+    ? source.entities
+    : {};
+  let operations = (Array.isArray(source.operations) ? source.operations : [])
+    .map((operation) => {
+      if (!operation || typeof operation !== "object") return null;
+      const opportunityId = Number(operation.opportunityId || 0);
+      const accountId = Number(operation.accountId || 0);
+      const contactId = Number(operation.contactId || 0);
+      const kind = String(operation.kind || "").trim();
+      if (["create_account", "create_contact", "create_opportunity", "lead_resolve"].includes(kind)) {
+        const payload = operation.payload && typeof operation.payload === "object"
+          ? operation.payload
+          : null;
+        const entityId = Number(operation.interactionId || operation.accountId || operation.contactId || 0);
+        if (!payload || (kind !== "create_account" && entityId <= 0)) return null;
+        if (kind === "lead_resolve" && !leadIds.has(Number(operation.interactionId))) return null;
+        const payloadAccountId = Number(payload.accountId || payload.accountResolution?.accountId || 0);
+        const payloadContactId = Number(payload.contactId || 0);
+        if (payloadAccountId && !accountIds.has(payloadAccountId)) return null;
+        if (payloadContactId && !contactIds.has(payloadContactId)) return null;
+        return {
+          ...operation,
+          kind,
+          entityType: kind === "create_account" ? "account" : kind === "create_contact" ? "contact" : kind === "create_opportunity" ? "opportunity" : "lead",
+          payload,
+          title: String(operation.title || (kind === "lead_resolve" ? "Resolver lead" : kind === "create_account" ? "Crear cuenta" : kind === "create_contact" ? "Crear contacto" : "Crear oportunidad")).trim(),
+          source: { type: kind === "lead_resolve" ? "lead" : kind.replace("create_", ""), id: entityId || null },
+        };
+      }
+      if (kind === "account_field" && accountId > 0) {
+        if (!accountIds.has(accountId)) return null;
+        return { kind, entityType: "account", accountId, field: String(operation.field || "").trim(), value: String(operation.value ?? "").trim(), title: String(operation.title || "Actualizar cuenta").trim(), source: { type: "account", id: accountId } };
+      }
+      if (kind === "contact_field" && contactId > 0) {
+        if (!contactIds.has(contactId)) return null;
+        return { kind, entityType: "contact", contactId, field: String(operation.field || "").trim(), value: String(operation.value ?? "").trim(), title: String(operation.title || "Actualizar contacto").trim(), source: { type: "contact", id: contactId } };
+      }
+      if (kind === "lead_call_outcome" && Number(operation.interactionId || 0) > 0) {
+        if (!leadIds.has(Number(operation.interactionId))) return null;
+        const substatusCode = String(operation.substatusCode || "").trim();
+        const reasonCode = String(operation.reasonCode || "").trim();
+        const requiredActionCode = String(operation.requiredActionCode || "").trim();
+        if (!substatusCode || !reasonCode || !requiredActionCode) return null;
+        return {
+          kind,
+          interactionId: Number(operation.interactionId),
+          substatusCode,
+          reasonCode,
+          requiredActionCode,
+          comment: String(operation.comment || "").trim(),
+          nextActionDueAt: String(operation.nextActionDueAt || "").trim() || null,
+          title: String(operation.title || "Registrar resultado del lead").trim(),
+          source: { type: "lead", id: Number(operation.interactionId) },
+          entityType: "lead",
+        };
+      }
+      if (kind === "activity" && opportunityIds.has(opportunityId)) {
+        const activityId = Number(operation.activityId || 0) || null;
+        if (activityId && !activityIdsByOpportunity.get(opportunityId)?.has(activityId)) return null;
+        return {
+          kind,
+          entityType: "opportunity_activity",
+          opportunityId,
+          actionType: String(operation.actionType || "meeting").trim() || "meeting",
+          title: String(operation.title || "Actividad comercial").trim(),
+          status: ["pending", "in_progress", "blocked", "done"].includes(String(operation.status || "").trim()) ? String(operation.status).trim() : "pending",
+          priority: ["low", "medium", "high"].includes(String(operation.priority || "").trim()) ? String(operation.priority).trim() : "medium",
+          scheduledAt: String(operation.scheduledAt || "").trim() || null,
+          dueDate: String(operation.dueDate || "").trim() || null,
+          notes: String(operation.notes || "").trim(),
+          successCriteria: String(operation.successCriteria || "").trim(),
+          activityId,
+          source: { type: "opportunity", id: opportunityId },
+        };
+      }
+      if (!opportunityIds.has(opportunityId)) return null;
+      if (kind === "stage_answer") {
+        const questionId = Number(operation.questionId || 0);
+        const answerValue = String(operation.answerValue || "").trim();
+        if (!questionId || !answerValue) return null;
+        return {
+          kind,
+          opportunityId,
+          questionId,
+          answerValue,
+          answerMode: operation.answerMode === "append" ? "append" : "replace",
+          title: String(operation.title || "Actualizar respuesta de etapa").trim(),
+          source: { type: "opportunity", id: opportunityId },
+          entityType: "stage_answer",
+          previousAnswer: stageAnswers.find((answer) => Number(answer.opportunityId) === opportunityId && Number(answer.questionId) === questionId)?.answer || "",
+        };
+      }
+      if (["opportunity_field", "account_field", "contact_field"].includes(kind)) {
+        const field = String(operation.field || "").trim();
+        const allowedFields = kind === "opportunity_field"
+          ? ["name", "amountUsd", "closeDate"]
+          : kind === "account_field"
+            ? ["name", "phone", "website", "city", "stateRegion", "companyDescription"]
+            : ["firstName", "lastName", "email", "mobile", "phone", "positionTitle", "department", "city", "stateRegion"];
+        if (!allowedFields.includes(field)) return null;
+        return {
+          kind,
+          opportunityId,
+          field,
+          value: String(operation.value ?? "").trim(),
+          title: String(operation.title || "Actualizar oportunidad").trim(),
+          source: { type: kind === "account_field" ? "account" : kind === "contact_field" ? "contact" : "opportunity", id: kind === "account_field" ? accountId : kind === "contact_field" ? contactId : opportunityId },
+          entityType: kind === "opportunity_field" ? "opportunity" : kind.replace("_field", ""),
+        };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+  const normalizedQuestion = String(question || "").trim();
+  let inferredStageAnswer = false;
+  const asksForActivity = /\b(agend|registr|crea|program).*(reuni[oó]n|llamada|actividad|seguimiento|demostraci[oó]n|visita)|\b(actividad|llamada|reuni[oó]n|demostraci[oó]n|visita)\b.*\b(agend|registr|crea|program)/i.test(normalizedQuestion);
+  const requestsStageAnswer = /\b(actualiza|actualizar|registra|registrar|guarda|guardar|modifica|modificar|captura|capturar|anota|anotar)\b/i.test(normalizedQuestion) ||
+    /\b(motivaci[oó]n|motivo|necesidad|problema|prioridad)\b.*\bes\b/i.test(normalizedQuestion);
+  if (!operations.length && !asksForActivity && requestsStageAnswer) {
+    const selectedOpportunityId = Number(selectedContext?.opportunityId || 0);
+    const stageAnswerCandidate = stageAnswers.find((answer) =>
+      (!selectedOpportunityId || Number(answer.opportunityId) === selectedOpportunityId) &&
+      /motiv|motivo|neces|problema|priorid/i.test(`${answer.code} ${answer.prompt}`),
+    );
+    const opportunityId = selectedOpportunityId || Number(stageAnswerCandidate?.opportunityId || 0);
+    if (stageAnswerCandidate && opportunityId) {
+      const answerValue = normalizedQuestion
+        .replace(/^\s*(actualiza|actualizar|registra|registrar|guarda|guardar|modifica|modificar|captura|capturar|anota|anotar)\b[^:]*?(?:indicando que|con el texto|que)\s*/i, "")
+        .replace(/^\s*una de las respuestas\s*(?:indicando que|con el texto|que)\s*/i, "")
+        .trim();
+      if (answerValue) {
+        operations = [{
+          kind: "stage_answer",
+          opportunityId,
+          questionId: Number(stageAnswerCandidate.questionId),
+          answerValue,
+          answerMode: "replace",
+          title: `Registrar respuesta: ${stageAnswerCandidate.prompt}`,
+          source: { type: "opportunity", id: opportunityId },
+          entityType: "stage_answer",
+          previousAnswer: stageAnswerCandidate.answer || "",
+        }];
+        inferredStageAnswer = true;
+      }
+    }
+  }
+  const requestsActivity = /\b(agend|registr|crea|program).*(reuni[oó]n|llamada|actividad)|reuni[oó]n.*(jueves|viernes|lunes|martes|mi[eé]rcoles|s[aá]bado|domingo)/i.test(normalizedQuestion);
+  const clarification = !operations.length && !rawAction?.opportunityId && requestsActivity
+    ? {
+        type: "select_opportunity",
+        message: "Para registrar la reunión necesito asociarla a una oportunidad.",
+        missing: ["Oportunidad", "Fecha completa"],
+        candidates: opportunities.slice(0, 8).map((item) => ({
+          id: Number(item.id),
+          name: item.name || "Oportunidad sin nombre",
+          accountName: item.accountName || item.account?.name || "Sin cuenta",
+        })),
+        activity: {
+          actionType: /llamada/i.test(normalizedQuestion) ? "call" : "meeting",
+          title: /compras/i.test(normalizedQuestion) ? "Reunión con Compras" : "Reunión comercial",
+          rawRequest: normalizedQuestion,
+        },
+      }
+    : null;
+
+  return {
+    intent: COACH_INTENTS.has(String(source.intent || "").trim())
+      ? String(source.intent).trim()
+      : "freeform",
+    responseType: ["informational", "recommendation", "change_request"].includes(
+      String(source.responseType || "").trim(),
+    )
+      ? inferredStageAnswer ? "change_request" : String(source.responseType).trim()
+      : rawAction
+        ? "recommendation"
+        : "informational",
+    answer:
+      String(source.answer || "").trim() ||
+      "No encontré una respuesta suficiente en el contexto disponible.",
+    evidence: (Array.isArray(source.evidence) ? source.evidence : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 8),
+    recommendation: String(source.recommendation || "").trim(),
+    operations,
+    clarification,
+    confidence: ["high", "medium", "low"].includes(
+      String(source.confidence || "").trim(),
+    )
+      ? String(source.confidence).trim()
+      : "medium",
+    entities: {
+      opportunityId: opportunityIds.has(actionOpportunityId)
+        ? actionOpportunityId
+        : null,
+      accountId: accountIds.has(Number(entities.accountId || 0))
+        ? Number(entities.accountId)
+        : null,
+      contactId: contactIds.has(Number(entities.contactId || 0))
+        ? Number(entities.contactId)
+        : null,
+      leadId: null,
+      names: (Array.isArray(entities.names) ? entities.names : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean)
+        .slice(0, 8),
+    },
+    action: rawAction
+      ? {
+          title: String(rawAction.title || "").trim(),
+          opportunityId: opportunityIds.has(actionOpportunityId)
+            ? actionOpportunityId
+            : null,
+          actionType: String(rawAction.actionType || "other").trim() || "other",
+          status: ["pending", "in_progress", "blocked", "done"].includes(
+            String(rawAction.status || "").trim(),
+          )
+            ? String(rawAction.status).trim()
+            : "pending",
+          priority: ["low", "medium", "high"].includes(
+            String(rawAction.priority || "").trim(),
+          )
+            ? String(rawAction.priority).trim()
+            : "medium",
+          suggestedDueDate: String(rawAction.suggestedDueDate || "").trim() || null,
+          scheduledAt: String(rawAction.scheduledAt || "").trim() || null,
+          notes: String(rawAction.notes || "").trim(),
+          successCriteria: String(rawAction.successCriteria || "").trim(),
+        }
+      : null,
+  };
+}
+
+function normalizeAnalysis(payload, snapshot, developmentPlan = null) {
+  const analysis = payload && typeof payload === "object" ? payload : {};
+  const actions = Array.isArray(analysis.actions) ? analysis.actions : [];
+  const opportunities = Array.isArray(snapshot?.pipeline?.opportunities)
+    ? snapshot.pipeline.opportunities
+    : Array.isArray(snapshot?.workboard)
+      ? snapshot.workboard
+      : [];
+  const opportunityById = new Map(
+    opportunities.map((opportunity) => [Number(opportunity.id), opportunity]),
+  );
+  const planByOpportunityId = new Map(
+    (Array.isArray(developmentPlan?.opportunities)
+      ? developmentPlan.opportunities
+      : []
+    ).map((item) => [Number(item?.opportunityId || 0), item]),
+  );
+  const alerts = buildSalesAlerts(snapshot, developmentPlan);
+  const activityProgress = buildActivityProgress(snapshot, developmentPlan);
+  return {
+    headline: String(analysis.headline || "").trim(),
+    summary: String(analysis.summary || "").trim(),
+    quotaReadout: String(analysis.quotaReadout || "").trim(),
+    alerts,
+    activityProgress,
+    actions: actions.slice(0, 5).map((action, index) => ({
+      rank: index + 1,
+      title: String(action?.title || "").trim(),
+      opportunityId: Number(action?.opportunityId || 0) || null,
+      opportunityName:
+        String(action?.opportunityName || "").trim() ||
+        String(
+          opportunityById.get(Number(action?.opportunityId || 0))?.name ||
+            "",
+        ).trim(),
+      accountName:
+        String(action?.accountName || "").trim() ||
+        String(
+          opportunityById.get(Number(action?.opportunityId || 0))?.accountName ||
+            "",
+        ).trim(),
+      developmentNarrative:
+        opportunityById.get(Number(action?.opportunityId || 0))?.workspace
+          ?.developmentNarrative || null,
+      alignedContext: {
+        situation:
+          String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))?.situation ||
+              action?.situation ||
+              "",
+          ).trim(),
+        strategy:
+          String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))?.strategy ||
+              action?.strategy ||
+              "",
+          ).trim(),
+        nextBestStep:
+          String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))?.nextBestStep ||
+              action?.nextBestStep ||
+              "",
+          ).trim(),
+        alternativeStep:
+          String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))?.alternativeStep ||
+              action?.alternativeStep ||
+              "",
+          ).trim(),
+        alignment: ["aligned", "partially_aligned", "not_aligned"].includes(
+          String(action?.alignment || "").trim(),
+        )
+          ? String(action.alignment).trim()
+          : "partially_aligned",
+      },
+      salesHealth:
+        planByOpportunityId.get(Number(action?.opportunityId || 0))?.health ||
+        null,
+      priority: ["critical", "high", "medium", "low"].includes(
+        String(action?.priority || "").trim(),
+      )
+        ? String(action.priority).trim()
+        : "medium",
+      stageName: String(action?.stageName || "").trim(),
+      reason: String(action?.reason || "").trim(),
+      risk: String(action?.risk || "").trim(),
+      expectedOutcome: String(action?.expectedOutcome || "").trim(),
+      successCriteria: String(action?.successCriteria || "").trim(),
+      actionType: String(action?.actionType || "follow_up").trim(),
+      executionKit: {
+        objective: String(action?.objective || "").trim(),
+        knownInformation: Array.isArray(action?.knownInformation)
+          ? action.knownInformation.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 8)
+          : [],
+        objections: Array.isArray(action?.objections)
+          ? action.objections.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 5)
+          : [],
+        valueProposition: String(action?.valueProposition || "").trim(),
+        followUpMessage: String(action?.followUpMessage || "").trim(),
+        minimumOutcome: String(action?.minimumOutcome || "").trim(),
+      },
+      suggestedDueDate: String(action?.suggestedDueDate || "").trim() || null,
+      questions: Array.isArray(action?.questions)
+        ? action.questions.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 5)
+        : [],
+    })),
+    risks: Array.isArray(analysis.risks)
+      ? analysis.risks.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 6)
+      : [],
+    meta: {
+      generatedAt: new Date().toISOString(),
+      provider: "openai",
+      model: String(config.openai.model || "").trim(),
+    },
+  };
+}
+
+function buildActivityProgress(snapshot, developmentPlan) {
+  const opportunities = Array.isArray(snapshot?.workboard) ? snapshot.workboard : [];
+  const periodEnd = new Date();
+  const periodStart = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const plans = new Map(
+    (Array.isArray(developmentPlan?.opportunities) ? developmentPlan.opportunities : [])
+      .map((item) => [Number(item.opportunityId), item]),
+  );
+  const details = opportunities.map((opportunity) => {
+    const plan = plans.get(Number(opportunity.id));
+    const health = plan?.health;
+    const recentActivities = (opportunity.activities || []).filter((activity) => {
+      const date = new Date(activity.occurredAt || activity.createdAt || 0);
+      return date >= periodStart && date <= periodEnd;
+    });
+    const recentProgress = (opportunity.stageAnswers || []).some((answer) => {
+      const date = new Date(answer.answeredAt || 0);
+      return date >= periodStart && date <= periodEnd && String(answer.answer || "").trim();
+    });
+    const activityCount = recentActivities.length;
+    const actionCount = (opportunity.workspace?.actions || []).length;
+    const solidDimensions = Number(health?.solidCount || 0);
+    return {
+      opportunityId: Number(opportunity.id),
+      opportunityName: opportunity.name || "",
+      accountName: opportunity.accountName || opportunity.account?.name || "",
+      activityCount,
+      actionCount,
+      solidDimensions,
+      totalDimensions: Number(health?.totalCount || 8),
+      progressed: recentProgress,
+      activityWithoutProgress: activityCount > 0 && !recentProgress,
+    };
+  });
+  const activityCount = details.reduce((sum, item) => sum + item.activityCount, 0);
+  const progressedOpportunities = details.filter((item) => item.progressed).length;
+  const opportunitiesWithActivity = details.filter((item) => item.activityCount > 0).length;
+  const opportunitiesWithoutProgress = details.filter((item) => item.activityWithoutProgress).length;
+  const message = activityCount > 0 && opportunitiesWithoutProgress > 0
+    ? `Has tenido ${activityCount} actividades en los últimos 7 días, pero ninguna ha cambiado el estado de ${opportunitiesWithoutProgress} de tus oportunidades.`
+    : progressedOpportunities > 0
+      ? `Tus actividades recientes han producido avance comercial en ${progressedOpportunities} oportunidades.`
+      : "No hay suficiente actividad reciente para medir avance comercial.";
+  return {
+    periodLabel: "Últimos 7 días",
+    message,
+    activityCount,
+    progressedOpportunities,
+    opportunitiesWithActivity,
+    opportunitiesWithoutProgress,
+    efficiencyPercent: activityCount ? Math.round((details.filter((item) => item.progressed).reduce((sum, item) => sum + item.solidDimensions, 0) / activityCount) * 100) : 0,
+    details: details.filter((item) => item.activityCount > 0).slice(0, 12),
+  };
+}
+
+function buildSalesAlerts(snapshot, developmentPlan) {
+  const opportunities = Array.isArray(snapshot?.workboard) ? snapshot.workboard : [];
+  const plans = new Map(
+    (Array.isArray(developmentPlan?.opportunities) ? developmentPlan.opportunities : [])
+      .map((item) => [Number(item.opportunityId), item]),
+  );
+  const alerts = [];
+  const add = ({ code, title, severity, opportunity, evidence, impact, action }) => {
+    alerts.push({
+      code,
+      title,
+      severity,
+      opportunityId: opportunity ? Number(opportunity.id) : null,
+      opportunityName: opportunity?.name || null,
+      accountName: opportunity?.accountName || opportunity?.account?.name || null,
+      amountUsd: opportunity ? Number(opportunity.amountUsd || 0) : null,
+      evidence,
+      impact,
+      action,
+    });
+  };
+  const totalPipeline = opportunities.reduce((sum, item) => sum + Number(item.amountUsd || 0), 0);
+  const byAccount = opportunities.reduce((groups, item) => {
+    const key = item.accountName || item.account?.name || "Cuenta sin nombre";
+    groups.set(key, (groups.get(key) || 0) + Number(item.amountUsd || 0));
+    return groups;
+  }, new Map());
+  const largestAccount = [...byAccount.entries()].sort((left, right) => right[1] - left[1])[0];
+
+  opportunities.forEach((opportunity) => {
+    const plan = plans.get(Number(opportunity.id));
+    const health = plan?.health;
+    const activityCount = (opportunity.activities || []).length;
+    const decider = health?.dimensions?.find((dimension) => dimension.key === "decider");
+    const days = Number(opportunity.daysSinceActivity || 0);
+    if (days > 14) {
+      add({ code: "stale_opportunity", title: "Oportunidad estancada", severity: days > 21 ? "critical" : "high", opportunity, evidence: `${days} días sin actividad registrada.`, impact: "La oportunidad puede perder tracción y prioridad.", action: "Reactivar la conversación con un objetivo y una fecha concreta." });
+    }
+    if (!opportunity.nextStep?.title && !opportunity.nextPendingAction) {
+      add({ code: "missing_next_activity", title: "Sin próxima actividad", severity: "high", opportunity, evidence: "No existe un siguiente paso pendiente o programado.", impact: "La oportunidad no tiene un movimiento comercial verificable.", action: "Definir y registrar el siguiente compromiso del cliente." });
+    }
+    if (decider?.state === "unknown") {
+      add({ code: "missing_decision_maker", title: "Oportunidad sin decisor", severity: Number(opportunity.amountUsd || 0) >= 100000 ? "critical" : "high", opportunity, evidence: "No hay decisor económico o aprobador identificado.", impact: "Puedes invertir recursos sin acceso a la decisión final.", action: "Identificar comprador económico, aprobadores y posibles vetos." });
+    }
+    if (opportunity.stageCode === "cotizacion" && days > 7 && !opportunity.nextStep?.title) {
+      add({ code: "proposal_without_follow_up", title: "Propuesta sin seguimiento", severity: "high", opportunity, evidence: `Está en Cotización y lleva ${days} días sin siguiente actividad.`, impact: "La propuesta puede quedar sin respuesta o perder frente a competidores.", action: "Solicitar feedback y confirmar fecha de decisión." });
+    }
+    if (activityCount >= 2 && Number(health?.solidCount || 0) === 0) {
+      add({ code: "activity_without_progress", title: "Actividad sin avance", severity: "high", opportunity, evidence: `Tiene ${activityCount} actividades registradas, pero ninguna dimensión comercial está confirmada.`, impact: "El esfuerzo comercial no está generando evidencia nueva para mover la oportunidad.", action: "Orientar la próxima interacción a obtener un dato concreto: decisor, presupuesto, fecha o siguiente compromiso." });
+    }
+    if (opportunity.closeDate && new Date(opportunity.closeDate) < new Date() && opportunity.stageCode !== "waiting") {
+      add({ code: "inconsistent_close_date", title: "Fecha de cierre comprometida", severity: "high", opportunity, evidence: "La fecha objetivo ya pasó y la oportunidad sigue abierta.", impact: "El forecast puede estar inflado o desactualizado.", action: "Confirmar una nueva fecha respaldada por un hito real del cliente." });
+    }
+  });
+  const gap = Number(snapshot?.quota?.gapAmount || 0);
+  if (gap > 0 && totalPipeline < gap) {
+    add({ code: "weak_pipeline", title: "Pipeline débil", severity: "critical", evidence: `El pipeline calificado cubre ${(totalPipeline / gap).toFixed(1)}x la brecha.`, impact: "La cobertura actual no alcanza para cubrir el objetivo.", action: "Generar nuevas oportunidades y fortalecer las existentes." });
+  }
+  if (largestAccount && totalPipeline > 0 && largestAccount[1] / totalPipeline >= 0.5) {
+    add({ code: "excessive_account_dependency", title: "Dependencia excesiva", severity: largestAccount[1] / totalPipeline >= 0.7 ? "critical" : "high", evidence: `${Math.round((largestAccount[1] / totalPipeline) * 100)}% del pipeline depende de ${largestAccount[0]}.`, impact: "El objetivo depende demasiado de una sola cuenta.", action: "Proteger la cuenta y desarrollar pipeline alternativo." });
+  }
+  return alerts
+    .sort((left, right) => ({ critical: 3, high: 2, medium: 1, low: 0 }[right.severity] - ({ critical: 3, high: 2, medium: 1, low: 0 }[left.severity])))
+    .slice(0, 12);
+}
+
+function buildDevelopmentPlanPrompt(snapshot) {
+  const planningSnapshot = {
+    period: snapshot?.period || null,
+    quota: snapshot?.quota || null,
+    pipeline: snapshot?.pipeline || null,
+    workboard: (snapshot?.workboard || []).map((item) => ({
+      id: Number(item.id),
+      name: item.name || "",
+      account: item.account || { name: item.accountName || "" },
+      contact: item.contact || null,
+      amountUsd: Number(item.amountUsd || 0),
+      closeDate: item.closeDate || null,
+      stageCode: item.stageCode || "",
+      stageName: item.stageName || "",
+      riskLevel: item.riskLevel || "low",
+      riskReasons: (item.riskReasons || []).slice(0, 3),
+      stageAnswers: (item.stageAnswers || []).slice(0, 8).map((answer) => ({
+        code: answer.code,
+        answer: clip(answer.answer, 600),
+        required: answer.required,
+      })),
+      documents: (item.documents || []).slice(0, 3).map((document) => ({
+        fileName: document.fileName,
+        summary: clip(document.summary, 500),
+        text: clip(document.text, 700),
+        analysis: clip(document.analysis, 500),
+      })),
+      activities: (item.activities || []).slice(0, 4).map((activity) => ({
+        title: activity.title,
+        summary: clip(activity.summary, 600),
+        nextSteps: clip(activity.nextSteps, 400),
+        occurredAt: activity.occurredAt,
+      })),
+      workspace: {
+        developmentNarrative: item.workspace?.developmentNarrative || null,
+        actions: (item.workspace?.actions || []).slice(0, 6),
+        weaknesses: (item.workspace?.weaknesses || []).slice(0, 5),
+        stakeholders: (item.workspace?.stakeholders || []).slice(0, 5),
+        themes: (item.workspace?.themes || []).slice(0, 6),
+        deliverables: (item.workspace?.deliverables || []).slice(0, 4),
+        strategy: item.workspace?.strategy || null,
+        criteria: (item.workspace?.criteria || []).slice(0, 10),
+      },
+    })),
+  };
+  return {
+    model: config.openai.model,
+    temperature: 0.1,
+    input: [
+      {
+        role: "system",
+        content:
+          "Primero construye el plan comercial de cada oportunidad usando exclusivamente el contexto enriquecido: cuenta, contacto, oportunidad, respuestas y validaciones de etapas, documentos y su analisis, actividades e interacciones, acciones del workspace, debilidades, stakeholders, temas, entregables, estrategia y narrativa previa. No calcules acciones todavia. Para cada oportunidad devuelve, en este orden conceptual: descripcion y situacion actual, estrategia para lograr la venta, siguiente mejor paso y paso alternativo condicionado. Los cuatro bloques deben ser especificos de la oportunidad y sustentados por todas las fuentes. No inventes datos. Devuelve solo JSON valido.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          instructions: {
+            neverInvent: true,
+            language: "es",
+          },
+          expectedJsonShape: {
+            opportunities: [
+              {
+                opportunityId: 0,
+                situation: "",
+                strategy: "",
+                nextBestStep: "",
+                alternativeStep: "",
+              },
+            ],
+          },
+          snapshot: planningSnapshot,
+        }),
+      },
+    ],
+  };
+}
+
+function buildActionPrompt(snapshot, developmentPlan) {
+  const actionSnapshot = {
+    period: snapshot?.period || null,
+    quota: snapshot?.quota || null,
+    pipeline: {
+      qualifiedAmount: snapshot?.pipeline?.qualifiedAmount || 0,
+      qualifiedCount: snapshot?.pipeline?.qualifiedCount || 0,
+      opportunities: (snapshot?.workboard || []).map((item) => ({
+        id: Number(item.id),
+        name: item.name || "",
+        accountName: item.accountName || "",
+        amountUsd: Number(item.amountUsd || 0),
+        closeDate: item.closeDate || null,
+        stageCode: item.stageCode || "",
+        stageName: item.stageName || "",
+        riskLevel: item.riskLevel || "low",
+        riskReasons: item.riskReasons || [],
+      })),
+    },
+    alerts: buildSalesAlerts(snapshot, developmentPlan),
+  };
+  return {
+    model: config.openai.model,
+    temperature: 0.1,
+    input: [
+      {
+        role: "system",
+        content:
+          "Ahora calcula y ordena las acciones recomendadas para el vendedor usando el contexto enriquecido y el plan comercial previamente calculado. Cada accion debe derivarse de una oportunidad concreta y de sus cuatro bloques: situacion actual, estrategia, siguiente mejor paso y paso alternativo. No vuelvas a inventar ni sustituir esos bloques. La accion debe ejecutar el siguiente mejor paso, respetar la estrategia y resolver la situacion actual. Usa el paso alternativo solo como contingencia. Para que el vendedor pueda ejecutarla, incluye tambien un kit practico: tipo de accion, objetivo, informacion conocida del cliente, objeciones probables, propuesta de valor, mensaje de seguimiento, resultado minimo y criterio de exito. Devuelve solo JSON valido.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          instructions: {
+            maxActions: 5,
+            sortByImpactOnQuota: true,
+            preferConcreteNextSteps: true,
+            neverInvent: true,
+            language: "es",
+          },
+          developmentPlan,
+          expectedJsonShape: {
+            headline: "",
+            summary: "",
+            quotaReadout: "",
+            actions: [
+              {
+                title: "",
+                opportunityId: 0,
+                opportunityName: "",
+                accountName: "",
+                priority: "critical|high|medium|low",
+                stageName: "",
+                reason: "",
+                risk: "",
+                expectedOutcome: "",
+                successCriteria: "",
+                actionType: "call|meeting|follow_up|demo|quotation|negotiation|waiting|other",
+                objective: "",
+                knownInformation: [""],
+                objections: [""],
+                valueProposition: "",
+                followUpMessage: "",
+                minimumOutcome: "",
+                alignment: "aligned|partially_aligned|not_aligned",
+                suggestedDueDate: "YYYY-MM-DD|null",
+                questions: [""],
+              },
+            ],
+            risks: [""],
+          },
+          snapshot: actionSnapshot,
+        }),
+      },
+    ],
+  };
+}
+
+function buildLocalDevelopmentPlan(snapshot) {
+  return {
+    opportunities: (snapshot?.workboard || []).map((item) => {
+      const health = buildOpportunityHealth(item);
+      const narrative = item.workspace?.developmentNarrative || {};
+      const contract = narrative.contract || {};
+      const firstWeakness = item.workspace?.weaknesses?.[0];
+      const firstAction = item.workspace?.actions?.[0];
+      const strategy = item.workspace?.strategy;
+      return {
+        opportunityId: Number(item.id),
+        health,
+        situation:
+          contract.descriptionSituationText ||
+          narrative.statusSummary ||
+          firstWeakness?.detail ||
+          `Oportunidad en ${item.stageName || "la etapa actual"} con riesgo ${item.riskLevel || "no determinado"}.`,
+        strategy:
+          contract.salesStrategyText ||
+          strategy?.finalObjective ||
+          strategy?.heading ||
+          "Consolidar la evidencia comercial y mover la oportunidad al siguiente hito verificable.",
+        nextBestStep:
+          contract.nextBestStepText ||
+          narrative.nextStepRecommendation ||
+          firstAction?.title ||
+          item.nextStep?.title ||
+          "Definir y ejecutar el siguiente compromiso comercial con fecha y responsable.",
+        alternativeStep:
+          contract.alternativeStepText ||
+          "Si el siguiente paso no se concreta, activar una vía alternativa con el sponsor o responsable de decisión.",
+      };
+    }),
+  };
+}
+
+function buildOpportunityHealth(item) {
+  const answers = Array.isArray(item.stageAnswers) ? item.stageAnswers : [];
+  const answerText = answers.map((answer) => `${answer.code} ${answer.answer}`).join(" ").toLowerCase();
+  const stakeholders = item.workspace?.stakeholders || [];
+  const themes = item.workspace?.themes || [];
+  const actions = item.workspace?.actions || [];
+  const hasAnswer = (patterns) => answers.some((answer) => patterns.some((pattern) => String(answer.code || "").toLowerCase().includes(pattern) && String(answer.answer || "").trim()));
+  const hasTheme = (code) => themes.some((theme) => String(theme.theme || "").toLowerCase() === code && String(theme.claim || theme.evidence || "").trim());
+  const dimensions = [
+    { key: "need", label: "Necesidad", state: hasAnswer(["need", "interes", "motivacion"]) || hasTheme("need") ? "confirmed" : "unknown", evidence: "Respuestas y temas de necesidad de la oportunidad." },
+    { key: "motivation", label: "Motivación", state: hasAnswer(["motivacion", "objetivo", "urgencia"]) || /necesit|problema|prioridad|urgenc/.test(answerText) ? "high" : "unknown", evidence: "Motivación y objetivos expresados por el cliente." },
+    { key: "budget", label: "Presupuesto", state: hasAnswer(["presupuesto", "budget"]) || hasTheme("budget") ? "partial" : "unknown", evidence: "Respuestas económicas y tema de presupuesto." },
+    { key: "decider", label: "Decisor", state: stakeholders.length && stakeholders.some((stakeholder) => /economic|decisor|compras|finanzas|aprob/i.test(`${stakeholder.roleCode} ${stakeholder.roleLabel}`)) ? "confirmed" : "unknown", evidence: "Stakeholders y roles de decisión registrados." },
+    { key: "date", label: "Fecha", state: item.closeDate || hasAnswer(["fecha", "timeline", "plazo"]) ? "partial" : "unknown", evidence: "Fecha objetivo y respuestas de timeline." },
+    { key: "purchaseProcess", label: "Proceso de compra", state: hasAnswer(["proceso", "purchase", "compra"]) || stakeholders.some((stakeholder) => /compras|aprob|procurement/i.test(`${stakeholder.roleCode} ${stakeholder.roleLabel} ${stakeholder.nextAction}`)) ? "partial" : "unknown", evidence: "Respuestas y mapa de stakeholders." },
+    { key: "competition", label: "Competencia", state: hasAnswer(["competencia", "competitor"]) || hasTheme("competition") ? "confirmed" : "unknown", evidence: "Respuestas y temas competitivos." },
+    { key: "nextActivity", label: "Próxima actividad", state: item.nextStep?.title || item.nextPendingAction || actions.some((action) => ["pending", "in_progress"].includes(action.status)) ? "confirmed" : "unknown", evidence: "Acciones y próximo paso registrados." },
+  ];
+  const stateLabels = { confirmed: "Confirmada", high: "Alta", partial: "Parcial", unknown: "No identificada" };
+  const solidCount = dimensions.filter((dimension) => ["confirmed", "high"].includes(dimension.state)).length;
+  const weakest = dimensions.find((dimension) => dimension.state === "unknown") || dimensions.find((dimension) => dimension.state === "partial") || dimensions[0];
+  return {
+    label: solidCount >= 6 ? "Sólida" : solidCount >= 3 ? "Parcial" : "Débil",
+    solidCount,
+    totalCount: dimensions.length,
+    principalWeakness: weakest?.label || "Sin debilidad identificada",
+    dimensions: dimensions.map((dimension) => ({ ...dimension, stateLabel: stateLabels[dimension.state] || dimension.state })),
+  };
+}
+
+async function requestMiAgentJson({ payload, user, jobId, startedAt, phase }) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${config.openai.baseUrl.replace(/\/$/, "")}/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Mi agente excedio el tiempo en la fase ${phase}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  const responsePayload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error("No fue posible obtener el análisis de Mi agente");
+  await recordAiUsageFromOpenAiResponse({
+    internalRequestId: randomUUID(),
+    userId: Number(user.id),
+    featureCode: FEATURE_CODE,
+    model: String(config.openai.model || "").trim(),
+    openAiResponse: responsePayload,
+    jobType: "mi_agent_analysis",
+    jobId,
+    startedAt,
+  });
+  const parsed = parseJson(extractOutputText(responsePayload));
+  if (!parsed) throw new Error("La respuesta de Mi agente no tuvo un formato válido");
+  return parsed;
+}
+
+function buildCoachPrompt(snapshot, question, processGuide = "", selectedContext = {}) {
+  return {
+    model: config.openai.model,
+    temperature: 0.2,
+    input: [
+      {
+        role: "system",
+        content:
+          "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          question,
+          expectedJsonShape: {
+            intent: "seller_status|today_priorities|at_risk_opportunities|neglected_accounts|pipeline_coverage|opportunity_preparation|freeform",
+            responseType: "informational|recommendation|change_request",
+            answer: "",
+            evidence: [""],
+            recommendation: "",
+            confidence: "high|medium|low",
+            entities: { opportunityId: 0, accountId: 0, contactId: 0, leadId: 0, names: [""] },
+            operations: [{
+              kind: "activity|stage_answer|opportunity_field|account_field|contact_field|lead_call_outcome|create_account|create_contact|create_opportunity|lead_resolve",
+              opportunityId: 0,
+              accountId: 0,
+              contactId: 0,
+              interactionId: 0,
+              questionId: 0,
+              answerValue: "",
+              answerMode: "replace|append",
+              field: "name|amountUsd|closeDate",
+              value: "",
+              substatusCode: "",
+              reasonCode: "",
+              requiredActionCode: "",
+              comment: "",
+              nextActionDueAt: "YYYY-MM-DD|null",
+              actionType: "next_step|follow_up|call|meeting|demo|quotation|negotiation|other",
+              activityId: 0,
+              activitySearch: "",
+              status: "pending|in_progress|blocked|done",
+              priority: "low|medium|high",
+              scheduledAt: "YYYY-MM-DDTHH:mm|null",
+              dueDate: "YYYY-MM-DD|null",
+              notes: "",
+              successCriteria: "",
+              title: "",
+            }],
+            action: {
+              title: "",
+              opportunityId: 0,
+              actionType: "next_step|follow_up|call|meeting|demo|quotation|negotiation|other",
+              status: "pending|in_progress|blocked|done",
+              priority: "low|medium|high",
+              suggestedDueDate: "YYYY-MM-DD|null",
+              scheduledAt: "YYYY-MM-DDTHH:mm|null",
+              notes: "",
+              successCriteria: "",
+            },
+          },
+          processGuide: clip(processGuide, 18000),
+          selectedContext,
+          snapshot,
+        }),
+      },
+    ],
+  };
+}
+
+async function executeCoachJob({ jobId, user, question, selectedContext = {} }) {
+  try {
+    await query(`UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ?`, [jobId]);
+    const snapshot = await getMiAgentEnrichedContext(user, await getMiAgentContext(user));
+    const scopedSnapshot = buildCoachScopedSnapshot(snapshot, selectedContext);
+    const processGuide = await loadProcessGuide();
+    const result = await requestMiAgentJson({
+      payload: buildCoachPrompt(scopedSnapshot, question, processGuide, selectedContext),
+      user,
+      jobId,
+      startedAt: new Date(),
+      phase: "coach",
+    });
+    await query(
+      `UPDATE mi_agent_analysis_jobs SET status = 'completed', result_json = ?, error_message = NULL, updated_at = NOW(3) WHERE id = ?`,
+      [JSON.stringify(normalizeCoachResult(result, snapshot, question, selectedContext)), jobId],
+    );
+  } catch (error) {
+    await query(
+      `UPDATE mi_agent_analysis_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3) WHERE id = ?`,
+      [String(error?.message || "No fue posible responder la pregunta").slice(0, 1000), jobId],
+    ).catch(() => undefined);
+  }
+}
+
+async function executeInteractionJob({
+  jobId,
+  user,
+  opportunityId,
+  note,
+  stageQuestions = [],
+}) {
+  try {
+    await query(`UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ?`, [jobId]);
+    const fullContext = await getMiAgentEnrichedContext(user, await getMiAgentContext(user));
+    let opportunity = fullContext.workboard?.find((item) => Number(item.id) === Number(opportunityId));
+    if (!opportunity) {
+      const params = [Number(opportunityId)];
+      const globalScope = hasMiAgentGlobalScope(user);
+      let scope = "";
+      if (!globalScope) {
+        scope = "LEFT JOIN account_owners ao_scope ON ao_scope.account_id = o.account_id AND ao_scope.user_id = ? AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)";
+        params.push(Number(user.id), Number(user.id), Number(user.id));
+      }
+      const rows = await query(
+        `SELECT o.id, o.name, o.amount_usd, o.close_date, oss.code AS stage_code,
+                oss.name AS stage_name, a.name AS account_name
+         FROM opportunities o
+         ${scope}
+         INNER JOIN accounts a ON a.id = o.account_id
+         INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+         WHERE o.id = ?
+           ${globalScope ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
+         LIMIT 1`,
+        globalScope ? [Number(opportunityId)] : [Number(user.id), Number(user.id), Number(user.id), Number(opportunityId), Number(user.id), Number(user.id)],
+      );
+      const row = rows[0];
+      if (row) {
+        opportunity = {
+          id: Number(row.id), name: row.name || "", accountName: row.account_name || "",
+          amountUsd: Number(row.amount_usd || 0), closeDate: row.close_date || null,
+          stageCode: row.stage_code || "", stageName: row.stage_name || "",
+          workspace: {}, stageAnswers: [], documents: [], activities: [],
+        };
+      }
+    }
+    if (!opportunity) throw new Error("Oportunidad no encontrada o fuera de alcance");
+    const result = await requestMiAgentJson({
+      payload: {
+        model: config.openai.model,
+        temperature: 0.1,
+        input: [
+          { role: "system", content: "Analiza una nota de conversación comercial y devuelve solo JSON válido en castellano. Extrae hechos y cambios propuestos, sin inventar. No apliques cambios. Distingue hechos confirmados de inferencias. Si el vendedor solicita actualizar un campo de la oportunidad, como el importe en dólares, devuelve un cambio entity=opportunity y field=amountUsd con el valor numérico en newValue. En ese caso no propongas stageAnswer ni respuesta de etapa, aunque el texto incluya un monto. Solo propone una respuesta de etapa si la nota informa un dato que responde una pregunta de la etapa actual y usa el questionId real de la lista proporcionada. Solo propone una actividad si el vendedor pide explícitamente agendarla, programarla o registrar una actividad realizada. Si no existe esa petición explícita, activity debe ser null. No inventes fechas, horas, objetivos ni actividades. Si la nota o la fecha indicada está en el pasado, decide si la actividad realmente se realizó o sigue pendiente; no asumas automáticamente que por ser fecha pasada ya está completada." },
+          { role: "user", content: JSON.stringify({
+            note,
+            currentDate: new Date().toISOString().slice(0, 10),
+            timeZone: config.app?.businessTimezone || "America/Mexico_City",
+            opportunity,
+            stageQuestions,
+            expectedJsonShape: {
+              summary: "",
+              changes: [{ entity: "activity|opportunity|stage_answer|stakeholder|risk|next_step", field: "", previousValue: "", newValue: "", confidence: "high|medium|low", evidence: "", requiresConfirmation: true }],
+              stageAnswer: { questionId: 0, questionPrompt: "", answerValue: "", confidence: "high|medium|low", evidence: "" },
+              activity: null,
+              nextStep: { title: "", dueDate: "YYYY-MM-DD|null", successCriteria: "" },
+              warnings: [""],
+            },
+          }) },
+        ],
+      },
+      user,
+      jobId,
+      startedAt: new Date(),
+      phase: "interaction",
+    });
+    await query(`UPDATE mi_agent_analysis_jobs SET status = 'completed', result_json = ?, error_message = NULL, updated_at = NOW(3) WHERE id = ?`, [JSON.stringify(result), jobId]);
+  } catch (error) {
+    await query(`UPDATE mi_agent_analysis_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3) WHERE id = ?`, [String(error?.message || "No fue posible analizar la conversación").slice(0, 1000), jobId]).catch(() => undefined);
+  }
+}
+
+async function executeMiAgentAnalysisJob({ jobId, user }) {
+  try {
+    await query(
+      `UPDATE mi_agent_analysis_jobs
+       SET status = 'running', updated_at = NOW(3)
+       WHERE id = ? AND created_by_user_id = ?`,
+      [jobId, Number(user.id)],
+    );
+
+    const startedAt = new Date();
+    await assertAiBudgetAvailable({ userId: Number(user.id) });
+    const baseContext = await getMiAgentContext(user);
+    const snapshot = await getMiAgentEnrichedContext(user, baseContext);
+    const developmentPlan = buildLocalDevelopmentPlan(snapshot);
+    const parsed = await requestMiAgentJson({
+      payload: buildActionPrompt(snapshot, developmentPlan),
+      user,
+      jobId,
+      startedAt,
+      phase: "acciones_recomendadas",
+    });
+
+    await query(
+      `UPDATE mi_agent_analysis_jobs
+       SET status = 'completed', result_json = ?, error_message = NULL,
+           updated_at = NOW(3)
+       WHERE id = ? AND created_by_user_id = ?`,
+      [
+        JSON.stringify(normalizeAnalysis(parsed, snapshot, developmentPlan)),
+        jobId,
+        Number(user.id),
+      ],
+    );
+  } catch (error) {
+    await query(
+      `UPDATE mi_agent_analysis_jobs
+       SET status = 'failed', error_message = ?, updated_at = NOW(3)
+       WHERE id = ? AND created_by_user_id = ?`,
+      [String(error?.message || "No fue posible analizar la situación comercial").slice(0, 1000), jobId, Number(user.id)],
+    ).catch(() => undefined);
+  }
+}
+
+router.get(
+  "/context",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    return res.json(await getMiAgentContext(req.user));
+  },
+);
+
+router.post(
+  "/analyze",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    if (!config.openai.apiKey) {
+      return res.status(503).json({ message: "La configuracion IA no esta habilitada" });
+    }
+    await ensureMiAgentSchema();
+    const result = await query(
+      `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, status)
+       VALUES (?, 'pending')`,
+      [Number(req.user.id)],
+    );
+    const jobId = Number(result.insertId);
+    setImmediate(() => executeMiAgentAnalysisJob({ jobId, user: req.user }));
+    return res.status(202).json({
+      job: { id: jobId, status: "pending", pollAfterMs: 1000 },
+    });
+  },
+);
+
+router.post(
+  "/coach",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const question = String(req.body?.question || "").trim();
+    const selectedContext = req.body?.context && typeof req.body.context === "object"
+      ? {
+          accountId: Number(req.body.context.accountId || 0) || null,
+          opportunityId: Number(req.body.context.opportunityId || 0) || null,
+          contactId: Number(req.body.context.contactId || 0) || null,
+        }
+      : {};
+    const userId = Number(req.user.id);
+    const hasAccountGlobalScope = req.user?.permissionSet?.has("cuentas.read_all");
+    if (selectedContext.accountId) {
+      const accountParams = [selectedContext.accountId];
+      const accountScope = hasAccountGlobalScope
+        ? ""
+        : "AND EXISTS (SELECT 1 FROM account_owners ao WHERE ao.account_id = a.id AND ao.user_id = ?)";
+      if (!hasAccountGlobalScope) accountParams.push(userId);
+      const accountRows = await query(
+        `SELECT a.id FROM accounts a
+         INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+         WHERE a.id = ? AND aas.code = 'activada' ${accountScope} LIMIT 1`,
+        accountParams,
+      );
+      if (!accountRows.length) return res.status(404).json({ message: "La cuenta seleccionada no esta disponible" });
+    }
+    if (selectedContext.opportunityId) {
+      const opportunityParams = [selectedContext.opportunityId];
+      const opportunityScope = hasMiAgentGlobalScope(req.user)
+        ? ""
+        : "AND (EXISTS (SELECT 1 FROM account_owners ao WHERE ao.account_id = o.account_id AND ao.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)";
+      if (!hasMiAgentGlobalScope(req.user)) opportunityParams.push(userId, userId, userId);
+      const relationship = selectedContext.accountId ? "AND o.account_id = ?" : "";
+      if (selectedContext.accountId) opportunityParams.push(selectedContext.accountId);
+      const opportunityRows = await query(
+        `SELECT o.id FROM opportunities o
+         INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+         INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+         WHERE o.id = ? AND oas.code = 'activada'
+           AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')
+           ${opportunityScope} ${relationship} LIMIT 1`,
+        opportunityParams,
+      );
+      if (!opportunityRows.length) return res.status(404).json({ message: "La oportunidad seleccionada no esta disponible" });
+    }
+    if (selectedContext.contactId) {
+      const contactParams = [selectedContext.contactId];
+      let contactRelationship = "";
+      if (selectedContext.accountId) {
+        contactRelationship = "AND c.account_id = ?";
+        contactParams.push(selectedContext.accountId);
+      }
+      const contactScope = hasAccountGlobalScope
+        ? ""
+        : "AND EXISTS (SELECT 1 FROM account_owners ao_contact WHERE ao_contact.account_id = c.account_id AND ao_contact.user_id = ?)";
+      if (!hasAccountGlobalScope) contactParams.push(userId);
+      const contactRows = await query(
+        `SELECT c.id FROM contacts c
+         INNER JOIN contact_activation_statuses cas ON cas.id = c.activation_status_id
+         WHERE c.id = ? AND cas.code = 'activado' ${contactRelationship} ${contactScope} LIMIT 1`,
+        contactParams,
+      );
+      if (!contactRows.length) return res.status(404).json({ message: "El contacto seleccionado no esta disponible" });
+    }
+    if (!question) return res.status(400).json({ message: "La pregunta es obligatoria" });
+    if (!config.openai.apiKey) return res.status(503).json({ message: "La configuracion IA no esta habilitada" });
+    await ensureMiAgentSchema();
+    const result = await query(
+      `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, context_snapshot, status)
+       VALUES (?, 'coach', ?, ?, 'pending')`,
+      [Number(req.user.id), question, JSON.stringify(selectedContext)],
+    );
+    const jobId = Number(result.insertId);
+    setImmediate(() => executeCoachJob({ jobId, user: req.user, question, selectedContext }));
+    return res.status(202).json({ job: { id: jobId, status: "pending", pollAfterMs: 1000 } });
+  },
+);
+
+router.get(
+  "/coach/metrics",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const userId = Number(req.user.id);
+    const [usageRows, coachQueryRows, operationRows, undoneRows, rejectedRows] = await Promise.all([
+      query(
+        `SELECT COUNT(*) AS requests, COALESCE(SUM(total_tokens), 0) AS tokens,
+                COALESCE(SUM(cost_micros), 0) AS costMicros
+         FROM ai_usage_ledger
+         WHERE user_id = ? AND feature_code = 'mi_agent.analysis'
+           AND created_at_utc >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 30 DAY)`,
+        [userId],
+      ),
+      query(
+        `SELECT COUNT(*) AS total
+         FROM mi_agent_analysis_jobs
+         WHERE created_by_user_id = ? AND job_kind = 'coach'
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+        [userId],
+      ),
+      query(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS completed
+         FROM opportunity_workspace_actions
+         WHERE created_by_user_id = ? AND notes LIKE '%Coach Comercial%'
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+        [userId],
+      ),
+      query(
+        `SELECT COUNT(*) AS total
+         FROM audit_log
+         WHERE performed_by_user_id = ? AND action = 'coach_action_undone'
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+        [userId],
+      ),
+      query(
+        `SELECT COUNT(*) AS total
+         FROM audit_log
+         WHERE performed_by_user_id = ? AND action = 'coach_operation_rejected'
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+        [userId],
+      ),
+    ]);
+    const usage = usageRows[0] || {};
+    const operations = operationRows[0] || {};
+    return res.json({
+      periodDays: 30,
+      requests: Number(coachQueryRows[0]?.total || 0),
+      tokens: Number(usage.tokens || 0),
+      costMicros: Number(usage.costMicros || 0),
+      operationsCreated: Number(operations.total || 0),
+      operationsCompleted: Number(operations.completed || 0),
+      operationsUndone: Number(undoneRows[0]?.total || 0),
+      operationsRejected: Number(rejectedRows[0]?.total || 0),
+      operationsDecided:
+        Number(operations.total || 0) + Number(rejectedRows[0]?.total || 0),
+      approvalRate:
+        Number(operations.total || 0) + Number(rejectedRows[0]?.total || 0)
+          ? Number(operations.total || 0) /
+            (Number(operations.total || 0) + Number(rejectedRows[0]?.total || 0))
+          : 0,
+      completionRate: Number(operations.total || 0)
+        ? Number(operations.completed || 0) / Number(operations.total)
+        : 0,
+    });
+  },
+);
+
+router.post(
+  "/coach/operations/rejected",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const operation = req.body?.operation;
+    if (!operation || typeof operation !== "object") {
+      return res.status(400).json({ message: "Operacion invalida" });
+    }
+    await logAuditEvent({
+      req,
+      module: "mi_agent.coach",
+      action: "coach_operation_rejected",
+      entityType: String(operation.kind || "operation").slice(0, 80),
+      entityId: Number(
+        operation.opportunityId ||
+          operation.accountId ||
+          operation.contactId ||
+          operation.interactionId ||
+          0,
+      ) || null,
+      detail: `Operacion del Coach rechazada: ${String(operation.title || operation.kind || "").slice(0, 180)}`,
+      after: {
+        kind: String(operation.kind || "").slice(0, 80),
+        source: operation.source || null,
+      },
+    });
+    return res.json({ ok: true });
+  },
+);
+
+router.post(
+  "/coach/leads/:interactionId/undo",
+  requirePermission("interacciones.update"),
+  async (req, res) => {
+    const interactionId = Number(req.params.interactionId || 0);
+    if (!Number.isInteger(interactionId) || interactionId <= 0) {
+      return res.status(400).json({ message: "Lead invalido" });
+    }
+    const rows = await query(
+      `SELECT i.id, i.analysis_status, i.account_id, i.seller_user_id, i.created_by
+       FROM interactions i
+       LEFT JOIN account_owners ao ON ao.account_id = i.account_id AND ao.user_id = ?
+       WHERE i.id = ? AND (ao.user_id IS NOT NULL OR i.seller_user_id = ? OR i.created_by = ?)
+       LIMIT 1`,
+      [Number(req.user.id), interactionId, Number(req.user.id), Number(req.user.id)],
+    );
+    if (!rows.length && !req.user?.permissionSet?.has("interacciones.read_all")) {
+      return res.status(404).json({ message: "Lead no encontrado" });
+    }
+    const events = await query(
+      `SELECT id, event_type, from_status_code, to_status_code, substatus_code,
+              reason_code, required_action_code, commercial_comment,
+              next_action_due_at
+       FROM interaction_lead_outcome_events
+       WHERE interaction_id = ? AND invalidated_at IS NULL
+       ORDER BY id DESC LIMIT 2`,
+      [interactionId],
+    );
+    if (!events.length) return res.status(409).json({ message: "No existe resultado de lead para revertir" });
+    const latest = events[0];
+    const previous = events[1] || null;
+    await query(
+      `UPDATE interactions
+       SET analysis_status = ?, lead_substatus_code = ?, lead_reason_code = ?,
+           lead_required_action_code = ?, lead_commercial_comment = ?,
+           lead_next_action_due_at = ?, updated_by = ?, updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        latest.from_status_code || previous?.to_status_code || "created",
+        previous?.substatus_code || null,
+        previous?.reason_code || null,
+        previous?.required_action_code || null,
+        previous?.commercial_comment || null,
+        previous?.next_action_due_at || null,
+        Number(req.user.id),
+        interactionId,
+      ],
+    );
+    await query(
+      `UPDATE interaction_lead_outcome_events SET invalidated_at = NOW(3) WHERE id = ?`,
+      [latest.id],
+    );
+    await logAuditEvent({
+      req,
+      module: "mi_agent.coach",
+      action: "coach_lead_outcome_undone",
+      entityType: "interaction",
+      entityId: interactionId,
+      detail: "Resultado de lead revertido desde Coach",
+      before: { eventId: latest.id, status: latest.to_status_code },
+      after: { eventId: previous?.id || null, status: latest.from_status_code || previous?.to_status_code || "created" },
+    });
+    return res.json({ ok: true, interactionId, invalidatedEventId: latest.id });
+  },
+);
+
+router.post(
+  "/coach/operations/:auditId/undo",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const auditId = Number(req.params.auditId || 0);
+    if (!Number.isInteger(auditId) || auditId <= 0) {
+      return res.status(400).json({ message: "Auditoria invalida" });
+    }
+    const rows = await query(
+      `SELECT id, action, entity_type, entity_id, changed_fields, performed_by_user_id
+       FROM audit_log WHERE id = ? AND performed_by_user_id = ? LIMIT 1`,
+      [auditId, Number(req.user.id)],
+    );
+    const audit = rows[0];
+    const allowedActions = new Set([
+      "coach_opportunity_field_updated",
+      "coach_field_updated",
+    ]);
+    if (!audit || !allowedActions.has(String(audit.action))) {
+      return res.status(404).json({ message: "Cambio del Coach no reversible" });
+    }
+    const changes = parseAuditChangedFields(audit.changed_fields);
+    const [field, change] = Object.entries(changes)[0] || [];
+    const maps = {
+      coach_opportunity_field_updated: {
+        opportunity: { name: "name", amountUsd: "amount_usd", closeDate: "close_date" },
+      },
+      coach_field_updated: {
+        account: { name: "name", phone: "phone", website: "website", city: "city", stateRegion: "state_region", companyDescription: "description" },
+        contact: { firstName: "first_name", lastName: "last_name", email: "email", mobile: "mobile", phone: "phone", positionTitle: "position_title", department: "department", city: "city", stateRegion: "state_region" },
+      },
+    };
+    const tableMap = { opportunity: "opportunities", account: "accounts", contact: "contacts" };
+    const entityMap = { opportunity: "opportunity", account: "account", contact: "contact" };
+    const entityKey = entityMap[String(audit.entity_type)] || String(audit.entity_type);
+    const column = maps[audit.action]?.[entityKey]?.[field];
+    const table = tableMap[entityKey];
+    if (!column || !table || !change || !Object.prototype.hasOwnProperty.call(change, "before")) {
+      return res.status(409).json({ message: "El cambio no tiene un valor anterior reversible" });
+    }
+    const idColumn = "id";
+    const updateValues = entityKey === "opportunity" ? [change.before, audit.entity_id] : [change.before, Number(req.user.id), audit.entity_id];
+    const updateSql = entityKey === "opportunity"
+      ? `UPDATE ${table} SET ${column} = ?, updated_at = NOW(3) WHERE ${idColumn} = ?`
+      : `UPDATE ${table} SET ${column} = ?, updated_by = ?, updated_at = NOW(3) WHERE ${idColumn} = ?`;
+    await query(updateSql, updateValues);
+    await logAuditEvent({
+      req,
+      module: "mi_agent.coach",
+      action: "coach_operation_undone",
+      entityType: entityKey,
+      entityId: audit.entity_id,
+      detail: `Cambio del Coach revertido: ${field}`,
+      before: { [field]: change.after },
+      after: { [field]: change.before },
+    });
+    return res.json({ ok: true, auditId });
+  },
+);
+
+router.post(
+  "/interaction/analyze",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.body?.opportunityId || 0);
+    const note = String(req.body?.note || "").trim();
+    const stageQuestions = Array.isArray(req.body?.stageQuestions)
+      ? req.body.stageQuestions
+          .map((question) => ({
+            questionId: Number(question?.questionId || question?.question_id || 0),
+            questionPrompt: String(question?.questionPrompt || question?.prompt || "").trim(),
+            answerValue: String(question?.answerValue || question?.answer_value || "").trim(),
+            required: Boolean(question?.required || question?.is_required),
+          }))
+          .filter((question) => question.questionId > 0 && question.questionPrompt)
+      : [];
+    if (!opportunityId || !note) return res.status(400).json({ message: "opportunityId y note son obligatorios" });
+    await ensureMiAgentSchema();
+    const result = await query(`INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, status) VALUES (?, 'interaction', ?, 'pending')`, [Number(req.user.id), note]);
+    const jobId = Number(result.insertId);
+    setImmediate(() => executeInteractionJob({
+      jobId,
+      user: req.user,
+      opportunityId,
+      note,
+      stageQuestions,
+    }));
+    return res.status(202).json({ job: { id: jobId, status: "pending", pollAfterMs: 1000 } });
+  },
+);
+
+router.get(
+  "/interaction/jobs/:jobId",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    await ensureMiAgentSchema();
+    const rows = await query(`SELECT id, status, result_json, error_message FROM mi_agent_analysis_jobs WHERE id = ? AND created_by_user_id = ? AND job_kind = 'interaction' LIMIT 1`, [Number(req.params.jobId || 0), Number(req.user.id)]);
+    const job = rows[0];
+    if (!job) return res.status(404).json({ message: "Análisis de conversación no encontrado" });
+    let result = null;
+    try { result = job.result_json ? (typeof job.result_json === "string" ? JSON.parse(job.result_json) : job.result_json) : null; } catch { result = null; }
+    return res.json({ job: { id: Number(job.id), status: job.status, errorMessage: job.error_message || null }, result });
+  },
+);
+
+router.get(
+  "/coach/jobs/:jobId",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    await ensureMiAgentSchema();
+    const rows = await query(
+      `SELECT id, status, question, context_snapshot, result_json, error_message, created_at, updated_at
+       FROM mi_agent_analysis_jobs
+       WHERE id = ? AND created_by_user_id = ? AND job_kind = 'coach'
+       LIMIT 1`,
+      [Number(req.params.jobId || 0), Number(req.user.id)],
+    );
+    const job = rows[0];
+    if (!job) return res.status(404).json({ message: "Pregunta no encontrada" });
+    let result = null;
+    try { result = job.result_json ? (typeof job.result_json === "string" ? JSON.parse(job.result_json) : job.result_json) : null; } catch { result = null; }
+    let contextSnapshot = null;
+    try { contextSnapshot = job.context_snapshot ? (typeof job.context_snapshot === "string" ? JSON.parse(job.context_snapshot) : job.context_snapshot) : null; } catch { contextSnapshot = null; }
+    return res.json({ job: { id: Number(job.id), status: job.status, question: job.question, contextSnapshot, errorMessage: job.error_message || null, createdAt: job.created_at, updatedAt: job.updated_at }, result });
+  },
+);
+
+router.get(
+  "/analyze/jobs/:jobId",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    await ensureMiAgentSchema();
+    const jobId = Number(req.params.jobId || 0);
+    const rows = await query(
+      `SELECT id, status, result_json, error_message, created_at, updated_at
+       FROM mi_agent_analysis_jobs
+       WHERE id = ? AND created_by_user_id = ?
+       LIMIT 1`,
+      [jobId, Number(req.user.id)],
+    );
+    const job = rows[0];
+    if (!job) return res.status(404).json({ message: "Análisis no encontrado" });
+    let result = null;
+    if (job.result_json) {
+      try {
+        result = typeof job.result_json === "string" ? JSON.parse(job.result_json) : job.result_json;
+      } catch {
+        result = null;
+      }
+    }
+    return res.json({
+      job: {
+        id: Number(job.id), status: job.status, errorMessage: job.error_message || null,
+        createdAt: job.created_at, updatedAt: job.updated_at,
+      },
+      result,
+    });
+  },
+);
+
+export default router;

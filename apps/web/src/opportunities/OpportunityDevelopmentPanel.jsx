@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
-import { formatBusinessDateTime } from "../business-timezone";
+import {
+  formatBusinessDate,
+  formatBusinessDateTime,
+  toBusinessDateTimeInputValue,
+} from "../business-timezone";
 import OpportunityOperationEmailModal from "./OpportunityOperationEmailModal";
+import {
+  buildInteractionApprovalDraft,
+  inferInteractionActivityStatus,
+} from "./interactionStatus";
+import "./opportunity-interaction-coach.css";
+import "./opportunity-interaction-review.css";
 
 const AI_NARRATIVE_TIMEOUT_MS = 60000;
 const AI_NARRATIVE_POLL_INTERVAL_MS = 3000;
@@ -10,6 +20,61 @@ const OPERATION_EMAIL_MAX_LIBRARY_ASSETS = 3;
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function parseOpportunityAmount(value) {
+  const normalized = normalizeText(value)
+    .replace(/[^0-9.,-]/g, "")
+    .replace(/,(?=\d{3}(?:\D|$))/g, "")
+    .replace(/,/g, ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+function getInteractionActivityTypeLabel(value) {
+  return {
+    call: "Llamada",
+    meeting: "Reunión",
+    demo: "Demostración",
+    email: "Correo",
+    other: "Otra actividad",
+  }[normalizeText(value).toLowerCase()] || "Actividad";
+}
+
+function normalizeInteractionActivityType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  return {
+    demo: "presentation",
+    meeting: "conference",
+    email: "other",
+    call: "call",
+    presentation: "presentation",
+    conference: "conference",
+    visit: "visit",
+    other: "other",
+  }[normalized] || "other";
+}
+
+function getInteractionFieldLabel(value) {
+  return {
+    budgetUsd: "Presupuesto de la oportunidad",
+    type: "Tipo de actividad",
+    scheduledDate: "Fecha propuesta",
+    dueDate: "Fecha del próximo paso",
+    title: "Título de la actividad",
+    note: "Nota de la actividad",
+    implementationDate: "Fecha de implementación",
+    approvalRequired: "Aprobación requerida",
+    successCriteria: "Criterio de éxito",
+  }[normalizeText(value)] || normalizeText(value) || "Cambio detectado";
+}
+
+function getInteractionConfidenceLabel(value) {
+  return {
+    high: "alta",
+    medium: "media",
+    low: "baja",
+  }[normalizeText(value).toLowerCase()] || normalizeText(value) || "media";
 }
 
 function isStepAnswerMissing(answer) {
@@ -91,12 +156,298 @@ function formatNarrativeTimestamp(value) {
   });
 }
 
+function formatActivityDisplayDate(value, { includeTime = false } = {}) {
+  if (!value) return "Sin fecha";
+  const dateOnly = toDateOnly(value);
+  if (dateOnly && !includeTime) {
+    return formatBusinessDate(dateOnly, {
+      fallback: "Sin fecha",
+      options: { day: "2-digit", month: "2-digit", year: "numeric" },
+    });
+  }
+  return formatNarrativeTimestamp(value);
+}
+
 function parseActivityTimestamp(value) {
   const parsed = value ? new Date(value) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) {
     return Number.NaN;
   }
   return parsed.getTime();
+}
+
+function normalizeInteractionAnalysisResult(result) {
+  const source = result && typeof result === "object" && !Array.isArray(result)
+    ? result
+    : {};
+  return {
+    ...source,
+    changes: Array.isArray(source.changes)
+      ? source.changes.filter(
+          (change) => change && typeof change === "object",
+        )
+      : [],
+    activity:
+      source.activity && typeof source.activity === "object"
+        ? source.activity
+        : null,
+    nextStep:
+      source.nextStep && typeof source.nextStep === "object"
+        ? source.nextStep
+        : {},
+  };
+}
+
+function buildStructuredInteractionDraft(
+  result,
+  fallbackNote = "",
+  stageQuestions = [],
+  stageName = "",
+  currentAmount = "",
+) {
+  const legacy = buildInteractionApprovalDraft(result, fallbackNote);
+  const activityResult = result?.activity || null;
+  const nextStep = result?.nextStep || {};
+  const activityScheduledAt = normalizeText(
+    activityResult?.scheduledAt || activityResult?.scheduled_at,
+  );
+  const activityScheduledTime = activityScheduledAt.match(
+    /[T\s](\d{2}:\d{2})(?::\d{2})?/,
+  )?.[1];
+  const structuredProposals = [];
+  const amountChange = (Array.isArray(result?.changes) ? result.changes : []).find(
+    (change) =>
+      normalizeText(change?.entity).toLowerCase() === "opportunity" &&
+      ["amountusd", "amount_usd", "importe", "monto"].includes(
+        normalizeText(change?.field).toLowerCase(),
+      ),
+  );
+  const proposedAmount = amountChange
+    ? parseOpportunityAmount(amountChange.newValue)
+    : null;
+  if (proposedAmount !== null) {
+    structuredProposals.push({
+      proposalId: "opportunity-amount-proposal",
+      kind: "opportunity_field",
+      status: "proposed",
+      reviewRequired: true,
+      selected: true,
+      source: { type: "chatbot", rawText: fallbackNote },
+      fields: {
+        field: "amountUsd",
+        label: "Importe en dólares",
+        value: proposedAmount,
+        previousValue:
+          parseOpportunityAmount(amountChange?.previousValue) ??
+          parseOpportunityAmount(currentAmount),
+        confidence: amountChange?.confidence || "high",
+        evidence: amountChange?.evidence || "",
+      },
+    });
+  }
+
+  if (activityResult?.requested === true) {
+    structuredProposals.push({
+      proposalId: "activity-proposal",
+      kind: "activity",
+      status: "proposed",
+      reviewRequired: true,
+      selected: true,
+      source: { type: "chatbot", rawText: fallbackNote },
+      fields: {
+        activityType: String(activityResult?.type || legacy.activityType || "call"),
+        objective:
+          String(
+            activityResult?.objective || activityResult?.title || legacy.objective || "",
+          ).trim(),
+        scheduledDate: String(
+          activityResult?.scheduledAt || activityResult?.scheduledDate || legacy.scheduledDate || "",
+        ).slice(0, 10).trim(),
+        scheduledTime: String(
+          activityResult?.scheduledTime ||
+            activityResult?.time ||
+            activityResult?.hora ||
+            activityScheduledTime ||
+            legacy.scheduledTime ||
+            "09:00",
+        ).trim(),
+        note: String(activityResult?.note || legacy.note || fallbackNote || "").trim(),
+        status: "pending",
+        ownerUserId: null,
+        confidence: 0.92,
+      },
+    });
+  }
+
+  const nextStepTitle = normalizeText(
+    nextStep?.title || legacy.nextStepTitle || "",
+  );
+  if (nextStepTitle) {
+    structuredProposals.push({
+      proposalId: "next-step-proposal",
+      kind: "next_step",
+      status: "proposed",
+      reviewRequired: true,
+      selected: true,
+      source: { type: "chatbot", rawText: fallbackNote },
+      fields: {
+        title: nextStepTitle,
+        dueDate: String(nextStep?.dueDate || legacy.nextStepDueDate || "").slice(0, 10),
+        successCriteria:
+          String(
+            nextStep?.successCriteria ||
+              legacy.nextStepSuccessCriteria ||
+              "Registrar compromiso del cliente.",
+          ).trim() || "Registrar compromiso del cliente.",
+        priority: "high",
+        ownerUserId: null,
+        status: "pending",
+      },
+    });
+  }
+
+  const stageAnswerChange = (Array.isArray(result?.changes) ? result.changes : []).find(
+    (change) =>
+      ["stageanswer", "stageanswers"].includes(
+        normalizeText(change?.entity).toLowerCase().replace(/[_-]/g, ""),
+      ) && normalizeText(change?.newValue),
+  );
+  const stageAnswers = Array.isArray(result?.stageAnswers)
+    ? result.stageAnswers
+    : [];
+  const stageAnswerCandidates = [
+    result?.stageAnswer,
+    result?.stage_answer,
+    ...stageAnswers,
+    stageAnswerChange,
+  ];
+  const stageAnswer =
+    stageAnswerCandidates.find((candidate) =>
+      normalizeText(
+        candidate?.answerValue ||
+          candidate?.answer_value ||
+          candidate?.proposedAnswer ||
+          candidate?.newValue,
+      ),
+    ) || {};
+  const stageAnswerQuestionId = [
+    stageAnswer?.questionId,
+    stageAnswer?.question_id,
+    stageAnswerChange?.questionId,
+    stageAnswerChange?.question_id,
+    stageAnswerChange?.field,
+    stageAnswer?.id,
+    stageQuestions[0]?.questionId,
+    stageQuestions[0]?.question_id,
+    stageQuestions[0]?.id,
+  ]
+    .map((value) => Number(value))
+    .find((value) => Number.isInteger(value) && value > 0) || 0;
+  const matchedStageQuestion = stageQuestions.find(
+    (question) =>
+      Number(
+        question?.question_id || question?.questionId || question?.id,
+      ) === stageAnswerQuestionId,
+  );
+  const stageAnswerValue = normalizeText(
+    stageAnswer?.answerValue ||
+      stageAnswer?.answer_value ||
+      stageAnswer?.proposedAnswer ||
+      stageAnswer?.newValue,
+  );
+  if (proposedAmount === null && stageAnswerQuestionId > 0 && stageAnswerValue) {
+    structuredProposals.unshift({
+      proposalId: "stage-answer-proposal",
+      kind: "stage_answer",
+      status: "proposed",
+      reviewRequired: true,
+      selected: true,
+      source: { type: "chatbot", rawText: fallbackNote },
+      question: {
+        id: stageAnswerQuestionId,
+        prompt:
+          normalizeText(stageAnswer?.questionPrompt) ||
+          normalizeText(stageAnswer?.question_prompt) ||
+          normalizeText(matchedStageQuestion?.prompt),
+        stageName: normalizeText(stageAnswer?.stageName) || normalizeText(stageName),
+      },
+      fields: {
+        answerValue: stageAnswerValue,
+        previousAnswer: normalizeText(matchedStageQuestion?.answerValue || matchedStageQuestion?.answer_value),
+        answerMode: normalizeText(matchedStageQuestion?.answerValue || matchedStageQuestion?.answer_value)
+          ? "replace"
+          : "replace",
+        confidence: stageAnswer?.confidence || "high",
+      },
+    });
+  }
+
+  return {
+    draftId: `interaction-${Date.now()}`,
+    status: "pending_review",
+    summary: {
+      title: "Resumen del cambio sugerido",
+      message:
+        normalizeText(result?.summary) ||
+        "El coach detectó cambios recomendados para la oportunidad.",
+      warnings: [],
+    },
+    errors: [],
+    proposals: structuredProposals,
+    activityType: legacy.activityType,
+    objective: legacy.objective,
+    scheduledDate: legacy.scheduledDate,
+    scheduledTime: legacy.scheduledTime,
+    note: legacy.note,
+    nextStepTitle: legacy.nextStepTitle,
+    nextStepDueDate: legacy.nextStepDueDate,
+    nextStepSuccessCriteria: legacy.nextStepSuccessCriteria,
+  };
+}
+
+function formatProposalLabel(kind) {
+  return {
+    stage_answer: "Respuesta de etapa",
+    activity: "Actividad",
+    next_step: "Próximo paso",
+    stage_transition: "Cambio de etapa",
+    commercial_close: "Cierre comercial",
+  }[kind] || "Cambio sugerido";
+}
+
+function updateInteractionApprovalProposalById(current, proposalId, updater) {
+  if (!current?.proposals?.length) return current;
+  return {
+    ...current,
+    proposals: current.proposals.map((proposal) =>
+      proposal.proposalId === proposalId ? updater(proposal) : proposal,
+    ),
+  };
+}
+
+function formatActivityProposalDate(value) {
+  if (!value) return "Seleccionar fecha";
+  return formatBusinessDate(value, {
+    fallback: "Sin fecha",
+    options: { day: "2-digit", month: "2-digit", year: "numeric" },
+  });
+}
+
+function formatActivityProposalTime(value) {
+  return value ? value : "09:00";
+}
+
+function formatProposalSummaryText(proposal) {
+  if (proposal.kind === "stage_answer") {
+    return normalizeText(proposal.fields?.answerValue) || "Sin respuesta";
+  }
+  if (proposal.kind === "activity") {
+    return `${proposal.fields?.objective || "Actividad sin objetivo"} · ${formatActivityProposalDate(proposal.fields?.scheduledDate)} ${formatActivityProposalTime(proposal.fields?.scheduledTime)}`;
+  }
+  if (proposal.kind === "next_step") {
+    return `${proposal.fields?.title || "Próximo paso"} · ${proposal.fields?.dueDate || "Sin fecha"}`;
+  }
+  return normalizeText(proposal.fields?.reason || proposal.fields?.title || "Cambio sugerido");
 }
 
 function formatActivityTimestamp(value) {
@@ -195,6 +546,9 @@ function getWorkspaceEntryKind(item) {
 }
 
 function toDateTimeLocalInputValue(value) {
+  if (!value) return "";
+  const businessDateTime = toBusinessDateTimeInputValue(value);
+  if (businessDateTime) return businessDateTime;
   const parsed = value ? new Date(value) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) {
     return "";
@@ -300,18 +654,22 @@ function mapLibraryOptionToEmailAttachment(option, selectionSource = "manual") {
 export default function OpportunityDevelopmentPanel({
   editingOpportunityId,
   form,
+  setForm,
   commercialContext,
   opportunityDocuments,
   currentCommercialStage,
   loadingCommercialStageView,
   isCommercialFlowClosed,
   refreshCommercialContext,
+  updateCommercialAnswer,
+  updateOpportunityAmountFromCoach,
   selectedOpportunityContact,
   selectedOpportunityContactEmail,
   contactOptions,
   accountName,
   sellerUserEmail,
   canExecuteOperations,
+  showOpportunityCoach = true,
 }) {
   const [quotations, setQuotations] = useState([]);
   const [interactions, setInteractions] = useState([]);
@@ -341,7 +699,42 @@ export default function OpportunityDevelopmentPanel({
     details: "",
   });
   const [savingExecutionItem, setSavingExecutionItem] = useState("");
+  const [interactionNote, setInteractionNote] = useState("");
+  const [chatMessages, setChatMessages] = useState([
+    {
+      id: "assistant-welcome",
+      role: "assistant",
+      text: "Estoy listo para ayudarte con esta oportunidad. Escribe lo que ocurrió y revisaré qué cambios proponer.",
+    },
+  ]);
+  const [chatInput, setChatInput] = useState("");
+  const [interactionAnalysis, setInteractionAnalysis] = useState(null);
+  const [interactionApprovalDraft, setInteractionApprovalDraft] = useState({
+    draftId: "",
+    status: "drafted",
+    activityType: "call",
+    objective: "",
+    scheduledDate: "",
+    scheduledTime: "09:00",
+    note: "",
+    nextStepTitle: "",
+    nextStepDueDate: "",
+    nextStepSuccessCriteria: "",
+    proposals: [],
+    summary: {
+      title: "Resumen del cambio sugerido",
+      message: "",
+      warnings: [],
+    },
+    errors: [],
+  });
+  const [isInteractionApprovalOpen, setIsInteractionApprovalOpen] =
+    useState(false);
+  const [analyzingInteraction, setAnalyzingInteraction] = useState(false);
+  const [interactionJobStatus, setInteractionJobStatus] = useState("");
+  const [applyingInteraction, setApplyingInteraction] = useState(false);
   const [executionRefreshToken, setExecutionRefreshToken] = useState(0);
+  const [localInteractionEntries, setLocalInteractionEntries] = useState([]);
   const [executionItemModal, setExecutionItemModal] = useState(null);
   const [executionItemUpdateDraft, setExecutionItemUpdateDraft] = useState({
     status: "done",
@@ -898,7 +1291,13 @@ export default function OpportunityDevelopmentPanel({
   const workspaceActions = Array.isArray(commercialContext?.workspace?.actions)
     ? commercialContext.workspace.actions
     : [];
-  const previousActivities = workspaceActions
+  const visibleWorkspaceActions = [
+    ...localInteractionEntries,
+    ...workspaceActions.filter(
+      (item) => !localInteractionEntries.some((local) => Number(local.id) === Number(item.id)),
+    ),
+  ];
+  const previousActivities = visibleWorkspaceActions
     .filter((item) => getWorkspaceEntryKind(item) === "activity")
     .sort((left, right) => {
       const leftDate = new Date(
@@ -917,7 +1316,7 @@ export default function OpportunityDevelopmentPanel({
       ).getTime();
       return rightDate - leftDate;
     });
-  const operationActions = workspaceActions
+  const operationActions = visibleWorkspaceActions
     .filter(
       (item) =>
         getWorkspaceEntryKind(item) === "action" &&
@@ -1351,6 +1750,304 @@ export default function OpportunityDevelopmentPanel({
       );
     } finally {
       setSavingExecutionItem("");
+    }
+  }
+
+  function buildInteractionApprovalDraftFromAnalysis(result, fallbackNote = interactionNote) {
+    return buildStructuredInteractionDraft(
+      result,
+      fallbackNote,
+      answers,
+      currentCommercialStage?.name || commercialContext?.salesStage?.name || "",
+      form?.amountUsd,
+    );
+  }
+
+  function appendChatMessage(role, text) {
+    const messageText = normalizeText(text);
+    if (!messageText) return;
+    setChatMessages((current) => [
+      ...current,
+      {
+        id: `${role}-${Date.now()}-${Math.random()}`,
+        role,
+        text: messageText,
+      },
+    ]);
+  }
+
+  async function analyzeInteractionConversation(sourceText = interactionNote) {
+    const nextNote = normalizeText(sourceText);
+    if (!editingOpportunityId || !nextNote) return;
+
+    setAnalyzingInteraction(true);
+    setInteractionJobStatus("pending");
+    setSourceError("");
+
+    try {
+      const queued = await api.post("/api/mi-agent/interaction/analyze", {
+        opportunityId: Number(editingOpportunityId),
+        note: nextNote,
+        stageQuestions: answers.map((answer) => ({
+          questionId: Number(answer?.question_id || 0),
+          questionPrompt: normalizeText(answer?.prompt),
+          answerValue: normalizeText(answer?.answer_value),
+          required: Boolean(answer?.is_required),
+          stageName: normalizeText(currentCommercialStage?.name || commercialContext?.salesStage?.name),
+        })),
+      });
+      const jobId = Number(queued.data?.job?.id || 0);
+      if (!jobId) throw new Error("No se pudo iniciar el análisis de la conversación");
+
+      let result = null;
+      for (;;) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        const response = await api.get(`/api/mi-agent/interaction/jobs/${jobId}`);
+        const status = String(response.data?.job?.status || "");
+        setInteractionJobStatus(status);
+        if (status === "completed") {
+          result = response.data.result;
+          break;
+        }
+        if (status === "failed") {
+          throw new Error(
+            response.data.job.errorMessage ||
+              "No fue posible analizar la conversación",
+          );
+        }
+      }
+
+      const normalizedResult = normalizeInteractionAnalysisResult(result);
+      const nextDraft = buildInteractionApprovalDraftFromAnalysis(
+        normalizedResult,
+        nextNote,
+      );
+      setInteractionAnalysis(normalizedResult);
+      setInteractionApprovalDraft(nextDraft);
+      appendChatMessage(
+        "assistant",
+        nextDraft.summary?.message ||
+          "He preparado una propuesta para revisarla y aprobarla.",
+      );
+    } catch (error) {
+      appendChatMessage(
+        "assistant",
+        getApiErrorMessage(error, "No fue posible analizar la conversación"),
+      );
+      setSourceError(
+        getApiErrorMessage(error, "No fue posible analizar la conversación"),
+      );
+    } finally {
+      setAnalyzingInteraction(false);
+      setInteractionJobStatus((current) => current || "completed");
+    }
+  }
+
+  function toggleInteractionProposalSelected(proposalId, selected) {
+    setInteractionApprovalDraft((current) => {
+      if (!current?.proposals?.length) return current;
+      return {
+        ...current,
+        proposals: current.proposals.map((proposal) =>
+          proposal.proposalId === proposalId
+            ? { ...proposal, selected }
+            : proposal,
+        ),
+      };
+    });
+  }
+
+  function editInteractionProposal(proposalId, field, value) {
+    setInteractionApprovalDraft((current) => {
+      if (!current?.proposals?.length) return current;
+      return {
+        ...current,
+        proposals: current.proposals.map((proposal) => {
+          if (proposal.proposalId !== proposalId) return proposal;
+          const nextProposal = structuredClone(proposal);
+          if (field.startsWith("fields.")) {
+            const fieldPath = field.replace("fields.", "").split(".");
+            let target = nextProposal.fields;
+            for (let index = 0; index < fieldPath.length - 1; index += 1) {
+              target = target[fieldPath[index]];
+            }
+            target[fieldPath[fieldPath.length - 1]] = value;
+          }
+          return {
+            ...nextProposal,
+            status: "edited",
+          };
+        }),
+      };
+    });
+  }
+
+  async function handleAnalyzeInteraction() {
+    await analyzeInteractionConversation(interactionNote);
+  }
+
+  async function handleChatSubmit(event) {
+    event.preventDefault();
+    const nextNote = normalizeText(chatInput);
+    if (!nextNote) return;
+
+    setInteractionNote(nextNote);
+    appendChatMessage("user", nextNote);
+    setChatInput("");
+    await analyzeInteractionConversation(nextNote);
+  }
+
+  async function handleApplyInteraction() {
+    if (!editingOpportunityId || !interactionAnalysis) return;
+    const selectedProposals = (interactionApprovalDraft.proposals || []).filter(
+      (proposal) => proposal.selected,
+    );
+    if (!selectedProposals.length) {
+      setSourceError("Debes seleccionar al menos un cambio antes de guardar.");
+      return;
+    }
+    setApplyingInteraction(true);
+    setSourceError("");
+    try {
+      const activityProposal = selectedProposals.find(
+        (proposal) => proposal.kind === "activity",
+      );
+      const nextStepProposal = selectedProposals.find(
+        (proposal) => proposal.kind === "next_step",
+      );
+      const stageAnswerProposal = selectedProposals.find(
+        (proposal) => proposal.kind === "stage_answer",
+      );
+      const opportunityFieldProposal = selectedProposals.find(
+        (proposal) => proposal.kind === "opportunity_field",
+      );
+
+      if (
+        opportunityFieldProposal?.fields?.field === "amountUsd" &&
+        typeof updateOpportunityAmountFromCoach === "function"
+      ) {
+        await updateOpportunityAmountFromCoach(
+          opportunityFieldProposal.fields.value,
+        );
+      }
+
+      const localEntries = [];
+      if (activityProposal) {
+        const scheduledDate = activityProposal.fields?.scheduledDate || "";
+        const scheduledTime = activityProposal.fields?.scheduledTime || "09:00";
+        const scheduledAt = scheduledDate && scheduledTime
+          ? `${scheduledDate}T${scheduledTime}`
+          : new Date().toISOString().slice(0, 16);
+        const activityObjective = activityProposal.fields?.objective || "Actividad comercial";
+        const activityNote = activityProposal.fields?.note || interactionNote;
+        const activityStatus = inferInteractionActivityStatus({
+          title: activityObjective,
+          note: activityNote,
+          result: interactionAnalysis.activity?.result || activityNote,
+          scheduledDate,
+        });
+        const activityResponse = await api.post(`/api/opportunities/${editingOpportunityId}/workspace/actions`, {
+          actionType: normalizeInteractionActivityType(activityProposal.fields?.activityType || "call"),
+          title: activityObjective,
+          status: activityStatus,
+          priority: "medium",
+          dueDate: scheduledAt.slice(0, 10),
+          scheduledAt,
+          notes: activityNote,
+          successCriteria: "Resultado registrado desde la conversación.",
+          ownerUserId: null,
+        });
+        localEntries.push({
+          id: Number(activityResponse.data?.id || Date.now()),
+          actionType: normalizeInteractionActivityType(activityProposal.fields?.activityType || "call"),
+          status: activityStatus,
+          title: activityObjective,
+          notes: activityNote,
+          dueDate: scheduledAt.slice(0, 10),
+          scheduledAt,
+          details: { entryKind: "activity", result: activityNote || "" },
+          isPrimaryNextStep: false,
+        });
+      }
+      if (nextStepProposal?.fields?.title || interactionApprovalDraft.nextStepTitle) {
+        const nextStepTitle = nextStepProposal?.fields?.title || interactionApprovalDraft.nextStepTitle;
+        const nextStepDueDate = nextStepProposal?.fields?.dueDate || interactionApprovalDraft.nextStepDueDate || null;
+        const nextStepSuccessCriteria =
+          nextStepProposal?.fields?.successCriteria ||
+          interactionApprovalDraft.nextStepSuccessCriteria ||
+          "Registrar compromiso del cliente.";
+        const nextStepResponse = await api.post(`/api/opportunities/${editingOpportunityId}/workspace/actions`, {
+          title: nextStepTitle,
+          actionType: "next_step",
+          status: "pending",
+          priority: "high",
+          dueDate: nextStepDueDate,
+          successCriteria: nextStepSuccessCriteria,
+          ownerUserId: null,
+        });
+        localEntries.push({
+          id: Number(nextStepResponse.data?.id || Date.now() + 1),
+          actionType: "next_step",
+          status: "pending",
+          title: nextStepTitle,
+          dueDate: nextStepDueDate,
+          successCriteria: nextStepSuccessCriteria,
+          isPrimaryNextStep: true,
+        });
+      }
+      setLocalInteractionEntries((current) => [...localEntries, ...current]);
+      if (stageAnswerProposal) {
+        const proposedAnswer = normalizeText(stageAnswerProposal.fields?.answerValue);
+        const previousAnswer = normalizeText(stageAnswerProposal.fields?.previousAnswer);
+        const answerMode = stageAnswerProposal.fields?.answerMode || "replace";
+        const answerValue = answerMode === "append" && previousAnswer
+          ? `${previousAnswer}\n${proposedAnswer}`
+          : proposedAnswer;
+        const stageAnswerPayload = {
+          answers: [
+            {
+              questionId: Number(stageAnswerProposal.question?.id || 0),
+              answerValue,
+            },
+          ],
+        };
+        if (Number(stageAnswerProposal.question?.id || 0) > 0) {
+          await api.post(`/api/opportunities/${editingOpportunityId}/stage-answers`, stageAnswerPayload);
+          if (typeof updateCommercialAnswer === "function") {
+            updateCommercialAnswer(
+              Number(stageAnswerProposal.question.id),
+              answerValue,
+            );
+          }
+        }
+      }
+      setInteractionAnalysis(null);
+      setInteractionNote("");
+      setIsInteractionApprovalOpen(false);
+      setInteractionApprovalDraft({
+        draftId: "",
+        status: "drafted",
+        activityType: "call",
+        objective: "",
+        scheduledDate: "",
+        scheduledTime: "09:00",
+        note: "",
+        nextStepTitle: "",
+        nextStepDueDate: "",
+        nextStepSuccessCriteria: "",
+        proposals: [],
+        summary: {
+          title: "Resumen del cambio sugerido",
+          message: "",
+          warnings: [],
+        },
+        errors: [],
+      });
+      await refreshExecutionSection();
+    } catch (error) {
+      setSourceError(getApiErrorMessage(error, "No fue posible aplicar los cambios"));
+    } finally {
+      setApplyingInteraction(false);
     }
   }
 
@@ -2194,6 +2891,9 @@ export default function OpportunityDevelopmentPanel({
       : aiHeaderBadge.tone === "amber"
         ? `Estado: En progreso\nCriterio: puntaje ${aiQualityScore}/8. Requiere reforzar calidad para llegar a alta confianza.`
         : `Estado: Requiere ajuste\nCriterio: puntaje ${aiQualityScore}/8. Ajusta la recomendacion antes de publicarla.`;
+  const interactionChanges = Array.isArray(interactionAnalysis?.changes)
+    ? interactionAnalysis.changes.filter(Boolean)
+    : [];
 
   return (
     <section className="account-form-section opportunity-development-section">
@@ -2288,6 +2988,467 @@ export default function OpportunityDevelopmentPanel({
             <h5>Ejecucion comercial</h5>
             <span className="field-hint">
               Registra y da seguimiento sin salir de la oportunidad.
+          {showOpportunityCoach ? <div className="opportunity-development-interaction-coach">
+            <div className="opportunity-development-execution-section-header">
+              <h6>Coach de oportunidad</h6>
+              <span className="field-hint">Habla con el asistente y revisa los cambios antes de guardarlos.</span>
+            </div>
+
+            <div style={{ display: "grid", gap: "12px" }}>
+              <div style={{ display: "grid", gap: "8px", maxHeight: "240px", overflowY: "auto", padding: "8px 10px", border: "1px solid #d9dfe8", borderRadius: "12px", background: "#f8fafc" }}>
+                {chatMessages.map((message) => (
+                  <div key={message.id} style={{ display: "flex", justifyContent: message.role === "user" ? "flex-end" : "flex-start" }}>
+                    <div
+                      style={{
+                        maxWidth: "80%",
+                        padding: "9px 12px",
+                        borderRadius: "12px",
+                        background: message.role === "user" ? "#1d4ed8" : "#ffffff",
+                        color: message.role === "user" ? "#fff" : "#0f172a",
+                        border: message.role === "assistant" ? "1px solid #d9dfe8" : "none",
+                        boxShadow: message.role === "assistant" ? "0 1px 2px rgba(15,23,42,0.04)" : "none",
+                      }}
+                    >
+                      {message.text}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "grid", gap: "10px" }}>
+                <textarea
+                  rows={3}
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Ej. La demo fue muy bien. El cliente confirmó interés y quiere avanzado con la propuesta. Agéndame reunión con compras el jueves a las 11:00."
+                />
+                <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "space-between" }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleChatSubmit}
+                    disabled={analyzingInteraction || !normalizeText(chatInput)}
+                  >
+                    {analyzingInteraction ? "Analizando..." : "Enviar al coach"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setChatInput("");
+                      setInteractionNote("");
+                    }}
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              </div>
+
+              {interactionJobStatus ? <p className="field-hint">Estado: {interactionJobStatus === "running" ? "analizando" : interactionJobStatus === "completed" ? "análisis listo" : interactionJobStatus}</p> : null}
+
+              {interactionAnalysis ? (
+                <div className="opportunity-development-interaction-review">
+                  <strong>{interactionAnalysis.summary || "Detecté cambios posibles"}</strong>
+                  {interactionAnalysis.activity ? (
+                    <div className="opportunity-development-proposed-activity">
+                      <h6>Nueva actividad propuesta</h6>
+                      <p>
+                        <strong>Tipo:</strong>{" "}
+                        {getInteractionActivityTypeLabel(
+                          interactionAnalysis.activity.type,
+                        )}
+                      </p>
+                      <p>
+                        <strong>Objetivo:</strong>{" "}
+                        {interactionAnalysis.activity.objective || interactionAnalysis.activity.title || "Sin objetivo"}
+                      </p>
+                      <p>
+                        <strong>Fecha:</strong>{" "}
+                        {interactionAnalysis.activity.scheduledDate || "Seleccionar fecha"}
+                        {interactionAnalysis.activity.scheduledTime ? ` ${interactionAnalysis.activity.scheduledTime}` : ""}
+                      </p>
+                      <p>
+                        <strong>Nota:</strong>{" "}
+                        {interactionAnalysis.activity.note || interactionNote}
+                      </p>
+                    </div>
+                  ) : null}
+                  <h6>Cambios detectados en la oportunidad</h6>
+                  {interactionChanges.filter((change) => change.entity !== "activity").length ? (
+                    <ul>
+                      {interactionChanges
+                        .filter((change) => change.entity !== "activity")
+                        .map((change, index) => (
+                          <li key={`${change.entity}-${change.field}-${index}`}>
+                            <span>{getInteractionFieldLabel(change.field || change.entity)}</span>
+                            <small>Propuesto: {change.newValue || "Sin valor detectado"}</small>
+                            <em>
+                              Confianza {getInteractionConfidenceLabel(change.confidence)} · {change.evidence || "Sin evidencia"}
+                            </em>
+                          </li>
+                        ))}
+                    </ul>
+                  ) : (
+                    <p className="field-hint">
+                      No hay cambios adicionales en la oportunidad; la actividad nueva se muestra arriba.
+                    </p>
+                  )}
+                  <div className="opportunity-development-interaction-review-actions">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => setIsInteractionApprovalOpen(true)}
+                      disabled={applyingInteraction || !interactionAnalysis}
+                    >
+                      {applyingInteraction ? "Aplicando..." : "Revisar y aprobar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        setInteractionAnalysis(null);
+                        setIsInteractionApprovalOpen(false);
+                      }}
+                      disabled={applyingInteraction}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            {interactionAnalysis && isInteractionApprovalOpen ? (
+              <div className="opportunity-interaction-approval-backdrop" role="dialog" aria-modal="true" aria-label="Aprobacion de propuesta del coach">
+                <div className="opportunity-development-execution-form opportunity-interaction-approval-modal">
+                  <div className="opportunity-development-execution-form-header">
+                    <h6>Revisar y aprobar</h6>
+                    <span className="record-id-badge state-pending">Aprobación</span>
+                  </div>
+
+                  <div className="opportunity-development-execution-form-grid is-activity">
+                    <div className="opportunity-development-interaction-review-summary" style={{ gridColumn: "1 / -1" }}>
+                      <strong>{interactionApprovalDraft.summary?.title || "Resumen del cambio sugerido"}</strong>
+                      <p>{interactionApprovalDraft.summary?.message || "El coach detectó cambios sugeridos para la oportunidad."}</p>
+                    </div>
+
+                    {(interactionApprovalDraft.proposals || []).length ? (
+                      interactionApprovalDraft.proposals.map((proposal) => (
+                        <div key={proposal.proposalId} className="opportunity-development-proposed-activity" style={{ gridColumn: "1 / -1" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "10px" }}>
+                            <strong>{formatProposalLabel(proposal.kind)}</strong>
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "12px", margin: 0 }}>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(proposal.selected)}
+                                onChange={(event) => toggleInteractionProposalSelected(proposal.proposalId, event.target.checked)}
+                              />
+                              Aplicar
+                            </label>
+                          </div>
+
+                          {proposal.kind === "opportunity_field" ? (
+                            <div style={{ display: "grid", gap: "10px" }}>
+                              <div>
+                                <strong>Campo: {proposal.fields?.label || "Importe en dólares"}</strong>
+                                <p style={{ margin: "6px 0 0" }}>
+                                  Valor actual: {proposal.fields?.previousValue ?? "Sin valor registrado"}
+                                </p>
+                              </div>
+                              <label style={{ display: "block" }}>
+                                Nuevo importe en dólares
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={proposal.fields?.value ?? ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.value", event.target.value)}
+                                />
+                              </label>
+                            </div>
+                          ) : null}
+
+                          {proposal.kind === "stage_answer" ? (
+                            <>
+                              <div style={{ marginBottom: "12px", padding: "10px 12px", borderRadius: "8px", background: "#e8f1ff", border: "1px solid #c8dcfb" }}>
+                                <strong style={{ display: "block", marginBottom: "4px" }}>
+                                  Etapa: {proposal.question?.stageName || "Etapa actual"}
+                                </strong>
+                                <span style={{ color: "#4b6380" }}>
+                                  Verifica que la respuesta corresponda a esta etapa antes de guardarla.
+                                </span>
+                              </div>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Pregunta de la etapa
+                                <input
+                                  value={proposal.question?.prompt || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "question.prompt", event.target.value)}
+                                  disabled
+                                />
+                              </label>
+                              <label style={{ display: "block" }}>
+                                Respuesta sugerida
+                                <textarea
+                                  rows={3}
+                                  value={proposal.fields?.answerValue || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.answerValue", event.target.value)}
+                                />
+                              </label>
+                              {proposal.fields?.previousAnswer ? (
+                                <div style={{ marginTop: "12px" }}>
+                                  <label style={{ display: "block", marginBottom: "6px" }}>
+                                    Qué hacer con la respuesta anterior
+                                    <select
+                                      value={proposal.fields?.answerMode || "replace"}
+                                      onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.answerMode", event.target.value)}
+                                    >
+                                      <option value="replace">Reemplazar la respuesta anterior</option>
+                                      <option value="append">Adicionar a la respuesta anterior</option>
+                                    </select>
+                                  </label>
+                                  <div style={{ padding: "10px 12px", borderRadius: "8px", background: "#fff", border: "1px solid #d9dfe8" }}>
+                                    <strong style={{ display: "block", marginBottom: "4px" }}>Respuesta anterior</strong>
+                                    <span style={{ whiteSpace: "pre-wrap" }}>{proposal.fields.previousAnswer}</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="field-hint" style={{ marginTop: "8px" }}>
+                                  No existe una respuesta anterior para esta pregunta.
+                                </p>
+                              )}
+                            </>
+                          ) : null}
+
+                          {proposal.kind === "activity" ? (
+                            <>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Tipo
+                                <select
+                                  value={proposal.fields?.activityType || "call"}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.activityType", event.target.value)}
+                                >
+                                  {ACTIVITY_TYPE_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Fecha
+                                <input
+                                  type="date"
+                                  value={proposal.fields?.scheduledDate || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.scheduledDate", event.target.value)}
+                                />
+                              </label>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Hora
+                                <input
+                                  type="time"
+                                  value={proposal.fields?.scheduledTime || "09:00"}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.scheduledTime", event.target.value)}
+                                />
+                              </label>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Objetivo
+                                <textarea
+                                  rows={2}
+                                  value={proposal.fields?.objective || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.objective", event.target.value)}
+                                />
+                              </label>
+                              <label style={{ display: "block" }}>
+                                Nota
+                                <textarea
+                                  rows={2}
+                                  value={proposal.fields?.note || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.note", event.target.value)}
+                                />
+                              </label>
+                            </>
+                          ) : null}
+
+                          {proposal.kind === "next_step" ? (
+                            <>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Título
+                                <input
+                                  value={proposal.fields?.title || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.title", event.target.value)}
+                                />
+                              </label>
+                              <label style={{ display: "block", marginBottom: "8px" }}>
+                                Fecha límite
+                                <input
+                                  type="date"
+                                  value={proposal.fields?.dueDate || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.dueDate", event.target.value)}
+                                />
+                              </label>
+                              <label style={{ display: "block" }}>
+                                Criterio de éxito
+                                <input
+                                  value={proposal.fields?.successCriteria || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.successCriteria", event.target.value)}
+                                />
+                              </label>
+                            </>
+                          ) : null}
+
+                          {proposal.kind === "stage_transition" ? (
+                            <>
+                              <p style={{ margin: 0 }}>De {proposal.fields?.fromStageName || "etapa actual"} a {proposal.fields?.toStageName || "siguiente etapa"}</p>
+                              <label style={{ display: "block", marginTop: "8px" }}>
+                                Motivo
+                                <textarea
+                                  rows={2}
+                                  value={proposal.fields?.reason || ""}
+                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.reason", event.target.value)}
+                                />
+                              </label>
+                            </>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      <>
+                        <label>
+                          Tipo
+                          <select
+                            value={interactionApprovalDraft.activityType}
+                            onChange={(event) =>
+                              setInteractionApprovalDraft((current) => ({
+                                ...current,
+                                activityType: event.target.value,
+                              }))
+                            }
+                          >
+                            {ACTIVITY_TYPE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Fecha
+                          <input
+                            type="date"
+                            value={interactionApprovalDraft.scheduledDate}
+                            onChange={(event) =>
+                              setInteractionApprovalDraft((current) => ({
+                                ...current,
+                                scheduledDate: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Hora
+                          <input
+                            type="time"
+                            value={interactionApprovalDraft.scheduledTime}
+                            onChange={(event) =>
+                              setInteractionApprovalDraft((current) => ({
+                                ...current,
+                                scheduledTime: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="is-span-3">
+                          Objetivo
+                          <textarea
+                            rows={2}
+                            value={interactionApprovalDraft.objective}
+                            onChange={(event) =>
+                              setInteractionApprovalDraft((current) => ({
+                                ...current,
+                                objective: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="is-span-3">
+                          Nota
+                          <textarea
+                            rows={3}
+                            value={interactionApprovalDraft.note}
+                            onChange={(event) =>
+                              setInteractionApprovalDraft((current) => ({
+                                ...current,
+                                note: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        {interactionApprovalDraft.nextStepTitle || interactionAnalysis.nextStep?.title ? (
+                          <>
+                            <label className="is-span-3">
+                              Próximo paso
+                              <input
+                                value={interactionApprovalDraft.nextStepTitle}
+                                onChange={(event) =>
+                                  setInteractionApprovalDraft((current) => ({
+                                    ...current,
+                                    nextStepTitle: event.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              Fecha del próximo paso
+                              <input
+                                type="date"
+                                value={interactionApprovalDraft.nextStepDueDate}
+                                onChange={(event) =>
+                                  setInteractionApprovalDraft((current) => ({
+                                    ...current,
+                                    nextStepDueDate: event.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              Criterio de éxito
+                              <input
+                                value={interactionApprovalDraft.nextStepSuccessCriteria}
+                                onChange={(event) =>
+                                  setInteractionApprovalDraft((current) => ({
+                                    ...current,
+                                    nextStepSuccessCriteria: event.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
+                          </>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="opportunity-development-interaction-review-actions">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={handleApplyInteraction}
+                      disabled={applyingInteraction}
+                    >
+                      {applyingInteraction ? "Guardando..." : "Aprobar y guardar"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setIsInteractionApprovalOpen(false)}
+                      disabled={applyingInteraction}
+                    >
+                      Volver a revisar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div> : null}
+
             </span>
           </div>
           <div className="opportunity-collapsible-section-actions">
@@ -2566,9 +3727,9 @@ export default function OpportunityDevelopmentPanel({
                           </span>
                           <span>
                             {item.scheduledAt
-                              ? `Agenda: ${formatNarrativeTimestamp(item.scheduledAt)}`
+                              ? `Agenda: ${formatActivityDisplayDate(item.scheduledAt, { includeTime: true })}`
                               : item.dueDate
-                                ? `Fecha: ${toDateOnly(item.dueDate)}`
+                                ? `Fecha: ${formatActivityDisplayDate(item.dueDate)}`
                                 : "Sin fecha"}
                           </span>
                         </div>
@@ -2675,9 +3836,9 @@ export default function OpportunityDevelopmentPanel({
                             </span>
                             <span>
                               {sentAt
-                                ? `Enviada: ${formatNarrativeTimestamp(sentAt)}`
+                                ? `Enviada: ${formatActivityDisplayDate(sentAt, { includeTime: true })}`
                                 : item.dueDate
-                                  ? `Fecha: ${toDateOnly(item.dueDate)}`
+                                  ? `Fecha: ${formatActivityDisplayDate(item.dueDate)}`
                                   : "Sin fecha"}
                             </span>
                           </div>

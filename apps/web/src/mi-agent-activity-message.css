@@ -1,0 +1,1 @@
+.mi-agent-activity-progress-message{margin:0 0 16px;padding:15px 16px;background:#eef7f6;border-left:4px solid #4aa8a0;border-radius:6px;color:#173b52;font-size:16px;font-weight:800;line-height:1.45}.mi-agent-activity-progress-message::before{content:'Lectura del agente: ';color:#287b76}@media(max-width:560px){.mi-agent-activity-progress-message{font-size:14px}}

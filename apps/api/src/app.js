@@ -16,6 +16,7 @@ import interactionRoutes from "./routes.interactions.js";
 import catalogRoutes from "./routes.catalogs.js";
 import auditRoutes from "./routes.audit.js";
 import executionCommercialRoutes from "./routes.execution-commercial.js";
+import miAgentRoutes from "./routes.mi-agent.js";
 import commercialTrackingRoutes from "./routes.commercial-tracking.js";
 import commercialEnablementRoutes from "./routes.commercial-enablement.js";
 import commercialPlanningRoutes from "./routes.commercial-planning.js";
@@ -126,6 +127,7 @@ export function createApp() {
     loadUser,
     executionCommercialRoutes,
   );
+  app.use("/api/mi-agent", authRequired, loadUser, miAgentRoutes);
   app.use(
     "/api/commercial-tracking",
     authRequired,

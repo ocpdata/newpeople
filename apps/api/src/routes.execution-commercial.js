@@ -122,6 +122,9 @@ const COMMERCIAL_ACTIVITY_ACTION_TYPES = new Set([
   "conference",
   "visit",
   "presentation",
+  "send_email",
+  "next_step",
+  "waiting_customer",
   "other",
 ]);
 
@@ -9259,6 +9262,48 @@ router.post(
           "No fue posible generar la narrativa IA",
       });
     }
+  },
+);
+
+router.get(
+  "/opportunities/:id/activities",
+  requireAnyPermission([
+    "desarrollo_comercial.read",
+    "desarrollo_comercial.update",
+    "calendario_comercial.read",
+    "calendario_comercial.update",
+  ]),
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+    const opportunity = await loadOpportunityForExecution(req.user, opportunityId);
+    if (!opportunity) return res.status(404).json({ message: "Oportunidad no encontrada" });
+    const rows = await query(
+      `SELECT id, action_type, status, priority, title, due_date, scheduled_at,
+              success_criteria, notes, is_primary_next_step, details_json
+       FROM opportunity_workspace_actions
+       WHERE opportunity_id = ?
+       ORDER BY scheduled_at IS NULL, scheduled_at DESC, id DESC
+       LIMIT 100`,
+      [opportunityId],
+    );
+    return res.json(rows.map((row) => ({
+      id: Number(row.id),
+      activityType: row.action_type || "other",
+      status: row.status || "pending",
+      priority: row.priority || "medium",
+      objective: row.title || "",
+      dueDate: row.due_date || null,
+      scheduledAt: row.scheduled_at || null,
+      successCriteria: row.success_criteria || "",
+      notes: row.notes || "",
+      isPrimaryNextStep: Boolean(row.is_primary_next_step),
+      entryKind: getCommercialEntryKind(row.action_type),
+      details: parseCommercialActionDetails(row.details_json),
+    })));
   },
 );
 

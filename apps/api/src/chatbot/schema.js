@@ -83,6 +83,33 @@ export async function ensureChatbotSchema() {
             ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
       `);
+
+      await query(`
+        CREATE TABLE IF NOT EXISTS chatbot_operation_drafts (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          public_id VARCHAR(64) NOT NULL,
+          session_id BIGINT UNSIGNED NOT NULL,
+          user_id BIGINT UNSIGNED NOT NULL,
+          job_id BIGINT UNSIGNED NULL,
+          status ENUM('drafted','needs_clarification','approved','executing','completed','rejected','failed','expired') NOT NULL DEFAULT 'drafted',
+          intent VARCHAR(80) NOT NULL,
+          target_entity VARCHAR(80) NOT NULL,
+          target_entity_id BIGINT UNSIGNED NULL,
+          draft_json JSON NOT NULL,
+          result_json JSON NULL,
+          error_message TEXT NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+          approved_at DATETIME(3) NULL,
+          completed_at DATETIME(3) NULL,
+          PRIMARY KEY (id),
+          UNIQUE KEY uq_chatbot_operation_drafts_public_id (public_id),
+          KEY idx_chatbot_operation_drafts_user (user_id, status, created_at),
+          CONSTRAINT fk_chatbot_operation_drafts_session FOREIGN KEY (session_id) REFERENCES chatbot_sessions(id) ON DELETE CASCADE,
+          CONSTRAINT fk_chatbot_operation_drafts_job FOREIGN KEY (job_id) REFERENCES chatbot_jobs(id) ON DELETE SET NULL,
+          CONSTRAINT fk_chatbot_operation_drafts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `);
     })();
   }
 

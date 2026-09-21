@@ -705,11 +705,19 @@ router.get("/", requirePermission("contactos.read"), async (req, res) => {
   }
 
   const whereClauses = [];
+  const opportunityIdFilter = req.query.opportunityId ? Number(req.query.opportunityId) : null;
   if (accountIdFilter !== null) {
     whereClauses.push("c.account_id = ?");
   }
   if (activeOnly) {
     whereClauses.push("cas.code = 'activado'");
+  }
+  if (opportunityIdFilter !== null) {
+    if (!Number.isInteger(opportunityIdFilter) || opportunityIdFilter <= 0) {
+      return res.status(400).json({ message: "opportunityId invalido" });
+    }
+    whereClauses.push("EXISTS (SELECT 1 FROM opportunities co WHERE co.id = ? AND co.contact_id = c.id)");
+    params.push(opportunityIdFilter);
   }
 
   const rows = await query(
@@ -939,6 +947,32 @@ router.post(
     }
   },
 );
+
+router.patch("/:id/coach-field", requirePermission("contactos.update"), async (req, res) => {
+  const id = Number(req.params.id);
+  const fieldMap = {
+    firstName: "first_name",
+    lastName: "last_name",
+    email: "email",
+    mobile: "mobile",
+    phone: "phone",
+    positionTitle: "position_title",
+    department: "department",
+    city: "city",
+    stateRegion: "state_region",
+  };
+  const field = String(req.body?.field || "").trim();
+  const column = fieldMap[field];
+  if (!Number.isInteger(id) || id <= 0 || !column) return res.status(400).json({ message: "Campo de contacto no permitido" });
+  const access = await requireAccessibleContactOr404({ user: req.user, contactId: id, message: "Contacto no encontrado" });
+  if (!access.ok) return res.status(access.response.status).json(access.response.body);
+  const rows = await query(`SELECT ${column} AS value FROM contacts WHERE id = ? LIMIT 1`, [id]);
+  if (!rows.length) return res.status(404).json({ message: "Contacto no encontrado" });
+  const value = String(req.body?.value ?? "").trim();
+  await query(`UPDATE contacts SET ${column} = ?, updated_by = ?, updated_at = NOW(3) WHERE id = ?`, [value || null, Number(req.user.id), id]);
+  const auditId = await logAuditEvent({ req, module: "contactos", action: "coach_field_updated", entityType: "contact", entityId: id, detail: `Campo actualizado desde Coach: ${field}`, before: { [field]: rows[0].value }, after: { [field]: value || null } });
+  return res.json({ id, field, value: value || null, auditId });
+});
 
 router.put("/:id", requirePermission("contactos.update"), async (req, res) => {
   const id = Number(req.params.id);

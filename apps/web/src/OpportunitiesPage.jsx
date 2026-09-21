@@ -128,6 +128,7 @@ function OpportunitiesPage({ currentUser, can }) {
     toggleOpportunityMenu,
     runOpportunityAction,
     updateOpportunityStatus,
+    updateOpportunityAmountFromCoach,
     linkingStageDocumentId,
     linkingAnswerSourceId,
     setAnswerDocumentSelection,
@@ -169,6 +170,28 @@ function OpportunitiesPage({ currentUser, can }) {
         contactId: form?.contactId ? Number(form.contactId) : null,
       },
       visibleData: {
+        opportunity: {
+          id: Number(editingOpportunityId),
+          name: String(form?.name || "").trim(),
+          amountUsd: form?.amountUsd || "",
+          closeDate: String(form?.closeDate || "").trim(),
+          accountId: form?.accountId ? Number(form.accountId) : null,
+          contactId: form?.contactId ? Number(form.contactId) : null,
+          businessLineId: form?.businessLineId
+            ? Number(form.businessLineId)
+            : null,
+          sellerUserId: form?.sellerUserId
+            ? Number(form.sellerUserId)
+            : null,
+          presalesUserId: form?.presalesUserId
+            ? Number(form.presalesUserId)
+            : null,
+          activationStatusId: form?.activationStatusId
+            ? Number(form.activationStatusId)
+            : null,
+        },
+        amountUsd: form?.amountUsd || "",
+        closeDate: String(form?.closeDate || "").trim(),
         currentSalesStageCode: String(
           currentCommercialStage?.code ||
             commercialContext?.currentSalesStage?.code ||
@@ -179,12 +202,58 @@ function OpportunitiesPage({ currentUser, can }) {
             commercialContext?.currentSalesStage?.name ||
             "",
         ).trim(),
+        stageAnswers: Array.isArray(commercialContext?.answers)
+          ? commercialContext.answers.map((answer) => ({
+              questionId: Number(answer?.question_id || 0),
+              prompt: String(answer?.prompt || "").trim(),
+              answerValue: String(answer?.answer_value || "").trim(),
+              required: Boolean(answer?.is_required),
+              answeredAt: answer?.answered_at || null,
+            }))
+          : [],
         commercialStatusCode: String(
           commercialContext?.commercialStatus?.code || "",
         ).trim(),
         commercialStatusName: String(
           commercialContext?.commercialStatus?.name || "",
         ).trim(),
+        stages: Array.isArray(commercialContext?.stages)
+          ? commercialContext.stages.map((stage) => ({
+              id: Number(stage?.id || 0),
+              code: String(stage?.code || "").trim(),
+              name: String(stage?.name || "").trim(),
+              order: Number(stage?.order || 0),
+              isCurrent: Boolean(stage?.isCurrent),
+              isSelected: Boolean(stage?.isSelected),
+            }))
+          : [],
+        workspace: commercialContext?.workspace
+          ? {
+              summary: commercialContext.workspace.summary || null,
+              recommendedStrategy,
+              actions: Array.isArray(commercialContext.workspace.actions)
+                ? commercialContext.workspace.actions.slice(0, 20)
+                : [],
+              weaknesses: Array.isArray(commercialContext.workspace.weaknesses)
+                ? commercialContext.workspace.weaknesses.slice(0, 12)
+                : [],
+              stakeholders: Array.isArray(commercialContext.workspace.stakeholders)
+                ? commercialContext.workspace.stakeholders.slice(0, 12)
+                : [],
+              risks: Array.isArray(commercialContext.workspace.risks)
+                ? commercialContext.workspace.risks.slice(0, 12)
+                : [],
+            }
+          : null,
+        documents: Array.isArray(opportunityDocuments)
+          ? opportunityDocuments.slice(0, 12).map((document) => ({
+              id: document?.id || document?.publicId || null,
+              name: String(
+                document?.fileName || document?.originalFileName || "",
+              ).trim(),
+              status: String(document?.status || "").trim(),
+            }))
+          : [],
         recommendedStrategy: recommendedStrategy
           ? {
               heading: String(recommendedStrategy.heading || "").trim(),
@@ -217,6 +286,7 @@ function OpportunitiesPage({ currentUser, can }) {
     currentCommercialStage,
     editingOpportunityId,
     form,
+    opportunityDocuments,
     selectedCommercialStageId,
     showOpportunityModal,
   ]);
@@ -319,6 +389,7 @@ function OpportunitiesPage({ currentUser, can }) {
         hasImmediatePreviousStage={hasImmediatePreviousStage}
         savingCommercialAction={savingCommercialAction}
         updateCommercialAnswer={updateCommercialAnswer}
+        updateOpportunityAmountFromCoach={updateOpportunityAmountFromCoach}
         closeOpportunityModal={closeOpportunityModal}
         saveOpportunity={saveOpportunity}
         savingOpportunity={savingOpportunity}

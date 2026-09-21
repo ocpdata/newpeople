@@ -49,6 +49,9 @@ export default function ChatbotWidget({ currentUser }) {
   const [isOpen, setIsOpen] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState([]);
+  const [operationReview, setOperationReview] = useState(null);
+  const [loadingOperationReview, setLoadingOperationReview] = useState("");
+  const [approvingOperation, setApprovingOperation] = useState("");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [statusText, setStatusText] = useState("");
@@ -64,6 +67,8 @@ export default function ChatbotWidget({ currentUser }) {
   const dragStateRef = useRef(null);
 
   const contextSnapshot = useChatbotContextState();
+  const isSuppressedInOpportunityModal =
+    contextSnapshot?.surface === "opportunity_form_modal";
   const contextIdentity = useMemo(
     () =>
       [
@@ -177,6 +182,16 @@ export default function ChatbotWidget({ currentUser }) {
         setMessages(Array.isArray(data?.items) ? data.items : []);
       }
     } catch (historyError) {
+      if (historyError?.response?.status === 404) {
+        localStorage.removeItem(storageKey);
+        if (mounted) {
+          setSessionId("");
+          setMessages([]);
+          setError("");
+          await createSession(mounted, timeoutMs);
+        }
+        return false;
+      }
       if (mounted) {
         setError(
           getApiErrorMessage(
@@ -186,6 +201,7 @@ export default function ChatbotWidget({ currentUser }) {
         );
       }
     }
+    return true;
   }
 
   function setPollingJob(jobId, timeoutMs = requestTimeoutMs) {
@@ -278,11 +294,90 @@ export default function ChatbotWidget({ currentUser }) {
 
       setPollingJob(String(data?.jobId || ""), requestTimeoutMs);
     } catch (sendError) {
+      if (sendError?.response?.status === 404) {
+        localStorage.removeItem(storageKey);
+        setSessionId("");
+        setMessages([]);
+        setStatusText("Reiniciando sesión...");
+        try {
+          const nextSessionId = await createSession(true, requestTimeoutMs);
+          const { data } = await api.post(
+            "/api/chatbot/messages",
+            {
+              sessionId: nextSessionId,
+              message,
+              useContext: true,
+              contextSnapshot,
+              featureCode: "chatbot.assistant",
+            },
+            { timeout: requestTimeoutMs },
+          );
+          setMessages((current) => [
+            ...current,
+            {
+              id: `temp_${Date.now()}`,
+              role: "user",
+              content: message,
+              source: null,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+          setStatusText("");
+          setPollingJob(String(data?.jobId || ""), requestTimeoutMs);
+          return;
+        } catch (sessionError) {
+          sendError = sessionError;
+        }
+      }
       setSending(false);
       setStatusText("");
       setError(
         getApiErrorMessage(sendError, "No fue posible enviar la pregunta"),
       );
+    }
+  }
+
+  async function handleReviewOperation(draftId) {
+    const id = String(draftId || "").trim();
+    if (!id) return;
+    setLoadingOperationReview(id);
+    setError("");
+    try {
+      const { data } = await api.get(
+        `/api/chatbot/operation-drafts/${encodeURIComponent(id)}`,
+      );
+      if (!Array.isArray(data?.operation?.changes) || !data.operation.changes.length) {
+        setOperationReview(null);
+        setError("No hay cambios concretos para aprobar. Indica el campo y el nuevo valor.");
+        return;
+      }
+      setOperationReview(data);
+    } catch (reviewError) {
+      setError(getApiErrorMessage(reviewError, "No fue posible cargar la propuesta"));
+    } finally {
+      setLoadingOperationReview("");
+    }
+  }
+
+  async function handleApproveOperation(draftId) {
+    const id = String(draftId || "").trim();
+    if (!id) return;
+    setApprovingOperation(id);
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/chatbot/operation-drafts/${encodeURIComponent(id)}/approve`,
+      );
+      setOperationReview((current) => ({
+        ...(current || {}),
+        status: data?.status || "completed",
+        result: data?.result || null,
+      }));
+      await loadHistory(sessionId, true, requestTimeoutMs);
+    } catch (approveError) {
+      setError(getApiErrorMessage(approveError, "No fue posible aprobar la operación"));
+    } finally {
+      setApprovingOperation("");
     }
   }
 
@@ -425,6 +520,8 @@ export default function ChatbotWidget({ currentUser }) {
     dragStateRef.current = null;
   }
 
+  if (isSuppressedInOpportunityModal) return null;
+
   return (
     <>
       <button
@@ -531,6 +628,23 @@ export default function ChatbotWidget({ currentUser }) {
                     </span>
                   </div>
                   <p className="chatbot-message-text">{item.content}</p>
+                  {item?.source?.operationDraftId &&
+                  Array.isArray(item?.source?.operation?.changes) &&
+                  item.source.operation.changes.length > 0 ? (
+                    <div className="chatbot-operation-card">
+                      <strong>Propuesta de cambio</strong>
+                      <button
+                        type="button"
+                        className="chatbot-suggestion"
+                        onClick={() => handleReviewOperation(item.source.operationDraftId)}
+                        disabled={Boolean(loadingOperationReview || approvingOperation)}
+                      >
+                        {loadingOperationReview === item.source.operationDraftId
+                          ? "Cargando propuesta..."
+                          : "Revisar y aprobar"}
+                      </button>
+                    </div>
+                  ) : null}
                   {item?.source?.sourceType ? (
                     <small className="chatbot-message-source">
                       {item.source.sourceType}
@@ -547,6 +661,67 @@ export default function ChatbotWidget({ currentUser }) {
               </div>
             )}
           </div>
+
+          {operationReview ? (
+            <div className="chatbot-operation-review" role="dialog" aria-modal="true">
+              <strong>Revisar operación</strong>
+                  <p>
+                {operationReview.operation?.target?.entity === "opportunity"
+                  ? "Oportunidad"
+                  : operationReview.operation?.target?.entity || "Registro"}
+                {operationReview.operation?.target?.id
+                  ? ` #${operationReview.operation.target.id}`
+                  : ""}
+              </p>
+              {(operationReview.operation?.changes || []).map((change) => (
+                <div key={change.field || change.questionId} className="chatbot-operation-change">
+                  <p>
+                    <strong>{change.label || change.questionPrompt || change.field || "Cambio"}:</strong>
+                  </p>
+                  {change.questionPrompt ? (
+                    <p>Pregunta: {change.questionPrompt}</p>
+                  ) : null}
+                  {change.kind === "activity" ? (
+                    <>
+                      <p>Tipo: {change.activityType === "conference" ? "Reunión" : change.activityType === "presentation" ? "Demostración" : "Llamada"}</p>
+                      <p>Fecha: {change.scheduledDate || "Sin fecha"}</p>
+                      <p>Hora: {change.scheduledTime || "Sin hora"}</p>
+                      <p>Objetivo: {change.objective || "Sin objetivo"}</p>
+                      <p>Nota: {change.note || "Sin nota"}</p>
+                    </>
+                  ) : null}
+                  {change.kind !== "activity" ? <p>
+                    {change.currentValue ?? change.previousValue ?? "Sin valor"} → {change.proposedValue}
+                  </p> : null}
+                  {change.mode ? (
+                    <p>Acción: {change.mode === "append" ? "Adicionar a la respuesta anterior" : "Reemplazar la respuesta anterior"}</p>
+                  ) : null}
+                </div>
+              ))}
+              {operationReview.status === "completed" ? (
+                <p>Operación aprobada y ejecutada.</p>
+              ) : (
+                <button
+                  type="button"
+                  className="chatbot-operation-review-action is-primary"
+                  onClick={() => handleApproveOperation(operationReview.draftId)}
+                  disabled={Boolean(approvingOperation)}
+                >
+                  {approvingOperation === operationReview.draftId
+                    ? "Guardando..."
+                    : "Aprobar y guardar"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="chatbot-operation-review-action"
+                onClick={() => setOperationReview(null)}
+                disabled={Boolean(approvingOperation)}
+              >
+                Cerrar
+              </button>
+            </div>
+          ) : null}
 
           {suggestions.length && !messages.length ? (
             <div className="chatbot-suggestions">

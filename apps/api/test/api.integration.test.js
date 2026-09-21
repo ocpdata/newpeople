@@ -21,6 +21,7 @@ import { processPendingProposalExecutiveSummaryGenerationJobs } from "../src/rou
 import { processPendingOpportunityStageAnswerSuggestionJobs } from "../src/opportunity-stage-answer-suggestions/service.js";
 import { processPendingOpportunityStageValidationJobs } from "../src/opportunity-stage-validations/service.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
+import { ensureCorePermissions } from "../src/permissions.js";
 import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
 import {
   TEST_PREFIX,
@@ -58,6 +59,10 @@ describe("API integration baseline", () => {
   const ctx = {};
 
   beforeAll(async () => {
+    const adminRole = await ensureNamedRole("Administrador");
+    if (adminRole.created) cleanup.roleIds.push(adminRole.roleId);
+    await ensureCorePermissions({ autoAssignRoles: true });
+    await ensureLandingPermissions({ autoAssignRoles: true });
     await ensureCommercialEnablementPermissions();
     await ensureCommercialTrackingPermissions();
     await ensureCommercialPlanningPermissions();
@@ -9945,6 +9950,41 @@ describe("API integration baseline", () => {
         }),
       ]),
     );
+  });
+
+  test("oportunidades.workspace guarda la hora aprovada en scheduled_at", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_workspace_scheduled_at_preserved`,
+    );
+
+    const createResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/workspace/actions`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        title: "Reunion de validacion con cliente",
+        actionType: "follow_up",
+        status: "pending",
+        priority: "high",
+        dueDate: "2026-09-19",
+        scheduledAt: "2026-09-19T11:00",
+        successCriteria: "Confirmar acuerdo de compra.",
+        notes: "Reunion programada para validar condiciones.",
+      });
+
+    expect(createResponse.status).toBe(200);
+
+    const [row] = await query(
+      `SELECT due_date, scheduled_at
+       FROM opportunity_workspace_actions
+       WHERE opportunity_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [fixture.opportunityId],
+    );
+
+    expect(row).toBeTruthy();
+    expect(String(row.due_date)).toBe("2026-09-19");
+    expect(String(row.scheduled_at)).toContain("2026-09-19 11:00:00");
   });
 
   test("oportunidades.workspace solo muestra avance comercial cuando la etapa fue validada", async () => {

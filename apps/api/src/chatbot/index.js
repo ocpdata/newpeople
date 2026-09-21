@@ -6,6 +6,15 @@ import { executeChatbotPlan } from "./executor.js";
 import { buildEvidenceReferences } from "./references.js";
 import { planChatbotRetrievalWithAi } from "./planner.js";
 import { resolveChatbotEntityWithAi } from "./resolver.js";
+import {
+  buildOperationDraft,
+  classifyChatbotIntent,
+  isWriteIntent,
+} from "./intent.js";
+import {
+  loadActiveOpportunityContext,
+  mergeLoadedOpportunityContext,
+} from "./context-loader.js";
 
 function buildClarificationAnswer({ entityLabel, candidates }) {
   const options = candidates
@@ -57,10 +66,67 @@ export async function runChatbotPipeline({
     }
   }
 
+  const loadedOpportunityContext = await loadActiveOpportunityContext({
+    user,
+    contextSnapshot,
+  });
+  const enrichedContextSnapshot = mergeLoadedOpportunityContext(
+    contextSnapshot,
+    loadedOpportunityContext,
+  );
+  const intent = classifyChatbotIntent({
+    prompt,
+    contextSnapshot: enrichedContextSnapshot,
+  });
+  if (isWriteIntent(intent)) {
+    const operation = buildOperationDraft({
+      intent,
+      prompt,
+      contextSnapshot: enrichedContextSnapshot,
+    });
+    if (!operation.target.id) {
+      return {
+        answer:
+          "Necesito que indiques el registro que quieres modificar o que abras ese registro para usar el contexto actual.",
+        sourceType: "crm_data",
+        confidence: 0.6,
+        references: [],
+        operation,
+        usage: null,
+        sourceReason: "operation_entity_required",
+      };
+    }
+    if (!operation.changes.length) {
+      return {
+        answer:
+          "Entendi que quieres realizar un cambio, pero necesito que indiques con claridad el campo y el nuevo valor.",
+        sourceType: "crm_data",
+        confidence: 0.55,
+        references: [],
+        operation: {
+          ...operation,
+          requiresApproval: false,
+          status: "needs_clarification",
+        },
+        usage: null,
+        sourceReason: "operation_details_required",
+      };
+    }
+    return {
+      answer: "Prepare una propuesta de cambio para que la revises y la apruebes antes de guardarla.",
+      sourceType: "crm_data",
+      confidence: Number(intent.confidence || 0.8),
+      references: [`${operation.target.entity}:${operation.target.id}`],
+      operation,
+      usage: null,
+      sourceReason: "operation_draft_ready",
+    };
+  }
+
   const plannerOutput = await planChatbotRetrievalWithAi({
     user,
     prompt,
-    contextSnapshot,
+    contextSnapshot: enrichedContextSnapshot,
     featureCode,
     internalRequestId,
   });

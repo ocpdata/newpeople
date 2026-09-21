@@ -9,7 +9,25 @@ function placeholders(length) {
 }
 
 export async function getPermissionIds(codes) {
-  const rows = await query(
+  let rows = await query(
+    `SELECT id, code FROM permissions WHERE code IN (${placeholders(codes.length)})`,
+    codes,
+  );
+  const existingCodes = new Set(rows.map((row) => String(row.code)));
+  const missingCodes = codes.filter((code) => !existingCodes.has(code));
+  for (const code of missingCodes) {
+    const separatorIndex = code.lastIndexOf(".");
+    const module = separatorIndex > 0 ? code.slice(0, separatorIndex) : code;
+    const action = separatorIndex > 0 ? code.slice(separatorIndex + 1) : "read";
+    const now = new Date();
+    await query(
+      `INSERT INTO permissions (code, module, action, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)`,
+      [code, module, action, `Permiso temporal de pruebas: ${code}`, now, now],
+    );
+  }
+  rows = await query(
     `SELECT id, code FROM permissions WHERE code IN (${placeholders(codes.length)})`,
     codes,
   );

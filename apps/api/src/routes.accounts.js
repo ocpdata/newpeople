@@ -438,6 +438,11 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
     String(req.query.activeOnly || "")
       .trim()
       .toLowerCase() === "true";
+  const search = String(req.query.search || "").trim();
+  const accountWhere = [];
+  if (activeOnly) accountWhere.push("aas.code = 'activada'");
+  if (search) accountWhere.push("(a.name LIKE ? OR a.registration_code LIKE ?)");
+  if (search) params.push(`%${search}%`, `%${search}%`);
   const rows = await query(
     `SELECT a.id, a.name, atp.name AS account_type, a.registration_code, a.phone, es.name AS economic_sector,
             a.website, a.city, a.state_region, c.name AS country,
@@ -462,7 +467,7 @@ router.get("/", requirePermission("cuentas.read"), async (req, res) => {
        INNER JOIN users u ON u.id = ao.user_id
        GROUP BY ao.account_id
      ) owners ON owners.account_id = a.id
-     ${activeOnly ? "WHERE aas.code = 'activada'" : ""}
+    ${accountWhere.length ? `WHERE ${accountWhere.join(" AND ")}` : ""}
      ORDER BY a.id DESC`,
     params,
   );
@@ -941,6 +946,35 @@ router.put("/:id", requirePermission("cuentas.update"), async (req, res) => {
 
   res.json({ message: "Cuenta actualizada" });
 });
+
+router.patch(
+  "/:id/coach-field",
+  requirePermission("cuentas.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const fieldMap = {
+      name: "name",
+      phone: "phone",
+      website: "website",
+      city: "city",
+      stateRegion: "state_region",
+      companyDescription: "description",
+    };
+    const column = fieldMap[String(req.body?.field || "").trim()];
+    if (!Number.isInteger(id) || id <= 0 || !column) {
+      return res.status(400).json({ message: "Campo de cuenta no permitido" });
+    }
+    const access = await requireAccessibleAccountOr404({ user: req.user, accountId: id, message: "Cuenta no encontrada" });
+    if (!access.ok) return res.status(access.response.status).json(access.response.body);
+    const rows = await query(`SELECT ${column} AS value FROM accounts WHERE id = ? LIMIT 1`, [id]);
+    if (!rows.length) return res.status(404).json({ message: "Cuenta no encontrada" });
+    const value = String(req.body?.value ?? "").trim();
+    if (column === "name" && value.length < 2) return res.status(400).json({ message: "El nombre de cuenta no es valido" });
+    await query(`UPDATE accounts SET ${column} = ?, updated_by = ?, updated_at = NOW(3) WHERE id = ?`, [value || null, Number(req.user.id), id]);
+    const auditId = await logAuditEvent({ req, module: "cuentas", action: "coach_field_updated", entityType: "account", entityId: id, detail: `Campo actualizado desde Coach: ${req.body.field}`, before: { [req.body.field]: rows[0].value }, after: { [req.body.field]: value || null } });
+    return res.json({ id, field: req.body.field, value: value || null, auditId });
+  },
+);
 
 router.patch(
   "/:id/status",

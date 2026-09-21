@@ -39,6 +39,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Configuracion del sistema](./configuracion-sistema.md)
 - [Cuenta de usuario](./cuenta-usuario.md)
 - [Chatbot](./chatbot.md)
+- [Mi Coach](./mi-coach.md)
 - [Pruebas](./pruebas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)

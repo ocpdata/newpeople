@@ -74,6 +74,7 @@ function OpportunityFormModal({
   analyzingCommercialSuggestions,
   commercialSuggestionFeedback,
   updateCommercialAnswer,
+  updateOpportunityAmountFromCoach,
   analyzeCommercialStageAnswers,
   applyCommercialAnswerSuggestion,
   closeCommercialSuggestionFeedback,
@@ -1082,12 +1083,15 @@ function OpportunityFormModal({
                   <OpportunityDevelopmentPanel
                     editingOpportunityId={editingOpportunityId}
                     form={form}
+                    setForm={setForm}
                     commercialContext={commercialContext}
                     opportunityDocuments={opportunityDocuments}
                     currentCommercialStage={currentCommercialStage}
                     loadingCommercialStageView={loadingCommercialStageView}
                     isCommercialFlowClosed={isCommercialFlowClosed}
                     refreshCommercialContext={refreshOpportunityCommercialView}
+                    updateCommercialAnswer={updateCommercialAnswer}
+                    updateOpportunityAmountFromCoach={updateOpportunityAmountFromCoach}
                     selectedOpportunityContact={selectedOpportunityContact}
                     selectedOpportunityContactEmail={
                       selectedOpportunityContactEmail
@@ -1108,6 +1112,7 @@ function OpportunityFormModal({
                       )?.email || ""
                     }
                     canExecuteOperations={true}
+                    showOpportunityCoach={false}
                   />
                 ) : null}
 

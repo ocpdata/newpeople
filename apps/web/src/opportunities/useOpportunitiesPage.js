@@ -3108,6 +3108,42 @@ export function useOpportunitiesPage({
     }
   }
 
+  async function updateOpportunityAmountFromCoach(amountUsd) {
+    if (!editingOpportunityId) return;
+
+    const normalizedAmountUsd = formatOpportunityAmountInput(String(amountUsd));
+    const payload = {
+      name: normalizeOpportunityNameValue(form.name),
+      amountUsd: parseOpportunityAmountInput(normalizedAmountUsd),
+      accountId: Number(form.accountId),
+      closeDate: form.closeDate,
+      contactId: Number(form.contactId),
+      businessLineId: Number(form.businessLineId),
+      sellerUserId: Number(form.sellerUserId),
+      presalesUserId: form.presalesUserId ? Number(form.presalesUserId) : null,
+      activationStatusId: Number(form.activationStatusId),
+      salesStageId: Number(form.salesStageId),
+    };
+
+    try {
+      const { data } = await api.put(
+        `/api/opportunities/${editingOpportunityId}`,
+        payload,
+      );
+      setForm((current) => ({
+        ...current,
+        amountUsd: normalizedAmountUsd,
+      }));
+      setSuccess(data?.message || "Importe de la oportunidad actualizado");
+      await load();
+    } catch (err) {
+      setError(
+        getApiErrorMessage(err, "No fue posible actualizar el importe de la oportunidad"),
+      );
+      throw err;
+    }
+  }
+
   const contactOptions = useMemo(() => {
     if (!form.accountId) return [];
     return catalogs.contacts.filter(
@@ -3368,6 +3404,7 @@ export function useOpportunitiesPage({
     toggleOpportunityMenu,
     runOpportunityAction,
     updateOpportunityStatus,
+    updateOpportunityAmountFromCoach,
     answerDocumentSelections,
     linkingStageDocumentId,
     linkingAnswerSourceId,

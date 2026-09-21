@@ -34,6 +34,7 @@ const OpportunitiesPage = lazy(() => import("./OpportunitiesPage"));
 const CommercialDevelopmentPage = lazy(
   () => import("./CommercialDevelopmentPage"),
 );
+const MiAgentPage = lazy(() => import("./MiAgentPage"));
 const CalendarPage = lazy(() => import("./CalendarPage"));
 const CommercialTrackingPage = lazy(() => import("./CommercialTrackingPage"));
 const SellerLeagueTvPage = lazy(() => import("./SellerLeagueTvPage"));
@@ -196,6 +197,7 @@ export default function AppShell({
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     canReadOpportunities;
+  const canAccessMiAgent = canReadOpportunities;
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
   const canAccessCommercialRhythm = can("ritmo_comercial.read");
@@ -439,6 +441,27 @@ export default function AppShell({
               <CommercialDevelopmentPage
                 currentUser={currentUser}
                 canAccessCommercialCalendar={canAccessCommercialCalendar}
+              />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/mi-agent"
+          element={
+            canAccessMiAgent ? (
+              <MiAgentPage
+                currentUser={currentUser}
+                canCreateActions={can("oportunidades.update")}
+                canUpdateLeads={can("interacciones.update")}
+                canUpdateAccounts={can("cuentas.update")}
+                canUpdateContacts={can("contactos.update")}
+                canCreateAccounts={can("cuentas.create") || can("cuentas.request")}
+                canCreateContacts={can("contactos.create") || can("contactos.request")}
+                canResolveLeads={can("interacciones.resolve")}
+                canCreateOpportunities={can("oportunidades.create") || can("oportunidades.request")}
+                canUpdateCommercialDevelopment={can("desarrollo_comercial.update")}
               />
             ) : (
               <Navigate to="/" />
@@ -702,14 +725,6 @@ export default function AppShell({
                 )}
                 {canAccessProposals && (
                   <GuardedNavLink
-                    to="/proposals"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Propuestas
-                  </GuardedNavLink>
-                )}
-                {canAccessProposals && (
-                  <GuardedNavLink
                     to="/proposals-new"
                     onBeforeNavigate={confirmRouteChange}
                   >
@@ -720,6 +735,7 @@ export default function AppShell({
             )}
 
             {(canAccessCommercialDevelopment ||
+              canAccessMiAgent ||
               canAccessCommercialCalendar ||
               canAccessCommercialTracking ||
               canAccessCommercialRhythm ||
@@ -727,6 +743,14 @@ export default function AppShell({
               canAccessCommercialEnablement ||
               canReadContacts) && (
               <SidebarNavGroup title="Gestión Comercial">
+                {canAccessMiAgent ? (
+                  <GuardedNavLink
+                    to="/mi-agent"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Mi Coach
+                  </GuardedNavLink>
+                ) : null}
                 {canAccessCommercialTracking ? (
                   <GuardedNavLink
                     to="/commercial-tracking"
