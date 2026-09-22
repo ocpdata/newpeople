@@ -10,6 +10,7 @@ import { ensureLandingPermissions } from "../src/landing/permissions.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-registrations/permissions.js";
 import { ensureManufacturerRegistrationsSchema } from "../src/manufacturer-registrations/schema.js";
+import { ensureInteractionPermissions } from "../src/interactions/permissions.js";
 import {
   analyzeAccountDraft,
   processPendingAccountDraftAnalysisJobs,
@@ -70,6 +71,7 @@ describe("API integration baseline", () => {
     await ensureCommercialExecutionSchema();
     await ensureManufacturerRegistrationPermissions();
     await ensureManufacturerRegistrationsSchema();
+    await ensureInteractionPermissions();
 
     await query(
       `INSERT INTO contact_relationship_types (code, name, is_active)
@@ -84,6 +86,18 @@ describe("API integration baseline", () => {
       cleanup.roleIds.push(sellerRole.roleId);
     }
     ctx.sellerRoleId = sellerRole.roleId;
+    const sellerEligibilityPermissionId = (await getPermissionIds([
+      "comercial.seller.eligible",
+    ]))[0];
+    await query(
+      `INSERT INTO role_permissions (role_id, permission_id, created_at)
+       SELECT ?, ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM role_permissions
+         WHERE role_id = ? AND permission_id = ?
+       )`,
+      [sellerRole.roleId, sellerEligibilityPermissionId, new Date(), sellerRole.roleId, sellerEligibilityPermissionId],
+    );
 
     ctx.accountCreateRoleId = await createRole({
       name: `${TEST_PREFIX}_accounts_create`,
@@ -145,6 +159,7 @@ describe("API integration baseline", () => {
         "oportunidades.read",
         "oportunidades.create",
         "oportunidades.update",
+        "oportunidades.bypass_stage_validation",
         "proceso_comercial_config.read",
         "proceso_comercial_config.update",
       ],

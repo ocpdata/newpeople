@@ -99,6 +99,60 @@ Archivo relevante:
 apps/api/test/setupTestDb.js
 ```
 
+## Estado de cobertura actual (2026-09-21)
+
+El inventario actual contiene aproximadamente:
+
+- 235 casos automatizados del API en 5 archivos de prueba.
+- 79 casos E2E del frontend en 6 archivos.
+- 314 casos automatizados entre API y frontend.
+- 7 scripts independientes para validaciones de seguridad y protección perimetral.
+
+La cantidad de casos puede cambiar al agregar escenarios o al ampliar las suites.
+
+## Pruebas de Mi Coach
+
+La suite focalizada de Mi Coach valida la normalización y seguridad de las operaciones propuestas:
+
+- Contexto seleccionado de cuenta, oportunidad y contacto.
+- Actividades nuevas y actualización de actividades existentes.
+- Rechazo de actividades con `activityId` fuera de la oportunidad.
+- Herencia de la oportunidad seleccionada cuando el modelo omite el ID.
+- Respuestas de preguntas de etapa (`stage_answer`).
+- Detección de respuestas relacionadas con motivación o necesidad.
+- Consulta del importe exacto de la oportunidad seleccionada.
+- Cambio del importe de una oportunidad seleccionada.
+- Reemplazo de respuestas narrativas contradictorias del modelo.
+- Rechazo de operaciones contra cuentas, contactos o leads inaccesibles.
+
+Prueba focalizada:
+
+```bash
+npm exec --prefix apps/api vitest run test/mi-agent-coach-operations.test.js
+```
+
+Las operaciones de Mi Coach deben conservar el flujo:
+
+```text
+respuesta del Coach -> revisar y confirmar -> modal editable -> guardar -> mensaje de éxito o error
+```
+
+No se debe guardar ninguna operación automáticamente. Las pruebas deben confirmar que los selectores de cuenta, oportunidad y contacto determinan el contexto de la operación.
+
+## Pruebas de seguridad y protección
+
+Además de las suites de API y frontend, el repositorio incluye scripts independientes para:
+
+- `scripts/test-api-get.mjs`: validaciones de acceso y respuestas GET.
+- `scripts/test-api-owasp.mjs`: pruebas de controles relacionados con OWASP.
+- `scripts/test-rate-limit.mjs`: límites de frecuencia.
+- `scripts/test-waf.sh`: reglas WAF HTTP.
+- `scripts/test-bot-defense.mjs`: perfiles de Bot Defense.
+- `scripts/test-client-side-defense.mjs`: controles de protección del cliente.
+- `scripts/test-l7-dos.mjs`: escenarios L7/DoS.
+
+Estos scripts requieren configuración adicional y no forman parte necesariamente de la ejecución local de `npm run test:api`.
+
 ## Requisitos previos
 
 - API arriba en `http://localhost:4000`

@@ -62,6 +62,14 @@ import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
 
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function getSanitizedInternalErrorDetail(error) {
   const message = String(error?.message || "")
     .split(/\r?\n/, 1)[0]
@@ -2247,7 +2255,7 @@ router.patch(
       column = "close_date";
     }
     await query(`UPDATE opportunities SET ${column} = ?, updated_at = NOW(3) WHERE id = ?`, [nextValue, id]);
-    await logOpportunityWorkspaceMutation({
+    const auditId = await logOpportunityWorkspaceMutation({
       req,
       opportunityId: id,
       action: "coach_opportunity_field_updated",

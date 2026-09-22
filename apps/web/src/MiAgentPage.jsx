@@ -636,6 +636,25 @@ export default function MiAgentPage({ currentUser, canCreateActions = false, can
       } else if (operation.kind === "lead_resolve") {
         await api.post(`/api/interactions/${operation.interactionId}/resolve`, draft.payload);
       }
+      if (!operation.successNotice) {
+        operation.successNotice = operation.kind === "opportunity_field"
+          ? "Cambio de la oportunidad guardado correctamente."
+          : operation.kind === "stage_answer"
+            ? "Respuesta de etapa guardada correctamente."
+            : operation.kind === "account_field"
+              ? "Cambio de la cuenta guardado correctamente."
+              : operation.kind === "contact_field"
+                ? "Cambio del contacto guardado correctamente."
+                : operation.kind === "lead_call_outcome" || operation.kind === "lead_resolve"
+                  ? "Resultado del lead guardado correctamente."
+                  : operation.kind === "create_account"
+                    ? "Cuenta creada correctamente."
+                    : operation.kind === "create_contact"
+                      ? "Contacto creado correctamente."
+                      : operation.kind === "create_opportunity"
+                        ? "Oportunidad creada correctamente."
+                        : "Cambio guardado correctamente en el CRM.";
+      }
       if (auditId) setCoachUndoAuditId(auditId);
       setCoachOperationDraft(null);
       if (operation.successNotice) appendCoachOperationMessage(operation.successNotice);

@@ -19,6 +19,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Tableros de leads v1](./tableros-leads-v1.md)
 - [Oportunidades](./oportunidades.md)
 - [Configuracion del proceso comercial](./configuracion-proceso-comercial.md)
+- [Preguntas por etapa del proceso comercial](./preguntas-etapas-proceso-comercial.md)
 - [Contactos](./contactos.md)
 - [Mapeo de contactos](./mapeo-contactos.md)
 - [Cotizaciones](./cotizaciones.md)

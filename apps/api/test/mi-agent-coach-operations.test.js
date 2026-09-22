@@ -6,6 +6,8 @@ describe("Coach operation normalization", () => {
     pipeline: {
       opportunities: [{
         id: 10,
+        name: "Oportunidad de prueba",
+        amountUsd: 90000,
         account: { id: 1 },
         contact: { id: 2 },
         stageAnswers: [{ questionId: 7, code: "identificacion_motivacion_principal", prompt: "¿Cuál es el motivo de negocio principal?", answer: "La necesidad inicial" }],
@@ -32,6 +34,35 @@ describe("Coach operation normalization", () => {
 
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0].activityId).toBe(99);
+  });
+
+  it("inherits the selected opportunity for a new activity", () => {
+    const result = normalizeCoachResult({
+      operations: [{
+        kind: "activity",
+        actionType: "call",
+        title: "Llamar al cliente",
+      }],
+    }, snapshot, "Crea una llamada", { opportunityId: 10 });
+
+    expect(result.operations).toHaveLength(1);
+    expect(result.operations[0].opportunityId).toBe(10);
+  });
+
+  it("proposes an activity on the selected opportunity when the model returns none", () => {
+    const result = normalizeCoachResult(
+      { operations: [] },
+      snapshot,
+      "Crea una demostración para esta oportunidad",
+      { opportunityId: 10 },
+    );
+
+    expect(result.operations).toHaveLength(1);
+    expect(result.operations[0]).toMatchObject({
+      kind: "activity",
+      opportunityId: 10,
+      actionType: "presentation",
+    });
   });
 
   it("drops an activity id that does not belong to the opportunity", () => {
@@ -76,6 +107,55 @@ describe("Coach operation normalization", () => {
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0].kind).toBe("stage_answer");
     expect(result.operations[0].questionId).toBe(7);
+  });
+
+  it("answers the selected opportunity amount from CRM data", () => {
+    const result = normalizeCoachResult(
+      { answer: "El total del pipeline es 999999 USD." },
+      snapshot,
+      "¿Cuál es el importe de esta oportunidad?",
+      { opportunityId: 10 },
+    );
+
+    expect(result.answer).toBe("El importe de la oportunidad 10 es 90,000.00 USD.");
+    expect(result.entities.opportunityId).toBe(10);
+  });
+
+  it("creates an amount update for the selected opportunity when the model omits it", () => {
+    const result = normalizeCoachResult(
+      { responseType: "change_request", operations: [] },
+      snapshot,
+      "Cambia el monto a 100,000 dólares",
+      { opportunityId: 10 },
+    );
+
+    expect(result.operations).toHaveLength(1);
+    expect(result.operations[0]).toMatchObject({
+      kind: "opportunity_field",
+      opportunityId: 10,
+      field: "amountUsd",
+      value: "100000",
+    });
+  });
+
+  it("replaces a contradictory missing-opportunity answer when an operation is scoped", () => {
+    const result = normalizeCoachResult(
+      {
+        responseType: "change_request",
+        answer: "Para cambiar el monto necesito confirmar la oportunidad específica a modificar, ya que no hay una oportunidad seleccionada actualmente.",
+        operations: [{
+          kind: "opportunity_field",
+          field: "amountUsd",
+          value: "100000",
+        }],
+      },
+      snapshot,
+      "Cambia el monto a 100,000 dólares",
+      { opportunityId: 10 },
+    );
+
+    expect(result.answer).toBe("Se propone cambiar el importe de la oportunidad 10 a 100,000.00 USD.");
+    expect(result.entities.opportunityId).toBe(10);
   });
 
   it("drops CRM operations that reference inaccessible entities", () => {

@@ -907,15 +907,15 @@ async function openCreateQuotationModal(page) {
   await expect(
     page.getByRole("heading", { name: "Cotizaciones" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "+ Crear cotizacion" }).click();
+  await page.getByRole("button", { name: "+ Crear cotización" }).click();
 
   const createModal = page
     .locator(".modal-dialog")
-    .filter({ has: page.getByRole("heading", { name: "Crear cotizacion" }) })
+    .filter({ has: page.getByRole("heading", { name: "Crear cotización" }) })
     .first();
 
   await expect(
-    createModal.getByRole("heading", { name: "Crear cotizacion" }),
+    createModal.getByRole("heading", { name: "Crear cotización" }),
   ).toBeVisible();
 
   await createModal
@@ -923,7 +923,7 @@ async function openCreateQuotationModal(page) {
     .fill("Cuenta Demo");
   await createModal.locator("select").first().selectOption("11");
   await createModal
-    .getByRole("button", { name: "Ingresar datos de la cotizacion" })
+    .getByRole("button", { name: "Ingresar datos de la cotización" })
     .click();
 
   await createModal
@@ -948,15 +948,15 @@ async function openEditQuotationModal(page, { versionId } = {}) {
       .selectOption(String(versionId));
   }
 
-  await page.getByRole("button", { name: "Editar cotizacion" }).click();
+  await page.getByRole("button", { name: "Editar cotización" }).click();
 
   const editModal = page
     .locator(".modal-dialog")
-    .filter({ has: page.getByRole("heading", { name: "Editar cotizacion" }) })
+    .filter({ has: page.getByRole("heading", { name: "Editar cotización" }) })
     .first();
 
   await expect(
-    editModal.getByRole("heading", { name: "Editar cotizacion" }),
+    editModal.getByRole("heading", { name: "Editar cotización" }),
   ).toBeVisible();
 
   return editModal;
@@ -1486,7 +1486,7 @@ test.describe("quotations", () => {
     await createModal.getByRole("radio", { name: "Valor" }).check();
     await createModal.getByLabel("Descuento US$").fill("20");
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.summaryDiscountMode).toBe("amount");
@@ -1523,7 +1523,7 @@ test.describe("quotations", () => {
       .getByRole("spinbutton", { name: "Descuento %" })
       .fill("10");
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.summaryDiscountMode).toBeNull();
@@ -1592,7 +1592,7 @@ test.describe("quotations", () => {
       .getByRole("radio", { name: "Total" })
       .check();
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.summaryDistributionMode).toBe("total");
@@ -1620,7 +1620,7 @@ test.describe("quotations", () => {
       .locator(".quotation-summary-notes-field textarea")
       .fill("Solo visible internamente para revision comercial.");
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.internalNotes).toBe(
@@ -1650,7 +1650,7 @@ test.describe("quotations", () => {
       .getByLabel("Tiempo de entrega")
       .selectOption({ label: "45 días" });
     await createModal
-      .getByLabel("Validez de la cotizacion")
+      .getByLabel("Validez de la cotización")
       .selectOption({ label: "60 días" });
     await createModal.getByLabel("Garantia").selectOption({ label: "2 años" });
     await createModal
@@ -1659,10 +1659,10 @@ test.describe("quotations", () => {
     await createModal.getByLabel("Moneda").selectOption("EUR");
     await createModal.getByLabel("Tipo de cambio").fill("17.2500");
     await createModal
-      .getByLabel("Notas de la cotizacion")
+      .getByLabel("Notas de la cotización")
       .fill("Entrega sujeta a confirmacion de fabrica.");
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.deliveryTime).toBe("45_dias");
@@ -1701,7 +1701,7 @@ test.describe("quotations", () => {
       .getByRole("textbox")
       .nth(2)
       .fill("120");
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.sections[0].items[0]).toMatchObject({
@@ -1738,7 +1738,7 @@ test.describe("quotations", () => {
       "20.00",
     );
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
     expect(capturedCreatePayload.sections[0].items).toEqual(
@@ -1821,7 +1821,7 @@ test.describe("quotations", () => {
       .getByLabel("Tiempo de entrega")
       .selectOption({ label: "45 días" });
     await editModal
-      .getByLabel("Validez de la cotizacion")
+      .getByLabel("Validez de la cotización")
       .selectOption({ label: "60 días" });
     await editModal.getByLabel("Garantia").selectOption({ label: "2 años" });
     await editModal
@@ -1830,7 +1830,7 @@ test.describe("quotations", () => {
     await editModal.getByLabel("Moneda").selectOption("EUR");
     await editModal.getByLabel("Tipo de cambio").fill("17.2500");
     await editModal
-      .getByLabel("Notas de la cotizacion")
+      .getByLabel("Notas de la cotización")
       .fill("Entrega actualizada segun stock disponible.");
     await editModal
       .getByLabel("Notas internas")
@@ -1916,7 +1916,7 @@ test.describe("quotations", () => {
     await descriptionInput.click();
     await expect(descriptionEditor).toBeVisible();
 
-    await editModal.getByRole("heading", { name: "Editar cotizacion" }).click();
+    await editModal.getByRole("heading", { name: "Editar cotización" }).click();
     await expect(descriptionEditor).toBeHidden();
 
     await descriptionInput.click();
@@ -2124,7 +2124,7 @@ test.describe("quotations", () => {
       .locator("td:nth-child(5) input")
       .fill("4");
     await editModal
-      .getByLabel("Notas de la cotizacion")
+      .getByLabel("Notas de la cotización")
       .fill("Vista previa con notas locales.");
 
     const { printPage } = await openQuotationPdfPreview(page, editModal);
@@ -2173,7 +2173,7 @@ test.describe("quotations", () => {
         .nth(1)
         .locator("td:nth-child(5) input"),
     ).toHaveValue("4");
-    await expect(editModal.getByLabel("Notas de la cotizacion")).toHaveValue(
+    await expect(editModal.getByLabel("Notas de la cotización")).toHaveValue(
       "Vista previa con notas locales.",
     );
 
@@ -2530,7 +2530,7 @@ test.describe("quotations", () => {
     await dismissCreateDialog;
 
     await expect(
-      createModal.getByRole("heading", { name: "Crear cotizacion" }),
+      createModal.getByRole("heading", { name: "Crear cotización" }),
     ).toBeVisible();
     await expect(proposalNameInput).toHaveValue("Cotizacion local");
 
@@ -2542,7 +2542,7 @@ test.describe("quotations", () => {
     await acceptCreateDialog;
 
     await expect(
-      page.getByRole("heading", { name: "Crear cotizacion" }),
+      page.getByRole("heading", { name: "Crear cotización" }),
     ).toHaveCount(0);
   });
 
@@ -2580,7 +2580,7 @@ test.describe("quotations", () => {
 
     await expect(page).toHaveURL(/\/quotations(\?.*)?$/);
     await expect(
-      createModal.getByRole("heading", { name: "Crear cotizacion" }),
+      createModal.getByRole("heading", { name: "Crear cotización" }),
     ).toBeVisible();
     await expect(proposalNameInput).toHaveValue("Cotizacion local");
 
@@ -2633,7 +2633,7 @@ test.describe("quotations", () => {
 
     await expect(page).toHaveURL(/\/quotations(\?.*)?$/);
     await expect(
-      editModal.getByRole("heading", { name: "Editar cotizacion" }),
+      editModal.getByRole("heading", { name: "Editar cotización" }),
     ).toBeVisible();
     await expect(sectionTitleInput).toHaveValue("Bundle persistido local");
 
@@ -3647,7 +3647,7 @@ test.describe("quotations", () => {
     await expect
       .poll(() => getQuotationRowCodes(page))
       .toEqual(["BUNDLE-A", "A-COMP-1", "A-COMP-2"]);
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
 
@@ -3749,7 +3749,7 @@ test.describe("quotations", () => {
       .poll(() => getQuotationRowCodes(page))
       .toEqual(["PROD-2", "PROD-1", "PROD-3"]);
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
 
@@ -3882,7 +3882,7 @@ test.describe("quotations", () => {
       .poll(() => getQuotationRowCodes(page))
       .toEqual(["PROD-3", "PROD-2", "PROD-2", "PROD-1"]);
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
 
@@ -4023,7 +4023,7 @@ test.describe("quotations", () => {
       .poll(() => getQuotationRowCodes(page))
       .toEqual(["PROD-3", "PROD-2", "PROD-1", "PROD-2"]);
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
 
@@ -4099,7 +4099,7 @@ test.describe("quotations", () => {
       })
       .click();
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
 
@@ -4234,7 +4234,7 @@ test.describe("quotations", () => {
       .poll(() => getQuotationRowCodes(page))
       .toEqual(["BUNDLE-A", "A-COMP-2", "A-COMP-1"]);
 
-    await createModal.getByRole("button", { name: "Crear cotizacion" }).click();
+    await createModal.getByRole("button", { name: "Crear cotización" }).click();
 
     await expect.poll(() => capturedCreatePayload).not.toBeNull();
 

@@ -406,7 +406,7 @@ function getTimeZoneOffsetMinutes(dateValue, timeZone) {
 }
 
 function parseDateTimeLocalText(value) {
-  const rawValue = String(value || "").trim();
+  const rawValue = String(value || "").trim().replace(/Z$/i, "");
   const match = rawValue.match(
     /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/,
   );

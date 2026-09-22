@@ -52,9 +52,9 @@ test.describe("set-password", () => {
     await expect(page.getByText("seller@example.com")).toBeVisible();
     await expect(page.getByText(/Vigente hasta el/i)).toBeVisible();
 
-    await page.getByLabel("Nueva contrasena").fill("NuevaPass123");
-    await page.getByLabel("Confirmar contrasena").fill("NuevaPass123");
-    await page.getByRole("button", { name: "Guardar contrasena" }).click();
+    await page.getByLabel("Nueva contraseña").fill("NuevaPass123");
+    await page.getByLabel("Confirmar contraseña").fill("NuevaPass123");
+    await page.getByRole("button", { name: "Guardar contraseña" }).click();
 
     await expect(page.getByText(/Redirigiendo al dashboard/i)).toBeVisible();
     await page.waitForURL("/");
@@ -75,6 +75,6 @@ test.describe("set-password", () => {
     await page.goto("/set-password?token=expired-token");
 
     await expect(page.getByText("Este enlace ya expiro")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Guardar contrasena" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Guardar contraseña" })).toBeDisabled();
   });
 });

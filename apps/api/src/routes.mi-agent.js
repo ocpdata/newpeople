@@ -105,6 +105,9 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
         (contactId > 0 && Number(contact.id) === contactId),
       )
     : [];
+    const selectedOpportunity = opportunityId > 0
+      ? opportunities.find((item) => Number(item.id) === opportunityId) || null
+      : null;
 
   return {
     ...snapshot,
@@ -117,6 +120,16 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
     workboard: opportunities,
     leads,
     contactMappings,
+    selectedRecord: selectedOpportunity
+      ? {
+          type: "opportunity",
+          id: Number(selectedOpportunity.id),
+          name: selectedOpportunity.name || "",
+          amountUsd: Number(selectedOpportunity.amountUsd || 0),
+          closeDate: selectedOpportunity.closeDate || null,
+          stageName: selectedOpportunity.stageName || "",
+        }
+      : null,
     selectedContext: {
       accountId: scopedAccountId || null,
       opportunityId: opportunityId || null,
@@ -748,13 +761,28 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
   const entities = source.entities && typeof source.entities === "object"
     ? source.entities
     : {};
+  const selectedContextOpportunityId = Number(selectedContext?.opportunityId || 0);
+  const selectedContextAccountId = Number(selectedContext?.accountId || 0);
+  const selectedContextContactId = Number(selectedContext?.contactId || 0);
   let operations = (Array.isArray(source.operations) ? source.operations : [])
     .map((operation) => {
       if (!operation || typeof operation !== "object") return null;
-      const opportunityId = Number(operation.opportunityId || 0);
-      const accountId = Number(operation.accountId || 0);
-      const contactId = Number(operation.contactId || 0);
       const kind = String(operation.kind || "").trim();
+      const opportunityId = Number((
+        ["activity", "stage_answer", "opportunity_field"].includes(kind)
+          ? selectedContextOpportunityId || Number(operation.opportunityId || 0)
+          : Number(operation.opportunityId || 0)
+      ));
+      const accountId = Number(
+        kind === "account_field"
+          ? selectedContextAccountId || Number(operation.accountId || 0)
+          : Number(operation.accountId || 0),
+      );
+      const contactId = Number(
+        kind === "contact_field"
+          ? selectedContextContactId || Number(operation.contactId || 0)
+          : Number(operation.contactId || 0),
+      );
       if (["create_account", "create_contact", "create_opportunity", "lead_resolve"].includes(kind)) {
         const payload = operation.payload && typeof operation.payload === "object"
           ? operation.payload
@@ -777,11 +805,11 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
       }
       if (kind === "account_field" && accountId > 0) {
         if (!accountIds.has(accountId)) return null;
-        return { kind, entityType: "account", accountId, field: String(operation.field || "").trim(), value: String(operation.value ?? "").trim(), title: String(operation.title || "Actualizar cuenta").trim(), source: { type: "account", id: accountId } };
+        return { ...operation, kind, entityType: "account", accountId, field: String(operation.field || "").trim(), value: String(operation.value ?? "").trim(), title: String(operation.title || "Actualizar cuenta").trim(), source: { type: "account", id: accountId } };
       }
       if (kind === "contact_field" && contactId > 0) {
         if (!contactIds.has(contactId)) return null;
-        return { kind, entityType: "contact", contactId, field: String(operation.field || "").trim(), value: String(operation.value ?? "").trim(), title: String(operation.title || "Actualizar contacto").trim(), source: { type: "contact", id: contactId } };
+        return { ...operation, kind, entityType: "contact", contactId, field: String(operation.field || "").trim(), value: String(operation.value ?? "").trim(), title: String(operation.title || "Actualizar contacto").trim(), source: { type: "contact", id: contactId } };
       }
       if (kind === "lead_call_outcome" && Number(operation.interactionId || 0) > 0) {
         if (!leadIds.has(Number(operation.interactionId))) return null;
@@ -808,6 +836,7 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
         return {
           kind,
           entityType: "opportunity_activity",
+          ...operation,
           opportunityId,
           actionType: String(operation.actionType || "meeting").trim() || "meeting",
           title: String(operation.title || "Actividad comercial").trim(),
@@ -828,6 +857,7 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
         if (!questionId || !answerValue) return null;
         return {
           kind,
+          ...operation,
           opportunityId,
           questionId,
           answerValue,
@@ -848,6 +878,7 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
         if (!allowedFields.includes(field)) return null;
         return {
           kind,
+          ...operation,
           opportunityId,
           field,
           value: String(operation.value ?? "").trim(),
@@ -861,6 +892,32 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
     .filter(Boolean)
     .slice(0, 6);
   const normalizedQuestion = String(question || "").trim();
+  const selectedOpportunityId = Number(selectedContext?.opportunityId || 0);
+  const selectedOpportunity = selectedOpportunityId > 0
+    ? opportunities.find((item) => Number(item.id) === selectedOpportunityId) || null
+    : null;
+  const asksOpportunityAmount = selectedOpportunity &&
+    /\b(monto|importe|valor|cantidad)\b/i.test(normalizedQuestion) &&
+    /\b(oportunidad|esta|seleccionad|actual)\b/i.test(normalizedQuestion);
+  const selectedAmount = Number(selectedOpportunity?.amountUsd || 0);
+  const asksToChangeAmount = selectedOpportunity &&
+    /\b(cambia|cambiar|actualiza|actualizar|modifica|modificar|ajusta|ajustar|sube|subir|baja|bajar)\b/i.test(normalizedQuestion) &&
+    /\b(monto|importe|valor|cantidad)\b/i.test(normalizedQuestion);
+  const amountMatch = normalizedQuestion.match(/(?:a|en|por)\s*\$?\s*([\d.,]+)/i);
+  const proposedAmount = amountMatch
+    ? Number(String(amountMatch[1]).replace(/,/g, ""))
+    : 0;
+  if (!operations.length && asksToChangeAmount && proposedAmount > 0) {
+    operations = [{
+      kind: "opportunity_field",
+      opportunityId: selectedOpportunityId,
+      field: "amountUsd",
+      value: String(proposedAmount),
+      title: "Actualizar importe de la oportunidad",
+      source: { type: "opportunity", id: selectedOpportunityId },
+      entityType: "opportunity",
+    }];
+  }
   let inferredStageAnswer = false;
   const asksForActivity = /\b(agend|registr|crea|program).*(reuni[oó]n|llamada|actividad|seguimiento|demostraci[oó]n|visita)|\b(actividad|llamada|reuni[oó]n|demostraci[oó]n|visita)\b.*\b(agend|registr|crea|program)/i.test(normalizedQuestion);
   const requestsStageAnswer = /\b(actualiza|actualizar|registra|registrar|guarda|guardar|modifica|modificar|captura|capturar|anota|anotar)\b/i.test(normalizedQuestion) ||
@@ -893,6 +950,46 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
       }
     }
   }
+  if (!operations.length && asksForActivity && selectedOpportunityId) {
+    operations = [{
+      kind: "activity",
+      opportunityId: selectedOpportunityId,
+      actionType: /llamada/i.test(normalizedQuestion)
+        ? "call"
+        : /demostraci[oó]n|demo/i.test(normalizedQuestion)
+          ? "presentation"
+          : /visita/i.test(normalizedQuestion)
+            ? "visit"
+            : "conference",
+      title: /demostraci[oó]n|demo/i.test(normalizedQuestion)
+        ? "Demostración comercial"
+        : /visita/i.test(normalizedQuestion)
+          ? "Visita comercial"
+          : /llamada/i.test(normalizedQuestion)
+            ? "Llamada comercial"
+            : "Reunión comercial",
+      status: "pending",
+      priority: "medium",
+      scheduledAt: null,
+      dueDate: null,
+      notes: normalizedQuestion,
+      successCriteria: "",
+      source: { type: "opportunity", id: selectedOpportunityId },
+      entityType: "opportunity_activity",
+    }];
+  }
+  const selectedOperation = operations.find((operation) =>
+    Number(operation?.opportunityId || 0) === selectedOpportunityId,
+  );
+  const modelClaimsMissingOpportunity = /no hay una oportunidad|no existe una oportunidad|no está seleccionada|no esta seleccionada|necesito confirmar la oportunidad/i
+    .test(String(source.answer || ""));
+  const operationAnswer = selectedOperation?.kind === "opportunity_field" && selectedOperation.field === "amountUsd"
+    ? `Se propone cambiar el importe de la oportunidad ${selectedOpportunityId} a ${Number(selectedOperation.value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`
+    : selectedOperation?.kind === "activity"
+      ? `Se propone registrar la actividad en la oportunidad ${selectedOpportunityId}.`
+      : selectedOperation?.kind === "stage_answer"
+        ? `Se propone actualizar una respuesta de etapa en la oportunidad ${selectedOpportunityId}.`
+        : null;
   const requestsActivity = /\b(agend|registr|crea|program).*(reuni[oó]n|llamada|actividad)|reuni[oó]n.*(jueves|viernes|lunes|martes|mi[eé]rcoles|s[aá]bado|domingo)/i.test(normalizedQuestion);
   const clarification = !operations.length && !rawAction?.opportunityId && requestsActivity
     ? {
@@ -923,10 +1020,15 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
       : rawAction
         ? "recommendation"
         : "informational",
-    answer:
-      String(source.answer || "").trim() ||
-      "No encontré una respuesta suficiente en el contexto disponible.",
-    evidence: (Array.isArray(source.evidence) ? source.evidence : [])
+    answer: asksOpportunityAmount
+      ? `El importe de la oportunidad ${selectedOpportunity.id} es ${selectedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`
+      : operationAnswer && modelClaimsMissingOpportunity
+        ? operationAnswer
+      : String(source.answer || "").trim() ||
+        "No encontré una respuesta suficiente en el contexto disponible.",
+    evidence: (asksOpportunityAmount
+      ? [`Importe registrado en CRM para la oportunidad ${selectedOpportunity.id}: ${selectedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`]
+      : Array.isArray(source.evidence) ? source.evidence : [])
       .map((item) => String(item || "").trim())
       .filter(Boolean)
       .slice(0, 8),
@@ -939,8 +1041,10 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
       ? String(source.confidence).trim()
       : "medium",
     entities: {
-      opportunityId: opportunityIds.has(actionOpportunityId)
-        ? actionOpportunityId
+      opportunityId: opportunityIds.has(selectedOpportunityId)
+        ? selectedOpportunityId
+        : opportunityIds.has(actionOpportunityId)
+          ? actionOpportunityId
         : null,
       accountId: accountIds.has(Number(entities.accountId || 0))
         ? Number(entities.accountId)
@@ -1488,7 +1592,7 @@ function buildCoachPrompt(snapshot, question, processGuide = "", selectedContext
       {
         role: "system",
         content:
-          "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
+          "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si existe selectedRecord de tipo opportunity, ese registro es la fuente principal: para preguntas sobre monto, importe, valor, fecha, etapa o nombre responde primero con sus campos exactos y no uses totales globales del pipeline como sustituto. Los totales globales solo aplican cuando la pregunta es general o no hay una oportunidad seleccionada. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
       },
       {
         role: "user",
