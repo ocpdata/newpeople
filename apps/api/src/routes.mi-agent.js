@@ -7,10 +7,15 @@ import { config } from "./config.js";
 import { query } from "./db.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 import { logAuditEvent, parseAuditChangedFields } from "./audit.js";
+import { appendCoachSessionTurn, getCoachSession, getOrCreateCoachSession } from "./coach/service.js";
+import { filterValidCoachOperations } from "./coach/contract.js";
+import { resolveCoachEntities } from "./coach/entity-resolver.js";
 
 const router = express.Router();
 const FEATURE_CODE = "mi_agent.analysis";
-const ANALYSIS_TIMEOUT_MS = 30000;
+const MI_COACH_USE_PERMISSION = "mi_coach.use";
+const MI_COACH_EXECUTE_PERMISSION = "mi_coach.execute";
+const ANALYSIS_TIMEOUT_MS = 120000;
 const PROCESS_GUIDE_URL = new URL("../../../readme/proceso-comercial.md", import.meta.url);
 let processGuideTextPromise;
 let ensureMiAgentSchemaPromise;
@@ -71,6 +76,27 @@ function buildInClause(values) {
 function clip(value, max = 3000) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length <= max ? text : `${text.slice(0, max)}...`;
+}
+
+function normalizeCoachMatchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function inferOpportunityIdFromText(opportunities, text) {
+  const normalizedText = normalizeCoachMatchText(text);
+  return opportunities
+    .filter((opportunity) => Number(opportunity?.id || 0) > 0)
+    .map((opportunity) => ({
+      id: Number(opportunity.id),
+      name: normalizeCoachMatchText(opportunity.name),
+    }))
+    .filter((opportunity) => opportunity.name.length >= 6 && normalizedText.includes(opportunity.name))
+    .sort((left, right) => right.name.length - left.name.length)[0]?.id || 0;
 }
 
 export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
@@ -163,6 +189,35 @@ function hasMiAgentGlobalScope(user) {
   );
 }
 
+function hasPermission(user, permission) {
+  return Boolean(user?.permissionSet?.has(permission));
+}
+
+function hasReadPermission(user, basePermission) {
+  return Boolean(
+    hasPermission(user, `${basePermission}.read`) ||
+      hasPermission(user, `${basePermission}.read_all`),
+  );
+}
+
+function requireEntityReadPermission(user, basePermission) {
+  if (hasReadPermission(user, basePermission)) return null;
+  return {
+    status: 403,
+    body: {
+      message: "No autorizado",
+      requiredPermission: `${basePermission}.read`,
+    },
+  };
+}
+
+function canExecuteCoachWrite(user, permission) {
+  return Boolean(
+    hasPermission(user, MI_COACH_EXECUTE_PERMISSION) &&
+      hasPermission(user, permission),
+  );
+}
+
 function buildOpportunityScope(user, params) {
   if (hasMiAgentGlobalScope(user)) {
     return "";
@@ -174,6 +229,10 @@ function buildOpportunityScope(user, params) {
 async function getMiAgentContext(user) {
   await ensureOpportunityWorkspaceSchema();
   const period = getQuarterSelection();
+  const canReadOpportunities = hasReadPermission(user, "oportunidades");
+  const canReadAccounts = hasReadPermission(user, "cuentas");
+  const canReadContacts = hasReadPermission(user, "contactos");
+  const canReadLeads = hasReadPermission(user, "interacciones");
   const stageParams = [...QUALIFIED_STAGE_CODES];
   const opportunityParams = [];
   const scopeJoin = buildOpportunityScope(user, opportunityParams);
@@ -195,7 +254,7 @@ async function getMiAgentContext(user) {
       console.error("[mi-agent] No fue posible cargar la cuota:", error?.message || error);
       return [];
     }),
-    query(
+    canReadOpportunities ? query(
             `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
               o.sales_stage_id,
               o.updated_at, oss.code AS stage_code, oss.name AS stage_name,
@@ -243,14 +302,14 @@ async function getMiAgentContext(user) {
     ).catch((error) => {
       console.error("[mi-agent] No fue posible consultar oportunidades:", error?.message || error);
       return [];
-    }),
+    }) : Promise.resolve([]),
   ]);
 
   const quotaAmount = Number(targetRows[0]?.sales_quota_amount || 0);
   const opportunityIds = opportunityRows.map((row) => Number(row.id));
   const wonParams = [];
   const wonScopeJoin = buildOpportunityScope(user, wonParams);
-  const wonRows = await query(
+  const wonRows = canReadOpportunities ? await query(
     `SELECT COALESCE(SUM(o.amount_usd), 0) AS actual_amount
      FROM opportunities o
      ${wonScopeJoin}
@@ -260,15 +319,16 @@ async function getMiAgentContext(user) {
        AND o.close_date BETWEEN ? AND ?
        ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}`,
      [...wonParams, period.startDate, period.endDate, ...(hasMiAgentGlobalScope(user) ? [] : [Number(user.id), Number(user.id)])],
-  ).catch(() => []);
+  ).catch(() => []) : [];
 
   const actualAmount = Number(wonRows[0]?.actual_amount || 0);
   const leadParams = [];
-  const leadScopeJoin = hasMiAgentGlobalScope(user)
+  const hasLeadGlobalScope = hasPermission(user, "interacciones.read_all");
+  const leadScopeJoin = hasLeadGlobalScope
     ? ""
     : "LEFT JOIN account_owners ao_lead_scope ON ao_lead_scope.account_id = i.account_id AND ao_lead_scope.user_id = ?";
-  if (!hasMiAgentGlobalScope(user)) leadParams.push(Number(user.id));
-  const leads = await query(
+  if (!hasLeadGlobalScope) leadParams.push(Number(user.id));
+  const leads = canReadLeads ? await query(
     `SELECT i.id, i.title, i.lead_source, i.analysis_status, i.processing_status,
             i.summary, i.source_notes, i.account_id, i.primary_opportunity_id,
             i.seller_user_id, i.lead_substatus_code, i.lead_reason_code,
@@ -279,15 +339,15 @@ async function getMiAgentContext(user) {
      ${leadScopeJoin}
      LEFT JOIN accounts a ON a.id = i.account_id
      LEFT JOIN opportunities o ON o.id = i.primary_opportunity_id
-     WHERE ${hasMiAgentGlobalScope(user) ? "1 = 1" : "(ao_lead_scope.user_id IS NOT NULL OR i.seller_user_id = ? OR i.created_by = ?)"}
+     WHERE ${hasLeadGlobalScope ? "1 = 1" : "(ao_lead_scope.user_id IS NOT NULL OR i.seller_user_id = ? OR i.created_by = ?)"}
      ORDER BY i.updated_at DESC
      LIMIT 100`,
-    hasMiAgentGlobalScope(user) ? [] : [...leadParams, Number(user.id), Number(user.id)],
-  ).catch(() => []);
+    hasLeadGlobalScope ? [] : [...leadParams, Number(user.id), Number(user.id)],
+  ).catch(() => []) : [];
   const accessibleAccountIds = Array.from(
     new Set(opportunityRows.map((row) => Number(row.account_id)).filter((id) => id > 0)),
   );
-  const contactMappings = accessibleAccountIds.length
+  const contactMappings = canReadContacts && accessibleAccountIds.length
     ? await query(
         `SELECT c.id, c.account_id, c.first_name, c.last_name, c.email,
                 c.phone, c.mobile, c.position_title, c.department,
@@ -315,8 +375,8 @@ async function getMiAgentContext(user) {
     return {
       id: Number(row.id),
       name: row.name || "",
-      accountName: row.account_name || "",
-      account: {
+      accountName: canReadAccounts ? row.account_name || "" : "",
+      account: canReadAccounts ? {
         id: Number(row.account_id),
         name: row.account_name || "",
         registrationCode: row.account_registration_code || "",
@@ -325,8 +385,8 @@ async function getMiAgentContext(user) {
         city: row.account_city || "",
         stateRegion: row.account_state_region || "",
         description: clip(row.account_description, 1800),
-      },
-      contact: {
+      } : null,
+      contact: canReadContacts ? {
         id: Number(row.contact_id),
         name: row.contact_name || "",
         email: row.contact_email || "",
@@ -334,7 +394,7 @@ async function getMiAgentContext(user) {
         mobile: row.contact_mobile || "",
         position: row.contact_position || "",
         department: row.contact_department || "",
-      },
+      } : null,
       amountUsd: Number(row.amount_usd || 0),
       closeDate: row.close_date || null,
       updatedAt: row.updated_at || null,
@@ -412,6 +472,7 @@ async function getMiAgentEnrichedContext(user, baseContext) {
   const opportunities = Array.isArray(baseContext?.workboard)
     ? baseContext.workboard
     : [];
+  const canReadLeads = hasReadPermission(user, "interacciones");
   const ids = opportunities.map((item) => Number(item.id)).filter(Boolean);
   if (!ids.length) {
     return { ...baseContext, enriched: true, source: "mi_agent" };
@@ -494,7 +555,7 @@ async function getMiAgentEnrichedContext(user, baseContext) {
        FROM opportunity_workspace_criterion_assessments
        WHERE opportunity_id IN (${placeholders})`, ids,
     ).catch(() => []),
-    query(
+    canReadLeads ? query(
       `SELECT COALESCE(i.primary_opportunity_id, iol.opportunity_id) AS opportunity_id,
               i.id, i.title,
               i.summary, i.source_notes, i.topics_json, i.actions_taken_json,
@@ -507,7 +568,7 @@ async function getMiAgentEnrichedContext(user, baseContext) {
        WHERE i.primary_opportunity_id IN (${placeholders})
           OR iol.opportunity_id IS NOT NULL
       ORDER BY i.created_at DESC`, [...ids, ...ids],
-    ).catch(() => []),
+    ).catch(() => []) : Promise.resolve([]),
     query(
       `SELECT opportunity_id, status, result_json, fallback_json,
               created_at, finished_at
@@ -783,11 +844,11 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
           ? selectedContextContactId || Number(operation.contactId || 0)
           : Number(operation.contactId || 0),
       );
-      if (["create_account", "create_contact", "create_opportunity", "lead_resolve"].includes(kind)) {
+      if (["create_account", "create_contact", "create_opportunity", "create_quotation", "create_proposal", "lead_resolve"].includes(kind)) {
         const payload = operation.payload && typeof operation.payload === "object"
           ? operation.payload
           : null;
-        const entityId = Number(operation.interactionId || operation.accountId || operation.contactId || 0);
+        const entityId = Number(operation.interactionId || operation.accountId || operation.contactId || operation.opportunityId || operation.quotationVersionId || 0);
         if (!payload || (kind !== "create_account" && entityId <= 0)) return null;
         if (kind === "lead_resolve" && !leadIds.has(Number(operation.interactionId))) return null;
         const payloadAccountId = Number(payload.accountId || payload.accountResolution?.accountId || 0);
@@ -797,9 +858,9 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
         return {
           ...operation,
           kind,
-          entityType: kind === "create_account" ? "account" : kind === "create_contact" ? "contact" : kind === "create_opportunity" ? "opportunity" : "lead",
+          entityType: kind === "create_account" ? "account" : kind === "create_contact" ? "contact" : kind === "create_opportunity" ? "opportunity" : kind === "create_quotation" ? "quotation" : kind === "create_proposal" ? "proposal" : "lead",
           payload,
-          title: String(operation.title || (kind === "lead_resolve" ? "Resolver lead" : kind === "create_account" ? "Crear cuenta" : kind === "create_contact" ? "Crear contacto" : "Crear oportunidad")).trim(),
+          title: String(operation.title || (kind === "lead_resolve" ? "Resolver lead" : kind === "create_account" ? "Crear cuenta" : kind === "create_contact" ? "Crear contacto" : kind === "create_opportunity" ? "Crear oportunidad" : kind === "create_quotation" ? "Crear cotización" : "Crear propuesta")).trim(),
           source: { type: kind === "lead_resolve" ? "lead" : kind.replace("create_", ""), id: entityId || null },
         };
       }
@@ -874,7 +935,7 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
           ? ["name", "amountUsd", "closeDate"]
           : kind === "account_field"
             ? ["name", "phone", "website", "city", "stateRegion", "companyDescription"]
-            : ["firstName", "lastName", "email", "mobile", "phone", "positionTitle", "department", "city", "stateRegion"];
+            : ["firstName", "lastName", "email", "mobile", "phone", "positionTitle", "department", "city", "stateRegion", "hierarchyLevelId", "relationshipTypeId", "influenceLevelId", "managerContactId", "influencesContactId"];
         if (!allowedFields.includes(field)) return null;
         return {
           kind,
@@ -896,12 +957,28 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
   const selectedOpportunity = selectedOpportunityId > 0
     ? opportunities.find((item) => Number(item.id) === selectedOpportunityId) || null
     : null;
+  const inferredOpportunityId = inferOpportunityIdFromText(
+    opportunities,
+    `${normalizedQuestion} ${source.answer || ""}`,
+  );
+  const selectedAcceptanceAnswer = selectedOpportunity
+    ? stageAnswers.find((answer) =>
+        Number(answer.opportunityId) === selectedOpportunityId &&
+        /aceptaci[oó]n|validaci[oó]n|conformidad/i.test(`${answer.code} ${answer.prompt}`) &&
+        String(answer.answer || "").trim(),
+      )
+    : null;
+  const asksAcceptance = /acept(o|aron|ada|ado|aci[oó]n)|validaci[oó]n|conformidad/i.test(normalizedQuestion) &&
+    /propuesta|t[eé]cnica|soluci[oó]n/i.test(normalizedQuestion);
+  const asksAcceptanceGap = /100\s*%|cien\s*por\s*ciento|por qu[eé].*100/i.test(normalizedQuestion) &&
+    Boolean(selectedAcceptanceAnswer);
   const asksOpportunityAmount = selectedOpportunity &&
     /\b(monto|importe|valor|cantidad)\b/i.test(normalizedQuestion) &&
     /\b(oportunidad|esta|seleccionad|actual)\b/i.test(normalizedQuestion);
   const selectedAmount = Number(selectedOpportunity?.amountUsd || 0);
   const asksToChangeAmount = selectedOpportunity &&
-    /\b(cambia|cambiar|actualiza|actualizar|modifica|modificar|ajusta|ajustar|sube|subir|baja|bajar)\b/i.test(normalizedQuestion) &&
+    ( /\b(cambia|cambiar|actualiza|actualizar|modifica|modificar|ajusta|ajustar|sube|subir|aumenta|aumentar|incrementa|incrementar|baja|bajar|pasa|pasar)\b/i.test(normalizedQuestion) ||
+      /subi[oó]|aument[oó]|increment[oó]|baj[oó]|pas[oó]/i.test(normalizedQuestion) ) &&
     /\b(monto|importe|valor|cantidad)\b/i.test(normalizedQuestion);
   const amountMatch = normalizedQuestion.match(/(?:a|en|por)\s*\$?\s*([\d.,]+)/i);
   const proposedAmount = amountMatch
@@ -978,11 +1055,60 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
       entityType: "opportunity_activity",
     }];
   }
+  const requestsOpportunityCreation = /\b(crea|crear|abrir|abre|genera|generar|registra|registrar)\b.*\boportunidad\b/i.test(normalizedQuestion);
+  const requestedOpportunityName = Array.isArray(entities.names)
+    ? entities.names.map((name) => String(name || "").trim()).find(Boolean) || ""
+    : "";
+  const requestedAccountId = Number(entities.accountId || 0);
+  const requestedContactId = Number(entities.contactId || 0);
+  if (!operations.length && requestsOpportunityCreation && requestedOpportunityName &&
+      accountIds.has(requestedAccountId) && contactIds.has(requestedContactId)) {
+    operations = [{
+      kind: "create_opportunity",
+      accountId: requestedAccountId,
+      contactId: requestedContactId,
+      title: "Crear oportunidad",
+      payload: {
+        accountId: requestedAccountId,
+        contactId: requestedContactId,
+        name: requestedOpportunityName,
+      },
+      source: { type: "account", id: requestedAccountId },
+      entityType: "opportunity",
+    }];
+  }
+  const requestsQuotationCreation = /\b(crea|crear|genera|generar|prepara|preparar)\b.*\bcotizaci[oó]n\b/i.test(normalizedQuestion);
+  if (!operations.length && requestsQuotationCreation && selectedOpportunity) {
+    const accountId = Number(selectedOpportunity.account?.id || selectedOpportunity.accountId || 0) || null;
+    const contactId = Number(selectedOpportunity.contact?.id || selectedOpportunity.contactId || 0) || null;
+    if (accountId && contactId) {
+      operations = [{
+        kind: "create_quotation",
+        opportunityId: selectedOpportunityId,
+        accountId,
+        contactId,
+        title: "Crear cotización",
+        payload: {
+          accountId,
+          contactId,
+          proposalName: selectedOpportunity.name || "Cotización comercial",
+        },
+        source: { type: "opportunity", id: selectedOpportunityId },
+        entityType: "quotation",
+      }];
+    }
+  }
+  operations = filterValidCoachOperations(operations);
   const selectedOperation = operations.find((operation) =>
     Number(operation?.opportunityId || 0) === selectedOpportunityId,
   );
   const modelClaimsMissingOpportunity = /no hay una oportunidad|no existe una oportunidad|no está seleccionada|no esta seleccionada|necesito confirmar la oportunidad/i
     .test(String(source.answer || ""));
+  const answerWithoutContextContradiction = String(source.answer || "")
+    .replace(/(?:no hay una oportunidad seleccionada|no existe una oportunidad seleccionada|no está seleccionada la oportunidad|no esta seleccionada la oportunidad)[^.?!]*(?:[.?!]|$)/i, "")
+    .replace(/la oportunidad más cercana en contexto/gi, "La oportunidad activa")
+    .replace(/\s{2,}/g, " ")
+    .trim();
   const operationAnswer = selectedOperation?.kind === "opportunity_field" && selectedOperation.field === "amountUsd"
     ? `Se propone cambiar el importe de la oportunidad ${selectedOpportunityId} a ${Number(selectedOperation.value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`
     : selectedOperation?.kind === "activity"
@@ -1020,13 +1146,23 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
       : rawAction
         ? "recommendation"
         : "informational",
-    answer: asksOpportunityAmount
+    answer: asksAcceptance && selectedAcceptanceAnswer
+      ? `La oportunidad ${selectedOpportunity.id} tiene registrada una aceptación de la propuesta técnica de ${selectedAcceptanceAnswer.answer}.`
+      : asksAcceptanceGap
+        ? `La oportunidad ${selectedOpportunity.id} registra una aceptación de la propuesta técnica de ${selectedAcceptanceAnswer.answer}, por lo que no alcanzó el 100%. El contexto comercial no registra una explicación específica de esa diferencia.`
+      : asksOpportunityAmount
       ? `El importe de la oportunidad ${selectedOpportunity.id} es ${selectedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`
       : operationAnswer && modelClaimsMissingOpportunity
         ? operationAnswer
+      : selectedOpportunity && modelClaimsMissingOpportunity
+        ? answerWithoutContextContradiction || `No encontré información suficiente en los datos de la oportunidad ${selectedOpportunity.id}.`
       : String(source.answer || "").trim() ||
         "No encontré una respuesta suficiente en el contexto disponible.",
-    evidence: (asksOpportunityAmount
+    evidence: (asksAcceptance && selectedAcceptanceAnswer
+      ? [`Respuesta de etapa ${selectedAcceptanceAnswer.code}: ${selectedAcceptanceAnswer.answer}`]
+      : asksAcceptanceGap
+        ? [`Respuesta de etapa ${selectedAcceptanceAnswer.code}: ${selectedAcceptanceAnswer.answer}`]
+      : asksOpportunityAmount
       ? [`Importe registrado en CRM para la oportunidad ${selectedOpportunity.id}: ${selectedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD.`]
       : Array.isArray(source.evidence) ? source.evidence : [])
       .map((item) => String(item || "").trim())
@@ -1045,6 +1181,10 @@ export function normalizeCoachResult(result, snapshot, question = "", selectedCo
         ? selectedOpportunityId
         : opportunityIds.has(actionOpportunityId)
           ? actionOpportunityId
+          : opportunityIds.has(Number(entities.opportunityId || 0))
+            ? Number(entities.opportunityId)
+            : opportunityIds.has(inferredOpportunityId)
+              ? inferredOpportunityId
         : null,
       accountId: accountIds.has(Number(entities.accountId || 0))
         ? Number(entities.accountId)
@@ -1377,6 +1517,12 @@ function buildDevelopmentPlanPrompt(snapshot) {
           "Primero construye el plan comercial de cada oportunidad usando exclusivamente el contexto enriquecido: cuenta, contacto, oportunidad, respuestas y validaciones de etapas, documentos y su analisis, actividades e interacciones, acciones del workspace, debilidades, stakeholders, temas, entregables, estrategia y narrativa previa. No calcules acciones todavia. Para cada oportunidad devuelve, en este orden conceptual: descripcion y situacion actual, estrategia para lograr la venta, siguiente mejor paso y paso alternativo condicionado. Los cuatro bloques deben ser especificos de la oportunidad y sustentados por todas las fuentes. No inventes datos. Devuelve solo JSON valido.",
       },
       {
+        role: "system",
+        content: activeOpportunityId > 0
+          ? `REGLA DE CONTEXTO ACTIVO: la oportunidad ${activeOpportunityId} está seleccionada para este hilo. Todas las preguntas actuales y de seguimiento se refieren a esa oportunidad, aunque la pregunta use pronombres, elipsis o no repita su nombre. Usa exclusivamente sus datos de selectedRecord, workboard y stageAnswers. Nunca digas que no hay una oportunidad seleccionada mientras selectedContext.opportunityId sea ${activeOpportunityId}. Solo cambia de oportunidad si el contexto recibido contiene otro opportunityId.`
+          : "REGLA DE CONTEXTO ACTIVO: no hay una oportunidad seleccionada. Si la pregunta depende de una oportunidad concreta, identifica una candidata solo cuando el texto la nombre claramente y devuelve su opportunityId.",
+      },
+      {
         role: "user",
         content: JSON.stringify({
           instructions: {
@@ -1568,7 +1714,15 @@ async function requestMiAgentJson({ payload, user, jobId, startedAt, phase }) {
     clearTimeout(timeoutId);
   }
   const responsePayload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error("No fue posible obtener el análisis de Mi agente");
+  if (!response.ok) {
+    const providerMessage =
+      responsePayload?.error?.message ||
+      responsePayload?.message ||
+      `HTTP ${response.status}`;
+    throw new Error(
+      `No fue posible obtener el análisis de Mi agente: ${String(providerMessage).slice(0, 500)}`,
+    );
+  }
   await recordAiUsageFromOpenAiResponse({
     internalRequestId: randomUUID(),
     userId: Number(user.id),
@@ -1584,7 +1738,14 @@ async function requestMiAgentJson({ payload, user, jobId, startedAt, phase }) {
   return parsed;
 }
 
-function buildCoachPrompt(snapshot, question, processGuide = "", selectedContext = {}) {
+function buildCoachPrompt(
+  snapshot,
+  question,
+  processGuide = "",
+  selectedContext = {},
+  conversationHistory = [],
+) {
+  const activeOpportunityId = Number(selectedContext?.opportunityId || 0);
   return {
     model: config.openai.model,
     temperature: 0.2,
@@ -1607,7 +1768,7 @@ function buildCoachPrompt(snapshot, question, processGuide = "", selectedContext
             confidence: "high|medium|low",
             entities: { opportunityId: 0, accountId: 0, contactId: 0, leadId: 0, names: [""] },
             operations: [{
-              kind: "activity|stage_answer|opportunity_field|account_field|contact_field|lead_call_outcome|create_account|create_contact|create_opportunity|lead_resolve",
+              kind: "activity|stage_answer|opportunity_field|account_field|contact_field|lead_call_outcome|create_account|create_contact|create_opportunity|create_quotation|create_proposal|lead_resolve",
               opportunityId: 0,
               accountId: 0,
               contactId: 0,
@@ -1647,6 +1808,7 @@ function buildCoachPrompt(snapshot, question, processGuide = "", selectedContext
           },
           processGuide: clip(processGuide, 18000),
           selectedContext,
+          conversationHistory,
           snapshot,
         }),
       },
@@ -1654,23 +1816,50 @@ function buildCoachPrompt(snapshot, question, processGuide = "", selectedContext
   };
 }
 
-async function executeCoachJob({ jobId, user, question, selectedContext = {} }) {
+async function executeCoachJob({ jobId, user, question, selectedContext = {}, conversationHistory = [], sessionId = null }) {
   try {
     await query(`UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ?`, [jobId]);
     const snapshot = await getMiAgentEnrichedContext(user, await getMiAgentContext(user));
-    const scopedSnapshot = buildCoachScopedSnapshot(snapshot, selectedContext);
+    const effectiveContext = { ...selectedContext };
+    if (!Number(effectiveContext.opportunityId || 0)) {
+      const contextText = [
+        question,
+        ...conversationHistory.map((message) => message.text),
+      ].join(" ");
+      const resolvedEntities = resolveCoachEntities(snapshot, contextText);
+      const inferredOpportunity = resolvedEntities.opportunity;
+      const inferredOpportunityId = Number(inferredOpportunity?.id || 0);
+      if (inferredOpportunity) {
+        effectiveContext.opportunityId = inferredOpportunityId;
+        effectiveContext.accountId = Number(inferredOpportunity.account?.id || inferredOpportunity.accountId || 0) || null;
+        effectiveContext.contactId = Number(inferredOpportunity.contact?.id || inferredOpportunity.contactId || 0) || null;
+      }
+    }
+    const scopedSnapshot = buildCoachScopedSnapshot(snapshot, effectiveContext);
     const processGuide = await loadProcessGuide();
     const result = await requestMiAgentJson({
-      payload: buildCoachPrompt(scopedSnapshot, question, processGuide, selectedContext),
+      payload: buildCoachPrompt(scopedSnapshot, question, processGuide, effectiveContext, conversationHistory),
       user,
       jobId,
       startedAt: new Date(),
       phase: "coach",
     });
+    const normalizedResult = normalizeCoachResult(result, snapshot, question, effectiveContext);
     await query(
       `UPDATE mi_agent_analysis_jobs SET status = 'completed', result_json = ?, error_message = NULL, updated_at = NOW(3) WHERE id = ?`,
-      [JSON.stringify(normalizeCoachResult(result, snapshot, question, selectedContext)), jobId],
+      [JSON.stringify(normalizedResult), jobId],
     );
+    if (sessionId) {
+      await appendCoachSessionTurn(user.id, sessionId, {
+        role: "seller",
+        text: question,
+      }, effectiveContext);
+      await appendCoachSessionTurn(user.id, sessionId, {
+        role: "coach",
+        text: normalizedResult.answer,
+        result: normalizedResult,
+      }, effectiveContext);
+    }
   } catch (error) {
     await query(
       `UPDATE mi_agent_analysis_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3) WHERE id = ?`,
@@ -1800,7 +1989,7 @@ async function executeMiAgentAnalysisJob({ jobId, user }) {
 
 router.get(
   "/context",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     return res.json(await getMiAgentContext(req.user));
   },
@@ -1808,7 +1997,7 @@ router.get(
 
 router.post(
   "/analyze",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     if (!config.openai.apiKey) {
       return res.status(503).json({ message: "La configuracion IA no esta habilitada" });
@@ -1829,9 +2018,19 @@ router.post(
 
 router.post(
   "/coach",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     const question = String(req.body?.question || "").trim();
+    let conversationHistory = Array.isArray(req.body?.history)
+      ? req.body.history
+        .filter((message) => message && typeof message === "object")
+        .map((message) => ({
+          role: message.role === "coach" ? "coach" : "seller",
+          text: String(message.text || "").trim().slice(0, 2000),
+        }))
+        .filter((message) => message.text)
+        .slice(-8)
+      : [];
     const selectedContext = req.body?.context && typeof req.body.context === "object"
       ? {
           accountId: Number(req.body.context.accountId || 0) || null,
@@ -1842,6 +2041,8 @@ router.post(
     const userId = Number(req.user.id);
     const hasAccountGlobalScope = req.user?.permissionSet?.has("cuentas.read_all");
     if (selectedContext.accountId) {
+      const permissionError = requireEntityReadPermission(req.user, "cuentas");
+      if (permissionError) return res.status(permissionError.status).json(permissionError.body);
       const accountParams = [selectedContext.accountId];
       const accountScope = hasAccountGlobalScope
         ? ""
@@ -1856,6 +2057,8 @@ router.post(
       if (!accountRows.length) return res.status(404).json({ message: "La cuenta seleccionada no esta disponible" });
     }
     if (selectedContext.opportunityId) {
+      const permissionError = requireEntityReadPermission(req.user, "oportunidades");
+      if (permissionError) return res.status(permissionError.status).json(permissionError.body);
       const opportunityParams = [selectedContext.opportunityId];
       const opportunityScope = hasMiAgentGlobalScope(req.user)
         ? ""
@@ -1875,6 +2078,8 @@ router.post(
       if (!opportunityRows.length) return res.status(404).json({ message: "La oportunidad seleccionada no esta disponible" });
     }
     if (selectedContext.contactId) {
+      const permissionError = requireEntityReadPermission(req.user, "contactos");
+      if (permissionError) return res.status(permissionError.status).json(permissionError.body);
       const contactParams = [selectedContext.contactId];
       let contactRelationship = "";
       if (selectedContext.accountId) {
@@ -1895,6 +2100,22 @@ router.post(
     }
     if (!question) return res.status(400).json({ message: "La pregunta es obligatoria" });
     if (!config.openai.apiKey) return res.status(503).json({ message: "La configuracion IA no esta habilitada" });
+    const session = await getOrCreateCoachSession(
+      req.user.id,
+      Number(req.body?.sessionId || 0) || null,
+      selectedContext,
+    );
+    if (session) {
+      for (const key of ["accountId", "contactId", "opportunityId", "quotationId", "proposalId", "leadId"]) {
+        if (!selectedContext[key] && session.context?.[key]) selectedContext[key] = session.context[key];
+      }
+      if (!conversationHistory.length) {
+        conversationHistory = session.messages.slice(-8).map((message) => ({
+          role: message.role,
+          text: message.text || message.result?.answer || "",
+        })).filter((message) => message.text);
+      }
+    }
     await ensureMiAgentSchema();
     const result = await query(
       `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, context_snapshot, status)
@@ -1902,14 +2123,34 @@ router.post(
       [Number(req.user.id), question, JSON.stringify(selectedContext)],
     );
     const jobId = Number(result.insertId);
-    setImmediate(() => executeCoachJob({ jobId, user: req.user, question, selectedContext }));
-    return res.status(202).json({ job: { id: jobId, status: "pending", pollAfterMs: 1000 } });
+    setImmediate(() => executeCoachJob({
+      jobId,
+      user: req.user,
+      question,
+      selectedContext,
+      conversationHistory,
+      sessionId: session?.id || null,
+    }));
+    return res.status(202).json({
+      sessionId: session?.id || null,
+      job: { id: jobId, status: "pending", pollAfterMs: 1000 },
+    });
+  },
+);
+
+router.get(
+  "/coach/sessions/:sessionId",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    const session = await getCoachSession(req.user.id, Number(req.params.sessionId || 0));
+    if (!session) return res.status(404).json({ message: "La sesión del Coach no existe" });
+    return res.json({ session });
   },
 );
 
 router.get(
   "/coach/metrics",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     const userId = Number(req.user.id);
     const [usageRows, coachQueryRows, operationRows, undoneRows, rejectedRows] = await Promise.all([
@@ -1978,7 +2219,7 @@ router.get(
 
 router.post(
   "/coach/operations/rejected",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     const operation = req.body?.operation;
     if (!operation || typeof operation !== "object") {
@@ -2008,6 +2249,7 @@ router.post(
 
 router.post(
   "/coach/leads/:interactionId/undo",
+  requirePermission(MI_COACH_USE_PERMISSION),
   requirePermission("interacciones.update"),
   async (req, res) => {
     const interactionId = Number(req.params.interactionId || 0);
@@ -2074,7 +2316,7 @@ router.post(
 
 router.post(
   "/coach/operations/:auditId/undo",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     const auditId = Number(req.params.auditId || 0);
     if (!Number.isInteger(auditId) || auditId <= 0) {
@@ -2101,7 +2343,7 @@ router.post(
       },
       coach_field_updated: {
         account: { name: "name", phone: "phone", website: "website", city: "city", stateRegion: "state_region", companyDescription: "description" },
-        contact: { firstName: "first_name", lastName: "last_name", email: "email", mobile: "mobile", phone: "phone", positionTitle: "position_title", department: "department", city: "city", stateRegion: "state_region" },
+        contact: { firstName: "first_name", lastName: "last_name", email: "email", mobile: "mobile", phone: "phone", positionTitle: "position_title", department: "department", city: "city", stateRegion: "state_region", hierarchyLevelId: "hierarchy_level_id", relationshipTypeId: "relationship_type_id", influenceLevelId: "influence_level_id", managerContactId: "manager_contact_id", influencesContactId: "influences_contact_id" },
       },
     };
     const tableMap = { opportunity: "opportunities", account: "accounts", contact: "contacts" };
@@ -2109,6 +2351,17 @@ router.post(
     const entityKey = entityMap[String(audit.entity_type)] || String(audit.entity_type);
     const column = maps[audit.action]?.[entityKey]?.[field];
     const table = tableMap[entityKey];
+    const requiredUpdatePermission = {
+      opportunity: "oportunidades.update",
+      account: "cuentas.update",
+      contact: "contactos.update",
+    }[entityKey];
+    if (!requiredUpdatePermission || !canExecuteCoachWrite(req.user, requiredUpdatePermission)) {
+      return res.status(403).json({
+        message: "No autorizado",
+        requiredPermission: requiredUpdatePermission || MI_COACH_EXECUTE_PERMISSION,
+      });
+    }
     if (!column || !table || !change || !Object.prototype.hasOwnProperty.call(change, "before")) {
       return res.status(409).json({ message: "El cambio no tiene un valor anterior reversible" });
     }
@@ -2134,6 +2387,7 @@ router.post(
 
 router.post(
   "/interaction/analyze",
+  requirePermission(MI_COACH_USE_PERMISSION),
   requirePermission("oportunidades.read"),
   async (req, res) => {
     const opportunityId = Number(req.body?.opportunityId || 0);
@@ -2165,7 +2419,7 @@ router.post(
 
 router.get(
   "/interaction/jobs/:jobId",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     await ensureMiAgentSchema();
     const rows = await query(`SELECT id, status, result_json, error_message FROM mi_agent_analysis_jobs WHERE id = ? AND created_by_user_id = ? AND job_kind = 'interaction' LIMIT 1`, [Number(req.params.jobId || 0), Number(req.user.id)]);
@@ -2179,7 +2433,7 @@ router.get(
 
 router.get(
   "/coach/jobs/:jobId",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     await ensureMiAgentSchema();
     const rows = await query(
@@ -2201,7 +2455,7 @@ router.get(
 
 router.get(
   "/analyze/jobs/:jobId",
-  requirePermission("oportunidades.read"),
+  requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     await ensureMiAgentSchema();
     const jobId = Number(req.params.jobId || 0);

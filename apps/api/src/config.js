@@ -197,6 +197,13 @@ export const config = {
     enableWebSearch:
       String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",
   },
+  tavily: {
+    apiKey: process.env.TAVILY_API_KEY || "",
+    baseUrl: process.env.TAVILY_BASE_URL || "https://api.tavily.com",
+    enableSearch: String(process.env.TAVILY_ENABLE_SEARCH || "false") === "true",
+    timeoutMs: Number(process.env.TAVILY_TIMEOUT_MS || 15000),
+    maxResults: Math.max(1, Math.min(20, Number(process.env.TAVILY_MAX_RESULTS || 8))),
+  },
   landingSecurity: {
     defaultEnabled:
       String(process.env.LANDING_SECURITY_DEFAULT_ENABLED || "false") ===

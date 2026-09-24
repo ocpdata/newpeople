@@ -698,6 +698,21 @@ function createQuotationsFixture({
       return;
     }
 
+    if (pathname === "/api/quotation-product-lists") {
+      const providerId = Number(searchParams.get("providerId") || 0);
+      await fulfillJson(route, providerId === 201 ? [{
+        id: 301,
+        providerId: 201,
+        providerName: "Bundles Inc",
+        name: "Lista activa Bundles Inc",
+        code: "LISTA-ACTIVA",
+        currencyCode: "USD",
+        itemType: "producto",
+        isActive: true,
+      }] : []);
+      return;
+    }
+
     if (pathname === "/api/catalogs/quotation-activation-statuses") {
       await fulfillJson(route, activationStatuses);
       return;

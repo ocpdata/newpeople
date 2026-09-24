@@ -18,6 +18,10 @@ import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema
 import { ensureCommercialCalendarPermissions } from "./commercial-calendar/permissions.js";
 import { ensureCommercialDevelopmentPermissions } from "./commercial-development/permissions.js";
 import { ensureCommercialTrackingPermissions } from "./commercial-tracking/permissions.js";
+import { ensureCommercialIntelligencePermissions } from "./commercial-intelligence/permissions.js";
+import { ensureCommercialIntelligenceSchema } from "./commercial-intelligence/schema.js";
+import { ensureProspectResearchPermissions } from "./prospect-research/permissions.js";
+import { ensureProspectResearchSchema } from "./prospect-research/schema.js";
 import { ensureCommercialPlanningPermissions } from "./commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "./manufacturer-registrations/permissions.js";
@@ -70,6 +74,8 @@ export async function startServer() {
   await ensureCommercialDevelopmentPermissions({ autoAssignRoles });
   await ensureCommercialCalendarPermissions({ autoAssignRoles });
   await ensureCommercialTrackingPermissions({ autoAssignRoles });
+  await ensureCommercialIntelligencePermissions({ autoAssignRoles });
+  await ensureProspectResearchPermissions({ autoAssignRoles });
   await ensureCommercialEnablementPermissions({ autoAssignRoles });
   await ensureCommercialPlanningPermissions({ autoAssignRoles });
   await ensureManufacturerRegistrationPermissions({ autoAssignRoles });
@@ -89,6 +95,8 @@ export async function startServer() {
   await ensureProposalSchema();
   await ensureProposalExecutiveSummaryGenerationJobSchema();
   await ensureCommercialExecutionSchema();
+  await ensureCommercialIntelligenceSchema();
+  await ensureProspectResearchSchema();
   await ensureCommercialEnablementSchema();
   await ensureCommercialEnablementStarterData();
   await ensureCommercialPlanningSchema();

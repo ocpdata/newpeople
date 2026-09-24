@@ -462,6 +462,7 @@ export default function AppShell({
                 canResolveLeads={can("interacciones.resolve")}
                 canCreateOpportunities={can("oportunidades.create") || can("oportunidades.request")}
                 canUpdateCommercialDevelopment={can("desarrollo_comercial.update")}
+                canUseExternalSources={can("fuentes_externas.execute")}
               />
             ) : (
               <Navigate to="/" />

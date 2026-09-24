@@ -1,0 +1,9 @@
+Nombre de la oportunidad: Oportunidad documental api_test_1789939303860_4r0ksa
+Monto: 125000
+Fecha de cierre: 2026-08-15
+Cuenta: Cuenta fixture api_test_1789939303860_4r0ksa_opportunity_documents
+Contacto: Contacto Fixture api_test_1789939303860_4r0ksa_opportunity_documents
+Linea de negocio: General
+Vendedor: API Seller Fixture
+Preventa: 
+Notas: Proyecto derivado de propuesta comercial y llamada de descubrimiento.

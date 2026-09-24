@@ -1,9 +1,15 @@
 node_modules/
 apps/*/node_modules/
 .env
+**/.env
 apps/api/.env
 apps/web/.env
 .vscode/
+**/tasks.json
+apps/api/.tmp-check-perms.mjs
+apps/api/.tmp-check-qualified.mjs
+apps/api/scripts/demoSeedSnapshot.sql
+apps/api/scripts/verifyDemoSeed.js
 waf-test-results.tsv
 bot-defense-results.tsv
 cert-f5/

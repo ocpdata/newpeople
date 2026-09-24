@@ -273,8 +273,8 @@ async function mockCommercialFlowApi(
         status: "active",
         roles: [{ name: "Vendedor" }],
         permissions: canManageQuestions
-          ? ["oportunidades.read", "oportunidades.update"]
-          : ["oportunidades.read"],
+          ? ["mi_coach.use", "oportunidades.read", "oportunidades.update"]
+          : ["mi_coach.use", "oportunidades.read"],
       });
     }
 

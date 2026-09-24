@@ -318,12 +318,12 @@ npm run seed:demo --prefix apps/api -- \
   --contacts-min 2 \
   --contacts-max 4 \
   --opportunities-per-account 4 \
-  --admin-name "Omar Carrillo" \
-  --admin-email "ocarrillo@accessq.com.mx" \
-  --admin-password "Cruz4das?" \
+  --admin-name "Juan Perez" \
+  --admin-email "<ADMIN_EMAIL>" \
+  --admin-password "<ADMIN_PASSWORD>" \
   --oscar-name "Oscar Rillo" \
-  --oscar-email "ocarrillo@electrodata.com.pe" \
-  --oscar-password "Cruz4das?"
+  --oscar-email "<USER_EMAIL>" \
+  --oscar-password "<USER_PASSWORD>"
 ```
 
 Notas:

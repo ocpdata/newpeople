@@ -109,8 +109,9 @@ export async function runStructuredWebResearch({
   currentValues,
   fields,
   aiUsageContext = null,
+  useWebSearchTool = true,
 }) {
-  if (!config.openai.apiKey || !config.openai.enableWebSearch) {
+  if (!config.openai.apiKey || (useWebSearchTool && !config.openai.enableWebSearch)) {
     return null;
   }
 
@@ -126,7 +127,14 @@ export async function runStructuredWebResearch({
 
   const payload = {
     model: config.openai.model,
-    tools: [{ type: "web_search_preview" }],
+    ...(useWebSearchTool ? { tools: [{ type: "web_search_preview" }] } : {}),
+    text: {
+      format: {
+        type: "json_schema",
+        ...buildStructuredResearchSchema(schemaName, fields),
+        strict: true,
+      },
+    },
     input: [
       {
         role: "system",
@@ -187,6 +195,10 @@ export async function runStructuredWebResearch({
   return extractJsonObject(extractResponseOutputText(data));
 }
 
+export async function runStructuredTextResearch(args) {
+  return runStructuredWebResearch({ ...args, useWebSearchTool: false });
+}
+
 export async function runProfiledStructuredWebResearch(profile, args) {
   return runStructuredWebResearch({
     schemaName: profile.schemaName,
@@ -211,9 +223,7 @@ export function buildStructuredResearchSchema(schemaName, fields) {
       properties: Object.fromEntries(
         fields.map((field) => [field.key, buildFieldSchema(field)]),
       ),
-      required: fields
-        .filter((field) => field.required !== false)
-        .map((field) => field.key),
+      required: fields.map((field) => field.key),
     },
   };
 }

@@ -960,6 +960,11 @@ router.patch("/:id/coach-field", requirePermission("contactos.update"), async (r
     department: "department",
     city: "city",
     stateRegion: "state_region",
+    hierarchyLevelId: "hierarchy_level_id",
+    relationshipTypeId: "relationship_type_id",
+    influenceLevelId: "influence_level_id",
+    managerContactId: "manager_contact_id",
+    influencesContactId: "influences_contact_id",
   };
   const field = String(req.body?.field || "").trim();
   const column = fieldMap[field];
@@ -968,8 +973,18 @@ router.patch("/:id/coach-field", requirePermission("contactos.update"), async (r
   if (!access.ok) return res.status(access.response.status).json(access.response.body);
   const rows = await query(`SELECT ${column} AS value FROM contacts WHERE id = ? LIMIT 1`, [id]);
   if (!rows.length) return res.status(404).json({ message: "Contacto no encontrado" });
-  const value = String(req.body?.value ?? "").trim();
-  await query(`UPDATE contacts SET ${column} = ?, updated_by = ?, updated_at = NOW(3) WHERE id = ?`, [value || null, Number(req.user.id), id]);
+  const numericFields = new Set([
+    "hierarchyLevelId",
+    "relationshipTypeId",
+    "influenceLevelId",
+    "managerContactId",
+    "influencesContactId",
+  ]);
+  const rawValue = req.body?.value;
+  const value = numericFields.has(field)
+    ? Number(rawValue || 0) || null
+    : String(rawValue ?? "").trim() || null;
+  await query(`UPDATE contacts SET ${column} = ?, updated_by = ?, updated_at = NOW(3) WHERE id = ?`, [value, Number(req.user.id), id]);
   const auditId = await logAuditEvent({ req, module: "contactos", action: "coach_field_updated", entityType: "contact", entityId: id, detail: `Campo actualizado desde Coach: ${field}`, before: { [field]: rows[0].value }, after: { [field]: value || null } });
   return res.json({ id, field, value: value || null, auditId });
 });

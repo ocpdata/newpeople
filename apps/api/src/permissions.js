@@ -50,6 +50,30 @@ const CORE_PERMISSIONS = [
     description: "Bypasear la validacion de etapa solo en Demostracion",
   },
   {
+    code: "mi_coach.use",
+    module: "mi_coach",
+    action: "use",
+    description: "Usar Mi Coach comercial",
+  },
+  {
+    code: "mi_coach.execute",
+    module: "mi_coach",
+    action: "execute",
+    description: "Confirmar operaciones propuestas por Mi Coach",
+  },
+  {
+    code: "mi_coach.admin",
+    module: "mi_coach",
+    action: "admin",
+    description: "Administrar gobierno, limites y configuracion de Mi Coach",
+  },
+  {
+    code: "fuentes_externas.execute",
+    module: "fuentes_externas",
+    action: "execute",
+    description: "Ejecutar investigaciones con fuentes publicas externas",
+  },
+  {
     code: "herramientas.read",
     module: "herramientas",
     action: "read",

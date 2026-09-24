@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
 import { config } from "../src/config.js";
 import { ensureCommercialEnablementPermissions } from "../src/commercial-enablement/permissions.js";
+import { ensureCommercialIntelligencePermissions } from "../src/commercial-intelligence/permissions.js";
+import { ensureCommercialIntelligenceSchema } from "../src/commercial-intelligence/schema.js";
 import { ensureCommercialTrackingPermissions } from "../src/commercial-tracking/permissions.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
@@ -24,6 +26,9 @@ import { processPendingOpportunityStageValidationJobs } from "../src/opportunity
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
 import { ensureCorePermissions } from "../src/permissions.js";
 import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
+import { ensureOpportunityWorkspaceSchema } from "../src/opportunity-workspace/schema.js";
+import { ensureProspectResearchPermissions } from "../src/prospect-research/permissions.js";
+import { ensureProspectResearchSchema } from "../src/prospect-research/schema.js";
 import {
   TEST_PREFIX,
   cleanupArtifacts,
@@ -65,6 +70,10 @@ describe("API integration baseline", () => {
     await ensureCorePermissions({ autoAssignRoles: true });
     await ensureLandingPermissions({ autoAssignRoles: true });
     await ensureCommercialEnablementPermissions();
+    await ensureCommercialIntelligencePermissions();
+    await ensureCommercialIntelligenceSchema();
+    await ensureProspectResearchPermissions();
+    await ensureProspectResearchSchema();
     await ensureCommercialTrackingPermissions();
     await ensureCommercialPlanningPermissions();
     await ensureCommercialPlanningSchema();
@@ -72,6 +81,7 @@ describe("API integration baseline", () => {
     await ensureManufacturerRegistrationPermissions();
     await ensureManufacturerRegistrationsSchema();
     await ensureInteractionPermissions();
+    await ensureOpportunityWorkspaceSchema();
 
     await query(
       `INSERT INTO contact_relationship_types (code, name, is_active)
@@ -156,6 +166,8 @@ describe("API integration baseline", () => {
       permissionCodes: [
         "desarrollo_comercial.read",
         "desarrollo_comercial.update",
+        "calendario_comercial.read",
+        "calendario_comercial.update",
         "oportunidades.read",
         "oportunidades.create",
         "oportunidades.update",
@@ -189,6 +201,61 @@ describe("API integration baseline", () => {
     ctx.opportunityReadOnlyRoleId = await createRole({
       name: `${TEST_PREFIX}_opportunity_readonly`,
       permissionCodes: ["oportunidades.read"],
+    });
+    ctx.miCoachUseRoleId = await createRole({
+      name: `${TEST_PREFIX}_mi_coach_use`,
+      permissionCodes: ["mi_coach.use"],
+    });
+    ctx.miCoachAdminRoleId = await createRole({
+      name: `${TEST_PREFIX}_mi_coach_admin`,
+      permissionCodes: ["mi_coach.use", "mi_coach.admin"],
+    });
+    ctx.commercialIntelligenceReadRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_intelligence_read`,
+      permissionCodes: [
+        "mi_coach.use",
+        "inteligencia_comercial.read",
+        "cuentas.read",
+        "contactos.read",
+        "oportunidades.read",
+        "interacciones.read",
+        "fuentes_externas.execute",
+      ],
+    });
+    ctx.commercialIntelligenceUpdateRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_intelligence_update`,
+      permissionCodes: [
+        "mi_coach.use",
+        "inteligencia_comercial.read",
+        "inteligencia_comercial.update",
+        "cuentas.read",
+        "contactos.read",
+        "oportunidades.read",
+        "interacciones.read",
+        "fuentes_externas.execute",
+      ],
+    });
+    ctx.commercialIntelligenceNoAccountRoleId = await createRole({
+      name: `${TEST_PREFIX}_commercial_intelligence_no_account`,
+      permissionCodes: ["mi_coach.use", "inteligencia_comercial.read"],
+    });
+    ctx.prospectResearchRoleId = await createRole({
+      name: `${TEST_PREFIX}_prospect_research`,
+      permissionCodes: [
+        "mi_coach.use",
+        "prospeccion.read",
+        "prospeccion.create",
+        "prospeccion.update",
+        "cuentas.create",
+        "contactos.create",
+        "interacciones.create",
+        "oportunidades.create",
+        "fuentes_externas.execute",
+      ],
+    });
+    ctx.prospectResearchNoCoachRoleId = await createRole({
+      name: `${TEST_PREFIX}_prospect_research_no_coach`,
+      permissionCodes: ["prospeccion.read", "prospeccion.create"],
     });
     ctx.processCommercialConfigReadRoleId = await createRole({
       name: `${TEST_PREFIX}_process_commercial_config_read`,
@@ -503,10 +570,50 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.opps.demo.bypass@example.com`,
       roleIds: [ctx.opportunityDemoBypassRoleId],
     });
+    ctx.opportunityReadOnlyUserId = await createUser({
+      fullName: "API Opportunity Read Only",
+      email: `${TEST_PREFIX}.opps.readonly@example.com`,
+      roleIds: [ctx.opportunityReadOnlyRoleId],
+    });
     ctx.opportunityGlobalScopeUserId = await createUser({
       fullName: "API Opportunity Global Scope",
       email: `${TEST_PREFIX}.opps.global.scope@example.com`,
       roleIds: [ctx.opportunityGlobalScopeRoleId],
+    });
+    ctx.miCoachUseUserId = await createUser({
+      fullName: "API Mi Coach Use",
+      email: `${TEST_PREFIX}.mi.coach.use@example.com`,
+      roleIds: [ctx.miCoachUseRoleId],
+    });
+    ctx.miCoachAdminUserId = await createUser({
+      fullName: "API Mi Coach Admin",
+      email: `${TEST_PREFIX}.mi.coach.admin@example.com`,
+      roleIds: [ctx.miCoachAdminRoleId],
+    });
+    ctx.commercialIntelligenceReadUserId = await createUser({
+      fullName: "API Commercial Intelligence Read",
+      email: `${TEST_PREFIX}.commercial.intelligence.read@example.com`,
+      roleIds: [ctx.commercialIntelligenceReadRoleId],
+    });
+    ctx.commercialIntelligenceUpdateUserId = await createUser({
+      fullName: "API Commercial Intelligence Update",
+      email: `${TEST_PREFIX}.commercial.intelligence.update@example.com`,
+      roleIds: [ctx.commercialIntelligenceUpdateRoleId],
+    });
+    ctx.commercialIntelligenceNoAccountUserId = await createUser({
+      fullName: "API Commercial Intelligence No Account",
+      email: `${TEST_PREFIX}.commercial.intelligence.no.account@example.com`,
+      roleIds: [ctx.commercialIntelligenceNoAccountRoleId],
+    });
+    ctx.prospectResearchUserId = await createUser({
+      fullName: "API Prospect Research",
+      email: `${TEST_PREFIX}.prospect.research@example.com`,
+      roleIds: [ctx.prospectResearchRoleId],
+    });
+    ctx.prospectResearchNoCoachUserId = await createUser({
+      fullName: "API Prospect Research No Coach",
+      email: `${TEST_PREFIX}.prospect.research.no.coach@example.com`,
+      roleIds: [ctx.prospectResearchNoCoachRoleId],
     });
     ctx.sellerUserId = await createUser({
       fullName: "API Seller Fixture",
@@ -597,7 +704,15 @@ describe("API integration baseline", () => {
       ctx.opportunityRequestUserId,
       ctx.opportunityFlowUserId,
       ctx.opportunityDemoBypassUserId,
+      ctx.opportunityReadOnlyUserId,
       ctx.opportunityGlobalScopeUserId,
+      ctx.miCoachUseUserId,
+      ctx.miCoachAdminUserId,
+      ctx.commercialIntelligenceReadUserId,
+      ctx.commercialIntelligenceUpdateUserId,
+      ctx.commercialIntelligenceNoAccountUserId,
+      ctx.prospectResearchUserId,
+      ctx.prospectResearchNoCoachUserId,
       ctx.sellerUserId,
       ctx.roleManagerUserId,
       ctx.configurationManagerUserId,
@@ -949,6 +1064,532 @@ describe("API integration baseline", () => {
     expect(meResponse.status).toBe(200);
     expect(meResponse.body.permissions).toContain("cuentas.create");
     expect(meResponse.body.permissions).toContain("cuentas.update");
+  });
+
+  test("mi coach exige permiso propio y permisos por registro", async () => {
+    const opportunityOnlyLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.opps.readonly@example.com`,
+    );
+
+    const forbiddenContextResponse = await request(app)
+      .get("/api/mi-agent/context")
+      .set("Authorization", `Bearer ${opportunityOnlyLogin.body.token}`);
+
+    expect(forbiddenContextResponse.status).toBe(403);
+    expect(forbiddenContextResponse.body.requiredPermission).toBe("mi_coach.use");
+
+    const coachLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.use@example.com`,
+    );
+
+    const contextResponse = await request(app)
+      .get("/api/mi-agent/context")
+      .set("Authorization", `Bearer ${coachLogin.body.token}`);
+
+    expect(contextResponse.status).toBe(200);
+    expect(contextResponse.body.workboard).toEqual([]);
+    expect(contextResponse.body.leads).toEqual([]);
+    expect(contextResponse.body.contactMappings).toEqual([]);
+
+    const accountScopedCoachResponse = await request(app)
+      .post("/api/mi-agent/coach")
+      .set("Authorization", `Bearer ${coachLogin.body.token}`)
+      .send({
+        question: "Resume esta cuenta",
+        context: { accountId: ctx.fixtureAccountId },
+      });
+
+    expect(accountScopedCoachResponse.status).toBe(403);
+    expect(accountScopedCoachResponse.body.requiredPermission).toBe("cuentas.read");
+  });
+
+  test("inteligencia comercial crea jobs y hallazgos respetando permisos por registro", async () => {
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.commercialIntelligenceUpdateUserId,
+      actorUserId: ctx.commercialIntelligenceUpdateUserId,
+      suffix: `${TEST_PREFIX}_commercial_intelligence`,
+    });
+    cleanup.accountIds.push(accountId);
+
+    const contactId = await createDirectContact({
+      accountId,
+      actorUserId: ctx.commercialIntelligenceUpdateUserId,
+      suffix: `${TEST_PREFIX}_commercial_intelligence`,
+    });
+    cleanup.contactIds.push(contactId);
+
+    const noCoachLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.accounts.read@example.com`,
+    );
+    const noCoachResponse = await request(app)
+      .post("/api/commercial-intelligence/customer-research/jobs")
+      .set("Authorization", `Bearer ${noCoachLogin.body.token}`)
+      .send({ accountId });
+
+    expect(noCoachResponse.status).toBe(403);
+    expect(noCoachResponse.body.requiredPermission).toBe("mi_coach.use");
+
+    const noAccountLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.intelligence.no.account@example.com`,
+    );
+    const noAccountResponse = await request(app)
+      .post("/api/commercial-intelligence/customer-research/jobs")
+      .set("Authorization", `Bearer ${noAccountLogin.body.token}`)
+      .send({ accountId });
+
+    expect(noAccountResponse.status).toBe(403);
+    expect(noAccountResponse.body.requiredPermission).toBe("cuentas.read");
+
+    const updateLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.intelligence.update@example.com`,
+    );
+    const createJobResponse = await request(app)
+      .post("/api/commercial-intelligence/customer-research/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId, objective: "Preparar investigacion interna" });
+
+    expect(createJobResponse.status).toBe(202);
+    const jobId = Number(createJobResponse.body.job.id);
+    expect(jobId).toBeGreaterThan(0);
+
+    let jobResponse;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      jobResponse = await request(app)
+        .get(`/api/commercial-intelligence/customer-research/jobs/${jobId}`)
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(jobResponse.body.job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    expect(jobResponse.status).toBe(200);
+    expect(jobResponse.body.job.status).toBe("completed");
+    expect(jobResponse.body.job.findings.length).toBeGreaterThan(0);
+    expect(jobResponse.body.job.findings[0]).toEqual(
+      expect.objectContaining({
+        status: "suggested",
+        sourceType: expect.any(String),
+        confidence: expect.any(String),
+      }),
+    );
+
+    const snapshotResponse = await request(app)
+      .get(`/api/commercial-intelligence/account-intelligence/snapshot?accountId=${accountId}`)
+      .set("Authorization", `Bearer ${updateLogin.body.token}`);
+
+    expect(snapshotResponse.status).toBe(200);
+    expect(snapshotResponse.body.snapshot).toEqual(
+      expect.objectContaining({
+        snapshotVersion: "account-intelligence.v1",
+        account: expect.objectContaining({ id: accountId }),
+        contacts: expect.any(Array),
+        opportunities: expect.any(Array),
+        interactions: expect.any(Array),
+        activities: expect.any(Array),
+        renewals: expect.any(Array),
+        products: expect.any(Array),
+        expansionHypotheses: expect.any(Array),
+        accountHealth: expect.objectContaining({
+          status: expect.any(String),
+          score: expect.any(Number),
+          signals: expect.any(Array),
+          metrics: expect.any(Object),
+        }),
+        dataAvailability: { products: true, supportCases: false },
+      }),
+    );
+
+    const forbiddenSnapshotResponse = await request(app)
+      .get(`/api/commercial-intelligence/account-intelligence/snapshot?accountId=${accountId}`)
+      .set("Authorization", `Bearer ${noAccountLogin.body.token}`);
+
+    expect(forbiddenSnapshotResponse.status).toBe(403);
+    expect(forbiddenSnapshotResponse.body.requiredPermission).toBe("cuentas.read");
+
+    const internalAnalysisResponse = await request(app)
+      .post("/api/commercial-intelligence/account-internal-analysis/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId });
+    expect(internalAnalysisResponse.status).toBe(202);
+    const internalJobId = Number(internalAnalysisResponse.body.job.id);
+    let internalJobResponse;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      internalJobResponse = await request(app)
+        .get(`/api/commercial-intelligence/account-internal-analysis/jobs/${internalJobId}`)
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(internalJobResponse.body.job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(internalJobResponse.status).toBe(200);
+    expect(internalJobResponse.body.job.result).toEqual(expect.objectContaining({ sourceDomain: "crm_internal", writesPerformed: false, snapshot: expect.any(Object), agents: expect.any(Array), findings: expect.any(Array) }));
+    expect(internalJobResponse.body.job.findings.length).toBeGreaterThan(0);
+
+    const accountChatResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId, question: "Resume esta cuenta para mi reunión" });
+    expect(accountChatResponse.status).toBe(202);
+    const accountChatJobId = Number(accountChatResponse.body.job.id);
+    let accountChatJob;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      accountChatJob = await request(app).get(`/api/commercial-intelligence/account-chat/jobs/${accountChatJobId}`).set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(accountChatJob.body.job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(accountChatJob.status).toBe(200);
+    expect(accountChatJob.body.job.result).toEqual(expect.objectContaining({ source: "account_intelligence", answer: expect.any(String) }));
+
+    const agentsResponse = await request(app)
+      .post("/api/commercial-intelligence/agents/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId, includePublicResearch: false });
+    expect(agentsResponse.status).toBe(202);
+    const agentsJobId = Number(agentsResponse.body.job.id);
+    let agentsJobResponse;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      agentsJobResponse = await request(app)
+        .get(`/api/commercial-intelligence/agents/jobs/${agentsJobId}`)
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(agentsJobResponse.body.job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(agentsJobResponse.status).toBe(200);
+    expect(agentsJobResponse.body.job.status).toBe("completed");
+    expect(agentsJobResponse.body.job.result).toEqual(expect.objectContaining({
+      sourceDomain: "crm_internal",
+      orchestrationVersion: "account-intelligence.agents.v1",
+      writesPerformed: false,
+      telemetry: expect.objectContaining({ durationMs: expect.any(Number), writesPerformed: false }),
+      agents: expect.arrayContaining([expect.objectContaining({ agentId: "synthesis" }), expect.objectContaining({ agentId: "actions" })]),
+    }));
+
+    const agentsMetricsResponse = await request(app)
+      .get("/api/commercial-intelligence/agents/metrics")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`);
+    expect(agentsMetricsResponse.status).toBe(200);
+    expect(agentsMetricsResponse.body).toEqual(expect.objectContaining({ periodDays: 30, aiUsage: expect.any(Object), jobs: expect.any(Array) }));
+
+    const executiveBriefingResponse = await request(app)
+      .post("/api/commercial-intelligence/executive-briefing/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId });
+
+    expect(executiveBriefingResponse.status).toBe(202);
+    const executiveJobId = Number(executiveBriefingResponse.body.job.id);
+    let executiveJob;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      executiveJob = await request(app)
+        .get(`/api/commercial-intelligence/executive-briefing/jobs/${executiveJobId}`)
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(executiveJob.body.job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(executiveJob.status).toBe(200);
+    expect(executiveJob.body.job.status).toBe("completed");
+    expect(executiveJob.body.job.result.executiveBriefing).toEqual(
+      expect.objectContaining({
+        healthScore: expect.any(Number),
+        nextBestStep: expect.any(String),
+        recommendedActions: expect.any(Array),
+      }),
+    );
+
+    const findingId = Number(jobResponse.body.job.findings[0].id);
+    const prematureApplyResponse = await request(app)
+      .post(`/api/commercial-intelligence/findings/${findingId}/apply`)
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ target: "account", field: "description", value: "Cambio sin confirmar" });
+
+    expect(prematureApplyResponse.status).toBe(409);
+
+    const confirmResponse = await request(app)
+      .post(`/api/commercial-intelligence/findings/${findingId}/confirm`)
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({});
+
+    expect(confirmResponse.status).toBe(200);
+    expect(confirmResponse.body.finding.status).toBe("confirmed");
+
+    const listResponse = await request(app)
+      .get(`/api/commercial-intelligence/findings?accountId=${accountId}&status=confirmed`)
+      .set("Authorization", `Bearer ${updateLogin.body.token}`);
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: findingId, status: "confirmed" }),
+      ]),
+    );
+
+    const discoveryResponse = await request(app)
+      .post("/api/commercial-intelligence/commercial-discovery/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId, objective: "Preparar llamada comercial" });
+
+    expect(discoveryResponse.status).toBe(202);
+    const discoveryJobId = Number(discoveryResponse.body.job.id);
+    expect(discoveryJobId).toBeGreaterThan(0);
+
+    let discoveryJobResponse;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      discoveryJobResponse = await request(app)
+        .get(`/api/commercial-intelligence/commercial-discovery/jobs/${discoveryJobId}`)
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(discoveryJobResponse.body.job?.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    expect(discoveryJobResponse.status).toBe(200);
+    expect(discoveryJobResponse.body.job.status).toBe("completed");
+    expect(discoveryJobResponse.body.job.result.briefing.questions.length).toBeGreaterThan(0);
+    expect(discoveryJobResponse.body.job.result.briefing.nextSteps.length).toBeGreaterThan(0);
+    expect(discoveryJobResponse.body.job.result.briefing.emailDraft.subject).toContain("Siguiente paso");
+
+    const externalResearchResponse = await request(app)
+      .post("/api/commercial-intelligence/external-research/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId });
+
+    expect(externalResearchResponse.status).toBe(403);
+    expect(externalResearchResponse.body.requiredPermission).toBe("mi_coach.admin");
+
+    const automaticBriefingResponse = await request(app)
+      .get("/api/commercial-intelligence/automatic-briefing/next")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`);
+
+    expect(automaticBriefingResponse.status).toBe(200);
+    expect(automaticBriefingResponse.body).toEqual(
+      expect.objectContaining({ message: expect.any(String) }),
+    );
+  });
+
+  test("prospeccion crea sesion, genera ficha y confirma hallazgos", async () => {
+    const noCoachLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.prospect.research.no.coach@example.com`,
+    );
+
+    const forbiddenResponse = await request(app)
+      .post("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${noCoachLogin.body.token}`)
+      .send({
+        companyName: `Prospecto ${TEST_PREFIX}`,
+        country: "Mexico",
+      });
+
+    expect(forbiddenResponse.status).toBe(403);
+    expect(forbiddenResponse.body.requiredPermission).toBe("mi_coach.use");
+
+    const prospectLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.prospect.research@example.com`,
+    );
+
+    const createSessionResponse = await request(app)
+      .post("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        companyName: `Prospecto ${TEST_PREFIX}`,
+        country: "Mexico",
+        website: "prospecto.example.com",
+        industry: "Logistica",
+      });
+
+    expect(createSessionResponse.status).toBe(201);
+    const sessionId = Number(createSessionResponse.body.session.id);
+    expect(sessionId).toBeGreaterThan(0);
+
+    const runResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/run`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+
+    expect(runResponse.status).toBe(200);
+    expect(runResponse.body.session.status).toBe("completed");
+    expect(runResponse.body.session.findings.length).toBeGreaterThan(0);
+    expect(runResponse.body.session.contacts.length).toBeGreaterThan(0);
+    expect(runResponse.body.session.hypotheses.length).toBeGreaterThan(0);
+    expect(runResponse.body.session.result.outreach.subject).toContain("Prospecto");
+
+    const findingId = Number(runResponse.body.session.findings[0].id);
+    const confirmResponse = await request(app)
+      .post(`/api/prospect-research/findings/${findingId}/confirm`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+
+    expect(confirmResponse.status).toBe(200);
+    expect(confirmResponse.body.finding.status).toBe("confirmed");
+
+    const getSessionResponse = await request(app)
+      .get(`/api/prospect-research/sessions/${sessionId}`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+
+    expect(getSessionResponse.status).toBe(200);
+    expect(getSessionResponse.body.session.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: findingId, status: "confirmed" }),
+      ]),
+    );
+
+    const externalProspectResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/run-external`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+
+    expect(externalProspectResponse.status).toBe(200);
+    expect(externalProspectResponse.body.session.result.externalResearch).toEqual(
+      expect.objectContaining({ enabled: false }),
+    );
+
+    const accountConversionResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/convert-to-account`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+
+    expect([200, 201]).toContain(accountConversionResponse.status);
+    const accountId = Number(accountConversionResponse.body.accountId);
+    expect(accountId).toBeGreaterThan(0);
+    cleanup.accountIds.push(accountId);
+
+    const suggestedContactId = Number(runResponse.body.session.contacts[0].id);
+    const contactConversionResponse = await request(app)
+      .post(`/api/prospect-research/contacts/${suggestedContactId}/convert`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        accountId,
+        contactName: "Laura Prospecto",
+        email: `laura.prospecto.${TEST_PREFIX}@example.com`,
+      });
+
+    expect(contactConversionResponse.status).toBe(201);
+    const contactId = Number(contactConversionResponse.body.contactId);
+    expect(contactId).toBeGreaterThan(0);
+    cleanup.contactIds.push(contactId);
+
+    const leadConversionResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/convert-to-lead`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ accountId });
+
+    expect(leadConversionResponse.status).toBe(201);
+    expect(Number(leadConversionResponse.body.interactionId)).toBeGreaterThan(0);
+
+    const hypothesisId = Number(runResponse.body.session.hypotheses[0].id);
+    const opportunityConversionResponse = await request(app)
+      .post(`/api/prospect-research/hypotheses/${hypothesisId}/convert-to-opportunity`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        accountId,
+        contactId,
+        amountUsd: 15000,
+        closeDate: "2026-12-31",
+      });
+
+    expect(opportunityConversionResponse.status).toBe(201);
+    const opportunityId = Number(opportunityConversionResponse.body.opportunityId);
+    expect(opportunityId).toBeGreaterThan(0);
+    cleanup.opportunityIds.push(opportunityId);
+  });
+
+  test("gobierno de Mi Coach exige admin y actualiza configuracion y metricas", async () => {
+    const regularLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.use@example.com`,
+    );
+    const forbiddenResponse = await request(app)
+      .get("/api/commercial-intelligence/governance")
+      .set("Authorization", `Bearer ${regularLogin.body.token}`);
+
+    expect(forbiddenResponse.status).toBe(403);
+    expect(forbiddenResponse.body.requiredPermission).toBe("mi_coach.admin");
+
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.admin@example.com`,
+    );
+    const initialResponse = await request(app)
+      .get("/api/commercial-intelligence/governance")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+
+    expect(initialResponse.status).toBe(200);
+    expect(initialResponse.body.settings).toEqual(
+      expect.objectContaining({
+        externalSourcesEnabled: expect.any(Boolean),
+        dailyResearchLimitPerUser: expect.any(Number),
+        findingRetentionDays: expect.any(Number),
+      }),
+    );
+
+    const updateResponse = await request(app)
+      .put("/api/commercial-intelligence/governance/settings")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        externalSourcesEnabled: false,
+        dailyResearchLimitPerUser: 7,
+        findingRetentionDays: 90,
+        requireEvidenceForExternalFindings: true,
+        allowProspectConversion: false,
+        notes: "Configuracion temporal de prueba",
+      });
+
+    expect(updateResponse.status).toBe(200);
+    expect(updateResponse.body.settings).toMatchObject({
+      dailyResearchLimitPerUser: 7,
+      findingRetentionDays: 90,
+      allowProspectConversion: false,
+    });
+
+    const externalUserLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.intelligence.update@example.com`,
+    );
+    const blockedExternalResponse = await request(app)
+      .post("/api/commercial-intelligence/external-research/jobs")
+      .set("Authorization", `Bearer ${externalUserLogin.body.token}`)
+      .send({ accountId: ctx.fixtureAccountId });
+
+    expect(blockedExternalResponse.status).toBe(403);
+    expect(blockedExternalResponse.body.requiredPermission).toBe("mi_coach.admin");
+
+    const blockedConversionResponse = await request(app)
+      .post("/api/prospect-research/sessions/999999/convert-to-account")
+      .set("Authorization", `Bearer ${(await login(request(app), `${TEST_PREFIX}.prospect.research@example.com`)).body.token}`)
+      .send({});
+
+    expect(blockedConversionResponse.status).toBe(403);
+    expect(blockedConversionResponse.body.requiredPermission).toBe("mi_coach.admin");
+
+    const oldJobResult = await query(
+      `INSERT INTO customer_intelligence_jobs
+        (public_id, requested_by_user_id, job_type, status, request_json, created_at, updated_at)
+       VALUES (?, ?, 'governance_retention_test', 'completed', '{}', DATE_SUB(NOW(3), INTERVAL 120 DAY), DATE_SUB(NOW(3), INTERVAL 120 DAY))`,
+      [`cij_retention_${TEST_PREFIX}`, ctx.miCoachAdminUserId],
+    );
+    const oldJobId = Number(oldJobResult.insertId);
+
+    const retentionResponse = await request(app)
+      .get("/api/commercial-intelligence/governance")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+
+    expect(retentionResponse.status).toBe(200);
+    const oldJobRows = await query(
+      `SELECT id FROM customer_intelligence_jobs WHERE id = ?`,
+      [oldJobId],
+    );
+    expect(oldJobRows).toHaveLength(0);
+
+    const auditRows = await query(
+      `SELECT id FROM audit_log
+       WHERE action = 'mi_coach_governance_updated'
+         AND performed_by_user_id = ?
+       ORDER BY id DESC LIMIT 1`,
+      [ctx.miCoachAdminUserId],
+    );
+    expect(auditRows).toHaveLength(1);
   });
 
   test("configuracion permite consultar y actualizar el perfil institucional", async () => {
@@ -10941,14 +11582,24 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}_commercial_development_calendar_lead_follow_up`,
     );
 
+    await query(
+      `UPDATE opportunities SET seller_user_id = ?, created_by = ? WHERE id = ?`,
+      [ctx.opportunityFlowUserId, ctx.opportunityFlowUserId, fixture.opportunityId],
+    );
+
     const interactionsLoginResponse = await login(
       request(app),
       `${TEST_PREFIX}.interactions.manager@example.com`,
     );
 
-    test("desarrollo comercial evita duplicar un lead con varios eventos en el mismo dia", async () => {
+    async function runLeadCalendarDedupCase() {
       const fixture = await createOwnedOpportunityFlowFixture(
         `${TEST_PREFIX}_commercial_development_calendar_lead_dedup`,
+      );
+
+      await query(
+        `UPDATE opportunities SET seller_user_id = ?, created_by = ? WHERE id = ?`,
+        [ctx.opportunityFlowUserId, ctx.opportunityFlowUserId, fixture.opportunityId],
       );
 
       const interactionsLoginResponse = await login(
@@ -10960,6 +11611,7 @@ describe("API integration baseline", () => {
         .post("/api/interactions")
         .set("Authorization", `Bearer ${interactionsLoginResponse.body.token}`)
         .field("title", `Lead calendario duplicado ${TEST_PREFIX}`)
+        .field("leadSource", "vendedor")
         .attach(
           "files",
           Buffer.from(
@@ -11063,12 +11715,15 @@ describe("API integration baseline", () => {
           scheduledDate: "2026-06-30",
         }),
       );
-    });
+    }
+
+    await runLeadCalendarDedupCase();
 
     const createInteractionResponse = await request(app)
       .post("/api/interactions")
       .set("Authorization", `Bearer ${interactionsLoginResponse.body.token}`)
       .field("title", `Lead calendario ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(

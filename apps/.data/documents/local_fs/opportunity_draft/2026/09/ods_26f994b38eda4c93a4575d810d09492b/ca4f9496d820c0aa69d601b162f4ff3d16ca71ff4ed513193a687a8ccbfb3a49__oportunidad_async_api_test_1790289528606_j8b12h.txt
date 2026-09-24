@@ -1,0 +1,3 @@
+Nombre de la oportunidad: Oportunidad async api_test_1790289528606_j8b12h
+Monto: 88000
+Cuenta: Cuenta fixture api_test_1790289528606_j8b12h_opportunity_documents_async

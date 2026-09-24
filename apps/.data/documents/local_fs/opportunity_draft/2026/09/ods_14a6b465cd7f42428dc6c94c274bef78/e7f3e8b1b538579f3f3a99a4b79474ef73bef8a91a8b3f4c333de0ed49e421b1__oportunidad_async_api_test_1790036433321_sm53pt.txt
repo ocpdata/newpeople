@@ -1,0 +1,3 @@
+Nombre de la oportunidad: Oportunidad async api_test_1790036433321_sm53pt
+Monto: 88000
+Cuenta: Cuenta fixture api_test_1790036433321_sm53pt_opportunity_documents_async
