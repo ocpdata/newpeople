@@ -539,6 +539,10 @@ function buildSnapshot(dashboard) {
     cancelledOpportunities: Array.isArray(dashboard?.cancelledOpportunities)
       ? dashboard.cancelledOpportunities
       : [],
+    accounts: Array.isArray(dashboard?.accounts) ? dashboard.accounts : [],
+    contactMappings: Array.isArray(dashboard?.contactMappings)
+      ? dashboard.contactMappings
+      : [],
     summary: dashboard?.summary || {},
   };
 }
@@ -1085,6 +1089,60 @@ export default function MiAgentPage({
     setCoachRecentOperations([]);
     setCoachNotice("");
     resetCustomerIntelligence();
+  }
+
+  async function applyCoachActiveContext(activeContext) {
+    const nextContext = {
+      accountId: String(activeContext?.accountId || ""),
+      opportunityId: String(activeContext?.opportunityId || ""),
+      contactId: String(activeContext?.contactId || ""),
+      leadId: String(activeContext?.leadId || ""),
+    };
+    const hasChanged = [
+      "accountId",
+      "opportunityId",
+      "contactId",
+      "leadId",
+    ].some((key) => nextContext[key] !== coachContextRef.current[key]);
+    setCoachContext(nextContext);
+    if (!hasChanged) return;
+    if (!nextContext.accountId) {
+      setCoachOpportunities([]);
+      setCoachContacts([]);
+      return;
+    }
+
+    const [contextResponse, opportunitiesResponse, contactsResponse] =
+      await Promise.all([
+        api.get("/api/mi-agent/context"),
+        api.get(
+          `/api/opportunities?accountId=${nextContext.accountId}&activeOnly=true&openOnly=true`,
+        ),
+        api.get(
+          `/api/contacts?accountId=${nextContext.accountId}&opportunityId=${nextContext.opportunityId}&activeOnly=true`,
+        ),
+      ]);
+    const accountSnapshot = buildSnapshot(contextResponse.data);
+    setDashboard(contextResponse.data);
+    setCoachAccounts((current) => {
+      const accounts = new Map(
+        current.map((account) => [Number(account.id), account]),
+      );
+      accountSnapshot.accounts.forEach((account) =>
+        accounts.set(Number(account.id), account),
+      );
+      return [...accounts.values()];
+    });
+    setCoachOpportunities(
+      buildCoachOpportunityOptions(
+        opportunitiesResponse.data,
+        accountSnapshot,
+        nextContext.accountId,
+      ),
+    );
+    setCoachContacts(
+      Array.isArray(contactsResponse.data) ? contactsResponse.data : [],
+    );
   }
 
   useEffect(() => {
@@ -1974,28 +2032,8 @@ export default function MiAgentPage({
               "El contexto cambio mientras se analizaba la pregunta. Vuelve a intentarlo.",
             );
           }
-          const inferredOpportunityId = Number(
-            data.result?.entities?.opportunityId || 0,
-          );
-          if (inferredOpportunityId && !requestContext.opportunityId) {
-            const inferredOpportunity = snapshot.coachOpportunities.find(
-              (opportunity) => Number(opportunity.id) === inferredOpportunityId,
-            );
-            setCoachContext((current) =>
-              current.opportunityId
-                ? current
-                : {
-                    ...current,
-                    accountId: String(
-                      inferredOpportunity?.account?.id ||
-                        inferredOpportunity?.accountId ||
-                        current.accountId ||
-                        "",
-                    ),
-                    opportunityId: String(inferredOpportunityId),
-                  },
-            );
-          }
+          const activeContext = data.result?.activeContext;
+          if (activeContext) await applyCoachActiveContext(activeContext);
           const persistedOperations = (data.result?.operations || [])
             .filter((operation) => operation.persistentId)
             .map((operation) => ({

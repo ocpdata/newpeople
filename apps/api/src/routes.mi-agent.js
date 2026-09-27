@@ -14,6 +14,7 @@ import {
   appendCoachSessionTurn,
   cancelCoachHandoff,
   completeCoachHandoff,
+  createCoachSession,
   createCoachHandoff,
   getCoachHandoff,
   getLatestActiveCoachSession,
@@ -31,6 +32,7 @@ import {
   safeParseCoachResponse,
 } from "./coach/contract.js";
 import {
+  applyCoachEntityResolution,
   buildCoachEntityClarification,
   resolveCoachEntities,
 } from "./coach/entity-resolver.js";
@@ -71,29 +73,22 @@ export function getEnabledCoachTerminalStatusCodes(settings = {}) {
   ].filter(Boolean);
 }
 
-export function mergeCoachSessionContext(
-  selectedContext = {},
+export function resolveCoachTurnContext(
+  requestContext = {},
   sessionContext = {},
-  requestContext = null,
+  isExistingSession = false,
 ) {
-  const merged = { ...selectedContext };
-  for (const key of [
-    "accountId",
-    "contactId",
-    "opportunityId",
-    "quotationId",
-    "proposalId",
-    "leadId",
-  ]) {
-    if (
-      !Object.hasOwn(requestContext || {}, key) &&
-      !merged[key] &&
-      sessionContext?.[key]
-    ) {
-      merged[key] = sessionContext[key];
-    }
-  }
-  return merged;
+  const source = isExistingSession ? sessionContext : requestContext;
+  return Object.fromEntries(
+    [
+      "accountId",
+      "contactId",
+      "opportunityId",
+      "quotationId",
+      "proposalId",
+      "leadId",
+    ].map((key) => [key, Number(source?.[key] || 0) || null]),
+  );
 }
 
 export function coachSessionContextMatchesRequest(
@@ -108,30 +103,116 @@ export function coachSessionContextMatchesRequest(
   });
 }
 
+export function getCoachConversationHistory(
+  messages = [],
+  requestContext = null,
+  sessionContext = {},
+) {
+  if (!coachSessionContextMatchesRequest(requestContext, sessionContext)) {
+    return [];
+  }
+  return (Array.isArray(messages) ? messages : [])
+    .filter(
+      (message) =>
+        !message.context ||
+        coachSessionContextMatchesRequest(requestContext, message.context),
+    )
+    .slice(-8)
+    .map((message) => ({
+      role: message.role,
+      text: message.text || message.result?.answer || "",
+    }))
+    .filter((message) => message.text);
+}
+
 export function resolveCoachContextEntities(
   snapshot,
   question,
-  conversationHistory = [],
-  selectedContext = {},
+  _conversationHistory = [],
+  _selectedContext = {},
 ) {
   const explicitEntities = resolveCoachEntities(snapshot, question);
-  const hasSelectedEntity = [
-    "accountId",
-    "opportunityId",
-    "contactId",
-    "leadId",
-  ].some((key) => Number(selectedContext?.[key] || 0) > 0);
-  const resolutionText = hasSelectedEntity
-    ? question
-    : [question, ...conversationHistory.map((message) => message.text)].join(
-        " ",
-      );
   return {
     explicitEntities,
-    resolvedEntities:
-      resolutionText === question
-        ? explicitEntities
-        : resolveCoachEntities(snapshot, resolutionText),
+    resolvedEntities: explicitEntities,
+  };
+}
+
+export function resolveCoachResponseContext(
+  snapshot,
+  currentContext,
+  response,
+) {
+  const opportunities = [
+    ...(snapshot?.coachOpportunities || []),
+    ...(snapshot?.wonOpportunities || []),
+    ...(snapshot?.lostOpportunities || []),
+    ...(snapshot?.cancelledOpportunities || []),
+  ];
+  const accounts = snapshot?.accounts || [];
+  const contacts = snapshot?.contactMappings || [];
+  const leads = snapshot?.leads || [];
+  const facts = Array.isArray(response?.facts) ? response.facts : [];
+  const entities = response?.entities || {};
+  const findById = (items, id) =>
+    items.find((item) => Number(item?.id) === Number(id || 0)) || null;
+  const factId = (sourceType) => {
+    const ids = new Set(
+      facts
+        .filter((fact) => fact?.sourceType === sourceType)
+        .map((fact) => Number(fact?.sourceId || 0))
+        .filter((id) => id > 0),
+    );
+    return ids.size === 1 ? [...ids][0] : null;
+  };
+  const explicitEntities = {
+    account:
+      findById(accounts, entities.accountId) ||
+      findById(accounts, factId("account")),
+    opportunity:
+      findById(opportunities, entities.opportunityId) ||
+      findById(opportunities, factId("opportunity")),
+    contact: findById(contacts, factId("contact")),
+    lead: findById(leads, entities.leadId) || findById(leads, factId("lead")),
+    candidates: { accounts: [], opportunities: [], contacts: [], leads: [] },
+  };
+  const responseText = [
+    response?.answer,
+    ...(Array.isArray(entities.names) ? entities.names : []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const responseResolution = resolveCoachEntities(snapshot, responseText);
+  if (
+    /\boportunidad(?:es)?\b/.test(normalizeCoachMatchText(responseText)) &&
+    responseResolution.opportunity &&
+    !/\b(?:lead|leads|prospecto|prospectos)\b/.test(
+      normalizeCoachMatchText(responseText),
+    )
+  ) {
+    explicitEntities.opportunity = responseResolution.opportunity;
+    explicitEntities.lead = null;
+  }
+  if (!Object.values(explicitEntities).some((entity) => entity?.id)) {
+    const namesResolution = responseResolution;
+    Object.assign(explicitEntities, {
+      account: namesResolution.account,
+      opportunity: namesResolution.opportunity,
+      contact: namesResolution.contact,
+      lead: namesResolution.lead,
+      candidates: namesResolution.candidates,
+    });
+  }
+  const resolution = explicitEntities;
+  const transition = applyCoachEntityResolution(
+    snapshot,
+    currentContext,
+    resolution,
+  );
+  return {
+    ...transition,
+    resolution,
+    source: "coach_response",
   };
 }
 const ANALYSIS_TIMEOUT_MS = 120000;
@@ -282,9 +363,15 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
   const historicalOpportunities = TERMINAL_OPPORTUNITY_COLLECTIONS.flatMap(
     (key) => (Array.isArray(snapshot?.[key]) ? snapshot[key] : []),
   );
+  const inactiveOpportunities = Array.isArray(
+    snapshot?.inactivePipelineOpportunities,
+  )
+    ? snapshot.inactivePipelineOpportunities
+    : [];
   const allOpportunities = [
     ...commercialOpportunities,
     ...historicalOpportunities,
+    ...inactiveOpportunities,
   ];
   const matchesSelection = (item) => {
     if (scopedOpportunityId > 0) return Number(item.id) === scopedOpportunityId;
@@ -301,6 +388,7 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
       ),
     ]),
   );
+  const scopedInactive = inactiveOpportunities.filter(matchesSelection);
   const scopedAllOpportunities = allOpportunities.filter(matchesSelection);
   const opportunityIds = new Set(
     scopedAllOpportunities.map((item) => Number(item.id)),
@@ -324,6 +412,20 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
           (contactId > 0 && Number(contact.id) === contactId),
       )
     : [];
+  const accountRecords =
+    Array.isArray(snapshot?.accounts) && snapshot.accounts.length
+      ? snapshot.accounts
+      : [
+          ...new Map(
+            allOpportunities
+              .map((item) => item.account)
+              .filter(Boolean)
+              .map((account) => [Number(account.id), account]),
+          ).values(),
+        ];
+  const scopedAccounts = accountRecords.filter(
+    (account) => scopedAccountId > 0 && Number(account.id) === scopedAccountId,
+  );
   const selectedOpportunity =
     scopedOpportunityId > 0
       ? scopedAllOpportunities.find(
@@ -333,7 +435,22 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
 
   return {
     ...snapshot,
+    accounts: scopedAccounts,
+    pipeline: snapshot?.pipeline
+      ? {
+          ...snapshot.pipeline,
+          opportunities: (Array.isArray(snapshot.pipeline.opportunities)
+            ? snapshot.pipeline.opportunities
+            : []
+          ).filter(matchesSelection),
+        }
+      : snapshot?.pipeline,
+    workboard: (Array.isArray(snapshot?.workboard)
+      ? snapshot.workboard
+      : []
+    ).filter(matchesSelection),
     coachOpportunities: opportunities,
+    inactivePipelineOpportunities: scopedInactive,
     ...scopedHistorical,
     leads,
     contactMappings,
@@ -457,6 +574,8 @@ async function getMiAgentContext(user) {
               o.updated_at, oss.code AS stage_code, oss.name AS stage_name,
               oss.stage_order,
               ocs.code AS commercial_status_code,
+              oas.code AS activation_status_code,
+              oas.name AS activation_status_name,
               a.name AS account_name, a.registration_code AS account_registration_code,
               a.phone AS account_phone, a.website AS account_website,
               a.city AS account_city, a.state_region AS account_state_region,
@@ -514,6 +633,55 @@ async function getMiAgentContext(user) {
   ]);
 
   const quotaAmount = Number(targetRows[0]?.sales_quota_amount || 0);
+  const inactiveParams = [];
+  const inactiveScopeJoin = buildOpportunityScope(user, inactiveParams);
+  const inactiveRows = canReadOpportunities
+    ? await query(
+        `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
+                  o.close_date, o.sales_stage_id, o.updated_at,
+                  oss.code AS stage_code, oss.name AS stage_name,
+                  oss.stage_order, ocs.code AS commercial_status_code,
+                  oas.code AS activation_status_code,
+                  oas.name AS activation_status_name,
+                  a.name AS account_name,
+                  a.registration_code AS account_registration_code,
+                  a.phone AS account_phone, a.website AS account_website,
+                  a.city AS account_city, a.state_region AS account_state_region,
+                  a.description AS account_description,
+                  CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+                  c.email AS contact_email, c.phone AS contact_phone,
+                  c.mobile AS contact_mobile, c.position_title AS contact_position,
+                  c.department AS contact_department,
+                  NULL AS last_activity_at, NULL AS next_action_title,
+                  NULL AS next_action_due_date
+           FROM opportunities o
+           ${inactiveScopeJoin}
+           INNER JOIN accounts a ON a.id = o.account_id
+           LEFT JOIN contacts c ON c.id = o.contact_id
+           INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+           INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+           INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+           WHERE oas.code <> 'activada'
+             AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')
+             AND oss.code IN (${COACH_STAGE_CODES.map(() => "?").join(", ")})
+             ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
+           ORDER BY o.updated_at DESC, o.close_date IS NULL, o.close_date ASC
+           LIMIT 300`,
+        [
+          ...inactiveParams,
+          ...COACH_STAGE_CODES,
+          ...(hasMiAgentGlobalScope(user)
+            ? []
+            : [Number(user.id), Number(user.id)]),
+        ],
+      ).catch((error) => {
+        console.error(
+          "[mi-agent] No fue posible consultar oportunidades no activas:",
+          error?.message || error,
+        );
+        return [];
+      })
+    : [];
   const historicalParams = [];
   const historicalScopeJoin = buildOpportunityScope(user, historicalParams);
   const historicalRows =
@@ -697,11 +865,16 @@ async function getMiAgentContext(user) {
       isQualified: QUALIFIED_STAGE_CODES.includes(row.stage_code),
       salesStageId: Number(row.sales_stage_id || 0) || null,
       commercialStatusCode: row.commercial_status_code || null,
+      activationStatusCode: row.activation_status_code || "activada",
+      activationStatusName: row.activation_status_name || "Activada",
       lifecycle: ["ganada", "perdida", "anulada"].includes(
         row.commercial_status_code,
       )
         ? "historical"
-        : "open",
+        : row.activation_status_code &&
+            row.activation_status_code !== "activada"
+          ? "inactive"
+          : "open",
       riskLevel:
         riskReasons.length > 1 ? "high" : riskReasons.length ? "medium" : "low",
       riskReasons,
@@ -718,6 +891,7 @@ async function getMiAgentContext(user) {
     };
   };
   const coachOpportunities = opportunityRows.map(mapOpportunity);
+  const inactivePipelineOpportunities = inactiveRows.map(mapOpportunity);
   const historicalOpportunities = historicalRows.map(mapOpportunity);
   const opportunities = coachOpportunities.filter((item) =>
     QUALIFIED_STAGE_CODES.includes(item.stageCode),
@@ -744,6 +918,7 @@ async function getMiAgentContext(user) {
     },
     workboard: opportunities,
     coachOpportunities,
+    inactivePipelineOpportunities,
     wonOpportunities: historicalOpportunities.filter(
       (item) => item.commercialStatusCode === "ganada",
     ),
@@ -1420,8 +1595,14 @@ export function normalizeCoachResult(
     opportunities.map((item) => Number(item?.id)).filter((id) => id > 0),
   );
   const accountIds = new Set(
-    opportunities
-      .map((item) => Number(item?.account?.id))
+    [
+      ...(Array.isArray(snapshot?.accounts) ? snapshot.accounts : []),
+      ...opportunities.flatMap((item) => [
+        item?.account,
+        { id: item?.accountId },
+      ]),
+    ]
+      .map((item) => Number(item?.id))
       .filter((id) => id > 0),
   );
   const contactIds = new Set(
@@ -2102,7 +2283,9 @@ export function normalizeCoachResult(
       contactId: contactIds.has(Number(entities.contactId || 0))
         ? Number(entities.contactId)
         : null,
-      leadId: null,
+      leadId: leadIds.has(Number(entities.leadId || 0))
+        ? Number(entities.leadId)
+        : null,
       names: (Array.isArray(entities.names) ? entities.names : [])
         .map((item) => String(item || "").trim())
         .filter(Boolean)
@@ -2967,6 +3150,8 @@ function buildCoachPrompt(
       {
         role: "system",
         content:
+          "inactivePipelineOpportunities contiene oportunidades no terminales que están desactivadas o pendientes de activación. Nunca las cuentes como oportunidades abiertas, activas o parte del forecast; si la pregunta busca oportunidades abiertas y esta colección tiene registros de la cuenta consultada, responde que no hay activas y menciona aparte las oportunidades en proceso no activas con su estado de activación. No afirmes que no existen oportunidades de la cuenta cuando haya registros en esta colección. " +
+          "Si la respuesta establece una cuenta, oportunidad, contacto o lead como referente para la siguiente pregunta, llena entities con su ID exacto del snapshot autorizado y con sus entidades padre compatibles. Si menciona varios registros del mismo tipo o el referente no es inequívoco, deja ese ID en null y no cambies el contexto activo. " +
           "Para preguntas sobre el número de cotizaciones ganadas, cuenta documentos quotation distintos de la oportunidad seleccionada cuyo statusCode sea ganada; no cuentes versiones ni partidas. Para preguntas sobre productos, servicios, partidas o cantidades cotizadas, usa exclusivamente quotations[].products de la oportunidad correspondiente; conserva la separación por cotización y no infieras productos desde el nombre o la narrativa. " +
           "coachOpportunities contiene pipeline abierto; wonOpportunities, lostOpportunities y cancelledOpportunities contienen historial terminal separado. Nunca sumes registros terminales al pipeline, forecast o preparación de etapa. La ausencia de una entidad en el contexto no demuestra que no exista en el CRM: expresa que no está disponible en el contexto consultado. " +
           "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si existe selectedRecord de tipo opportunity, ese registro es la fuente principal: para preguntas sobre monto, importe, valor, fecha, etapa o nombre responde primero con sus campos exactos y no uses totales globales del pipeline como sustituto. Los totales globales solo aplican cuando la pregunta es general o no hay una oportunidad seleccionada. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
@@ -3107,77 +3292,37 @@ async function executeCoachJob({
       [jobId],
     );
     const baseSnapshot = await getMiAgentContext(user);
-    const effectiveContext = { ...selectedContext };
-    const { explicitEntities, resolvedEntities } = resolveCoachContextEntities(
+    let effectiveContext = { ...selectedContext };
+    const { explicitEntities } = resolveCoachContextEntities(
       baseSnapshot,
       question,
       conversationHistory,
       effectiveContext,
     );
-    if (explicitEntities.opportunity) {
-      const inferredOpportunity = explicitEntities.opportunity;
-      effectiveContext.opportunityId = Number(inferredOpportunity.id);
-      effectiveContext.accountId =
-        Number(
-          inferredOpportunity.account?.id || inferredOpportunity.accountId,
-        ) || null;
-      effectiveContext.contactId =
-        Number(
-          inferredOpportunity.contact?.id || inferredOpportunity.contactId,
-        ) || null;
-      effectiveContext.leadId = null;
-    } else if (explicitEntities.account) {
-      effectiveContext.accountId = Number(explicitEntities.account.id);
-      effectiveContext.opportunityId = null;
-      effectiveContext.contactId = null;
-      effectiveContext.leadId = null;
-    } else if (!Number(effectiveContext.opportunityId || 0)) {
-      const inferredOpportunity = resolvedEntities.opportunity;
-      const inferredOpportunityId = Number(inferredOpportunity?.id || 0);
-      if (inferredOpportunity) {
-        effectiveContext.opportunityId = inferredOpportunityId;
-        effectiveContext.accountId =
-          Number(
-            inferredOpportunity.account?.id ||
-              inferredOpportunity.accountId ||
-              0,
-          ) || null;
-        effectiveContext.contactId =
-          Number(
-            inferredOpportunity.contact?.id ||
-              inferredOpportunity.contactId ||
-              0,
-          ) || null;
-      }
-    }
-    if (!Number(effectiveContext.accountId || 0) && resolvedEntities.account) {
-      effectiveContext.accountId = Number(resolvedEntities.account.id);
-    }
-    if (!Number(effectiveContext.contactId || 0) && resolvedEntities.contact) {
-      effectiveContext.contactId = Number(resolvedEntities.contact.id);
-      effectiveContext.accountId =
-        Number(
-          resolvedEntities.contact.accountId || effectiveContext.accountId || 0,
-        ) || null;
-    }
-    if (!Number(effectiveContext.leadId || 0) && resolvedEntities.lead) {
-      effectiveContext.leadId = Number(resolvedEntities.lead.id);
-      effectiveContext.accountId =
-        Number(
-          resolvedEntities.lead.accountId || effectiveContext.accountId || 0,
-        ) || null;
-      effectiveContext.opportunityId =
-        Number(
-          resolvedEntities.lead.opportunityId ||
-            effectiveContext.opportunityId ||
-            0,
-        ) || null;
-    }
-    const entityClarification = buildCoachEntityClarification(
-      explicitEntities,
-      question,
+    const questionContextTransition = applyCoachEntityResolution(
+      baseSnapshot,
       effectiveContext,
+      explicitEntities,
     );
+    effectiveContext = questionContextTransition.context;
+    if (questionContextTransition.changed) conversationHistory = [];
+    const relationshipClarification = questionContextTransition.conflict
+      ? {
+          type: "select_opportunity",
+          message: questionContextTransition.conflict.message,
+          missing: ["Cuenta, oportunidad o contacto compatibles"],
+          candidates: questionContextTransition.conflict.candidates,
+          originalRequest: question,
+          intendedAction: "continue_request",
+        }
+      : null;
+    const entityClarification =
+      relationshipClarification ||
+      buildCoachEntityClarification(
+        explicitEntities,
+        question,
+        effectiveContext,
+      );
     const historicalQuestion =
       explicitEntities.opportunity?.lifecycle === "historical" ||
       /\b(vend|vent|compr|adquiri|ganad|perdid|anulad|cancelad|cerrad|historial|cotiz|propuest)/.test(
@@ -3285,6 +3430,19 @@ async function executeCoachJob({
           stageReadiness: authoritativeStageReadiness,
         }
       : result;
+    const responseContextTransition =
+      !clarification && !result?.clarification
+        ? resolveCoachResponseContext(scopedSnapshot, effectiveContext, result)
+        : null;
+    const activeContext =
+      responseContextTransition && !responseContextTransition.conflict
+        ? responseContextTransition.context
+        : effectiveContext;
+    const activeContextSource = questionContextTransition.changed
+      ? "question"
+      : responseContextTransition?.changed
+        ? "coach_response"
+        : "existing_context";
     const normalizedResult = normalizeCoachResult(
       authoritativeResult,
       scopedSnapshot,
@@ -3292,6 +3450,15 @@ async function executeCoachJob({
       effectiveContext,
       authoritativeStageReadiness,
     );
+    normalizedResult.entities = {
+      ...normalizedResult.entities,
+      accountId: activeContext.accountId,
+      opportunityId: activeContext.opportunityId,
+      contactId: activeContext.contactId,
+      leadId: activeContext.leadId,
+    };
+    normalizedResult.activeContext = activeContext;
+    normalizedResult.activeContextSource = activeContextSource;
     const persistedOperations = sessionId
       ? await persistCoachOperations({
           userId: user.id,
@@ -3324,7 +3491,7 @@ async function executeCoachJob({
           role: "seller",
           text: question,
         },
-        effectiveContext,
+        activeContext,
       );
       await appendCoachSessionTurn(
         user.id,
@@ -3334,7 +3501,7 @@ async function executeCoachJob({
           text: normalizedResult.answer,
           result: normalizedResult,
         },
-        effectiveContext,
+        activeContext,
       );
     }
   } catch (error) {
@@ -3577,10 +3744,6 @@ router.post(
   requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     const question = String(req.body?.question || "").trim();
-    const requestContext =
-      req.body?.context && typeof req.body.context === "object"
-        ? req.body.context
-        : null;
     let conversationHistory = Array.isArray(req.body?.history)
       ? req.body.history
           .filter((message) => message && typeof message === "object")
@@ -3593,7 +3756,7 @@ router.post(
           .filter((message) => message.text)
           .slice(-8)
       : [];
-    const selectedContext =
+    let selectedContext =
       req.body?.context && typeof req.body.context === "object"
         ? {
             accountId: Number(req.body.context.accountId || 0) || null,
@@ -3603,6 +3766,17 @@ router.post(
           }
         : {};
     const userId = Number(req.user.id);
+    const requestedSessionId = Number(req.body?.sessionId || 0) || null;
+    let session = requestedSessionId
+      ? await getCoachSession(req.user.id, requestedSessionId)
+      : null;
+    if (session) {
+      selectedContext = resolveCoachTurnContext(
+        selectedContext,
+        session.context,
+        true,
+      );
+    }
     const hasAccountGlobalScope =
       req.user?.permissionSet?.has("cuentas.read_all");
     if (selectedContext.accountId) {
@@ -3727,30 +3901,15 @@ router.post(
       return res
         .status(503)
         .json({ message: "La configuracion IA no esta habilitada" });
-    const session = await getOrCreateCoachSession(
-      req.user.id,
-      Number(req.body?.sessionId || 0) || null,
-      selectedContext,
-    );
+    if (!session)
+      session = await createCoachSession(req.user.id, selectedContext);
     if (session) {
-      Object.assign(
-        selectedContext,
-        mergeCoachSessionContext(
+      if (!conversationHistory.length) {
+        conversationHistory = getCoachConversationHistory(
+          session.messages,
           selectedContext,
           session.context,
-          requestContext,
-        ),
-      );
-      if (!coachSessionContextMatchesRequest(requestContext, session.context)) {
-        conversationHistory = [];
-      } else if (!conversationHistory.length) {
-        conversationHistory = session.messages
-          .slice(-8)
-          .map((message) => ({
-            role: message.role,
-            text: message.text || message.result?.answer || "",
-          }))
-          .filter((message) => message.text);
+        );
       }
     }
     await ensureMiAgentSchema();

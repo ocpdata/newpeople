@@ -7,6 +7,7 @@ async function mockMiCoachApi(
     withCustomerHealth = false,
     withCoachInterface = false,
     withHistoricalOpportunityContext = false,
+    withResponseContextSwitch = false,
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -52,6 +53,12 @@ async function mockMiCoachApi(
           currencyCode: "USD",
         },
         workboard: [],
+        accounts: withResponseContextSwitch
+          ? [
+              { id: 160, name: "Cuenta Demo" },
+              { id: 170, name: "Cuenta Alterna" },
+            ]
+          : [],
         wonOpportunities: withHistoricalOpportunityContext
           ? [
               {
@@ -110,6 +117,46 @@ async function mockMiCoachApi(
               completed: 0,
             },
       );
+    if (pathname === "/api/mi-agent/coach" && method === "POST")
+      return json(
+        {
+          sessionId: 71,
+          job: { id: 711, status: "pending", pollAfterMs: 1000 },
+        },
+        202,
+      );
+    if (pathname === "/api/mi-agent/coach/jobs/711")
+      return json({
+        job: { id: 711, status: "completed" },
+        result: {
+          intent: "context_query",
+          responseType: "informational",
+          answer:
+            "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+          confidence: "high",
+          facts: [],
+          evidence: [],
+          inferences: [],
+          pendingItems: [],
+          recommendation: null,
+          operations: [],
+          clarification: null,
+          entities: {
+            accountId: 170,
+            opportunityId: 320,
+            contactId: null,
+            leadId: null,
+            names: ["Proyecto B"],
+          },
+          activeContext: {
+            accountId: 170,
+            opportunityId: 320,
+            contactId: null,
+            leadId: null,
+          },
+          activeContextSource: "coach_response",
+        },
+      });
     if (
       withCoachInterface &&
       [
@@ -256,19 +303,51 @@ async function mockMiCoachApi(
       });
     }
     if (pathname.startsWith("/api/accounts"))
-      return json(withCustomerHealth ? [{ id: 160, name: "Cuenta Demo" }] : []);
+      return json(
+        withResponseContextSwitch
+          ? [
+              { id: 160, name: "Cuenta Demo" },
+              { id: 170, name: "Cuenta Alterna" },
+            ]
+          : withCustomerHealth
+            ? [{ id: 160, name: "Cuenta Demo" }]
+            : [],
+      );
     if (pathname === "/api/opportunities")
       return json(
-        withHistoricalOpportunityContext
+        withResponseContextSwitch && url.searchParams.get("accountId") === "160"
           ? [
               {
                 id: 300,
-                name: "Proyecto abierto",
+                name: "Proyecto A",
                 amount_usd: 20000,
                 sales_stage: "Desarrollo",
+                account_id: 160,
+                account: { id: 160, name: "Cuenta Demo" },
               },
             ]
-          : [],
+          : withResponseContextSwitch &&
+              url.searchParams.get("accountId") === "170"
+            ? [
+                {
+                  id: 320,
+                  name: "Proyecto B",
+                  amount_usd: 35000,
+                  sales_stage: "Negociación",
+                  account_id: 170,
+                  account: { id: 170, name: "Cuenta Alterna" },
+                },
+              ]
+            : withHistoricalOpportunityContext
+              ? [
+                  {
+                    id: 300,
+                    name: "Proyecto abierto",
+                    amount_usd: 20000,
+                    sales_stage: "Desarrollo",
+                  },
+                ]
+              : [],
       );
     if (pathname === "/api/contacts") return json([]);
     if (
@@ -873,6 +952,36 @@ test.describe("Mi Coach governance and workspaces", () => {
     });
     await opportunitySelect.selectOption("301");
     await expect(opportunitySelect).toHaveValue("301");
+  });
+
+  test("adopta la entidad autorizada mencionada por Coach sin limpiar la conversación", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withResponseContextSwitch: true,
+    });
+    await openMiCoach(page);
+    await page.getByLabel("Cuenta activa").selectOption("160");
+    await page
+      .getByRole("combobox", { name: "Oportunidad", exact: true })
+      .selectOption("300");
+    await page
+      .getByPlaceholder("Escribe tu pregunta para el Coach...")
+      .fill("¿Qué otra oportunidad requiere seguimiento?");
+    await page.getByRole("button", { name: "Preguntar" }).click();
+
+    await expect(
+      page.getByText(
+        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+      ),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByLabel("Cuenta activa")).toHaveValue("170");
+    await expect(
+      page.getByRole("combobox", { name: "Oportunidad", exact: true }),
+    ).toHaveValue("320");
+    await expect(
+      page.getByText("¿Qué otra oportunidad requiere seguimiento?"),
+    ).toBeVisible();
   });
 
   test("muestra salud, señales y productos en Cliente existente", async ({

@@ -43,7 +43,11 @@ Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis 
 8. Revisa, completa y aprueba el formulario antes de guardarlo.
 9. Regresa al chat para continuar la conversación desde el mismo contexto.
 
-La cuenta es el contexto principal. El selector de oportunidad agrupa registros abiertos, ganados, perdidos y anulados que estén habilitados por gobierno y sean accesibles para el usuario; el selector de contacto conserva únicamente registros activos. Si el vendedor menciona una cuenta u oportunidad de forma clara y única, esa referencia explícita prevalece sobre la selección anterior.
+La conversación mantiene un contexto activo tipado de cuenta, oportunidad, contacto o lead. El selector inicia ese contexto, pero no tiene prioridad permanente: una entidad mencionada de forma clara y única en la pregunta actual reemplaza la selección anterior. Una respuesta del Coach también puede establecer otra entidad para el siguiente turno, pero solo con IDs estructurados presentes en el snapshot autorizado o con un nombre estructurado inequívoco. La nueva combinación debe ser relacionalmente compatible; por ejemplo, una oportunidad determina su cuenta y un contacto debe corresponder a la misma cuenta. Si las entidades mencionadas se contradicen o son ambiguas, el Coach solicita aclaración en vez de elegir una en silencio.
+
+Las preguntas de seguimiento como «esa oportunidad», «el contacto», «¿y sus cotizaciones?» o «¿en qué etapa está?» usan los IDs activos persistidos en la sesión. Términos genéricos de consulta —como etapa, estado, cotizaciones o productos— no identifican por sí solos otra entidad, aunque aparezcan dentro del título de un registro distinto. El historial anterior no se vuelve a analizar como una bolsa de nombres: cada turno está asociado a su contexto y solo se reutiliza el historial compatible. Si no hay entidad activa, el Coach intenta resolver nombres inequívocos de la pregunta; las referencias deícticas usan el último contexto activo compatible. Un cambio explícito de entidad inicia un tramo contextual nuevo sin borrar los mensajes visibles de la conversación.
+
+Una respuesta del Coach puede cambiar el contexto activo para el turno siguiente si identifica una entidad accesible con IDs estructurados y relaciones válidas. El frontend actualiza los selectores, pero conserva la conversación. Los nombres mencionados en prosa sin ID verificable no cambian el contexto.
 
 Al cambiar la cuenta, oportunidad o contacto, la interfaz limpia la conversación visible e inicia un contexto nuevo. La opción **Limpiar contexto** hace lo mismo sin seleccionar otra entidad.
 
@@ -94,13 +98,25 @@ El vendedor debe poder preguntar, por ejemplo:
 
 Las respuestas deben basarse en la información real de la oportunidad, sus preguntas de etapa, contactos, actividades, cotizaciones, propuestas y demás registros accesibles. Cuando falte información, el Coach debe indicarlo claramente y proponer cómo obtenerla.
 
+El estado de activación y el estado comercial son dimensiones distintas. Una oportunidad puede estar **Activada** en el sistema y tener estado comercial **Ganada**; en ese caso es un registro accesible e incluido en el historial configurado, pero no es una oportunidad abierta. Del mismo modo, una oportunidad **En proceso** que está **Desactivada** no cuenta como abierta ni como activa para el pipeline.
+
 Las oportunidades terminales se mantienen separadas del pipeline abierto:
 
 - `wonOpportunities`: historial de oportunidades ganadas.
 - `lostOpportunities`: historial de oportunidades perdidas.
 - `cancelledOpportunities`: historial de oportunidades anuladas.
 
-Estas colecciones pueden aportar antecedentes, cotizaciones y propuestas, pero no participan en forecast, cobertura, riesgos del pipeline ni preparación de etapa. La ausencia de un registro en el contexto autorizado no debe presentarse como prueba de que no existe en el CRM.
+Estas colecciones pueden aportar antecedentes, cotizaciones y propuestas, pero no participan en forecast, cobertura, riesgos del pipeline ni preparación de etapa. Solo se incluyen si su switch correspondiente está habilitado en **Administración > Gobierno de Mi Coach** y el usuario tiene permisos para verlas. La ausencia de un registro en el contexto autorizado no debe presentarse como prueba de que no existe en el CRM.
+
+Las oportunidades no terminales desactivadas o pendientes de activación se exponen por separado en `inactivePipelineOpportunities`. No cuentan como oportunidades abiertas ni en el forecast.
+
+Al responder **“¿Qué oportunidades abiertas tiene esta cuenta?”**, el Coach debe separar con claridad:
+
+- Oportunidades abiertas y activadas, si existen.
+- Oportunidades no terminales en proceso, pero desactivadas o pendientes de activación, indicándolas como no activas y fuera del pipeline.
+- Oportunidades ganadas, perdidas o anuladas habilitadas por Administración, identificándolas como historial terminal y fuera del pipeline abierto.
+
+Si no hay oportunidades abiertas, no debe concluir que no existen oportunidades en la cuenta cuando haya registros en las otras categorías. Debe decir que no hay oportunidades abiertas y resumir por separado los registros activados terminales y los no activados. Por ejemplo: **“No hay oportunidades abiertas activas. Existe una oportunidad activada y ganada, y otra en proceso pero desactivada; ninguna de las dos se cuenta como pipeline abierto.”**
 
 ## Creación y actualización desde el chat
 
@@ -178,7 +194,7 @@ El contexto del chat puede incluir:
 
 Cuando existe una oportunidad seleccionada, sus datos son la fuente principal para preguntas sobre nombre, importe, fecha o etapa. Los totales del pipeline no deben sustituir los datos de esa oportunidad.
 
-Si no se seleccionó una oportunidad, el backend intenta resolverla a partir de la pregunta y del historial. Solo adopta una coincidencia cuando el resultado es único; las coincidencias ambiguas deben conservarse como candidatos y requieren aclaración.
+Una entidad inequívoca en la pregunta actual prevalece sobre el contexto activo; una referencia deíctica conserva la entidad activa. Si hay varias coincidencias explícitas, la selección anterior no las desambigua automáticamente y el Coach debe pedir aclaración. Las entidades que el Coach identifica en una respuesta solo se convierten en el contexto del siguiente turno después de validar sus IDs y relaciones contra el snapshot autorizado. Si una respuesta enumera varias entidades del mismo tipo, no se selecciona una de ellas arbitrariamente.
 
 ## Tipos de interacción
 
@@ -517,7 +533,7 @@ los utiliza.
 
 ## Permisos y seguridad
 
-La pestaña **Administración > Gobierno de Mi Coach** permite habilitar por separado la consulta de oportunidades ganadas, perdidas y anuladas. Los valores predeterminados incluyen ganadas y perdidas, y excluyen anuladas. Cambiar estos controles requiere `mi_coach.admin` y queda registrado en auditoría.
+La pestaña **Administración > Gobierno de Mi Coach** permite habilitar por separado la consulta de oportunidades ganadas, perdidas y anuladas. Estos switches controlan si cada categoría terminal entra al contexto histórico del Coach; no cambian el estado comercial, no reactivan la oportunidad y no la agregan al pipeline. Los valores predeterminados incluyen ganadas y perdidas, y excluyen anuladas. Cambiar estos controles requiere `mi_coach.admin` y queda registrado en auditoría.
 
 - `mi_coach.use` permite abrir el espacio, cargar contexto y métricas, enviar preguntas, recuperar sesiones y registrar rechazos.
 - La lectura de contexto depende además de los permisos `read` o `read_all` de cuentas, contactos, oportunidades y leads.

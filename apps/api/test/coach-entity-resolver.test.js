@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  applyCoachEntityResolution,
   buildCoachEntityClarification,
   resolveCoachEntities,
 } from "../src/coach/entity-resolver.js";
@@ -17,7 +18,11 @@ describe("Coach entity resolver", () => {
         stageCode: "contacto_inicial",
       },
       { id: 116, name: "Seguridad de las APIs" },
-      { id: 117, name: "Seguridad de Redes" },
+      {
+        id: 117,
+        name: "Seguridad de Redes",
+        account: { id: 2, name: "Acme Servicios" },
+      },
     ],
     wonOpportunities: [
       {
@@ -61,6 +66,150 @@ describe("Coach entity resolver", () => {
     expect(result.contact?.id).toBe(32);
   });
 
+  test("la oportunidad nombrada en la pregunta reemplaza la seleccionada", () => {
+    const result = resolveCoachEntities(snapshot, "Revisa Seguridad de Redes");
+    const transition = applyCoachEntityResolution(
+      snapshot,
+      { accountId: 7, opportunityId: 118, contactId: 32, leadId: null },
+      result,
+    );
+
+    expect(transition).toMatchObject({
+      changed: true,
+      conflict: null,
+      context: {
+        accountId: 2,
+        opportunityId: 117,
+        leadId: null,
+      },
+    });
+    expect(transition.context.contactId).toBeNull();
+  });
+
+  test("un nombre exacto de cuenta no coincide con contacto por dominio ni lead por token compartido", () => {
+    const raloySnapshot = {
+      accounts: [
+        { id: 23, name: "Raloy Lubricantes" },
+        { id: 104, name: "Mexicana de Lubricantes" },
+      ],
+      coachOpportunities: [
+        {
+          id: 27,
+          name: "Balanceo y Seguridad de Aplicaciones",
+          accountId: 23,
+          account: { id: 23, name: "Raloy Lubricantes" },
+        },
+      ],
+      contactMappings: [
+        {
+          id: 33,
+          name: "Pedro Jiménez",
+          email: "pedro.jimenez@raloy.com",
+          accountId: 23,
+        },
+      ],
+      leads: [
+        {
+          id: 71,
+          title: "Mexicana de Lubricantes",
+          accountId: 104,
+        },
+      ],
+    };
+    const resolution = resolveCoachEntities(
+      raloySnapshot,
+      "¿Qué oportunidades abiertas tiene Raloy Lubricantes?",
+    );
+    const transition = applyCoachEntityResolution(
+      raloySnapshot,
+      { accountId: null, opportunityId: null, contactId: null, leadId: null },
+      resolution,
+    );
+
+    expect(resolution.account?.id).toBe(23);
+    expect(resolution.contact).toBeNull();
+    expect(resolution.lead).toBeNull();
+    expect(transition).toMatchObject({
+      changed: true,
+      conflict: null,
+      context: { accountId: 23, opportunityId: null, leadId: null },
+    });
+  });
+
+  test("una pregunta de oportunidades prefiere Prosa Consolidado al lead PROSA", () => {
+    const prosaSnapshot = {
+      accounts: [
+        { id: 24, name: "Prosa (Promoción y Operación S.A. de C.V.)" },
+      ],
+      coachOpportunities: [
+        {
+          id: 113,
+          name: "Prosa Consolidado",
+          accountId: 24,
+          account: {
+            id: 24,
+            name: "Prosa (Promoción y Operación S.A. de C.V.)",
+          },
+        },
+      ],
+      leads: [
+        {
+          id: 209,
+          title: "PROSA",
+          accountId: null,
+        },
+      ],
+    };
+    const resolution = resolveCoachEntities(
+      prosaSnapshot,
+      "Ahora revisemos las oportunidades de Prosa",
+    );
+    const transition = applyCoachEntityResolution(
+      prosaSnapshot,
+      {},
+      resolution,
+    );
+
+    expect(resolution.opportunity?.id).toBe(113);
+    expect(resolution.lead).toBeNull();
+    expect(transition.context).toMatchObject({
+      accountId: 24,
+      opportunityId: 113,
+      leadId: null,
+    });
+  });
+
+  test("mantiene el contexto si la cuenta y oportunidad nombradas no se relacionan", () => {
+    const result = resolveCoachEntities(
+      {
+        ...snapshot,
+        coachOpportunities: [
+          ...snapshot.coachOpportunities,
+          {
+            id: 120,
+            name: "Oportunidad Acme",
+            account: { id: 7 },
+          },
+        ],
+      },
+      "Revisa Acme Servicios y Seguridad de Redes",
+    );
+    const transition = applyCoachEntityResolution(
+      snapshot,
+      { accountId: 7, opportunityId: 118 },
+      result,
+    );
+
+    expect(transition.changed).toBe(false);
+    expect(transition.conflict).toMatchObject({
+      type: "entity_relationship",
+    });
+    expect(transition.context).toMatchObject({
+      accountId: 7,
+      opportunityId: 118,
+    });
+  });
+
   test("no elige una oportunidad ambigua", () => {
     const result = resolveCoachEntities(snapshot, "seguridad");
     expect(result.opportunity).toBeNull();
@@ -81,6 +230,25 @@ describe("Coach entity resolver", () => {
         ],
       },
       "que numero de cotizaciones fueron las ganadas para esta oportunidad",
+    );
+
+    expect(result.opportunity).toBeNull();
+    expect(result.candidates.opportunities).toEqual([]);
+  });
+
+  test("una pregunta de etapa conserva referencias deícticas en lugar de coincidir con 'Etapa' del título", () => {
+    const result = resolveCoachEntities(
+      {
+        ...snapshot,
+        coachOpportunities: [
+          ...snapshot.coachOpportunities,
+          {
+            id: 121,
+            name: "Seguridad Movil para Bcp en Peru 2Da Etapa",
+          },
+        ],
+      },
+      "¿En qué etapa está?",
     );
 
     expect(result.opportunity).toBeNull();
@@ -178,7 +346,7 @@ describe("Coach entity resolver", () => {
     expect(clarification.candidates).toHaveLength(2);
   });
 
-  test("respeta una cuenta ya seleccionada aunque el texto sea ambiguo", () => {
+  test("pide aclaración si el turno menciona varias cuentas aunque haya selección", () => {
     const resolution = resolveCoachEntities(snapshot, "Acme");
     const clarification = buildCoachEntityClarification(
       resolution,
@@ -186,18 +354,30 @@ describe("Coach entity resolver", () => {
       { accountId: 7 },
     );
 
-    expect(clarification).toBeNull();
+    expect(clarification).toMatchObject({ type: "select_account" });
+  });
+
+  test("pide aclaración si hay varias cuentas y la selección no es candidata", () => {
+    const resolution = resolveCoachEntities(snapshot, "Acme");
+    expect(
+      buildCoachEntityClarification(resolution, "Revisa Acme", {
+        accountId: 99,
+      }),
+    ).toMatchObject({ type: "select_account" });
   });
 
   test("no interrumpe una oportunidad seleccionada por leads ambiguos", () => {
-    const resolution = resolveCoachEntities(snapshot, "Renovación");
+    const resolution = resolveCoachEntities(
+      snapshot,
+      "¿Qué productos incluyeron las cotizaciones?",
+    );
     const clarification = buildCoachEntityClarification(
       resolution,
       "¿Qué productos incluyeron las cotizaciones?",
       { accountId: 7, opportunityId: 118 },
     );
 
-    expect(resolution.candidates.leads).toHaveLength(2);
+    expect(resolution.candidates.leads).toEqual([]);
     expect(clarification).toBeNull();
   });
 });

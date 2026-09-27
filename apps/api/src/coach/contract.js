@@ -429,6 +429,7 @@ export const coachTurnSchema = z
     role: z.enum(["seller", "coach"]),
     text: optionalText(4000),
     result: coachResponseSchema.optional(),
+    context: coachContextSchema.optional(),
     createdAt: z.iso.datetime().optional(),
   })
   .strict();

@@ -35,6 +35,10 @@ function normalizeMessages(messages) {
         message.result && typeof message.result === "object"
           ? message.result
           : undefined,
+      context:
+        message.context && typeof message.context === "object"
+          ? normalizeContext(message.context)
+          : undefined,
       createdAt: message.createdAt || new Date().toISOString(),
     }))
     .filter((message) => message.text || message.result)
@@ -879,6 +883,9 @@ export async function appendCoachSessionTurn(
   if (!session) return null;
   return updateCoachSession(userId, sessionId, {
     context,
-    messages: [...session.messages, turn],
+    messages: [
+      ...session.messages,
+      { ...turn, context: normalizeContext(context) },
+    ],
   });
 }
