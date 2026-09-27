@@ -6,6 +6,10 @@ const miAgentSource = readFileSync(
   new URL("../../web/src/MiAgentPage.jsx", import.meta.url),
   "utf8",
 );
+const miAgentApiSource = readFileSync(
+  new URL("../src/routes.mi-agent.js", import.meta.url),
+  "utf8",
+);
 
 describe("Coach handoff boundary", () => {
   it("does not create delegated domain records from MiAgentPage", () => {
@@ -52,5 +56,14 @@ describe("Coach handoff boundary", () => {
       city: "Monterrey",
       accountTypeId: "3",
     });
+  });
+
+  it("normalizes Coach jobs with the scoped snapshot", () => {
+    expect(miAgentApiSource).toMatch(
+      /normalizeCoachResult\(\s*authoritativeResult,\s*scopedSnapshot,/,
+    );
+    expect(miAgentApiSource).not.toMatch(
+      /normalizeCoachResult\(\s*authoritativeResult,\s*snapshot,/,
+    );
   });
 });

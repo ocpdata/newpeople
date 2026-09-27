@@ -1931,6 +1931,9 @@ describe("API integration baseline", () => {
     expect(initialResponse.body.settings).toEqual(
       expect.objectContaining({
         externalSourcesEnabled: expect.any(Boolean),
+        includeWonOpportunities: expect.any(Boolean),
+        includeLostOpportunities: expect.any(Boolean),
+        includeCancelledOpportunities: expect.any(Boolean),
         dailyResearchLimitPerUser: expect.any(Number),
         findingRetentionDays: expect.any(Number),
       }),
@@ -1941,6 +1944,9 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${adminLogin.body.token}`)
       .send({
         externalSourcesEnabled: false,
+        includeWonOpportunities: true,
+        includeLostOpportunities: false,
+        includeCancelledOpportunities: true,
         dailyResearchLimitPerUser: 7,
         findingRetentionDays: 90,
         requireEvidenceForExternalFindings: true,
@@ -1950,10 +1956,24 @@ describe("API integration baseline", () => {
 
     expect(updateResponse.status).toBe(200);
     expect(updateResponse.body.settings).toMatchObject({
+      includeWonOpportunities: true,
+      includeLostOpportunities: false,
+      includeCancelledOpportunities: true,
       dailyResearchLimitPerUser: 7,
       findingRetentionDays: 90,
       allowProspectConversion: false,
     });
+
+    const contextResponse = await request(app)
+      .get("/api/mi-agent/context")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+
+    expect(contextResponse.status).toBe(200);
+    expect(contextResponse.body.wonOpportunities).toEqual(expect.any(Array));
+    expect(contextResponse.body.lostOpportunities).toEqual([]);
+    expect(contextResponse.body.cancelledOpportunities).toEqual(
+      expect.any(Array),
+    );
 
     const externalUserLogin = await login(
       request(app),

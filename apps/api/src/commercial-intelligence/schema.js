@@ -90,6 +90,9 @@ export async function ensureCommercialIntelligenceSchema() {
         [
           JSON.stringify({
             externalSourcesEnabled: false,
+            includeWonOpportunities: true,
+            includeLostOpportunities: true,
+            includeCancelledOpportunities: false,
             dailyResearchLimitPerUser: 25,
             findingRetentionDays: 365,
             requireEvidenceForExternalFindings: true,

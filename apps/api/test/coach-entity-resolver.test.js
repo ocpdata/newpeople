@@ -19,6 +19,15 @@ describe("Coach entity resolver", () => {
       { id: 116, name: "Seguridad de las APIs" },
       { id: 117, name: "Seguridad de Redes" },
     ],
+    wonOpportunities: [
+      {
+        id: 118,
+        name: "Balanceo y Seguridad de Aplicaciones",
+        commercialStatusCode: "ganada",
+        lifecycle: "historical",
+        account: { id: 7 },
+      },
+    ],
     pipeline: {
       opportunities: [
         { id: 116, name: "Seguridad de las APIs" },
@@ -55,7 +64,27 @@ describe("Coach entity resolver", () => {
   test("no elige una oportunidad ambigua", () => {
     const result = resolveCoachEntities(snapshot, "seguridad");
     expect(result.opportunity).toBeNull();
-    expect(result.candidates.opportunities).toHaveLength(2);
+    expect(result.candidates.opportunities).toHaveLength(3);
+  });
+
+  test("no trata palabras genéricas de seguimiento como nombre de oportunidad", () => {
+    const result = resolveCoachEntities(
+      {
+        ...snapshot,
+        coachOpportunities: [
+          ...snapshot.coachOpportunities,
+          {
+            id: 119,
+            name: "Sim para Complementar Su Infraestructura",
+          },
+          { id: 120, name: "Adc para Gateways" },
+        ],
+      },
+      "que numero de cotizaciones fueron las ganadas para esta oportunidad",
+    );
+
+    expect(result.opportunity).toBeNull();
+    expect(result.candidates.opportunities).toEqual([]);
   });
 
   test("resuelve cuentas y oportunidades fuera del pipeline calificado", () => {
@@ -65,6 +94,19 @@ describe("Coach entity resolver", () => {
     );
     expect(result.account?.id).toBe(7);
     expect(result.opportunity?.id).toBe(115);
+  });
+
+  test("resuelve oportunidades ganadas desde el historial separado", () => {
+    const result = resolveCoachEntities(
+      snapshot,
+      "¿Qué pasó con Balanceo y Seguridad de Aplicaciones?",
+    );
+
+    expect(result.opportunity).toMatchObject({
+      id: 118,
+      commercialStatusCode: "ganada",
+      lifecycle: "historical",
+    });
   });
 
   test("devuelve candidatos tipados para cuentas ambiguas", () => {
@@ -103,6 +145,22 @@ describe("Coach entity resolver", () => {
     expect(exact.lead?.id).toBe(88);
   });
 
+  test("no interpreta una pregunta genérica de productos como referencia a leads", () => {
+    const result = resolveCoachEntities(
+      {
+        ...snapshot,
+        leads: snapshot.leads.map((lead) => ({
+          ...lead,
+          summary: `Productos considerados: ${lead.summary}`,
+        })),
+      },
+      "¿Qué productos incluyeron las cotizaciones?",
+    );
+
+    expect(result.lead).toBeNull();
+    expect(result.candidates.leads).toEqual([]);
+  });
+
   test("construye una aclaración reutilizable que conserva la solicitud", () => {
     const resolution = resolveCoachEntities(snapshot, "Acme");
     const clarification = buildCoachEntityClarification(
@@ -128,6 +186,18 @@ describe("Coach entity resolver", () => {
       { accountId: 7 },
     );
 
+    expect(clarification).toBeNull();
+  });
+
+  test("no interrumpe una oportunidad seleccionada por leads ambiguos", () => {
+    const resolution = resolveCoachEntities(snapshot, "Renovación");
+    const clarification = buildCoachEntityClarification(
+      resolution,
+      "¿Qué productos incluyeron las cotizaciones?",
+      { accountId: 7, opportunityId: 118 },
+    );
+
+    expect(resolution.candidates.leads).toHaveLength(2);
     expect(clarification).toBeNull();
   });
 });

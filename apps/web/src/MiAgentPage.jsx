@@ -530,8 +530,43 @@ function buildSnapshot(dashboard) {
       })),
     },
     coachOpportunities,
+    wonOpportunities: Array.isArray(dashboard?.wonOpportunities)
+      ? dashboard.wonOpportunities
+      : [],
+    lostOpportunities: Array.isArray(dashboard?.lostOpportunities)
+      ? dashboard.lostOpportunities
+      : [],
+    cancelledOpportunities: Array.isArray(dashboard?.cancelledOpportunities)
+      ? dashboard.cancelledOpportunities
+      : [],
     summary: dashboard?.summary || {},
   };
+}
+
+function buildCoachOpportunityOptions(openOpportunities, snapshot, accountId) {
+  const normalizedAccountId = Number(accountId || 0);
+  const open = (Array.isArray(openOpportunities) ? openOpportunities : []).map(
+    (opportunity) => ({ ...opportunity, contextGroup: "open" }),
+  );
+  const historicalGroups = [
+    ["wonOpportunities", "won"],
+    ["lostOpportunities", "lost"],
+    ["cancelledOpportunities", "cancelled"],
+  ];
+  const historical = historicalGroups.flatMap(([key, contextGroup]) =>
+    (Array.isArray(snapshot?.[key]) ? snapshot[key] : [])
+      .filter(
+        (opportunity) =>
+          Number(opportunity.account?.id || opportunity.accountId || 0) ===
+          normalizedAccountId,
+      )
+      .map((opportunity) => ({ ...opportunity, contextGroup })),
+  );
+  const unique = new Map();
+  [...open, ...historical].forEach((opportunity) => {
+    unique.set(Number(opportunity.id), opportunity);
+  });
+  return [...unique.values()];
 }
 
 function buildCoachClarification(result, snapshot) {
@@ -955,18 +990,23 @@ export default function MiAgentPage({
     if (!normalizedId) return;
     setLoadingCoachContext(true);
     try {
-      const [opportunitiesResponse, contactsResponse] = await Promise.all([
-        api.get(
-          `/api/opportunities?accountId=${normalizedId}&activeOnly=true&openOnly=true`,
-        ),
-        api.get(
-          `/api/contacts?accountId=${normalizedId}&opportunityId=${coachContext.opportunityId || ""}&activeOnly=true`,
-        ),
-      ]);
+      const [contextResponse, opportunitiesResponse, contactsResponse] =
+        await Promise.all([
+          api.get("/api/mi-agent/context"),
+          api.get(
+            `/api/opportunities?accountId=${normalizedId}&activeOnly=true&openOnly=true`,
+          ),
+          api.get(
+            `/api/contacts?accountId=${normalizedId}&opportunityId=${coachContext.opportunityId || ""}&activeOnly=true`,
+          ),
+        ]);
+      setDashboard(contextResponse.data);
       setCoachOpportunities(
-        Array.isArray(opportunitiesResponse.data)
-          ? opportunitiesResponse.data
-          : [],
+        buildCoachOpportunityOptions(
+          opportunitiesResponse.data,
+          buildSnapshot(contextResponse.data),
+          normalizedId,
+        ),
       );
       setCoachContacts(
         Array.isArray(contactsResponse.data) ? contactsResponse.data : [],
@@ -998,10 +1038,14 @@ export default function MiAgentPage({
   }
 
   async function selectCoachOpportunity(opportunityId) {
+    const opportunity = coachOpportunities.find(
+      (item) => String(item.id) === String(opportunityId),
+    );
     setCoachContext((current) => ({
       ...current,
       opportunityId: String(opportunityId || ""),
       contactId: "",
+      leadId: "",
     }));
     setCoachSessionId(null);
     setCoachMessages([]);
@@ -1011,7 +1055,11 @@ export default function MiAgentPage({
     setCoachRecentOperations([]);
     setCoachNotice("");
     resetCustomerIntelligence();
-    if (opportunityId && coachContext.accountId) {
+    if (
+      opportunityId &&
+      coachContext.accountId &&
+      opportunity?.contextGroup === "open"
+    ) {
       const response = await api.get(
         `/api/contacts?accountId=${coachContext.accountId}&opportunityId=${opportunityId}&activeOnly=true`,
       );
@@ -1027,6 +1075,7 @@ export default function MiAgentPage({
     setCoachContext((current) => ({
       ...current,
       contactId: String(contactId || ""),
+      leadId: "",
     }));
     setCoachSessionId(null);
     setCoachMessages([]);
@@ -1066,6 +1115,18 @@ export default function MiAgentPage({
     coachOpportunities.find(
       (item) => String(item.id) === String(coachContext.opportunityId),
     ) || null;
+  const coachOpportunityGroups = [
+    ["open", "Abiertas"],
+    ["won", "Ganadas"],
+    ["lost", "Perdidas"],
+    ["cancelled", "Anuladas"],
+  ].map(([code, label]) => ({
+    code,
+    label,
+    opportunities: coachOpportunities.filter(
+      (opportunity) => opportunity.contextGroup === code,
+    ),
+  }));
   const selectedCoachContact =
     coachContacts.find(
       (item) => String(item.id) === String(coachContext.contactId),
@@ -2101,6 +2162,20 @@ export default function MiAgentPage({
         coachGovernance.settings,
       );
       setCoachGovernance(response.data || coachGovernance);
+      const contextResponse = await api.get("/api/mi-agent/context");
+      setDashboard(contextResponse.data);
+      if (coachContext.accountId) {
+        const opportunitiesResponse = await api.get(
+          `/api/opportunities?accountId=${coachContext.accountId}&activeOnly=true&openOnly=true`,
+        );
+        setCoachOpportunities(
+          buildCoachOpportunityOptions(
+            opportunitiesResponse.data,
+            buildSnapshot(contextResponse.data),
+            coachContext.accountId,
+          ),
+        );
+      }
       setCoachNotice("Configuración de gobierno guardada.");
     } catch (requestError) {
       setError(
@@ -2991,7 +3066,7 @@ export default function MiAgentPage({
                 </select>
               </label>
               <label>
-                Oportunidad activa
+                Oportunidad
                 <select
                   value={coachContext.opportunityId}
                   onChange={(event) =>
@@ -3003,22 +3078,30 @@ export default function MiAgentPage({
                     {loadingCoachContext
                       ? "Cargando oportunidades..."
                       : coachContext.accountId && !coachOpportunities.length
-                        ? "Sin oportunidades activas"
+                        ? "Sin oportunidades disponibles"
                         : "Selecciona una oportunidad"}
                   </option>
-                  {coachOpportunities.map((opportunity) => (
-                    <option key={opportunity.id} value={opportunity.id}>
-                      {opportunity.name} ·{" "}
-                      {opportunity.sales_stage ||
-                        opportunity.stage_name ||
-                        "Sin etapa"}{" "}
-                      ·{" "}
-                      {formatCurrency(
-                        opportunity.amount_usd ?? opportunity.amountUsd,
-                        "USD",
-                      )}
-                    </option>
-                  ))}
+                  {coachOpportunityGroups.map((group) =>
+                    group.opportunities.length ? (
+                      <optgroup key={group.code} label={group.label}>
+                        {group.opportunities.map((opportunity) => (
+                          <option key={opportunity.id} value={opportunity.id}>
+                            {group.label.slice(0, -1)} · {opportunity.name} ·{" "}
+                            {opportunity.sales_stage ||
+                              opportunity.sales_stage_name ||
+                              opportunity.stage_name ||
+                              opportunity.stageName ||
+                              "Sin etapa"}{" "}
+                            ·{" "}
+                            {formatCurrency(
+                              opportunity.amount_usd ?? opportunity.amountUsd,
+                              "USD",
+                            )}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null,
+                  )}
                 </select>
               </label>
               <label>
@@ -3077,7 +3160,7 @@ export default function MiAgentPage({
             (!coachOpportunities.length || !coachContacts.length) ? (
               <div className="mi-agent-coach-context-notices">
                 {!coachOpportunities.length ? (
-                  <span>Sin oportunidades activas y abiertas.</span>
+                  <span>Sin oportunidades disponibles.</span>
                 ) : null}
                 {!coachContacts.length ? (
                   <span>Sin contactos activos.</span>
@@ -5342,6 +5425,60 @@ export default function MiAgentPage({
                         settings: {
                           ...current.settings,
                           allowProspectConversion: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Incluir oportunidades ganadas
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      coachGovernance.settings.includeWonOpportunities,
+                    )}
+                    onChange={(event) =>
+                      setCoachGovernance((current) => ({
+                        ...current,
+                        settings: {
+                          ...current.settings,
+                          includeWonOpportunities: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Incluir oportunidades perdidas
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      coachGovernance.settings.includeLostOpportunities,
+                    )}
+                    onChange={(event) =>
+                      setCoachGovernance((current) => ({
+                        ...current,
+                        settings: {
+                          ...current.settings,
+                          includeLostOpportunities: event.target.checked,
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Incluir oportunidades anuladas
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      coachGovernance.settings.includeCancelledOpportunities,
+                    )}
+                    onChange={(event) =>
+                      setCoachGovernance((current) => ({
+                        ...current,
+                        settings: {
+                          ...current.settings,
+                          includeCancelledOpportunities: event.target.checked,
                         },
                       }))
                     }

@@ -1,3 +1,57 @@
+const NON_IDENTIFYING_TOKENS = new Set([
+  "para",
+  "esta",
+  "este",
+  "estas",
+  "estos",
+  "esa",
+  "ese",
+  "esas",
+  "esos",
+  "oportunidad",
+  "oportunidades",
+  "cuenta",
+  "cuentas",
+  "cotizacion",
+  "cotizaciones",
+  "propuesta",
+  "propuestas",
+  "producto",
+  "productos",
+  "servicio",
+  "servicios",
+  "ganada",
+  "ganadas",
+  "ganado",
+  "ganados",
+  "perdida",
+  "perdidas",
+  "perdido",
+  "perdidos",
+  "anulada",
+  "anuladas",
+  "anulado",
+  "anulados",
+  "cuanto",
+  "cuantos",
+  "cuanta",
+  "cuantas",
+  "cual",
+  "cuales",
+  "que",
+  "fue",
+  "fueron",
+  "incluyo",
+  "incluyeron",
+  "tiene",
+  "tienen",
+  "hemos",
+  "vendido",
+  "vendimos",
+  "comprado",
+  "compramos",
+]);
+
 function normalize(value) {
   return String(value || "")
     .normalize("NFD")
@@ -9,6 +63,7 @@ function normalize(value) {
 
 function candidates(records, text, fields) {
   const normalizedText = normalize(text);
+  const normalizedTextTokens = new Set(normalizedText.split(" "));
   const matches = records
     .map((record) => {
       const labels = fields
@@ -16,9 +71,14 @@ function candidates(records, text, fields) {
         .filter((label) => label.length >= 3);
       const match = labels
         .map((label) => {
-          const tokens = label.split(" ").filter((token) => token.length >= 3);
+          const tokens = label
+            .split(" ")
+            .filter(
+              (token) =>
+                token.length >= 3 && !NON_IDENTIFYING_TOKENS.has(token),
+            );
           const matchedTokens = tokens.filter((token) =>
-            normalizedText.includes(token),
+            normalizedTextTokens.has(token),
           );
           return {
             label,
@@ -45,7 +105,17 @@ function candidates(records, text, fields) {
           (matchedTokens.length >= 1 &&
             matchedTokens.some((token) => token.length >= 4) &&
             (matchedTokens.length === 1 ||
-              matchedTokens.length / label.split(" ").length >= 0.3))),
+              matchedTokens.length /
+                Math.max(
+                  label
+                    .split(" ")
+                    .filter(
+                      (token) =>
+                        token.length >= 3 && !NON_IDENTIFYING_TOKENS.has(token),
+                    ).length,
+                  1,
+                ) >=
+                0.3))),
     )
     .sort(
       (left, right) =>
@@ -63,13 +133,25 @@ function candidates(records, text, fields) {
 }
 
 export function resolveCoachEntities(snapshot, text) {
-  const opportunities = Array.isArray(snapshot?.coachOpportunities)
+  const activeOpportunities = Array.isArray(snapshot?.coachOpportunities)
     ? snapshot.coachOpportunities
     : Array.isArray(snapshot?.pipeline?.opportunities)
       ? snapshot.pipeline.opportunities
       : Array.isArray(snapshot?.workboard)
         ? snapshot.workboard
         : [];
+  const opportunities = [
+    ...activeOpportunities,
+    ...(Array.isArray(snapshot?.wonOpportunities)
+      ? snapshot.wonOpportunities
+      : []),
+    ...(Array.isArray(snapshot?.lostOpportunities)
+      ? snapshot.lostOpportunities
+      : []),
+    ...(Array.isArray(snapshot?.cancelledOpportunities)
+      ? snapshot.cancelledOpportunities
+      : []),
+  ];
   const accounts = Array.isArray(snapshot?.accounts)
     ? snapshot.accounts
     : Array.from(
@@ -97,11 +179,7 @@ export function resolveCoachEntities(snapshot, text) {
     "phone",
     "mobile",
   ]);
-  const leadMatches = candidates(leads, text, [
-    "title",
-    "summary",
-    "sourceNotes",
-  ]);
+  const leadMatches = candidates(leads, text, ["title"]);
   const account = accountMatches.length === 1 ? accountMatches[0] : null;
   const opportunity =
     opportunityMatches.length === 1 ? opportunityMatches[0] : null;
@@ -164,11 +242,19 @@ export function buildCoachEntityClarification(
     ["contacts", "select_contact", "contacto", "contact", "contactId"],
     ["leads", "select_lead", "lead", "lead", "leadId"],
   ];
-  const ambiguous = ambiguousTypes.find(
-    ([candidateKey, , , , selectedKey]) =>
+  const ambiguous = ambiguousTypes.find(([candidateKey, , , , selectedKey]) => {
+    const hasSelectedCommercialContext = Boolean(
+      Number(selectedContext?.accountId || 0) ||
+      Number(selectedContext?.opportunityId || 0),
+    );
+    if (candidateKey === "leads" && hasSelectedCommercialContext) {
+      return false;
+    }
+    return (
       !Number(selectedContext?.[selectedKey] || 0) &&
-      (resolution?.candidates?.[candidateKey] || []).length > 1,
-  );
+      (resolution?.candidates?.[candidateKey] || []).length > 1
+    );
+  });
   if (!ambiguous) return null;
   const [candidateKey, type, label, entityType] = ambiguous;
   return {

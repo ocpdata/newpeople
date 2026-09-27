@@ -58,6 +58,9 @@ const snapshotQuerySchema = z.object({
 
 const governanceSettingsSchema = z.object({
   externalSourcesEnabled: z.boolean().optional(),
+  includeWonOpportunities: z.boolean().optional(),
+  includeLostOpportunities: z.boolean().optional(),
+  includeCancelledOpportunities: z.boolean().optional(),
   dailyResearchLimitPerUser: z.number().int().min(1).max(500).optional(),
   findingRetentionDays: z.number().int().min(30).max(3650).optional(),
   requireEvidenceForExternalFindings: z.boolean().optional(),

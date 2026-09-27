@@ -6,6 +6,7 @@ async function mockMiCoachApi(
     canAdmin = false,
     withCustomerHealth = false,
     withCoachInterface = false,
+    withHistoricalOpportunityContext = false,
   } = {},
 ) {
   await page.route("**/api/**", async (route) => {
@@ -51,6 +52,39 @@ async function mockMiCoachApi(
           currencyCode: "USD",
         },
         workboard: [],
+        wonOpportunities: withHistoricalOpportunityContext
+          ? [
+              {
+                id: 301,
+                name: "Renovación ganada",
+                amountUsd: 41560,
+                stageName: "Waiting",
+                account: { id: 160, name: "Cuenta Demo" },
+              },
+            ]
+          : [],
+        lostOpportunities: withHistoricalOpportunityContext
+          ? [
+              {
+                id: 302,
+                name: "Proyecto perdido",
+                amountUsd: 12000,
+                stageName: "Negociación",
+                account: { id: 160, name: "Cuenta Demo" },
+              },
+            ]
+          : [],
+        cancelledOpportunities: withHistoricalOpportunityContext
+          ? [
+              {
+                id: 303,
+                name: "Proyecto anulado",
+                amountUsd: 8000,
+                stageName: "Cotización",
+                account: { id: 160, name: "Cuenta Demo" },
+              },
+            ]
+          : [],
         leads: [],
         contactMappings: [],
         summary: { openOpportunities: 0, riskyOpportunities: 0 },
@@ -223,7 +257,19 @@ async function mockMiCoachApi(
     }
     if (pathname.startsWith("/api/accounts"))
       return json(withCustomerHealth ? [{ id: 160, name: "Cuenta Demo" }] : []);
-    if (pathname === "/api/opportunities") return json([]);
+    if (pathname === "/api/opportunities")
+      return json(
+        withHistoricalOpportunityContext
+          ? [
+              {
+                id: 300,
+                name: "Proyecto abierto",
+                amount_usd: 20000,
+                sales_stage: "Desarrollo",
+              },
+            ]
+          : [],
+      );
     if (pathname === "/api/contacts") return json([]);
     if (
       pathname === "/api/commercial-intelligence/account-intelligence/snapshot"
@@ -430,6 +476,9 @@ async function mockMiCoachApi(
       return json({
         settings: {
           externalSourcesEnabled: false,
+          includeWonOpportunities: true,
+          includeLostOpportunities: true,
+          includeCancelledOpportunities: false,
           dailyResearchLimitPerUser: 25,
           findingRetentionDays: 365,
           requireEvidenceForExternalFindings: true,
@@ -758,11 +807,72 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     const externalSources = page.getByLabel("Fuentes externas habilitadas");
+    const wonOpportunities = page.getByLabel("Incluir oportunidades ganadas");
+    const lostOpportunities = page.getByLabel("Incluir oportunidades perdidas");
+    const cancelledOpportunities = page.getByLabel(
+      "Incluir oportunidades anuladas",
+    );
+    await expect(wonOpportunities).toBeChecked();
+    await expect(lostOpportunities).toBeChecked();
+    await expect(cancelledOpportunities).not.toBeChecked();
     await externalSources.check();
+    await lostOpportunities.uncheck();
+    await cancelledOpportunities.check();
+    const settingsRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .endsWith("/api/commercial-intelligence/governance/settings") &&
+        request.method() === "PUT",
+    );
     await page.getByRole("button", { name: "Guardar configuración" }).click();
+    expect((await settingsRequest).postDataJSON()).toMatchObject({
+      includeWonOpportunities: true,
+      includeLostOpportunities: false,
+      includeCancelledOpportunities: true,
+    });
     await expect(page.getByRole("status")).toContainText(
       "Configuración de gobierno guardada",
     );
+  });
+
+  test("agrupa oportunidades abiertas y terminales habilitadas por cuenta", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withHistoricalOpportunityContext: true,
+    });
+    await openMiCoach(page);
+
+    await page.getByLabel("Cuenta activa").selectOption("160");
+
+    await expect(
+      page.getByRole("option", {
+        name: /Abierta · Proyecto abierto/,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("option", {
+        name: /Ganada · Renovación ganada/,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("option", {
+        name: /Perdida · Proyecto perdido/,
+      }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("option", {
+        name: /Anulada · Proyecto anulado/,
+      }),
+    ).toHaveCount(1);
+    const opportunitySelect = page.getByRole("combobox", {
+      name: "Oportunidad",
+      exact: true,
+    });
+    await opportunitySelect.selectOption("301");
+    await expect(opportunitySelect).toHaveValue("301");
   });
 
   test("muestra salud, señales y productos en Cliente existente", async ({

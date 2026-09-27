@@ -32,6 +32,9 @@ export const PUBLIC_CONTACT_ROLE_TERMS = [
 
 const DEFAULT_GOVERNANCE_SETTINGS = {
   externalSourcesEnabled: false,
+  includeWonOpportunities: true,
+  includeLostOpportunities: true,
+  includeCancelledOpportunities: false,
   dailyResearchLimitPerUser: 25,
   findingRetentionDays: 365,
   requireEvidenceForExternalFindings: true,
@@ -105,6 +108,9 @@ function normalizeGovernanceSettings(value) {
   const source = value && typeof value === "object" ? value : {};
   return {
     externalSourcesEnabled: Boolean(source.externalSourcesEnabled),
+    includeWonOpportunities: source.includeWonOpportunities !== false,
+    includeLostOpportunities: source.includeLostOpportunities !== false,
+    includeCancelledOpportunities: Boolean(source.includeCancelledOpportunities),
     dailyResearchLimitPerUser: Math.max(1, Math.min(500, Number(source.dailyResearchLimitPerUser || DEFAULT_GOVERNANCE_SETTINGS.dailyResearchLimitPerUser))),
     findingRetentionDays: Math.max(30, Math.min(3650, Number(source.findingRetentionDays || DEFAULT_GOVERNANCE_SETTINGS.findingRetentionDays))),
     requireEvidenceForExternalFindings: source.requireEvidenceForExternalFindings !== false,

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildCoachScopedSnapshot } from "../src/routes.mi-agent.js";
+import {
+  buildCoachScopedSnapshot,
+  coachSessionContextMatchesRequest,
+  getEnabledCoachTerminalStatusCodes,
+  mergeCoachSessionContext,
+  resolveCoachContextEntities,
+} from "../src/routes.mi-agent.js";
 
 describe("Coach context optimization", () => {
   const snapshot = {
@@ -38,6 +44,25 @@ describe("Coach context optimization", () => {
         account: { id: 2 },
       },
     ],
+    wonOpportunities: [
+      {
+        id: 70,
+        name: "Venta histórica A",
+        commercialStatusCode: "ganada",
+        lifecycle: "historical",
+        account: { id: 1 },
+      },
+    ],
+    lostOpportunities: [
+      {
+        id: 71,
+        name: "Venta perdida B",
+        commercialStatusCode: "perdida",
+        lifecycle: "historical",
+        account: { id: 2 },
+      },
+    ],
+    cancelledOpportunities: [],
     leads: [
       { id: 30, accountId: 1, opportunityId: 10 },
       { id: 40, accountId: 2, opportunityId: 20 },
@@ -48,6 +73,75 @@ describe("Coach context optimization", () => {
     ],
   };
 
+  it("maps each governance switch to its terminal commercial status", () => {
+    expect(
+      getEnabledCoachTerminalStatusCodes({
+        includeWonOpportunities: true,
+        includeLostOpportunities: false,
+        includeCancelledOpportunities: true,
+      }),
+    ).toEqual(["ganada", "anulada"]);
+  });
+
+  it("does not restore a stale lead over explicit null request context", () => {
+    expect(
+      mergeCoachSessionContext(
+        {
+          accountId: 23,
+          opportunityId: 27,
+          contactId: null,
+          leadId: null,
+        },
+        { accountId: 127, leadId: 93 },
+        {
+          accountId: 23,
+          opportunityId: 27,
+          contactId: null,
+          leadId: null,
+        },
+      ),
+    ).toEqual({
+      accountId: 23,
+      opportunityId: 27,
+      contactId: null,
+      leadId: null,
+    });
+  });
+
+  it("detects a session whose account or lead differs from request context", () => {
+    expect(
+      coachSessionContextMatchesRequest(
+        {
+          accountId: 23,
+          opportunityId: 27,
+          contactId: null,
+          leadId: null,
+        },
+        {
+          accountId: 127,
+          opportunityId: null,
+          contactId: null,
+          leadId: 93,
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("does not resolve a prior unrelated lead over a selected opportunity", () => {
+    const resolution = resolveCoachContextEntities(
+      {
+        ...snapshot,
+        leads: [{ id: 93, title: "Gana Lotto", accountId: 127 }],
+      },
+      "¿Cuántas cotizaciones fueron las ganadas para esta oportunidad?",
+      [{ role: "seller", text: "Resume Gana Lotto" }],
+      { accountId: 23, opportunityId: 27, leadId: null },
+    );
+
+    expect(resolution.explicitEntities.candidates.opportunities).toEqual([]);
+    expect(resolution.resolvedEntities.candidates.leads).toEqual([]);
+  });
+
   it("preserves the complete snapshot without an explicit context", () => {
     expect(buildCoachScopedSnapshot(snapshot)).toBe(snapshot);
   });
@@ -57,6 +151,8 @@ describe("Coach context optimization", () => {
     expect(scoped.coachOpportunities.map((item) => item.id)).toEqual([5, 10]);
     expect(scoped.leads.map((item) => item.id)).toEqual([30]);
     expect(scoped.contactMappings.map((item) => item.id)).toEqual([50]);
+    expect(scoped.wonOpportunities.map((item) => item.id)).toEqual([70]);
+    expect(scoped.lostOpportunities).toEqual([]);
     expect(scoped.pipeline.qualifiedAmount).toBe(300);
     expect(scoped.pipeline.opportunities.map((item) => item.id)).toEqual([
       10, 20,
@@ -70,6 +166,19 @@ describe("Coach context optimization", () => {
     expect(scoped.workboard.map((item) => item.id)).toEqual([10, 20]);
     expect(scoped.leads.map((item) => item.id)).toEqual([40]);
     expect(scoped.selectedContext.opportunityId).toBe(20);
+  });
+
+  it("selects a terminal opportunity without adding it to the open pipeline", () => {
+    const scoped = buildCoachScopedSnapshot(snapshot, { opportunityId: 70 });
+
+    expect(scoped.coachOpportunities).toEqual([]);
+    expect(scoped.wonOpportunities.map((item) => item.id)).toEqual([70]);
+    expect(scoped.selectedRecord).toMatchObject({
+      id: 70,
+      type: "opportunity",
+      commercialStatusCode: "ganada",
+    });
+    expect(scoped.workboard.map((item) => item.id)).toEqual([10, 20]);
   });
 
   it("scopes the context to the selected contact's account", () => {

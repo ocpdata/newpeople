@@ -43,7 +43,7 @@ Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis 
 8. Revisa, completa y aprueba el formulario antes de guardarlo.
 9. Regresa al chat para continuar la conversación desde el mismo contexto.
 
-La cuenta es el contexto principal. La oportunidad y el contacto dependen de la cuenta seleccionada y solo muestran registros activos y accesibles para el usuario. Si el vendedor menciona una oportunidad de forma clara y única, el Coach puede identificarla sin que haya sido seleccionada previamente.
+La cuenta es el contexto principal. El selector de oportunidad agrupa registros abiertos, ganados, perdidos y anulados que estén habilitados por gobierno y sean accesibles para el usuario; el selector de contacto conserva únicamente registros activos. Si el vendedor menciona una cuenta u oportunidad de forma clara y única, esa referencia explícita prevalece sobre la selección anterior.
 
 Al cambiar la cuenta, oportunidad o contacto, la interfaz limpia la conversación visible e inicia un contexto nuevo. La opción **Limpiar contexto** hace lo mismo sin seleccionar otra entidad.
 
@@ -93,6 +93,14 @@ El vendedor debe poder preguntar, por ejemplo:
 - “¿Qué riesgo impide avanzar a negociación?”
 
 Las respuestas deben basarse en la información real de la oportunidad, sus preguntas de etapa, contactos, actividades, cotizaciones, propuestas y demás registros accesibles. Cuando falte información, el Coach debe indicarlo claramente y proponer cómo obtenerla.
+
+Las oportunidades terminales se mantienen separadas del pipeline abierto:
+
+- `wonOpportunities`: historial de oportunidades ganadas.
+- `lostOpportunities`: historial de oportunidades perdidas.
+- `cancelledOpportunities`: historial de oportunidades anuladas.
+
+Estas colecciones pueden aportar antecedentes, cotizaciones y propuestas, pero no participan en forecast, cobertura, riesgos del pipeline ni preparación de etapa. La ausencia de un registro en el contexto autorizado no debe presentarse como prueba de que no existe en el CRM.
 
 ## Creación y actualización desde el chat
 
@@ -158,6 +166,7 @@ El contexto del chat puede incluir:
 
 - Cuenta, oportunidad y contacto seleccionados.
 - Oportunidades activas y abiertas del vendedor.
+- Historial autorizado de oportunidades ganadas, perdidas y anuladas, conforme a la configuración de gobierno.
 - Etapa, importe, fecha de cierre y estado comercial.
 - Preguntas y respuestas de etapa.
 - Actividades y próximos pasos de la oportunidad.
@@ -255,20 +264,22 @@ Antes de mostrar una operación, el backend normaliza el resultado de IA y desca
 
 El contrato actual acepta los siguientes tipos:
 
-| Tipo                 | Resultado                                              |
-| -------------------- | ------------------------------------------------------ |
-| `activity`           | Abre la actividad en Desarrollo comercial.             |
-| `stage_answer`       | Reemplaza o agrega una respuesta de etapa.             |
-| `opportunity_field`  | Actualiza un campo permitido de oportunidad.           |
-| `account_field`      | Actualiza un campo permitido de cuenta.                |
-| `contact_field`      | Actualiza un campo permitido de contacto.              |
-| `lead_call_outcome`  | Registra el resultado de una llamada de lead.          |
-| `lead_resolve`       | Ejecuta el flujo oficial de resolución de lead.        |
-| `create_account`     | Abre el formulario oficial de cuentas.                 |
-| `create_contact`     | Abre el formulario oficial de contactos.               |
-| `create_opportunity` | Abre el formulario oficial de oportunidades.           |
-| `create_quotation`   | Abre el formulario oficial de cotizaciones.            |
-| `create_proposal`    | Abre el flujo oficial desde una versión de cotización. |
+| Tipo                     | Resultado                                              |
+| ------------------------ | ------------------------------------------------------ |
+| `activity`               | Abre la actividad en Desarrollo comercial.             |
+| `stage_answer`           | Reemplaza o agrega una respuesta de etapa.             |
+| `opportunity_field`      | Actualiza un campo permitido de oportunidad.           |
+| `account_field`          | Actualiza un campo permitido de cuenta.                |
+| `contact_field`          | Actualiza un campo permitido de contacto.              |
+| `lead_call_outcome`      | Registra el resultado de una llamada de lead.          |
+| `lead_resolve`           | Ejecuta el flujo oficial de resolución de lead.        |
+| `create_account`         | Abre el formulario oficial de cuentas.                 |
+| `create_contact`         | Abre el formulario oficial de contactos.               |
+| `create_opportunity`     | Abre el formulario oficial de oportunidades.           |
+| `create_lead`            | Abre el formulario oficial de leads.                   |
+| `create_contact_mapping` | Abre el formulario oficial de mapeo de contactos.      |
+| `create_quotation`       | Abre el formulario oficial de cotizaciones.            |
+| `create_proposal`        | Abre el flujo oficial desde una versión de cotización. |
 
 Los campos editables desde operaciones de campo son:
 
@@ -289,13 +300,13 @@ pregunta -> respuesta -> propuesta -> revisión editable -> confirmar o cancelar
 - **Confirmar una operación delegada:** emite el token y abre el formulario oficial; el módulo ejecuta el guardado y después marca la operación como completada.
 - **Cerrar el formulario:** conserva el token y la operación para continuar después.
 - **Descartar borrador:** cancela la operación desde el módulo destino y elimina `coachDraft` de la URL.
-- **Cancelar en el Coach:** cierra el borrador y registra el rechazo para las métricas.
+- **Descartar en el Coach:** cancela la operación pendiente con confirmación y conserva el evento para las métricas.
 - **Error:** conserva el borrador y muestra el mensaje devuelto por el dominio; en creaciones también puede mostrar advertencias de duplicados.
 - **Revertir:** está disponible para cambios compatibles de campos de oportunidad, cuenta o contacto y para el último resultado de lead. No todas las operaciones son reversibles.
 
 ## Sesiones y continuidad
 
-La interfaz conserva el identificador de sesión en `localStorage` bajo `mi-agent-coach-session`. Al regresar, solicita la sesión al API y restaura su contexto y mensajes.
+La interfaz conserva el identificador de sesión en `localStorage` bajo `mi-agent-coach-session`. Al regresar, solicita la sesión al API y restaura su contexto y mensajes. La preferencia para mostrar el fundamento de las respuestas se guarda de forma independiente bajo `mi-agent-coach-show-foundation`.
 
 El backend:
 
@@ -506,6 +517,8 @@ los utiliza.
 
 ## Permisos y seguridad
 
+La pestaña **Administración > Gobierno de Mi Coach** permite habilitar por separado la consulta de oportunidades ganadas, perdidas y anuladas. Los valores predeterminados incluyen ganadas y perdidas, y excluyen anuladas. Cambiar estos controles requiere `mi_coach.admin` y queda registrado en auditoría.
+
 - `mi_coach.use` permite abrir el espacio, cargar contexto y métricas, enviar preguntas, recuperar sesiones y registrar rechazos.
 - La lectura de contexto depende además de los permisos `read` o `read_all` de cuentas, contactos, oportunidades y leads.
 - La ruta y el menú de Mi Coach dependen directamente de `mi_coach.use`, no de lectura de oportunidades.
@@ -550,6 +563,14 @@ La respuesta del Coach separa explícitamente cuatro tipos de contenido:
   vendedor.
 - **Recomendaciones:** sugerencias que todavía no modifican el CRM.
 
+Estos cuatro bloques forman el **fundamento** de la respuesta. El switch
+**Mostrar fundamento**, situado en el extremo derecho del encabezado
+**Conversación**, los oculta inicialmente para mantener el hilo compacto y
+permite mostrarlos en todas las respuestas de la sesión. La preferencia se
+conserva al recargar. El switch solo aparece cuando al menos una respuesta tiene
+fundamento disponible y no oculta la respuesta principal, el diagnóstico de
+etapa ni las operaciones propuestas.
+
 El diagnóstico de etapa muestra etapa y objetivo actuales, nivel general de
 preparación, dimensiones confirmadas, principal punto de atención, avances,
 pendientes, riesgos con evidencia, siguiente paso y recomendación de avance.
@@ -558,9 +579,10 @@ Las operaciones activas se restauran desde el servidor al abrir o recargar el
 Coach. Cada una presenta su estado textual, módulo destino, vigencia del handoff,
 campos faltantes y solo las acciones válidas:
 
-- `Continuar` completa datos o retoma un handoff vigente.
-- `Corregir` abre una operación lista, fallida o con handoff vencido.
-- `Cancelar` abandona una operación activa con confirmación.
+- `Completar datos` abre una operación que todavía tiene campos obligatorios pendientes.
+- `Abrir en <módulo>` retoma un handoff vigente en su formulario oficial.
+- `Revisar` abre una operación lista, fallida o con handoff vencido.
+- `Descartar` cancela una operación activa con confirmación.
 
 El handoff permanece bloqueado mientras existan campos obligatorios sin valor.
 El editor muestra los errores junto al campo y anuncia el guardado automático,
@@ -609,7 +631,10 @@ actualización controlada, auditoría, reversión y restauración terminal.
 
 La matriz E2E cubre cuenta, contacto, oportunidad, lead, mapeo, actividad,
 cotización y propuesta. Cada recorrido abre el módulo destino, completa el
-handoff, vuelve al chat y recupera el resultado después de recargar:
+handoff, vuelve al chat y recupera el resultado después de recargar. También
+verifica que el fundamento esté oculto inicialmente, que el switch lo muestre y
+oculte sin afectar el diagnóstico, que la preferencia sobreviva a una recarga y
+que la interfaz no se desborde en móvil:
 
 ```bash
 npm run test:e2e:coach --prefix apps/web
@@ -621,7 +646,7 @@ suite API completa, build, lint y la matriz E2E de Coach.
 ## Límites actuales
 
 - El chat depende de la calidad y actualidad de los datos del CRM.
-- El snapshot principal solo incluye oportunidades activas, abiertas y en etapas calificadas desde Desarrollo hasta Waiting.
+- El contexto conversacional incluye oportunidades activas y accesibles de las siete etapas, desde Contacto Inicial hasta Waiting. Los cálculos agregados de pipeline calificado conservan el subconjunto desde Desarrollo hasta Waiting.
 - La resolución por texto adopta entidades únicamente cuando encuentra una coincidencia única.
 - Se muestran como máximo seis operaciones por respuesta.
 - La sesión conserva 40 turnos y cada consulta utiliza hasta ocho mensajes anteriores.

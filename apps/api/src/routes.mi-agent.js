@@ -50,12 +50,90 @@ import {
 } from "./coach/operation-policy.js";
 import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
 import { getCoachMetrics } from "./coach/metrics.js";
+import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
 
 const router = express.Router();
 const MI_AGENT_FEATURE_CODE = "mi_agent.analysis";
 const MI_COACH_FEATURE_CODE = "mi_coach.chat";
 const MI_COACH_USE_PERMISSION = "mi_coach.use";
 const MI_COACH_EXECUTE_PERMISSION = "mi_coach.execute";
+const TERMINAL_OPPORTUNITY_COLLECTIONS = [
+  "wonOpportunities",
+  "lostOpportunities",
+  "cancelledOpportunities",
+];
+
+export function getEnabledCoachTerminalStatusCodes(settings = {}) {
+  return [
+    settings.includeWonOpportunities ? "ganada" : null,
+    settings.includeLostOpportunities ? "perdida" : null,
+    settings.includeCancelledOpportunities ? "anulada" : null,
+  ].filter(Boolean);
+}
+
+export function mergeCoachSessionContext(
+  selectedContext = {},
+  sessionContext = {},
+  requestContext = null,
+) {
+  const merged = { ...selectedContext };
+  for (const key of [
+    "accountId",
+    "contactId",
+    "opportunityId",
+    "quotationId",
+    "proposalId",
+    "leadId",
+  ]) {
+    if (
+      !Object.hasOwn(requestContext || {}, key) &&
+      !merged[key] &&
+      sessionContext?.[key]
+    ) {
+      merged[key] = sessionContext[key];
+    }
+  }
+  return merged;
+}
+
+export function coachSessionContextMatchesRequest(
+  requestContext,
+  sessionContext = {},
+) {
+  if (!requestContext || typeof requestContext !== "object") return true;
+  return Object.keys(requestContext).every((key) => {
+    const requestedId = Number(requestContext[key] || 0) || null;
+    const storedId = Number(sessionContext?.[key] || 0) || null;
+    return requestedId === storedId;
+  });
+}
+
+export function resolveCoachContextEntities(
+  snapshot,
+  question,
+  conversationHistory = [],
+  selectedContext = {},
+) {
+  const explicitEntities = resolveCoachEntities(snapshot, question);
+  const hasSelectedEntity = [
+    "accountId",
+    "opportunityId",
+    "contactId",
+    "leadId",
+  ].some((key) => Number(selectedContext?.[key] || 0) > 0);
+  const resolutionText = hasSelectedEntity
+    ? question
+    : [question, ...conversationHistory.map((message) => message.text)].join(
+        " ",
+      );
+  return {
+    explicitEntities,
+    resolvedEntities:
+      resolutionText === question
+        ? explicitEntities
+        : resolveCoachEntities(snapshot, resolutionText),
+  };
+}
 const ANALYSIS_TIMEOUT_MS = 120000;
 const PROCESS_GUIDE_URL = new URL(
   "../../../readme/proceso-comercial.md",
@@ -201,13 +279,32 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
       : Array.isArray(snapshot?.workboard)
         ? snapshot.workboard
         : [];
-  const opportunities = commercialOpportunities.filter((item) => {
+  const historicalOpportunities = TERMINAL_OPPORTUNITY_COLLECTIONS.flatMap(
+    (key) => (Array.isArray(snapshot?.[key]) ? snapshot[key] : []),
+  );
+  const allOpportunities = [
+    ...commercialOpportunities,
+    ...historicalOpportunities,
+  ];
+  const matchesSelection = (item) => {
     if (scopedOpportunityId > 0) return Number(item.id) === scopedOpportunityId;
     if (scopedAccountId > 0)
       return Number(item.account?.id || item.accountId) === scopedAccountId;
     return Number(item.contact?.id || item.contactId) === contactId;
-  });
-  const opportunityIds = new Set(opportunities.map((item) => Number(item.id)));
+  };
+  const opportunities = commercialOpportunities.filter(matchesSelection);
+  const scopedHistorical = Object.fromEntries(
+    TERMINAL_OPPORTUNITY_COLLECTIONS.map((key) => [
+      key,
+      (Array.isArray(snapshot?.[key]) ? snapshot[key] : []).filter(
+        matchesSelection,
+      ),
+    ]),
+  );
+  const scopedAllOpportunities = allOpportunities.filter(matchesSelection);
+  const opportunityIds = new Set(
+    scopedAllOpportunities.map((item) => Number(item.id)),
+  );
   const leads = Array.isArray(snapshot?.leads)
     ? snapshot.leads.filter(
         (lead) =>
@@ -229,13 +326,15 @@ export function buildCoachScopedSnapshot(snapshot, selectedContext = {}) {
     : [];
   const selectedOpportunity =
     scopedOpportunityId > 0
-      ? opportunities.find((item) => Number(item.id) === scopedOpportunityId) ||
-        null
+      ? scopedAllOpportunities.find(
+          (item) => Number(item.id) === scopedOpportunityId,
+        ) || null
       : null;
 
   return {
     ...snapshot,
     coachOpportunities: opportunities,
+    ...scopedHistorical,
     leads,
     contactMappings,
     selectedRecord: selectedOpportunity
@@ -325,6 +424,9 @@ async function getMiAgentContext(user) {
   const canReadContacts = hasReadPermission(user, "contactos");
   const canReadLeads = hasReadPermission(user, "interacciones");
   const stageParams = [...COACH_STAGE_CODES];
+  const governanceSettings = await getMiCoachGovernanceSettings();
+  const terminalStatusCodes =
+    getEnabledCoachTerminalStatusCodes(governanceSettings);
   const opportunityParams = [];
   const scopeJoin = buildOpportunityScope(user, opportunityParams);
   const stagePlaceholders = COACH_STAGE_CODES.map(() => "?").join(", ");
@@ -412,7 +514,46 @@ async function getMiAgentContext(user) {
   ]);
 
   const quotaAmount = Number(targetRows[0]?.sales_quota_amount || 0);
-  const opportunityIds = opportunityRows.map((row) => Number(row.id));
+  const historicalParams = [];
+  const historicalScopeJoin = buildOpportunityScope(user, historicalParams);
+  const historicalRows =
+    canReadOpportunities && terminalStatusCodes.length
+      ? await query(
+          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+                  o.sales_stage_id, o.updated_at, oss.code AS stage_code,
+                  oss.name AS stage_name, oss.stage_order,
+                  ocs.code AS commercial_status_code,
+                  a.name AS account_name, a.registration_code AS account_registration_code,
+                  a.phone AS account_phone, a.website AS account_website,
+                  a.city AS account_city, a.state_region AS account_state_region,
+                  a.description AS account_description,
+                  CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
+                  c.email AS contact_email, c.phone AS contact_phone,
+                  c.mobile AS contact_mobile, c.position_title AS contact_position,
+                  c.department AS contact_department,
+                  o.updated_at AS last_activity_at,
+                  NULL AS next_action_title, NULL AS next_action_due_date
+           FROM opportunities o
+           ${historicalScopeJoin}
+           INNER JOIN accounts a ON a.id = o.account_id
+           LEFT JOIN contacts c ON c.id = o.contact_id
+           INNER JOIN opportunity_sales_stages oss ON oss.id = o.sales_stage_id
+           INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
+           INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
+           WHERE oas.code = 'activada'
+             AND ocs.code IN (${terminalStatusCodes.map(() => "?").join(", ")})
+             ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
+           ORDER BY o.close_date DESC, o.updated_at DESC
+           LIMIT 300`,
+          [
+            ...historicalParams,
+            ...terminalStatusCodes,
+            ...(hasMiAgentGlobalScope(user)
+              ? []
+              : [Number(user.id), Number(user.id)]),
+          ],
+        ).catch(() => [])
+      : [];
   const wonParams = [];
   const wonScopeJoin = buildOpportunityScope(user, wonParams);
   const wonRows = canReadOpportunities
@@ -505,7 +646,7 @@ async function getMiAgentContext(user) {
           accessibleAccountIds,
         ).catch(() => [])
       : [];
-  const coachOpportunities = opportunityRows.map((row) => {
+  const mapOpportunity = (row) => {
     const lastActivity = row.last_activity_at
       ? new Date(row.last_activity_at)
       : null;
@@ -556,6 +697,11 @@ async function getMiAgentContext(user) {
       isQualified: QUALIFIED_STAGE_CODES.includes(row.stage_code),
       salesStageId: Number(row.sales_stage_id || 0) || null,
       commercialStatusCode: row.commercial_status_code || null,
+      lifecycle: ["ganada", "perdida", "anulada"].includes(
+        row.commercial_status_code,
+      )
+        ? "historical"
+        : "open",
       riskLevel:
         riskReasons.length > 1 ? "high" : riskReasons.length ? "medium" : "low",
       riskReasons,
@@ -570,7 +716,9 @@ async function getMiAgentContext(user) {
         : null,
       nextPendingAction: row.next_action_title || null,
     };
-  });
+  };
+  const coachOpportunities = opportunityRows.map(mapOpportunity);
+  const historicalOpportunities = historicalRows.map(mapOpportunity);
   const opportunities = coachOpportunities.filter((item) =>
     QUALIFIED_STAGE_CODES.includes(item.stageCode),
   );
@@ -596,6 +744,15 @@ async function getMiAgentContext(user) {
     },
     workboard: opportunities,
     coachOpportunities,
+    wonOpportunities: historicalOpportunities.filter(
+      (item) => item.commercialStatusCode === "ganada",
+    ),
+    lostOpportunities: historicalOpportunities.filter(
+      (item) => item.commercialStatusCode === "perdida",
+    ),
+    cancelledOpportunities: historicalOpportunities.filter(
+      (item) => item.commercialStatusCode === "anulada",
+    ),
     accounts: accountRows.map((account) => ({
       id: Number(account.id),
       name: account.name || "",
@@ -655,11 +812,17 @@ async function getMiAgentContext(user) {
 }
 
 async function getMiAgentEnrichedContext(user, baseContext) {
-  const opportunities = Array.isArray(baseContext?.coachOpportunities)
+  const activeOpportunities = Array.isArray(baseContext?.coachOpportunities)
     ? baseContext.coachOpportunities
     : Array.isArray(baseContext?.workboard)
       ? baseContext.workboard
       : [];
+  const opportunities = [
+    ...activeOpportunities,
+    ...TERMINAL_OPPORTUNITY_COLLECTIONS.flatMap((key) =>
+      Array.isArray(baseContext?.[key]) ? baseContext[key] : [],
+    ),
+  ];
   const canReadLeads = hasReadPermission(user, "interacciones");
   const ids = opportunities.map((item) => Number(item.id)).filter(Boolean);
   if (!ids.length) {
@@ -681,6 +844,7 @@ async function getMiAgentEnrichedContext(user, baseContext) {
     narratives,
     playbookStages,
     quotations,
+    quotationItems,
     proposals,
   ] = await Promise.all([
     query(
@@ -831,6 +995,30 @@ async function getMiAgentEnrichedContext(user, baseContext) {
       ids,
     ).catch(() => []),
     query(
+      `SELECT q.opportunity_id, q.id AS quotation_id,
+              qv.id AS quotation_version_id,
+              section.id AS section_id, section.title AS section_title,
+              item.id AS item_id, item.product_code,
+              item.product_description, item.item_type, item.is_renewal,
+              item.quantity, item.original_currency_code,
+              item.original_list_price_unit, item.list_price_unit,
+              provider.id AS provider_id, provider.name AS provider_name
+       FROM quotations q
+       INNER JOIN quotation_versions qv ON qv.id = q.latest_version_id
+       INNER JOIN quotation_sections section
+         ON section.quotation_version_id = qv.id
+       INNER JOIN quotation_activation_statuses section_status
+         ON section_status.id = section.activation_status_id
+        AND section_status.code = 'activada'
+       INNER JOIN quotation_section_items item
+         ON item.quotation_section_id = section.id
+       LEFT JOIN providers provider ON provider.id = item.provider_id
+       WHERE q.opportunity_id IN (${placeholders})
+       ORDER BY q.opportunity_id, q.id, section.display_order,
+                item.display_order, item.id`,
+      ids,
+    ).catch(() => []),
+    query(
       `SELECT id, opportunity_id, quotation_id, quotation_version_id,
               contact_id, title, status_code, created_at, updated_at
        FROM proposals
@@ -862,6 +1050,7 @@ async function getMiAgentEnrichedContext(user, baseContext) {
     interactions: groupByOpportunity(interactions),
     narratives: groupByOpportunity(narratives),
     quotations: groupByOpportunity(quotations),
+    quotationItems: groupByOpportunity(quotationItems),
     proposals: groupByOpportunity(proposals),
   };
   const stageDefinitions = playbookStages.reduce((definitions, row) => {
@@ -983,6 +1172,27 @@ async function getMiAgentEnrichedContext(user, baseContext) {
         statusName: row.status_name || null,
         activationStatusCode: row.activation_status_code || null,
         updatedAt: row.updated_at || row.created_at || null,
+        products: (grouped.quotationItems.get(id) || [])
+          .filter((item) => Number(item.quotation_id) === Number(row.id))
+          .slice(0, 40)
+          .map((item) => ({
+            id: Number(item.item_id),
+            sectionId: Number(item.section_id),
+            sectionTitle: item.section_title || "",
+            code: item.product_code || "",
+            description: clip(item.product_description, 700),
+            type: item.item_type || "producto",
+            isRenewal: Boolean(item.is_renewal),
+            quantity: Number(item.quantity || 0),
+            currencyCode: item.original_currency_code || null,
+            originalListPriceUnit:
+              item.original_list_price_unit == null
+                ? null
+                : Number(item.original_list_price_unit),
+            listPriceUnit: Number(item.list_price_unit || 0),
+            providerId: Number(item.provider_id || 0) || null,
+            providerName: item.provider_name || "",
+          })),
       })),
       proposals: (grouped.proposals.get(id) || []).slice(0, 6).map((row) => ({
         id: Number(row.id),
@@ -1115,7 +1325,21 @@ async function getMiAgentEnrichedContext(user, baseContext) {
     ...baseContext,
     enriched: true,
     source: "mi_agent",
-    coachOpportunities: enrichedOpportunities,
+    selectedRecord: baseContext.selectedRecord
+      ? enrichedById.get(Number(baseContext.selectedRecord.id)) ||
+        baseContext.selectedRecord
+      : null,
+    coachOpportunities: activeOpportunities.map(
+      (item) => enrichedById.get(Number(item.id)) || item,
+    ),
+    ...Object.fromEntries(
+      TERMINAL_OPPORTUNITY_COLLECTIONS.map((key) => [
+        key,
+        (baseContext[key] || []).map(
+          (item) => enrichedById.get(Number(item.id)) || item,
+        ),
+      ]),
+    ),
     workboard: (baseContext.workboard || []).map(
       (item) => enrichedById.get(Number(item.id)) || item,
     ),
@@ -1178,7 +1402,7 @@ export function normalizeCoachResult(
   authoritativeStageReadiness = null,
 ) {
   const source = result && typeof result === "object" ? result : {};
-  const opportunities = Array.isArray(snapshot?.coachOpportunities)
+  const activeOpportunities = Array.isArray(snapshot?.coachOpportunities)
     ? snapshot.coachOpportunities
     : [
         ...(Array.isArray(snapshot?.pipeline?.opportunities)
@@ -1186,6 +1410,12 @@ export function normalizeCoachResult(
           : []),
         ...(Array.isArray(snapshot?.workboard) ? snapshot.workboard : []),
       ];
+  const opportunities = [
+    ...activeOpportunities,
+    ...TERMINAL_OPPORTUNITY_COLLECTIONS.flatMap((key) =>
+      Array.isArray(snapshot?.[key]) ? snapshot[key] : [],
+    ),
+  ];
   const opportunityIds = new Set(
     opportunities.map((item) => Number(item?.id)).filter((id) => id > 0),
   );
@@ -2737,6 +2967,8 @@ function buildCoachPrompt(
       {
         role: "system",
         content:
+          "Para preguntas sobre el número de cotizaciones ganadas, cuenta documentos quotation distintos de la oportunidad seleccionada cuyo statusCode sea ganada; no cuentes versiones ni partidas. Para preguntas sobre productos, servicios, partidas o cantidades cotizadas, usa exclusivamente quotations[].products de la oportunidad correspondiente; conserva la separación por cotización y no infieras productos desde el nombre o la narrativa. " +
+          "coachOpportunities contiene pipeline abierto; wonOpportunities, lostOpportunities y cancelledOpportunities contienen historial terminal separado. Nunca sumes registros terminales al pipeline, forecast o preparación de etapa. La ausencia de una entidad en el contexto no demuestra que no exista en el CRM: expresa que no está disponible en el contexto consultado. " +
           "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si existe selectedRecord de tipo opportunity, ese registro es la fuente principal: para preguntas sobre monto, importe, valor, fecha, etapa o nombre responde primero con sus campos exactos y no uses totales globales del pipeline como sustituto. Los totales globales solo aplican cuando la pregunta es general o no hay una oportunidad seleccionada. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
       },
       {
@@ -2874,17 +3106,32 @@ async function executeCoachJob({
       `UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ?`,
       [jobId],
     );
-    const snapshot = await getMiAgentEnrichedContext(
-      user,
-      await getMiAgentContext(user),
-    );
+    const baseSnapshot = await getMiAgentContext(user);
     const effectiveContext = { ...selectedContext };
-    const contextText = [
+    const { explicitEntities, resolvedEntities } = resolveCoachContextEntities(
+      baseSnapshot,
       question,
-      ...conversationHistory.map((message) => message.text),
-    ].join(" ");
-    const resolvedEntities = resolveCoachEntities(snapshot, contextText);
-    if (!Number(effectiveContext.opportunityId || 0)) {
+      conversationHistory,
+      effectiveContext,
+    );
+    if (explicitEntities.opportunity) {
+      const inferredOpportunity = explicitEntities.opportunity;
+      effectiveContext.opportunityId = Number(inferredOpportunity.id);
+      effectiveContext.accountId =
+        Number(
+          inferredOpportunity.account?.id || inferredOpportunity.accountId,
+        ) || null;
+      effectiveContext.contactId =
+        Number(
+          inferredOpportunity.contact?.id || inferredOpportunity.contactId,
+        ) || null;
+      effectiveContext.leadId = null;
+    } else if (explicitEntities.account) {
+      effectiveContext.accountId = Number(explicitEntities.account.id);
+      effectiveContext.opportunityId = null;
+      effectiveContext.contactId = null;
+      effectiveContext.leadId = null;
+    } else if (!Number(effectiveContext.opportunityId || 0)) {
       const inferredOpportunity = resolvedEntities.opportunity;
       const inferredOpportunityId = Number(inferredOpportunity?.id || 0);
       if (inferredOpportunity) {
@@ -2927,18 +3174,36 @@ async function executeCoachJob({
         ) || null;
     }
     const entityClarification = buildCoachEntityClarification(
-      resolvedEntities,
+      explicitEntities,
       question,
       effectiveContext,
     );
-    const scopedSnapshot = buildCoachScopedSnapshot(snapshot, effectiveContext);
+    const historicalQuestion =
+      explicitEntities.opportunity?.lifecycle === "historical" ||
+      /\b(vend|vent|compr|adquiri|ganad|perdid|anulad|cancelad|cerrad|historial|cotiz|propuest)/.test(
+        normalizeCoachMatchText(question),
+      );
+    const analysisBaseSnapshot = historicalQuestion
+      ? baseSnapshot
+      : {
+          ...baseSnapshot,
+          wonOpportunities: [],
+          lostOpportunities: [],
+          cancelledOpportunities: [],
+        };
+    const scopedSnapshot = await getMiAgentEnrichedContext(
+      user,
+      buildCoachScopedSnapshot(analysisBaseSnapshot, effectiveContext),
+    );
     const preparationRequested = isStagePreparationQuestion(question);
     const selectedOpportunity =
       scopedSnapshot.selectedRecord?.type === "opportunity"
         ? scopedSnapshot.selectedRecord
         : null;
     const deterministicStageReadiness =
-      preparationRequested && selectedOpportunity
+      preparationRequested &&
+      selectedOpportunity &&
+      selectedOpportunity.lifecycle !== "historical"
         ? buildStageReadiness(selectedOpportunity, {
             currentUserId: Number(user.id),
           })
@@ -3005,6 +3270,7 @@ async function executeCoachJob({
     const requiresStageReadiness =
       !clarification &&
       selectedOpportunity &&
+      selectedOpportunity.lifecycle !== "historical" &&
       (preparationRequested || result?.intent === "opportunity_preparation");
     const authoritativeStageReadiness = requiresStageReadiness
       ? deterministicStageReadiness ||
@@ -3021,7 +3287,7 @@ async function executeCoachJob({
       : result;
     const normalizedResult = normalizeCoachResult(
       authoritativeResult,
-      snapshot,
+      scopedSnapshot,
       question,
       effectiveContext,
       authoritativeStageReadiness,
@@ -3311,6 +3577,10 @@ router.post(
   requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     const question = String(req.body?.question || "").trim();
+    const requestContext =
+      req.body?.context && typeof req.body.context === "object"
+        ? req.body.context
+        : null;
     let conversationHistory = Array.isArray(req.body?.history)
       ? req.body.history
           .filter((message) => message && typeof message === "object")
@@ -3362,7 +3632,16 @@ router.post(
       );
       if (permissionError)
         return res.status(permissionError.status).json(permissionError.body);
-      const opportunityParams = [selectedContext.opportunityId];
+      const governanceSettings = await getMiCoachGovernanceSettings();
+      const enabledTerminalStatusCodes =
+        getEnabledCoachTerminalStatusCodes(governanceSettings);
+      const terminalStatusCondition = enabledTerminalStatusCodes.length
+        ? `AND (ocs.code NOT IN ('ganada', 'perdida', 'anulada') OR ocs.code IN (${enabledTerminalStatusCodes.map(() => "?").join(", ")}))`
+        : "AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')";
+      const opportunityParams = [
+        selectedContext.opportunityId,
+        ...enabledTerminalStatusCodes,
+      ];
       const opportunityScope = hasMiAgentGlobalScope(req.user)
         ? ""
         : "AND (EXISTS (SELECT 1 FROM account_owners ao WHERE ao.account_id = o.account_id AND ao.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)";
@@ -3378,7 +3657,7 @@ router.post(
          INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
          INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
          WHERE o.id = ? AND oas.code = 'activada'
-           AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')
+           ${terminalStatusCondition}
            ${opportunityScope} ${relationship} LIMIT 1`,
         opportunityParams,
       );
@@ -3454,18 +3733,17 @@ router.post(
       selectedContext,
     );
     if (session) {
-      for (const key of [
-        "accountId",
-        "contactId",
-        "opportunityId",
-        "quotationId",
-        "proposalId",
-        "leadId",
-      ]) {
-        if (!selectedContext[key] && session.context?.[key])
-          selectedContext[key] = session.context[key];
-      }
-      if (!conversationHistory.length) {
+      Object.assign(
+        selectedContext,
+        mergeCoachSessionContext(
+          selectedContext,
+          session.context,
+          requestContext,
+        ),
+      );
+      if (!coachSessionContextMatchesRequest(requestContext, session.context)) {
+        conversationHistory = [];
+      } else if (!conversationHistory.length) {
         conversationHistory = session.messages
           .slice(-8)
           .map((message) => ({
