@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CommercialCloseConfirmationModal,
@@ -10,9 +10,18 @@ import { useChatbotContextRegistration } from "./chatbot/context.jsx";
 import OpportunityFormModal from "./opportunities/OpportunityFormModal";
 import OpportunitiesListSection from "./opportunities/OpportunitiesListSection";
 import { useOpportunitiesPage } from "./opportunities/useOpportunitiesPage";
+import {
+  buildCoachFormPatch,
+  getCoachHandoffEntityId,
+  getCoachHandoffOperation,
+} from "./coach/handoffForm";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 function OpportunitiesPage({ currentUser, can }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const coachHandoff = useCoachHandoff({ module: "opportunities" });
+  const appliedCoachHandoffRef = useRef("");
   const {
     opportunityStatusFilter,
     setOpportunityStatusFilter,
@@ -136,6 +145,63 @@ function OpportunitiesPage({ currentUser, can }) {
     linkOpportunityDocumentToAnswer,
     commercialAnswerSuggestionsByStageId,
   } = useOpportunitiesPage({ currentUser, searchParams, setSearchParams });
+
+  useEffect(() => {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    if (!operation || appliedCoachHandoffRef.current === coachHandoff.token) {
+      return;
+    }
+    if (
+      operation.kind === "create_opportunity" &&
+      (!catalogs.stages.length ||
+        !catalogs.statuses.length ||
+        !catalogs.sellerUsers.length)
+    ) {
+      return;
+    }
+
+    appliedCoachHandoffRef.current = coachHandoff.token;
+    const formPatch = buildCoachFormPatch(
+      coachHandoff.handoff,
+      "opportunities",
+    );
+    if (operation.kind === "create_opportunity") {
+      openCreateOpportunityModal();
+      setForm((current) => ({ ...current, ...formPatch }));
+      return;
+    }
+    if (operation.kind === "opportunity_field") {
+      const opportunityId = getCoachHandoffEntityId(
+        coachHandoff.handoff,
+        "opportunityId",
+      );
+      if (opportunityId) {
+        void openEditOpportunityModal(opportunityId).then(() => {
+          setForm((current) => ({ ...current, ...formPatch }));
+        });
+      }
+    }
+  }, [
+    coachHandoff.handoff,
+    coachHandoff.token,
+    catalogs,
+    openCreateOpportunityModal,
+    openEditOpportunityModal,
+    setForm,
+  ]);
+
+  async function saveOpportunityWithCoachHandoff(event) {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    const data = await saveOpportunity(event);
+    if (!operation || !data) return data;
+    const entityId =
+      Number(data.id || 0) ||
+      getCoachHandoffEntityId(coachHandoff.handoff, "opportunityId");
+    if (entityId) {
+      await coachHandoff.complete({ entityType: "opportunity", entityId });
+    }
+    return data;
+  }
   const canBypassAnyStageValidation = can(
     "oportunidades.bypass_stage_validation",
   );
@@ -180,9 +246,7 @@ function OpportunitiesPage({ currentUser, can }) {
           businessLineId: form?.businessLineId
             ? Number(form.businessLineId)
             : null,
-          sellerUserId: form?.sellerUserId
-            ? Number(form.sellerUserId)
-            : null,
+          sellerUserId: form?.sellerUserId ? Number(form.sellerUserId) : null,
           presalesUserId: form?.presalesUserId
             ? Number(form.presalesUserId)
             : null,
@@ -237,7 +301,9 @@ function OpportunitiesPage({ currentUser, can }) {
               weaknesses: Array.isArray(commercialContext.workspace.weaknesses)
                 ? commercialContext.workspace.weaknesses.slice(0, 12)
                 : [],
-              stakeholders: Array.isArray(commercialContext.workspace.stakeholders)
+              stakeholders: Array.isArray(
+                commercialContext.workspace.stakeholders,
+              )
                 ? commercialContext.workspace.stakeholders.slice(0, 12)
                 : [],
               risks: Array.isArray(commercialContext.workspace.risks)
@@ -300,6 +366,7 @@ function OpportunitiesPage({ currentUser, can }) {
 
   return (
     <section className="panel">
+      <CoachHandoffNotice {...coachHandoff} />
       <OpportunitiesListSection
         canCreateOrRequestOpportunities={canCreateOrRequestOpportunities}
         opportunitiesPendingEnabled={opportunitiesPendingEnabled}
@@ -382,16 +449,14 @@ function OpportunitiesPage({ currentUser, can }) {
         handleStageTransition={handleStageTransition}
         handleCommercialClose={handleCommercialClose}
         canBypassCurrentStage={canBypassCurrentStage}
-        canBypassCommercialStageValidation={
-          canBypassCommercialStageValidation
-        }
+        canBypassCommercialStageValidation={canBypassCommercialStageValidation}
         canRetreatToSelectedStage={canRetreatToSelectedStage}
         hasImmediatePreviousStage={hasImmediatePreviousStage}
         savingCommercialAction={savingCommercialAction}
         updateCommercialAnswer={updateCommercialAnswer}
         updateOpportunityAmountFromCoach={updateOpportunityAmountFromCoach}
         closeOpportunityModal={closeOpportunityModal}
-        saveOpportunity={saveOpportunity}
+        saveOpportunity={saveOpportunityWithCoachHandoff}
         savingOpportunity={savingOpportunity}
         documentUploadSession={documentUploadSession}
         opportunityDocuments={opportunityDocuments}

@@ -8,10 +8,19 @@ import AccountProposalsModal from "./accounts/AccountProposalsModal";
 import { useAccountRelatedRecords } from "./accounts/useAccountRelatedRecords";
 import { api, getApiErrorMessage } from "./api";
 import { useContactsPage } from "./contacts/useContactsPage";
+import {
+  buildCoachFormPatch,
+  getCoachHandoffEntityId,
+  getCoachHandoffOperation,
+} from "./coach/handoffForm";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 function ContactsPage({ can, currentUser }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const coachHandoff = useCoachHandoff({ module: "contacts" });
+  const appliedCoachHandoffRef = useRef("");
   const canAccessAccounts = can("cuentas.read") || can("cuentas.read_all");
   const canAccessQuotations = [
     "cotizaciones.read",
@@ -98,6 +107,7 @@ function ContactsPage({ can, currentUser }) {
     canCreateOrRequestContacts,
     canChangeContactActivationStatus,
     form,
+    setForm,
     totalContactsCount,
     contactStatusCounts,
     visibleContacts,
@@ -135,6 +145,59 @@ function ContactsPage({ can, currentUser }) {
     dismissContactDuplicateReview,
     openDuplicateCandidateContact,
   } = useContactsPage({ currentUser, searchParams, setSearchParams });
+
+  useEffect(() => {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    if (!operation || appliedCoachHandoffRef.current === coachHandoff.token) {
+      return;
+    }
+    if (
+      operation.kind === "create_contact" &&
+      (!catalogs.purchaseParticipations.length ||
+        !catalogs.activationStatuses.length)
+    ) {
+      return;
+    }
+
+    appliedCoachHandoffRef.current = coachHandoff.token;
+    const formPatch = buildCoachFormPatch(coachHandoff.handoff, "contacts");
+    if (operation.kind === "create_contact") {
+      openCreateContactModal();
+      setForm((current) => ({ ...current, ...formPatch }));
+      return;
+    }
+    if (operation.kind === "contact_field") {
+      const contactId = getCoachHandoffEntityId(
+        coachHandoff.handoff,
+        "contactId",
+      );
+      if (contactId) {
+        void openEditContactModal(contactId).then(() => {
+          setForm((current) => ({ ...current, ...formPatch }));
+        });
+      }
+    }
+  }, [
+    coachHandoff.handoff,
+    coachHandoff.token,
+    catalogs,
+    openCreateContactModal,
+    openEditContactModal,
+    setForm,
+  ]);
+
+  async function saveContactWithCoachHandoff(event) {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    const data = await saveContact(event);
+    if (!operation || !data) return data;
+    const entityId =
+      Number(data.id || 0) ||
+      getCoachHandoffEntityId(coachHandoff.handoff, "contactId");
+    if (entityId) {
+      await coachHandoff.complete({ entityType: "contact", entityId });
+    }
+    return data;
+  }
 
   function handleOpportunitySelect(opportunityId) {
     closeContactOppsModal();
@@ -258,6 +321,7 @@ function ContactsPage({ can, currentUser }) {
 
   return (
     <section className="panel">
+      <CoachHandoffNotice {...coachHandoff} />
       <ConfirmationModal
         isOpen={Boolean(confirmContactStatusAction)}
         title={getContactStatusConfirmationMeta().title}
@@ -412,7 +476,7 @@ function ContactsPage({ can, currentUser }) {
         contactDuplicateReview={contactDuplicateReview}
         savingContact={savingContact}
         onClose={closeContactModal}
-        onSubmit={saveContact}
+        onSubmit={saveContactWithCoachHandoff}
         onDismissDuplicateReview={dismissContactDuplicateReview}
         onOpenDuplicateCandidate={openDuplicateCandidateContact}
         onChange={updateContactFormField}

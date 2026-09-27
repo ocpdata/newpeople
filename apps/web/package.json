@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:coach": "playwright test e2e/mi-agent-governance.spec.js"
   },
   "dependencies": {
     "@tiptap/extension-heading": "^3.31.3",

@@ -1696,6 +1696,7 @@ export function useQuotationsSection({
   isOpen,
   showDetails,
   initialSelectedQuotationId,
+  onQuotationCreated,
 }) {
   const quotationsListEndpoint = showDetails
     ? opportunityId
@@ -2667,46 +2668,57 @@ export function useQuotationsSection({
     return nextCatalogs;
   }, [catalogs]);
 
-  const openCreateQuotationModal = useCallback(() => {
-    Promise.resolve(ensureEditorCatalogs())
-      .then((nextCatalogs) => {
-        setCreateSelectedAccountId("");
-        setCreateOpportunities([]);
-        setCreateSelectedOpportunityId("");
-        setCreateContactOptions([]);
-        setLoadingCreateOpportunities(false);
-        setLoadingCreateContacts(false);
-        setCreateQuotationForm(
-          buildCreateQuotationForm({
-            accountId: "",
-            contactOptions: [],
-            opportunityId: "",
-            opportunityName: "",
-            sellerUserId: "",
-            sellerUserName: "",
-          }),
-        );
-        createSectionDraftSequenceRef.current = 1;
-        setCreateSectionDraft(buildSectionDraft(nextCatalogs.inclusionTypes));
-        setCreateSectionDrafts([]);
-        setCreateItemDraftsBySection({});
-        setCreateSelectedItemIdsBySection({});
-        setCreateHighlightedItemIdsBySection({});
-        setCreateCopiedItems([]);
-        setCreateCommercialContextConfirmed(false);
-        setError("");
-        setSuccess("");
-        setShowCreateQuotationForm(true);
-      })
-      .catch((err) => {
-        setError(
-          getApiErrorMessage(
-            err,
-            "No fue posible preparar el formulario de cotización",
-          ),
-        );
-      });
-  }, [ensureEditorCatalogs]);
+  const openCreateQuotationModal = useCallback(
+    (initialDraft = {}) => {
+      Promise.resolve(ensureEditorCatalogs())
+        .then((nextCatalogs) => {
+          const initialAccountId = String(initialDraft.accountId || "");
+          const initialOpportunityId = String(initialDraft.opportunityId || "");
+          setCreateSelectedAccountId(initialAccountId);
+          setCreateOpportunities([]);
+          setCreateSelectedOpportunityId(initialOpportunityId);
+          setCreateContactOptions([]);
+          setLoadingCreateOpportunities(false);
+          setLoadingCreateContacts(false);
+          setCreateQuotationForm(
+            buildCreateQuotationForm({
+              accountId: initialAccountId,
+              contactOptions: [],
+              opportunityId: initialOpportunityId,
+              opportunityName: initialDraft.proposalName || "",
+              sellerUserId: "",
+              sellerUserName: "",
+            }),
+          );
+          setCreateQuotationForm((current) => ({
+            ...current,
+            proposalName: initialDraft.proposalName || current.proposalName,
+            quotationDate: initialDraft.quotationDate || current.quotationDate,
+            introduction: initialDraft.introduction || current.introduction,
+          }));
+          createSectionDraftSequenceRef.current = 1;
+          setCreateSectionDraft(buildSectionDraft(nextCatalogs.inclusionTypes));
+          setCreateSectionDrafts([]);
+          setCreateItemDraftsBySection({});
+          setCreateSelectedItemIdsBySection({});
+          setCreateHighlightedItemIdsBySection({});
+          setCreateCopiedItems([]);
+          setCreateCommercialContextConfirmed(false);
+          setError("");
+          setSuccess("");
+          setShowCreateQuotationForm(true);
+        })
+        .catch((err) => {
+          setError(
+            getApiErrorMessage(
+              err,
+              "No fue posible preparar el formulario de cotización",
+            ),
+          );
+        });
+    },
+    [ensureEditorCatalogs],
+  );
 
   const closeCreateQuotationModal = useCallback(() => {
     createSectionDraftSequenceRef.current = 1;
@@ -3785,6 +3797,7 @@ export function useQuotationsSection({
               : data.message || "Cotización creada",
           );
         }
+        await onQuotationCreated?.(data);
       } catch (err) {
         setError(getApiErrorMessage(err, "No fue posible crear la cotización"));
       } finally {
@@ -3802,6 +3815,7 @@ export function useQuotationsSection({
       syncUploadedQuotationDocumentAiEligibility,
       onOpportunityFocusChange,
       opportunityId,
+      onQuotationCreated,
       uploadQuotationDocumentsToVersion,
     ],
   );

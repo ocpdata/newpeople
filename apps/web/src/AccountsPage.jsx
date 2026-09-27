@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ConfirmationModal } from "./AppModals";
 import AccountContactsModal from "./accounts/AccountContactsModal";
@@ -9,10 +10,19 @@ import AccountsListSection from "./accounts/AccountsListSection";
 import AccountOpportunitiesModal from "./accounts/AccountOpportunitiesModal";
 import { useAccountsCrud } from "./accounts/useAccountsCrud";
 import { useAccountRelatedRecords } from "./accounts/useAccountRelatedRecords";
+import {
+  buildCoachFormPatch,
+  getCoachHandoffEntityId,
+  getCoachHandoffOperation,
+} from "./coach/handoffForm";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 function AccountsPage({ can, currentUser }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const coachHandoff = useCoachHandoff({ module: "accounts" });
+  const appliedCoachHandoffRef = useRef("");
   const canAccessQuotations = [
     "cotizaciones.operacion",
     "cotizaciones.revision",
@@ -94,6 +104,68 @@ function AccountsPage({ can, currentUser }) {
     useSuggestedCompanyDescription,
     applySuggestedAccountField,
   } = useAccountsCrud({ currentUser, searchParams, setSearchParams });
+
+  useEffect(() => {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    if (!operation || appliedCoachHandoffRef.current === coachHandoff.token) {
+      return;
+    }
+    if (
+      operation.kind === "create_account" &&
+      (!catalogs.accountTypes.length || !catalogs.statuses.length)
+    ) {
+      return;
+    }
+
+    appliedCoachHandoffRef.current = coachHandoff.token;
+    const formPatch = buildCoachFormPatch(coachHandoff.handoff, "accounts");
+    if (operation.kind === "create_account") {
+      openCreateAccountModal();
+      setForm((current) => ({ ...current, ...formPatch }));
+      return;
+    }
+    if (operation.kind === "account_field") {
+      const accountId = getCoachHandoffEntityId(
+        coachHandoff.handoff,
+        "accountId",
+      );
+      if (accountId) {
+        void openEditAccountModal(accountId).then(() => {
+          setForm((current) => ({ ...current, ...formPatch }));
+        });
+      }
+    }
+  }, [
+    coachHandoff.handoff,
+    coachHandoff.token,
+    catalogs,
+    openCreateAccountModal,
+    openEditAccountModal,
+    setForm,
+  ]);
+
+  async function completeAccountHandoff(data) {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    if (!operation || !data) return;
+    const entityId =
+      Number(data.id || 0) ||
+      getCoachHandoffEntityId(coachHandoff.handoff, "accountId");
+    if (entityId) {
+      await coachHandoff.complete({ entityType: "account", entityId });
+    }
+  }
+
+  async function saveAccountWithCoachHandoff(event, options) {
+    const data = await saveAccount(event, options);
+    await completeAccountHandoff(data);
+    return data;
+  }
+
+  async function confirmAccountDuplicateWithCoachHandoff() {
+    const data = await confirmAccountDuplicateOverride();
+    await completeAccountHandoff(data);
+    return data;
+  }
 
   const {
     editAccountOpportunities,
@@ -179,6 +251,7 @@ function AccountsPage({ can, currentUser }) {
 
   return (
     <section className="panel">
+      <CoachHandoffNotice {...coachHandoff} />
       <ConfirmationModal
         isOpen={Boolean(confirmAccountStatusAction)}
         title={getAccountStatusConfirmationMeta().title}
@@ -244,7 +317,7 @@ function AccountsPage({ can, currentUser }) {
         toggleOwnerUser={toggleOwnerUser}
         canAssignAnyOwners={canAssignAnyOwners}
         onClose={closeAccountModal}
-        onSubmit={saveAccount}
+        onSubmit={saveAccountWithCoachHandoff}
         onAnalyzeDraft={analyzeAccountDraft}
         onUseSuggestedCompanyDescription={useSuggestedCompanyDescription}
         onApplySuggestedWebsite={() => applySuggestedAccountField("website")}
@@ -262,7 +335,7 @@ function AccountsPage({ can, currentUser }) {
         accountDuplicateReview={accountDuplicateReview}
         analyzingAccountDraft={analyzingAccountDraft}
         onDismissDuplicateReview={dismissAccountDuplicateReview}
-        onConfirmDuplicateOverride={confirmAccountDuplicateOverride}
+        onConfirmDuplicateOverride={confirmAccountDuplicateWithCoachHandoff}
         onOpenDuplicateCandidateAccount={openDuplicateCandidateAccount}
         onRetryDuplicateAiReview={() =>
           runDuplicateAiReview(accountDuplicateReview)

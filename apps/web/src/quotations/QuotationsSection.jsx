@@ -25,6 +25,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     onOpportunityFocusChange,
     onCreateProposalFromQuotationVersion,
     initialSelectedQuotationId,
+    onQuotationCreated,
     isOpen,
     showHeader = true,
     showCreateButton = true,
@@ -63,6 +64,7 @@ const QuotationsSection = forwardRef(function QuotationsSection(
     isOpen,
     showDetails,
     initialSelectedQuotationId,
+    onQuotationCreated,
   });
 
   useImperativeHandle(

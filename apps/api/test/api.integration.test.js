@@ -30,6 +30,10 @@ import { ensureOpportunityWorkspaceSchema } from "../src/opportunity-workspace/s
 import { ensureProspectResearchPermissions } from "../src/prospect-research/permissions.js";
 import { ensureProspectResearchSchema } from "../src/prospect-research/schema.js";
 import {
+  createCoachSession,
+  persistCoachOperations,
+} from "../src/coach/service.js";
+import {
   TEST_PREFIX,
   cleanupArtifacts,
   createDirectAccount,
@@ -96,9 +100,9 @@ describe("API integration baseline", () => {
       cleanup.roleIds.push(sellerRole.roleId);
     }
     ctx.sellerRoleId = sellerRole.roleId;
-    const sellerEligibilityPermissionId = (await getPermissionIds([
-      "comercial.seller.eligible",
-    ]))[0];
+    const sellerEligibilityPermissionId = (
+      await getPermissionIds(["comercial.seller.eligible"])
+    )[0];
     await query(
       `INSERT INTO role_permissions (role_id, permission_id, created_at)
        SELECT ?, ?, ?
@@ -106,7 +110,13 @@ describe("API integration baseline", () => {
          SELECT 1 FROM role_permissions
          WHERE role_id = ? AND permission_id = ?
        )`,
-      [sellerRole.roleId, sellerEligibilityPermissionId, new Date(), sellerRole.roleId, sellerEligibilityPermissionId],
+      [
+        sellerRole.roleId,
+        sellerEligibilityPermissionId,
+        new Date(),
+        sellerRole.roleId,
+        sellerEligibilityPermissionId,
+      ],
     );
 
     ctx.accountCreateRoleId = await createRole({
@@ -209,6 +219,17 @@ describe("API integration baseline", () => {
     ctx.miCoachAdminRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_coach_admin`,
       permissionCodes: ["mi_coach.use", "mi_coach.admin"],
+    });
+    ctx.miCoachOperatorRoleId = await createRole({
+      name: `${TEST_PREFIX}_mi_coach_operator`,
+      permissionCodes: [
+        "mi_coach.use",
+        "mi_coach.execute",
+        "cuentas.read",
+        "cuentas.create",
+        "cuentas.update",
+        "desarrollo_comercial.update",
+      ],
     });
     ctx.commercialIntelligenceReadRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_intelligence_read`,
@@ -391,6 +412,7 @@ describe("API integration baseline", () => {
       ctx.auditReaderRoleId,
       ctx.commercialPlanningManagerRoleId,
       ctx.manufacturerRegistrationManagerRoleId,
+      ctx.miCoachOperatorRoleId,
     );
 
     ctx.catalogIds = {
@@ -590,6 +612,11 @@ describe("API integration baseline", () => {
       email: `${TEST_PREFIX}.mi.coach.admin@example.com`,
       roleIds: [ctx.miCoachAdminRoleId],
     });
+    ctx.miCoachOperatorUserId = await createUser({
+      fullName: "API Mi Coach Operator",
+      email: `${TEST_PREFIX}.mi.coach.operator@example.com`,
+      roleIds: [ctx.miCoachOperatorRoleId],
+    });
     ctx.commercialIntelligenceReadUserId = await createUser({
       fullName: "API Commercial Intelligence Read",
       email: `${TEST_PREFIX}.commercial.intelligence.read@example.com`,
@@ -708,6 +735,7 @@ describe("API integration baseline", () => {
       ctx.opportunityGlobalScopeUserId,
       ctx.miCoachUseUserId,
       ctx.miCoachAdminUserId,
+      ctx.miCoachOperatorUserId,
       ctx.commercialIntelligenceReadUserId,
       ctx.commercialIntelligenceUpdateUserId,
       ctx.commercialIntelligenceNoAccountUserId,
@@ -878,7 +906,9 @@ describe("API integration baseline", () => {
   }
 
   async function createOwnedOpportunityFlowFixture(suffix, options = {}) {
-    const ownerUserId = Number(options.ownerUserId || ctx.opportunityFlowUserId);
+    const ownerUserId = Number(
+      options.ownerUserId || ctx.opportunityFlowUserId,
+    );
     const actorUserId = Number(options.actorUserId || ownerUserId);
     const loginEmail = String(
       options.loginEmail || `${TEST_PREFIX}.opps.flow@example.com`,
@@ -1077,7 +1107,9 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${opportunityOnlyLogin.body.token}`);
 
     expect(forbiddenContextResponse.status).toBe(403);
-    expect(forbiddenContextResponse.body.requiredPermission).toBe("mi_coach.use");
+    expect(forbiddenContextResponse.body.requiredPermission).toBe(
+      "mi_coach.use",
+    );
 
     const coachLogin = await login(
       request(app),
@@ -1102,7 +1134,313 @@ describe("API integration baseline", () => {
       });
 
     expect(accountScopedCoachResponse.status).toBe(403);
-    expect(accountScopedCoachResponse.body.requiredPermission).toBe("cuentas.read");
+    expect(accountScopedCoachResponse.body.requiredPermission).toBe(
+      "cuentas.read",
+    );
+  });
+
+  test("mi coach protege y completa sesiones, jobs, handoffs y reversiones", async () => {
+    const operatorLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.operator@example.com`,
+    );
+    const otherLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.use@example.com`,
+    );
+    const authorization = `Bearer ${operatorLogin.body.token}`;
+    const otherAuthorization = `Bearer ${otherLogin.body.token}`;
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.miCoachOperatorUserId,
+      actorUserId: ctx.miCoachOperatorUserId,
+      suffix: `${TEST_PREFIX}_coach_lifecycle`,
+    });
+    cleanup.accountIds.push(accountId);
+    await query(`UPDATE accounts SET city = 'Guadalajara' WHERE id = ?`, [
+      accountId,
+    ]);
+
+    const bootstrapJobRoute = await request(app)
+      .get("/api/mi-agent/coach/jobs/0")
+      .set("Authorization", authorization);
+    expect(bootstrapJobRoute.status).toBe(404);
+
+    const jobResult = await query(
+      `INSERT INTO mi_agent_analysis_jobs
+        (created_by_user_id, job_kind, question, context_snapshot, status, result_json)
+       VALUES (?, 'coach', ?, ?, 'completed', ?)`,
+      [
+        ctx.miCoachOperatorUserId,
+        "Prepara y actualiza la cuenta",
+        JSON.stringify({ accountId }),
+        JSON.stringify({ answer: "Operaciones preparadas" }),
+      ],
+    );
+    const jobId = Number(jobResult.insertId);
+    const session = await createCoachSession(ctx.miCoachOperatorUserId, {
+      accountId,
+    });
+
+    try {
+      const invalidProposal = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", authorization)
+        .send({ sessionId: session.id, operation: { kind: "activity" } });
+      expect(invalidProposal.status).toBe(400);
+
+      const forbiddenProposal = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", otherAuthorization)
+        .send({
+          sessionId: session.id,
+          operation: {
+            kind: "activity",
+            title: "Seguimiento sin permiso",
+            opportunityId: null,
+            activityId: null,
+            actionType: "follow_up",
+            status: "pending",
+            priority: "medium",
+            evidence: [],
+            missingFields: [],
+            requiresConfirmation: true,
+          },
+        });
+      expect(forbiddenProposal.status).toBe(403);
+
+      const proposedActivity = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", authorization)
+        .send({
+          sessionId: session.id,
+          context: { accountId },
+          originalIntent: "Agendar seguimiento",
+          operation: {
+            kind: "activity",
+            title: "Seguimiento de cuenta",
+            opportunityId: null,
+            activityId: null,
+            actionType: "follow_up",
+            status: "pending",
+            priority: "medium",
+            dueDate: "2026-10-03",
+            evidence: [],
+            missingFields: [],
+            requiresConfirmation: true,
+          },
+        });
+      expect(proposedActivity.status).toBe(201);
+      expect(proposedActivity.body.operation).toMatchObject({
+        kind: "activity",
+        status: "ready",
+        targetModule: "commercial_development",
+      });
+
+      const operations = await persistCoachOperations({
+        userId: ctx.miCoachOperatorUserId,
+        sessionId: session.id,
+        sourceJobId: jobId,
+        originalIntent: "Prepara y actualiza la cuenta",
+        entities: { accountId },
+        operations: [
+          {
+            kind: "create_account",
+            title: "Crear cuenta relacionada",
+            targetModule: "accounts",
+            payload: { name: `Cuenta hija ${TEST_PREFIX}` },
+            missingFields: [],
+            evidence: [],
+            requiresConfirmation: true,
+          },
+          {
+            kind: "account_field",
+            title: "Actualizar ciudad",
+            accountId,
+            field: "city",
+            value: "Monterrey",
+            missingFields: [],
+            evidence: [],
+            requiresConfirmation: true,
+          },
+          {
+            kind: "create_account",
+            title: "Operación a rechazar",
+            targetModule: "accounts",
+            payload: { name: `Cuenta rechazada ${TEST_PREFIX}` },
+            missingFields: [],
+            evidence: [],
+            requiresConfirmation: true,
+          },
+          {
+            kind: "create_account",
+            title: "Operación a expirar",
+            targetModule: "accounts",
+            payload: { name: `Cuenta expirada ${TEST_PREFIX}` },
+            missingFields: [],
+            evidence: [],
+            requiresConfirmation: true,
+          },
+        ],
+      });
+
+      const ownSession = await request(app)
+        .get(`/api/mi-agent/coach/sessions/${session.id}`)
+        .set("Authorization", authorization);
+      expect(ownSession.status).toBe(200);
+      expect(ownSession.body.operations).toHaveLength(5);
+
+      const activityHandoff = await request(app)
+        .post(
+          `/api/mi-agent/coach/operations/${proposedActivity.body.operation.id}/handoff`,
+        )
+        .set("Authorization", authorization);
+      expect(activityHandoff.status).toBe(200);
+      const cancelledActivity = await request(app)
+        .post(
+          `/api/mi-agent/coach/handoffs/${activityHandoff.body.handoff.token}/cancel`,
+        )
+        .set("Authorization", authorization)
+        .send({
+          module: "commercial_development",
+          reason: "Cancelada durante la prueba",
+        });
+      expect(cancelledActivity.status).toBe(200);
+      expect(cancelledActivity.body.operation.status).toBe("cancelled");
+
+      const foreignSession = await request(app)
+        .get(`/api/mi-agent/coach/sessions/${session.id}`)
+        .set("Authorization", otherAuthorization);
+      expect(foreignSession.status).toBe(404);
+
+      const ownJob = await request(app)
+        .get(`/api/mi-agent/coach/jobs/${jobId}`)
+        .set("Authorization", authorization);
+      expect(ownJob.status).toBe(200);
+      expect(ownJob.body.job.status).toBe("completed");
+      const foreignJob = await request(app)
+        .get(`/api/mi-agent/coach/jobs/${jobId}`)
+        .set("Authorization", otherAuthorization);
+      expect(foreignJob.status).toBe(404);
+
+      const handoffResponse = await request(app)
+        .post(`/api/mi-agent/coach/operations/${operations[0].id}/handoff`)
+        .set("Authorization", authorization);
+      expect(handoffResponse.status).toBe(200);
+      const handoffToken = handoffResponse.body.handoff.token;
+
+      const foreignHandoff = await request(app)
+        .get(`/api/mi-agent/coach/handoffs/${handoffToken}?module=accounts`)
+        .set("Authorization", otherAuthorization);
+      expect(foreignHandoff.status).toBe(404);
+
+      const completed = await request(app)
+        .post(`/api/mi-agent/coach/handoffs/${handoffToken}/complete`)
+        .set("Authorization", authorization)
+        .send({
+          module: "accounts",
+          entityType: "account",
+          entityId: accountId,
+        });
+      expect(completed.status).toBe(200);
+      expect(completed.body.operation.status).toBe("completed");
+      const duplicateCompletion = await request(app)
+        .post(`/api/mi-agent/coach/handoffs/${handoffToken}/complete`)
+        .set("Authorization", authorization)
+        .send({
+          module: "accounts",
+          entityType: "account",
+          entityId: accountId,
+        });
+      expect(duplicateCompletion.status).toBe(404);
+
+      const rejected = await request(app)
+        .post(`/api/mi-agent/coach/operations/${operations[2].id}/reject`)
+        .set("Authorization", authorization)
+        .send({ reason: "No corresponde a la estrategia" });
+      expect(rejected.status).toBe(200);
+      expect(rejected.body.operation.status).toBe("rejected");
+
+      const expiringHandoff = await request(app)
+        .post(`/api/mi-agent/coach/operations/${operations[3].id}/handoff`)
+        .set("Authorization", authorization);
+      expect(expiringHandoff.status).toBe(200);
+      await query(
+        `UPDATE coach_session_operations SET handoff_expires_at = DATE_SUB(NOW(3), INTERVAL 1 SECOND)
+         WHERE id = ?`,
+        [operations[3].id],
+      );
+      const expired = await request(app)
+        .get(
+          `/api/mi-agent/coach/handoffs/${expiringHandoff.body.handoff.token}?module=accounts`,
+        )
+        .set("Authorization", authorization);
+      expect(expired.status).toBe(404);
+      const expiredRows = await query(
+        `SELECT status, cancellation_reason FROM coach_session_operations WHERE id = ?`,
+        [operations[3].id],
+      );
+      expect(expiredRows[0]).toMatchObject({
+        status: "cancelled",
+        cancellation_reason: "El handoff expiró",
+      });
+
+      const reviewed = await request(app)
+        .post(`/api/mi-agent/coach/operations/${operations[1].id}/review`)
+        .set("Authorization", authorization)
+        .send({ version: operations[1].version });
+      expect(reviewed.status).toBe(200);
+      expect(reviewed.body.operation.pendingOperation.currentValue).toBe(
+        "Guadalajara",
+      );
+      const executed = await request(app)
+        .post(`/api/mi-agent/coach/operations/${operations[1].id}/execute`)
+        .set("Authorization", authorization)
+        .send({
+          version: reviewed.body.operation.version,
+          idempotencyKey: `coach-api-${TEST_PREFIX}`,
+        });
+      expect(executed.status).toBe(200);
+      expect(executed.body.operation.status).toBe("completed");
+      expect(
+        (await query(`SELECT city FROM accounts WHERE id = ?`, [accountId]))[0]
+          .city,
+      ).toBe("Monterrey");
+
+      const reverted = await request(app)
+        .post(`/api/mi-agent/coach/operations/${operations[1].id}/revert`)
+        .set("Authorization", authorization);
+      expect(reverted.status).toBe(200);
+      expect(reverted.body.operation.status).toBe("reverted");
+      expect(
+        (await query(`SELECT city FROM accounts WHERE id = ?`, [accountId]))[0]
+          .city,
+      ).toBe("Guadalajara");
+
+      const restored = await request(app)
+        .get(`/api/mi-agent/coach/sessions/${session.id}`)
+        .set("Authorization", authorization);
+      expect(restored.status).toBe(200);
+      expect(restored.body.operations).toEqual([]);
+      expect(restored.body.recentOperations.map((item) => item.status)).toEqual(
+        expect.arrayContaining([
+          "completed",
+          "rejected",
+          "cancelled",
+          "reverted",
+        ]),
+      );
+    } finally {
+      await query(`DELETE FROM coach_operation_events WHERE session_id = ?`, [
+        session.id,
+      ]);
+      await query(`DELETE FROM coach_session_operations WHERE session_id = ?`, [
+        session.id,
+      ]);
+      await query(`DELETE FROM coach_conversation_sessions WHERE id = ?`, [
+        session.id,
+      ]);
+      await query(`DELETE FROM mi_agent_analysis_jobs WHERE id = ?`, [jobId]);
+    }
   });
 
   test("inteligencia comercial crea jobs y hallazgos respetando permisos por registro", async () => {
@@ -1178,7 +1516,9 @@ describe("API integration baseline", () => {
     );
 
     const snapshotResponse = await request(app)
-      .get(`/api/commercial-intelligence/account-intelligence/snapshot?accountId=${accountId}`)
+      .get(
+        `/api/commercial-intelligence/account-intelligence/snapshot?accountId=${accountId}`,
+      )
       .set("Authorization", `Bearer ${updateLogin.body.token}`);
 
     expect(snapshotResponse.status).toBe(200);
@@ -1204,11 +1544,15 @@ describe("API integration baseline", () => {
     );
 
     const forbiddenSnapshotResponse = await request(app)
-      .get(`/api/commercial-intelligence/account-intelligence/snapshot?accountId=${accountId}`)
+      .get(
+        `/api/commercial-intelligence/account-intelligence/snapshot?accountId=${accountId}`,
+      )
       .set("Authorization", `Bearer ${noAccountLogin.body.token}`);
 
     expect(forbiddenSnapshotResponse.status).toBe(403);
-    expect(forbiddenSnapshotResponse.body.requiredPermission).toBe("cuentas.read");
+    expect(forbiddenSnapshotResponse.body.requiredPermission).toBe(
+      "cuentas.read",
+    );
 
     const internalAnalysisResponse = await request(app)
       .post("/api/commercial-intelligence/account-internal-analysis/jobs")
@@ -1219,13 +1563,26 @@ describe("API integration baseline", () => {
     let internalJobResponse;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       internalJobResponse = await request(app)
-        .get(`/api/commercial-intelligence/account-internal-analysis/jobs/${internalJobId}`)
+        .get(
+          `/api/commercial-intelligence/account-internal-analysis/jobs/${internalJobId}`,
+        )
         .set("Authorization", `Bearer ${updateLogin.body.token}`);
-      if (["completed", "failed"].includes(internalJobResponse.body.job?.status)) break;
+      if (
+        ["completed", "failed"].includes(internalJobResponse.body.job?.status)
+      )
+        break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(internalJobResponse.status).toBe(200);
-    expect(internalJobResponse.body.job.result).toEqual(expect.objectContaining({ sourceDomain: "crm_internal", writesPerformed: false, snapshot: expect.any(Object), agents: expect.any(Array), findings: expect.any(Array) }));
+    expect(internalJobResponse.body.job.result).toEqual(
+      expect.objectContaining({
+        sourceDomain: "crm_internal",
+        writesPerformed: false,
+        snapshot: expect.any(Object),
+        agents: expect.any(Array),
+        findings: expect.any(Array),
+      }),
+    );
     expect(internalJobResponse.body.job.findings.length).toBeGreaterThan(0);
 
     const accountChatResponse = await request(app)
@@ -1236,12 +1593,22 @@ describe("API integration baseline", () => {
     const accountChatJobId = Number(accountChatResponse.body.job.id);
     let accountChatJob;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      accountChatJob = await request(app).get(`/api/commercial-intelligence/account-chat/jobs/${accountChatJobId}`).set("Authorization", `Bearer ${updateLogin.body.token}`);
-      if (["completed", "failed"].includes(accountChatJob.body.job?.status)) break;
+      accountChatJob = await request(app)
+        .get(
+          `/api/commercial-intelligence/account-chat/jobs/${accountChatJobId}`,
+        )
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(accountChatJob.body.job?.status))
+        break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(accountChatJob.status).toBe(200);
-    expect(accountChatJob.body.job.result).toEqual(expect.objectContaining({ source: "account_intelligence", answer: expect.any(String) }));
+    expect(accountChatJob.body.job.result).toEqual(
+      expect.objectContaining({
+        source: "account_intelligence",
+        answer: expect.any(String),
+      }),
+    );
 
     const agentsResponse = await request(app)
       .post("/api/commercial-intelligence/agents/jobs")
@@ -1254,24 +1621,39 @@ describe("API integration baseline", () => {
       agentsJobResponse = await request(app)
         .get(`/api/commercial-intelligence/agents/jobs/${agentsJobId}`)
         .set("Authorization", `Bearer ${updateLogin.body.token}`);
-      if (["completed", "failed"].includes(agentsJobResponse.body.job?.status)) break;
+      if (["completed", "failed"].includes(agentsJobResponse.body.job?.status))
+        break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(agentsJobResponse.status).toBe(200);
     expect(agentsJobResponse.body.job.status).toBe("completed");
-    expect(agentsJobResponse.body.job.result).toEqual(expect.objectContaining({
-      sourceDomain: "crm_internal",
-      orchestrationVersion: "account-intelligence.agents.v1",
-      writesPerformed: false,
-      telemetry: expect.objectContaining({ durationMs: expect.any(Number), writesPerformed: false }),
-      agents: expect.arrayContaining([expect.objectContaining({ agentId: "synthesis" }), expect.objectContaining({ agentId: "actions" })]),
-    }));
+    expect(agentsJobResponse.body.job.result).toEqual(
+      expect.objectContaining({
+        sourceDomain: "crm_internal",
+        orchestrationVersion: "account-intelligence.agents.v1",
+        writesPerformed: false,
+        telemetry: expect.objectContaining({
+          durationMs: expect.any(Number),
+          writesPerformed: false,
+        }),
+        agents: expect.arrayContaining([
+          expect.objectContaining({ agentId: "synthesis" }),
+          expect.objectContaining({ agentId: "actions" }),
+        ]),
+      }),
+    );
 
     const agentsMetricsResponse = await request(app)
       .get("/api/commercial-intelligence/agents/metrics")
       .set("Authorization", `Bearer ${updateLogin.body.token}`);
     expect(agentsMetricsResponse.status).toBe(200);
-    expect(agentsMetricsResponse.body).toEqual(expect.objectContaining({ periodDays: 30, aiUsage: expect.any(Object), jobs: expect.any(Array) }));
+    expect(agentsMetricsResponse.body).toEqual(
+      expect.objectContaining({
+        periodDays: 30,
+        aiUsage: expect.any(Object),
+        jobs: expect.any(Array),
+      }),
+    );
 
     const executiveBriefingResponse = await request(app)
       .post("/api/commercial-intelligence/executive-briefing/jobs")
@@ -1283,9 +1665,12 @@ describe("API integration baseline", () => {
     let executiveJob;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       executiveJob = await request(app)
-        .get(`/api/commercial-intelligence/executive-briefing/jobs/${executiveJobId}`)
+        .get(
+          `/api/commercial-intelligence/executive-briefing/jobs/${executiveJobId}`,
+        )
         .set("Authorization", `Bearer ${updateLogin.body.token}`);
-      if (["completed", "failed"].includes(executiveJob.body.job?.status)) break;
+      if (["completed", "failed"].includes(executiveJob.body.job?.status))
+        break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect(executiveJob.status).toBe(200);
@@ -1302,7 +1687,11 @@ describe("API integration baseline", () => {
     const prematureApplyResponse = await request(app)
       .post(`/api/commercial-intelligence/findings/${findingId}/apply`)
       .set("Authorization", `Bearer ${updateLogin.body.token}`)
-      .send({ target: "account", field: "description", value: "Cambio sin confirmar" });
+      .send({
+        target: "account",
+        field: "description",
+        value: "Cambio sin confirmar",
+      });
 
     expect(prematureApplyResponse.status).toBe(409);
 
@@ -1315,7 +1704,9 @@ describe("API integration baseline", () => {
     expect(confirmResponse.body.finding.status).toBe("confirmed");
 
     const listResponse = await request(app)
-      .get(`/api/commercial-intelligence/findings?accountId=${accountId}&status=confirmed`)
+      .get(
+        `/api/commercial-intelligence/findings?accountId=${accountId}&status=confirmed`,
+      )
       .set("Authorization", `Bearer ${updateLogin.body.token}`);
 
     expect(listResponse.status).toBe(200);
@@ -1337,17 +1728,28 @@ describe("API integration baseline", () => {
     let discoveryJobResponse;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       discoveryJobResponse = await request(app)
-        .get(`/api/commercial-intelligence/commercial-discovery/jobs/${discoveryJobId}`)
+        .get(
+          `/api/commercial-intelligence/commercial-discovery/jobs/${discoveryJobId}`,
+        )
         .set("Authorization", `Bearer ${updateLogin.body.token}`);
-      if (["completed", "failed"].includes(discoveryJobResponse.body.job?.status)) break;
+      if (
+        ["completed", "failed"].includes(discoveryJobResponse.body.job?.status)
+      )
+        break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
     expect(discoveryJobResponse.status).toBe(200);
     expect(discoveryJobResponse.body.job.status).toBe("completed");
-    expect(discoveryJobResponse.body.job.result.briefing.questions.length).toBeGreaterThan(0);
-    expect(discoveryJobResponse.body.job.result.briefing.nextSteps.length).toBeGreaterThan(0);
-    expect(discoveryJobResponse.body.job.result.briefing.emailDraft.subject).toContain("Siguiente paso");
+    expect(
+      discoveryJobResponse.body.job.result.briefing.questions.length,
+    ).toBeGreaterThan(0);
+    expect(
+      discoveryJobResponse.body.job.result.briefing.nextSteps.length,
+    ).toBeGreaterThan(0);
+    expect(
+      discoveryJobResponse.body.job.result.briefing.emailDraft.subject,
+    ).toContain("Siguiente paso");
 
     const externalResearchResponse = await request(app)
       .post("/api/commercial-intelligence/external-research/jobs")
@@ -1355,7 +1757,9 @@ describe("API integration baseline", () => {
       .send({ accountId });
 
     expect(externalResearchResponse.status).toBe(403);
-    expect(externalResearchResponse.body.requiredPermission).toBe("mi_coach.admin");
+    expect(externalResearchResponse.body.requiredPermission).toBe(
+      "mi_coach.admin",
+    );
 
     const automaticBriefingResponse = await request(app)
       .get("/api/commercial-intelligence/automatic-briefing/next")
@@ -1413,7 +1817,9 @@ describe("API integration baseline", () => {
     expect(runResponse.body.session.findings.length).toBeGreaterThan(0);
     expect(runResponse.body.session.contacts.length).toBeGreaterThan(0);
     expect(runResponse.body.session.hypotheses.length).toBeGreaterThan(0);
-    expect(runResponse.body.session.result.outreach.subject).toContain("Prospecto");
+    expect(runResponse.body.session.result.outreach.subject).toContain(
+      "Prospecto",
+    );
 
     const findingId = Number(runResponse.body.session.findings[0].id);
     const confirmResponse = await request(app)
@@ -1441,9 +1847,9 @@ describe("API integration baseline", () => {
       .send({});
 
     expect(externalProspectResponse.status).toBe(200);
-    expect(externalProspectResponse.body.session.result.externalResearch).toEqual(
-      expect.objectContaining({ enabled: false }),
-    );
+    expect(
+      externalProspectResponse.body.session.result.externalResearch,
+    ).toEqual(expect.objectContaining({ enabled: false }));
 
     const accountConversionResponse = await request(app)
       .post(`/api/prospect-research/sessions/${sessionId}/convert-to-account`)
@@ -1476,11 +1882,15 @@ describe("API integration baseline", () => {
       .send({ accountId });
 
     expect(leadConversionResponse.status).toBe(201);
-    expect(Number(leadConversionResponse.body.interactionId)).toBeGreaterThan(0);
+    expect(Number(leadConversionResponse.body.interactionId)).toBeGreaterThan(
+      0,
+    );
 
     const hypothesisId = Number(runResponse.body.session.hypotheses[0].id);
     const opportunityConversionResponse = await request(app)
-      .post(`/api/prospect-research/hypotheses/${hypothesisId}/convert-to-opportunity`)
+      .post(
+        `/api/prospect-research/hypotheses/${hypothesisId}/convert-to-opportunity`,
+      )
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)
       .send({
         accountId,
@@ -1490,7 +1900,9 @@ describe("API integration baseline", () => {
       });
 
     expect(opportunityConversionResponse.status).toBe(201);
-    const opportunityId = Number(opportunityConversionResponse.body.opportunityId);
+    const opportunityId = Number(
+      opportunityConversionResponse.body.opportunityId,
+    );
     expect(opportunityId).toBeGreaterThan(0);
     cleanup.opportunityIds.push(opportunityId);
   });
@@ -1553,15 +1965,22 @@ describe("API integration baseline", () => {
       .send({ accountId: ctx.fixtureAccountId });
 
     expect(blockedExternalResponse.status).toBe(403);
-    expect(blockedExternalResponse.body.requiredPermission).toBe("mi_coach.admin");
+    expect(blockedExternalResponse.body.requiredPermission).toBe(
+      "mi_coach.admin",
+    );
 
     const blockedConversionResponse = await request(app)
       .post("/api/prospect-research/sessions/999999/convert-to-account")
-      .set("Authorization", `Bearer ${(await login(request(app), `${TEST_PREFIX}.prospect.research@example.com`)).body.token}`)
+      .set(
+        "Authorization",
+        `Bearer ${(await login(request(app), `${TEST_PREFIX}.prospect.research@example.com`)).body.token}`,
+      )
       .send({});
 
     expect(blockedConversionResponse.status).toBe(403);
-    expect(blockedConversionResponse.body.requiredPermission).toBe("mi_coach.admin");
+    expect(blockedConversionResponse.body.requiredPermission).toBe(
+      "mi_coach.admin",
+    );
 
     const oldJobResult = await query(
       `INSERT INTO customer_intelligence_jobs
@@ -11584,7 +12003,11 @@ describe("API integration baseline", () => {
 
     await query(
       `UPDATE opportunities SET seller_user_id = ?, created_by = ? WHERE id = ?`,
-      [ctx.opportunityFlowUserId, ctx.opportunityFlowUserId, fixture.opportunityId],
+      [
+        ctx.opportunityFlowUserId,
+        ctx.opportunityFlowUserId,
+        fixture.opportunityId,
+      ],
     );
 
     const interactionsLoginResponse = await login(
@@ -11599,7 +12022,11 @@ describe("API integration baseline", () => {
 
       await query(
         `UPDATE opportunities SET seller_user_id = ?, created_by = ? WHERE id = ?`,
-        [ctx.opportunityFlowUserId, ctx.opportunityFlowUserId, fixture.opportunityId],
+        [
+          ctx.opportunityFlowUserId,
+          ctx.opportunityFlowUserId,
+          fixture.opportunityId,
+        ],
       );
 
       const interactionsLoginResponse = await login(
@@ -16726,20 +17153,19 @@ describe("API integration baseline", () => {
       `UPDATE quotation_versions
        SET status_id = ?
        WHERE id = ?`,
-      [await getCatalogId("quotation_statuses", "ganada"), fixture.latestVersionId],
+      [
+        await getCatalogId("quotation_statuses", "ganada"),
+        fixture.latestVersionId,
+      ],
     );
 
     const wonUploadResponse = await request(app)
       .post(`/api/quotation-versions/${fixture.latestVersionId}/documents`)
       .set("Authorization", `Bearer ${fixture.token}`)
-      .attach(
-        "files",
-        Buffer.from("Documento de orden de compra", "utf8"),
-        {
-          filename: "orden-compra.txt",
-          contentType: "text/plain",
-        },
-      );
+      .attach("files", Buffer.from("Documento de orden de compra", "utf8"), {
+        filename: "orden-compra.txt",
+        contentType: "text/plain",
+      });
 
     expect(wonUploadResponse.status).toBe(201);
     expect(wonUploadResponse.body.documents).toHaveLength(2);

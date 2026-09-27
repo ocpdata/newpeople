@@ -17,6 +17,8 @@ import {
   LeadCallOutcomeOptionCards,
 } from "./interactions/LeadCallOutcomeGuides";
 import LeadOperationEmailModal from "./interactions/LeadOperationEmailModal";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 const INTERACTION_FILE_ACCEPT =
   ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a,.mp4";
@@ -1163,16 +1165,17 @@ function shouldSkipResolveConfirmation(preview, detail) {
 
   const hasRecordsToCreate = Boolean(
     preview.accountToCreate ||
-      preview.contactsToCreate.length ||
-      preview.opportunitiesToCreate.length,
+    preview.contactsToCreate.length ||
+    preview.opportunitiesToCreate.length,
   );
   const hasLinks = Boolean(
     preview.accountToLink ||
-      preview.contactsToLink.length ||
-      preview.opportunitiesToLink.length,
+    preview.contactsToLink.length ||
+    preview.opportunitiesToLink.length,
   );
-  const currentStatusLabel = getInteractionStatusMeta(detail.analysisStatus)
-    .label;
+  const currentStatusLabel = getInteractionStatusMeta(
+    detail.analysisStatus,
+  ).label;
   const hasStatusChange =
     normalizeText(preview.targetStatus) !== normalizeText(currentStatusLabel);
   const hasSellerAssignmentChange = Boolean(preview.sellerToAssign);
@@ -3250,8 +3253,14 @@ function InteractionDetailModal({
                               <button
                                 type="button"
                                 className="interaction-detail-icon-btn interaction-document-play-btn"
-                                onClick={() => void onPlayAudioDocument(document)}
-                                disabled={playingAudioLoading && playingAudioDocumentPublicId === document.publicId}
+                                onClick={() =>
+                                  void onPlayAudioDocument(document)
+                                }
+                                disabled={
+                                  playingAudioLoading &&
+                                  playingAudioDocumentPublicId ===
+                                    document.publicId
+                                }
                                 aria-label="Reproducir audio"
                                 title="Reproducir audio"
                               >
@@ -3336,8 +3345,14 @@ function InteractionDetailModal({
                               <button
                                 type="button"
                                 className="interaction-detail-icon-btn interaction-document-play-btn"
-                                onClick={() => void onPlayAudioDocument(document)}
-                                disabled={playingAudioLoading && playingAudioDocumentPublicId === document.publicId}
+                                onClick={() =>
+                                  void onPlayAudioDocument(document)
+                                }
+                                disabled={
+                                  playingAudioLoading &&
+                                  playingAudioDocumentPublicId ===
+                                    document.publicId
+                                }
                                 aria-label="Reproducir audio"
                                 title="Reproducir audio"
                               >
@@ -3356,15 +3371,18 @@ function InteractionDetailModal({
                                 className="interaction-detail-icon-btn interaction-document-download-btn"
                                 onClick={() => onDownloadDocument(document)}
                                 disabled={
-                                  downloadingDocumentPublicId === document.publicId
+                                  downloadingDocumentPublicId ===
+                                  document.publicId
                                 }
                                 aria-label={
-                                  downloadingDocumentPublicId === document.publicId
+                                  downloadingDocumentPublicId ===
+                                  document.publicId
                                     ? "Descargando archivo"
                                     : "Descargar archivo"
                                 }
                                 title={
-                                  downloadingDocumentPublicId === document.publicId
+                                  downloadingDocumentPublicId ===
+                                  document.publicId
                                     ? "Descargando..."
                                     : "Descargar archivo"
                                 }
@@ -3386,9 +3404,7 @@ function InteractionDetailModal({
                       {playingAudioDocumentPublicId === document.publicId ? (
                         <div className="interaction-document-audio-player">
                           {playingAudioLoading && !playingAudioUrl ? (
-                            <p className="field-hint">
-                              Cargando audio...
-                            </p>
+                            <p className="field-hint">Cargando audio...</p>
                           ) : null}
                           {playingAudioError ? (
                             <p className="field-hint interaction-document-audio-error">
@@ -3396,7 +3412,11 @@ function InteractionDetailModal({
                             </p>
                           ) : null}
                           {playingAudioUrl ? (
-                            <audio controls preload="metadata" src={playingAudioUrl} />
+                            <audio
+                              controls
+                              preload="metadata"
+                              src={playingAudioUrl}
+                            />
                           ) : null}
                         </div>
                       ) : null}
@@ -3768,11 +3788,12 @@ function InteractionDetailModal({
                                 {isMaterializedContactSuggestion ? (
                                   <div className="interaction-readonly-field interaction-readonly-link-field">
                                     {(() => {
-                                      const linkedContact = availableContacts.find(
-                                        (c) =>
-                                          Number(c.id) ===
-                                          Number(resolution.contactId || 0),
-                                      );
+                                      const linkedContact =
+                                        availableContacts.find(
+                                          (c) =>
+                                            Number(c.id) ===
+                                            Number(resolution.contactId || 0),
+                                        );
                                       return (
                                         <>
                                           <span className="interaction-readonly-value-title">
@@ -3792,25 +3813,33 @@ function InteractionDetailModal({
                                               }}
                                             >
                                               {linkedContact.email && (
-                                                <div style={{ flex: "0 1 auto" }}>
+                                                <div
+                                                  style={{ flex: "0 1 auto" }}
+                                                >
                                                   <strong>Email:</strong>{" "}
                                                   {linkedContact.email}
                                                 </div>
                                               )}
                                               {linkedContact.mobile && (
-                                                <div style={{ flex: "0 1 auto" }}>
+                                                <div
+                                                  style={{ flex: "0 1 auto" }}
+                                                >
                                                   <strong>Móvil:</strong>{" "}
                                                   {linkedContact.mobile}
                                                 </div>
                                               )}
                                               {linkedContact.phone && (
-                                                <div style={{ flex: "0 1 auto" }}>
+                                                <div
+                                                  style={{ flex: "0 1 auto" }}
+                                                >
                                                   <strong>Teléfono:</strong>{" "}
                                                   {linkedContact.phone}
                                                 </div>
                                               )}
                                               {linkedContact.position_title && (
-                                                <div style={{ flex: "0 1 auto" }}>
+                                                <div
+                                                  style={{ flex: "0 1 auto" }}
+                                                >
                                                   <strong>Cargo:</strong>{" "}
                                                   {linkedContact.position_title}
                                                 </div>
@@ -5353,6 +5382,8 @@ function LeadCallOutcomeModal({
 }
 
 function InteractionsPage({ can, currentUser }) {
+  const coachHandoff = useCoachHandoff({ module: "interactions" });
+  const appliedCoachHandoffRef = useRef("");
   const helpRef = useRef(null);
   const interactionMenuRef = useRef(null);
   const statusFilterRef = useRef(null);
@@ -6768,6 +6799,62 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
+  useEffect(() => {
+    const operation = coachHandoff.handoff?.payload;
+    if (!operation || appliedCoachHandoffRef.current === coachHandoff.token) {
+      return;
+    }
+    if (operation.kind === "create_lead") {
+      appliedCoachHandoffRef.current = coachHandoff.token;
+      const payload = operation.payload || {};
+      queueMicrotask(() => {
+        setCreateLeadSource(
+          payload.leadSource || operation.leadSource || "otro",
+        );
+        setCreatePastedTextName(
+          payload.title || operation.title || "Lead Coach",
+        );
+        setCreatePastedText(
+          payload.sourceNotes || payload.summary || operation.sourceNotes || "",
+        );
+        setShowCreateModal(true);
+      });
+      return;
+    }
+    if (operation.kind === "lead_resolve") {
+      const interactionId = Number(
+        operation.interactionId || coachHandoff.handoff?.entities?.leadId || 0,
+      );
+      if (!interactionId) return;
+      appliedCoachHandoffRef.current = coachHandoff.token;
+      queueMicrotask(() => {
+        void openDetail(interactionId).then(() => {
+          const payload = operation.payload || {};
+          setEditForm((current) =>
+            current
+              ? {
+                  ...current,
+                  title: payload.title ?? current.title,
+                  leadSource: payload.leadSource ?? current.leadSource,
+                  sourceNotes: payload.sourceNotes ?? current.sourceNotes,
+                  summary: payload.summary ?? current.summary,
+                }
+              : current,
+          );
+        });
+      });
+    }
+  }, [coachHandoff.handoff, coachHandoff.token]);
+
+  async function completeInteractionHandoff(entityId, result = {}) {
+    if (!coachHandoff.handoff || !entityId) return;
+    await coachHandoff.complete({
+      entityType: "lead",
+      entityId: Number(entityId),
+      result,
+    });
+  }
+
   async function handleSaveLeadCallOutcome(form) {
     if (!detail?.id) return;
 
@@ -6820,7 +6907,7 @@ function InteractionsPage({ can, currentUser }) {
         }
         filesToUpload.forEach((file) => formData.append("files", file));
       }
-      await api.post("/api/interactions", formData, {
+      const { data } = await api.post("/api/interactions", formData, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: 120000,
       });
@@ -6839,6 +6926,11 @@ function InteractionsPage({ can, currentUser }) {
         statuses: LEAD_STATUS_FILTER_VALUES,
         source: "all",
       });
+      if (coachHandoff.handoff?.payload?.kind === "create_lead") {
+        await completeInteractionHandoff(data?.id, {
+          leadSource: createLeadSource,
+        });
+      }
     } catch (err) {
       setCreateInfoMessage(
         getApiErrorMessage(err, "No fue posible crear el lead"),
@@ -7216,9 +7308,7 @@ function InteractionsPage({ can, currentUser }) {
                 ...opportunityBase,
                 ...(resolution.mode === "create_new" ? resolution.draft : {}),
                 suggestionId:
-                  opportunityBase.suggestionId ||
-                  resolution.suggestionId ||
-                  "",
+                  opportunityBase.suggestionId || resolution.suggestionId || "",
                 resolutionMode: resolution.mode,
                 selectedOpportunityId:
                   resolution.mode === "link_existing" &&
@@ -7237,7 +7327,10 @@ function InteractionsPage({ can, currentUser }) {
             ),
         };
 
-        const response = await api.put(`/api/interactions/${detail.id}`, payload);
+        const response = await api.put(
+          `/api/interactions/${detail.id}`,
+          payload,
+        );
         const refreshedDetail = response.data;
         setDetail(refreshedDetail);
         setEditForm(buildEditableForm(refreshedDetail));
@@ -7247,6 +7340,9 @@ function InteractionsPage({ can, currentUser }) {
         closeDetailModal();
         setSuccess("Lead actualizado");
         await loadInteractions();
+        if (coachHandoff.handoff?.payload?.kind === "lead_resolve") {
+          await completeInteractionHandoff(detail.id);
+        }
       } catch (err) {
         setError(getApiErrorMessage(err, "No fue posible guardar el lead"));
       } finally {
@@ -7413,6 +7509,9 @@ function InteractionsPage({ can, currentUser }) {
       closeDetailModal();
       setSuccess("Lead guardado");
       await loadInteractions();
+      if (coachHandoff.handoff?.payload?.kind === "lead_resolve") {
+        await completeInteractionHandoff(data?.id || detail.id);
+      }
     } catch (err) {
       const duplicatePayload = err?.response?.data;
       if (
@@ -8001,6 +8100,7 @@ function InteractionsPage({ can, currentUser }) {
 
   return (
     <section className="panel">
+      <CoachHandoffNotice {...coachHandoff} />
       <InteractionInfoModal
         message={createInfoMessage}
         onClose={() => setCreateInfoMessage("")}

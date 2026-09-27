@@ -1171,6 +1171,91 @@ function getLeadCallOutcomeRule({
   );
 }
 
+export function validateLeadCallOutcomeForCoach({
+  currentStatusCode,
+  operation,
+}) {
+  if (isFinalizedLeadStatus(currentStatusCode)) {
+    return {
+      ok: false,
+      status: 409,
+      code: "COACH_LEAD_FINALIZED",
+      message:
+        "No puedes registrar un resultado comercial en un lead finalizado",
+    };
+  }
+  const rule = getLeadCallOutcomeRule({
+    currentStatusCode,
+    substatusCode: String(operation?.substatusCode || "").trim(),
+    reasonCode: String(operation?.reasonCode || "").trim(),
+    requiredActionCode: String(operation?.requiredActionCode || "").trim(),
+  });
+  if (!rule) {
+    return {
+      ok: false,
+      status: 400,
+      code: "COACH_LEAD_OUTCOME_INVALID",
+      message:
+        "La combinación de subestado, razón y acción no es válida para el estado actual del lead",
+    };
+  }
+  const comment = String(operation?.comment || "").trim();
+  const nextActionDueAt = String(operation?.nextActionDueAt || "").trim();
+  const referredContactName = String(
+    operation?.referredContactName || "",
+  ).trim();
+  const referredAreaName = String(operation?.referredAreaName || "").trim();
+  if (rule.requiresComment && !comment) {
+    return {
+      ok: false,
+      status: 400,
+      code: "COACH_LEAD_COMMENT_REQUIRED",
+      message: "Debes registrar un comentario comercial para este resultado",
+    };
+  }
+  if (rule.requiresDueDate && !parseDateOnlyText(nextActionDueAt)) {
+    return {
+      ok: false,
+      status: 400,
+      code: "COACH_LEAD_DUE_DATE_REQUIRED",
+      message:
+        "Debes registrar una fecha compromiso válida para este resultado",
+    };
+  }
+  if (nextActionDueAt && !parseDateOnlyText(nextActionDueAt)) {
+    return {
+      ok: false,
+      status: 400,
+      code: "COACH_LEAD_DUE_DATE_INVALID",
+      message: "La fecha compromiso no es válida",
+    };
+  }
+  if (rule.requiresReferredContact && !referredContactName) {
+    return {
+      ok: false,
+      status: 400,
+      code: "COACH_LEAD_CONTACT_REQUIRED",
+      message: "Debes indicar la persona referida para continuar",
+    };
+  }
+  if (rule.requiresReferredArea && !referredAreaName) {
+    return {
+      ok: false,
+      status: 400,
+      code: "COACH_LEAD_AREA_REQUIRED",
+      message: "Debes indicar el área objetivo para continuar",
+    };
+  }
+  return {
+    ok: true,
+    rule,
+    comment,
+    nextActionDueAt: nextActionDueAt || null,
+    referredContactName,
+    referredAreaName,
+  };
+}
+
 function getLeadCallOutcomeCatalogResponse(currentStatusCode = null) {
   const transitionRules = currentStatusCode
     ? LEAD_CALL_OUTCOME_RULES.filter(

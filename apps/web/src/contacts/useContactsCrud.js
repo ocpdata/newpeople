@@ -610,6 +610,7 @@ export function useContactsCrud({
         setContactSortDirection("desc");
         setContactsPage(1);
       }
+      return data;
     } catch (err) {
       const duplicatePayload = err?.response?.data;
       if (
@@ -645,6 +646,7 @@ export function useContactsCrud({
         }
       }
       setError(getApiErrorMessage(err, "No fue posible guardar el contacto"));
+      return null;
     } finally {
       setSavingContact(false);
     }
@@ -981,6 +983,7 @@ export function useContactsCrud({
     canCreateOrRequestContacts,
     canChangeContactActivationStatus,
     form,
+    setForm,
     totalContactsCount,
     contactStatusCounts,
     visibleContacts,

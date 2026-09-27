@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import ProposalTemplatePickerModal from "./ProposalTemplatePickerModal";
 import QuotationsSection from "./quotations/QuotationsSection";
 import { api, getApiErrorMessage } from "./api";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 import "./quotations/quotations.css";
 
 function normalizeText(value) {
@@ -39,6 +41,15 @@ export default function QuotationsPage({ currentUser }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const quotationsSectionRef = useRef(null);
+  const {
+    token: coachHandoffToken,
+    handoff: coachHandoffData,
+    loading: coachHandoffLoading,
+    error: coachHandoffError,
+    complete: completeCoachHandoff,
+    cancel: cancelCoachHandoff,
+  } = useCoachHandoff({ module: "quotations" });
+  const appliedCoachHandoffRef = useRef("");
   const [initialSelectedOpportunityId] = useState(
     searchParams.get("opportunityId") || "",
   );
@@ -65,6 +76,20 @@ export default function QuotationsPage({ currentUser }) {
   });
   const [selectedProposalTemplateId, setSelectedProposalTemplateId] =
     useState(null);
+
+  const setOpportunitySearchParams = useCallback(
+    (opportunityId) => {
+      const next = new URLSearchParams();
+      if (opportunityId) {
+        next.set("opportunityId", String(opportunityId));
+      }
+      if (coachHandoffToken) {
+        next.set("coachDraft", coachHandoffToken);
+      }
+      setSearchParams(next, { replace: true });
+    },
+    [coachHandoffToken, setSearchParams],
+  );
 
   const selectedAccount = useMemo(
     () =>
@@ -207,7 +232,7 @@ export default function QuotationsPage({ currentUser }) {
           setSelectedOpportunityId("");
           setContactOptions([]);
           setOpportunities([]);
-          setSearchParams({}, { replace: true });
+          setOpportunitySearchParams("");
         }
       } catch (err) {
         if (!cancelled) {
@@ -302,12 +327,9 @@ export default function QuotationsPage({ currentUser }) {
 
         setSelectedOpportunityId(nextSelectedOpportunityId);
         if (nextSelectedOpportunityId) {
-          setSearchParams(
-            { opportunityId: nextSelectedOpportunityId },
-            { replace: true },
-          );
+          setOpportunitySearchParams(nextSelectedOpportunityId);
         } else {
-          setSearchParams({}, { replace: true });
+          setOpportunitySearchParams("");
         }
       } catch (err) {
         if (!cancelled) {
@@ -337,7 +359,7 @@ export default function QuotationsPage({ currentUser }) {
     initialSelectedOpportunityId,
     selectedAccountId,
     selectedOpportunityId,
-    setSearchParams,
+    setOpportunitySearchParams,
   ]);
 
   useEffect(() => {
@@ -356,25 +378,95 @@ export default function QuotationsPage({ currentUser }) {
     quotationPermissions.has("cotizaciones.administracion");
   const canOpenCreateQuotationModal =
     canCreateQuotation && hasAvailableAccounts && !loadingAccounts;
+  useEffect(() => {
+    const operation = coachHandoffData?.payload;
+    if (
+      operation?.kind !== "create_quotation" ||
+      appliedCoachHandoffRef.current === coachHandoffToken ||
+      loadingAccounts
+    ) {
+      return;
+    }
+    const payload = operation.payload || {};
+    const opportunityId = Number(
+      operation.opportunityId ||
+        payload.opportunityId ||
+        coachHandoffData?.entities?.opportunityId ||
+        0,
+    );
+    const accountId = Number(
+      payload.accountId ||
+        operation.accountId ||
+        coachHandoffData?.entities?.accountId ||
+        0,
+    );
+    if (!opportunityId || !accountId) return;
+
+    appliedCoachHandoffRef.current = coachHandoffToken;
+    queueMicrotask(() => {
+      setSelectedAccountId(String(accountId));
+      setSelectedOpportunityId(String(opportunityId));
+      setOpportunitySearchParams(opportunityId);
+      quotationsSectionRef.current?.openCreateQuotationModal({
+        accountId,
+        opportunityId,
+        proposalName: payload.proposalName,
+        quotationDate: payload.quotationDate,
+        introduction: payload.introduction,
+      });
+    });
+  }, [
+    coachHandoffData,
+    coachHandoffToken,
+    loadingAccounts,
+    setOpportunitySearchParams,
+  ]);
+
+  const handleCoachQuotationCreated = useCallback(
+    async (data) => {
+      if (coachHandoffData?.payload?.kind !== "create_quotation") return;
+      const quotationId = Number(data?.quotationId || 0);
+      if (!quotationId) return;
+      try {
+        await completeCoachHandoff({
+          entityType: "quotation",
+          entityId: quotationId,
+          result: { versionId: Number(data?.latestVersionId || 0) || null },
+        });
+      } catch (err) {
+        setError(
+          getApiErrorMessage(
+            err,
+            "La cotización se creó, pero no fue posible cerrar el borrador del Coach",
+          ),
+        );
+      }
+    },
+    [coachHandoffData, completeCoachHandoff],
+  );
   const handleQuotationOpportunityFocusChange = useCallback(
     (nextOpportunityId) => {
       const normalizedOpportunityId = String(nextOpportunityId || "");
       setSelectedOpportunityId(normalizedOpportunityId);
       if (normalizedOpportunityId) {
-        setSearchParams(
-          { opportunityId: normalizedOpportunityId },
-          { replace: true },
-        );
+        setOpportunitySearchParams(normalizedOpportunityId);
         return;
       }
 
-      setSearchParams({}, { replace: true });
+      setOpportunitySearchParams("");
     },
-    [setSearchParams],
+    [setOpportunitySearchParams],
   );
 
   return (
     <section className="panel">
+      <CoachHandoffNotice
+        token={coachHandoffToken}
+        handoff={coachHandoffData}
+        loading={coachHandoffLoading}
+        error={coachHandoffError}
+        cancel={cancelCoachHandoff}
+      />
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
@@ -479,6 +571,7 @@ export default function QuotationsPage({ currentUser }) {
             openProposalTemplateModal(versionId);
           }}
           initialSelectedQuotationId={initialSelectedQuotationId}
+          onQuotationCreated={handleCoachQuotationCreated}
           isOpen
           showHeader={false}
           showCreateButton={false}

@@ -12,6 +12,7 @@
     "seed:demo:reset-db": "npm run seed:demo:reset-db --prefix apps/api",
     "build:web": "npm run build --prefix apps/web",
     "test:api": "npm run test --prefix apps/api",
+    "test:coach": "npm run test:coach --prefix apps/api && npm run test:e2e:coach --prefix apps/web",
     "test:web:e2e": "npm run test:e2e --prefix apps/web"
   },
   "keywords": [],

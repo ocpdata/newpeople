@@ -9,8 +9,7 @@ const DOCUMENT_SESSION_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TIMEOUT_MS = 60000;
 const VALIDATE_STAGE_JOB_POLL_INTERVAL_MS = 3000;
 const VALIDATE_STAGE_TOTAL_POLL_TIMEOUT_MS = 120000;
-const COMMERCIAL_SELLER_ELIGIBILITY_PERMISSION =
-  "comercial.seller.eligible";
+const COMMERCIAL_SELLER_ELIGIBILITY_PERMISSION = "comercial.seller.eligible";
 
 function isDocumentProcessingPending(session, documents) {
   const sessionStatus = normalizeText(session?.status);
@@ -1689,7 +1688,10 @@ export function useOpportunitiesPage({
     const defaultCommercialContext = buildDefaultCommercialContext();
     seedCommercialDraftState(defaultCommercialContext);
     const defaultForm = buildDefaultOpportunityForm();
-    defaultForm.salesStageId = findCatalogIdByCode(catalogs.stages, "contacto_inicial");
+    defaultForm.salesStageId = findCatalogIdByCode(
+      catalogs.stages,
+      "contacto_inicial",
+    );
     setForm(defaultForm);
     setShowOpportunityModal(true);
   }
@@ -3051,6 +3053,7 @@ export function useOpportunitiesPage({
         setOpportunitySortDirection("desc");
         setOpportunitiesPage(1);
       }
+      return data;
     } catch (err) {
       const fieldErrors = err?.response?.data?.errors?.fieldErrors;
       if (fieldErrors && typeof fieldErrors === "object") {
@@ -3067,6 +3070,7 @@ export function useOpportunitiesPage({
       setError(
         getApiErrorMessage(err, "No fue posible guardar la oportunidad"),
       );
+      return null;
     } finally {
       setSavingOpportunity(false);
     }
@@ -3138,7 +3142,10 @@ export function useOpportunitiesPage({
       await load();
     } catch (err) {
       setError(
-        getApiErrorMessage(err, "No fue posible actualizar el importe de la oportunidad"),
+        getApiErrorMessage(
+          err,
+          "No fue posible actualizar el importe de la oportunidad",
+        ),
       );
       throw err;
     }
@@ -3414,5 +3421,3 @@ export function useOpportunitiesPage({
     commercialAnswerSuggestionsByStageId,
   };
 }
-
-

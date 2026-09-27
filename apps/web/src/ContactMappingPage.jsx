@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import ContactFormModal from "./contacts/ContactFormModal";
 import { useContactsPage } from "./contacts/useContactsPage";
+import {
+  buildCoachFormPatch,
+  getCoachHandoffEntityId,
+  getCoachHandoffOperation,
+} from "./coach/handoffForm";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 const ORG_NODE_WIDTH = 220;
 const ORG_NODE_HEIGHT = 118;
@@ -462,6 +469,8 @@ function ContactOrgNode({
 export default function ContactMappingPage({ currentUser }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const helpRef = useRef(null);
+  const coachHandoff = useCoachHandoff({ module: "contact_mapping" });
+  const appliedCoachHandoffRef = useRef("");
   const {
     contacts,
     showContactModal,
@@ -473,6 +482,7 @@ export default function ContactMappingPage({ currentUser }) {
     success,
     catalogs,
     form,
+    setForm,
     managerOptions,
     editingContact,
     getContactStatusBadgeClass,
@@ -489,6 +499,54 @@ export default function ContactMappingPage({ currentUser }) {
     dismissContactDuplicateReview,
     openDuplicateCandidateContact,
   } = useContactsPage({ currentUser, searchParams, setSearchParams });
+
+  useEffect(() => {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    if (
+      operation?.kind !== "create_contact_mapping" ||
+      appliedCoachHandoffRef.current === coachHandoff.token ||
+      !catalogs.purchaseParticipations.length ||
+      !catalogs.activationStatuses.length
+    ) {
+      return;
+    }
+    const accountId =
+      Number(operation.payload?.accountId || operation.accountId || 0) ||
+      getCoachHandoffEntityId(coachHandoff.handoff, "accountId");
+    if (!accountId) return;
+
+    appliedCoachHandoffRef.current = coachHandoff.token;
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set("accountId", String(accountId));
+    setSearchParams(nextSearchParams, { replace: true });
+    openCreateContactModal();
+    setForm((current) => ({
+      ...current,
+      ...buildCoachFormPatch(coachHandoff.handoff, "contacts"),
+      accountId: String(accountId),
+    }));
+  }, [
+    coachHandoff.handoff,
+    coachHandoff.token,
+    catalogs,
+    openCreateContactModal,
+    searchParams,
+    setForm,
+    setSearchParams,
+  ]);
+
+  async function saveContactMappingWithCoachHandoff(event) {
+    const operation = getCoachHandoffOperation(coachHandoff.handoff);
+    const data = await saveContact(event);
+    if (operation?.kind === "create_contact_mapping" && data?.id) {
+      await coachHandoff.complete({
+        entityType: "contact",
+        entityId: Number(data.id),
+        result: { accountId: Number(form.accountId) },
+      });
+    }
+    return data;
+  }
 
   const selectedAccountId = searchParams.get("accountId") || "";
   const selectedContactId = searchParams.get("contactId") || "";
@@ -695,6 +753,7 @@ export default function ContactMappingPage({ currentUser }) {
 
   return (
     <section className="panel contact-mapping-page">
+      <CoachHandoffNotice {...coachHandoff} />
       <div className="roles-page-header contact-mapping-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
@@ -766,7 +825,7 @@ export default function ContactMappingPage({ currentUser }) {
           contactDuplicateReview={contactDuplicateReview}
           savingContact={savingContact}
           onClose={closeContactModal}
-          onSubmit={saveContact}
+          onSubmit={saveContactMappingWithCoachHandoff}
           onDismissDuplicateReview={dismissContactDuplicateReview}
           onOpenDuplicateCandidate={openDuplicateCandidateContact}
           onChange={updateContactFormField}

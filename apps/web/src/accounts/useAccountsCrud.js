@@ -502,6 +502,7 @@ export function useAccountsCrud({
             ? "Cuenta actualizada correctamente"
             : "Cuenta creada correctamente"),
       );
+      return data;
     } catch (err) {
       const duplicatePayload = err?.response?.data;
       if (
@@ -553,6 +554,7 @@ export function useAccountsCrud({
       setError(
         getApiErrorMessage(err, err?.message || "No fue posible crear cuenta"),
       );
+      return null;
     } finally {
       setCreatingAccount(false);
     }

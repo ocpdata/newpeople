@@ -56,3 +56,11 @@ jobs:
 
       - name: Lint web
         run: npm --prefix apps/web run lint
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+
+      - name: Run Coach E2E tests
+        run: npm run test:e2e:coach
+        working-directory: apps/web

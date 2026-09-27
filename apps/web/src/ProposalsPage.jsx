@@ -6,6 +6,8 @@ import ProposalPrintPreviewModal from "./proposals/ProposalPrintPreviewModal";
 import ProposalEmailComposerModal from "./proposals/ProposalEmailComposerModal";
 import ModalInlineHelp from "./help/ModalInlineHelp";
 import { api, getApiErrorMessage } from "./api";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -3043,7 +3045,16 @@ function ProposalEditorModal({
 export default function ProposalsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const {
+    handoff: coachHandoffData,
+    token: coachHandoffToken,
+    loading: coachHandoffLoading,
+    error: coachHandoffError,
+    complete: completeCoachHandoff,
+    cancel: cancelCoachHandoff,
+  } = useCoachHandoff({ module: "proposals" });
   const createRequestRef = useRef("");
+  const appliedCoachHandoffRef = useRef("");
   const proposalsLoadRequestRef = useRef(0);
   const appliedProposalSuggestionJobRef = useRef(new Map());
   const componentGenerationJobsRef = useRef({});
@@ -3233,6 +3244,35 @@ export default function ProposalsPage() {
     Number(searchParams.get("sourceProposalId") || 0) || null;
   const selectedTemplateIdFromQuery =
     Number(searchParams.get("templateId") || 0) || null;
+
+  useEffect(() => {
+    const operation = coachHandoffData?.payload;
+    if (
+      operation?.kind !== "create_proposal" ||
+      appliedCoachHandoffRef.current === coachHandoffToken
+    ) {
+      return;
+    }
+    const payload = operation.payload || {};
+    const versionId = Number(
+      payload.quotationVersionId || operation.quotationVersionId || 0,
+    );
+    if (!versionId) return;
+
+    appliedCoachHandoffRef.current = coachHandoffToken;
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set("createFromVersionId", String(versionId));
+    if (payload.templateId) {
+      nextSearchParams.set("templateId", String(payload.templateId));
+    }
+    if (payload.sourceProposalId) {
+      nextSearchParams.set(
+        "sourceProposalId",
+        String(payload.sourceProposalId),
+      );
+    }
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [coachHandoffData, coachHandoffToken, searchParams, setSearchParams]);
 
   const defaultTemplateId = useMemo(
     () =>
@@ -3880,6 +3920,20 @@ export default function ProposalsPage() {
         await loadProposalsRef.current({
           nextSelectedProposalId: nextProposalId,
         });
+        if (
+          coachHandoffData?.payload?.kind === "create_proposal" &&
+          nextProposalId
+        ) {
+          await completeCoachHandoff({
+            entityType: "proposal",
+            entityId: nextProposalId,
+            result: { quotationVersionId: createFromVersionId },
+          });
+          setSearchParams(
+            new URLSearchParams({ proposalId: String(nextProposalId) }),
+            { replace: true },
+          );
+        }
       } catch (err) {
         if (!cancelled) {
           setError(
@@ -3901,7 +3955,14 @@ export default function ProposalsPage() {
     return () => {
       cancelled = true;
     };
-  }, [createFromVersionId, sourceProposalId, selectedTemplateIdFromQuery]);
+  }, [
+    coachHandoffData,
+    completeCoachHandoff,
+    createFromVersionId,
+    setSearchParams,
+    sourceProposalId,
+    selectedTemplateIdFromQuery,
+  ]);
 
   function updateProposalInList(nextProposal) {
     if (!nextProposal?.id) return;
@@ -5230,6 +5291,13 @@ export default function ProposalsPage() {
 
   return (
     <section className="panel proposal-shell">
+      <CoachHandoffNotice
+        token={coachHandoffToken}
+        handoff={coachHandoffData}
+        loading={coachHandoffLoading}
+        error={coachHandoffError}
+        cancel={cancelCoachHandoff}
+      />
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">

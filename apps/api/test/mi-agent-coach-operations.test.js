@@ -2,17 +2,51 @@ import { describe, expect, it } from "vitest";
 import { normalizeCoachResult } from "../src/routes.mi-agent.js";
 
 describe("Coach operation normalization", () => {
+  const authoritativeStageReadiness = {
+    currentStage: {
+      id: 3,
+      code: "desarrollo",
+      name: "Desarrollo",
+      objective: "Validar la solución propuesta.",
+    },
+    confirmedProgress: [],
+    pendingItems: [
+      {
+        title: "Ajuste técnico",
+        detail: "Falta evidencia verificable.",
+        evidence: [],
+      },
+    ],
+    risks: [],
+    nextStep: {
+      action: "Validar el ajuste técnico",
+      responsibleUserId: 7,
+      targetDate: "2026-10-03",
+      successCriteria: "Registrar la aceptación técnica.",
+    },
+    recommendation: "remain",
+    rationale: "Falta un criterio requerido.",
+  };
   const snapshot = {
     pipeline: {
-      opportunities: [{
-        id: 10,
-        name: "Oportunidad de prueba",
-        amountUsd: 90000,
-        account: { id: 1 },
-        contact: { id: 2 },
-        stageAnswers: [{ questionId: 7, code: "identificacion_motivacion_principal", prompt: "¿Cuál es el motivo de negocio principal?", answer: "La necesidad inicial" }],
-        workspace: { actions: [{ id: 99 }] },
-      }],
+      opportunities: [
+        {
+          id: 10,
+          name: "Oportunidad de prueba",
+          amountUsd: 90000,
+          account: { id: 1 },
+          contact: { id: 2 },
+          stageAnswers: [
+            {
+              questionId: 7,
+              code: "identificacion_motivacion_principal",
+              prompt: "¿Cuál es el motivo de negocio principal?",
+              answer: "La necesidad inicial",
+            },
+          ],
+          workspace: { actions: [{ id: 99 }] },
+        },
+      ],
     },
     workboard: [],
     leads: [{ id: 30, accountId: 1 }],
@@ -20,30 +54,42 @@ describe("Coach operation normalization", () => {
   };
 
   it("keeps a valid activity and its existing activity id", () => {
-    const result = normalizeCoachResult({
-      intent: "freeform",
-      operations: [{
-        kind: "activity",
-        opportunityId: 10,
-        activityId: 99,
-        actionType: "meeting",
-        title: "Reunión con Compras",
-        scheduledAt: "2026-09-24T11:00",
-      }],
-    }, snapshot);
+    const result = normalizeCoachResult(
+      {
+        intent: "freeform",
+        operations: [
+          {
+            kind: "activity",
+            opportunityId: 10,
+            activityId: 99,
+            actionType: "meeting",
+            title: "Reunión con Compras",
+            scheduledAt: "2026-09-24T11:00",
+          },
+        ],
+      },
+      snapshot,
+    );
 
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0].activityId).toBe(99);
   });
 
   it("inherits the selected opportunity for a new activity", () => {
-    const result = normalizeCoachResult({
-      operations: [{
-        kind: "activity",
-        actionType: "call",
-        title: "Llamar al cliente",
-      }],
-    }, snapshot, "Crea una llamada", { opportunityId: 10 });
+    const result = normalizeCoachResult(
+      {
+        operations: [
+          {
+            kind: "activity",
+            actionType: "call",
+            title: "Llamar al cliente",
+          },
+        ],
+      },
+      snapshot,
+      "Crea una llamada",
+      { opportunityId: 10 },
+    );
 
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0].opportunityId).toBe(10);
@@ -66,29 +112,40 @@ describe("Coach operation normalization", () => {
   });
 
   it("drops an activity id that does not belong to the opportunity", () => {
-    const result = normalizeCoachResult({
-      operations: [{
-        kind: "activity",
-        opportunityId: 10,
-        activityId: 777,
-        title: "Actividad falsa",
-      }],
-    }, snapshot);
+    const result = normalizeCoachResult(
+      {
+        operations: [
+          {
+            kind: "activity",
+            opportunityId: 10,
+            activityId: 777,
+            title: "Actividad falsa",
+          },
+        ],
+      },
+      snapshot,
+    );
 
     expect(result.operations).toEqual([]);
   });
 
   it("keeps a proposed stage answer and its previous value", () => {
-    const result = normalizeCoachResult({
-      responseType: "change_request",
-      operations: [{
-        kind: "stage_answer",
-        opportunityId: 10,
-        questionId: 7,
-        answerValue: "El cliente necesita evitar nuevos incidentes de seguridad.",
-        title: "Registrar motivación del cliente",
-      }],
-    }, snapshot);
+    const result = normalizeCoachResult(
+      {
+        responseType: "change_request",
+        operations: [
+          {
+            kind: "stage_answer",
+            opportunityId: 10,
+            questionId: 7,
+            answerValue:
+              "El cliente necesita evitar nuevos incidentes de seguridad.",
+            title: "Registrar motivación del cliente",
+          },
+        ],
+      },
+      snapshot,
+    );
 
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0].previousAnswer).toBe("La necesidad inicial");
@@ -117,7 +174,9 @@ describe("Coach operation normalization", () => {
       { opportunityId: 10 },
     );
 
-    expect(result.answer).toBe("El importe de la oportunidad 10 es 90,000.00 USD.");
+    expect(result.answer).toBe(
+      "El importe de la oportunidad 10 es 90,000.00 USD.",
+    );
     expect(result.entities.opportunityId).toBe(10);
   });
 
@@ -142,31 +201,172 @@ describe("Coach operation normalization", () => {
     const result = normalizeCoachResult(
       {
         responseType: "change_request",
-        answer: "Para cambiar el monto necesito confirmar la oportunidad específica a modificar, ya que no hay una oportunidad seleccionada actualmente.",
-        operations: [{
-          kind: "opportunity_field",
-          field: "amountUsd",
-          value: "100000",
-        }],
+        answer:
+          "Para cambiar el monto necesito confirmar la oportunidad específica a modificar, ya que no hay una oportunidad seleccionada actualmente.",
+        operations: [
+          {
+            kind: "opportunity_field",
+            field: "amountUsd",
+            value: "100000",
+          },
+        ],
       },
       snapshot,
       "Cambia el monto a 100,000 dólares",
       { opportunityId: 10 },
     );
 
-    expect(result.answer).toBe("Se propone cambiar el importe de la oportunidad 10 a 100,000.00 USD.");
+    expect(result.answer).toBe(
+      "Se propone cambiar el importe de la oportunidad 10 a 100,000.00 USD.",
+    );
     expect(result.entities.opportunityId).toBe(10);
   });
 
   it("drops CRM operations that reference inaccessible entities", () => {
-    const result = normalizeCoachResult({
-      operations: [
-        { kind: "account_field", accountId: 999, field: "name", value: "Otro" },
-        { kind: "contact_field", contactId: 998, field: "email", value: "x@y.com" },
-        { kind: "lead_call_outcome", interactionId: 997, substatusCode: "x", reasonCode: "y", requiredActionCode: "z" },
-      ],
-    }, snapshot);
+    const result = normalizeCoachResult(
+      {
+        operations: [
+          {
+            kind: "account_field",
+            accountId: 999,
+            field: "name",
+            value: "Otro",
+          },
+          {
+            kind: "contact_field",
+            contactId: 998,
+            field: "email",
+            value: "x@y.com",
+          },
+          {
+            kind: "lead_call_outcome",
+            interactionId: 997,
+            substatusCode: "x",
+            reasonCode: "y",
+            requiredActionCode: "z",
+          },
+        ],
+      },
+      snapshot,
+    );
 
+    expect(result.operations).toEqual([]);
+  });
+
+  it("falls back without operations when the normalized response violates the contract", () => {
+    const result = normalizeCoachResult(
+      {
+        answer: "Actualizaré el importe.",
+        facts: [{ sourceType: "invented_source", sourceId: 10, label: "Dato" }],
+        operations: [
+          {
+            kind: "opportunity_field",
+            opportunityId: 10,
+            field: "amountUsd",
+            value: 100000,
+            title: "Actualizar importe",
+          },
+        ],
+      },
+      snapshot,
+      "Cambia el monto",
+      { opportunityId: 10 },
+    );
+
+    expect(result.responseType).toBe("informational");
+    expect(result.confidence).toBe("low");
+    expect(result.operations).toEqual([]);
+  });
+
+  it("does not let the model override authoritative stage readiness", () => {
+    const result = normalizeCoachResult(
+      {
+        intent: "opportunity_preparation",
+        answer: "Puedes avanzar.",
+        stageReadiness: {
+          ...authoritativeStageReadiness,
+          pendingItems: [],
+          recommendation: "advance",
+          rationale: "Todo está completo.",
+        },
+      },
+      snapshot,
+      "¿Qué me falta para avanzar de etapa?",
+      { opportunityId: 10 },
+      authoritativeStageReadiness,
+    );
+
+    expect(result.intent).toBe("opportunity_preparation");
+    expect(result.stageReadiness).toEqual(authoritativeStageReadiness);
+    expect(result.stageReadiness.recommendation).toBe("remain");
+  });
+
+  it("preserves all readiness blocks when the model response is invalid", () => {
+    const result = normalizeCoachResult(
+      {
+        answer: "Diagnóstico disponible.",
+        facts: [{ sourceType: "invented_source", label: "Dato inválido" }],
+      },
+      snapshot,
+      "¿Estoy listo para pasar a cotización?",
+      { opportunityId: 10 },
+      authoritativeStageReadiness,
+    );
+
+    expect(result.confidence).toBe("low");
+    expect(result.stageReadiness).toEqual(authoritativeStageReadiness);
+    expect(Object.keys(result.stageReadiness)).toEqual([
+      "currentStage",
+      "confirmedProgress",
+      "pendingItems",
+      "risks",
+      "nextStep",
+      "recommendation",
+      "rationale",
+    ]);
+  });
+
+  it("preserves a general entity clarification and its original request", () => {
+    const result = normalizeCoachResult(
+      {
+        intent: "clarification",
+        responseType: "clarification",
+        answer: "Encontré varias cuentas Acme.",
+        confidence: "high",
+        clarification: {
+          type: "select_account",
+          message: "Selecciona una cuenta para continuar.",
+          missing: ["Cuenta"],
+          candidates: [
+            {
+              id: 1,
+              name: "Acme México",
+              entityType: "account",
+              website: "acme.mx",
+            },
+            {
+              id: 2,
+              name: "Acme Servicios",
+              entityType: "account",
+              website: "servicios.acme.mx",
+            },
+          ],
+          originalRequest: "Actualiza el teléfono de Acme",
+          intendedAction: "continue_request",
+        },
+        operations: [],
+      },
+      snapshot,
+    );
+
+    expect(result.intent).toBe("clarification");
+    expect(result.responseType).toBe("clarification");
+    expect(result.clarification).toEqual(
+      expect.objectContaining({
+        type: "select_account",
+        originalRequest: "Actualiza el teléfono de Acme",
+      }),
+    );
     expect(result.operations).toEqual([]);
   });
 });

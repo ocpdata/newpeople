@@ -197,7 +197,7 @@ export default function AppShell({
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     canReadOpportunities;
-  const canAccessMiAgent = canReadOpportunities;
+  const canAccessMiAgent = can("mi_coach.use");
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
   const canAccessCommercialRhythm = can("ritmo_comercial.read");
@@ -341,11 +341,7 @@ export default function AppShell({
         <Route
           path="/security-tests"
           element={
-            can("pruebas.read") ? (
-              <SecurityTestsPage />
-            ) : (
-              <Navigate to="/" />
-            )
+            can("pruebas.read") ? <SecurityTestsPage /> : <Navigate to="/" />
           }
         />
         <Route
@@ -453,16 +449,33 @@ export default function AppShell({
             canAccessMiAgent ? (
               <MiAgentPage
                 currentUser={currentUser}
+                canExecuteCoach={can("mi_coach.execute")}
                 canCreateActions={can("oportunidades.update")}
                 canUpdateLeads={can("interacciones.update")}
+                canCreateLeads={can("interacciones.update")}
                 canUpdateAccounts={can("cuentas.update")}
                 canUpdateContacts={can("contactos.update")}
-                canCreateAccounts={can("cuentas.create") || can("cuentas.request")}
-                canCreateContacts={can("contactos.create") || can("contactos.request")}
+                canCreateAccounts={
+                  can("cuentas.create") || can("cuentas.request")
+                }
+                canCreateContacts={
+                  can("contactos.create") || can("contactos.request")
+                }
                 canResolveLeads={can("interacciones.resolve")}
-                canCreateOpportunities={can("oportunidades.create") || can("oportunidades.request")}
-                canUpdateCommercialDevelopment={can("desarrollo_comercial.update")}
+                canCreateOpportunities={
+                  can("oportunidades.create") || can("oportunidades.request")
+                }
+                canUpdateCommercialDevelopment={can(
+                  "desarrollo_comercial.update",
+                )}
+                canCreateQuotations={[
+                  "cotizaciones.operacion",
+                  "cotizaciones.ingreso",
+                  "cotizaciones.administracion",
+                ].some(can)}
+                canCreateProposals={can("propuestas.create")}
                 canUseExternalSources={can("fuentes_externas.execute")}
+                canManageCoach={can("mi_coach.admin")}
               />
             ) : (
               <Navigate to="/" />

@@ -33,6 +33,8 @@ import {
   toBusinessDateIso,
   toBusinessDateTimeInputValue,
 } from "./business-timezone";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
 
 const ACTIVITY_TYPE_OPTIONS = [
   { value: "call", label: "Llamada" },
@@ -2077,7 +2079,9 @@ function buildActivityDraft(item, activity = null) {
     note: "",
     successCriteria: "",
     isPrimaryNextStep: !item?.nextStep,
-    calendarSource: normalizeCalendarSource(item?.calendarSource || "opportunity"),
+    calendarSource: normalizeCalendarSource(
+      item?.calendarSource || "opportunity",
+    ),
     details: emptyActionDetails(),
   };
 }
@@ -3865,6 +3869,8 @@ export default function CommercialDevelopmentPage({
 }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const coachHandoff = useCoachHandoff({ module: "commercial_development" });
+  const appliedCoachHandoffRef = useRef("");
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
     [currentUser],
@@ -4492,6 +4498,41 @@ export default function CommercialDevelopmentPage({
     () => new Map(workboard.map((item) => [Number(item.id), item])),
     [workboard],
   );
+  useEffect(() => {
+    const operation = coachHandoff.handoff?.payload;
+    if (
+      operation?.kind !== "activity" ||
+      appliedCoachHandoffRef.current === coachHandoff.token
+    ) {
+      return;
+    }
+    const opportunityId = Number(
+      operation.opportunityId ||
+        coachHandoff.handoff?.entities?.opportunityId ||
+        0,
+    );
+    const item = workboardById.get(opportunityId);
+    if (!item) return;
+
+    appliedCoachHandoffRef.current = coachHandoff.token;
+    openActivityModal(item);
+    setActivityDraft((current) => ({
+      ...current,
+      activityType: operation.actionType || current.activityType,
+      scheduledAt: operation.scheduledAt || current.scheduledAt,
+      dueDate: operation.dueDate || current.dueDate,
+      priority: operation.priority || current.priority,
+      objective: operation.title || current.objective,
+      note: operation.notes || operation.note || current.note,
+      status: operation.status || current.status,
+      successCriteria: operation.successCriteria || current.successCriteria,
+    }));
+  }, [
+    coachHandoff.handoff,
+    coachHandoff.token,
+    openActivityModal,
+    workboardById,
+  ]);
   const activeSendEmailAccountId =
     activityModalItem &&
     activityDraft.entryKind === "action" &&
@@ -5691,6 +5732,13 @@ export default function CommercialDevelopmentPage({
           activityModalItem.id,
           savedActivityId,
         );
+        if (coachHandoff.handoff?.payload?.kind === "activity") {
+          await coachHandoff.complete({
+            entityType: "activity",
+            entityId: savedActivityId,
+            result: { opportunityId: Number(activityModalItem.id) },
+          });
+        }
         closeActivityModal();
         return response.data || { id: savedActivityId };
       }
@@ -5701,6 +5749,13 @@ export default function CommercialDevelopmentPage({
         activityModalItem.id,
         savedActivityId,
       );
+      if (coachHandoff.handoff?.payload?.kind === "activity") {
+        await coachHandoff.complete({
+          entityType: "activity",
+          entityId: savedActivityId,
+          result: { opportunityId: Number(activityModalItem.id) },
+        });
+      }
       closeActivityModal();
       return { id: savedActivityId };
     } catch (requestError) {
@@ -5845,6 +5900,7 @@ export default function CommercialDevelopmentPage({
 
   return (
     <section className="panel commercial-development-page">
+      <CoachHandoffNotice {...coachHandoff} />
       <header className="commercial-development-hero">
         <div className="commercial-development-hero-copy">
           <span className="commercial-development-kicker">
@@ -6327,7 +6383,9 @@ export default function CommercialDevelopmentPage({
                                       aria-label={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
                                       title={`Origen: ${getCalendarSourceLabel(item.calendarSource)}`}
                                     >
-                                      {getCalendarSourceLabel(item.calendarSource)}
+                                      {getCalendarSourceLabel(
+                                        item.calendarSource,
+                                      )}
                                     </span>{" "}
                                     <span>
                                       {formatDateTime(item.scheduledAt)
