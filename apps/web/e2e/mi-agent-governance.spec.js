@@ -8,8 +8,86 @@ async function mockMiCoachApi(
     withCoachInterface = false,
     withHistoricalOpportunityContext = false,
     withResponseContextSwitch = false,
+    withSituationAnalysis = false,
+    withProspect = false,
+    withOpportunityStatusMatrix = false,
+    quotaCurrencyCode = "USD",
+    usdToTargetRate = 1,
+    currencyConversionAvailable = true,
   } = {},
 ) {
+  const prospectSession = {
+    id: 991,
+    status: "completed",
+    companyName: "Prospecto E2E",
+    country: "Mexico",
+    website: "https://prospecto-e2e.example.com",
+    industry: "Tecnología",
+    convertedAccountId: null,
+    result: {
+      headline: "Prospecto E2E",
+      summary: "Ficha inicial pendiente de validación comercial.",
+      profile: {
+        companyName: "Prospecto E2E",
+        positioning: "Empresa en evaluación.",
+      },
+      outreach: {
+        subject: "Conversación de diagnóstico",
+        body: "Hola, quisiera conocer sus prioridades.",
+        questions: ["¿Cuál es su prioridad actual?"],
+      },
+      externalResearch: { enabled: false, warnings: [] },
+    },
+    findings: [
+      {
+        id: 801,
+        status: "suggested",
+        category: "company_profile",
+        title: "Señal pública",
+        summary: "Hallazgo para confirmar con el vendedor.",
+        evidenceText: "Evidencia publicada.",
+        confidence: "high",
+        certainty: "evidenced",
+        sourceType: "public_source",
+        sourceReference: "https://example.com/evidence",
+      },
+    ],
+    contacts: [
+      {
+        id: 901,
+        area: "Tecnología",
+        roleTitle: "Dirección de TI",
+        confidence: "medium",
+        status: "suggested",
+        sourceReference: "",
+      },
+    ],
+    hypotheses: [
+      {
+        id: 902,
+        technologyArea: "Infraestructura",
+        title: "Modernizar la plataforma",
+        businessChallenge: "Hipótesis por validar con el vendedor.",
+        validationQuestion: "¿Qué limitación desean resolver?",
+        confidence: "medium",
+        status: "suggested",
+      },
+    ],
+    duplicateReview: {
+      completed: true,
+      countryResolved: true,
+      candidates: [
+        {
+          id: 777,
+          name: "Prospecto E2E existente",
+          website: "https://prospecto-e2e.example.com",
+          domain: "prospecto-e2e.example.com",
+          country: "Mexico",
+          matchType: "domain",
+        },
+      ],
+    },
+  };
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const { pathname } = url;
@@ -20,6 +98,57 @@ async function mockMiCoachApi(
         contentType: "application/json",
         body: JSON.stringify(body),
       });
+
+    if (
+      withProspect &&
+      pathname === "/api/prospect-research/sessions" &&
+      method === "POST"
+    )
+      return json({ session: { id: prospectSession.id } }, 201);
+    if (
+      withProspect &&
+      pathname === `/api/prospect-research/sessions/${prospectSession.id}/run`
+    )
+      return json({ session: prospectSession });
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/run-external`
+    ) {
+      return json({
+        session: {
+          ...prospectSession,
+          result: {
+            ...prospectSession.result,
+            externalResearch: { enabled: true, findingCount: 1, warnings: [] },
+          },
+        },
+      });
+    }
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/convert-to-account`
+    )
+      return json({ accountId: 777, reused: true }, 200);
+    if (
+      withProspect &&
+      pathname === `/api/prospect-research/contacts/901/convert`
+    )
+      return json({ accountId: 777, contactId: 650 }, 201);
+    if (
+      withProspect &&
+      pathname === "/api/prospect-research/hypotheses/902/confirm"
+    )
+      return json({
+        hypothesis: { ...prospectSession.hypotheses[0], status: "confirmed" },
+      });
+    if (
+      withProspect &&
+      pathname ===
+        "/api/prospect-research/hypotheses/902/convert-to-opportunity"
+    )
+      return json({ opportunityId: 850, accountId: 777, contactId: 650 }, 201);
 
     if (pathname === "/api/auth/bootstrap-status")
       return json({ hasUsers: true });
@@ -37,22 +166,113 @@ async function mockMiCoachApi(
           "oportunidades.read",
           "desarrollo_comercial.update",
           "fuentes_externas.execute",
+          ...(withProspect
+            ? [
+                "prospeccion.read",
+                "prospeccion.create",
+                "prospeccion.update",
+                "cuentas.create",
+                "contactos.create",
+                "oportunidades.create",
+              ]
+            : []),
+          ...(withCustomerHealth
+            ? ["inteligencia_comercial.read", "contactos.read"]
+            : []),
           ...(canAdmin ? ["mi_coach.admin"] : []),
         ],
       });
     }
     if (pathname === "/api/mi-agent/context") {
       return json({
-        period: { label: "Q3 2026", baseCurrencyCode: "USD" },
+        period: { label: "Q3 2026", baseCurrencyCode: quotaCurrencyCode },
         quota: {
-          assignedAmount: 100000,
-          actualAmount: 25000,
-          gapAmount: 75000,
+          assignedAmount: quotaCurrencyCode === "USD" ? 100000 : 1750000,
+          actualAmount: currencyConversionAvailable
+            ? quotaCurrencyCode === "USD"
+              ? 25000
+              : 437500
+            : null,
+          gapAmount: currencyConversionAvailable
+            ? quotaCurrencyCode === "USD"
+              ? 75000
+              : 1312500
+            : null,
           committedOpenAmount: 50000,
           weightedOpenAmount: 50000,
-          currencyCode: "USD",
+          currencyCode: quotaCurrencyCode,
         },
-        workboard: [],
+        currencyConversion: {
+          available: currencyConversionAvailable,
+          baseCurrencyCode: "USD",
+          targetCurrencyCode: quotaCurrencyCode,
+          usdToTargetRate: currencyConversionAvailable ? usdToTargetRate : null,
+          fetchedAt: currencyConversionAvailable
+            ? "2026-09-27T00:00:00.000Z"
+            : null,
+        },
+        workboard: withSituationAnalysis
+          ? [
+              {
+                id: 501,
+                name: "Renovación crítica",
+                accountName: "Cuenta Demo",
+                amountUsd: 60000,
+                stageCode: "negociacion",
+                stageName: "Negociación",
+                riskLevel: "high",
+                riskReasons: ["Sin actividad reciente"],
+              },
+            ]
+          : [],
+        inactivePipelineOpportunities: withOpportunityStatusMatrix
+          ? [
+              {
+                id: 505,
+                name: "Oportunidad desactivada terminal",
+                accountName: "Cuenta Demo",
+                activationStatusCode: "desactivada",
+                activationStatusName: "Desactivada",
+                commercialStatusCode: "ganada",
+                lifecycle: "inactive",
+              },
+            ]
+          : [],
+        coachOpportunities: withSituationAnalysis
+          ? [
+              {
+                id: 501,
+                name: "Renovación crítica",
+                accountName: "Cuenta Demo",
+                amountUsd: 60000,
+                stageCode: "negociacion",
+                stageName: "Negociación",
+                lifecycle: "open",
+                riskLevel: "high",
+              },
+              {
+                id: 502,
+                name: "Oportunidad inicial",
+                accountName: "Cuenta Alterna",
+                amountUsd: 25000,
+                stageCode: "contacto_inicial",
+                stageName: "Contacto inicial",
+                lifecycle: "open",
+              },
+              {
+                id: 503,
+                name: "Oportunidad ganada",
+                amountUsd: 40000,
+                lifecycle: "historical",
+              },
+              {
+                id: 504,
+                name: "Oportunidad inactiva",
+                amountUsd: 35000,
+                lifecycle: "inactive",
+              },
+            ]
+          : [],
         accounts: withResponseContextSwitch
           ? [
               { id: 160, name: "Cuenta Demo" },
@@ -117,6 +337,65 @@ async function mockMiCoachApi(
               completed: 0,
             },
       );
+    if (pathname === "/api/mi-agent/analyze" && method === "POST")
+      return json(
+        { job: { id: 910, status: "pending", pollAfterMs: 500 } },
+        202,
+      );
+    if (pathname === "/api/mi-agent/analyze/jobs/910")
+      return json({
+        job: { id: 910, status: "completed" },
+        result: {
+          headline: "Atiende la renovación crítica",
+          summary: "La cuenta requiere confirmar el calendario de decisión.",
+          quotaReadout: "Avance trimestral con brecha pendiente.",
+          activityProgress: {
+            message: "La actividad reciente no se ha traducido en avance.",
+            activityCount: 3,
+            progressedOpportunities: 1,
+            opportunitiesWithoutProgress: 1,
+            details: [
+              {
+                opportunityId: 501,
+                opportunityName: "Renovación crítica",
+                accountName: "Cuenta Demo",
+                activityCount: 2,
+                activityWithoutProgress: true,
+              },
+            ],
+          },
+          alerts: [
+            {
+              code: "activity_without_progress",
+              severity: "high",
+              title: "Actividad sin progreso",
+              opportunityId: 501,
+              opportunityName: "Renovación crítica",
+              accountName: "Cuenta Demo",
+              evidence: "Dos actividades sin cambio comercial.",
+              action: "Confirmar el calendario de decisión.",
+            },
+          ],
+          actions: [
+            {
+              rank: 1,
+              opportunityId: 501,
+              title: "Confirmar calendario de decisión",
+              opportunityName: "Renovación crítica",
+              accountName: "Cuenta Demo",
+              stageName: "Negociación",
+              priority: "high",
+              status: "pending",
+              reason: "La oportunidad no avanza pese a la actividad.",
+              risk: "El calendario de decisión no está confirmado.",
+              expectedOutcome: "Obtener fecha de decisión validada.",
+              successCriteria: "Registrar fecha y responsable.",
+              actionType: "call",
+              questions: ["¿Cuándo tomarán la decisión final?"],
+            },
+          ],
+        },
+      });
     if (pathname === "/api/mi-agent/coach" && method === "POST")
       return json(
         {
@@ -310,7 +589,10 @@ async function mockMiCoachApi(
               { id: 170, name: "Cuenta Alterna" },
             ]
           : withCustomerHealth
-            ? [{ id: 160, name: "Cuenta Demo" }]
+            ? [
+                { id: 160, name: "Cuenta Demo" },
+                { id: 170, name: "Cuenta Alterna" },
+              ]
             : [],
       );
     if (pathname === "/api/opportunities")
@@ -357,25 +639,141 @@ async function mockMiCoachApi(
         snapshot: {
           snapshotVersion: "account-intelligence.v1",
           capturedAt: "2026-09-23T12:00:00.000Z",
-          account: { id: 160, name: "Cuenta Demo" },
-          contacts: [],
-          opportunities: [],
-          interactions: [],
+          account: {
+            id: 160,
+            name: "Cuenta Demo",
+            website: "https://cuenta-demo.example",
+            city: "Monterrey",
+            stateRegion: "Nuevo León",
+            description: "Cliente de soluciones de seguridad empresarial.",
+          },
+          contacts: [
+            {
+              id: 601,
+              name: "Ana Compras",
+              positionTitle: "Directora de compras",
+              department: "Compras",
+              purchaseParticipation: "decide_final",
+              hierarchyLevel: "directivo",
+              relationshipType: "fuerte",
+              influenceLevel: "decide",
+              managerContactId: null,
+              influencesContactId: null,
+            },
+          ],
+          opportunities: [
+            {
+              id: 300,
+              name: "Proyecto abierto",
+              amountUsd: 20000,
+              closeDate: "2026-10-30",
+              stageName: "Desarrollo",
+              commercialStatusCode: "en_proceso",
+              activationStatusCode: "activada",
+            },
+            {
+              id: 301,
+              name: "Renovación ganada",
+              amountUsd: 41560,
+              stageName: "Waiting",
+              commercialStatusCode: "ganada",
+              activationStatusCode: "activada",
+            },
+            {
+              id: 302,
+              name: "Proyecto perdido",
+              amountUsd: 12000,
+              stageName: "Negociación",
+              commercialStatusCode: "perdida",
+              activationStatusCode: "activada",
+            },
+            {
+              id: 303,
+              name: "Proyecto anulado",
+              amountUsd: 8000,
+              stageName: "Cotización",
+              commercialStatusCode: "anulada",
+              activationStatusCode: "activada",
+            },
+          ],
+          inactiveOpportunities: [
+            {
+              id: 304,
+              name: "Proyecto desactivado",
+              amountUsd: 9000,
+              stageName: "Desarrollo",
+              commercialStatusCode: "en_proceso",
+              activationStatusCode: "desactivada",
+            },
+          ],
+          interactions: [
+            {
+              id: 701,
+              title: "Revisión de renovación",
+              summary: "Validar alcance y fecha de renovación.",
+              updatedAt: "2026-09-26T14:00:00.000Z",
+            },
+          ],
           activities: [],
-          renewals: [],
+          renewals: [
+            {
+              id: 801,
+              opportunityId: 301,
+              providerId: 9,
+              providerName: "Proveedor Demo",
+              statusCode: "vigente",
+              expiresAt: "2026-11-15",
+              renewalCount: 1,
+            },
+          ],
           products: [
             {
+              quotationId: 901,
+              quotationVersionId: 902,
+              opportunityId: 301,
+              providerName: "Proveedor Demo",
+              itemType: "servicio",
               description: "Servicio WAAP",
+              quantity: 1,
+              currencyCode: "USD",
               commercialStatus: "won",
               fulfillmentStatus: "not_verified",
             },
+            {
+              quotationId: 903,
+              quotationVersionId: 904,
+              opportunityId: 300,
+              providerName: "Proveedor Alterno",
+              itemType: "producto",
+              description: "Firewall Perimetral",
+              quantity: 2,
+              currencyCode: "USD",
+              commercialStatus: "accepted",
+              fulfillmentStatus: "not_verified",
+            },
           ],
+          permissions: {
+            canReadAccounts: true,
+            canReadContacts: true,
+            canReadOpportunities: true,
+            canReadInteractions: true,
+          },
           expansionHypotheses: [
+            {
+              type: "renewal",
+              title: "Preparar renovación de Proveedor Demo",
+              summary: "Validar continuidad antes del vencimiento.",
+              evidence: "Vencimiento: 2026-11-15.",
+              confidence: "high",
+              opportunityId: 301,
+              requiresConfirmation: true,
+            },
             {
               type: "cross_sell",
               title: "Explorar solución complementaria: Seguridad",
               summary: "Hipótesis",
               evidence: "Producto actual: Servicio WAAP.",
+              confidence: "low",
               opportunityId: 22,
               requiresConfirmation: true,
             },
@@ -394,15 +792,22 @@ async function mockMiCoachApi(
                   "La cuenta no tiene una interacción reciente accesible.",
                 evidence: "Última interacción hace 30 días.",
               },
+              {
+                code: "relationship_map_incomplete",
+                severity: "medium",
+                title: "Mapa de relación incompleto",
+                summary: "Faltan relaciones de contactos.",
+                evidence: "Ana Compras",
+              },
             ],
             metrics: {
-              contactCount: 0,
-              opportunityCount: 0,
-              riskyOpportunityCount: 0,
-              interactionCount: 0,
+              contactCount: 1,
+              opportunityCount: 4,
+              riskyOpportunityCount: 1,
+              interactionCount: 1,
               daysSinceLastInteraction: 30,
               renewalCount: 0,
-              productCount: 1,
+              productCount: 2,
             },
           },
         },
@@ -510,11 +915,13 @@ async function mockMiCoachApi(
           status: "completed",
           result: {
             writesPerformed: false,
+            sourceDomain: "public_web",
             agents: [
               {
                 agentId: "crm_context",
                 status: "completed",
                 summary: "Contexto CRM disponible.",
+                sourceDomain: "crm_internal",
                 findings: [],
                 confidence: "high",
               },
@@ -522,9 +929,32 @@ async function mockMiCoachApi(
                 agentId: "commercial_health",
                 status: "completed",
                 summary: "Salud estable.",
+                sourceDomain: "crm_internal",
                 findings: [],
                 confidence: "medium",
               },
+              ...(withCustomerHealth
+                ? [
+                    {
+                      agentId: "public_research",
+                      status: "completed",
+                      summary: "Señal pública encontrada.",
+                      sourceDomain: "public_web",
+                      evidence: ["https://public.example/evidence"],
+                      findings: [
+                        {
+                          title: "Proyecto de modernización anunciado",
+                          summary: "La empresa anunció un proyecto.",
+                          evidenceText: "Nota pública consultada.",
+                          sourceUrl: "https://public.example/evidence",
+                          certainty: "evidenced",
+                          confidence: "medium",
+                        },
+                      ],
+                      confidence: "medium",
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -541,10 +971,22 @@ async function mockMiCoachApi(
           status: "completed",
           result: {
             source: "account_intelligence",
+            sourceDomain: "mixed",
             answer: "La cuenta requiere seguimiento comercial.",
             evidence: ["Snapshot autorizado"],
+            inferences: ["La renovación podría ampliarse a otra área."],
             confidence: "medium",
-            recommendedActions: [],
+            publicSources: ["https://public.example/evidence"],
+            recommendedActions: [
+              {
+                title: "Validar ampliación",
+                opportunityId: 300,
+                actionType: "call",
+                notes: "Confirmar necesidad.",
+                successCriteria: "Cliente confirma interés.",
+                requiresConfirmation: true,
+              },
+            ],
           },
         },
       });
@@ -588,13 +1030,17 @@ async function mockMiCoachApi(
   });
 }
 
-async function openMiCoach(page) {
+async function openMiCoach(page, { workspace = "coach" } = {}) {
   await page.addInitScript(
     (token) => window.localStorage.setItem("crm_token", token),
     "jwt-token",
   );
   await page.goto("/mi-agent");
   await expect(page.getByRole("heading", { name: "Mi Coach" })).toBeVisible();
+  if (workspace === "coach")
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+  if (workspace === "prospect")
+    await page.getByRole("button", { name: "Cuenta nueva" }).click();
 }
 
 const coachCreationJourneys = [
@@ -832,6 +1278,7 @@ test.describe("Mi Coach governance and workspaces", () => {
         await expect(
           page.getByRole("heading", { name: "Mi Coach" }),
         ).toBeVisible();
+        await page.getByRole("button", { name: "Coach", exact: true }).click();
         await page.getByText("Actividad reciente").click();
         await expect(page.getByText(journey.title)).toBeVisible();
         await expect(
@@ -839,6 +1286,7 @@ test.describe("Mi Coach governance and workspaces", () => {
         ).toBeVisible();
 
         await page.reload();
+        await page.getByRole("button", { name: "Coach", exact: true }).click();
         await page.getByText("Actividad reciente").click();
         await expect(page.getByText(journey.title)).toBeVisible();
       });
@@ -848,10 +1296,32 @@ test.describe("Mi Coach governance and workspaces", () => {
   test("muestra los espacios principales y conserva Coach", async ({
     page,
   }) => {
-    await mockMiCoachApi(page);
-    await openMiCoach(page);
+    const automaticBriefingRequests = [];
+    page.on("request", (request) => {
+      if (
+        request
+          .url()
+          .includes("/api/commercial-intelligence/automatic-briefing/next")
+      )
+        automaticBriefingRequests.push(request.url());
+    });
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withProspect: true,
+    });
+    await openMiCoach(page, { workspace: "summary" });
 
-    await expect(page.getByRole("button", { name: "Coach" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Resumen comercial" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Resumen" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByText("Pipeline abierto")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Coach", exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Cliente existente" }),
     ).toBeVisible();
@@ -862,6 +1332,19 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByRole("button", { name: "Administración" }),
     ).toHaveCount(0);
 
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Pregúntale a tu Coach" }),
+    ).toBeVisible();
+    await expect(page.getByPlaceholder("Nombre de la cuenta")).toBeVisible();
+    await expect(
+      page.getByPlaceholder("Escribe tu pregunta para el Coach..."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Preparar briefing automático" }),
+    ).toHaveCount(0);
+    expect(automaticBriefingRequests).toEqual([]);
+
     await page.getByRole("button", { name: "Cuenta nueva" }).click();
     await expect(
       page.getByRole("heading", { name: "Prospección asistida" }),
@@ -871,11 +1354,276 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
   });
 
+  test("oculta Cliente existente y Cuenta nueva sin permisos de lectura especializados", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page);
+    await openMiCoach(page, { workspace: "summary" });
+
+    await expect(
+      page.getByRole("button", { name: "Cliente existente" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Cuenta nueva" }),
+    ).toHaveCount(0);
+  });
+
+  test("presenta oportunidades no activadas por separado de pipeline e historial", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, { withOpportunityStatusMatrix: true });
+    await openMiCoach(page, { workspace: "summary" });
+
+    await expect(page.getByText("Oportunidades desactivadas")).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Oportunidad desactivada terminal",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText(/Desactivada\s+·\s+ganada/)).toBeVisible();
+  });
+
+  test("Cuenta nueva completa prospección con revisión humana y sin investigación pública automática", async ({
+    page,
+  }) => {
+    const publicResearchRequests = [];
+    page.on("request", (request) => {
+      if (
+        request
+          .url()
+          .includes("/api/prospect-research/sessions/991/run-external")
+      )
+        publicResearchRequests.push(request.method());
+    });
+    await mockMiCoachApi(page, { withProspect: true });
+    await openMiCoach(page, { workspace: "prospect" });
+
+    await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
+    await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
+    await page.getByRole("button", { name: "Preparar cuenta" }).click();
+    await expect(
+      page.getByText("Revisión de posibles cuentas duplicadas"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Abrir fuente" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Sugerido · no confirmado en el CRM"),
+    ).toBeVisible();
+    expect(publicResearchRequests).toEqual([]);
+
+    await page
+      .getByRole("button", { name: "Investigar fuentes públicas" })
+      .click();
+    await expect.poll(() => publicResearchRequests.length).toBe(1);
+
+    await page.getByRole("button", { name: "Vincular esta cuenta" }).click();
+    await expect(
+      page.getByRole("button", { name: "Cuenta creada/vinculada" }),
+    ).toBeVisible();
+    await page
+      .getByPlaceholder("Nombre y apellido")
+      .fill("Lucía Contacto Real");
+    await page.getByRole("button", { name: "Crear contacto" }).click();
+    await expect(
+      page.getByRole("button", { name: "Contacto creado" }),
+    ).toBeVisible();
+
+    await expect(
+      page.getByRole("button", { name: "Crear oportunidad preliminar" }),
+    ).toBeDisabled();
+    await page.getByRole("button", { name: "Confirmar hipótesis" }).click();
+    await page
+      .getByRole("button", { name: "Crear oportunidad preliminar" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Oportunidad creada" }),
+    ).toBeVisible();
+  });
+
+  test("cambiar de espacio conserva contexto separado de Coach, Cliente existente y Cuenta nueva", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withResponseContextSwitch: true,
+      withProspect: true,
+    });
+    await openMiCoach(page, { workspace: "prospect" });
+
+    await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
+    await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
+    await page.getByRole("button", { name: "Preparar cuenta" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Prospecto E2E" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Cliente existente" }).click();
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    await expect(
+      page.getByRole("heading", { name: "Cuenta Demo" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    const coachAccount = page.getByLabel("Cuenta activa");
+    await coachAccount.selectOption("160");
+    await coachAccount.selectOption("170");
+    await expect(coachAccount).toHaveValue("170");
+    await page
+      .getByPlaceholder("Escribe tu pregunta para el Coach...")
+      .fill("¿Qué seguimiento corresponde a esta oportunidad?");
+    await page.getByRole("button", { name: "Preguntar" }).click();
+    await expect(
+      page.getByText(
+        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+      ),
+    ).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole("button", { name: "Cliente existente" }).click();
+    await expect(page.getByLabel("Cuenta existente")).toHaveValue("160");
+    await expect(
+      page.getByRole("heading", { name: "Cuenta Demo" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Cuenta nueva" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Prospecto E2E" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    await expect(page.getByLabel("Cuenta activa")).toHaveValue("170");
+    await expect(
+      page.getByText("¿Qué seguimiento corresponde a esta oportunidad?"),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+      ),
+    ).toBeVisible();
+  });
+
+  test("Resumen concentra el análisis comercial y enlaza cada recomendación", async ({
+    page,
+  }) => {
+    const crmWrites = [];
+    page.on("request", (request) => {
+      const method = request.method();
+      const url = request.url();
+      if (
+        ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+        [
+          "/api/opportunities",
+          "/api/commercial-development",
+          "/api/interactions",
+        ].some((path) => url.includes(path))
+      ) {
+        crmWrites.push(`${method} ${url}`);
+      }
+    });
+    await mockMiCoachApi(page, { withSituationAnalysis: true });
+    await openMiCoach(page, { workspace: "summary" });
+
+    await expect(page.getByText("Pipeline abierto")).toBeVisible();
+    await expect(page.getByText(/85,000/)).toBeVisible();
+    await expect(
+      page.getByText("2 oportunidades · 1.1x cobertura"),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Analizar mi situación" }).click();
+
+    await expect(
+      page.getByRole("heading", { name: "Atiende la renovación crítica" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Actividad vs. avance" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Actividad sin evidencia de etapa"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Problemas de venta detectados" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Qué hacer ahora" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Crear próximo paso" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    await expect(
+      page.getByPlaceholder("Escribe tu pregunta para el Coach..."),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Analizar mi situación" }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Resumen" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Atiende la renovación crítica" }),
+    ).toBeVisible();
+
+    await page
+      .locator(".mi-agent-action-item")
+      .getByRole("button", { name: "Abrir oportunidad" })
+      .click();
+    await expect(page).toHaveURL(/\/opportunities\?edit=501$/);
+    expect(crmWrites).toEqual([]);
+  });
+
+  test("Resumen normaliza el pipeline a la moneda de cuota y maneja falta de tipo de cambio", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withSituationAnalysis: true,
+      quotaCurrencyCode: "MXN",
+      usdToTargetRate: 17.5,
+    });
+    await openMiCoach(page, { workspace: "summary" });
+
+    const metrics = page.locator(".mi-agent-metrics article");
+    await expect(metrics.nth(0)).toContainText("1,750,000");
+    await expect(page.getByText(/1 USD = 17\.5 MXN/)).toBeVisible();
+    await expect(metrics.nth(1)).toContainText("437,500");
+    await expect(metrics.nth(2)).toContainText("1,312,500");
+    await expect(metrics.nth(3)).toContainText("1,487,500");
+    await expect(metrics.nth(3)).toContainText(
+      "2 oportunidades · 1.1x cobertura",
+    );
+
+    await mockMiCoachApi(page, {
+      withSituationAnalysis: true,
+      quotaCurrencyCode: "MXN",
+      currencyConversionAvailable: false,
+    });
+    await page.reload();
+    await expect(
+      page.getByText("No se obtuvo tipo de cambio desde USD"),
+    ).toBeVisible();
+    await expect(page.getByText("Cobertura no disponible")).toBeVisible();
+    await expect(
+      page.getByText("Avance no disponible: falta tipo de cambio"),
+    ).toBeVisible();
+  });
+
   test("permite abrir y guardar gobierno con permiso administrativo", async ({
     page,
   }) => {
     await mockMiCoachApi(page, { canAdmin: true });
     await openMiCoach(page);
+
+    const workspaceNavigation = page.getByRole("navigation", {
+      name: "Espacios de Mi Coach",
+    });
+    const adminNavigation = page.getByRole("navigation", {
+      name: "Administración",
+    });
+    await expect(
+      adminNavigation.getByRole("button", { name: "Administración" }),
+    ).toBeVisible();
+    await expect(
+      workspaceNavigation.getByRole("button", {
+        name: "Administración",
+      }),
+    ).toHaveCount(0);
 
     await page.getByRole("button", { name: "Administración" }).click();
     await expect(
@@ -989,28 +1737,83 @@ test.describe("Mi Coach governance and workspaces", () => {
   }) => {
     await mockMiCoachApi(page, { withCustomerHealth: true });
     await openMiCoach(page);
-
-    await page
-      .locator("label")
-      .filter({ hasText: "Cuenta activa" })
-      .locator("select")
-      .selectOption("160");
+    await page.getByLabel("Cuenta activa").selectOption("170");
     await page.getByRole("button", { name: "Cliente existente" }).click();
+    await expect(page.getByLabel("Cuenta existente")).toHaveValue("");
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    await expect(page.getByLabel("Cuenta existente")).toHaveValue("160");
+    await expect(
+      page.getByRole("heading", { name: "Cuenta Demo" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Chat de cuenta" }),
+    ).toBeVisible();
+    await expect(page.getByText("https://cuenta-demo.example")).toBeVisible();
+    await expect(page.getByText("Revisión de renovación")).toBeVisible();
 
     await expect(
       page.getByRole("heading", { name: "Requiere atención" }),
     ).toBeVisible();
     await expect(page.getByText("55/100")).toBeVisible();
-    await expect(page.getByText("Actividad comercial atrasada")).toBeVisible();
+    await expect(
+      page
+        .getByRole("region", { name: "Salud de la cuenta" })
+        .getByText("Actividad comercial atrasada"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Próximo paso sugerido" }),
+    ).toContainText("Evidencia:");
+    await expect(
+      page
+        .getByRole("region", { name: "Próximo paso sugerido" })
+        .getByRole("button", { name: "Preparar seguimiento" }),
+    ).toBeVisible();
+    const history = page.getByRole("region", {
+      name: "Historial comercial de la cuenta",
+    });
+    await expect(history.getByText("Proyecto abierto")).toBeVisible();
+    await expect(history.getByText("Renovación ganada")).toBeVisible();
+    await expect(history.getByText("Proyecto perdido")).toBeVisible();
+    await expect(history.getByText("Proyecto anulado")).toBeVisible();
+    await expect(history.getByText("Proyecto desactivado")).toBeVisible();
+    await expect(history.getByText(/desactivada · en_proceso/)).toBeVisible();
+    const relationshipMap = page.getByRole("region", {
+      name: "Mapa de relaciones de la cuenta",
+    });
+    await expect(relationshipMap.getByText("Ana Compras")).toBeVisible();
+    await expect(relationshipMap.getByText("decide_final")).toBeVisible();
+    await expect(
+      relationshipMap.getByText(/Falta: relación con otros contactos/),
+    ).toBeVisible();
     await expect(
       page
         .getByRole("region", { name: "Productos y renovaciones" })
         .locator("li")
         .filter({ hasText: "Servicio WAAP" }),
     ).toBeVisible();
+    const productsPanel = page.getByRole("region", {
+      name: "Productos y renovaciones",
+    });
+    await expect(
+      productsPanel.getByText("Compra/entrega: no verificada").first(),
+    ).toBeVisible();
+    await expect(
+      productsPanel
+        .getByRole("button", {
+          name: "Abrir oportunidad asociada",
+        })
+        .first(),
+    ).toBeVisible();
+    await expect(
+      productsPanel.getByText(/no confirma por sí sola compra/),
+    ).toBeVisible();
+    await expect(
+      productsPanel.getByText("Preparar renovación de Proveedor Demo"),
+    ).toBeVisible();
     await expect(
       page.getByText("Explorar solución complementaria: Seguridad"),
     ).toBeVisible();
+    await expect(page.getByText("Hipótesis · cross_sell")).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Analizar cuenta" }),
     ).toBeVisible();
@@ -1045,10 +1848,34 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByRole("heading", { name: "Agentes especializados" }),
     ).toBeVisible();
     await expect(page.getByText("Contexto CRM disponible.")).toBeVisible();
+    await expect(
+      page.getByText("CRM interno + investigación pública"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Proyecto de modernización anunciado"),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Ver fuente pública" }),
+    ).toHaveAttribute("href", "https://public.example/evidence");
     await page.getByRole("button", { name: "Resumen para reunión" }).click();
     await expect(
       page.getByText("La cuenta requiere seguimiento comercial."),
     ).toBeVisible();
+    const accountChat = page.getByRole("region", { name: "Chat de cuenta" });
+    await expect(
+      accountChat.getByText("CRM + investigación pública"),
+    ).toBeVisible();
+    await expect(accountChat.getByText("Hipótesis por validar")).toBeVisible();
+    await expect(
+      accountChat.getByRole("link", {
+        name: "https://public.example/evidence",
+      }),
+    ).toHaveAttribute("href", "https://public.example/evidence");
+    await expect(
+      accountChat.getByRole("button", { name: "Preparar actividad" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    await expect(page.getByLabel("Cuenta activa")).toHaveValue("170");
   });
 
   test("restaura diagnóstico estructurado y operaciones accionables", async ({
@@ -1102,6 +1929,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     await page.reload();
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
     await expect(foundationSwitch).toBeChecked();
     await expect(semantic).toBeVisible();
     await foundationSwitch.click();

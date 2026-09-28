@@ -13,7 +13,6 @@ import {
   buildAuthorizedCustomerSnapshot,
   getCustomerIntelligenceJob,
   getMiCoachGovernanceOverview,
-  getNextAutomaticCustomerBriefing,
   listCustomerIntelligenceFindings,
   applyCustomerIntelligenceFinding,
   applyCustomerContactFinding,
@@ -45,9 +44,7 @@ const findingsQuerySchema = z.object({
   accountId: z.coerce.number().int().positive().optional(),
   opportunityId: z.coerce.number().int().positive().optional(),
   contactId: z.coerce.number().int().positive().optional(),
-  status: z
-    .enum(["suggested", "confirmed", "rejected", "outdated"])
-    .optional(),
+  status: z.enum(["suggested", "confirmed", "rejected", "outdated"]).optional(),
 });
 
 const snapshotQuerySchema = z.object({
@@ -123,25 +120,50 @@ router.post(
   },
 );
 
-router.post("/account-internal-analysis/jobs", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  try {
-    const payload = jobCreateSchema.parse(req.body || {});
-    const { job } = await createAccountInternalAnalysisJob({ user: req.user, payload });
-    setImmediate(() => processAccountInternalAnalysisJob({ jobId: job.id, user: req.user }).catch(() => undefined));
-    return res.status(202).json({ job });
-  } catch (error) {
-    if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-    return sendRouteError(res, error, "No fue posible analizar la cuenta");
-  }
-});
+router.post(
+  "/account-internal-analysis/jobs",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    try {
+      const payload = jobCreateSchema.parse(req.body || {});
+      const { job } = await createAccountInternalAnalysisJob({
+        user: req.user,
+        payload,
+      });
+      setImmediate(() =>
+        processAccountInternalAnalysisJob({
+          jobId: job.id,
+          user: req.user,
+        }).catch(() => undefined),
+      );
+      return res.status(202).json({ job });
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(res, error, "No fue posible analizar la cuenta");
+    }
+  },
+);
 
-router.get("/account-internal-analysis/jobs/:jobId", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  const jobId = Number(req.params.jobId || 0);
-  if (!Number.isInteger(jobId) || jobId <= 0) return res.status(400).json({ message: "Job invalido" });
-  const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
-  if (!job || job.jobType !== "account_internal_analysis") return res.status(404).json({ message: "Análisis de cuenta no encontrado" });
-  return res.json({ job });
-});
+router.get(
+  "/account-internal-analysis/jobs/:jobId",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
+    const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
+    if (!job || job.jobType !== "account_internal_analysis")
+      return res
+        .status(404)
+        .json({ message: "Análisis de cuenta no encontrado" });
+    return res.json({ job });
+  },
+);
 
 router.get(
   "/customer-research/jobs/:jobId",
@@ -173,16 +195,23 @@ router.post(
         payload,
       });
       setImmediate(() => {
-        processCustomerExternalResearchJob({ jobId: job.id, user: req.user }).catch(
-          () => undefined,
-        );
+        processCustomerExternalResearchJob({
+          jobId: job.id,
+          user: req.user,
+        }).catch(() => undefined);
       });
       return res.status(202).json({ job });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Payload invalido", issues: error.issues });
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
       }
-      return sendRouteError(res, error, "No fue posible iniciar investigacion externa");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible iniciar investigacion externa",
+      );
     }
   },
 );
@@ -194,10 +223,13 @@ router.get(
   requirePermission("fuentes_externas.execute"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
-    if (!Number.isInteger(jobId) || jobId <= 0) return res.status(400).json({ message: "Job invalido" });
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
     const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
     if (!job || job.jobType !== "external_research") {
-      return res.status(404).json({ message: "Investigacion externa no encontrada" });
+      return res
+        .status(404)
+        .json({ message: "Investigacion externa no encontrada" });
     }
     return res.json({ job });
   },
@@ -247,7 +279,9 @@ router.get(
     }
     const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
     if (!job || job.jobType !== "commercial_discovery") {
-      return res.status(404).json({ message: "Preparacion comercial no encontrada" });
+      return res
+        .status(404)
+        .json({ message: "Preparacion comercial no encontrada" });
     }
     return res.json({ job });
   },
@@ -260,12 +294,27 @@ router.post(
   async (req, res) => {
     try {
       const payload = jobCreateSchema.parse(req.body || {});
-      const { job } = await createCustomerExecutiveBriefingJob({ user: req.user, payload });
-      setImmediate(() => processCustomerExecutiveBriefingJob({ jobId: job.id, user: req.user }).catch(() => undefined));
+      const { job } = await createCustomerExecutiveBriefingJob({
+        user: req.user,
+        payload,
+      });
+      setImmediate(() =>
+        processCustomerExecutiveBriefingJob({
+          jobId: job.id,
+          user: req.user,
+        }).catch(() => undefined),
+      );
       return res.status(202).json({ job });
     } catch (error) {
-      if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-      return sendRouteError(res, error, "No fue posible iniciar el resumen ejecutivo");
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible iniciar el resumen ejecutivo",
+      );
     }
   },
 );
@@ -276,68 +325,154 @@ router.get(
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
-    if (!Number.isInteger(jobId) || jobId <= 0) return res.status(400).json({ message: "Job invalido" });
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
     const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
-    if (!job || job.jobType !== "executive_briefing") return res.status(404).json({ message: "Resumen ejecutivo no encontrado" });
+    if (!job || job.jobType !== "executive_briefing")
+      return res
+        .status(404)
+        .json({ message: "Resumen ejecutivo no encontrado" });
     return res.json({ job });
   },
 );
 
-router.post("/agents/jobs", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  try {
-    const payload = jobCreateSchema.parse(req.body || {});
-    const { job } = await createAccountIntelligenceAgentsJob({ user: req.user, payload });
-    setImmediate(() => processAccountIntelligenceAgentsJob({ jobId: job.id, user: req.user }).catch(() => undefined));
-    return res.status(202).json({ job });
-  } catch (error) {
-    if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-    return sendRouteError(res, error, "No fue posible iniciar los agentes de Account Intelligence");
-  }
-});
+router.post(
+  "/agents/jobs",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    try {
+      const payload = jobCreateSchema.parse(req.body || {});
+      const { job } = await createAccountIntelligenceAgentsJob({
+        user: req.user,
+        payload,
+      });
+      setImmediate(() =>
+        processAccountIntelligenceAgentsJob({
+          jobId: job.id,
+          user: req.user,
+        }).catch(() => undefined),
+      );
+      return res.status(202).json({ job });
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible iniciar los agentes de Account Intelligence",
+      );
+    }
+  },
+);
 
-router.get("/agents/jobs/:jobId", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  const jobId = Number(req.params.jobId || 0);
-  if (!Number.isInteger(jobId) || jobId <= 0) return res.status(400).json({ message: "Job invalido" });
-  const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
-  if (!job || job.jobType !== "agent_orchestration") return res.status(404).json({ message: "Orquestación no encontrada" });
-  return res.json({ job });
-});
+router.get(
+  "/agents/jobs/:jobId",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
+    const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
+    if (!job || job.jobType !== "agent_orchestration")
+      return res.status(404).json({ message: "Orquestación no encontrada" });
+    return res.json({ job });
+  },
+);
 
-router.get("/agents/metrics", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  return res.json(await getAccountIntelligenceMetrics({ user: req.user }));
-});
+router.get(
+  "/agents/metrics",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    return res.json(await getAccountIntelligenceMetrics({ user: req.user }));
+  },
+);
 
-router.post("/account-chat/jobs", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  try {
-    const parsed = jobCreateSchema.extend({ question: z.string().trim().min(1).max(2000), includePublicResearch: z.boolean().optional().default(false) }).parse(req.body || {});
-    const { job } = await createCustomerAccountChatJob({ user: req.user, payload: parsed });
-    setImmediate(() => processCustomerAccountChatJob({ jobId: job.id, user: req.user }).catch(() => undefined));
-    return res.status(202).json({ job });
-  } catch (error) {
-    if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-    return sendRouteError(res, error, "No fue posible iniciar el chat de cuenta");
-  }
-});
+router.post(
+  "/account-chat/jobs",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    try {
+      const parsed = jobCreateSchema
+        .extend({
+          question: z.string().trim().min(1).max(2000),
+          includePublicResearch: z.boolean().optional().default(false),
+        })
+        .parse(req.body || {});
+      const { job } = await createCustomerAccountChatJob({
+        user: req.user,
+        payload: parsed,
+      });
+      setImmediate(() =>
+        processCustomerAccountChatJob({ jobId: job.id, user: req.user }).catch(
+          () => undefined,
+        ),
+      );
+      return res.status(202).json({ job });
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible iniciar el chat de cuenta",
+      );
+    }
+  },
+);
 
-router.get("/account-chat/jobs/:jobId", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.read"), async (req, res) => {
-  const jobId = Number(req.params.jobId || 0);
-  if (!Number.isInteger(jobId) || jobId <= 0) return res.status(400).json({ message: "Job invalido" });
-  const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
-  if (!job || job.jobType !== "account_chat") return res.status(404).json({ message: "Chat de cuenta no encontrado" });
-  return res.json({ job });
-});
+router.get(
+  "/account-chat/jobs/:jobId",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
+    const job = await getCustomerIntelligenceJob({ user: req.user, jobId });
+    if (!job || job.jobType !== "account_chat")
+      return res.status(404).json({ message: "Chat de cuenta no encontrado" });
+    return res.json({ job });
+  },
+);
 
-router.post("/findings/:findingId/apply-contact", requirePermission("mi_coach.use"), requirePermission("inteligencia_comercial.update"), async (req, res) => {
-  try {
-    const findingId = Number(req.params.findingId || 0);
-    const result = await applyCustomerContactFinding({ user: req.user, findingId, contactId: Number(req.body?.contactId || 0) || null, contactData: req.body?.contactData || {} });
-    if (!result) return res.status(404).json({ message: "Hallazgo no encontrado" });
-    await logAuditEvent({ req, module: "commercial_intelligence", action: "customer_intelligence_contact_applied", entityType: "contact", entityId: result.contactId, detail: `Contacto ${result.mode} desde hallazgo público`, after: result });
-    return res.json(result);
-  } catch (error) {
-    return sendRouteError(res, error, "No fue posible aplicar el contacto");
-  }
-});
+router.post(
+  "/findings/:findingId/apply-contact",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.update"),
+  async (req, res) => {
+    try {
+      const findingId = Number(req.params.findingId || 0);
+      const result = await applyCustomerContactFinding({
+        user: req.user,
+        findingId,
+        contactId: Number(req.body?.contactId || 0) || null,
+        contactData: req.body?.contactData || {},
+      });
+      if (!result)
+        return res.status(404).json({ message: "Hallazgo no encontrado" });
+      await logAuditEvent({
+        req,
+        module: "commercial_intelligence",
+        action: "customer_intelligence_contact_applied",
+        entityType: "contact",
+        entityId: result.contactId,
+        detail: `Contacto ${result.mode} desde hallazgo público`,
+        after: result,
+      });
+      return res.json(result);
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible aplicar el contacto");
+    }
+  },
+);
 
 router.get(
   "/findings",
@@ -381,9 +516,15 @@ router.get(
       return res.json({ snapshot });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Contexto invalido", issues: error.issues });
+        return res
+          .status(400)
+          .json({ message: "Contexto invalido", issues: error.issues });
       }
-      return sendRouteError(res, error, "No fue posible cargar el snapshot de la cuenta");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible cargar el snapshot de la cuenta",
+      );
     }
   },
 );
@@ -402,7 +543,9 @@ router.put(
   async (req, res) => {
     const parsed = governanceSettingsSchema.safeParse(req.body || {});
     if (!parsed.success) {
-      return res.status(400).json({ message: "Payload invalido", issues: parsed.error.issues });
+      return res
+        .status(400)
+        .json({ message: "Payload invalido", issues: parsed.error.issues });
     }
     const overview = await updateMiCoachGovernanceSettings({
       user: req.user,
@@ -418,24 +561,6 @@ router.put(
       after: overview.settings,
     });
     return res.json(overview);
-  },
-);
-
-router.get(
-  "/automatic-briefing/next",
-  requirePermission("mi_coach.use"),
-  requirePermission("inteligencia_comercial.read"),
-  async (req, res) => {
-    try {
-      const briefing = await getNextAutomaticCustomerBriefing({ user: req.user });
-      return res.json(briefing);
-    } catch (error) {
-      return sendRouteError(
-        res,
-        error,
-        "No fue posible preparar el briefing automatico",
-      );
-    }
   },
 );
 
@@ -487,7 +612,12 @@ router.post(
     const findingId = Number(req.params.findingId || 0);
     const parsed = applyFindingSchema.safeParse(req.body || {});
     if (!Number.isInteger(findingId) || findingId <= 0 || !parsed.success) {
-      return res.status(400).json({ message: "Aplicacion de hallazgo invalida", issues: parsed.success ? [] : parsed.error.issues });
+      return res
+        .status(400)
+        .json({
+          message: "Aplicacion de hallazgo invalida",
+          issues: parsed.success ? [] : parsed.error.issues,
+        });
     }
     try {
       const result = await applyCustomerIntelligenceFinding({
@@ -495,7 +625,8 @@ router.post(
         findingId,
         ...parsed.data,
       });
-      if (!result) return res.status(404).json({ message: "Hallazgo no encontrado" });
+      if (!result)
+        return res.status(404).json({ message: "Hallazgo no encontrado" });
       await logAuditEvent({
         req,
         module: "commercial_intelligence",

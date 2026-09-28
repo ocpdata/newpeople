@@ -8,6 +8,7 @@ import {
 } from "./ai-usage/service.js";
 import { config } from "./config.js";
 import { query } from "./db.js";
+import { getExchangeRate } from "./exchange-rates.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 import { logAuditEvent, parseAuditChangedFields } from "./audit.js";
 import {
@@ -71,6 +72,19 @@ export function getEnabledCoachTerminalStatusCodes(settings = {}) {
     settings.includeLostOpportunities ? "perdida" : null,
     settings.includeCancelledOpportunities ? "anulada" : null,
   ].filter(Boolean);
+}
+
+export function classifyCoachOpportunityLifecycle({
+  activationStatusCode,
+  commercialStatusCode,
+}) {
+  if (activationStatusCode && activationStatusCode !== "activada") {
+    return "inactive";
+  }
+  if (["ganada", "perdida", "anulada"].includes(commercialStatusCode)) {
+    return "historical";
+  }
+  return "open";
 }
 
 export function resolveCoachTurnContext(
@@ -533,6 +547,50 @@ function buildOpportunityScope(user, params) {
   return "LEFT JOIN account_owners ao_scope ON ao_scope.account_id = o.account_id AND ao_scope.user_id = ?";
 }
 
+export function buildCoachQuotaMetrics({
+  quotaAmount,
+  quotaCurrencyCode,
+  actualAmountUsd,
+  qualifiedAmountUsd,
+  committedOpenAmountUsd,
+  usdToQuotaRate,
+  exchangeRateFetchedAt = null,
+}) {
+  const currencyCode = String(quotaCurrencyCode || "USD")
+    .trim()
+    .toUpperCase();
+  const rate = Number(usdToQuotaRate);
+  const conversionAvailable = Number.isFinite(rate) && rate > 0;
+  const convertUsd = (amount) =>
+    conversionAvailable
+      ? Number((Number(amount || 0) * rate).toFixed(2))
+      : null;
+  const assignedAmount = Number(quotaAmount || 0);
+  const actualAmount = convertUsd(actualAmountUsd);
+
+  return {
+    quota: {
+      assignedAmount,
+      actualAmount,
+      actualAmountUsd: Number(actualAmountUsd || 0),
+      gapAmount:
+        actualAmount === null
+          ? null
+          : Math.max(assignedAmount - actualAmount, 0),
+      committedOpenAmount: convertUsd(committedOpenAmountUsd),
+      weightedOpenAmount: convertUsd(qualifiedAmountUsd),
+      currencyCode,
+    },
+    currencyConversion: {
+      available: conversionAvailable,
+      baseCurrencyCode: "USD",
+      targetCurrencyCode: currencyCode,
+      usdToTargetRate: conversionAvailable ? rate : null,
+      fetchedAt: exchangeRateFetchedAt,
+    },
+  };
+}
+
 async function getMiAgentContext(user) {
   await ensureOpportunityWorkspaceSchema();
   const period = getQuarterSelection();
@@ -662,7 +720,6 @@ async function getMiAgentContext(user) {
            INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
            INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
            WHERE oas.code <> 'activada'
-             AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')
              AND oss.code IN (${COACH_STAGE_CODES.map(() => "?").join(", ")})
              ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
            ORDER BY o.updated_at DESC, o.close_date IS NULL, o.close_date ASC
@@ -745,7 +802,7 @@ async function getMiAgentContext(user) {
       ).catch(() => [])
     : [];
 
-  const actualAmount = Number(wonRows[0]?.actual_amount || 0);
+  const actualAmountUsd = Number(wonRows[0]?.actual_amount || 0);
   const leadParams = [];
   const hasLeadGlobalScope = hasPermission(user, "interacciones.read_all");
   const leadScopeJoin = hasLeadGlobalScope
@@ -867,14 +924,10 @@ async function getMiAgentContext(user) {
       commercialStatusCode: row.commercial_status_code || null,
       activationStatusCode: row.activation_status_code || "activada",
       activationStatusName: row.activation_status_name || "Activada",
-      lifecycle: ["ganada", "perdida", "anulada"].includes(
-        row.commercial_status_code,
-      )
-        ? "historical"
-        : row.activation_status_code &&
-            row.activation_status_code !== "activada"
-          ? "inactive"
-          : "open",
+      lifecycle: classifyCoachOpportunityLifecycle({
+        activationStatusCode: row.activation_status_code || "activada",
+        commercialStatusCode: row.commercial_status_code,
+      }),
       riskLevel:
         riskReasons.length > 1 ? "high" : riskReasons.length ? "medium" : "low",
       riskReasons,
@@ -901,21 +954,43 @@ async function getMiAgentContext(user) {
     (sum, item) => sum + item.amountUsd,
     0,
   );
+  const quotaCurrencyCode = String(targetRows[0]?.currency_code || "USD")
+    .trim()
+    .toUpperCase();
+  let usdToQuotaRate = quotaCurrencyCode === "USD" ? 1 : null;
+  let exchangeRateFetchedAt = null;
+  if (usdToQuotaRate === null) {
+    try {
+      const rate = await getExchangeRate({
+        baseCurrency: "USD",
+        targetCurrency: quotaCurrencyCode,
+      });
+      usdToQuotaRate = rate.exchangeRate;
+      exchangeRateFetchedAt = rate.fetchedAt;
+    } catch (error) {
+      console.warn(
+        `[mi-agent] No fue posible convertir métricas a ${quotaCurrencyCode}:`,
+        error?.message || error,
+      );
+    }
+  }
+  const quotaMetrics = buildCoachQuotaMetrics({
+    quotaAmount,
+    quotaCurrencyCode,
+    actualAmountUsd,
+    qualifiedAmountUsd: qualifiedAmount,
+    committedOpenAmountUsd: opportunities
+      .filter((item) => ["negociacion", "waiting"].includes(item.stageCode))
+      .reduce((sum, item) => sum + item.amountUsd, 0),
+    usdToQuotaRate,
+    exchangeRateFetchedAt,
+  });
   return {
     period: {
       ...period,
       baseCurrencyCode: targetRows[0]?.currency_code || "USD",
     },
-    quota: {
-      assignedAmount: quotaAmount,
-      actualAmount,
-      gapAmount: Math.max(quotaAmount - actualAmount, 0),
-      committedOpenAmount: opportunities
-        .filter((item) => ["negociacion", "waiting"].includes(item.stageCode))
-        .reduce((sum, item) => sum + item.amountUsd, 0),
-      weightedOpenAmount: qualifiedAmount,
-      currencyCode: targetRows[0]?.currency_code || "USD",
-    },
+    ...quotaMetrics,
     workboard: opportunities,
     coachOpportunities,
     inactivePipelineOpportunities,
@@ -2355,7 +2430,7 @@ export function normalizeCoachResult(
   }).data;
 }
 
-function normalizeAnalysis(payload, snapshot, developmentPlan = null) {
+export function normalizeAnalysis(payload, snapshot, developmentPlan = null) {
   const analysis = payload && typeof payload === "object" ? payload : {};
   const actions = Array.isArray(analysis.actions) ? analysis.actions : [];
   const opportunities = Array.isArray(snapshot?.pipeline?.opportunities)
@@ -2374,101 +2449,106 @@ function normalizeAnalysis(payload, snapshot, developmentPlan = null) {
   );
   const alerts = buildSalesAlerts(snapshot, developmentPlan);
   const activityProgress = buildActivityProgress(snapshot, developmentPlan);
+  const authorizedActions = actions
+    .filter((action) => {
+      const opportunityId = Number(action?.opportunityId || 0);
+      return !opportunityId || opportunityById.has(opportunityId);
+    })
+    .slice(0, 5);
   return {
     headline: String(analysis.headline || "").trim(),
     summary: String(analysis.summary || "").trim(),
     quotaReadout: String(analysis.quotaReadout || "").trim(),
     alerts,
     activityProgress,
-    actions: actions.slice(0, 5).map((action, index) => ({
-      rank: index + 1,
-      title: String(action?.title || "").trim(),
-      opportunityId: Number(action?.opportunityId || 0) || null,
-      opportunityName:
-        String(action?.opportunityName || "").trim() ||
-        String(
-          opportunityById.get(Number(action?.opportunityId || 0))?.name || "",
-        ).trim(),
-      accountName:
-        String(action?.accountName || "").trim() ||
-        String(
-          opportunityById.get(Number(action?.opportunityId || 0))
-            ?.accountName || "",
-        ).trim(),
-      developmentNarrative:
-        opportunityById.get(Number(action?.opportunityId || 0))?.workspace
-          ?.developmentNarrative || null,
-      alignedContext: {
-        situation: String(
-          planByOpportunityId.get(Number(action?.opportunityId || 0))
-            ?.situation ||
-            action?.situation ||
-            "",
-        ).trim(),
-        strategy: String(
-          planByOpportunityId.get(Number(action?.opportunityId || 0))
-            ?.strategy ||
-            action?.strategy ||
-            "",
-        ).trim(),
-        nextBestStep: String(
-          planByOpportunityId.get(Number(action?.opportunityId || 0))
-            ?.nextBestStep ||
-            action?.nextBestStep ||
-            "",
-        ).trim(),
-        alternativeStep: String(
-          planByOpportunityId.get(Number(action?.opportunityId || 0))
-            ?.alternativeStep ||
-            action?.alternativeStep ||
-            "",
-        ).trim(),
-        alignment: ["aligned", "partially_aligned", "not_aligned"].includes(
-          String(action?.alignment || "").trim(),
+    actions: authorizedActions.map((action, index) => {
+      const opportunityId = Number(action?.opportunityId || 0) || null;
+      const opportunity = opportunityId
+        ? opportunityById.get(opportunityId)
+        : null;
+      return {
+        rank: index + 1,
+        title: String(action?.title || "").trim(),
+        opportunityId,
+        opportunityName:
+          opportunity?.name || String(action?.opportunityName || "").trim(),
+        accountName:
+          opportunity?.accountName || String(action?.accountName || "").trim(),
+        developmentNarrative:
+          opportunity?.workspace?.developmentNarrative || null,
+        alignedContext: {
+          situation: String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))
+              ?.situation ||
+              action?.situation ||
+              "",
+          ).trim(),
+          strategy: String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))
+              ?.strategy ||
+              action?.strategy ||
+              "",
+          ).trim(),
+          nextBestStep: String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))
+              ?.nextBestStep ||
+              action?.nextBestStep ||
+              "",
+          ).trim(),
+          alternativeStep: String(
+            planByOpportunityId.get(Number(action?.opportunityId || 0))
+              ?.alternativeStep ||
+              action?.alternativeStep ||
+              "",
+          ).trim(),
+          alignment: ["aligned", "partially_aligned", "not_aligned"].includes(
+            String(action?.alignment || "").trim(),
+          )
+            ? String(action.alignment).trim()
+            : "partially_aligned",
+        },
+        salesHealth:
+          planByOpportunityId.get(Number(action?.opportunityId || 0))?.health ||
+          null,
+        priority: ["critical", "high", "medium", "low"].includes(
+          String(action?.priority || "").trim(),
         )
-          ? String(action.alignment).trim()
-          : "partially_aligned",
-      },
-      salesHealth:
-        planByOpportunityId.get(Number(action?.opportunityId || 0))?.health ||
-        null,
-      priority: ["critical", "high", "medium", "low"].includes(
-        String(action?.priority || "").trim(),
-      )
-        ? String(action.priority).trim()
-        : "medium",
-      stageName: String(action?.stageName || "").trim(),
-      reason: String(action?.reason || "").trim(),
-      risk: String(action?.risk || "").trim(),
-      expectedOutcome: String(action?.expectedOutcome || "").trim(),
-      successCriteria: String(action?.successCriteria || "").trim(),
-      actionType: String(action?.actionType || "follow_up").trim(),
-      executionKit: {
-        objective: String(action?.objective || "").trim(),
-        knownInformation: Array.isArray(action?.knownInformation)
-          ? action.knownInformation
-              .map((item) => String(item || "").trim())
-              .filter(Boolean)
-              .slice(0, 8)
-          : [],
-        objections: Array.isArray(action?.objections)
-          ? action.objections
+          ? String(action.priority).trim()
+          : "medium",
+        stageName:
+          opportunity?.stageName || String(action?.stageName || "").trim(),
+        reason: String(action?.reason || "").trim(),
+        risk: String(action?.risk || "").trim(),
+        expectedOutcome: String(action?.expectedOutcome || "").trim(),
+        successCriteria: String(action?.successCriteria || "").trim(),
+        actionType: String(action?.actionType || "follow_up").trim(),
+        executionKit: {
+          objective: String(action?.objective || "").trim(),
+          knownInformation: Array.isArray(action?.knownInformation)
+            ? action.knownInformation
+                .map((item) => String(item || "").trim())
+                .filter(Boolean)
+                .slice(0, 8)
+            : [],
+          objections: Array.isArray(action?.objections)
+            ? action.objections
+                .map((item) => String(item || "").trim())
+                .filter(Boolean)
+                .slice(0, 5)
+            : [],
+          valueProposition: String(action?.valueProposition || "").trim(),
+          followUpMessage: String(action?.followUpMessage || "").trim(),
+          minimumOutcome: String(action?.minimumOutcome || "").trim(),
+        },
+        suggestedDueDate: String(action?.suggestedDueDate || "").trim() || null,
+        questions: Array.isArray(action?.questions)
+          ? action.questions
               .map((item) => String(item || "").trim())
               .filter(Boolean)
               .slice(0, 5)
           : [],
-        valueProposition: String(action?.valueProposition || "").trim(),
-        followUpMessage: String(action?.followUpMessage || "").trim(),
-        minimumOutcome: String(action?.minimumOutcome || "").trim(),
-      },
-      suggestedDueDate: String(action?.suggestedDueDate || "").trim() || null,
-      questions: Array.isArray(action?.questions)
-        ? action.questions
-            .map((item) => String(item || "").trim())
-            .filter(Boolean)
-            .slice(0, 5)
-        : [],
-    })),
+      };
+    }),
     risks: Array.isArray(analysis.risks)
       ? analysis.risks
           .map((item) => String(item || "").trim())
@@ -2483,7 +2563,7 @@ function normalizeAnalysis(payload, snapshot, developmentPlan = null) {
   };
 }
 
-function buildActivityProgress(snapshot, developmentPlan) {
+export function buildActivityProgress(snapshot, developmentPlan) {
   const opportunities = Array.isArray(snapshot?.workboard)
     ? snapshot.workboard
     : [];
@@ -2504,15 +2584,27 @@ function buildActivityProgress(snapshot, developmentPlan) {
         return date >= periodStart && date <= periodEnd;
       },
     );
-    const recentProgress = (opportunity.stageAnswers || []).some((answer) => {
-      const date = new Date(answer.answeredAt || 0);
-      return (
-        date >= periodStart &&
-        date <= periodEnd &&
-        String(answer.answer || "").trim()
-      );
-    });
     const activityCount = recentActivities.length;
+    const latestRecentActivityAt = recentActivities.reduce(
+      (latest, activity) => {
+        const occurredAt = new Date(
+          activity.occurredAt || activity.createdAt || 0,
+        );
+        return occurredAt > latest ? occurredAt : latest;
+      },
+      periodStart,
+    );
+    const recentStageAnswer = (opportunity.stageAnswers || []).some(
+      (answer) => {
+        const date = new Date(answer.answeredAt || 0);
+        return (
+          date >= periodStart &&
+          date <= periodEnd &&
+          (!activityCount || date >= latestRecentActivityAt) &&
+          String(answer.answer || "").trim()
+        );
+      },
+    );
     const actionCount = (opportunity.workspace?.actions || []).length;
     const solidDimensions = Number(health?.solidCount || 0);
     return {
@@ -2523,8 +2615,13 @@ function buildActivityProgress(snapshot, developmentPlan) {
       actionCount,
       solidDimensions,
       totalDimensions: Number(health?.totalCount || 8),
-      progressed: recentProgress,
-      activityWithoutProgress: activityCount > 0 && !recentProgress,
+      progressed: recentStageAnswer,
+      progressSignal: recentStageAnswer
+        ? activityCount
+          ? "stage_answer_after_activity"
+          : "stage_answer"
+        : null,
+      activityWithoutProgress: activityCount > 0 && !recentStageAnswer,
     };
   });
   const activityCount = details.reduce(
@@ -2542,9 +2639,9 @@ function buildActivityProgress(snapshot, developmentPlan) {
   ).length;
   const message =
     activityCount > 0 && opportunitiesWithoutProgress > 0
-      ? `Has tenido ${activityCount} actividades en los últimos 7 días, pero ninguna ha cambiado el estado de ${opportunitiesWithoutProgress} de tus oportunidades.`
+      ? `Has tenido ${activityCount} actividades en los últimos 7 días, pero ${opportunitiesWithoutProgress} oportunidades no tienen respuestas de etapa posteriores a su actividad reciente como evidencia de avance.`
       : progressedOpportunities > 0
-        ? `Tus actividades recientes han producido avance comercial en ${progressedOpportunities} oportunidades.`
+        ? `Hay respuestas de etapa posteriores a la actividad reciente que documentan avance comercial en ${progressedOpportunities} oportunidades.`
         : "No hay suficiente actividad reciente para medir avance comercial.";
   return {
     periodLabel: "Últimos 7 días",
@@ -2703,13 +2800,24 @@ function buildSalesAlerts(snapshot, developmentPlan) {
       });
     }
   });
+  const conversionAvailable = snapshot?.currencyConversion?.available !== false;
+  const usdToQuotaRate = Number(
+    snapshot?.currencyConversion?.usdToTargetRate ?? 1,
+  );
+  const totalPipelineInQuotaCurrency = conversionAvailable
+    ? totalPipeline * usdToQuotaRate
+    : null;
   const gap = Number(snapshot?.quota?.gapAmount || 0);
-  if (gap > 0 && totalPipeline < gap) {
+  if (
+    totalPipelineInQuotaCurrency !== null &&
+    gap > 0 &&
+    totalPipelineInQuotaCurrency < gap
+  ) {
     add({
       code: "weak_pipeline",
       title: "Pipeline débil",
       severity: "critical",
-      evidence: `El pipeline calificado cubre ${(totalPipeline / gap).toFixed(1)}x la brecha.`,
+      evidence: `El pipeline calificado cubre ${(totalPipelineInQuotaCurrency / gap).toFixed(1)}x la brecha en ${snapshot?.quota?.currencyCode || "la moneda de cuota"}.`,
       impact: "La cobertura actual no alcanza para cubrir el objetivo.",
       action: "Generar nuevas oportunidades y fortalecer las existentes.",
     });
@@ -2738,16 +2846,34 @@ function buildSalesAlerts(snapshot, developmentPlan) {
 }
 
 function buildDevelopmentPlanPrompt(snapshot) {
+  const conversionAvailable = snapshot?.currencyConversion?.available !== false;
+  const usdToQuotaRate = Number(
+    snapshot?.currencyConversion?.usdToTargetRate ?? 1,
+  );
+  const qualifiedAmountUsd = (snapshot?.workboard || []).reduce(
+    (sum, item) => sum + Number(item.amountUsd || 0),
+    0,
+  );
   const planningSnapshot = {
     period: snapshot?.period || null,
     quota: snapshot?.quota || null,
-    pipeline: snapshot?.pipeline || null,
+    pipeline: {
+      currencyCode: snapshot?.quota?.currencyCode || "USD",
+      qualifiedAmountUsd,
+      qualifiedAmount: conversionAvailable
+        ? Number((qualifiedAmountUsd * usdToQuotaRate).toFixed(2))
+        : null,
+      qualifiedCount: (snapshot?.workboard || []).length,
+    },
     workboard: (snapshot?.workboard || []).map((item) => ({
       id: Number(item.id),
       name: item.name || "",
       account: item.account || { name: item.accountName || "" },
       contact: item.contact || null,
       amountUsd: Number(item.amountUsd || 0),
+      amountInQuotaCurrency: conversionAvailable
+        ? Number((Number(item.amountUsd || 0) * usdToQuotaRate).toFixed(2))
+        : null,
       closeDate: item.closeDate || null,
       stageCode: item.stageCode || "",
       stageName: item.stageName || "",
@@ -2789,7 +2915,7 @@ function buildDevelopmentPlanPrompt(snapshot) {
       {
         role: "system",
         content:
-          "Primero construye el plan comercial de cada oportunidad usando exclusivamente el contexto enriquecido: cuenta, contacto, oportunidad, respuestas y validaciones de etapas, documentos y su analisis, actividades e interacciones, acciones del workspace, debilidades, stakeholders, temas, entregables, estrategia y narrativa previa. No calcules acciones todavia. Para cada oportunidad devuelve, en este orden conceptual: descripcion y situacion actual, estrategia para lograr la venta, siguiente mejor paso y paso alternativo condicionado. Los cuatro bloques deben ser especificos de la oportunidad y sustentados por todas las fuentes. No inventes datos. Devuelve solo JSON valido.",
+          "Primero construye el plan comercial de cada oportunidad usando exclusivamente el contexto enriquecido: cuenta, contacto, oportunidad, respuestas y validaciones de etapas, documentos y su analisis, actividades e interacciones, acciones del workspace, debilidades, stakeholders, temas, entregables, estrategia y narrativa previa. amountUsd siempre está en USD; amountInQuotaCurrency está en la moneda de cuota declarada por pipeline.currencyCode. No compares importes de monedas distintas ni inventes tipos de cambio. No calcules acciones todavia. Para cada oportunidad devuelve, en este orden conceptual: descripcion y situacion actual, estrategia para lograr la venta, siguiente mejor paso y paso alternativo condicionado. Los cuatro bloques deben ser especificos de la oportunidad y sustentados por todas las fuentes. No inventes datos. Devuelve solo JSON valido.",
       },
       {
         role: "system",
@@ -2824,17 +2950,32 @@ function buildDevelopmentPlanPrompt(snapshot) {
 }
 
 function buildActionPrompt(snapshot, developmentPlan) {
+  const conversionAvailable = snapshot?.currencyConversion?.available !== false;
+  const usdToQuotaRate = Number(
+    snapshot?.currencyConversion?.usdToTargetRate ?? 1,
+  );
+  const qualifiedAmountUsd = (snapshot?.workboard || []).reduce(
+    (sum, item) => sum + Number(item.amountUsd || 0),
+    0,
+  );
   const actionSnapshot = {
     period: snapshot?.period || null,
     quota: snapshot?.quota || null,
     pipeline: {
-      qualifiedAmount: snapshot?.pipeline?.qualifiedAmount || 0,
-      qualifiedCount: snapshot?.pipeline?.qualifiedCount || 0,
+      currencyCode: snapshot?.quota?.currencyCode || "USD",
+      qualifiedAmountUsd,
+      qualifiedAmount: conversionAvailable
+        ? Number((qualifiedAmountUsd * usdToQuotaRate).toFixed(2))
+        : null,
+      qualifiedCount: (snapshot?.workboard || []).length,
       opportunities: (snapshot?.workboard || []).map((item) => ({
         id: Number(item.id),
         name: item.name || "",
         accountName: item.accountName || "",
         amountUsd: Number(item.amountUsd || 0),
+        amountInQuotaCurrency: conversionAvailable
+          ? Number((Number(item.amountUsd || 0) * usdToQuotaRate).toFixed(2))
+          : null,
         closeDate: item.closeDate || null,
         stageCode: item.stageCode || "",
         stageName: item.stageName || "",
@@ -2851,7 +2992,7 @@ function buildActionPrompt(snapshot, developmentPlan) {
       {
         role: "system",
         content:
-          "Ahora calcula y ordena las acciones recomendadas para el vendedor usando el contexto enriquecido y el plan comercial previamente calculado. Cada accion debe derivarse de una oportunidad concreta y de sus cuatro bloques: situacion actual, estrategia, siguiente mejor paso y paso alternativo. No vuelvas a inventar ni sustituir esos bloques. La accion debe ejecutar el siguiente mejor paso, respetar la estrategia y resolver la situacion actual. Usa el paso alternativo solo como contingencia. Para que el vendedor pueda ejecutarla, incluye tambien un kit practico: tipo de accion, objetivo, informacion conocida del cliente, objeciones probables, propuesta de valor, mensaje de seguimiento, resultado minimo y criterio de exito. Devuelve solo JSON valido.",
+          "Ahora calcula y ordena las acciones recomendadas para el vendedor usando el contexto enriquecido y el plan comercial previamente calculado. Cada accion debe derivarse de una oportunidad concreta y de sus cuatro bloques: situacion actual, estrategia, siguiente mejor paso y paso alternativo. No vuelvas a inventar ni sustituir esos bloques. La accion debe ejecutar el siguiente mejor paso, respetar la estrategia y resolver la situacion actual. Usa el paso alternativo solo como contingencia. amountUsd siempre está en USD; amountInQuotaCurrency está en la moneda de cuota declarada por pipeline.currencyCode. No compares importes de monedas distintas ni inventes tipos de cambio. Para que el vendedor pueda ejecutarla, incluye tambien un kit practico: tipo de accion, objetivo, informacion conocida del cliente, objeciones probables, propuesta de valor, mensaje de seguimiento, resultado minimo y criterio de exito. Devuelve solo JSON valido.",
       },
       {
         role: "user",

@@ -272,6 +272,7 @@ describe("API integration baseline", () => {
         "interacciones.create",
         "oportunidades.create",
         "fuentes_externas.execute",
+        "cuentas.read",
       ],
     });
     ctx.prospectResearchNoCoachRoleId = await createRole({
@@ -1139,6 +1140,390 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("Coach baseline preserves the selected opportunity through question, job response, and session persistence", async () => {
+    const baselineRoleId = await createRole({
+      name: `${TEST_PREFIX}_mi_coach_baseline`,
+      permissionCodes: [
+        "mi_coach.use",
+        "oportunidades.read",
+        "cuentas.read",
+        "contactos.read",
+      ],
+    });
+    cleanup.roleIds.push(baselineRoleId);
+    const baselineUserId = await createUser({
+      fullName: "API Mi Coach Baseline",
+      email: `${TEST_PREFIX}.mi.coach.baseline@example.com`,
+      roleIds: [
+        baselineRoleId,
+        ctx.opportunityFlowRoleId,
+        ctx.accountReadRoleId,
+        ctx.contactReadRoleId,
+      ],
+    });
+    cleanup.userIds.push(baselineUserId);
+
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_coach_chat_baseline`,
+      {
+        ownerUserId: baselineUserId,
+        actorUserId: baselineUserId,
+        loginEmail: `${TEST_PREFIX}.mi.coach.baseline@example.com`,
+      },
+    );
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    const question = "¿En qué etapa está esta oportunidad?";
+    const followUpQuestion = "¿Qué falta para avanzar?";
+    const expectedAnswer =
+      "La oportunidad seleccionada está en Waiting y requiere confirmar el siguiente paso.";
+    const expectedFollowUpAnswer =
+      "Falta confirmar el siguiente paso con el cliente.";
+    const receivedPrompts = [];
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async (url, init) => {
+      expect(String(url)).toContain("/responses");
+      const payload = JSON.parse(init.body);
+      expect(payload.temperature).toBe(0.2);
+      const userMessage = payload.input.find((item) => item.role === "user");
+      const receivedPrompt = JSON.parse(userMessage.content);
+      receivedPrompts.push(receivedPrompt);
+      const answer =
+        receivedPrompt.question === followUpQuestion
+          ? expectedFollowUpAnswer
+          : expectedAnswer;
+      return {
+        ok: true,
+        json: async () => ({
+          id: `resp_coach_baseline_${receivedPrompts.length}`,
+          output_text: JSON.stringify({
+            intent: "context_query",
+            responseType: "informational",
+            answer,
+            facts: [
+              {
+                sourceType: "opportunity",
+                sourceId: fixture.opportunityId,
+                label: "Etapa actual: Waiting",
+                excerpt: "La oportunidad sigue abierta en Waiting.",
+              },
+            ],
+            evidence: ["Oportunidad y etapa registradas en el CRM."],
+            inferences: [],
+            pendingItems: [],
+            recommendation: null,
+            confidence: "high",
+            entities: {
+              opportunityId: fixture.opportunityId,
+              accountId: fixture.accountId,
+              contactId: fixture.contactId,
+              leadId: null,
+              names: [`Oportunidad flujo ${TEST_PREFIX}_coach_chat_baseline`],
+            },
+            operations: [],
+            clarification: null,
+            action: null,
+            stageReadiness: null,
+          }),
+          usage: {
+            input_tokens: 120,
+            output_tokens: 80,
+            total_tokens: 200,
+          },
+        }),
+      };
+    });
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.mi.coach.baseline@example.com`,
+      );
+      const authorization = `Bearer ${loginResponse.body.token}`;
+      const queuedResponse = await request(app)
+        .post("/api/mi-agent/coach")
+        .set("Authorization", authorization)
+        .send({
+          question,
+          context: {
+            accountId: fixture.accountId,
+            opportunityId: fixture.opportunityId,
+            contactId: fixture.contactId,
+            leadId: null,
+          },
+        });
+
+      expect(queuedResponse.status).toBe(202);
+      expect(queuedResponse.body.sessionId).toBeGreaterThan(0);
+      expect(queuedResponse.body.job.id).toBeGreaterThan(0);
+
+      const waitForJob = async (jobId) => {
+        let response;
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          response = await request(app)
+            .get(`/api/mi-agent/coach/jobs/${jobId}`)
+            .set("Authorization", authorization);
+          if (["completed", "failed"].includes(response.body.job?.status))
+            break;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        return response;
+      };
+      const jobResponse = await waitForJob(queuedResponse.body.job.id);
+
+      expect(jobResponse.status).toBe(200);
+      expect(jobResponse.body.job.status).toBe("completed");
+      expect(jobResponse.body.job.errorMessage).toBeNull();
+      expect(jobResponse.body.result.answer).toBe(expectedAnswer);
+      expect(jobResponse.body.result.entities).toMatchObject({
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+        leadId: null,
+      });
+      expect(jobResponse.body.result.activeContext).toMatchObject({
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+        leadId: null,
+      });
+      expect(receivedPrompts[0].question).toBe(question);
+      expect(receivedPrompts[0].selectedContext).toMatchObject({
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+      });
+      expect(receivedPrompts[0].snapshot.selectedRecord).toMatchObject({
+        id: fixture.opportunityId,
+      });
+      expect(receivedPrompts[0].snapshot.selectedContext.opportunityId).toBe(
+        fixture.opportunityId,
+      );
+      expect(
+        receivedPrompts[0].snapshot.coachOpportunities.map((item) => item.id),
+      ).toContain(fixture.opportunityId);
+
+      const followUpQueuedResponse = await request(app)
+        .post("/api/mi-agent/coach")
+        .set("Authorization", authorization)
+        .send({
+          question: followUpQuestion,
+          sessionId: queuedResponse.body.sessionId,
+          context: {
+            accountId: fixture.accountId + 1000,
+            opportunityId: fixture.opportunityId + 1000,
+            contactId: null,
+            leadId: null,
+          },
+        });
+      expect(followUpQueuedResponse.status).toBe(202);
+      expect(followUpQueuedResponse.body.sessionId).toBe(
+        queuedResponse.body.sessionId,
+      );
+      const followUpJobResponse = await waitForJob(
+        followUpQueuedResponse.body.job.id,
+      );
+      expect(followUpJobResponse.status).toBe(200);
+      expect(followUpJobResponse.body.job.status).toBe("completed");
+      expect(followUpJobResponse.body.result.answer).toBe(
+        expectedFollowUpAnswer,
+      );
+      expect(followUpJobResponse.body.result.activeContext).toMatchObject({
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+      });
+      expect(receivedPrompts).toHaveLength(2);
+      expect(receivedPrompts[1].question).toBe(followUpQuestion);
+      expect(receivedPrompts[1].selectedContext).toMatchObject({
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+      });
+      expect(receivedPrompts[1].conversationHistory).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ role: "seller", text: question }),
+          expect.objectContaining({ role: "coach", text: expectedAnswer }),
+        ]),
+      );
+
+      const sessionResponse = await request(app)
+        .get(`/api/mi-agent/coach/sessions/${queuedResponse.body.sessionId}`)
+        .set("Authorization", authorization);
+      expect(sessionResponse.status).toBe(200);
+      expect(sessionResponse.body.session.context).toMatchObject({
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+      });
+      expect(sessionResponse.body.session.messages.slice(-4)).toMatchObject([
+        { role: "seller", text: question },
+        {
+          role: "coach",
+          text: expectedAnswer,
+          context: expect.objectContaining({
+            accountId: fixture.accountId,
+            opportunityId: fixture.opportunityId,
+          }),
+        },
+        {
+          role: "seller",
+          text: followUpQuestion,
+          context: expect.objectContaining({
+            accountId: fixture.accountId,
+            opportunityId: fixture.opportunityId,
+          }),
+        },
+        {
+          role: "coach",
+          text: expectedFollowUpAnswer,
+          context: expect.objectContaining({
+            accountId: fixture.accountId,
+            opportunityId: fixture.opportunityId,
+          }),
+        },
+      ]);
+    } finally {
+      config.openai.apiKey = originalApiKey;
+      global.fetch = originalFetch;
+    }
+  });
+
+  test("mi agente analysis job conserva solo recomendaciones de oportunidades autorizadas", async () => {
+    const analysisRoleId = await createRole({
+      name: `${TEST_PREFIX}_mi_agent_analysis_scope`,
+      permissionCodes: [
+        "mi_coach.use",
+        "oportunidades.read",
+        "cuentas.read",
+        "contactos.read",
+      ],
+    });
+    cleanup.roleIds.push(analysisRoleId);
+    const analysisUserId = await createUser({
+      fullName: "API Mi Agent Analysis",
+      email: `${TEST_PREFIX}.mi.agent.analysis@example.com`,
+      roleIds: [
+        analysisRoleId,
+        ctx.opportunityFlowRoleId,
+        ctx.accountReadRoleId,
+        ctx.contactReadRoleId,
+      ],
+    });
+    cleanup.userIds.push(analysisUserId);
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_mi_agent_analysis_scope`,
+      {
+        ownerUserId: analysisUserId,
+        actorUserId: analysisUserId,
+        loginEmail: `${TEST_PREFIX}.mi.agent.analysis@example.com`,
+      },
+    );
+    await query("UPDATE opportunities SET sales_stage_id = ? WHERE id = ?", [
+      ctx.catalogIds.salesStageWaitingId,
+      fixture.opportunityId,
+    ]);
+    const [fixtureRecord] = await query(
+      `SELECT o.name AS opportunityName, a.name AS accountName
+       FROM opportunities o
+       INNER JOIN accounts a ON a.id = o.account_id
+       WHERE o.id = ?
+       LIMIT 1`,
+      [fixture.opportunityId],
+    );
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = global.fetch;
+    config.openai.apiKey = "test-key";
+    global.fetch = vi.fn(async (url) => {
+      expect(String(url)).toContain("/responses");
+      return {
+        ok: true,
+        json: async () => ({
+          id: "resp_mi_agent_analysis_scope",
+          output_text: JSON.stringify({
+            headline: "Prioriza la oportunidad accesible",
+            summary: "Hay una oportunidad que requiere atención.",
+            quotaReadout: "Cuota y pipeline cargados.",
+            actions: [
+              {
+                title: "Contactar oportunidad autorizada",
+                opportunityId: fixture.opportunityId,
+                opportunityName: "Nombre inventado por modelo",
+                accountName: "Cuenta inventada por modelo",
+                priority: "high",
+              },
+              {
+                title: "Abrir oportunidad ajena",
+                opportunityId: fixture.opportunityId + 900000,
+                priority: "critical",
+              },
+            ],
+          }),
+          usage: {
+            input_tokens: 100,
+            output_tokens: 60,
+            total_tokens: 160,
+          },
+        }),
+      };
+    });
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        `${TEST_PREFIX}.mi.agent.analysis@example.com`,
+      );
+      const authorization = `Bearer ${loginResponse.body.token}`;
+      const contextResponse = await request(app)
+        .get("/api/mi-agent/context")
+        .set("Authorization", authorization);
+      expect(contextResponse.status).toBe(200);
+      const authorizedOpportunity =
+        contextResponse.body.coachOpportunities.find(
+          (opportunity) => opportunity.id === fixture.opportunityId,
+        );
+      expect(authorizedOpportunity).toBeDefined();
+      expect(authorizedOpportunity).toMatchObject({
+        lifecycle: "open",
+        stageCode: "waiting",
+      });
+      expect(
+        contextResponse.body.workboard.map((opportunity) => opportunity.id),
+      ).toContain(fixture.opportunityId);
+      const queuedResponse = await request(app)
+        .post("/api/mi-agent/analyze")
+        .set("Authorization", authorization)
+        .send({});
+
+      expect(queuedResponse.status).toBe(202);
+      const jobId = Number(queuedResponse.body.job.id);
+      let jobResponse;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        jobResponse = await request(app)
+          .get(`/api/mi-agent/analyze/jobs/${jobId}`)
+          .set("Authorization", authorization);
+        if (["completed", "failed"].includes(jobResponse.body.job?.status))
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(jobResponse.status).toBe(200);
+      expect(jobResponse.body.job.status).toBe("completed");
+      expect(jobResponse.body.result.actions).toHaveLength(1);
+      expect(jobResponse.body.result.actions[0]).toMatchObject({
+        opportunityId: fixture.opportunityId,
+        opportunityName: fixtureRecord.opportunityName,
+        accountName: fixtureRecord.accountName,
+      });
+      expect(jobResponse.body.result.actions[0].opportunityId).not.toBe(
+        fixture.opportunityId + 900000,
+      );
+    } finally {
+      config.openai.apiKey = originalApiKey;
+      global.fetch = originalFetch;
+    }
+  });
+
   test("mi coach protege y completa sesiones, jobs, handoffs y reversiones", async () => {
     const operatorLogin = await login(
       request(app),
@@ -1505,6 +1890,7 @@ describe("API integration baseline", () => {
     }
 
     expect(jobResponse.status).toBe(200);
+    expect(jobResponse.body.job.errorMessage).toBeNull();
     expect(jobResponse.body.job.status).toBe("completed");
     expect(jobResponse.body.job.findings.length).toBeGreaterThan(0);
     expect(jobResponse.body.job.findings[0]).toEqual(
@@ -1528,6 +1914,7 @@ describe("API integration baseline", () => {
         account: expect.objectContaining({ id: accountId }),
         contacts: expect.any(Array),
         opportunities: expect.any(Array),
+        inactiveOpportunities: expect.any(Array),
         interactions: expect.any(Array),
         activities: expect.any(Array),
         renewals: expect.any(Array),
@@ -1541,6 +1928,20 @@ describe("API integration baseline", () => {
         }),
         dataAvailability: { products: true, supportCases: false },
       }),
+    );
+    expect(snapshotResponse.body.snapshot.contacts[0]).toEqual(
+      expect.objectContaining({
+        purchaseParticipation: expect.any(String),
+        hierarchyLevel: expect.any(String),
+        relationshipType: expect.any(String),
+        influenceLevel: expect.any(String),
+      }),
+    );
+    expect(snapshotResponse.body.snapshot.contacts[0]).toHaveProperty(
+      "managerContactId",
+    );
+    expect(snapshotResponse.body.snapshot.contacts[0]).toHaveProperty(
+      "influencesContactId",
     );
 
     const forbiddenSnapshotResponse = await request(app)
@@ -1760,15 +2161,6 @@ describe("API integration baseline", () => {
     expect(externalResearchResponse.body.requiredPermission).toBe(
       "mi_coach.admin",
     );
-
-    const automaticBriefingResponse = await request(app)
-      .get("/api/commercial-intelligence/automatic-briefing/next")
-      .set("Authorization", `Bearer ${updateLogin.body.token}`);
-
-    expect(automaticBriefingResponse.status).toBe(200);
-    expect(automaticBriefingResponse.body).toEqual(
-      expect.objectContaining({ message: expect.any(String) }),
-    );
   });
 
   test("prospeccion crea sesion, genera ficha y confirma hallazgos", async () => {
@@ -1792,6 +2184,15 @@ describe("API integration baseline", () => {
       request(app),
       `${TEST_PREFIX}.prospect.research@example.com`,
     );
+
+    const unknownCountryResponse = await request(app)
+      .post("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        companyName: `Pais Invalido ${TEST_PREFIX}`,
+        country: `Pais Desconocido ${TEST_PREFIX}`,
+      });
+    expect(unknownCountryResponse.status).toBe(400);
 
     const createSessionResponse = await request(app)
       .post("/api/prospect-research/sessions")
@@ -1817,6 +2218,15 @@ describe("API integration baseline", () => {
     expect(runResponse.body.session.findings.length).toBeGreaterThan(0);
     expect(runResponse.body.session.contacts.length).toBeGreaterThan(0);
     expect(runResponse.body.session.hypotheses.length).toBeGreaterThan(0);
+    expect(runResponse.body.session.convertedAccountId).toBeNull();
+    expect(runResponse.body.session.duplicateReview).toEqual(
+      expect.objectContaining({ completed: true, countryResolved: true }),
+    );
+    const crmAccountBeforeConversion = await query(
+      "SELECT id FROM accounts WHERE name = ? LIMIT 1",
+      [`Prospecto ${TEST_PREFIX}`],
+    );
+    expect(crmAccountBeforeConversion).toHaveLength(0);
     expect(runResponse.body.session.result.outreach.subject).toContain(
       "Prospecto",
     );
@@ -1846,20 +2256,64 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)
       .send({});
 
-    expect(externalProspectResponse.status).toBe(200);
-    expect(
-      externalProspectResponse.body.session.result.externalResearch,
-    ).toEqual(expect.objectContaining({ enabled: false }));
+    expect(externalProspectResponse.status).toBe(403);
+    expect(externalProspectResponse.body.requiredPermission).toBe(
+      "mi_coach.admin",
+    );
 
     const accountConversionResponse = await request(app)
       .post(`/api/prospect-research/sessions/${sessionId}/convert-to-account`)
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)
-      .send({});
+      .send({ duplicateDecision: "create_new" });
 
     expect([200, 201]).toContain(accountConversionResponse.status);
     const accountId = Number(accountConversionResponse.body.accountId);
     expect(accountId).toBeGreaterThan(0);
     cleanup.accountIds.push(accountId);
+
+    const duplicateSessionResponse = await request(app)
+      .post("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        companyName: `Prospecto ${TEST_PREFIX}`,
+        country: "Mexico",
+        website: "www.prospecto.example.com/",
+      });
+    const duplicateSessionId = Number(duplicateSessionResponse.body.session.id);
+    const duplicateSessionRunResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${duplicateSessionId}/run`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+    expect(
+      duplicateSessionRunResponse.body.session.duplicateReview.candidates,
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: accountId })]),
+    );
+    const unreviewedAccountConversionResponse = await request(app)
+      .post(
+        `/api/prospect-research/sessions/${duplicateSessionId}/convert-to-account`,
+      )
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+    expect(unreviewedAccountConversionResponse.status).toBe(409);
+    expect(
+      unreviewedAccountConversionResponse.body.duplicateCandidates,
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: accountId })]),
+    );
+    const linkDuplicateAccountResponse = await request(app)
+      .post(
+        `/api/prospect-research/sessions/${duplicateSessionId}/convert-to-account`,
+      )
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        duplicateDecision: "link_existing",
+        duplicateAccountId: accountId,
+      });
+    expect(linkDuplicateAccountResponse.status).toBe(200);
+    expect(linkDuplicateAccountResponse.body).toEqual(
+      expect.objectContaining({ accountId, reused: true }),
+    );
 
     const suggestedContactId = Number(runResponse.body.session.contacts[0].id);
     const contactConversionResponse = await request(app)
@@ -1876,6 +2330,16 @@ describe("API integration baseline", () => {
     expect(contactId).toBeGreaterThan(0);
     cleanup.contactIds.push(contactId);
 
+    const duplicateContactResponse = await request(app)
+      .post(`/api/prospect-research/contacts/${suggestedContactId}/convert`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        accountId,
+        contactName: "Otra Persona",
+        email: `laura.prospecto.${TEST_PREFIX}@example.com`,
+      });
+    expect(duplicateContactResponse.status).toBe(409);
+
     const leadConversionResponse = await request(app)
       .post(`/api/prospect-research/sessions/${sessionId}/convert-to-lead`)
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)
@@ -1887,6 +2351,21 @@ describe("API integration baseline", () => {
     );
 
     const hypothesisId = Number(runResponse.body.session.hypotheses[0].id);
+    const unconfirmedOpportunityResponse = await request(app)
+      .post(
+        `/api/prospect-research/hypotheses/${hypothesisId}/convert-to-opportunity`,
+      )
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ accountId, contactId });
+    expect(unconfirmedOpportunityResponse.status).toBe(409);
+
+    const confirmHypothesisResponse = await request(app)
+      .post(`/api/prospect-research/hypotheses/${hypothesisId}/confirm`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({});
+    expect(confirmHypothesisResponse.status).toBe(200);
+    expect(confirmHypothesisResponse.body.hypothesis.status).toBe("confirmed");
+
     const opportunityConversionResponse = await request(app)
       .post(
         `/api/prospect-research/hypotheses/${hypothesisId}/convert-to-opportunity`,
@@ -1908,6 +2387,61 @@ describe("API integration baseline", () => {
   });
 
   test("gobierno de Mi Coach exige admin y actualiza configuracion y metricas", async () => {
+    const governanceContextRoleId = await createRole({
+      name: `${TEST_PREFIX}_governance_context`,
+      permissionCodes: ["mi_coach.use", "inteligencia_comercial.read"],
+    });
+    cleanup.roleIds.push(governanceContextRoleId);
+    const governanceContextUserId = await createUser({
+      fullName: "API Governance Context Seller",
+      email: `${TEST_PREFIX}.governance.context@example.com`,
+      roleIds: [
+        governanceContextRoleId,
+        ctx.opportunityFlowRoleId,
+        ctx.accountReadRoleId,
+        ctx.contactReadRoleId,
+      ],
+    });
+    cleanup.userIds.push(governanceContextUserId);
+    const governedOpportunity = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_governance_status_isolation`,
+      {
+        ownerUserId: governanceContextUserId,
+        actorUserId: governanceContextUserId,
+        loginEmail: `${TEST_PREFIX}.governance.context@example.com`,
+      },
+    );
+    await query(
+      `UPDATE opportunities SET commercial_status_id = ? WHERE id = ?`,
+      [
+        ctx.catalogIds.opportunityCommercialWonStatusId,
+        governedOpportunity.opportunityId,
+      ],
+    );
+    const [statusBeforeGovernanceUpdate] = await query(
+      `SELECT o.commercial_status_id, o.activation_status_id
+       FROM opportunities o WHERE o.id = ? LIMIT 1`,
+      [governedOpportunity.opportunityId],
+    );
+    const deactivatedTerminalOpportunity =
+      await createOwnedOpportunityFlowFixture(
+        `${TEST_PREFIX}_governance_deactivated_terminal`,
+        {
+          ownerUserId: governanceContextUserId,
+          actorUserId: governanceContextUserId,
+          loginEmail: `${TEST_PREFIX}.governance.context@example.com`,
+        },
+      );
+    await query(
+      `UPDATE opportunities
+       SET commercial_status_id = ?, activation_status_id = ? WHERE id = ?`,
+      [
+        ctx.catalogIds.opportunityCommercialWonStatusId,
+        ctx.catalogIds.opportunityInactiveStatusId,
+        deactivatedTerminalOpportunity.opportunityId,
+      ],
+    );
+
     const regularLogin = await login(
       request(app),
       `${TEST_PREFIX}.mi.coach.use@example.com`,
@@ -1939,12 +2473,39 @@ describe("API integration baseline", () => {
       }),
     );
 
+    const enableWonHistoryResponse = await request(app)
+      .put("/api/commercial-intelligence/governance/settings")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({ includeWonOpportunities: true });
+    expect(enableWonHistoryResponse.status).toBe(200);
+    const contextBeforeGovernanceUpdate = await request(app)
+      .get("/api/mi-agent/context")
+      .set("Authorization", `Bearer ${governedOpportunity.token}`);
+    expect(contextBeforeGovernanceUpdate.status).toBe(200);
+    const customerSnapshotBeforeGovernanceUpdate = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-intelligence/snapshot?accountId=${governedOpportunity.accountId}`,
+      )
+      .set("Authorization", `Bearer ${governedOpportunity.token}`);
+    expect(customerSnapshotBeforeGovernanceUpdate.status).toBe(200);
+    expect(
+      customerSnapshotBeforeGovernanceUpdate.body.snapshot.opportunities,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: governedOpportunity.opportunityId,
+          commercialStatusCode: "ganada",
+          lifecycle: "historical",
+        }),
+      ]),
+    );
+
     const updateResponse = await request(app)
       .put("/api/commercial-intelligence/governance/settings")
       .set("Authorization", `Bearer ${adminLogin.body.token}`)
       .send({
         externalSourcesEnabled: false,
-        includeWonOpportunities: true,
+        includeWonOpportunities: false,
         includeLostOpportunities: false,
         includeCancelledOpportunities: true,
         dailyResearchLimitPerUser: 7,
@@ -1956,23 +2517,95 @@ describe("API integration baseline", () => {
 
     expect(updateResponse.status).toBe(200);
     expect(updateResponse.body.settings).toMatchObject({
-      includeWonOpportunities: true,
+      includeWonOpportunities: false,
       includeLostOpportunities: false,
       includeCancelledOpportunities: true,
       dailyResearchLimitPerUser: 7,
       findingRetentionDays: 90,
       allowProspectConversion: false,
     });
+    const [statusAfterGovernanceUpdate] = await query(
+      `SELECT o.commercial_status_id, o.activation_status_id
+       FROM opportunities o WHERE o.id = ? LIMIT 1`,
+      [governedOpportunity.opportunityId],
+    );
+    expect(statusAfterGovernanceUpdate).toEqual(statusBeforeGovernanceUpdate);
 
     const contextResponse = await request(app)
       .get("/api/mi-agent/context")
-      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+      .set("Authorization", `Bearer ${governedOpportunity.token}`);
 
     expect(contextResponse.status).toBe(200);
-    expect(contextResponse.body.wonOpportunities).toEqual(expect.any(Array));
+    expect(contextResponse.body.wonOpportunities).toEqual([]);
     expect(contextResponse.body.lostOpportunities).toEqual([]);
     expect(contextResponse.body.cancelledOpportunities).toEqual(
       expect.any(Array),
+    );
+    expect(contextResponse.body.inactivePipelineOpportunities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: deactivatedTerminalOpportunity.opportunityId,
+          lifecycle: "inactive",
+          commercialStatusCode: "ganada",
+          activationStatusCode: "desactivada",
+        }),
+      ]),
+    );
+    expect(contextResponse.body.coachOpportunities).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: deactivatedTerminalOpportunity.opportunityId,
+        }),
+      ]),
+    );
+    expect(contextResponse.body.quota.actualAmount).toBe(
+      contextBeforeGovernanceUpdate.body.quota.actualAmount,
+    );
+    expect(contextResponse.body.quota.committedOpenAmount).toBe(
+      contextBeforeGovernanceUpdate.body.quota.committedOpenAmount,
+    );
+    expect(
+      contextResponse.body.coachOpportunities.map((item) => [
+        item.id,
+        item.lifecycle,
+      ]),
+    ).toEqual(
+      contextBeforeGovernanceUpdate.body.coachOpportunities.map((item) => [
+        item.id,
+        item.lifecycle,
+      ]),
+    );
+    const customerSnapshotAfterGovernanceUpdate = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-intelligence/snapshot?accountId=${governedOpportunity.accountId}`,
+      )
+      .set("Authorization", `Bearer ${governedOpportunity.token}`);
+    expect(customerSnapshotAfterGovernanceUpdate.status).toBe(200);
+    expect(
+      customerSnapshotAfterGovernanceUpdate.body.snapshot.opportunities,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: governedOpportunity.opportunityId }),
+      ]),
+    );
+
+    const inactiveSnapshotAfterGovernanceUpdate = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-intelligence/snapshot?accountId=${deactivatedTerminalOpportunity.accountId}`,
+      )
+      .set("Authorization", `Bearer ${governedOpportunity.token}`);
+    expect(inactiveSnapshotAfterGovernanceUpdate.status).toBe(200);
+    expect(
+      inactiveSnapshotAfterGovernanceUpdate.body.snapshot.inactiveOpportunities,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: deactivatedTerminalOpportunity.opportunityId,
+          commercialStatusCode: "ganada",
+          activationStatusCode: "desactivada",
+          lifecycle: "inactive",
+        }),
+      ]),
     );
 
     const externalUserLogin = await login(

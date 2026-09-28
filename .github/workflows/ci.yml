@@ -61,6 +61,5 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: apps/web
 
-      - name: Run Coach E2E tests
-        run: npm run test:e2e:coach
-        working-directory: apps/web
+      - name: Run Coach behavioral baseline
+        run: npm run test:coach:baseline

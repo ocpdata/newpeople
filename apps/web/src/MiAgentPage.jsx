@@ -6,13 +6,17 @@ import {
   CheckCircle2,
   Clock3,
   Database,
+  LayoutDashboard,
   Lightbulb,
+  MessageCircle,
   Pencil,
   Search,
+  Settings2,
   X,
 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
 import "./mi-agent.css";
+import "./mi-agent-navigation.css";
 import "./mi-agent-detail.css";
 import "./mi-agent-execution-kit.css";
 import "./mi-agent-health.css";
@@ -167,6 +171,21 @@ const CUSTOMER_FINDING_CONFIDENCE_LABELS = {
   high: "Alta",
   medium: "Media",
   low: "Baja",
+};
+
+const CUSTOMER_QUOTATION_STATUS_LABELS = {
+  won: "Ganada",
+  ganada: "Ganada",
+  accepted: "Aceptada",
+  aceptada: "Aceptada",
+  draft: "Borrador",
+  borrador: "Borrador",
+  sent: "Enviada",
+  enviada: "Enviada",
+  rejected: "Rechazada",
+  rechazada: "Rechazada",
+  pending: "Pendiente",
+  pendiente: "Pendiente",
 };
 
 const CUSTOMER_FINDING_APPLY_FIELDS = {
@@ -483,22 +502,50 @@ function buildSnapshot(dashboard) {
   const coachOpportunities = Array.isArray(dashboard?.coachOpportunities)
     ? dashboard.coachOpportunities
     : qualified;
+  const openPipeline = coachOpportunities.filter(
+    (item) => item.lifecycle === "open",
+  );
+  const currencyCode =
+    quota.currencyCode ||
+    development.period?.baseCurrencyCode ||
+    dashboard?.period?.baseCurrencyCode ||
+    "USD";
+  const currencyConversionAvailable =
+    dashboard?.currencyConversion?.available ?? currencyCode === "USD";
 
   return {
     period: development.period || dashboard?.period || null,
     quota: {
       assignedAmount: Number(quota.assignedAmount || 0),
-      actualAmount: Number(quota.actualAmount || 0),
-      gapAmount: Number(quota.gapAmount || 0),
-      committedOpenAmount: Number(quota.committedOpenAmount || 0),
-      weightedOpenAmount: Number(quota.weightedOpenAmount || 0),
-      currencyCode:
-        quota.currencyCode ||
-        development.period?.baseCurrencyCode ||
-        dashboard?.period?.baseCurrencyCode ||
-        "USD",
+      actualAmount:
+        quota.actualAmount == null ? null : Number(quota.actualAmount),
+      gapAmount: quota.gapAmount == null ? null : Number(quota.gapAmount),
+      committedOpenAmount:
+        quota.committedOpenAmount == null
+          ? null
+          : Number(quota.committedOpenAmount),
+      weightedOpenAmount:
+        quota.weightedOpenAmount == null
+          ? null
+          : Number(quota.weightedOpenAmount),
+      currencyCode,
+      currencyConversionAvailable,
+      usdToQuotaRate: Number(
+        dashboard?.currencyConversion?.usdToTargetRate ?? 1,
+      ),
+      currencyRateFetchedAt: dashboard?.currencyConversion?.fetchedAt || null,
     },
     pipeline: {
+      openAmount: !currencyConversionAvailable
+        ? null
+        : openPipeline.reduce(
+            (sum, item) =>
+              sum +
+              Number(item.amountUsd ?? item.amount_usd ?? 0) *
+                Number(dashboard?.currencyConversion?.usdToTargetRate ?? 1),
+            0,
+          ),
+      openCount: openPipeline.length,
       qualifiedAmount: qualified.reduce(
         (sum, item) => sum + Number(item.amountUsd || 0),
         0,
@@ -538,6 +585,11 @@ function buildSnapshot(dashboard) {
       : [],
     cancelledOpportunities: Array.isArray(dashboard?.cancelledOpportunities)
       ? dashboard.cancelledOpportunities
+      : [],
+    inactivePipelineOpportunities: Array.isArray(
+      dashboard?.inactivePipelineOpportunities,
+    )
+      ? dashboard.inactivePipelineOpportunities
       : [],
     accounts: Array.isArray(dashboard?.accounts) ? dashboard.accounts : [],
     contactMappings: Array.isArray(dashboard?.contactMappings)
@@ -688,10 +740,14 @@ export default function MiAgentPage({
   canCreateQuotations = false,
   canCreateProposals = false,
   canUseExternalSources = false,
+  canReadProspecting = false,
+  canCreateProspecting = false,
+  canUpdateProspecting = false,
+  canReadCustomerIntelligence = false,
   canManageCoach = false,
 }) {
   const navigate = useNavigate();
-  const [activeWorkspace, setActiveWorkspace] = useState("coach");
+  const [activeWorkspace, setActiveWorkspace] = useState("summary");
   const [dashboard, setDashboard] = useState(null);
   const [coachAccounts, setCoachAccounts] = useState([]);
   const [coachAccountSearch, setCoachAccountSearch] = useState("");
@@ -733,13 +789,13 @@ export default function MiAgentPage({
   const [savingCoachOperation, setSavingCoachOperation] = useState(false);
   const [coachDraftSaving, setCoachDraftSaving] = useState(false);
   const [coachOperationAction, setCoachOperationAction] = useState({});
-  const [automaticBriefing, setAutomaticBriefing] = useState(null);
-  const [automaticBriefingLoading, setAutomaticBriefingLoading] =
-    useState(false);
   const [coachGovernance, setCoachGovernance] = useState(null);
   const [coachGovernanceLoading, setCoachGovernanceLoading] = useState(false);
   const [coachGovernanceSaving, setCoachGovernanceSaving] = useState(false);
   const [customerIntelligenceJob, setCustomerIntelligenceJob] = useState(null);
+  const [customerAccounts, setCustomerAccounts] = useState([]);
+  const [customerAccountSearch, setCustomerAccountSearch] = useState("");
+  const [customerAccountId, setCustomerAccountId] = useState("");
   const [customerSnapshot, setCustomerSnapshot] = useState(null);
   const [customerSnapshotLoading, setCustomerSnapshotLoading] = useState(false);
   const [customerFindings, setCustomerFindings] = useState([]);
@@ -961,6 +1017,9 @@ export default function MiAgentPage({
       setCoachAccounts(
         Array.isArray(accountsResponse.data) ? accountsResponse.data : [],
       );
+      setCustomerAccounts(
+        Array.isArray(accountsResponse.data) ? accountsResponse.data : [],
+      );
     } catch (requestError) {
       setError(
         getApiErrorMessage(
@@ -990,7 +1049,6 @@ export default function MiAgentPage({
     setCoachPendingOperations([]);
     setCoachRecentOperations([]);
     setCoachNotice("");
-    resetCustomerIntelligence();
     if (!normalizedId) return;
     setLoadingCoachContext(true);
     try {
@@ -1041,6 +1099,25 @@ export default function MiAgentPage({
     }
   }
 
+  async function searchCustomerAccounts(value) {
+    setCustomerAccountSearch(value);
+    try {
+      const response = await api.get(
+        `/api/accounts?activeOnly=true&search=${encodeURIComponent(value)}`,
+      );
+      setCustomerAccounts(Array.isArray(response.data) ? response.data : []);
+    } catch (requestError) {
+      setCustomerIntelligenceError(
+        getApiErrorMessage(requestError, "No fue posible buscar cuentas"),
+      );
+    }
+  }
+
+  function selectCustomerAccount(accountId) {
+    setCustomerAccountId(String(accountId || ""));
+    resetCustomerIntelligence();
+  }
+
   async function selectCoachOpportunity(opportunityId) {
     const opportunity = coachOpportunities.find(
       (item) => String(item.id) === String(opportunityId),
@@ -1058,7 +1135,6 @@ export default function MiAgentPage({
     setCoachPendingOperations([]);
     setCoachRecentOperations([]);
     setCoachNotice("");
-    resetCustomerIntelligence();
     if (
       opportunityId &&
       coachContext.accountId &&
@@ -1088,7 +1164,6 @@ export default function MiAgentPage({
     setCoachPendingOperations([]);
     setCoachRecentOperations([]);
     setCoachNotice("");
-    resetCustomerIntelligence();
   }
 
   async function applyCoachActiveContext(activeContext) {
@@ -1162,9 +1237,10 @@ export default function MiAgentPage({
 
   const snapshot = useMemo(() => buildSnapshot(dashboard), [dashboard]);
   const currency = snapshot.quota.currencyCode;
-  const coverage = snapshot.quota.gapAmount
-    ? snapshot.pipeline.qualifiedAmount / snapshot.quota.gapAmount
-    : 0;
+  const coverage =
+    snapshot.quota.currencyConversionAvailable && snapshot.quota.gapAmount
+      ? snapshot.pipeline.openAmount / snapshot.quota.gapAmount
+      : null;
   const selectedCoachAccount =
     coachAccounts.find(
       (item) => String(item.id) === String(coachContext.accountId),
@@ -1189,11 +1265,11 @@ export default function MiAgentPage({
     coachContacts.find(
       (item) => String(item.id) === String(coachContext.contactId),
     ) || null;
-  const hasCustomerContext = Boolean(
-    coachContext.accountId ||
-    coachContext.opportunityId ||
-    coachContext.contactId,
-  );
+  const selectedCustomerAccount =
+    customerAccounts.find(
+      (item) => String(item.id) === String(customerAccountId),
+    ) || null;
+  const hasCustomerContext = Boolean(customerAccountId);
 
   useEffect(() => {
     if (activeWorkspace !== "customer" || !hasCustomerContext) {
@@ -1205,15 +1281,7 @@ export default function MiAgentPage({
     api
       .get("/api/commercial-intelligence/account-intelligence/snapshot", {
         params: {
-          accountId: coachContext.accountId
-            ? Number(coachContext.accountId)
-            : null,
-          opportunityId: coachContext.opportunityId
-            ? Number(coachContext.opportunityId)
-            : null,
-          contactId: coachContext.contactId
-            ? Number(coachContext.contactId)
-            : null,
+          accountId: Number(customerAccountId),
         },
       })
       .then((response) => {
@@ -1234,13 +1302,7 @@ export default function MiAgentPage({
     return () => {
       cancelled = true;
     };
-  }, [
-    activeWorkspace,
-    coachContext.accountId,
-    coachContext.opportunityId,
-    coachContext.contactId,
-    hasCustomerContext,
-  ]);
+  }, [activeWorkspace, customerAccountId, hasCustomerContext]);
 
   function resetCustomerIntelligence() {
     setCustomerSnapshot(null);
@@ -1267,11 +1329,7 @@ export default function MiAgentPage({
 
   function buildCustomerIntelligencePayload() {
     return {
-      accountId: coachContext.accountId ? Number(coachContext.accountId) : null,
-      opportunityId: coachContext.opportunityId
-        ? Number(coachContext.opportunityId)
-        : null,
-      contactId: coachContext.contactId ? Number(coachContext.contactId) : null,
+      accountId: customerAccountId ? Number(customerAccountId) : null,
       objective: "Investigar cliente existente desde Mi Coach",
     };
   }
@@ -1297,7 +1355,7 @@ export default function MiAgentPage({
   async function runCustomerInvestigation() {
     if (!hasCustomerContext) {
       setCustomerIntelligenceError(
-        "Selecciona una cuenta, oportunidad o contacto para investigar.",
+        "Selecciona una cuenta existente para investigar.",
       );
       return;
     }
@@ -1516,7 +1574,7 @@ export default function MiAgentPage({
   async function prepareCustomerCall() {
     if (!hasCustomerContext) {
       setCustomerIntelligenceError(
-        "Selecciona una cuenta, oportunidad o contacto para preparar la llamada.",
+        "Selecciona una cuenta existente para preparar la llamada.",
       );
       return;
     }
@@ -1551,7 +1609,7 @@ export default function MiAgentPage({
   async function prepareCustomerExecutiveBriefing() {
     if (!hasCustomerContext) {
       setCustomerIntelligenceError(
-        "Selecciona una cuenta, oportunidad o contacto para preparar el resumen ejecutivo.",
+        "Selecciona una cuenta existente para preparar el resumen ejecutivo.",
       );
       return;
     }
@@ -1600,7 +1658,7 @@ export default function MiAgentPage({
   async function runCustomerAgents() {
     if (!hasCustomerContext) {
       setCustomerIntelligenceError(
-        "Selecciona una cuenta, oportunidad o contacto para ejecutar los agentes.",
+        "Selecciona una cuenta existente para ejecutar los agentes.",
       );
       return;
     }
@@ -1827,14 +1885,17 @@ export default function MiAgentPage({
     }
   }
 
-  async function convertProspectAccount() {
+  async function convertProspectAccount(
+    duplicateDecision = "",
+    duplicateAccountId = null,
+  ) {
     if (!prospectSession?.id) return;
     setProspectConverting("account");
     setProspectError("");
     try {
       const response = await api.post(
         `/api/prospect-research/sessions/${prospectSession.id}/convert-to-account`,
-        {},
+        { duplicateDecision, duplicateAccountId },
       );
       const accountId = Number(response.data?.accountId || 0);
       if (!accountId) throw new Error("No se pudo crear la cuenta");
@@ -1850,6 +1911,38 @@ export default function MiAgentPage({
     } catch (requestError) {
       setProspectError(
         getApiErrorMessage(requestError, "No fue posible crear la cuenta"),
+      );
+    } finally {
+      setProspectConverting("");
+    }
+  }
+
+  async function updateProspectHypothesisStatus(hypothesis, status) {
+    setProspectConverting(`hypothesis-${hypothesis.id}`);
+    setProspectError("");
+    try {
+      const response = await api.post(
+        `/api/prospect-research/hypotheses/${hypothesis.id}/${status === "confirmed" ? "confirm" : "reject"}`,
+        {},
+      );
+      const updatedHypothesis = response.data?.hypothesis;
+      if (updatedHypothesis) {
+        setProspectSession((current) =>
+          current
+            ? {
+                ...current,
+                hypotheses: (current.hypotheses || []).map((item) =>
+                  Number(item.id) === Number(updatedHypothesis.id)
+                    ? updatedHypothesis
+                    : item,
+                ),
+              }
+            : current,
+        );
+      }
+    } catch (requestError) {
+      setProspectError(
+        getApiErrorMessage(requestError, "No fue posible validar la hipótesis"),
       );
     } finally {
       setProspectConverting("");
@@ -2142,33 +2235,6 @@ export default function MiAgentPage({
       );
     } finally {
       setAnalyzing(false);
-    }
-  }
-
-  async function loadAutomaticBriefing() {
-    setAutomaticBriefingLoading(true);
-    setError("");
-    setCoachNotice("");
-    try {
-      const response = await api.get(
-        "/api/commercial-intelligence/automatic-briefing/next",
-      );
-      setAutomaticBriefing(response.data || null);
-      if (!response.data?.briefing) {
-        setCoachNotice(
-          response.data?.message ||
-            "No hay actividades próximas para preparar briefing automático.",
-        );
-      }
-    } catch (requestError) {
-      setError(
-        getApiErrorMessage(
-          requestError,
-          "No fue posible preparar el briefing automático",
-        ),
-      );
-    } finally {
-      setAutomaticBriefingLoading(false);
     }
   }
 
@@ -2860,1376 +2926,1475 @@ export default function MiAgentPage({
         </p>
       ) : null}
 
-      <nav
-        className="mi-agent-workspace-tabs"
-        aria-label="Espacios de Mi Coach"
-      >
-        <button
-          type="button"
-          className={activeWorkspace === "coach" ? "is-active" : ""}
-          onClick={() => setActiveWorkspace("coach")}
+      <div className="mi-agent-workspace-navigation">
+        <nav
+          className="mi-agent-workspace-tabs"
+          aria-label="Espacios de Mi Coach"
         >
-          Coach
-        </button>
-        <button
-          type="button"
-          className={activeWorkspace === "customer" ? "is-active" : ""}
-          onClick={() => setActiveWorkspace("customer")}
-        >
-          Cliente existente
-        </button>
-        <button
-          type="button"
-          className={activeWorkspace === "prospect" ? "is-active" : ""}
-          onClick={() => setActiveWorkspace("prospect")}
-        >
-          Cuenta nueva
-        </button>
-        {canManageCoach ? (
           <button
             type="button"
-            className={activeWorkspace === "admin" ? "is-active" : ""}
-            onClick={() => {
-              setActiveWorkspace("admin");
-              loadCoachGovernance();
-            }}
+            className={activeWorkspace === "summary" ? "is-active" : ""}
+            aria-current={activeWorkspace === "summary" ? "page" : undefined}
+            onClick={() => setActiveWorkspace("summary")}
           >
-            Administración
+            <LayoutDashboard size={16} aria-hidden="true" />
+            Resumen
           </button>
+          <button
+            type="button"
+            className={activeWorkspace === "coach" ? "is-active" : ""}
+            aria-current={activeWorkspace === "coach" ? "page" : undefined}
+            onClick={() => setActiveWorkspace("coach")}
+          >
+            <MessageCircle size={16} aria-hidden="true" />
+            Coach
+          </button>
+          {canReadCustomerIntelligence ? (
+            <button
+              type="button"
+              className={activeWorkspace === "customer" ? "is-active" : ""}
+              aria-current={activeWorkspace === "customer" ? "page" : undefined}
+              onClick={() => setActiveWorkspace("customer")}
+            >
+              Cliente existente
+            </button>
+          ) : null}
+          {canReadProspecting || canCreateProspecting ? (
+            <button
+              type="button"
+              className={activeWorkspace === "prospect" ? "is-active" : ""}
+              aria-current={activeWorkspace === "prospect" ? "page" : undefined}
+              onClick={() => setActiveWorkspace("prospect")}
+            >
+              Cuenta nueva
+            </button>
+          ) : null}
+        </nav>
+        {canManageCoach ? (
+          <nav className="mi-agent-workspace-admin" aria-label="Administración">
+            <button
+              type="button"
+              className={activeWorkspace === "admin" ? "is-active" : ""}
+              aria-current={activeWorkspace === "admin" ? "page" : undefined}
+              onClick={() => {
+                setActiveWorkspace("admin");
+                loadCoachGovernance();
+              }}
+            >
+              <Settings2 size={16} aria-hidden="true" />
+              Administración
+            </button>
+          </nav>
         ) : null}
-      </nav>
+      </div>
 
-      {activeWorkspace === "coach" ? (
+      {activeWorkspace === "summary" || activeWorkspace === "coach" ? (
         <>
-          <div className="mi-agent-metrics">
-            <article>
-              <span>Cuota</span>
-              <strong>
-                {formatCurrency(snapshot.quota.assignedAmount, currency)}
-              </strong>
-              <small>{snapshot.period?.label || "Período actual"}</small>
-            </article>
-            <article>
-              <span>Real ganado</span>
-              <strong>
-                {formatCurrency(snapshot.quota.actualAmount, currency)}
-              </strong>
-              <small>
-                {snapshot.quota.assignedAmount
-                  ? `${Math.round((snapshot.quota.actualAmount / snapshot.quota.assignedAmount) * 100)}% de avance`
-                  : "Sin cuota"}
-              </small>
-            </article>
-            <article className="is-alert">
-              <span>Brecha</span>
-              <strong>
-                {formatCurrency(snapshot.quota.gapAmount, currency)}
-              </strong>
-              <small>Lo que aún falta</small>
-            </article>
-            <article>
-              <span>Pipeline calificado</span>
-              <strong>
-                {formatCurrency(snapshot.pipeline.qualifiedAmount, currency)}
-              </strong>
-              <small>
-                {snapshot.pipeline.qualifiedCount} oportunidades ·{" "}
-                {coverage
-                  ? `${coverage.toFixed(1)}x cobertura`
-                  : "Sin cobertura"}
-              </small>
-            </article>
-          </div>
-
-          <section className="mi-agent-workspace-panel">
-            <div className="mi-agent-section-heading">
-              <div>
-                <span className="mi-agent-section-label">
-                  Briefing automático
-                </span>
-                <h3>Prepara tu próxima actividad</h3>
+          {activeWorkspace === "summary" ? (
+            <section
+              className="mi-agent-summary"
+              aria-labelledby="mi-agent-summary-title"
+            >
+              <div className="mi-agent-section-heading">
+                <div>
+                  <span className="mi-agent-section-label">Vista general</span>
+                  <h3 id="mi-agent-summary-title">Resumen comercial</h3>
+                </div>
+                <div className="mi-agent-summary-period">
+                  <span>{snapshot.period?.label || "Período actual"}</span>
+                  {currency !== "USD" &&
+                  snapshot.quota.currencyConversionAvailable ? (
+                    <small>
+                      1 USD ={" "}
+                      {snapshot.quota.usdToQuotaRate.toLocaleString("es-MX", {
+                        maximumFractionDigits: 4,
+                      })}{" "}
+                      {currency} · tasa de referencia{" "}
+                      {snapshot.quota.currencyRateFetchedAt
+                        ? formatDate(snapshot.quota.currencyRateFetchedAt)
+                        : "actual"}
+                    </small>
+                  ) : null}
+                </div>
               </div>
-              <span>
-                {automaticBriefing?.briefing ? "Listo" : "Agenda comercial"}
-              </span>
-            </div>
-            <div className="mi-agent-workspace-actions">
-              <button
-                type="button"
-                className="mi-agent-secondary-button"
-                onClick={loadAutomaticBriefing}
-                disabled={automaticBriefingLoading}
-              >
-                {automaticBriefingLoading
-                  ? "Preparando..."
-                  : "Preparar briefing automático"}
-              </button>
-            </div>
-            {automaticBriefing?.briefing ? (
-              <div className="mi-agent-discovery-panel">
+              <div className="mi-agent-metrics">
+                <article>
+                  <span>Cuota</span>
+                  <strong>
+                    {formatCurrency(snapshot.quota.assignedAmount, currency)}
+                  </strong>
+                  <small>{snapshot.period?.label || "Período actual"}</small>
+                </article>
+                <article>
+                  <span>Real ganado</span>
+                  <strong>
+                    {snapshot.quota.currencyConversionAvailable
+                      ? formatCurrency(snapshot.quota.actualAmount, currency)
+                      : "No disponible"}
+                  </strong>
+                  <small>
+                    {!snapshot.quota.currencyConversionAvailable
+                      ? "Avance no disponible: falta tipo de cambio"
+                      : snapshot.quota.assignedAmount
+                        ? `${Math.round((snapshot.quota.actualAmount / snapshot.quota.assignedAmount) * 100)}% de avance`
+                        : "Sin cuota"}
+                  </small>
+                </article>
+                <article className="is-alert">
+                  <span>Brecha</span>
+                  <strong>
+                    {snapshot.quota.currencyConversionAvailable
+                      ? formatCurrency(snapshot.quota.gapAmount, currency)
+                      : "No disponible"}
+                  </strong>
+                  <small>
+                    {snapshot.quota.currencyConversionAvailable
+                      ? "Lo que aún falta"
+                      : "No se obtuvo tipo de cambio desde USD"}
+                  </small>
+                </article>
+                <article>
+                  <span>Pipeline abierto</span>
+                  <strong>
+                    {snapshot.quota.currencyConversionAvailable
+                      ? formatCurrency(snapshot.pipeline.openAmount, currency)
+                      : "No disponible"}
+                  </strong>
+                  <small>
+                    {snapshot.pipeline.openCount} oportunidades ·{" "}
+                    {!snapshot.quota.currencyConversionAvailable
+                      ? "Cobertura no disponible"
+                      : coverage
+                        ? `${coverage.toFixed(1)}x cobertura`
+                        : "Sin cobertura"}
+                  </small>
+                </article>
+              </div>
+            </section>
+          ) : null}
+
+          {activeWorkspace === "summary" &&
+          snapshot.inactivePipelineOpportunities.length ? (
+            <section
+              className="mi-agent-prospect-section"
+              aria-label="Oportunidades desactivadas"
+            >
+              <div className="mi-agent-section-heading">
+                <div>
+                  <span className="mi-agent-section-label">Fuente CRM</span>
+                  <h3>Oportunidades desactivadas</h3>
+                </div>
+                <span>{snapshot.inactivePipelineOpportunities.length}</span>
+              </div>
+              <ul>
+                {snapshot.inactivePipelineOpportunities.map((opportunity) => (
+                  <li key={opportunity.id}>
+                    <button
+                      type="button"
+                      className="mi-agent-customer-record-link"
+                      onClick={() =>
+                        navigate(`/opportunities?edit=${opportunity.id}`)
+                      }
+                    >
+                      {opportunity.name}
+                    </button>
+                    <small>
+                      {opportunity.accountName || "Cuenta no disponible"} ·{" "}
+                      {opportunity.activationStatusName || "Desactivada"} ·{" "}
+                      {opportunity.commercialStatusCode || "en_proceso"}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {activeWorkspace === "coach" ? (
+            <>
+              <section className="mi-agent-coach-panel">
                 <div className="mi-agent-section-heading">
                   <div>
                     <span className="mi-agent-section-label">
-                      Próxima actividad
+                      Coach comercial
                     </span>
-                    <h3>
-                      {automaticBriefing.activity?.title ||
-                        "Actividad comercial"}
-                    </h3>
+                    <h3>Pregúntale a tu Coach</h3>
                   </div>
-                  <span>
-                    {automaticBriefing.activity?.scheduledAt ||
-                      automaticBriefing.activity?.dueDate ||
-                      "Sin fecha"}
-                  </span>
+                  <span>Usa tu contexto real del CRM</span>
                 </div>
-                <p className="mi-agent-customer-summary">
-                  {automaticBriefing.summary}
-                </p>
-                <div className="mi-agent-discovery-grid">
-                  <article>
-                    <span>Cuenta</span>
-                    <p>
-                      {automaticBriefing.activity?.accountName || "Sin cuenta"}
-                    </p>
-                  </article>
-                  <article>
-                    <span>Oportunidad</span>
-                    <p>
-                      {automaticBriefing.activity?.opportunityName ||
-                        "Sin oportunidad"}
-                    </p>
-                  </article>
-                </div>
-                <div className="mi-agent-discovery-columns">
+                <div className="mi-agent-coach-context-heading">
                   <div>
-                    <strong>Preguntas</strong>
-                    <ul>
-                      {(automaticBriefing.briefing.questions || []).map(
-                        (item) => (
-                          <li key={item}>{item}</li>
-                        ),
-                      )}
-                    </ul>
+                    <strong>Contexto de la conversación</strong>
+                    <small>
+                      Limita las respuestas a una cuenta, oportunidad o
+                      contacto.
+                    </small>
                   </div>
-                  <div>
-                    <strong>Riesgos</strong>
-                    <ul>
-                      {(automaticBriefing.briefing.risks || []).map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <strong>Guion</strong>
-                    <ul>
-                      {(automaticBriefing.briefing.callGuide || []).map(
-                        (item) => (
-                          <li key={item}>{item}</li>
-                        ),
-                      )}
-                    </ul>
-                  </div>
-                </div>
-                {automaticBriefing.briefing.emailDraft ? (
-                  <div className="mi-agent-discovery-email">
-                    <strong>Correo sugerido</strong>
-                    <span>{automaticBriefing.briefing.emailDraft.subject}</span>
-                    <pre>{automaticBriefing.briefing.emailDraft.body}</pre>
-                  </div>
-                ) : null}
-              </div>
-            ) : automaticBriefing?.message ? (
-              <p className="field-hint">{automaticBriefing.message}</p>
-            ) : null}
-          </section>
-
-          <section className="mi-agent-coach-panel">
-            <div className="mi-agent-section-heading">
-              <div>
-                <span className="mi-agent-section-label">Coach comercial</span>
-                <h3>Pregúntale a tu Coach</h3>
-              </div>
-              <span>Usa tu contexto real del CRM</span>
-            </div>
-            <div className="mi-agent-coach-context-heading">
-              <div>
-                <strong>Contexto de la conversación</strong>
-                <small>
-                  Limita las respuestas a una cuenta, oportunidad o contacto.
-                </small>
-              </div>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setCoachContext({
-                    accountId: "",
-                    opportunityId: "",
-                    contactId: "",
-                    leadId: "",
-                  });
-                  setCoachSessionId(null);
-                  setCoachOpportunities([]);
-                  setCoachContacts([]);
-                }}
-              >
-                <X size={14} aria-hidden="true" />
-                Limpiar contexto
-              </button>
-            </div>
-            <div className="mi-agent-coach-context-form">
-              <label>
-                Buscar cuenta
-                <input
-                  value={coachAccountSearch}
-                  onChange={(event) => searchCoachAccounts(event.target.value)}
-                  placeholder="Nombre de la cuenta"
-                  disabled={loadingCoachContext}
-                />
-              </label>
-              <label>
-                Cuenta activa
-                <select
-                  value={coachContext.accountId}
-                  onChange={(event) => selectCoachAccount(event.target.value)}
-                  disabled={loadingCoachContext}
-                >
-                  <option value="">Selecciona una cuenta</option>
-                  {coachAccounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Oportunidad
-                <select
-                  value={coachContext.opportunityId}
-                  onChange={(event) =>
-                    selectCoachOpportunity(event.target.value)
-                  }
-                  disabled={!coachContext.accountId || loadingCoachContext}
-                >
-                  <option value="">
-                    {loadingCoachContext
-                      ? "Cargando oportunidades..."
-                      : coachContext.accountId && !coachOpportunities.length
-                        ? "Sin oportunidades disponibles"
-                        : "Selecciona una oportunidad"}
-                  </option>
-                  {coachOpportunityGroups.map((group) =>
-                    group.opportunities.length ? (
-                      <optgroup key={group.code} label={group.label}>
-                        {group.opportunities.map((opportunity) => (
-                          <option key={opportunity.id} value={opportunity.id}>
-                            {group.label.slice(0, -1)} · {opportunity.name} ·{" "}
-                            {opportunity.sales_stage ||
-                              opportunity.sales_stage_name ||
-                              opportunity.stage_name ||
-                              opportunity.stageName ||
-                              "Sin etapa"}{" "}
-                            ·{" "}
-                            {formatCurrency(
-                              opportunity.amount_usd ?? opportunity.amountUsd,
-                              "USD",
-                            )}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ) : null,
-                  )}
-                </select>
-              </label>
-              <label>
-                Contacto
-                <select
-                  value={coachContext.contactId}
-                  onChange={(event) => selectCoachContact(event.target.value)}
-                  disabled={!coachContext.accountId || loadingCoachContext}
-                >
-                  <option value="">
-                    {loadingCoachContext
-                      ? "Cargando contactos..."
-                      : coachContext.accountId && !coachContacts.length
-                        ? "Sin contactos activos"
-                        : "Selecciona un contacto"}
-                  </option>
-                  {coachContacts.map((contact) => (
-                    <option key={contact.id} value={contact.id}>
-                      {contact.full_name ||
-                        `${contact.first_name || ""} ${contact.last_name || ""}`.trim()}{" "}
-                      · {contact.position_title || "Sin cargo"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {coachContext.accountId ? (
-              <div className="mi-agent-coach-context-summary">
-                <strong>Contexto aplicado</strong>
-                <span>
-                  {coachAccounts.find(
-                    (item) =>
-                      String(item.id) === String(coachContext.accountId),
-                  )?.name || "Cuenta seleccionada"}
-                </span>
-                {coachContext.opportunityId ? (
-                  <span>
-                    {coachOpportunities.find(
-                      (item) =>
-                        String(item.id) === String(coachContext.opportunityId),
-                    )?.name || "Oportunidad seleccionada"}
-                  </span>
-                ) : null}
-                {coachContext.contactId ? (
-                  <span>
-                    {coachContacts.find(
-                      (item) =>
-                        String(item.id) === String(coachContext.contactId),
-                    )?.full_name || "Contacto seleccionado"}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            {coachContext.accountId &&
-            !loadingCoachContext &&
-            (!coachOpportunities.length || !coachContacts.length) ? (
-              <div className="mi-agent-coach-context-notices">
-                {!coachOpportunities.length ? (
-                  <span>Sin oportunidades disponibles.</span>
-                ) : null}
-                {!coachContacts.length ? (
-                  <span>Sin contactos activos.</span>
-                ) : null}
-              </div>
-            ) : null}
-            {coachMetrics ? (
-              <div
-                className="mi-agent-coach-metrics"
-                aria-label="Actividad del Coach durante los últimos 30 días"
-              >
-                <div>
-                  <strong>Actividad del Coach</strong>
-                  <small>Últimos 30 días</small>
-                </div>
-                <dl>
-                  <div>
-                    <dt>Consultas</dt>
-                    <dd>{coachMetrics.requests}</dd>
-                  </div>
-                  <div>
-                    <dt>Propuestas</dt>
-                    <dd>{coachMetrics.proposed || 0}</dd>
-                  </div>
-                  <div>
-                    <dt>Decididas</dt>
-                    <dd>{coachMetrics.decided || 0}</dd>
-                  </div>
-                  <div>
-                    <dt>Aprobadas</dt>
-                    <dd>{coachMetrics.approved || 0}</dd>
-                  </div>
-                  <div>
-                    <dt>Rechazadas</dt>
-                    <dd>{coachMetrics.rejected || 0}</dd>
-                  </div>
-                  <div>
-                    <dt>Completadas</dt>
-                    <dd>{coachMetrics.completed || 0}</dd>
-                  </div>
-                </dl>
-              </div>
-            ) : null}
-            <div className="mi-agent-coach-quick-questions">
-              <strong>Preguntas rápidas</strong>
-              <div className="mi-agent-coach-suggestions">
-                {coachContext.opportunityId ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={askingCoach}
-                      onClick={() =>
-                        askCoach("¿Qué falta para avanzar de etapa?")
-                      }
-                    >
-                      ¿Qué falta para avanzar?
-                    </button>
-                    <button
-                      type="button"
-                      disabled={askingCoach}
-                      onClick={() =>
-                        askCoach("Registra una actividad de seguimiento")
-                      }
-                    >
-                      Registrar actividad
-                    </button>
-                  </>
-                ) : coachContext.accountId ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={askingCoach}
-                      onClick={() =>
-                        askCoach(
-                          "¿Qué oportunidades activas tiene esta cuenta?",
-                        )
-                      }
-                    >
-                      ¿Qué oportunidades tiene?
-                    </button>
-                    <button
-                      type="button"
-                      disabled={askingCoach}
-                      onClick={() =>
-                        askCoach(
-                          "¿Qué contactos importantes tiene esta cuenta?",
-                        )
-                      }
-                    >
-                      ¿Qué contactos tiene?
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={askingCoach}
-                      onClick={() => askCoach("¿Cómo voy este mes?")}
-                    >
-                      ¿Cómo voy este mes?
-                    </button>
-                    <button
-                      type="button"
-                      disabled={askingCoach}
-                      onClick={() =>
-                        askCoach(
-                          "¿Qué oportunidades tienen riesgo de perderse?",
-                        )
-                      }
-                    >
-                      ¿Qué está en riesgo?
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="mi-agent-coach-conversation-heading">
-              <div>
-                <strong>Conversación</strong>
-                <small>
-                  {coachMessages.length
-                    ? `${coachMessages.length} mensajes en esta sesión`
-                    : "Inicia una conversación con tu contexto actual"}
-                </small>
-              </div>
-              {hasCoachFoundation ? (
-                <label className="mi-agent-coach-foundation-toggle">
-                  <span>Mostrar fundamento</span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    checked={showCoachFoundation}
-                    onChange={(event) =>
-                      updateCoachFoundationVisibility(event.target.checked)
-                    }
-                  />
-                  <span
-                    className="mi-agent-coach-foundation-toggle-track"
-                    aria-hidden="true"
-                  />
-                </label>
-              ) : null}
-            </div>
-            <form
-              className="mi-agent-coach-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                askCoach();
-              }}
-            >
-              <input
-                value={coachQuestion}
-                onChange={(event) => setCoachQuestion(event.target.value)}
-                placeholder="Escribe tu pregunta para el Coach..."
-                disabled={askingCoach}
-              />
-              <button
-                type="submit"
-                className="mi-agent-primary-button"
-                disabled={askingCoach || !coachQuestion.trim()}
-              >
-                {askingCoach ? "Consultando..." : "Preguntar"}
-              </button>
-            </form>
-            {coachUndoOperationId ? (
-              <button
-                type="button"
-                className="btn-secondary mi-agent-coach-undo-button"
-                onClick={undoCoachOperation}
-              >
-                Deshacer último cambio
-              </button>
-            ) : null}
-            {coachMessages
-              .filter(
-                (message) =>
-                  message.result &&
-                  (message.result.clarification ||
-                    buildCoachClarification(message.result, snapshot)),
-              )
-              .slice(-1)
-              .map((message) => {
-                const clarification =
-                  message.result.clarification ||
-                  buildCoachClarification(message.result, snapshot);
-                return (
-                  <div
-                    className="mi-agent-coach-action"
-                    key={`${message.id}-clarification`}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setCoachContext({
+                        accountId: "",
+                        opportunityId: "",
+                        contactId: "",
+                        leadId: "",
+                      });
+                      setCoachSessionId(null);
+                      setCoachOpportunities([]);
+                      setCoachContacts([]);
+                    }}
                   >
-                    <strong>{clarification.message}</strong>
-                    <small>Falta: {clarification.missing.join(", ")}</small>
-                    {clarification.candidates.length ? (
-                      clarification.candidates.map((candidate) => (
+                    <X size={14} aria-hidden="true" />
+                    Limpiar contexto
+                  </button>
+                </div>
+                <div className="mi-agent-coach-context-form">
+                  <label>
+                    Buscar cuenta
+                    <input
+                      value={coachAccountSearch}
+                      onChange={(event) =>
+                        searchCoachAccounts(event.target.value)
+                      }
+                      placeholder="Nombre de la cuenta"
+                      disabled={loadingCoachContext}
+                    />
+                  </label>
+                  <label>
+                    Cuenta activa
+                    <select
+                      value={coachContext.accountId}
+                      onChange={(event) =>
+                        selectCoachAccount(event.target.value)
+                      }
+                      disabled={loadingCoachContext}
+                    >
+                      <option value="">Selecciona una cuenta</option>
+                      {coachAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Oportunidad
+                    <select
+                      value={coachContext.opportunityId}
+                      onChange={(event) =>
+                        selectCoachOpportunity(event.target.value)
+                      }
+                      disabled={!coachContext.accountId || loadingCoachContext}
+                    >
+                      <option value="">
+                        {loadingCoachContext
+                          ? "Cargando oportunidades..."
+                          : coachContext.accountId && !coachOpportunities.length
+                            ? "Sin oportunidades disponibles"
+                            : "Selecciona una oportunidad"}
+                      </option>
+                      {coachOpportunityGroups.map((group) =>
+                        group.opportunities.length ? (
+                          <optgroup key={group.code} label={group.label}>
+                            {group.opportunities.map((opportunity) => (
+                              <option
+                                key={opportunity.id}
+                                value={opportunity.id}
+                              >
+                                {group.label.slice(0, -1)} · {opportunity.name}{" "}
+                                ·{" "}
+                                {opportunity.sales_stage ||
+                                  opportunity.sales_stage_name ||
+                                  opportunity.stage_name ||
+                                  opportunity.stageName ||
+                                  "Sin etapa"}{" "}
+                                ·{" "}
+                                {formatCurrency(
+                                  opportunity.amount_usd ??
+                                    opportunity.amountUsd,
+                                  "USD",
+                                )}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null,
+                      )}
+                    </select>
+                  </label>
+                  <label>
+                    Contacto
+                    <select
+                      value={coachContext.contactId}
+                      onChange={(event) =>
+                        selectCoachContact(event.target.value)
+                      }
+                      disabled={!coachContext.accountId || loadingCoachContext}
+                    >
+                      <option value="">
+                        {loadingCoachContext
+                          ? "Cargando contactos..."
+                          : coachContext.accountId && !coachContacts.length
+                            ? "Sin contactos activos"
+                            : "Selecciona un contacto"}
+                      </option>
+                      {coachContacts.map((contact) => (
+                        <option key={contact.id} value={contact.id}>
+                          {contact.full_name ||
+                            `${contact.first_name || ""} ${contact.last_name || ""}`.trim()}{" "}
+                          · {contact.position_title || "Sin cargo"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {coachContext.accountId ? (
+                  <div className="mi-agent-coach-context-summary">
+                    <strong>Contexto aplicado</strong>
+                    <span>
+                      {coachAccounts.find(
+                        (item) =>
+                          String(item.id) === String(coachContext.accountId),
+                      )?.name || "Cuenta seleccionada"}
+                    </span>
+                    {coachContext.opportunityId ? (
+                      <span>
+                        {coachOpportunities.find(
+                          (item) =>
+                            String(item.id) ===
+                            String(coachContext.opportunityId),
+                        )?.name || "Oportunidad seleccionada"}
+                      </span>
+                    ) : null}
+                    {coachContext.contactId ? (
+                      <span>
+                        {coachContacts.find(
+                          (item) =>
+                            String(item.id) === String(coachContext.contactId),
+                        )?.full_name || "Contacto seleccionado"}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {coachContext.accountId &&
+                !loadingCoachContext &&
+                (!coachOpportunities.length || !coachContacts.length) ? (
+                  <div className="mi-agent-coach-context-notices">
+                    {!coachOpportunities.length ? (
+                      <span>Sin oportunidades disponibles.</span>
+                    ) : null}
+                    {!coachContacts.length ? (
+                      <span>Sin contactos activos.</span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {coachMetrics ? (
+                  <div
+                    className="mi-agent-coach-metrics"
+                    aria-label="Actividad del Coach durante los últimos 30 días"
+                  >
+                    <div>
+                      <strong>Actividad del Coach</strong>
+                      <small>Últimos 30 días</small>
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>Consultas</dt>
+                        <dd>{coachMetrics.requests}</dd>
+                      </div>
+                      <div>
+                        <dt>Propuestas</dt>
+                        <dd>{coachMetrics.proposed || 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Decididas</dt>
+                        <dd>{coachMetrics.decided || 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Aprobadas</dt>
+                        <dd>{coachMetrics.approved || 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Rechazadas</dt>
+                        <dd>{coachMetrics.rejected || 0}</dd>
+                      </div>
+                      <div>
+                        <dt>Completadas</dt>
+                        <dd>{coachMetrics.completed || 0}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                ) : null}
+                <div className="mi-agent-coach-quick-questions">
+                  <strong>Preguntas rápidas</strong>
+                  <div className="mi-agent-coach-suggestions">
+                    {coachContext.opportunityId ? (
+                      <>
                         <button
                           type="button"
-                          className="btn-secondary"
-                          key={`${candidate.entityType || clarification.type}-${candidate.id}`}
+                          disabled={askingCoach}
                           onClick={() =>
-                            applyCoachClarification(candidate, clarification)
+                            askCoach("¿Qué falta para avanzar de etapa?")
                           }
                         >
-                          Usar {candidate.name}
-                          {candidate.accountName
-                            ? ` · ${candidate.accountName}`
-                            : ""}
-                          {candidate.stageName
-                            ? ` · ${candidate.stageName}`
-                            : ""}
-                          {candidate.email ? ` · ${candidate.email}` : ""}
+                          ¿Qué falta para avanzar?
                         </button>
-                      ))
+                        <button
+                          type="button"
+                          disabled={askingCoach}
+                          onClick={() =>
+                            askCoach("Registra una actividad de seguimiento")
+                          }
+                        >
+                          Registrar actividad
+                        </button>
+                      </>
+                    ) : coachContext.accountId ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={askingCoach}
+                          onClick={() =>
+                            askCoach(
+                              "¿Qué oportunidades activas tiene esta cuenta?",
+                            )
+                          }
+                        >
+                          ¿Qué oportunidades tiene?
+                        </button>
+                        <button
+                          type="button"
+                          disabled={askingCoach}
+                          onClick={() =>
+                            askCoach(
+                              "¿Qué contactos importantes tiene esta cuenta?",
+                            )
+                          }
+                        >
+                          ¿Qué contactos tiene?
+                        </button>
+                      </>
                     ) : (
-                      <small>
-                        No hay registros accesibles para seleccionar.
-                      </small>
+                      <>
+                        <button
+                          type="button"
+                          disabled={askingCoach}
+                          onClick={() => askCoach("¿Cómo voy este mes?")}
+                        >
+                          ¿Cómo voy este mes?
+                        </button>
+                        <button
+                          type="button"
+                          disabled={askingCoach}
+                          onClick={() =>
+                            askCoach(
+                              "¿Qué oportunidades tienen riesgo de perderse?",
+                            )
+                          }
+                        >
+                          ¿Qué está en riesgo?
+                        </button>
+                      </>
                     )}
                   </div>
-                );
-              })}
-            {coachPendingOperations.length ? (
-              <section
-                className="mi-agent-coach-pending"
-                aria-label="Acciones pendientes del Coach"
-              >
-                <div>
-                  <strong>Acciones pendientes</strong>
-                  <small>
-                    Retoma las acciones que iniciaste o descarta las que ya no
-                    necesitas.
-                  </small>
                 </div>
-                <div className="mi-agent-coach-pending-list">
-                  {coachPendingOperations.map((persistedOperation) => {
-                    const statusMeta =
-                      COACH_OPERATION_STATUS_META[persistedOperation.status] ||
-                      COACH_OPERATION_STATUS_META.proposed;
-                    const missingFields =
-                      persistedOperation.missingFields || [];
-                    const actionPending =
-                      coachOperationAction.id === persistedOperation.id &&
-                      coachOperationAction.state === "loading";
-                    const actionError =
-                      coachOperationAction.id === persistedOperation.id &&
-                      coachOperationAction.state === "error"
-                        ? coachOperationAction.message
-                        : null;
-                    const handoffExpiresAt = persistedOperation.handoffExpiresAt
-                      ? new Date(persistedOperation.handoffExpiresAt)
-                      : null;
-                    const handoffExpired =
-                      handoffExpiresAt &&
-                      handoffExpiresAt.getTime() <= Date.now();
-                    const targetModuleLabel = formatCoachTargetModule(
-                      persistedOperation.targetModule ||
-                        persistedOperation.pendingOperation?.targetModule,
-                    );
+                <div className="mi-agent-coach-conversation-heading">
+                  <div>
+                    <strong>Conversación</strong>
+                    <small>
+                      {coachMessages.length
+                        ? `${coachMessages.length} mensajes en esta sesión`
+                        : "Inicia una conversación con tu contexto actual"}
+                    </small>
+                  </div>
+                  {hasCoachFoundation ? (
+                    <label className="mi-agent-coach-foundation-toggle">
+                      <span>Mostrar fundamento</span>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={showCoachFoundation}
+                        onChange={(event) =>
+                          updateCoachFoundationVisibility(event.target.checked)
+                        }
+                      />
+                      <span
+                        className="mi-agent-coach-foundation-toggle-track"
+                        aria-hidden="true"
+                      />
+                    </label>
+                  ) : null}
+                </div>
+                <form
+                  className="mi-agent-coach-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    askCoach();
+                  }}
+                >
+                  <input
+                    value={coachQuestion}
+                    onChange={(event) => setCoachQuestion(event.target.value)}
+                    placeholder="Escribe tu pregunta para el Coach..."
+                    disabled={askingCoach}
+                  />
+                  <button
+                    type="submit"
+                    className="mi-agent-primary-button"
+                    disabled={askingCoach || !coachQuestion.trim()}
+                  >
+                    {askingCoach ? "Consultando..." : "Preguntar"}
+                  </button>
+                </form>
+                {coachUndoOperationId ? (
+                  <button
+                    type="button"
+                    className="btn-secondary mi-agent-coach-undo-button"
+                    onClick={undoCoachOperation}
+                  >
+                    Deshacer último cambio
+                  </button>
+                ) : null}
+                {coachMessages
+                  .filter(
+                    (message) =>
+                      message.result &&
+                      (message.result.clarification ||
+                        buildCoachClarification(message.result, snapshot)),
+                  )
+                  .slice(-1)
+                  .map((message) => {
+                    const clarification =
+                      message.result.clarification ||
+                      buildCoachClarification(message.result, snapshot);
                     return (
-                      <article
-                        key={persistedOperation.id}
-                        className={`is-${statusMeta.tone}`}
+                      <div
+                        className="mi-agent-coach-action"
+                        key={`${message.id}-clarification`}
                       >
-                        <div>
-                          <span className="mi-agent-coach-operation-status">
-                            {persistedOperation.status === "completed" ? (
-                              <CheckCircle2 size={13} aria-hidden="true" />
-                            ) : persistedOperation.status === "failed" ? (
-                              <AlertCircle size={13} aria-hidden="true" />
-                            ) : (
-                              <Clock3 size={13} aria-hidden="true" />
-                            )}
-                            {statusMeta.label}
-                          </span>
-                          <strong>
-                            {formatCoachOperationLabel(persistedOperation)}
-                          </strong>
-                          {persistedOperation.status === "failed" ? (
-                            <small>
-                              {persistedOperation.errorDetail ||
-                                "La acción requiere revisión."}
-                            </small>
-                          ) : targetModuleLabel ? (
-                            <small>
-                              {targetModuleLabel}
-                              {persistedOperation.handedOffAt
-                                ? ` · enviada ${formatCoachDateTime(persistedOperation.handedOffAt)}`
-                                : ""}
-                            </small>
-                          ) : null}
-                          {persistedOperation.status === "handed_off" ? (
-                            <small
-                              className={handoffExpired ? "form-error" : ""}
-                            >
-                              {handoffExpired
-                                ? "El acceso al módulo venció; corrige para generar uno nuevo."
-                                : `Handoff vigente${handoffExpiresAt ? ` hasta ${formatCoachDateTime(handoffExpiresAt)}` : ""}.`}
-                            </small>
-                          ) : null}
-                          {missingFields.length ? (
-                            <div className="mi-agent-coach-missing-fields">
-                              <span>Falta completar antes de continuar:</span>
-                              <ul>
-                                {missingFields.map((field) => (
-                                  <li key={field}>
-                                    {formatCoachFieldLabel(field)}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-                          {actionError ? (
-                            <small className="form-error" role="alert">
-                              {actionError}
-                            </small>
-                          ) : null}
-                        </div>
-                        <div className="mi-agent-coach-pending-actions">
-                          {persistedOperation.status === "collecting" ||
-                          (persistedOperation.status === "handed_off" &&
-                            !handoffExpired) ? (
-                            <button
-                              type="button"
-                              className="btn-primary"
-                              disabled={actionPending}
-                              onClick={() =>
-                                continueCoachOperation(persistedOperation)
-                              }
-                            >
-                              <ArrowRight size={14} aria-hidden="true" />
-                              {actionPending
-                                ? "Abriendo..."
-                                : persistedOperation.status === "collecting"
-                                  ? "Completar datos"
-                                  : `Abrir en ${targetModuleLabel || "el módulo"}`}
-                            </button>
-                          ) : null}
-                          {["ready", "failed"].includes(
-                            persistedOperation.status,
-                          ) || handoffExpired ? (
+                        <strong>{clarification.message}</strong>
+                        <small>Falta: {clarification.missing.join(", ")}</small>
+                        {clarification.candidates.length ? (
+                          clarification.candidates.map((candidate) => (
                             <button
                               type="button"
                               className="btn-secondary"
-                              disabled={actionPending}
+                              key={`${candidate.entityType || clarification.type}-${candidate.id}`}
                               onClick={() =>
-                                openCoachOperationConfirmation({
-                                  ...persistedOperation.pendingOperation,
-                                  persistentId: persistedOperation.id,
-                                })
+                                applyCoachClarification(
+                                  candidate,
+                                  clarification,
+                                )
                               }
                             >
-                              <Pencil size={14} aria-hidden="true" />
-                              Revisar
+                              Usar {candidate.name}
+                              {candidate.accountName
+                                ? ` · ${candidate.accountName}`
+                                : ""}
+                              {candidate.stageName
+                                ? ` · ${candidate.stageName}`
+                                : ""}
+                              {candidate.email ? ` · ${candidate.email}` : ""}
                             </button>
-                          ) : null}
-                          {[
-                            "proposed",
-                            "collecting",
-                            "ready",
-                            "handed_off",
-                            "failed",
-                          ].includes(persistedOperation.status) ? (
-                            <button
-                              type="button"
-                              className="btn-ghost"
-                              disabled={actionPending}
-                              onClick={() =>
-                                cancelPendingCoachOperation(persistedOperation)
-                              }
-                            >
-                              <X size={14} aria-hidden="true" />
-                              Descartar
-                            </button>
-                          ) : null}
-                        </div>
-                      </article>
+                          ))
+                        ) : (
+                          <small>
+                            No hay registros accesibles para seleccionar.
+                          </small>
+                        )}
+                      </div>
                     );
                   })}
-                </div>
-              </section>
-            ) : null}
-            {coachRecentOperations.length ? (
-              <details className="mi-agent-coach-recent">
-                <summary>
-                  Actividad reciente
-                  <span>{coachRecentOperations.length}</span>
-                </summary>
-                <div>
-                  {coachRecentOperations.map((operation) => {
-                    const statusMeta =
-                      COACH_OPERATION_STATUS_META[operation.status] ||
-                      COACH_OPERATION_STATUS_META.completed;
-                    return (
-                      <article key={operation.id}>
-                        <span className={`is-${statusMeta.tone}`}>
-                          {operation.status === "completed" ? (
-                            <CheckCircle2 size={13} aria-hidden="true" />
-                          ) : (
-                            <Clock3 size={13} aria-hidden="true" />
-                          )}
-                          {statusMeta.label}
-                        </span>
-                        <strong>{formatCoachOperationLabel(operation)}</strong>
-                        <small>
-                          {formatCoachDateTime(
-                            operation.completedAt ||
-                              operation.revertedAt ||
-                              operation.rejectedAt ||
-                              operation.cancelledAt ||
-                              operation.updatedAt,
-                          ) || "Actualizada recientemente"}
-                        </small>
-                      </article>
-                    );
-                  })}
-                </div>
-              </details>
-            ) : null}
-            {coachMessages.length ? (
-              <div
-                ref={coachThreadRef}
-                className="mi-agent-coach-thread"
-                aria-live="polite"
-              >
-                {coachMessages.map((message) =>
-                  message.role === "seller" ? (
-                    <div
-                      key={message.id}
-                      className="mi-agent-coach-message is-seller"
-                    >
-                      <span>Vendedor</span>
-                      <p>{message.text}</p>
+                {coachPendingOperations.length ? (
+                  <section
+                    className="mi-agent-coach-pending"
+                    aria-label="Acciones pendientes del Coach"
+                  >
+                    <div>
+                      <strong>Acciones pendientes</strong>
+                      <small>
+                        Retoma las acciones que iniciaste o descarta las que ya
+                        no necesitas.
+                      </small>
                     </div>
-                  ) : (
-                    <div
-                      key={message.id}
-                      className="mi-agent-coach-message is-coach"
-                    >
-                      <span>Coach</span>
-                      {message.pending ? (
-                        <p>Analizando tu contexto comercial...</p>
-                      ) : message.error ? (
-                        <p>{message.error}</p>
-                      ) : (
-                        <>
-                          <div className="mi-agent-coach-result-meta">
-                            <span>
-                              {COACH_RESPONSE_TYPE_LABELS[
-                                message.result?.responseType
-                              ] || "Respuesta del Coach"}
-                            </span>
-                            <span>
-                              {COACH_CONFIDENCE_LABELS[
-                                message.result?.confidence
-                              ] || "Confianza media"}
-                            </span>
-                          </div>
-                          <p className="mi-agent-coach-answer-text">
-                            {message.result?.answer || "Lectura comercial"}
-                          </p>
-                          <CoachStageReadiness
-                            readiness={message.result?.stageReadiness}
-                          />
-                          {showCoachFoundation ? (
-                            <CoachSemanticSections result={message.result} />
-                          ) : null}
-                          {message.result?.operations
-                            ?.filter(
-                              (operation) =>
-                                !operation.persistentId ||
-                                coachPendingOperations.some(
-                                  (pending) =>
-                                    pending.id === operation.persistentId,
-                                ),
-                            )
-                            .map((operation, index) => (
-                              <div
-                                className="mi-agent-coach-action"
-                                key={`${operation.kind}-${operation.opportunityId || operation.accountId || operation.contactId || operation.interactionId}-${index}`}
-                              >
-                                <strong>
-                                  {operation.title || "Cambio propuesto"}
-                                </strong>
-                                <small>
-                                  {formatCoachOperationSummary(operation)}
-                                </small>
-                                {(
-                                  operation.kind === "activity"
-                                    ? canUpdateCommercialDevelopment
-                                    : operation.kind === "lead_call_outcome"
-                                      ? canUpdateLeads
-                                      : operation.kind === "account_field"
-                                        ? canUpdateAccounts
-                                        : operation.kind === "contact_field"
-                                          ? canUpdateContacts
-                                          : operation.kind === "create_account"
-                                            ? canCreateAccounts
-                                            : operation.kind ===
-                                                "create_contact"
-                                              ? canCreateContacts
-                                              : operation.kind ===
-                                                  "lead_resolve"
-                                                ? canResolveLeads
-                                                : canCreateActions
-                                ) ? (
-                                  <button
-                                    type="button"
-                                    className="btn-secondary"
-                                    onClick={() =>
-                                      openCoachOperationConfirmation(operation)
-                                    }
-                                  >
-                                    Revisar y confirmar
-                                  </button>
+                    <div className="mi-agent-coach-pending-list">
+                      {coachPendingOperations.map((persistedOperation) => {
+                        const statusMeta =
+                          COACH_OPERATION_STATUS_META[
+                            persistedOperation.status
+                          ] || COACH_OPERATION_STATUS_META.proposed;
+                        const missingFields =
+                          persistedOperation.missingFields || [];
+                        const actionPending =
+                          coachOperationAction.id === persistedOperation.id &&
+                          coachOperationAction.state === "loading";
+                        const actionError =
+                          coachOperationAction.id === persistedOperation.id &&
+                          coachOperationAction.state === "error"
+                            ? coachOperationAction.message
+                            : null;
+                        const handoffExpiresAt =
+                          persistedOperation.handoffExpiresAt
+                            ? new Date(persistedOperation.handoffExpiresAt)
+                            : null;
+                        const handoffExpired =
+                          handoffExpiresAt &&
+                          handoffExpiresAt.getTime() <= Date.now();
+                        const targetModuleLabel = formatCoachTargetModule(
+                          persistedOperation.targetModule ||
+                            persistedOperation.pendingOperation?.targetModule,
+                        );
+                        return (
+                          <article
+                            key={persistedOperation.id}
+                            className={`is-${statusMeta.tone}`}
+                          >
+                            <div>
+                              <span className="mi-agent-coach-operation-status">
+                                {persistedOperation.status === "completed" ? (
+                                  <CheckCircle2 size={13} aria-hidden="true" />
+                                ) : persistedOperation.status === "failed" ? (
+                                  <AlertCircle size={13} aria-hidden="true" />
                                 ) : (
-                                  <small>
-                                    Requiere permiso de actualización.
-                                  </small>
+                                  <Clock3 size={13} aria-hidden="true" />
                                 )}
-                              </div>
-                            ))}
-                          {message.result?.action?.title ? (
-                            <div className="mi-agent-coach-action">
+                                {statusMeta.label}
+                              </span>
                               <strong>
-                                Acción sugerida: {message.result.action.title}
+                                {formatCoachOperationLabel(persistedOperation)}
                               </strong>
-                              <small>
-                                Criterio de éxito:{" "}
-                                {message.result.action.successCriteria ||
-                                  "Definir un siguiente compromiso."}
-                              </small>
-                            </div>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-                  ),
-                )}
-              </div>
-            ) : null}
-          </section>
-
-          {!analysis ? (
-            <div className="mi-agent-start-panel">
-              <div className="mi-agent-start-icon">✦</div>
-              <div>
-                <h3>Tu plan comercial está listo para analizarse</h3>
-                <p>
-                  Mi agente revisará tu cuota, las oportunidades desde
-                  Desarrollo y las señales de riesgo del proceso comercial.
-                </p>
-                <button
-                  type="button"
-                  className="mi-agent-primary-button"
-                  onClick={analyzeSituation}
-                  disabled={analyzing}
-                >
-                  {analyzing ? "Analizando..." : "Analizar mi situación"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="mi-agent-content-stack">
-              <div className="mi-agent-main-column">
-                <section className="mi-agent-focus-panel">
-                  <div className="mi-agent-section-heading">
-                    <div>
-                      <span className="mi-agent-section-label">
-                        Lectura del agente
-                      </span>
-                      <h3>{analysis.headline || "Tu situación comercial"}</h3>
-                    </div>
-                    <span className="mi-agent-analysis-date">
-                      Actualizado ahora
-                    </span>
-                  </div>
-                  <p>{analysis.summary || analysis.quotaReadout}</p>
-                </section>
-
-                {analysis.activityProgress ? (
-                  <section className="mi-agent-activity-progress-panel">
-                    <div className="mi-agent-section-heading">
-                      <div>
-                        <span className="mi-agent-section-label">
-                          Efectividad comercial
-                        </span>
-                        <h3>Actividad vs. avance</h3>
-                      </div>
-                      <span>Lectura del período</span>
-                    </div>
-                    <p className="mi-agent-activity-progress-message">
-                      {analysis.activityProgress.message}
-                    </p>
-                    <div className="mi-agent-activity-progress-metrics">
-                      <article>
-                        <span>Actividades recientes</span>
-                        <strong>
-                          {analysis.activityProgress.activityCount}
-                        </strong>
-                        <small>Últimos 7 días</small>
-                      </article>
-                      <article>
-                        <span>Oportunidades que progresaron</span>
-                        <strong>
-                          {analysis.activityProgress.progressedOpportunities}
-                        </strong>
-                        <small>Con cambio comercial en el período</small>
-                      </article>
-                      <article
-                        className={
-                          analysis.activityProgress.opportunitiesWithoutProgress
-                            ? "is-alert"
-                            : ""
-                        }
-                      >
-                        <span>Actividad sin avance</span>
-                        <strong>
-                          {
-                            analysis.activityProgress
-                              .opportunitiesWithoutProgress
-                          }
-                        </strong>
-                        <small>
-                          Oportunidades que requieren una interacción más
-                          dirigida
-                        </small>
-                      </article>
-                    </div>
-                    {analysis.activityProgress.details?.filter(
-                      (item) => item.activityWithoutProgress,
-                    ).length ? (
-                      <div className="mi-agent-activity-progress-list">
-                        <strong>
-                          Oportunidades con actividad pero sin progreso
-                        </strong>
-                        <ul>
-                          {analysis.activityProgress.details
-                            .filter((item) => item.activityWithoutProgress)
-                            .map((item) => (
-                              <li key={item.opportunityId}>
-                                <span>
-                                  {item.opportunityName} ·{" "}
-                                  {item.accountName || "Sin cuenta"}
-                                </span>
+                              {persistedOperation.status === "failed" ? (
                                 <small>
-                                  {item.activityCount} actividades · falta
-                                  confirmar evidencia comercial
+                                  {persistedOperation.errorDetail ||
+                                    "La acción requiere revisión."}
                                 </small>
-                              </li>
-                            ))}
-                        </ul>
-                      </div>
-                    ) : null}
+                              ) : targetModuleLabel ? (
+                                <small>
+                                  {targetModuleLabel}
+                                  {persistedOperation.handedOffAt
+                                    ? ` · enviada ${formatCoachDateTime(persistedOperation.handedOffAt)}`
+                                    : ""}
+                                </small>
+                              ) : null}
+                              {persistedOperation.status === "handed_off" ? (
+                                <small
+                                  className={handoffExpired ? "form-error" : ""}
+                                >
+                                  {handoffExpired
+                                    ? "El acceso al módulo venció; corrige para generar uno nuevo."
+                                    : `Handoff vigente${handoffExpiresAt ? ` hasta ${formatCoachDateTime(handoffExpiresAt)}` : ""}.`}
+                                </small>
+                              ) : null}
+                              {missingFields.length ? (
+                                <div className="mi-agent-coach-missing-fields">
+                                  <span>
+                                    Falta completar antes de continuar:
+                                  </span>
+                                  <ul>
+                                    {missingFields.map((field) => (
+                                      <li key={field}>
+                                        {formatCoachFieldLabel(field)}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                              {actionError ? (
+                                <small className="form-error" role="alert">
+                                  {actionError}
+                                </small>
+                              ) : null}
+                            </div>
+                            <div className="mi-agent-coach-pending-actions">
+                              {persistedOperation.status === "collecting" ||
+                              (persistedOperation.status === "handed_off" &&
+                                !handoffExpired) ? (
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  disabled={actionPending}
+                                  onClick={() =>
+                                    continueCoachOperation(persistedOperation)
+                                  }
+                                >
+                                  <ArrowRight size={14} aria-hidden="true" />
+                                  {actionPending
+                                    ? "Abriendo..."
+                                    : persistedOperation.status === "collecting"
+                                      ? "Completar datos"
+                                      : `Abrir en ${targetModuleLabel || "el módulo"}`}
+                                </button>
+                              ) : null}
+                              {["ready", "failed"].includes(
+                                persistedOperation.status,
+                              ) || handoffExpired ? (
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  disabled={actionPending}
+                                  onClick={() =>
+                                    openCoachOperationConfirmation({
+                                      ...persistedOperation.pendingOperation,
+                                      persistentId: persistedOperation.id,
+                                    })
+                                  }
+                                >
+                                  <Pencil size={14} aria-hidden="true" />
+                                  Revisar
+                                </button>
+                              ) : null}
+                              {[
+                                "proposed",
+                                "collecting",
+                                "ready",
+                                "handed_off",
+                                "failed",
+                              ].includes(persistedOperation.status) ? (
+                                <button
+                                  type="button"
+                                  className="btn-ghost"
+                                  disabled={actionPending}
+                                  onClick={() =>
+                                    cancelPendingCoachOperation(
+                                      persistedOperation,
+                                    )
+                                  }
+                                >
+                                  <X size={14} aria-hidden="true" />
+                                  Descartar
+                                </button>
+                              ) : null}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
                   </section>
                 ) : null}
-
-                {analysis.alerts?.length ? (
-                  <section className="mi-agent-alerts-panel">
-                    <div className="mi-agent-section-heading">
-                      <div>
-                        <span className="mi-agent-section-label">
-                          Diagnóstico automático
-                        </span>
-                        <h3>Problemas de venta detectados</h3>
-                      </div>
-                      <span>{analysis.alerts.length} alertas</span>
-                    </div>
-                    <div className="mi-agent-alert-list">
-                      {analysis.alerts.map((alert) => (
-                        <article
-                          key={`${alert.code}-${alert.opportunityId || alert.accountName || alert.title}`}
-                          className={`mi-agent-alert-card is-${alert.severity}`}
-                        >
-                          <div className="mi-agent-alert-card-heading">
-                            <strong>{alert.title}</strong>
-                            <span>
-                              {alert.severity === "critical"
-                                ? "Crítica"
-                                : alert.severity === "high"
-                                  ? "Alta"
-                                  : "Media"}
-                            </span>
-                          </div>
-                          <p>
-                            {alert.opportunityName
-                              ? `Oportunidad: ${alert.opportunityName} · ${alert.accountName || "Sin cuenta"}`
-                              : "Pipeline del vendedor"}
-                          </p>
-                          <p>
-                            <strong>Evidencia:</strong> {alert.evidence}
-                          </p>
-                          <p>
-                            <strong>Acción:</strong> {alert.action}
-                          </p>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
-
-                <section className="mi-agent-actions-panel">
-                  <div className="mi-agent-section-heading">
+                {coachRecentOperations.length ? (
+                  <details className="mi-agent-coach-recent">
+                    <summary>
+                      Actividad reciente
+                      <span>{coachRecentOperations.length}</span>
+                    </summary>
                     <div>
-                      <span className="mi-agent-section-label">
-                        Orden recomendado
-                      </span>
-                      <h3>Qué hacer ahora</h3>
-                    </div>
-                    <span>{analysis.actions.length} acciones</span>
-                  </div>
-                  <div className="mi-agent-action-list">
-                    {analysis.actions.length ? (
-                      analysis.actions.map((action) => (
-                        <button
-                          type="button"
-                          key={`${action.rank}-${action.opportunityId || action.title}`}
-                          className={`mi-agent-action-row ${selectedAction?.rank === action.rank ? "is-selected" : ""}`}
-                          onClick={() => setSelectedAction(action)}
-                        >
-                          <span className="mi-agent-action-rank">
-                            {action.rank}
-                          </span>
-                          <span className="mi-agent-action-copy">
+                      {coachRecentOperations.map((operation) => {
+                        const statusMeta =
+                          COACH_OPERATION_STATUS_META[operation.status] ||
+                          COACH_OPERATION_STATUS_META.completed;
+                        return (
+                          <article key={operation.id}>
+                            <span className={`is-${statusMeta.tone}`}>
+                              {operation.status === "completed" ? (
+                                <CheckCircle2 size={13} aria-hidden="true" />
+                              ) : (
+                                <Clock3 size={13} aria-hidden="true" />
+                              )}
+                              {statusMeta.label}
+                            </span>
                             <strong>
-                              {action.title || "Acción comercial"}
+                              {formatCoachOperationLabel(operation)}
                             </strong>
                             <small>
-                              Oportunidad #{action.opportunityId || "-"} ·{" "}
-                              {action.opportunityName || "Sin nombre"}
+                              {formatCoachDateTime(
+                                operation.completedAt ||
+                                  operation.revertedAt ||
+                                  operation.rejectedAt ||
+                                  operation.cancelledAt ||
+                                  operation.updatedAt,
+                              ) || "Actualizada recientemente"}
                             </small>
-                            <small>
-                              {action.accountName || "Sin cuenta"} ·{" "}
-                              {action.stageName || "Sin etapa"}
-                            </small>
-                          </span>
-                          <span
-                            className={`mi-agent-health-badge is-${String(action.salesHealth?.label || "parcial").toLowerCase()}`}
-                          >
-                            {action.salesHealth
-                              ? `Salud ${action.salesHealth.label}`
-                              : "Salud"}
-                          </span>
-                          <span
-                            className={`mi-agent-priority is-${action.priority}`}
-                          >
-                            {PRIORITY_LABELS[action.priority]}
-                          </span>
-                          <span
-                            className={`mi-agent-row-state ${action.status === "done" ? "is-done" : ""}`}
-                          >
-                            {ACTION_STATUS_LABELS[action.status] || "Pendiente"}
-                          </span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="mi-agent-empty">
-                        No se encontraron acciones concretas en este análisis.
-                      </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ) : null}
+                {coachMessages.length ? (
+                  <div
+                    ref={coachThreadRef}
+                    className="mi-agent-coach-thread"
+                    aria-live="polite"
+                  >
+                    {coachMessages.map((message) =>
+                      message.role === "seller" ? (
+                        <div
+                          key={message.id}
+                          className="mi-agent-coach-message is-seller"
+                        >
+                          <span>Vendedor</span>
+                          <p>{message.text}</p>
+                        </div>
+                      ) : (
+                        <div
+                          key={message.id}
+                          className="mi-agent-coach-message is-coach"
+                        >
+                          <span>Coach</span>
+                          {message.pending ? (
+                            <p>Analizando tu contexto comercial...</p>
+                          ) : message.error ? (
+                            <p>{message.error}</p>
+                          ) : (
+                            <>
+                              <div className="mi-agent-coach-result-meta">
+                                <span>
+                                  {COACH_RESPONSE_TYPE_LABELS[
+                                    message.result?.responseType
+                                  ] || "Respuesta del Coach"}
+                                </span>
+                                <span>
+                                  {COACH_CONFIDENCE_LABELS[
+                                    message.result?.confidence
+                                  ] || "Confianza media"}
+                                </span>
+                              </div>
+                              <p className="mi-agent-coach-answer-text">
+                                {message.result?.answer || "Lectura comercial"}
+                              </p>
+                              <CoachStageReadiness
+                                readiness={message.result?.stageReadiness}
+                              />
+                              {showCoachFoundation ? (
+                                <CoachSemanticSections
+                                  result={message.result}
+                                />
+                              ) : null}
+                              {message.result?.operations
+                                ?.filter(
+                                  (operation) =>
+                                    !operation.persistentId ||
+                                    coachPendingOperations.some(
+                                      (pending) =>
+                                        pending.id === operation.persistentId,
+                                    ),
+                                )
+                                .map((operation, index) => (
+                                  <div
+                                    className="mi-agent-coach-action"
+                                    key={`${operation.kind}-${operation.opportunityId || operation.accountId || operation.contactId || operation.interactionId}-${index}`}
+                                  >
+                                    <strong>
+                                      {operation.title || "Cambio propuesto"}
+                                    </strong>
+                                    <small>
+                                      {formatCoachOperationSummary(operation)}
+                                    </small>
+                                    {(
+                                      operation.kind === "activity"
+                                        ? canUpdateCommercialDevelopment
+                                        : operation.kind === "lead_call_outcome"
+                                          ? canUpdateLeads
+                                          : operation.kind === "account_field"
+                                            ? canUpdateAccounts
+                                            : operation.kind === "contact_field"
+                                              ? canUpdateContacts
+                                              : operation.kind ===
+                                                  "create_account"
+                                                ? canCreateAccounts
+                                                : operation.kind ===
+                                                    "create_contact"
+                                                  ? canCreateContacts
+                                                  : operation.kind ===
+                                                      "lead_resolve"
+                                                    ? canResolveLeads
+                                                    : canCreateActions
+                                    ) ? (
+                                      <button
+                                        type="button"
+                                        className="btn-secondary"
+                                        onClick={() =>
+                                          openCoachOperationConfirmation(
+                                            operation,
+                                          )
+                                        }
+                                      >
+                                        Revisar y confirmar
+                                      </button>
+                                    ) : (
+                                      <small>
+                                        Requiere permiso de actualización.
+                                      </small>
+                                    )}
+                                  </div>
+                                ))}
+                              {message.result?.action?.title ? (
+                                <div className="mi-agent-coach-action">
+                                  <strong>
+                                    Acción sugerida:{" "}
+                                    {message.result.action.title}
+                                  </strong>
+                                  <small>
+                                    Criterio de éxito:{" "}
+                                    {message.result.action.successCriteria ||
+                                      "Definir un siguiente compromiso."}
+                                  </small>
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                      ),
                     )}
                   </div>
-                </section>
-              </div>
+                ) : null}
+              </section>
+            </>
+          ) : null}
 
-              <section
-                className="mi-agent-detail-panel"
-                style={{ alignSelf: "stretch", position: "static" }}
-              >
-                {selectedAction ? (
-                  <>
-                    <div className="mi-agent-detail-heading">
+          {activeWorkspace === "summary" ? (
+            !analysis ? (
+              <div className="mi-agent-start-panel">
+                <div className="mi-agent-start-icon">✦</div>
+                <div>
+                  <h3>Tu plan comercial está listo para analizarse</h3>
+                  <p>
+                    Mi agente revisará tu cuota, las oportunidades desde
+                    Desarrollo y las señales de riesgo del proceso comercial.
+                  </p>
+                  <button
+                    type="button"
+                    className="mi-agent-primary-button"
+                    onClick={analyzeSituation}
+                    disabled={analyzing}
+                  >
+                    {analyzing ? "Analizando..." : "Analizar mi situación"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mi-agent-content-stack">
+                <div className="mi-agent-main-column">
+                  <section className="mi-agent-focus-panel">
+                    <div className="mi-agent-section-heading">
                       <div>
                         <span className="mi-agent-section-label">
-                          Detalle de la acción
+                          Lectura del agente
                         </span>
-                        <h3>{selectedAction.title}</h3>
-                        <p>
-                          Oportunidad #{selectedAction.opportunityId || "-"} ·{" "}
-                          {selectedAction.opportunityName || "Sin nombre"} ·{" "}
-                          {selectedAction.accountName || "Sin cuenta"}
-                        </p>
+                        <h3>{analysis.headline || "Tu situación comercial"}</h3>
                       </div>
-                      <span
-                        className={`mi-agent-priority is-${selectedAction.priority}`}
-                      >
-                        {PRIORITY_LABELS[selectedAction.priority]}
+                      <span className="mi-agent-analysis-date">
+                        Actualizado ahora
                       </span>
-                    </div>
-                    <div className="mi-agent-detail-facts">
-                      <article>
-                        <span>Por qué importa</span>
-                        <p>
-                          {selectedAction.reason ||
-                            "Prioridad definida por el análisis del pipeline."}
-                        </p>
-                      </article>
-                      <article>
-                        <span>Riesgo</span>
-                        <p>
-                          {selectedAction.risk ||
-                            "Sin riesgo adicional identificado."}
-                        </p>
-                      </article>
-                      <article>
-                        <span>Resultado esperado</span>
-                        <p>
-                          {selectedAction.expectedOutcome ||
-                            "Obtener un siguiente paso verificable."}
-                        </p>
-                      </article>
-                      <article>
-                        <span>Criterio de éxito</span>
-                        <p>
-                          {selectedAction.successCriteria ||
-                            "Registrar el resultado y el siguiente compromiso."}
-                        </p>
-                      </article>
-                    </div>
-                    {selectedAction.salesHealth ? (
-                      <div className="mi-agent-health-panel">
-                        <div className="mi-agent-health-heading">
-                          <div>
-                            <span className="mi-agent-section-label">
-                              Salud de la oportunidad
-                            </span>
-                            <strong>
-                              {selectedAction.salesHealth.label} ·{" "}
-                              {selectedAction.salesHealth.solidCount}/
-                              {selectedAction.salesHealth.totalCount}{" "}
-                              dimensiones sólidas
-                            </strong>
-                          </div>
-                          <span>
-                            Principal debilidad:{" "}
-                            {selectedAction.salesHealth.principalWeakness}
-                          </span>
-                        </div>
-                        <div className="mi-agent-health-grid">
-                          {selectedAction.salesHealth.dimensions.map(
-                            (dimension) => (
-                              <div
-                                key={dimension.key}
-                                className={`mi-agent-health-dimension is-${dimension.state}`}
-                              >
-                                <span>{dimension.label}</span>
-                                <strong>{dimension.stateLabel}</strong>
-                                <small>{dimension.evidence}</small>
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                    <div className="mi-agent-execution-kit">
-                      <div className="mi-agent-execution-kit-heading">
-                        <div>
-                          <span className="mi-agent-section-label">
-                            Preparación para ejecutar
-                          </span>
-                          <h4>{selectedAction.actionType || "follow_up"}</h4>
-                        </div>
-                        <span>Listo para usar</span>
-                      </div>
-                      <div className="mi-agent-kit-grid">
-                        <article>
-                          <span>Objetivo</span>
-                          <p>
-                            {selectedAction.executionKit?.objective ||
-                              selectedAction.expectedOutcome ||
-                              "Conseguir un compromiso verificable del cliente."}
-                          </p>
-                        </article>
-                        <article>
-                          <span>Resultado mínimo</span>
-                          <p>
-                            {selectedAction.executionKit?.minimumOutcome ||
-                              selectedAction.successCriteria ||
-                              "Definir fecha, responsable y siguiente hito."}
-                          </p>
-                        </article>
-                        <article>
-                          <span>Propuesta de valor</span>
-                          <p>
-                            {selectedAction.executionKit?.valueProposition ||
-                              "Conectar la solución con la necesidad y el riesgo concreto del cliente."}
-                          </p>
-                        </article>
-                        <article>
-                          <span>Mensaje de seguimiento</span>
-                          <p>
-                            {selectedAction.executionKit?.followUpMessage ||
-                              "Enviar un resumen de acuerdos con fecha y siguiente paso."}
-                          </p>
-                        </article>
-                      </div>
-                      {selectedAction.executionKit?.knownInformation?.length ? (
-                        <div className="mi-agent-kit-list">
-                          <strong>Información conocida</strong>
-                          <ul>
-                            {selectedAction.executionKit.knownInformation.map(
-                              (item) => (
-                                <li key={item}>{item}</li>
-                              ),
-                            )}
-                          </ul>
-                        </div>
-                      ) : null}
-                      {selectedAction.executionKit?.objections?.length ? (
-                        <div className="mi-agent-kit-list">
-                          <strong>Objeciones probables</strong>
-                          <ul>
-                            {selectedAction.executionKit.objections.map(
-                              (item) => (
-                                <li key={item}>{item}</li>
-                              ),
-                            )}
-                          </ul>
-                        </div>
-                      ) : null}
-                    </div>
-                    {selectedAction.questions?.length ? (
-                      <div className="mi-agent-questions">
-                        <strong>Preguntas sugeridas</strong>
-                        <ul>
-                          {selectedAction.questions.map((question) => (
-                            <li key={question}>{question}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
-                    {selectedAction.developmentNarrative ? (
-                      <div className="mi-agent-development-context">
-                        <span className="mi-agent-section-label">
-                          Desarrollo de la oportunidad
-                        </span>
-                        <span
-                          className={`mi-agent-alignment-status is-${selectedAction.alignedContext?.alignment || "partially_aligned"}`}
-                          style={{
-                            display: "inline-block",
-                            marginBottom: "8px",
-                            fontSize: "12px",
-                            fontWeight: 800,
-                          }}
-                        >
-                          Alineación:{" "}
-                          {selectedAction.alignedContext?.alignment ===
-                          "aligned"
-                            ? "Alineada"
-                            : selectedAction.alignedContext?.alignment ===
-                                "not_aligned"
-                              ? "Requiere revisión"
-                              : "Parcial"}
-                        </span>
-                        <div className="mi-agent-development-block">
-                          <strong>Descripción y situación actual</strong>
-                          <p>
-                            {selectedAction.alignedContext?.situation ||
-                              selectedAction.developmentNarrative.contract
-                                ?.descriptionSituationText ||
-                              selectedAction.developmentNarrative
-                                .statusSummary ||
-                              "Sin información disponible."}
-                          </p>
-                        </div>
-                        <div className="mi-agent-development-block">
-                          <strong>Estrategia para lograr la venta</strong>
-                          <p>
-                            {selectedAction.alignedContext?.strategy ||
-                              selectedAction.developmentNarrative.contract
-                                ?.salesStrategyText ||
-                              "Sin información disponible."}
-                          </p>
-                        </div>
-                        <div className="mi-agent-development-block">
-                          <strong>Siguiente mejor paso</strong>
-                          <p>
-                            {selectedAction.alignedContext?.nextBestStep ||
-                              selectedAction.developmentNarrative.contract
-                                ?.nextBestStepText ||
-                              selectedAction.developmentNarrative
-                                .nextStepRecommendation ||
-                              "Sin información disponible."}
-                          </p>
-                        </div>
-                        <div className="mi-agent-development-block">
-                          <strong>Paso alternativo</strong>
-                          <p>
-                            {selectedAction.alignedContext?.alternativeStep ||
-                              selectedAction.developmentNarrative.contract
-                                ?.alternativeStepText ||
-                              "Sin información disponible."}
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
-                    {selectedAction.title &&
-                    canExecuteCoach &&
-                    canUpdateCommercialDevelopment ? (
                       <button
                         type="button"
-                        className="mi-agent-primary-button is-wide"
-                        onClick={() =>
-                          openCoachActionConfirmation(selectedAction)
-                        }
-                        disabled={
-                          creatingActionRank === selectedAction.rank ||
-                          selectedAction.status === "done"
-                        }
+                        className="mi-agent-secondary-button"
+                        onClick={analyzeSituation}
+                        disabled={analyzing}
                       >
-                        {selectedAction.status === "done"
-                          ? "Próximo paso creado"
-                          : "Crear próximo paso"}
+                        {analyzing ? "Actualizando..." : "Actualizar análisis"}
                       </button>
-                    ) : null}
-                    {selectedAction.opportunityId &&
-                    (!canExecuteCoach || !canUpdateCommercialDevelopment) ? (
-                      <p className="mi-agent-permission-note">
-                        Tienes acceso de lectura. Solicita permiso de ejecución
-                        y Desarrollo Comercial para preparar el próximo paso.
+                    </div>
+                    <p>{analysis.summary || analysis.quotaReadout}</p>
+                  </section>
+
+                  {analysis.activityProgress ? (
+                    <section className="mi-agent-activity-progress-panel">
+                      <div className="mi-agent-section-heading">
+                        <div>
+                          <span className="mi-agent-section-label">
+                            Efectividad comercial
+                          </span>
+                          <h3>Actividad vs. avance</h3>
+                        </div>
+                        <span>Lectura del período</span>
+                      </div>
+                      <p className="mi-agent-activity-progress-message">
+                        {analysis.activityProgress.message}
                       </p>
-                    ) : null}
-                  </>
-                ) : (
-                  <div className="mi-agent-empty">
-                    Selecciona una acción para ver su contexto.
-                  </div>
-                )}
-              </section>
-            </div>
-          )}
+                      <div className="mi-agent-activity-progress-metrics">
+                        <article>
+                          <span>Actividades recientes</span>
+                          <strong>
+                            {analysis.activityProgress.activityCount}
+                          </strong>
+                          <small>Últimos 7 días</small>
+                        </article>
+                        <article>
+                          <span>Oportunidades con respuesta de etapa</span>
+                          <strong>
+                            {analysis.activityProgress.progressedOpportunities}
+                          </strong>
+                          <small>Registrada en los últimos 7 días</small>
+                        </article>
+                        <article
+                          className={
+                            analysis.activityProgress
+                              .opportunitiesWithoutProgress
+                              ? "is-alert"
+                              : ""
+                          }
+                        >
+                          <span>Actividad sin evidencia de etapa</span>
+                          <strong>
+                            {
+                              analysis.activityProgress
+                                .opportunitiesWithoutProgress
+                            }
+                          </strong>
+                          <small>
+                            Oportunidades que requieren una interacción más
+                            dirigida
+                          </small>
+                        </article>
+                      </div>
+                      {analysis.activityProgress.details?.filter(
+                        (item) => item.activityWithoutProgress,
+                      ).length ? (
+                        <div className="mi-agent-activity-progress-list">
+                          <strong>
+                            Oportunidades con actividad pero sin respuesta de
+                            etapa reciente
+                          </strong>
+                          <ul>
+                            {analysis.activityProgress.details
+                              .filter((item) => item.activityWithoutProgress)
+                              .map((item) => (
+                                <li key={item.opportunityId}>
+                                  <span>
+                                    {item.opportunityName} ·{" "}
+                                    {item.accountName || "Sin cuenta"}
+                                  </span>
+                                  <small>
+                                    {item.activityCount} actividades · sin
+                                    respuesta de etapa posterior a la actividad
+                                  </small>
+                                  <button
+                                    type="button"
+                                    className="mi-agent-link-button"
+                                    onClick={() =>
+                                      navigate(
+                                        `/opportunities?edit=${item.opportunityId}`,
+                                      )
+                                    }
+                                  >
+                                    Abrir oportunidad
+                                  </button>
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+
+                  {analysis.alerts?.length ? (
+                    <section className="mi-agent-alerts-panel">
+                      <div className="mi-agent-section-heading">
+                        <div>
+                          <span className="mi-agent-section-label">
+                            Diagnóstico automático
+                          </span>
+                          <h3>Problemas de venta detectados</h3>
+                        </div>
+                        <span>{analysis.alerts.length} alertas</span>
+                      </div>
+                      <div className="mi-agent-alert-list">
+                        {analysis.alerts.map((alert) => (
+                          <article
+                            key={`${alert.code}-${alert.opportunityId || alert.accountName || alert.title}`}
+                            className={`mi-agent-alert-card is-${alert.severity}`}
+                          >
+                            <div className="mi-agent-alert-card-heading">
+                              <strong>{alert.title}</strong>
+                              <span>
+                                {alert.severity === "critical"
+                                  ? "Crítica"
+                                  : alert.severity === "high"
+                                    ? "Alta"
+                                    : "Media"}
+                              </span>
+                            </div>
+                            <p>
+                              {alert.opportunityName
+                                ? `Oportunidad: ${alert.opportunityName} · ${alert.accountName || "Sin cuenta"}`
+                                : "Pipeline del vendedor"}
+                            </p>
+                            <p>
+                              <strong>Evidencia:</strong> {alert.evidence}
+                            </p>
+                            <p>
+                              <strong>Acción:</strong> {alert.action}
+                            </p>
+                            {alert.opportunityId ? (
+                              <button
+                                type="button"
+                                className="mi-agent-link-button"
+                                onClick={() =>
+                                  navigate(
+                                    `/opportunities?edit=${alert.opportunityId}`,
+                                  )
+                                }
+                              >
+                                Abrir oportunidad
+                              </button>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  <section className="mi-agent-actions-panel">
+                    <div className="mi-agent-section-heading">
+                      <div>
+                        <span className="mi-agent-section-label">
+                          Orden recomendado
+                        </span>
+                        <h3>Qué hacer ahora</h3>
+                      </div>
+                      <span>{analysis.actions.length} acciones</span>
+                    </div>
+                    <div className="mi-agent-action-list">
+                      {analysis.actions.length ? (
+                        analysis.actions.map((action) => (
+                          <div
+                            key={`${action.rank}-${action.opportunityId || action.title}`}
+                            className="mi-agent-action-item"
+                          >
+                            <button
+                              type="button"
+                              className={`mi-agent-action-row ${selectedAction?.rank === action.rank ? "is-selected" : ""}`}
+                              onClick={() => setSelectedAction(action)}
+                            >
+                              <span className="mi-agent-action-rank">
+                                {action.rank}
+                              </span>
+                              <span className="mi-agent-action-copy">
+                                <strong>
+                                  {action.title || "Acción comercial"}
+                                </strong>
+                                <small>
+                                  Oportunidad #{action.opportunityId || "-"} ·{" "}
+                                  {action.opportunityName || "Sin nombre"}
+                                </small>
+                                <small>
+                                  {action.accountName || "Sin cuenta"} ·{" "}
+                                  {action.stageName || "Sin etapa"}
+                                </small>
+                              </span>
+                              <span
+                                className={`mi-agent-health-badge is-${String(action.salesHealth?.label || "parcial").toLowerCase()}`}
+                              >
+                                {action.salesHealth
+                                  ? `Salud ${action.salesHealth.label}`
+                                  : "Salud"}
+                              </span>
+                              <span
+                                className={`mi-agent-priority is-${action.priority}`}
+                              >
+                                {PRIORITY_LABELS[action.priority]}
+                              </span>
+                              <span
+                                className={`mi-agent-row-state ${action.status === "done" ? "is-done" : ""}`}
+                              >
+                                {ACTION_STATUS_LABELS[action.status] ||
+                                  "Pendiente"}
+                              </span>
+                            </button>
+                            {action.opportunityId ? (
+                              <button
+                                type="button"
+                                className="mi-agent-link-button"
+                                onClick={() =>
+                                  navigate(
+                                    `/opportunities?edit=${action.opportunityId}`,
+                                  )
+                                }
+                              >
+                                Abrir oportunidad
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="mi-agent-link-button"
+                                onClick={() => setActiveWorkspace("coach")}
+                              >
+                                Consultar con Coach
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="mi-agent-empty">
+                          No se encontraron acciones concretas en este análisis.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                </div>
+
+                <section
+                  className="mi-agent-detail-panel"
+                  style={{ alignSelf: "stretch", position: "static" }}
+                >
+                  {selectedAction ? (
+                    <>
+                      <div className="mi-agent-detail-heading">
+                        <div>
+                          <span className="mi-agent-section-label">
+                            Detalle de la acción
+                          </span>
+                          <h3>{selectedAction.title}</h3>
+                          <p>
+                            Oportunidad #{selectedAction.opportunityId || "-"} ·{" "}
+                            {selectedAction.opportunityName || "Sin nombre"} ·{" "}
+                            {selectedAction.accountName || "Sin cuenta"}
+                          </p>
+                        </div>
+                        <span
+                          className={`mi-agent-priority is-${selectedAction.priority}`}
+                        >
+                          {PRIORITY_LABELS[selectedAction.priority]}
+                        </span>
+                      </div>
+                      <div className="mi-agent-detail-facts">
+                        <article>
+                          <span>Por qué importa</span>
+                          <p>
+                            {selectedAction.reason ||
+                              "Prioridad definida por el análisis del pipeline."}
+                          </p>
+                        </article>
+                        <article>
+                          <span>Riesgo</span>
+                          <p>
+                            {selectedAction.risk ||
+                              "Sin riesgo adicional identificado."}
+                          </p>
+                        </article>
+                        <article>
+                          <span>Resultado esperado</span>
+                          <p>
+                            {selectedAction.expectedOutcome ||
+                              "Obtener un siguiente paso verificable."}
+                          </p>
+                        </article>
+                        <article>
+                          <span>Criterio de éxito</span>
+                          <p>
+                            {selectedAction.successCriteria ||
+                              "Registrar el resultado y el siguiente compromiso."}
+                          </p>
+                        </article>
+                      </div>
+                      {selectedAction.salesHealth ? (
+                        <div className="mi-agent-health-panel">
+                          <div className="mi-agent-health-heading">
+                            <div>
+                              <span className="mi-agent-section-label">
+                                Salud de la oportunidad
+                              </span>
+                              <strong>
+                                {selectedAction.salesHealth.label} ·{" "}
+                                {selectedAction.salesHealth.solidCount}/
+                                {selectedAction.salesHealth.totalCount}{" "}
+                                dimensiones sólidas
+                              </strong>
+                            </div>
+                            <span>
+                              Principal debilidad:{" "}
+                              {selectedAction.salesHealth.principalWeakness}
+                            </span>
+                          </div>
+                          <div className="mi-agent-health-grid">
+                            {selectedAction.salesHealth.dimensions.map(
+                              (dimension) => (
+                                <div
+                                  key={dimension.key}
+                                  className={`mi-agent-health-dimension is-${dimension.state}`}
+                                >
+                                  <span>{dimension.label}</span>
+                                  <strong>{dimension.stateLabel}</strong>
+                                  <small>{dimension.evidence}</small>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="mi-agent-execution-kit">
+                        <div className="mi-agent-execution-kit-heading">
+                          <div>
+                            <span className="mi-agent-section-label">
+                              Preparación para ejecutar
+                            </span>
+                            <h4>{selectedAction.actionType || "follow_up"}</h4>
+                          </div>
+                          <span>Listo para usar</span>
+                        </div>
+                        <div className="mi-agent-kit-grid">
+                          <article>
+                            <span>Objetivo</span>
+                            <p>
+                              {selectedAction.executionKit?.objective ||
+                                selectedAction.expectedOutcome ||
+                                "Conseguir un compromiso verificable del cliente."}
+                            </p>
+                          </article>
+                          <article>
+                            <span>Resultado mínimo</span>
+                            <p>
+                              {selectedAction.executionKit?.minimumOutcome ||
+                                selectedAction.successCriteria ||
+                                "Definir fecha, responsable y siguiente hito."}
+                            </p>
+                          </article>
+                          <article>
+                            <span>Propuesta de valor</span>
+                            <p>
+                              {selectedAction.executionKit?.valueProposition ||
+                                "Conectar la solución con la necesidad y el riesgo concreto del cliente."}
+                            </p>
+                          </article>
+                          <article>
+                            <span>Mensaje de seguimiento</span>
+                            <p>
+                              {selectedAction.executionKit?.followUpMessage ||
+                                "Enviar un resumen de acuerdos con fecha y siguiente paso."}
+                            </p>
+                          </article>
+                        </div>
+                        {selectedAction.executionKit?.knownInformation
+                          ?.length ? (
+                          <div className="mi-agent-kit-list">
+                            <strong>Información conocida</strong>
+                            <ul>
+                              {selectedAction.executionKit.knownInformation.map(
+                                (item) => (
+                                  <li key={item}>{item}</li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        ) : null}
+                        {selectedAction.executionKit?.objections?.length ? (
+                          <div className="mi-agent-kit-list">
+                            <strong>Objeciones probables</strong>
+                            <ul>
+                              {selectedAction.executionKit.objections.map(
+                                (item) => (
+                                  <li key={item}>{item}</li>
+                                ),
+                              )}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                      {selectedAction.questions?.length ? (
+                        <div className="mi-agent-questions">
+                          <strong>Preguntas sugeridas</strong>
+                          <ul>
+                            {selectedAction.questions.map((question) => (
+                              <li key={question}>{question}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {selectedAction.developmentNarrative ? (
+                        <div className="mi-agent-development-context">
+                          <span className="mi-agent-section-label">
+                            Desarrollo de la oportunidad
+                          </span>
+                          <span
+                            className={`mi-agent-alignment-status is-${selectedAction.alignedContext?.alignment || "partially_aligned"}`}
+                            style={{
+                              display: "inline-block",
+                              marginBottom: "8px",
+                              fontSize: "12px",
+                              fontWeight: 800,
+                            }}
+                          >
+                            Alineación:{" "}
+                            {selectedAction.alignedContext?.alignment ===
+                            "aligned"
+                              ? "Alineada"
+                              : selectedAction.alignedContext?.alignment ===
+                                  "not_aligned"
+                                ? "Requiere revisión"
+                                : "Parcial"}
+                          </span>
+                          <div className="mi-agent-development-block">
+                            <strong>Descripción y situación actual</strong>
+                            <p>
+                              {selectedAction.alignedContext?.situation ||
+                                selectedAction.developmentNarrative.contract
+                                  ?.descriptionSituationText ||
+                                selectedAction.developmentNarrative
+                                  .statusSummary ||
+                                "Sin información disponible."}
+                            </p>
+                          </div>
+                          <div className="mi-agent-development-block">
+                            <strong>Estrategia para lograr la venta</strong>
+                            <p>
+                              {selectedAction.alignedContext?.strategy ||
+                                selectedAction.developmentNarrative.contract
+                                  ?.salesStrategyText ||
+                                "Sin información disponible."}
+                            </p>
+                          </div>
+                          <div className="mi-agent-development-block">
+                            <strong>Siguiente mejor paso</strong>
+                            <p>
+                              {selectedAction.alignedContext?.nextBestStep ||
+                                selectedAction.developmentNarrative.contract
+                                  ?.nextBestStepText ||
+                                selectedAction.developmentNarrative
+                                  .nextStepRecommendation ||
+                                "Sin información disponible."}
+                            </p>
+                          </div>
+                          <div className="mi-agent-development-block">
+                            <strong>Paso alternativo</strong>
+                            <p>
+                              {selectedAction.alignedContext?.alternativeStep ||
+                                selectedAction.developmentNarrative.contract
+                                  ?.alternativeStepText ||
+                                "Sin información disponible."}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
+                      {selectedAction.title &&
+                      canExecuteCoach &&
+                      canUpdateCommercialDevelopment ? (
+                        <button
+                          type="button"
+                          className="mi-agent-primary-button is-wide"
+                          onClick={() =>
+                            openCoachActionConfirmation(selectedAction)
+                          }
+                          disabled={
+                            creatingActionRank === selectedAction.rank ||
+                            selectedAction.status === "done"
+                          }
+                        >
+                          {selectedAction.status === "done"
+                            ? "Próximo paso creado"
+                            : "Crear próximo paso"}
+                        </button>
+                      ) : null}
+                      {selectedAction.opportunityId &&
+                      (!canExecuteCoach || !canUpdateCommercialDevelopment) ? (
+                        <p className="mi-agent-permission-note">
+                          Tienes acceso de lectura. Solicita permiso de
+                          ejecución y Desarrollo Comercial para preparar el
+                          próximo paso.
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="mi-agent-empty">
+                      Selecciona una acción para ver su contexto.
+                    </div>
+                  )}
+                </section>
+              </div>
+            )
+          ) : null}
         </>
       ) : activeWorkspace === "customer" ? (
-        <section className="mi-agent-workspace-panel">
+        <section className="mi-agent-workspace-panel mi-agent-customer-workspace">
           <div className="mi-agent-section-heading">
             <div>
               <span className="mi-agent-section-label">Cliente existente</span>
@@ -4242,35 +4407,108 @@ export default function MiAgentPage({
             </span>
           </div>
           <div className="mi-agent-customer-context-card">
-            <div>
-              <strong>
-                {selectedCoachAccount?.name ||
-                  "Selecciona una cuenta en la pestaña Coach"}
-              </strong>
-              <span>
-                {selectedCoachOpportunity
-                  ? selectedCoachOpportunity.name
-                  : "Sin oportunidad seleccionada"}
-              </span>
-              <span>
-                {selectedCoachContact
-                  ? selectedCoachContact.full_name ||
-                    `${selectedCoachContact.first_name || ""} ${selectedCoachContact.last_name || ""}`.trim()
-                  : "Sin contacto seleccionado"}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="mi-agent-secondary-button"
-              onClick={() => setActiveWorkspace("coach")}
-            >
-              Cambiar contexto
-            </button>
+            <label>
+              Buscar cliente
+              <input
+                value={customerAccountSearch}
+                onChange={(event) => searchCustomerAccounts(event.target.value)}
+                placeholder="Nombre de cuenta"
+              />
+            </label>
+            <label>
+              Cuenta existente
+              <select
+                value={customerAccountId}
+                onChange={(event) => selectCustomerAccount(event.target.value)}
+              >
+                <option value="">Selecciona una cuenta</option>
+                {customerAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
+          {customerAccountId ? (
+            <section
+              className="mi-agent-customer-overview"
+              aria-label="Resumen de cuenta"
+            >
+              <div className="mi-agent-section-heading">
+                <div>
+                  <span className="mi-agent-section-label">Fuente CRM</span>
+                  <h3>
+                    {customerSnapshot?.account?.name ||
+                      selectedCustomerAccount?.name ||
+                      "Cuenta seleccionada"}
+                  </h3>
+                </div>
+                <span>
+                  {customerSnapshot?.account?.city ||
+                  customerSnapshot?.account?.stateRegion
+                    ? [
+                        customerSnapshot.account.city,
+                        customerSnapshot.account.stateRegion,
+                      ]
+                        .filter(Boolean)
+                        .join(", ")
+                    : "Ubicación sin registrar"}
+                </span>
+              </div>
+              <div className="mi-agent-customer-overview-grid">
+                <article>
+                  <span>Última actividad registrada</span>
+                  <strong>
+                    {customerSnapshot?.interactions?.[0]?.updatedAt
+                      ? formatDate(customerSnapshot.interactions[0].updatedAt)
+                      : "Sin actividad accesible"}
+                  </strong>
+                  <small>
+                    {customerSnapshot?.interactions?.[0]?.title ||
+                      "Fuente: interacciones CRM"}
+                  </small>
+                </article>
+                <article>
+                  <span>Sitio web</span>
+                  <strong>
+                    {customerSnapshot?.account?.website || "Sin registrar"}
+                  </strong>
+                  <small>
+                    {customerSnapshot?.account?.registrationCode ||
+                      "Sin código de registro"}
+                  </small>
+                </article>
+                <article>
+                  <span>Relación comercial</span>
+                  <strong>
+                    {customerSnapshot?.accountHealth?.metrics
+                      ?.opportunityCount || 0}{" "}
+                    oportunidades · {customerSnapshot?.contacts?.length || 0}{" "}
+                    contactos
+                  </strong>
+                  <small>Datos CRM autorizados</small>
+                </article>
+              </div>
+              {customerSnapshot?.account?.description ? (
+                <p className="mi-agent-customer-summary">
+                  {customerSnapshot.account.description}
+                </p>
+              ) : null}
+            </section>
+          ) : (
+            <div className="mi-agent-empty">
+              Selecciona una cuenta para revisar salud, riesgos e historial
+              comercial.
+            </div>
+          )}
           {customerIntelligenceError ? (
             <p className="form-error">{customerIntelligenceError}</p>
           ) : null}
-          <section className="mi-agent-coach-panel" aria-label="Chat de cuenta">
+          <section
+            className="mi-agent-coach-panel mi-agent-customer-chat"
+            aria-label="Chat de cuenta"
+          >
             <div className="mi-agent-section-heading">
               <div>
                 <span className="mi-agent-section-label">Chat de cuenta</span>
@@ -4360,19 +4598,78 @@ export default function MiAgentPage({
                       className="mi-agent-coach-message is-coach"
                     >
                       <span>Cuenta</span>
+                      <small className="mi-agent-customer-source-label">
+                        {message.sourceDomain === "mixed"
+                          ? "CRM + investigación pública"
+                          : message.sourceDomain === "public_web"
+                            ? "Investigación pública"
+                            : "Fuente CRM"}
+                        {message.confidence
+                          ? ` · confianza ${CUSTOMER_FINDING_CONFIDENCE_LABELS[message.confidence] || message.confidence}`
+                          : ""}
+                      </small>
                       <h4>{message.answer}</h4>
                       {message.evidence?.length ? (
-                        <ul>
-                          {message.evidence.map((item) => (
-                            <li key={item}>{item}</li>
-                          ))}
-                        </ul>
+                        <div className="mi-agent-customer-chat-evidence">
+                          <strong>Evidencia</strong>
+                          <ul>
+                            {message.evidence.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {message.inferences?.length ? (
+                        <div className="mi-agent-customer-chat-inferences">
+                          <strong>Hipótesis por validar</strong>
+                          <ul>
+                            {message.inferences.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
                       ) : null}
                       {message.publicSources?.length ? (
-                        <p>
-                          <strong>Fuentes públicas:</strong>{" "}
-                          {message.publicSources.length}
-                        </p>
+                        <div className="mi-agent-customer-public-sources">
+                          <strong>Fuentes públicas</strong>
+                          <ul>
+                            {message.publicSources.map(
+                              (source, sourceIndex) => {
+                                const sourceUrl =
+                                  typeof source === "string"
+                                    ? source
+                                    : source.url || source.sourceUrl;
+                                return (
+                                  <li
+                                    key={`${sourceUrl || "source"}-${sourceIndex}`}
+                                  >
+                                    {/^https?:\/\//i.test(
+                                      String(sourceUrl || ""),
+                                    ) ? (
+                                      <a
+                                        href={sourceUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        {typeof source === "object"
+                                          ? source.title ||
+                                            source.domain ||
+                                            sourceUrl
+                                          : sourceUrl}
+                                      </a>
+                                    ) : (
+                                      String(
+                                        source?.title ||
+                                          source ||
+                                          "Fuente pública",
+                                      )
+                                    )}
+                                  </li>
+                                );
+                              },
+                            )}
+                          </ul>
+                        </div>
                       ) : null}
                       {message.agents?.length ? (
                         <small>
@@ -4383,11 +4680,49 @@ export default function MiAgentPage({
                         </small>
                       ) : null}
                       {message.recommendedActions?.length ? (
-                        <p>
-                          <strong>Acción sugerida:</strong>{" "}
-                          {message.recommendedActions[0].title} (requiere
-                          confirmación)
-                        </p>
+                        <div className="mi-agent-customer-chat-actions">
+                          <strong>Próximos pasos sugeridos</strong>
+                          {message.recommendedActions.map(
+                            (action, actionIndex) => (
+                              <article key={`${action.title}-${actionIndex}`}>
+                                <span>
+                                  {action.title} · requiere confirmación
+                                </span>
+                                {action.opportunityId &&
+                                canExecuteCoach &&
+                                canUpdateCommercialDevelopment ? (
+                                  <button
+                                    type="button"
+                                    className="mi-agent-link-button"
+                                    onClick={() =>
+                                      openDiscoveryActivity({
+                                        opportunityId: action.opportunityId,
+                                        title: action.title,
+                                        actionType: action.actionType || "call",
+                                        notes: action.notes,
+                                        successCriteria: action.successCriteria,
+                                      })
+                                    }
+                                  >
+                                    Preparar actividad
+                                  </button>
+                                ) : action.opportunityId ? (
+                                  <button
+                                    type="button"
+                                    className="mi-agent-link-button"
+                                    onClick={() =>
+                                      navigate(
+                                        `/opportunities?edit=${action.opportunityId}`,
+                                      )
+                                    }
+                                  >
+                                    Abrir oportunidad
+                                  </button>
+                                ) : null}
+                              </article>
+                            ),
+                          )}
+                        </div>
                       ) : null}
                     </div>
                   ),
@@ -4468,14 +4803,334 @@ export default function MiAgentPage({
                         </div>
                         <em>{signal.severity}</em>
                       </div>
+                      <small className="mi-agent-customer-source-label">
+                        Fuente CRM · señal determinística
+                      </small>
                       <p>{signal.summary}</p>
                       <blockquote>{signal.evidence}</blockquote>
+                      <div className="mi-agent-customer-signal-actions">
+                        {signal.entityType === "opportunity" &&
+                        signal.entityId ? (
+                          <button
+                            type="button"
+                            className="mi-agent-link-button"
+                            onClick={() =>
+                              navigate(`/opportunities?edit=${signal.entityId}`)
+                            }
+                          >
+                            Abrir oportunidad
+                          </button>
+                        ) : null}
+                        {!signal.entityId &&
+                        customerSnapshot.opportunities?.some(
+                          (opportunity) =>
+                            !["ganada", "perdida", "anulada"].includes(
+                              opportunity.commercialStatusCode,
+                            ),
+                        ) &&
+                        canUpdateCommercialDevelopment ? (
+                          <button
+                            type="button"
+                            className="mi-agent-link-button"
+                            onClick={() => {
+                              const opportunity =
+                                customerSnapshot.opportunities.find(
+                                  (item) =>
+                                    !["ganada", "perdida", "anulada"].includes(
+                                      item.commercialStatusCode,
+                                    ),
+                                );
+                              openDiscoveryActivity({
+                                opportunityId: opportunity.id,
+                                title: signal.title,
+                                actionType: "call",
+                                priority:
+                                  signal.severity === "high"
+                                    ? "high"
+                                    : "medium",
+                                notes: signal.evidence,
+                                successCriteria:
+                                  "Validar la señal de salud con el cliente y registrar el siguiente compromiso.",
+                              });
+                            }}
+                          >
+                            Preparar seguimiento
+                          </button>
+                        ) : null}
+                      </div>
                     </article>
                   ))}
                 </div>
               ) : (
                 <div className="mi-agent-empty">
                   No se detectaron señales determinísticas de atención.
+                </div>
+              )}
+            </section>
+          ) : null}
+          {customerSnapshot?.accountHealth?.signals?.length ? (
+            <section
+              className="mi-agent-customer-next-step"
+              aria-label="Próximo paso sugerido"
+            >
+              <div>
+                <span className="mi-agent-section-label">
+                  Sugerencia basada en señales CRM
+                </span>
+                <h3>Próximo paso sugerido</h3>
+                <strong>
+                  {customerSnapshot.accountHealth.signals[0].title}
+                </strong>
+                <p>{customerSnapshot.accountHealth.signals[0].summary}</p>
+                <small>
+                  Evidencia:{" "}
+                  {customerSnapshot.accountHealth.signals[0].evidence}
+                </small>
+              </div>
+              {customerSnapshot.accountHealth.signals[0].entityType ===
+                "opportunity" &&
+              customerSnapshot.accountHealth.signals[0].entityId ? (
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={() =>
+                    navigate(
+                      `/opportunities?edit=${customerSnapshot.accountHealth.signals[0].entityId}`,
+                    )
+                  }
+                >
+                  Abrir oportunidad
+                </button>
+              ) : canExecuteCoach && canUpdateCommercialDevelopment ? (
+                customerSnapshot.opportunities?.some((opportunity) =>
+                  ["open", undefined].includes(opportunity.lifecycle),
+                ) ? (
+                  <button
+                    type="button"
+                    className="mi-agent-primary-button"
+                    onClick={() => {
+                      const opportunity = customerSnapshot.opportunities.find(
+                        (item) => ["open", undefined].includes(item.lifecycle),
+                      );
+                      openDiscoveryActivity({
+                        opportunityId: opportunity.id,
+                        title: customerSnapshot.accountHealth.signals[0].title,
+                        actionType: "call",
+                        priority:
+                          customerSnapshot.accountHealth.signals[0].severity ===
+                          "high"
+                            ? "high"
+                            : "medium",
+                        notes:
+                          customerSnapshot.accountHealth.signals[0].evidence,
+                        successCriteria:
+                          "Validar la señal con el cliente y registrar un siguiente compromiso.",
+                      });
+                    }}
+                  >
+                    Preparar seguimiento
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="mi-agent-secondary-button"
+                    onClick={() =>
+                      askCustomerChat(
+                        `¿Cuál es el siguiente paso para atender: ${customerSnapshot.accountHealth.signals[0].title}?`,
+                      )
+                    }
+                    disabled={customerChatLoading}
+                  >
+                    Consultar siguiente paso
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={() =>
+                    askCustomerChat(
+                      `¿Cuál es el siguiente paso para atender: ${customerSnapshot.accountHealth.signals[0].title}?`,
+                    )
+                  }
+                  disabled={customerChatLoading}
+                >
+                  Consultar siguiente paso
+                </button>
+              )}
+            </section>
+          ) : null}
+          {customerSnapshot ? (
+            <section
+              className="mi-agent-customer-history"
+              aria-label="Historial comercial de la cuenta"
+            >
+              <div className="mi-agent-section-heading">
+                <div>
+                  <span className="mi-agent-section-label">Fuente CRM</span>
+                  <h3>Historial comercial</h3>
+                </div>
+                <span>
+                  {(customerSnapshot.opportunities?.length || 0) +
+                    (customerSnapshot.inactiveOpportunities?.length || 0)}{" "}
+                  oportunidades
+                </span>
+              </div>
+              <div className="mi-agent-customer-history-grid">
+                {[
+                  ["open", "Abiertas"],
+                  ["ganada", "Ganadas"],
+                  ["perdida", "Perdidas"],
+                  ["anulada", "Anuladas"],
+                ].map(([statusCode, label]) => {
+                  const opportunities = (
+                    customerSnapshot.opportunities || []
+                  ).filter((opportunity) =>
+                    statusCode === "open"
+                      ? !["ganada", "perdida", "anulada"].includes(
+                          opportunity.commercialStatusCode,
+                        )
+                      : opportunity.commercialStatusCode === statusCode,
+                  );
+                  return (
+                    <div key={statusCode}>
+                      <strong>
+                        {label} <span>{opportunities.length}</span>
+                      </strong>
+                      {opportunities.length ? (
+                        <ul>
+                          {opportunities.map((opportunity) => (
+                            <li key={opportunity.id}>
+                              <button
+                                type="button"
+                                className="mi-agent-customer-record-link"
+                                onClick={() =>
+                                  navigate(
+                                    `/opportunities?edit=${opportunity.id}`,
+                                  )
+                                }
+                              >
+                                {opportunity.name}
+                              </button>
+                              <small>
+                                {opportunity.stageName || "Sin etapa"} ·{" "}
+                                {formatCurrency(opportunity.amountUsd, "USD")}
+                                {opportunity.closeDate
+                                  ? ` · cierre ${formatDate(opportunity.closeDate)}`
+                                  : ""}
+                              </small>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <small>Sin registros accesibles</small>
+                      )}
+                    </div>
+                  );
+                })}
+                <div>
+                  <strong>
+                    Desactivadas{" "}
+                    <span>
+                      {customerSnapshot.inactiveOpportunities?.length || 0}
+                    </span>
+                  </strong>
+                  {customerSnapshot.inactiveOpportunities?.length ? (
+                    <ul>
+                      {customerSnapshot.inactiveOpportunities.map(
+                        (opportunity) => (
+                          <li key={opportunity.id}>
+                            <button
+                              type="button"
+                              className="mi-agent-customer-record-link"
+                              onClick={() =>
+                                navigate(
+                                  `/opportunities?edit=${opportunity.id}`,
+                                )
+                              }
+                            >
+                              {opportunity.name}
+                            </button>
+                            <small>
+                              {opportunity.activationStatusCode ||
+                                "No activada"}{" "}
+                              ·{" "}
+                              {opportunity.commercialStatusCode || "en proceso"}{" "}
+                              · {opportunity.stageName || "Sin etapa"} ·{" "}
+                              {formatCurrency(opportunity.amountUsd, "USD")}
+                            </small>
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                  ) : (
+                    <small>Sin registros accesibles</small>
+                  )}
+                </div>
+              </div>
+            </section>
+          ) : null}
+          {customerSnapshot?.permissions?.canReadContacts ? (
+            <section
+              className="mi-agent-customer-contacts"
+              aria-label="Mapa de relaciones de la cuenta"
+            >
+              <div className="mi-agent-section-heading">
+                <div>
+                  <span className="mi-agent-section-label">Fuente CRM</span>
+                  <h3>Contactos y mapa de relación</h3>
+                </div>
+                <span>{customerSnapshot.contacts?.length || 0} contactos</span>
+              </div>
+              {customerSnapshot.contacts?.length ? (
+                <div className="mi-agent-customer-contact-grid">
+                  {customerSnapshot.contacts.map((contact) => {
+                    const missing = [
+                      !contact.positionTitle && "cargo",
+                      !contact.purchaseParticipation &&
+                        "participación de compra",
+                      !contact.hierarchyLevel && "nivel jerárquico",
+                      !contact.influenceLevel && "nivel de influencia",
+                      !contact.managerContactId &&
+                        !contact.influencesContactId &&
+                        "relación con otros contactos",
+                    ].filter(Boolean);
+                    return (
+                      <article key={contact.id}>
+                        <strong>{contact.name || "Contacto sin nombre"}</strong>
+                        <span>
+                          {contact.positionTitle || "Cargo sin registrar"}
+                          {contact.department ? ` · ${contact.department}` : ""}
+                        </span>
+                        <small>
+                          Participación:{" "}
+                          {contact.purchaseParticipation || "Sin dato"}
+                        </small>
+                        <small>
+                          Jerarquía: {contact.hierarchyLevel || "Sin dato"} ·{" "}
+                          Influencia: {contact.influenceLevel || "Sin dato"}
+                        </small>
+                        <small>
+                          Relación: {contact.relationshipType || "Sin dato"}
+                          {contact.managerName
+                            ? ` · Reporta a ${contact.managerName}`
+                            : ""}
+                          {contact.influencesName
+                            ? ` · Influye en ${contact.influencesName}`
+                            : ""}
+                        </small>
+                        {missing.length ? (
+                          <small className="mi-agent-customer-map-gap">
+                            Falta: {missing.join(", ")}
+                          </small>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="mi-agent-empty">
+                  No hay contactos activos accesibles para esta cuenta.
                 </div>
               )}
             </section>
@@ -4489,24 +5144,55 @@ export default function MiAgentPage({
             >
               <div className="mi-agent-section-heading">
                 <div>
-                  <span className="mi-agent-section-label">
-                    Historial comercial
-                  </span>
-                  <h3>Productos y renovaciones</h3>
+                  <span className="mi-agent-section-label">Fuente CRM</span>
+                  <h3>Cotizaciones, productos y renovaciones</h3>
                 </div>
                 <span>{customerSnapshot.products?.length || 0} productos</span>
               </div>
               {customerSnapshot.products?.length ? (
                 <div className="mi-agent-discovery-columns">
                   <div>
-                    <strong>Productos cotizados y ganados</strong>
+                    <strong>Partidas de cotizaciones</strong>
+                    <p className="mi-agent-customer-evidence-note">
+                      Una cotización aceptada o ganada no confirma por sí sola
+                      compra, facturación ni entrega.
+                    </p>
                     <ul>
                       {customerSnapshot.products.slice(0, 10).map((product) => (
                         <li
                           key={`${product.quotationVersionId}-${product.productCode}-${product.description}`}
                         >
-                          {product.description} · {product.commercialStatus} ·{" "}
-                          {product.fulfillmentStatus}
+                          <strong>{product.description}</strong>
+                          <br />
+                          <span>
+                            {product.itemType || "producto"} ·{" "}
+                            {product.quantity} unidad(es)
+                            {product.isRenewal ? " · renovación cotizada" : ""}
+                          </span>
+                          <br />
+                          <small>
+                            Cotización{" "}
+                            {CUSTOMER_QUOTATION_STATUS_LABELS[
+                              product.commercialStatus
+                            ] || product.commercialStatus}{" "}
+                            · Compra/entrega: no verificada
+                            {product.providerName
+                              ? ` · ${product.providerName}`
+                              : ""}
+                          </small>
+                          {product.opportunityId ? (
+                            <button
+                              type="button"
+                              className="mi-agent-customer-record-link"
+                              onClick={() =>
+                                navigate(
+                                  `/opportunities?edit=${product.opportunityId}`,
+                                )
+                              }
+                            >
+                              Abrir oportunidad asociada
+                            </button>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -4520,8 +5206,21 @@ export default function MiAgentPage({
                     <ul>
                       {customerSnapshot.renewals.slice(0, 10).map((renewal) => (
                         <li key={renewal.id}>
-                          {renewal.providerName} · {renewal.statusCode} · vence{" "}
-                          {renewal.expiresAt || "sin fecha"}
+                          <span>
+                            {renewal.providerName} · {renewal.statusCode} ·
+                            vence {renewal.expiresAt || "sin fecha"}
+                          </span>
+                          <button
+                            type="button"
+                            className="mi-agent-customer-record-link"
+                            onClick={() =>
+                              navigate(
+                                `/opportunities?edit=${renewal.opportunityId}`,
+                              )
+                            }
+                          >
+                            Abrir oportunidad asociada
+                          </button>
                         </li>
                       ))}
                     </ul>
@@ -4534,14 +5233,30 @@ export default function MiAgentPage({
                   {customerSnapshot.expansionHypotheses.map((hypothesis) => (
                     <article key={`${hypothesis.type}-${hypothesis.title}`}>
                       <div>
-                        <span>{hypothesis.type}</span>
+                        <span>Hipótesis · {hypothesis.type}</span>
                         <strong>{hypothesis.title}</strong>
                         <p>
                           {hypothesis.summary} {hypothesis.evidence}
                         </p>
+                        <small>
+                          Confianza:{" "}
+                          {CUSTOMER_FINDING_CONFIDENCE_LABELS[
+                            hypothesis.confidence
+                          ] ||
+                            hypothesis.confidence ||
+                            "Baja"}{" "}
+                          · requiere validación del vendedor
+                        </small>
                       </div>
                       {hypothesis.opportunityId &&
-                      canUpdateCommercialDevelopment ? (
+                      canExecuteCoach &&
+                      canUpdateCommercialDevelopment &&
+                      customerSnapshot.opportunities.some(
+                        (opportunity) =>
+                          Number(opportunity.id) ===
+                            Number(hypothesis.opportunityId) &&
+                          opportunity.lifecycle === "open",
+                      ) ? (
                         <button
                           type="button"
                           className="btn-secondary"
@@ -4559,6 +5274,18 @@ export default function MiAgentPage({
                         >
                           Revisar hipótesis
                         </button>
+                      ) : hypothesis.opportunityId ? (
+                        <button
+                          type="button"
+                          className="mi-agent-link-button"
+                          onClick={() =>
+                            navigate(
+                              `/opportunities?edit=${hypothesis.opportunityId}`,
+                            )
+                          }
+                        >
+                          Abrir oportunidad
+                        </button>
                       ) : null}
                     </article>
                   ))}
@@ -4566,7 +5293,7 @@ export default function MiAgentPage({
               ) : null}
             </section>
           ) : null}
-          <div className="mi-agent-workspace-actions">
+          <div className="mi-agent-workspace-actions mi-agent-customer-actions">
             <button
               type="button"
               className="mi-agent-primary-button"
@@ -4612,8 +5339,9 @@ export default function MiAgentPage({
           </div>
           {!hasCustomerContext ? (
             <p className="field-hint">
-              Selecciona una cuenta, oportunidad o contacto desde la pestaña
-              Coach para iniciar la investigación interna.
+              Selecciona una cuenta existente arriba para iniciar la
+              inteligencia comercial; la selección del Chat del Coach es
+              independiente.
             </p>
           ) : null}
           {customerIntelligenceJob ? (
@@ -4666,7 +5394,11 @@ export default function MiAgentPage({
             >
               <div className="mi-agent-section-heading">
                 <div>
-                  <span className="mi-agent-section-label">Orquestación</span>
+                  <span className="mi-agent-section-label">
+                    {customerAgentsJob.result.sourceDomain === "public_web"
+                      ? "CRM interno + investigación pública"
+                      : "Análisis interno CRM"}
+                  </span>
                   <h3>Agentes especializados</h3>
                 </div>
                 <span>Sin escrituras automáticas</span>
@@ -4677,8 +5409,12 @@ export default function MiAgentPage({
                     <strong>{agent.agentId}</strong>
                     <p>{agent.summary}</p>
                     <small>
-                      {agent.findings?.length || 0} hallazgos · confianza{" "}
-                      {agent.confidence}
+                      {agent.sourceDomain === "public_web"
+                        ? "Fuente pública"
+                        : "Fuente CRM"}{" "}
+                      · {agent.findings?.length || 0} hallazgos · confianza{" "}
+                      {CUSTOMER_FINDING_CONFIDENCE_LABELS[agent.confidence] ||
+                        agent.confidence}
                     </small>
                     {agent.findings?.length ? (
                       <ul>
@@ -4731,6 +5467,26 @@ export default function MiAgentPage({
                                   finding.evidence ||
                                   "Sin evidencia"}
                               </small>
+                              <small>
+                                Certeza: {finding.certainty || "evidenciada"} ·
+                                Confianza:{" "}
+                                {CUSTOMER_FINDING_CONFIDENCE_LABELS[
+                                  finding.confidence
+                                ] ||
+                                  finding.confidence ||
+                                  agent.confidence}
+                              </small>
+                              {/^https?:\/\//i.test(
+                                String(finding.sourceUrl || ""),
+                              ) ? (
+                                <a
+                                  href={finding.sourceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  Ver fuente pública
+                                </a>
+                              ) : null}
                             </li>
                           );
                         })}
@@ -4766,6 +5522,14 @@ export default function MiAgentPage({
                     <blockquote>{finding.evidenceText}</blockquote>
                   ) : null}
                   <div className="mi-agent-finding-meta">
+                    <span>
+                      Fuente:{" "}
+                      {finding.sourceDomain === "public_web"
+                        ? "Investigación pública"
+                        : finding.certainty === "inferred"
+                          ? "Inferencia"
+                          : "CRM"}
+                    </span>
                     <span>
                       Confianza:{" "}
                       {CUSTOMER_FINDING_CONFIDENCE_LABELS[finding.confidence] ||
@@ -5043,7 +5807,7 @@ export default function MiAgentPage({
                   updateProspectForm("companyName", event.target.value)
                 }
                 placeholder="Nombre de la empresa"
-                disabled={prospectPreparing}
+                disabled={prospectPreparing || Boolean(prospectSession)}
               />
             </label>
             <label>
@@ -5054,7 +5818,7 @@ export default function MiAgentPage({
                   updateProspectForm("country", event.target.value)
                 }
                 placeholder="México, Perú, Colombia..."
-                disabled={prospectPreparing}
+                disabled={prospectPreparing || Boolean(prospectSession)}
               />
             </label>
             <label>
@@ -5065,7 +5829,7 @@ export default function MiAgentPage({
                   updateProspectForm("website", event.target.value)
                 }
                 placeholder="https://empresa.com"
-                disabled={prospectPreparing}
+                disabled={prospectPreparing || Boolean(prospectSession)}
               />
             </label>
             <label>
@@ -5076,7 +5840,7 @@ export default function MiAgentPage({
                   updateProspectForm("industry", event.target.value)
                 }
                 placeholder="Logística, banca, retail..."
-                disabled={prospectPreparing}
+                disabled={prospectPreparing || Boolean(prospectSession)}
               />
             </label>
           </div>
@@ -5085,11 +5849,13 @@ export default function MiAgentPage({
               type="button"
               className="mi-agent-primary-button"
               onClick={prepareProspectAccount}
-              disabled={prospectPreparing}
+              disabled={!canCreateProspecting || prospectPreparing}
             >
               {prospectPreparing ? "Preparando..." : "Preparar cuenta"}
             </button>
-            {canUseExternalSources && prospectSession ? (
+            {canCreateProspecting &&
+            canUseExternalSources &&
+            prospectSession ? (
               <button
                 type="button"
                 className="mi-agent-secondary-button"
@@ -5164,6 +5930,11 @@ export default function MiAgentPage({
               <p className="mi-agent-customer-summary">
                 {prospectSession.result.summary}
               </p>
+              {prospectSession.result.externalResearch?.warnings?.length ? (
+                <p className="mi-agent-inline-notice">
+                  {prospectSession.result.externalResearch.warnings.join(" ")}
+                </p>
+              ) : null}
               <div className="mi-agent-discovery-grid">
                 <article>
                   <span>Empresa</span>
@@ -5174,14 +5945,94 @@ export default function MiAgentPage({
                   <p>{prospectSession.result.profile.positioning}</p>
                 </article>
               </div>
+              <div className="mi-agent-prospect-section">
+                <strong>Revisión de posibles cuentas duplicadas</strong>
+                {!prospectSession.duplicateReview?.completed ? (
+                  <p>
+                    Se requiere permiso de lectura de cuentas para revisar
+                    duplicados antes de convertir.
+                  </p>
+                ) : !prospectSession.duplicateReview.countryResolved ? (
+                  <p>
+                    No se reconoció el país indicado. Corrígelo y prepara de
+                    nuevo la prospección antes de convertir.
+                  </p>
+                ) : prospectSession.duplicateReview.candidates.length ? (
+                  <>
+                    <p>
+                      Hay coincidencias por nombre o dominio. Revisa en el
+                      módulo de cuentas y elige una decisión explícita.
+                    </p>
+                    <div className="mi-agent-prospect-card-grid">
+                      {prospectSession.duplicateReview.candidates.map(
+                        (candidate) => (
+                          <article key={candidate.id}>
+                            <strong>{candidate.name}</strong>
+                            <p>
+                              {candidate.country || "País no indicado"}
+                              {candidate.domain ? ` · ${candidate.domain}` : ""}
+                            </p>
+                            <small>
+                              Coincidencia:{" "}
+                              {candidate.matchType === "domain"
+                                ? "dominio"
+                                : "nombre y país"}
+                            </small>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() =>
+                                convertProspectAccount(
+                                  "link_existing",
+                                  candidate.id,
+                                )
+                              }
+                              disabled={
+                                !canUpdateProspecting ||
+                                !canCreateAccounts ||
+                                prospectConverting === "account" ||
+                                Boolean(prospectSession.convertedAccountId)
+                              }
+                            >
+                              Vincular esta cuenta
+                            </button>
+                          </article>
+                        ),
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="mi-agent-secondary-button"
+                      onClick={() => convertProspectAccount("create_new")}
+                      disabled={
+                        !canUpdateProspecting ||
+                        !canCreateAccounts ||
+                        prospectConverting === "account" ||
+                        Boolean(prospectSession.convertedAccountId)
+                      }
+                    >
+                      Crear una cuenta nueva de todos modos
+                    </button>
+                  </>
+                ) : (
+                  <p>
+                    No se encontraron posibles duplicados para este nombre, país
+                    y dominio.
+                  </p>
+                )}
+              </div>
               <div className="mi-agent-prospect-conversion-actions">
                 <button
                   type="button"
                   className="mi-agent-primary-button"
-                  onClick={convertProspectAccount}
+                  onClick={() => convertProspectAccount("create_new")}
                   disabled={
+                    !canUpdateProspecting ||
                     !canCreateAccounts ||
                     prospectConverting === "account" ||
+                    !prospectSession.duplicateReview?.completed ||
+                    !prospectSession.duplicateReview?.countryResolved ||
+                    prospectSession.duplicateReview.candidates.length > 0 ||
                     Boolean(
                       prospectConvertedAccountId ||
                       prospectSession.convertedAccountId,
@@ -5193,13 +6044,14 @@ export default function MiAgentPage({
                     ? "Cuenta creada/vinculada"
                     : prospectConverting === "account"
                       ? "Creando cuenta..."
-                      : "Crear cuenta"}
+                      : "Crear cuenta revisada"}
                 </button>
                 <button
                   type="button"
                   className="mi-agent-secondary-button"
                   onClick={convertProspectLead}
                   disabled={
+                    !canUpdateProspecting ||
                     !canCreateLeads ||
                     prospectConverting === "lead" ||
                     Boolean(prospectConvertedLeadId)
@@ -5244,9 +6096,22 @@ export default function MiAgentPage({
                           {CUSTOMER_FINDING_CONFIDENCE_LABELS[
                             finding.confidence
                           ] || finding.confidence}
-                        </span>
-                        <span>Certeza: {finding.certainty}</span>
-                        <span>
+                          <span>
+                            Fuente:{" "}
+                            {/^https?:\/\//i.test(
+                              finding.sourceReference || "",
+                            ) ? (
+                              <a
+                                href={finding.sourceReference}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Abrir fuente
+                              </a>
+                            ) : (
+                              finding.sourceReference || finding.sourceType
+                            )}
+                          </span>
                           Fuente:{" "}
                           {finding.sourceReference || finding.sourceType}
                         </span>
@@ -5259,6 +6124,7 @@ export default function MiAgentPage({
                             updateProspectFindingStatus(finding, "confirmed")
                           }
                           disabled={
+                            !canUpdateProspecting ||
                             finding.status === "confirmed" ||
                             prospectFindingUpdatingId === finding.id
                           }
@@ -5272,6 +6138,7 @@ export default function MiAgentPage({
                             updateProspectFindingStatus(finding, "rejected")
                           }
                           disabled={
+                            !canUpdateProspecting ||
                             finding.status === "rejected" ||
                             prospectFindingUpdatingId === finding.id
                           }
@@ -5292,12 +6159,29 @@ export default function MiAgentPage({
                       <article key={contact.id}>
                         <span>{contact.area}</span>
                         <strong>{contact.roleTitle}</strong>
+                        <small>Sugerido · no confirmado en el CRM</small>
                         <p>
                           Confianza:{" "}
                           {CUSTOMER_FINDING_CONFIDENCE_LABELS[
                             contact.confidence
                           ] || contact.confidence}
                         </p>
+                        {contact.sourceReference ? (
+                          <small>
+                            Fuente:{" "}
+                            {/^https?:\/\//i.test(contact.sourceReference) ? (
+                              <a
+                                href={contact.sourceReference}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Abrir fuente
+                              </a>
+                            ) : (
+                              contact.sourceReference
+                            )}
+                          </small>
+                        ) : null}
                         <label>
                           Nombre real
                           <input
@@ -5342,6 +6226,7 @@ export default function MiAgentPage({
                           className="btn-secondary"
                           onClick={() => convertProspectContact(contact)}
                           disabled={
+                            !canUpdateProspecting ||
                             !canCreateContacts ||
                             Boolean(prospectConvertedContacts[contact.id]) ||
                             prospectConverting === `contact-${contact.id}`
@@ -5367,14 +6252,61 @@ export default function MiAgentPage({
                       <article key={hypothesis.id}>
                         <span>{hypothesis.technologyArea}</span>
                         <strong>{hypothesis.title}</strong>
+                        <small>
+                          {hypothesis.status === "confirmed"
+                            ? "Validada por el vendedor"
+                            : hypothesis.status === "rejected"
+                              ? "Rechazada por el vendedor"
+                              : "Hipótesis · no confirmada"}
+                        </small>
                         <p>{hypothesis.businessChallenge}</p>
                         <small>{hypothesis.validationQuestion}</small>
+                        <div className="mi-agent-finding-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() =>
+                              updateProspectHypothesisStatus(
+                                hypothesis,
+                                "confirmed",
+                              )
+                            }
+                            disabled={
+                              !canUpdateProspecting ||
+                              hypothesis.status === "confirmed" ||
+                              prospectConverting ===
+                                `hypothesis-${hypothesis.id}`
+                            }
+                          >
+                            Confirmar hipótesis
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() =>
+                              updateProspectHypothesisStatus(
+                                hypothesis,
+                                "rejected",
+                              )
+                            }
+                            disabled={
+                              !canUpdateProspecting ||
+                              hypothesis.status === "rejected" ||
+                              prospectConverting ===
+                                `hypothesis-${hypothesis.id}`
+                            }
+                          >
+                            Rechazar
+                          </button>
+                        </div>
                         <button
                           type="button"
                           className="btn-secondary"
                           onClick={() => convertProspectOpportunity(hypothesis)}
                           disabled={
+                            !canUpdateProspecting ||
                             !canCreateOpportunities ||
+                            hypothesis.status !== "confirmed" ||
                             Boolean(
                               prospectConvertedOpportunities[hypothesis.id],
                             ) ||

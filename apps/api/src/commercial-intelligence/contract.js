@@ -34,10 +34,15 @@ export const CUSTOMER_INTELLIGENCE_TARGET_ENTITIES = [
   "lead",
 ];
 
-export const ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS = ["crm_internal", "public_web"];
+export const ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS = [
+  "crm_internal",
+  "public_web",
+];
 
 export const customerIntelligenceFindingSchema = z.object({
-  sourceDomain: z.enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS).default("crm_internal"),
+  sourceDomain: z
+    .enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS)
+    .default("crm_internal"),
   category: z.enum(CUSTOMER_INTELLIGENCE_CATEGORIES),
   title: z.string().trim().min(1).max(190),
   summary: z.string().trim().min(1).max(4000),
@@ -46,7 +51,10 @@ export const customerIntelligenceFindingSchema = z.object({
   sourceUrl: z.string().trim().max(500).default(""),
   confidence: z.enum(["high", "medium", "low"]),
   certainty: z.enum(["confirmed", "evidenced", "inferred"]),
-  targetEntity: z.enum(CUSTOMER_INTELLIGENCE_TARGET_ENTITIES).nullable().default(null),
+  targetEntity: z
+    .enum(CUSTOMER_INTELLIGENCE_TARGET_ENTITIES)
+    .nullable()
+    .default(null),
   targetField: z.string().trim().max(60).nullable().default(null),
   suggestedValue: z.string().trim().max(10000).nullable().default(null),
   requiresConfirmation: z.boolean().default(true),
@@ -71,13 +79,17 @@ export const customerIntelligenceAgentResultSchema = z.object({
   evidence: z.array(z.string()),
   confidence: z.enum(["high", "medium", "low"]),
   requiresConfirmation: z.boolean(),
-  sourceDomain: z.enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS).default("crm_internal"),
+  sourceDomain: z
+    .enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS)
+    .default("crm_internal"),
   durationMs: z.number().int().nonnegative().default(0),
   sourceCount: z.number().int().nonnegative().default(0),
 });
 
 export const customerIntelligenceResultSchema = z.object({
-  sourceDomain: z.enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS).default("crm_internal"),
+  sourceDomain: z
+    .enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS)
+    .default("crm_internal"),
   scope: z.array(z.enum(CUSTOMER_INTELLIGENCE_SCOPE)).min(1),
   headline: z.string().trim().min(1).max(190),
   summary: z.string().trim().min(1).max(4000),
@@ -99,7 +111,9 @@ export const accountInternalAnalysisResultSchema = z.object({
 });
 
 export const customerIntelligenceOrchestrationSchema = z.object({
-  sourceDomain: z.enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS).default("crm_internal"),
+  sourceDomain: z
+    .enum(ACCOUNT_INTELLIGENCE_SOURCE_DOMAINS)
+    .default("crm_internal"),
   orchestrationVersion: z.literal("account-intelligence.agents.v1"),
   agents: z.array(customerIntelligenceAgentResultSchema),
   generatedAt: z.string().datetime({ offset: true }),
@@ -112,7 +126,9 @@ export function normalizeCustomerIntelligenceOrchestration(input = {}) {
     orchestrationVersion: "account-intelligence.agents.v1",
     agents: (input.agents || []).map((agent) => ({
       ...agent,
-      findings: (agent.findings || []).map(normalizeCustomerIntelligenceFinding),
+      findings: (agent.findings || []).map(
+        normalizeCustomerIntelligenceFinding,
+      ),
     })),
     generatedAt: input.generatedAt || new Date().toISOString(),
     writesPerformed: false,
@@ -123,14 +139,16 @@ export const customerAccountChatResponseSchema = z.object({
   answer: z.string(),
   evidence: z.array(z.string()),
   confidence: z.enum(["high", "medium", "low"]),
-  recommendedActions: z.array(z.object({
-    title: z.string(),
-    opportunityId: z.number().int().positive().nullable(),
-    actionType: z.string(),
-    notes: z.string(),
-    successCriteria: z.string(),
-    requiresConfirmation: z.literal(true),
-  })),
+  recommendedActions: z.array(
+    z.object({
+      title: z.string(),
+      opportunityId: z.number().int().positive().nullable(),
+      actionType: z.string(),
+      notes: z.string(),
+      successCriteria: z.string(),
+      requiresConfirmation: z.literal(true),
+    }),
+  ),
   source: z.literal("account_intelligence"),
 });
 
@@ -154,6 +172,14 @@ const customerIntelligenceContactSchema = z.object({
   mobile: z.string(),
   positionTitle: z.string(),
   department: z.string(),
+  purchaseParticipation: z.string().default(""),
+  hierarchyLevel: z.string().default(""),
+  relationshipType: z.string().default(""),
+  influenceLevel: z.string().default(""),
+  managerContactId: z.number().int().positive().nullable().default(null),
+  managerName: z.string().default(""),
+  influencesContactId: z.number().int().positive().nullable().default(null),
+  influencesName: z.string().default(""),
 });
 
 const customerIntelligenceOpportunitySchema = z.object({
@@ -167,7 +193,15 @@ const customerIntelligenceOpportunitySchema = z.object({
   stageCode: z.string(),
   stageName: z.string(),
   commercialStatusCode: z.string(),
+  activationStatusCode: z.string().default("activada"),
+  lifecycle: z.enum(["open", "historical", "inactive"]).default("open"),
 });
+
+const customerIntelligenceInactiveOpportunitySchema =
+  customerIntelligenceOpportunitySchema.extend({
+    activationStatusCode: z.string(),
+    lifecycle: z.literal("inactive").default("inactive"),
+  });
 
 const customerIntelligenceInteractionSchema = z.object({
   id: z.number().int().positive(),
@@ -207,7 +241,7 @@ const customerIntelligenceProductSchema = z.object({
   quantity: z.number(),
   listPriceUnit: z.number().nullable(),
   currencyCode: z.string().nullable(),
-  commercialStatus: z.enum(["accepted", "won"]),
+  commercialStatus: z.string().min(1),
   fulfillmentStatus: z.literal("not_verified"),
 });
 
@@ -254,10 +288,15 @@ export const customerIntelligenceSnapshotSchema = z.object({
   snapshotVersion: z.literal("account-intelligence.v1"),
   capturedAt: z.string().datetime({ offset: true }),
   account: customerIntelligenceAccountSchema.nullable(),
-  selectedOpportunity: customerIntelligenceOpportunitySchema.extend({ contactId: z.number().int().positive().nullable() }).nullable(),
+  selectedOpportunity: customerIntelligenceOpportunitySchema
+    .extend({ contactId: z.number().int().positive().nullable() })
+    .nullable(),
   selectedContact: customerIntelligenceContactSchema.nullable(),
   contacts: z.array(customerIntelligenceContactSchema),
   opportunities: z.array(customerIntelligenceOpportunitySchema),
+  inactiveOpportunities: z
+    .array(customerIntelligenceInactiveOpportunitySchema)
+    .default([]),
   interactions: z.array(customerIntelligenceInteractionSchema),
   activities: z.array(customerIntelligenceInteractionSchema),
   renewals: z.array(customerIntelligenceRenewalSchema),
@@ -286,13 +325,17 @@ export function normalizeCustomerIntelligenceSnapshot(input = {}) {
     selectedContact: input.selectedContact || null,
     contacts: input.contacts || [],
     opportunities: input.opportunities || [],
+    inactiveOpportunities: input.inactiveOpportunities || [],
     interactions: input.interactions || [],
     activities: input.activities || input.interactions || [],
     renewals: input.renewals || [],
     products: input.products || [],
     expansionHypotheses: input.expansionHypotheses || [],
     supportCases: input.supportCases || [],
-    dataAvailability: input.dataAvailability || { products: false, supportCases: false },
+    dataAvailability: input.dataAvailability || {
+      products: false,
+      supportCases: false,
+    },
     accountHealth: input.accountHealth || {
       status: "insufficient_data",
       score: 0,
@@ -317,11 +360,14 @@ export function normalizeCustomerIntelligenceSnapshot(input = {}) {
 }
 
 export function normalizeCustomerIntelligenceFinding(input = {}) {
-  const metadata = input.metadata && typeof input.metadata === "object"
-    ? input.metadata
-    : {};
+  const metadata =
+    input.metadata && typeof input.metadata === "object" ? input.metadata : {};
   const parsed = customerIntelligenceFindingSchema.parse({
-    sourceDomain: input.sourceDomain ?? (input.sourceType === "tavily" || input.sourceType === "public_web" ? "public_web" : "crm_internal"),
+    sourceDomain:
+      input.sourceDomain ??
+      (input.sourceType === "tavily" || input.sourceType === "public_web"
+        ? "public_web"
+        : "crm_internal"),
     category: input.category,
     title: input.title,
     summary: input.summary,
@@ -333,7 +379,8 @@ export function normalizeCustomerIntelligenceFinding(input = {}) {
     targetEntity: input.targetEntity ?? metadata.targetEntity ?? null,
     targetField: input.targetField ?? metadata.targetField ?? null,
     suggestedValue: input.suggestedValue ?? metadata.suggestedValue ?? null,
-    requiresConfirmation: input.requiresConfirmation ?? input.status !== "confirmed",
+    requiresConfirmation:
+      input.requiresConfirmation ?? input.status !== "confirmed",
   });
   return {
     ...parsed,

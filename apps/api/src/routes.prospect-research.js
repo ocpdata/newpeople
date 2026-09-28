@@ -14,6 +14,7 @@ import {
   runProspectExternalResearchSession,
   runProspectResearchSession,
   updateProspectResearchFindingStatus,
+  updateProspectResearchHypothesisStatus,
 } from "./prospect-research/service.js";
 
 const router = express.Router();
@@ -29,6 +30,11 @@ const convertContactSchema = z.object({
   accountId: z.number().int().positive().optional().nullable(),
   contactName: z.string().trim().max(190).optional().default(""),
   email: z.string().trim().max(190).optional().default(""),
+});
+
+const convertAccountSchema = z.object({
+  duplicateDecision: z.enum(["link_existing", "create_new"]).optional(),
+  duplicateAccountId: z.number().int().positive().optional().nullable(),
 });
 
 const convertLeadSchema = z.object({
@@ -48,6 +54,9 @@ function sendRouteError(res, error, fallbackMessage) {
     message: error?.message || fallbackMessage,
     ...(error?.requiredPermission
       ? { requiredPermission: error.requiredPermission }
+      : {}),
+    ...(Array.isArray(error?.duplicateCandidates)
+      ? { duplicateCandidates: error.duplicateCandidates }
       : {}),
   });
 }
@@ -148,7 +157,11 @@ router.post(
       }
       return res.json({ session });
     } catch (error) {
-      return sendRouteError(res, error, "No fue posible ejecutar investigacion externa");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible ejecutar investigacion externa",
+      );
     }
   },
 );
@@ -163,11 +176,15 @@ router.post(
       return res.status(400).json({ message: "Sesion invalida" });
     }
     try {
+      const payload = convertAccountSchema.parse(req.body || {});
       const result = await convertProspectSessionToAccount({
         user: req.user,
         sessionId,
+        duplicateDecision: payload.duplicateDecision,
+        duplicateAccountId: payload.duplicateAccountId,
       });
-      if (!result) return res.status(404).json({ message: "Prospeccion no encontrada" });
+      if (!result)
+        return res.status(404).json({ message: "Prospeccion no encontrada" });
       await logAuditEvent({
         req,
         module: "prospect_research",
@@ -179,7 +196,17 @@ router.post(
       });
       return res.status(result.reused ? 200 : 201).json(result);
     } catch (error) {
-      return sendRouteError(res, error, "No fue posible convertir la prospeccion a cuenta");
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          message: "Payload invalido",
+          issues: error.issues,
+        });
+      }
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible convertir la prospeccion a cuenta",
+      );
     }
   },
 );
@@ -200,7 +227,8 @@ router.post(
         sessionId,
         accountId: payload.accountId,
       });
-      if (!result) return res.status(404).json({ message: "Prospeccion no encontrada" });
+      if (!result)
+        return res.status(404).json({ message: "Prospeccion no encontrada" });
       await logAuditEvent({
         req,
         module: "prospect_research",
@@ -212,8 +240,15 @@ router.post(
       });
       return res.status(201).json(result);
     } catch (error) {
-      if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-      return sendRouteError(res, error, "No fue posible convertir la prospeccion a lead");
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible convertir la prospeccion a lead",
+      );
     }
   },
 );
@@ -236,7 +271,10 @@ router.post(
         contactName: payload.contactName,
         email: payload.email,
       });
-      if (!result) return res.status(404).json({ message: "Contacto sugerido no encontrado" });
+      if (!result)
+        return res
+          .status(404)
+          .json({ message: "Contacto sugerido no encontrado" });
       await logAuditEvent({
         req,
         module: "prospect_research",
@@ -248,8 +286,15 @@ router.post(
       });
       return res.status(201).json(result);
     } catch (error) {
-      if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-      return sendRouteError(res, error, "No fue posible convertir el contacto sugerido");
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible convertir el contacto sugerido",
+      );
     }
   },
 );
@@ -273,7 +318,8 @@ router.post(
         amountUsd: payload.amountUsd,
         closeDate: payload.closeDate,
       });
-      if (!result) return res.status(404).json({ message: "Hipotesis no encontrada" });
+      if (!result)
+        return res.status(404).json({ message: "Hipotesis no encontrada" });
       await logAuditEvent({
         req,
         module: "prospect_research",
@@ -285,8 +331,15 @@ router.post(
       });
       return res.status(201).json(result);
     } catch (error) {
-      if (error instanceof z.ZodError) return res.status(400).json({ message: "Payload invalido", issues: error.issues });
-      return sendRouteError(res, error, "No fue posible convertir la hipotesis a oportunidad");
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible convertir la hipotesis a oportunidad",
+      );
     }
   },
 );
@@ -324,6 +377,39 @@ async function updateFindingStatus(req, res, status) {
   }
 }
 
+async function updateHypothesisStatus(req, res, status) {
+  const hypothesisId = Number(req.params.hypothesisId || 0);
+  if (!Number.isInteger(hypothesisId) || hypothesisId <= 0) {
+    return res.status(400).json({ message: "Hipotesis invalida" });
+  }
+  try {
+    const hypothesis = await updateProspectResearchHypothesisStatus({
+      user: req.user,
+      hypothesisId,
+      status,
+    });
+    if (!hypothesis) {
+      return res.status(404).json({ message: "Hipotesis no encontrada" });
+    }
+    await logAuditEvent({
+      req,
+      module: "prospect_research",
+      action: `prospect_research_hypothesis_${status}`,
+      entityType: "prospect_research_hypothesis",
+      entityId: hypothesis.id,
+      detail: `Hipotesis de prospeccion marcada como ${status}`,
+      after: hypothesis,
+    });
+    return res.json({ hypothesis });
+  } catch (error) {
+    return sendRouteError(
+      res,
+      error,
+      "No fue posible actualizar la hipotesis de prospeccion",
+    );
+  }
+}
+
 router.post(
   "/findings/:findingId/confirm",
   requirePermission("mi_coach.use"),
@@ -336,6 +422,20 @@ router.post(
   requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => updateFindingStatus(req, res, "rejected"),
+);
+
+router.post(
+  "/hypotheses/:hypothesisId/confirm",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.update"),
+  async (req, res) => updateHypothesisStatus(req, res, "confirmed"),
+);
+
+router.post(
+  "/hypotheses/:hypothesisId/reject",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.update"),
+  async (req, res) => updateHypothesisStatus(req, res, "rejected"),
 );
 
 export default router;

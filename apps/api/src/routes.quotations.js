@@ -23,6 +23,7 @@ import {
   summarizeProposalComponents,
 } from "./settings.js";
 import { config } from "./config.js";
+import { getExchangeRate } from "./exchange-rates.js";
 import {
   ensureProductTypesCatalog,
   getProductTypeByCode,
@@ -2580,7 +2581,8 @@ async function listQuotationProcessingPurchaseOrders({
     const list = itemsByOrderId.get(orderId) || [];
     list.push({
       itemId: Number(row.id),
-      sourceAssignmentKey: String(row.source_assignment_key || "").trim() || null,
+      sourceAssignmentKey:
+        String(row.source_assignment_key || "").trim() || null,
       productId: row.product_id ? Number(row.product_id) : null,
       code: row.line_code || "-",
       description: row.line_description || "Sin descripcion",
@@ -2618,7 +2620,7 @@ async function validateProductsReceptionStageData({
   requireComplete = false,
 }) {
   const rows = await query(
-        `SELECT poi.id AS item_id, poi.purchase_order_id, poi.product_id,
+    `SELECT poi.id AS item_id, poi.purchase_order_id, poi.product_id,
           poi.line_code, poi.line_description, po.order_number,
           poi.quantity
      FROM quotation_processing_purchase_order_items poi
@@ -2705,11 +2707,7 @@ async function validateProductsReceptionStageData({
     const sourceItemKey = String(extra?.sourceItemKey || "").trim();
     const sourceItem = itemsByKey.get(sourceItemKey);
     const extraQuantity = Number(extra?.quantityOverride ?? 0);
-    if (
-      !sourceItem ||
-      !Number.isFinite(extraQuantity) ||
-      extraQuantity < 0
-    ) {
+    if (!sourceItem || !Number.isFinite(extraQuantity) || extraQuantity < 0) {
       const error = new Error(
         "La recepcion contiene una recepcion parcial invalida",
       );
@@ -3861,66 +3859,10 @@ export async function ensureProposalSchema() {
 }
 
 async function fetchFrankfurterExchangeRate({ targetCurrency }) {
-  const baseCurrency = String(config.exchangeRates.baseCurrency || "USD")
-    .trim()
-    .toUpperCase();
-  const normalizedTargetCurrency = String(targetCurrency || "")
-    .trim()
-    .toUpperCase();
-
-  if (!normalizedTargetCurrency) {
-    throw new Error("Moneda objetivo invalida");
-  }
-  if (normalizedTargetCurrency === baseCurrency) {
-    return {
-      baseCurrency,
-      targetCurrency: normalizedTargetCurrency,
-      exchangeRate: 1,
-      provider: "frankfurter",
-      fetchedAt: new Date().toISOString(),
-    };
-  }
-
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(
-    () => controller.abort(),
-    config.exchangeRates.timeoutMs,
-  );
-
-  try {
-    const response = await fetch(
-      `${config.exchangeRates.frankfurterBaseUrl.replace(/\/$/, "")}/latest?from=${encodeURIComponent(baseCurrency)}&to=${encodeURIComponent(normalizedTargetCurrency)}`,
-      {
-        method: "GET",
-        signal: controller.signal,
-      },
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      throw new Error(
-        `Frankfurter request failed: ${response.status} ${errorText}`.trim(),
-      );
-    }
-
-    const payload = await response.json();
-    const exchangeRate = Number(payload?.rates?.[normalizedTargetCurrency]);
-    if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
-      throw new Error(
-        "Frankfurter request failed: invalid exchange rate payload",
-      );
-    }
-
-    return {
-      baseCurrency,
-      targetCurrency: normalizedTargetCurrency,
-      exchangeRate,
-      provider: "frankfurter",
-      fetchedAt: new Date().toISOString(),
-    };
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
+  return getExchangeRate({
+    baseCurrency: config.exchangeRates.baseCurrency || "USD",
+    targetCurrency,
+  });
 }
 
 async function ensureQuotationSectionItemsColumn(columnName, ddl) {
@@ -14138,7 +14080,9 @@ router.post(
   async (req, res) => {
     if (!assertAcceptOrderPermission(req, res)) return;
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
-      return res.status(403).json({ message: "No autorizado para cargar documentos de recepcion" });
+      return res
+        .status(403)
+        .json({ message: "No autorizado para cargar documentos de recepcion" });
     }
 
     const quotationId = Number(req.params.quotationId);
@@ -14149,23 +14093,39 @@ router.post(
     // itemKey tags the evidence so the frontend can filter per-item
     const itemKey = String(req.query.itemKey || "").trim() || null;
 
-    const quotation = await getAccessibleQuotation({ user: req.user, quotationId });
-    if (!quotation) return res.status(404).json({ message: "Cotizacion no encontrada" });
+    const quotation = await getAccessibleQuotation({
+      user: req.user,
+      quotationId,
+    });
+    if (!quotation)
+      return res.status(404).json({ message: "Cotizacion no encontrada" });
 
     const latestVersion = await getAccessibleQuotationVersion({
       user: req.user,
       versionId: Number(quotation.latest_version_id || 0),
     });
-    if (!latestVersion) return res.status(404).json({ message: "Version no encontrada" });
+    if (!latestVersion)
+      return res.status(404).json({ message: "Version no encontrada" });
 
     const { files } = await parseMultipartFiles(req);
-    if (!files.length) return res.status(400).json({ message: "Selecciona al menos un archivo" });
+    if (!files.length)
+      return res
+        .status(400)
+        .json({ message: "Selecciona al menos un archivo" });
 
     const allowedMimeTypes = new Set(config.documents.storage.allowedMimeTypes);
-    const invalidFile = files.find((f) => !String(f.mimetype || "").trim() || !allowedMimeTypes.has(String(f.mimetype || "").trim()));
+    const invalidFile = files.find(
+      (f) =>
+        !String(f.mimetype || "").trim() ||
+        !allowedMimeTypes.has(String(f.mimetype || "").trim()),
+    );
     if (invalidFile) {
       await cleanupTempFiles(files);
-      return res.status(400).json({ message: `Tipo de archivo no permitido: ${invalidFile.originalFilename || invalidFile.newFilename || "archivo"}` });
+      return res
+        .status(400)
+        .json({
+          message: `Tipo de archivo no permitido: ${invalidFile.originalFilename || invalidFile.newFilename || "archivo"}`,
+        });
     }
 
     try {
@@ -14173,8 +14133,13 @@ router.post(
       await withTransaction(async (conn) => {
         const now = new Date();
         for (const file of files) {
-          const originalFileName = String(file.originalFilename || file.newFilename || "documento").trim() || "documento";
-          const mimeType = String(file.mimetype || "application/octet-stream").trim();
+          const originalFileName =
+            String(
+              file.originalFilename || file.newFilename || "documento",
+            ).trim() || "documento";
+          const mimeType = String(
+            file.mimetype || "application/octet-stream",
+          ).trim();
           const extension = path.extname(originalFileName).slice(1) || null;
           const buffer = await readFile(file.filepath);
           const sha256 = createHash("sha256").update(buffer).digest("hex");
@@ -14195,10 +14160,22 @@ router.post(
                 uploaded_by_user_id, created_at, updated_at)
              VALUES (?, NULL, 'quotation_processing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, 0, ?, ?, ?)`,
             [
-              publicId, Number(latestVersion.id), stored.storageProvider, stored.storageBucket,
-              stored.storageKey, originalFileName, stored.storedFileName, mimeType, extension,
-              Number(file.size || buffer.length || 0), sha256, "quotation_processing_evidence",
-              "Documento recepcion de productos", Number(req.user.id), now, now,
+              publicId,
+              Number(latestVersion.id),
+              stored.storageProvider,
+              stored.storageBucket,
+              stored.storageKey,
+              originalFileName,
+              stored.storedFileName,
+              mimeType,
+              extension,
+              Number(file.size || buffer.length || 0),
+              sha256,
+              "quotation_processing_evidence",
+              "Documento recepcion de productos",
+              Number(req.user.id),
+              now,
+              now,
             ],
           );
           await conn.query(
@@ -14207,10 +14184,14 @@ router.post(
                evidence_type, document_id, content_text, created_by_user_id, created_at)
              VALUES (?, ?, ?, 'products_reception', ?, ?, ?, ?, ?)`,
             [
-              Number(quotation.id), Number(latestVersion.id), Number(quotation.opportunity_id),
-              "text_file", Number(insertResult.insertId),
+              Number(quotation.id),
+              Number(latestVersion.id),
+              Number(quotation.opportunity_id),
+              "text_file",
+              Number(insertResult.insertId),
               itemKey ? JSON.stringify({ itemKey }) : null,
-              Number(req.user.id), now,
+              Number(req.user.id),
+              now,
             ],
           );
         }
@@ -14231,7 +14212,10 @@ router.post(
 
     return res.status(201).json({
       message: "Documento cargado",
-      evidences: await listQuotationProcessingEvidences({ quotationId, stageCode: "products_reception" }),
+      evidences: await listQuotationProcessingEvidences({
+        quotationId,
+        stageCode: "products_reception",
+      }),
     });
   },
 );
@@ -22173,10 +22157,18 @@ router.get(
             : null,
           accountId: row.account_id ? Number(row.account_id) : null,
           quotationIds: (() => {
-            try { return JSON.parse(row.quotation_ids_json || "[]"); } catch { return []; }
+            try {
+              return JSON.parse(row.quotation_ids_json || "[]");
+            } catch {
+              return [];
+            }
           })(),
           quotationItems: (() => {
-            try { return JSON.parse(row.quotation_items_json || "[]"); } catch { return []; }
+            try {
+              return JSON.parse(row.quotation_items_json || "[]");
+            } catch {
+              return [];
+            }
           })(),
           createdByUserId: Number(row.created_by_user_id),
           createdAt: row.created_at,
@@ -22212,7 +22204,9 @@ router.post(
         return res.status(400).json({ message: "Fecha de factura invalida" });
       }
       if (!quotationIds.length) {
-        return res.status(400).json({ message: "Se requiere al menos una cotizacion" });
+        return res
+          .status(400)
+          .json({ message: "Se requiere al menos una cotizacion" });
       }
 
       const result = await query(
@@ -22229,7 +22223,9 @@ router.post(
         ],
       );
       const insertedId = String(result.insertId);
-      return res.status(201).json({ id: insertedId, invoiceNumber, invoiceDate });
+      return res
+        .status(201)
+        .json({ id: insertedId, invoiceNumber, invoiceDate });
     } catch (err) {
       console.error("POST /quotation-invoices error", err);
       return res.status(500).json({ message: "Error al guardar la factura" });

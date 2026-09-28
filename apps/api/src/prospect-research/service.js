@@ -3,11 +3,16 @@ import { query, withTransaction } from "../db.js";
 import { ensureInteractionSchema } from "../interactions/schema.js";
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { searchTavily } from "../tavily.js";
-import { assertExternalResearchGovernance, getMiCoachGovernanceSettings } from "../commercial-intelligence/service.js";
+import {
+  assertExternalResearchGovernance,
+  getMiCoachGovernanceSettings,
+} from "../commercial-intelligence/service.js";
 import { ensureProspectResearchSchema } from "./schema.js";
 
 function clip(value, max = 1200) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text.length <= max ? text : `${text.slice(0, max)}...`;
 }
 
@@ -45,26 +50,164 @@ async function getCatalogId(tableName, code, fallbackWhere = "is_active = 1") {
   const fallback = await query(
     `SELECT id FROM ${tableName} ${fallbackWhere ? `WHERE ${fallbackWhere}` : ""} ORDER BY id LIMIT 1`,
   );
-  if (!fallback.length) throw createHttpError(500, `Catalogo sin datos: ${tableName}`);
+  if (!fallback.length)
+    throw createHttpError(500, `Catalogo sin datos: ${tableName}`);
   return Number(fallback[0].id);
 }
 
 async function resolveCountryId(country) {
   const text = String(country || "").trim();
+  const normalizedCountry = text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+  if (!normalizedCountry) return null;
   const rows = await query(
-    `SELECT id FROM countries
-     WHERE LOWER(name) = LOWER(?) OR LOWER(iso2) = LOWER(?) OR LOWER(iso3) = LOWER(?)
-     ORDER BY id LIMIT 1`,
-    [text, text, text],
+    `SELECT id, name, iso2, iso3 FROM countries ORDER BY id`,
   ).catch(() => []);
-  if (rows.length) return Number(rows[0].id);
-  return getCatalogId("countries", "MX", "1 = 1");
+  const countryRow = rows.find((row) =>
+    [row.name, row.iso2, row.iso3].some(
+      (value) =>
+        String(value || "")
+          .normalize("NFKD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "") === normalizedCountry,
+    ),
+  );
+  return countryRow ? Number(countryRow.id) : null;
+}
+
+function normalizeCompanyName(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(
+      /\b(s\s*a\s*de\s*c\s*v|s\s*a\s*de\s*r\s*l|s\s*a|sa|llc|ltd|limited|inc|corp|corporation)\b/g,
+      " ",
+    )
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCompanyDomain(value) {
+  const normalizedWebsite = normalizeWebsite(value);
+  if (!normalizedWebsite) return "";
+  try {
+    return new URL(normalizedWebsite).hostname
+      .toLowerCase()
+      .replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+async function findProspectAccountDuplicates({ user, session }) {
+  const canReadAll = hasPermission(user, "cuentas.read_all");
+  const canReadOwned = hasPermission(user, "cuentas.read");
+  if (!canReadAll && !canReadOwned) {
+    return {
+      completed: false,
+      requiresAccountsRead: true,
+      countryResolved: false,
+      candidates: [],
+    };
+  }
+
+  const normalizedName = normalizeCompanyName(session.companyName);
+  const nameToken =
+    normalizedName.split(" ").find((token) => token.length >= 2) ||
+    normalizedName;
+  const domain = normalizeCompanyDomain(session.website);
+  const countryId = await resolveCountryId(session.country);
+  const params = [
+    session.companyName,
+    nameToken ? `%${nameToken}%` : "",
+    countryId,
+    countryId,
+    domain,
+    domain ? `%${domain}%` : "",
+  ];
+  const scope = canReadAll
+    ? ""
+    : "AND EXISTS (SELECT 1 FROM account_owners ao WHERE ao.account_id = a.id AND ao.user_id = ? )";
+  if (!canReadAll) params.push(Number(user.id));
+  const rows = await query(
+    `SELECT a.id, a.name, a.website, a.country_id, c.name AS country_name,
+            aas.code AS activation_status
+     FROM accounts a
+     LEFT JOIN countries c ON c.id = a.country_id
+     LEFT JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+     WHERE (((LOWER(TRIM(a.name)) = LOWER(TRIM(?)) OR (? <> '' AND LOWER(a.name) LIKE ?)) AND (? IS NULL OR a.country_id = ?))
+       OR (? <> '' AND LOWER(a.website) LIKE ?))
+       ${scope}
+     ORDER BY a.name, a.id
+     LIMIT 200`,
+    [params[0], params[1], params[1], ...params.slice(2)],
+  );
+  const candidates = rows
+    .map((row) => {
+      const rowDomain = normalizeCompanyDomain(row.website);
+      const nameMatches = normalizeCompanyName(row.name) === normalizedName;
+      const domainMatches = Boolean(
+        domain && rowDomain && domain === rowDomain,
+      );
+      if (!nameMatches && !domainMatches) return null;
+      return {
+        id: Number(row.id),
+        name: row.name || "",
+        website: row.website || "",
+        domain: rowDomain,
+        country: row.country_name || "",
+        activationStatus: row.activation_status || "",
+        matchType: domainMatches ? "domain" : "name_country",
+      };
+    })
+    .filter(Boolean);
+  return {
+    completed: true,
+    requiresAccountsRead: false,
+    countryResolved: Boolean(countryId),
+    candidates,
+  };
+}
+
+async function assertProspectAccountAccessible({ user, accountId }) {
+  if (!hasAnyPermission(user, ["cuentas.read", "cuentas.read_all"])) {
+    throw createHttpError(
+      403,
+      "Se requiere lectura de cuentas para convertir",
+      {
+        requiredPermission: "cuentas.read",
+      },
+    );
+  }
+  const params = [Number(accountId)];
+  const scope = hasPermission(user, "cuentas.read_all")
+    ? ""
+    : "AND EXISTS (SELECT 1 FROM account_owners ao WHERE ao.account_id = a.id AND ao.user_id = ? )";
+  if (!hasPermission(user, "cuentas.read_all")) params.push(Number(user.id));
+  const rows = await query(
+    `SELECT a.id FROM accounts a WHERE a.id = ? ${scope} LIMIT 1`,
+    params,
+  );
+  if (!rows.length) {
+    throw createHttpError(404, "La cuenta indicada no esta disponible");
+  }
 }
 
 function splitContactName(value) {
-  const parts = String(value || "").trim().split(/\s+/).filter(Boolean);
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
   if (!parts.length) return null;
-  if (parts.length === 1) return { firstName: parts[0], lastName: "Por confirmar" };
+  if (parts.length === 1)
+    return { firstName: parts[0], lastName: "Por confirmar" };
   return { firstName: parts.slice(0, -1).join(" "), lastName: parts.at(-1) };
 }
 
@@ -82,7 +225,10 @@ function mapSessionRow(row) {
     request: parseJson(row.request_json, null),
     result: parseJson(row.result_json, null),
     errorMessage: row.error_message || null,
-    convertedAccountId: row.converted_account_id === null ? null : Number(row.converted_account_id),
+    convertedAccountId:
+      row.converted_account_id === null
+        ? null
+        : Number(row.converted_account_id),
     discardedAt: row.discarded_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -106,7 +252,10 @@ function mapFindingRow(row) {
     certainty: row.certainty,
     status: row.status,
     metadata: parseJson(row.metadata_json, {}),
-    validatedByUserId: row.validated_by_user_id === null ? null : Number(row.validated_by_user_id),
+    validatedByUserId:
+      row.validated_by_user_id === null
+        ? null
+        : Number(row.validated_by_user_id),
     validatedAt: row.validated_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -162,10 +311,13 @@ function normalizeWebsite(value) {
 
 function detectIndustryLabel(industry = "") {
   const text = String(industry || "").toLowerCase();
-  if (text.includes("log") || text.includes("transporte")) return "operacion distribuida";
-  if (text.includes("fin") || text.includes("banco")) return "continuidad y cumplimiento";
+  if (text.includes("log") || text.includes("transporte"))
+    return "operacion distribuida";
+  if (text.includes("fin") || text.includes("banco"))
+    return "continuidad y cumplimiento";
   if (text.includes("salud")) return "disponibilidad y proteccion de datos";
-  if (text.includes("retail") || text.includes("comercio")) return "experiencia de cliente y omnicanalidad";
+  if (text.includes("retail") || text.includes("comercio"))
+    return "experiencia de cliente y omnicanalidad";
   return "eficiencia operativa y modernizacion tecnologica";
 }
 
@@ -192,7 +344,8 @@ function buildProspectResearchResult(session) {
       category: "business_challenge",
       title: "Reto probable para validar",
       summary: `Por el perfil ingresado, conviene validar prioridades de ${industrySignal}.`,
-      evidenceText: "Inferencia basada unicamente en pais, industria y datos capturados en la sesion.",
+      evidenceText:
+        "Inferencia basada unicamente en pais, industria y datos capturados en la sesion.",
       sourceType: "inference",
       sourceReference: "prospect_research_session",
       confidence: "medium",
@@ -203,8 +356,10 @@ function buildProspectResearchResult(session) {
     {
       category: "missing_information",
       title: "Faltan contactos y areas responsables",
-      summary: "Antes de crear una oportunidad, falta identificar responsable tecnico, area usuaria y responsable economico.",
-      evidenceText: "La sesion de prospeccion aun no tiene contactos confirmados.",
+      summary:
+        "Antes de crear una oportunidad, falta identificar responsable tecnico, area usuaria y responsable economico.",
+      evidenceText:
+        "La sesion de prospeccion aun no tiene contactos confirmados.",
       sourceType: "system_gap_analysis",
       sourceReference: "prospect_research_session",
       confidence: "high",
@@ -251,21 +406,25 @@ function buildProspectResearchResult(session) {
     {
       title: "Descubrir iniciativa de continuidad y disponibilidad",
       businessChallenge: `Validar si ${company} tiene riesgos de continuidad, disponibilidad o recuperacion en sus operaciones principales.`,
-      technologyArea: "Continuidad operativa / infraestructura / servicios administrados",
+      technologyArea:
+        "Continuidad operativa / infraestructura / servicios administrados",
       targetArea: "Tecnologia y Operaciones",
       suggestedContactRole: "Responsable de TI",
-      validationQuestion: "¿Que sistemas o procesos no pueden detenerse sin impactar al negocio?",
+      validationQuestion:
+        "¿Que sistemas o procesos no pueden detenerse sin impactar al negocio?",
       confidence: "medium",
       status: "suggested",
       metadata: { industrySignal },
     },
     {
       title: "Validar necesidades de seguridad y control",
-      businessChallenge: "Identificar si existen preocupaciones de seguridad, cumplimiento, accesos o proteccion de informacion.",
+      businessChallenge:
+        "Identificar si existen preocupaciones de seguridad, cumplimiento, accesos o proteccion de informacion.",
       technologyArea: "Ciberseguridad",
       targetArea: "Tecnologia",
       suggestedContactRole: "Responsable de Seguridad o TI",
-      validationQuestion: "¿Que riesgos tecnologicos o de seguridad estan priorizando actualmente?",
+      validationQuestion:
+        "¿Que riesgos tecnologicos o de seguridad estan priorizando actualmente?",
       confidence: "medium",
       status: "suggested",
       metadata: {},
@@ -298,24 +457,65 @@ function buildProspectResearchResult(session) {
   };
 }
 
-function normalizeExternalFinding(rawFinding, index = 0, sourceType = "public_web") {
-  const sourceUrl = clip(rawFinding?.sourceUrl || rawFinding?.sourceReference || "", 500);
+function isHttpUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeExternalFinding(
+  rawFinding,
+  index = 0,
+  sourceType = "public_web",
+) {
+  const sourceUrl = clip(
+    rawFinding?.sourceUrl || rawFinding?.sourceReference || "",
+    500,
+  );
   const title = clip(rawFinding?.title || `Señal publica ${index + 1}`, 190);
-  const summary = clip(rawFinding?.summary || rawFinding?.description || "", 4000);
-  const evidenceText = clip(rawFinding?.evidenceText || rawFinding?.evidence || "", 4000);
+  const summary = clip(
+    rawFinding?.summary || rawFinding?.description || "",
+    4000,
+  );
+  const evidenceText = clip(
+    rawFinding?.evidenceText || rawFinding?.evidence || "",
+    4000,
+  );
   return {
     category: clip(rawFinding?.category || "business_challenge", 60),
     title,
     summary: summary || title,
-    evidenceText: evidenceText || "Señal detectada en investigación externa; requiere validación comercial.",
+    evidenceText,
     sourceType,
-    sourceReference: sourceUrl || "fuente_publica_no_especificada",
+    sourceReference: isHttpUrl(sourceUrl) ? sourceUrl : "",
     confidence: ["high", "medium", "low"].includes(rawFinding?.confidence)
       ? rawFinding.confidence
       : "medium",
     certainty: "evidenced",
     status: "suggested",
     metadata: { externalResearch: true },
+  };
+}
+
+export function applyExternalEvidencePolicy(findings, requireEvidence) {
+  if (!requireEvidence) {
+    return { findings, omittedCount: 0 };
+  }
+  const accepted = [];
+  for (const finding of findings) {
+    if (
+      isHttpUrl(finding.sourceReference) &&
+      String(finding.evidenceText || "").trim()
+    ) {
+      accepted.push(finding);
+    }
+  }
+  return {
+    findings: accepted,
+    omittedCount: findings.length - accepted.length,
   };
 }
 
@@ -356,11 +556,28 @@ async function runProspectExternalResearch({ session, user }) {
           type: "object",
           fields: [
             { key: "category", type: "string", example: "technology_project" },
-            { key: "title", type: "string", example: "Posible iniciativa cloud" },
+            {
+              key: "title",
+              type: "string",
+              example: "Posible iniciativa cloud",
+            },
             { key: "summary", type: "string", example: "Resumen de la señal" },
-            { key: "evidenceText", type: "string", example: "Fragmento exacto" },
-            { key: "sourceUrl", type: "string", example: "https://example.com" },
-            { key: "confidence", type: "enum", enum: ["high", "medium", "low"], example: "medium" },
+            {
+              key: "evidenceText",
+              type: "string",
+              example: "Fragmento exacto",
+            },
+            {
+              key: "sourceUrl",
+              type: "string",
+              example: "https://example.com",
+            },
+            {
+              key: "confidence",
+              type: "enum",
+              enum: ["high", "medium", "low"],
+              example: "medium",
+            },
           ],
         },
       },
@@ -368,7 +585,10 @@ async function runProspectExternalResearch({ session, user }) {
         key: "warnings",
         type: "array",
         example: [],
-        items: { type: "string", example: "No se encontraron fuentes suficientes" },
+        items: {
+          type: "string",
+          example: "No se encontraron fuentes suficientes",
+        },
         required: false,
       },
     ],
@@ -384,18 +604,29 @@ async function runProspectExternalResearch({ session, user }) {
     return {
       enabled: false,
       findings: [],
-      warnings: ["OpenAI no esta disponible para interpretar los resultados de Tavily."],
+      warnings: [
+        "OpenAI no esta disponible para interpretar los resultados de Tavily.",
+      ],
       provider: "tavily",
     };
   }
 
   const findings = Array.isArray(result.findings)
-    ? result.findings.map((finding, index) => normalizeExternalFinding(finding, index, "tavily")).filter((finding) => finding.title)
+    ? result.findings
+        .map((finding, index) =>
+          normalizeExternalFinding(finding, index, "tavily"),
+        )
+        .filter((finding) => finding.title)
     : [];
   return {
     enabled: true,
     findings,
-    warnings: [...tavily.warnings, ...(Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [])],
+    warnings: [
+      ...tavily.warnings,
+      ...(Array.isArray(result.warnings)
+        ? result.warnings.filter(Boolean)
+        : []),
+    ],
     provider: "tavily",
   };
 }
@@ -509,6 +740,12 @@ export async function createProspectResearchSession({ user, payload }) {
   await ensureProspectResearchSchema();
   const companyName = clip(payload.companyName, 190);
   const country = clip(payload.country, 120);
+  if (!(await resolveCountryId(country))) {
+    throw createHttpError(
+      400,
+      "No se reconocio el pais. Selecciona un pais del catalogo antes de preparar la prospeccion.",
+    );
+  }
   const website = normalizeWebsite(payload.website);
   const industry = clip(payload.industry, 160);
   const publicId = `prs_${randomUUID()}`;
@@ -561,11 +798,17 @@ export async function getProspectResearchSession({ user, sessionId }) {
     ),
   ]);
 
-  return {
+  const mappedSession = {
     ...mapSessionRow(session),
     findings: findings.map(mapFindingRow),
     contacts: contacts.map(mapContactRow),
     hypotheses: hypotheses.map(mapHypothesisRow),
+  };
+  return {
+    ...mappedSession,
+    duplicateReview: mappedSession.result
+      ? await findProspectAccountDuplicates({ user, session: mappedSession })
+      : null,
   };
 }
 
@@ -586,12 +829,25 @@ export async function runProspectResearchSession({ user, sessionId }) {
     const session = mapSessionRow(sessionRow);
     const result = buildProspectResearchResult(session);
     await withTransaction(async (conn) => {
-      await conn.query(`DELETE FROM prospect_research_findings WHERE session_id = ?`, [Number(session.id)]);
-      await conn.query(`DELETE FROM prospect_research_contacts WHERE session_id = ?`, [Number(session.id)]);
-      await conn.query(`DELETE FROM prospect_research_opportunity_hypotheses WHERE session_id = ?`, [Number(session.id)]);
+      await conn.query(
+        `DELETE FROM prospect_research_findings WHERE session_id = ?`,
+        [Number(session.id)],
+      );
+      await conn.query(
+        `DELETE FROM prospect_research_contacts WHERE session_id = ?`,
+        [Number(session.id)],
+      );
+      await conn.query(
+        `DELETE FROM prospect_research_opportunity_hypotheses WHERE session_id = ?`,
+        [Number(session.id)],
+      );
       await insertSessionFindings(conn, Number(session.id), result.findings);
       await insertSessionContacts(conn, Number(session.id), result.contacts);
-      await insertSessionHypotheses(conn, Number(session.id), result.hypotheses);
+      await insertSessionHypotheses(
+        conn,
+        Number(session.id),
+        result.hypotheses,
+      );
       await conn.query(
         `UPDATE prospect_research_sessions
          SET status = 'completed', result_json = ?, error_message = NULL,
@@ -606,7 +862,10 @@ export async function runProspectResearchSession({ user, sessionId }) {
       `UPDATE prospect_research_sessions
        SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3)
        WHERE id = ?`,
-      [clip(error?.message || "No fue posible preparar la prospeccion", 1000), Number(sessionRow.id)],
+      [
+        clip(error?.message || "No fue posible preparar la prospeccion", 1000),
+        Number(sessionRow.id),
+      ],
     ).catch(() => undefined);
     return getProspectResearchSession({ user, sessionId });
   }
@@ -614,11 +873,28 @@ export async function runProspectResearchSession({ user, sessionId }) {
 
 export async function runProspectExternalResearchSession({ user, sessionId }) {
   await ensureProspectResearchSchema();
-  await assertExternalResearchGovernance(user);
+  const governance = await assertExternalResearchGovernance(user);
   const sessionRow = await getOwnedSession(sessionId, user.id);
   if (!sessionRow) return null;
+  await query(
+    `UPDATE prospect_research_sessions
+     SET external_researched_at = NOW(3), updated_at = NOW(3)
+     WHERE id = ? AND requested_by_user_id = ?`,
+    [Number(sessionId), Number(user.id)],
+  );
   const session = mapSessionRow(sessionRow);
   const externalResult = await runProspectExternalResearch({ session, user });
+  const evidencePolicy = applyExternalEvidencePolicy(
+    externalResult.findings,
+    governance.requireEvidenceForExternalFindings,
+  );
+  externalResult.findings = evidencePolicy.findings;
+  if (evidencePolicy.omittedCount) {
+    externalResult.warnings = [
+      ...(externalResult.warnings || []),
+      `${evidencePolicy.omittedCount} hallazgo(s) público(s) se omitieron por falta de URL o evidencia verificable.`,
+    ];
+  }
 
   let insertedFindings = [];
   if (externalResult.findings.length) {
@@ -646,9 +922,18 @@ export async function runProspectExternalResearchSession({ user, sessionId }) {
   return getProspectResearchSession({ user, sessionId });
 }
 
-export async function updateProspectResearchFindingStatus({ user, findingId, status }) {
+export async function updateProspectResearchFindingStatus({
+  user,
+  findingId,
+  status,
+}) {
   await ensureProspectResearchSchema();
-  const allowedStatuses = new Set(["suggested", "confirmed", "rejected", "outdated"]);
+  const allowedStatuses = new Set([
+    "suggested",
+    "confirmed",
+    "rejected",
+    "outdated",
+  ]);
   if (!allowedStatuses.has(status)) {
     throw createHttpError(400, "Estado de hallazgo invalido");
   }
@@ -678,13 +963,54 @@ export async function updateProspectResearchFindingStatus({ user, findingId, sta
   return mapFindingRow(updatedRows[0]);
 }
 
-export async function convertProspectSessionToAccount({ user, sessionId }) {
+export async function updateProspectResearchHypothesisStatus({
+  user,
+  hypothesisId,
+  status,
+}) {
+  await ensureProspectResearchSchema();
+  if (!["confirmed", "rejected"].includes(status)) {
+    throw createHttpError(400, "Estado de hipotesis invalido");
+  }
+  const rows = await query(
+    `SELECT h.*
+     FROM prospect_research_opportunity_hypotheses h
+     INNER JOIN prospect_research_sessions s ON s.id = h.session_id
+     WHERE h.id = ? AND s.requested_by_user_id = ?
+     LIMIT 1`,
+    [Number(hypothesisId), Number(user.id)],
+  );
+  if (!rows[0]) return null;
+  await query(
+    `UPDATE prospect_research_opportunity_hypotheses
+     SET status = ?, updated_at = NOW(3) WHERE id = ?`,
+    [status, Number(hypothesisId)],
+  );
+  const updatedRows = await query(
+    `SELECT * FROM prospect_research_opportunity_hypotheses WHERE id = ? LIMIT 1`,
+    [Number(hypothesisId)],
+  );
+  return mapHypothesisRow(updatedRows[0]);
+}
+
+export async function convertProspectSessionToAccount({
+  user,
+  sessionId,
+  duplicateDecision = "",
+  duplicateAccountId = null,
+}) {
   await ensureProspectResearchSchema();
   if (!(await getMiCoachGovernanceSettings()).allowProspectConversion) {
-    throw createHttpError(403, "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach", { requiredPermission: "mi_coach.admin" });
+    throw createHttpError(
+      403,
+      "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach",
+      { requiredPermission: "mi_coach.admin" },
+    );
   }
   if (!hasAnyPermission(user, ["cuentas.create", "cuentas.request"])) {
-    throw createHttpError(403, "No autorizado", { requiredPermission: "cuentas.create" });
+    throw createHttpError(403, "No autorizado", {
+      requiredPermission: "cuentas.create",
+    });
   }
   const sessionRow = await getOwnedSession(sessionId, user.id);
   if (!sessionRow) return null;
@@ -692,29 +1018,73 @@ export async function convertProspectSessionToAccount({ user, sessionId }) {
     return { accountId: Number(sessionRow.converted_account_id), reused: true };
   }
 
+  const prospectSession = mapSessionRow(sessionRow);
+  const duplicateReview = await findProspectAccountDuplicates({
+    user,
+    session: prospectSession,
+  });
+  if (!duplicateReview.completed) {
+    throw createHttpError(
+      403,
+      "Se requiere cuentas.read para revisar posibles duplicados antes de convertir",
+      { requiredPermission: "cuentas.read" },
+    );
+  }
   const countryId = await resolveCountryId(sessionRow.country);
-  const duplicateRows = await query(
-    `SELECT id FROM accounts WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND country_id = ? LIMIT 1`,
-    [sessionRow.company_name, countryId],
-  );
-  if (duplicateRows.length) {
-    const accountId = Number(duplicateRows[0].id);
+  if (
+    duplicateDecision === "link_existing" &&
+    Number.isInteger(Number(duplicateAccountId))
+  ) {
+    const duplicate = duplicateReview.candidates.find(
+      (candidate) => Number(candidate.id) === Number(duplicateAccountId),
+    );
+    if (!duplicate) {
+      throw createHttpError(
+        404,
+        "La cuenta duplicada seleccionada ya no esta disponible",
+      );
+    }
     await query(
       `UPDATE prospect_research_sessions SET converted_account_id = ?, updated_at = NOW(3) WHERE id = ?`,
-      [accountId, Number(sessionRow.id)],
+      [Number(duplicate.id), Number(sessionRow.id)],
     );
-    return { accountId, reused: true };
+    return { accountId: Number(duplicate.id), reused: true, duplicate };
+  }
+  if (duplicateDecision === "link_existing") {
+    throw createHttpError(
+      400,
+      "Selecciona una cuenta duplicada valida para vincular",
+    );
+  }
+  if (duplicateReview.candidates.length && duplicateDecision !== "create_new") {
+    throw createHttpError(
+      409,
+      "Revisa las posibles cuentas duplicadas antes de crear una cuenta nueva",
+      { duplicateCandidates: duplicateReview.candidates },
+    );
+  }
+  if (!countryId) {
+    throw createHttpError(
+      400,
+      "No se pudo reconocer el país. Corrige el país antes de convertir a cuenta.",
+    );
+  }
+  if (!hasAnyPermission(user, ["cuentas.create", "cuentas.request"])) {
+    throw createHttpError(403, "No autorizado para crear cuentas", {
+      requiredPermission: "cuentas.create",
+    });
   }
 
   const now = new Date();
   const activationStatusCode = hasPermission(user, "cuentas.create")
     ? "activada"
     : "pendiente_activacion";
-  const [accountTypeId, economicSectorId, activationStatusId] = await Promise.all([
-    getCatalogId("account_types", "cliente"),
-    getCatalogId("economic_sectors", "otro"),
-    getCatalogId("account_activation_statuses", activationStatusCode),
-  ]);
+  const [accountTypeId, economicSectorId, activationStatusId] =
+    await Promise.all([
+      getCatalogId("account_types", "cliente"),
+      getCatalogId("economic_sectors", "otro"),
+      getCatalogId("account_activation_statuses", activationStatusCode),
+    ]);
 
   const accountId = await withTransaction(async (conn) => {
     const [insertResult] = await conn.query(
@@ -753,13 +1123,25 @@ export async function convertProspectSessionToAccount({ user, sessionId }) {
   return { accountId, reused: false };
 }
 
-export async function convertProspectContact({ user, contactId, accountId, contactName = "", email = "" }) {
+export async function convertProspectContact({
+  user,
+  contactId,
+  accountId,
+  contactName = "",
+  email = "",
+}) {
   await ensureProspectResearchSchema();
   if (!(await getMiCoachGovernanceSettings()).allowProspectConversion) {
-    throw createHttpError(403, "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach", { requiredPermission: "mi_coach.admin" });
+    throw createHttpError(
+      403,
+      "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach",
+      { requiredPermission: "mi_coach.admin" },
+    );
   }
   if (!hasAnyPermission(user, ["contactos.create", "contactos.request"])) {
-    throw createHttpError(403, "No autorizado", { requiredPermission: "contactos.create" });
+    throw createHttpError(403, "No autorizado", {
+      requiredPermission: "contactos.create",
+    });
   }
   const rows = await query(
     `SELECT c.*, s.converted_account_id, s.requested_by_user_id
@@ -770,13 +1152,44 @@ export async function convertProspectContact({ user, contactId, accountId, conta
   );
   const prospectContact = rows[0];
   if (!prospectContact) return null;
-  const targetAccountId = Number(accountId || prospectContact.converted_account_id || 0);
-  if (!targetAccountId) throw createHttpError(400, "Primero convierte o indica una cuenta");
+  const targetAccountId = Number(
+    accountId || prospectContact.converted_account_id || 0,
+  );
+  if (!targetAccountId)
+    throw createHttpError(400, "Primero convierte o indica una cuenta");
+  await assertProspectAccountAccessible({ user, accountId: targetAccountId });
   const parsedName = splitContactName(contactName || prospectContact.name);
-  if (!parsedName) throw createHttpError(400, "Captura nombre del contacto para convertirlo");
+  if (!parsedName)
+    throw createHttpError(400, "Captura nombre del contacto para convertirlo");
+  const normalizedEmail = String(email || prospectContact.email || "")
+    .trim()
+    .toLowerCase();
+  if (normalizedEmail) {
+    const duplicateContactRows = await query(
+      `SELECT id FROM contacts
+       WHERE account_id = ? AND LOWER(TRIM(email)) = ?
+       LIMIT 1`,
+      [targetAccountId, normalizedEmail],
+    );
+    if (duplicateContactRows.length) {
+      throw createHttpError(
+        409,
+        "Ya existe un contacto con ese email en la cuenta seleccionada; revisa el contacto en el modulo oficial antes de continuar.",
+      );
+    }
+  }
 
-  const creationStatusCode = hasPermission(user, "contactos.create") ? "activado" : "pendiente_activacion";
-  const [purchaseParticipationId, hierarchyLevelId, relationshipTypeId, influenceLevelId, employmentStatusId, activationStatusId] = await Promise.all([
+  const creationStatusCode = hasPermission(user, "contactos.create")
+    ? "activado"
+    : "pendiente_activacion";
+  const [
+    purchaseParticipationId,
+    hierarchyLevelId,
+    relationshipTypeId,
+    influenceLevelId,
+    employmentStatusId,
+    activationStatusId,
+  ] = await Promise.all([
     getCatalogId("contact_purchase_participations", "ninguno"),
     getCatalogId("contact_hierarchy_levels", "usuario"),
     getCatalogId("contact_relationship_types", "ninguno"),
@@ -799,7 +1212,7 @@ export async function convertProspectContact({ user, contactId, accountId, conta
       parsedName.lastName,
       targetAccountId,
       prospectContact.role_title,
-      String(email || prospectContact.email || "").trim() || null,
+      normalizedEmail || null,
       prospectContact.area,
       purchaseParticipationId,
       hierarchyLevelId,
@@ -813,22 +1226,39 @@ export async function convertProspectContact({ user, contactId, accountId, conta
       now,
     ],
   );
-  await query(`UPDATE prospect_research_contacts SET status = 'confirmed', updated_at = NOW(3) WHERE id = ?`, [Number(contactId)]);
+  await query(
+    `UPDATE prospect_research_contacts SET status = 'confirmed', updated_at = NOW(3) WHERE id = ?`,
+    [Number(contactId)],
+  );
   return { contactId: Number(result.insertId), accountId: targetAccountId };
 }
 
-export async function convertProspectSessionToLead({ user, sessionId, accountId }) {
+export async function convertProspectSessionToLead({
+  user,
+  sessionId,
+  accountId,
+}) {
   await ensureProspectResearchSchema();
   if (!(await getMiCoachGovernanceSettings()).allowProspectConversion) {
-    throw createHttpError(403, "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach", { requiredPermission: "mi_coach.admin" });
+    throw createHttpError(
+      403,
+      "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach",
+      { requiredPermission: "mi_coach.admin" },
+    );
   }
   await ensureInteractionSchema();
   if (!hasPermission(user, "interacciones.create")) {
-    throw createHttpError(403, "No autorizado", { requiredPermission: "interacciones.create" });
+    throw createHttpError(403, "No autorizado", {
+      requiredPermission: "interacciones.create",
+    });
   }
   const sessionRow = await getOwnedSession(sessionId, user.id);
   if (!sessionRow) return null;
-  const targetAccountId = Number(accountId || sessionRow.converted_account_id || 0) || null;
+  const targetAccountId =
+    Number(accountId || sessionRow.converted_account_id || 0) || null;
+  if (targetAccountId) {
+    await assertProspectAccountAccessible({ user, accountId: targetAccountId });
+  }
   const publicId = `int_${randomUUID().replace(/-/g, "")}`;
   const now = new Date();
   const title = `Prospeccion ${sessionRow.company_name}`;
@@ -847,7 +1277,10 @@ export async function convertProspectSessionToLead({ user, sessionId, accountId 
       title,
       `Pais: ${sessionRow.country}. Industria: ${sessionRow.industry || "sin especificar"}.`,
       summary,
-      JSON.stringify({ name: sessionRow.company_name, website: sessionRow.website || null }),
+      JSON.stringify({
+        name: sessionRow.company_name,
+        website: sessionRow.website || null,
+      }),
       targetAccountId,
       Number(user.id),
       Number(user.id),
@@ -857,16 +1290,35 @@ export async function convertProspectSessionToLead({ user, sessionId, accountId 
       now,
     ],
   );
-  return { interactionId: Number(result.insertId), publicId, accountId: targetAccountId };
+  return {
+    interactionId: Number(result.insertId),
+    publicId,
+    accountId: targetAccountId,
+  };
 }
 
-export async function convertProspectHypothesisToOpportunity({ user, hypothesisId, accountId, contactId, amountUsd = 0, closeDate = "" }) {
+export async function convertProspectHypothesisToOpportunity({
+  user,
+  hypothesisId,
+  accountId,
+  contactId,
+  amountUsd = 0,
+  closeDate = "",
+}) {
   await ensureProspectResearchSchema();
   if (!(await getMiCoachGovernanceSettings()).allowProspectConversion) {
-    throw createHttpError(403, "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach", { requiredPermission: "mi_coach.admin" });
+    throw createHttpError(
+      403,
+      "Las conversiones de prospeccion estan deshabilitadas por gobierno de Mi Coach",
+      { requiredPermission: "mi_coach.admin" },
+    );
   }
-  if (!hasAnyPermission(user, ["oportunidades.create", "oportunidades.request"])) {
-    throw createHttpError(403, "No autorizado", { requiredPermission: "oportunidades.create" });
+  if (
+    !hasAnyPermission(user, ["oportunidades.create", "oportunidades.request"])
+  ) {
+    throw createHttpError(403, "No autorizado", {
+      requiredPermission: "oportunidades.create",
+    });
   }
   const rows = await query(
     `SELECT h.*, s.converted_account_id, s.requested_by_user_id
@@ -877,17 +1329,45 @@ export async function convertProspectHypothesisToOpportunity({ user, hypothesisI
   );
   const hypothesis = rows[0];
   if (!hypothesis) return null;
-  const targetAccountId = Number(accountId || hypothesis.converted_account_id || 0);
+  if (hypothesis.status !== "confirmed") {
+    throw createHttpError(
+      409,
+      "Confirma la hipotesis con el vendedor antes de crear una oportunidad",
+    );
+  }
+  const targetAccountId = Number(
+    accountId || hypothesis.converted_account_id || 0,
+  );
   const targetContactId = Number(contactId || 0);
-  if (!targetAccountId || !targetContactId) throw createHttpError(400, "Cuenta y contacto son obligatorios para crear oportunidad");
-  const activationStatusCode = hasPermission(user, "oportunidades.create") ? "activada" : "pendiente_activacion";
-  const [salesStageId, businessLineId, activationStatusId, commercialStatusId] = await Promise.all([
-    getCatalogId("opportunity_sales_stages", "contacto_inicial"),
-    getCatalogId("opportunity_business_lines", "otro"),
-    getCatalogId("opportunity_activation_statuses", activationStatusCode),
-    getCatalogId("opportunity_commercial_statuses", "en_proceso"),
-  ]);
-  const normalizedCloseDate = /^\d{4}-\d{2}-\d{2}$/.test(String(closeDate || ""))
+  if (!targetAccountId || !targetContactId)
+    throw createHttpError(
+      400,
+      "Cuenta y contacto son obligatorios para crear oportunidad",
+    );
+  await assertProspectAccountAccessible({ user, accountId: targetAccountId });
+  const contactRows = await query(
+    `SELECT id FROM contacts WHERE id = ? AND account_id = ? LIMIT 1`,
+    [targetContactId, targetAccountId],
+  );
+  if (!contactRows.length) {
+    throw createHttpError(
+      400,
+      "El contacto seleccionado no pertenece a la cuenta indicada",
+    );
+  }
+  const activationStatusCode = hasPermission(user, "oportunidades.create")
+    ? "activada"
+    : "pendiente_activacion";
+  const [salesStageId, businessLineId, activationStatusId, commercialStatusId] =
+    await Promise.all([
+      getCatalogId("opportunity_sales_stages", "contacto_inicial"),
+      getCatalogId("opportunity_business_lines", "otro"),
+      getCatalogId("opportunity_activation_statuses", activationStatusCode),
+      getCatalogId("opportunity_commercial_statuses", "en_proceso"),
+    ]);
+  const normalizedCloseDate = /^\d{4}-\d{2}-\d{2}$/.test(
+    String(closeDate || ""),
+  )
     ? String(closeDate)
     : new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
   const now = new Date();
@@ -914,6 +1394,13 @@ export async function convertProspectHypothesisToOpportunity({ user, hypothesisI
       now,
     ],
   );
-  await query(`UPDATE prospect_research_opportunity_hypotheses SET status = 'confirmed', updated_at = NOW(3) WHERE id = ?`, [Number(hypothesisId)]);
-  return { opportunityId: Number(result.insertId), accountId: targetAccountId, contactId: targetContactId };
+  await query(
+    `UPDATE prospect_research_opportunity_hypotheses SET status = 'confirmed', updated_at = NOW(3) WHERE id = ?`,
+    [Number(hypothesisId)],
+  );
+  return {
+    opportunityId: Number(result.insertId),
+    accountId: targetAccountId,
+    contactId: targetContactId,
+  };
 }

@@ -475,6 +475,12 @@ export default function AppShell({
                 ].some(can)}
                 canCreateProposals={can("propuestas.create")}
                 canUseExternalSources={can("fuentes_externas.execute")}
+                canReadProspecting={can("prospeccion.read")}
+                canCreateProspecting={can("prospeccion.create")}
+                canUpdateProspecting={can("prospeccion.update")}
+                canReadCustomerIntelligence={
+                  can("inteligencia_comercial.read") && canReadAccounts
+                }
                 canManageCoach={can("mi_coach.admin")}
               />
             ) : (

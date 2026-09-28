@@ -136,11 +136,27 @@ El Coach debe continuar desde el punto en que quedó la conversación, sin oblig
 
 ## Espacios internos
 
-Mi Coach contiene tres espacios funcionales principales y dos capacidades diferenciadas dentro de la experiencia comercial:
+Mi Coach se organiza en cinco espacios:
 
-- **Coach**: contiene el Chat del Coach y el Análisis de situación comercial.
-- **Cliente existente**: ejecuta inteligencia comercial interna sobre cuentas, contactos y oportunidades ya registradas.
+- **Resumen**: entrada del módulo con indicadores comerciales, análisis de situación y prioridades.
+- **Coach**: contiene el Chat del Coach, cuya conversación, selector y contexto se mantienen independientes del análisis general.
+- **Cliente existente**: parte de un selector de cuenta propio y responde cómo está el cliente, qué riesgo atender y qué desarrollar, sin reutilizar la cuenta o sesión del Chat del Coach.
 - **Cuenta nueva**: ejecuta prospección asistida antes de crear registros reales en el CRM.
+- **Administración**: configura el gobierno de Mi Coach y solo aparece para usuarios con permiso administrativo; se mantiene separada de la navegación cotidiana.
+
+Resumen presenta la cuota, el monto ganado, la brecha y el tamaño/cobertura del pipeline abierto. El total abierto incluye oportunidades activas no terminales, también las etapas tempranas, y excluye oportunidades ganadas, perdidas, anuladas e inactivas. Los importes USD se convierten a la moneda de la cuota con la tasa de referencia Frankfurter; Resumen muestra la tasa y fecha de referencia, y no presenta brecha/cobertura si no se pudo obtener. Es una base comparable de reporte, no una conversión contable histórica por fecha de cierre.
+
+El vendedor inicia o actualiza desde Resumen el análisis completo de actividad, evidencia de etapa, riesgos y acciones prioritarias; no se ejecuta automáticamente ni modifica registros. La comparación actividad/avance considera como evidencia una respuesta de etapa registrada después de la última actividad reciente (ventana de siete días); no afirma por sí sola que la oportunidad haya cambiado de etapa o estado. La navegación no duplica las conversaciones ni combina el contexto de Coach con los espacios especializados.
+
+### Aislamiento entre espacios
+
+Cambiar entre **Coach**, **Cliente existente** y **Cuenta nueva** solo cambia la vista activa; no transfiere ni combina cuentas, oportunidades, prospectos, sesiones o análisis. Cliente existente conserva su cuenta y resultados mientras se cambia el selector del Coach. Cuenta nueva conserva su ficha de prospección hasta que el vendedor la limpie o realice una conversión explícita. El Chat del Coach conserva su propio selector, contexto e hilo al navegar entre espacios. No existe una selección global compartida. Una futura acción explícita **Abrir esta cuenta en Coach** podría transferir únicamente el ID de cuenta; no fusionaría conversaciones ni análisis y no forma parte del flujo actual.
+
+### Estados, switches y permisos
+
+El estado comercial (`en_proceso`, `ganada`, `perdida`, `anulada`) y el estado de activación (`activada`, `desactivada`, `pendiente_activacion`) son dimensiones independientes. Solo oportunidades activadas y no terminales forman pipeline/forecast. Las terminales activadas aparecen en las colecciones históricas que habilitan los switches de Administración; los switches solo controlan disponibilidad para consulta y nunca actualizan estados del CRM ni intervienen en cuota, real ganado o pipeline. Toda oportunidad no activada, incluso si su estado comercial es terminal, se muestra en una colección **Desactivadas** independiente y queda fuera del historial terminal y del pipeline.
+
+Resumen, Coach y Cliente existente aplican alcance de lectura por cuenta, contacto y oportunidad. Cliente existente requiere `inteligencia_comercial.read` y lectura de cuentas; sus datos relacionados se limitan además a los permisos de lectura de contactos, oportunidades e interacciones. Cuenta nueva requiere `prospeccion.read` para consultar sesiones o `prospeccion.create` para iniciar la preparación; confirmar/rechazar y convertir requiere `prospeccion.update` más el permiso del módulo destino. La investigación pública requiere `fuentes_externas.execute`, permiso de prospección/investigación y aprobación de gobierno. La interfaz oculta o deshabilita acciones cuando falta permiso y la API vuelve a comprobarlo.
 
 ### Chat del Coach
 
@@ -161,7 +177,7 @@ El Chat del Coach trabaja principalmente sobre la necesidad concreta del vendedo
 
 ### Análisis de situación comercial
 
-El Análisis de situación comercial es un diagnóstico estructurado de la situación del vendedor, su cuota y su pipeline. No es una conversación ni sustituye al Chat del Coach.
+El Análisis de situación comercial vive en **Resumen**. Es un diagnóstico estructurado de la situación del vendedor, su cuota y su pipeline. No es una conversación ni sustituye al Chat del Coach.
 
 El análisis puede:
 
@@ -175,7 +191,7 @@ El análisis puede:
 - Ordenar las acciones prioritarias para el vendedor.
 - Explicar el resultado esperado y el criterio de éxito de cada acción.
 
-El análisis utiliza un snapshot del contexto comercial y se ejecuta como un trabajo asíncrono. Su resultado es una lectura general para decidir dónde concentrar el esfuerzo. No crea ni actualiza registros automáticamente.
+El análisis se inicia desde Resumen, utiliza un snapshot autorizado del contexto comercial y se ejecuta como un trabajo asíncrono. Sus recomendaciones enlazan a las oportunidades correspondientes; cualquier siguiente paso requiere una acción explícita del vendedor y los permisos correspondientes. El análisis no crea, actualiza ni cierra registros automáticamente.
 
 ### Cómo se complementan
 
@@ -187,7 +203,11 @@ Ambas capacidades utilizan el [Proceso Comercial](./proceso-comercial.md), pero 
 - El chat puede explicar qué información falta para realizarla y dirigir al vendedor al módulo correspondiente.
 - Ninguna de las dos capacidades debe avanzar una oportunidad automáticamente.
 
-La pestaña **Cliente existente** ofrece dos acciones: **Analizar cuenta**, que usa exclusivamente datos internos del CRM, y **Enriquecer con fuentes públicas**, que ejecuta la orquestación Tavily/OpenAI para contactos, tecnología e iniciativas públicas. La pestaña **Cuenta nueva** permite capturar empresa, país, sitio e industria, generar una ficha de prospección, revisar contactos objetivo, hipótesis de oportunidad, hallazgos y correo inicial. Ninguna de estas funciones crea registros reales automáticamente.
+**Cliente existente** organiza la cuenta seleccionada en resumen y última interacción, salud/riesgos/renovaciones, historial de oportunidades abiertas, ganadas, perdidas, anuladas y desactivadas, partidas de cotizaciones, contactos/mapa relacional, hipótesis de expansión, investigación y siguiente paso. Los enlaces a registros respetan el snapshot autorizado y las acciones de escritura requieren los permisos y la confirmación existentes.
+
+Las partidas conservan el estado comercial de la cotización (por ejemplo, aceptada o ganada) y `fulfillmentStatus: not_verified`. Una cotización no se presenta como compra, factura ni entrega confirmada. Las hipótesis de renovación, venta adicional y venta cruzada incluyen evidencia y confianza y siempre requieren validación; no son hechos ni generan oportunidades automáticamente. El CRM interno, la investigación pública y las inferencias se identifican por separado. Los hallazgos públicos muestran proveedor/fuente y URL cuando está disponible.
+
+El espacio ofrece **Analizar cuenta**, que usa exclusivamente datos internos del CRM, y **Enriquecer con fuentes públicas**, que ejecuta la orquestación Tavily/OpenAI para contactos, tecnología e iniciativas públicas. La preparación de llamada y los próximos pasos pueden proponer una actividad para revisión; nunca se guardan sin acción del vendedor. La pestaña **Cuenta nueva** permite capturar empresa, país, sitio e industria, generar una ficha de prospección, revisar contactos objetivo, hipótesis de oportunidad, hallazgos y correo inicial. Ninguna de estas funciones crea registros reales automáticamente.
 
 ### Contrato de Account Intelligence
 
@@ -425,7 +445,6 @@ Endpoints principales:
 - `GET /api/commercial-intelligence/commercial-discovery/jobs/:jobId`: consulta el briefing comercial generado.
 - `POST /api/commercial-intelligence/external-research/jobs`: ejecuta investigación externa controlada para un cliente existente.
 - `GET /api/commercial-intelligence/external-research/jobs/:jobId`: consulta el resultado de la investigación externa.
-- `GET /api/commercial-intelligence/automatic-briefing/next`: prepara un briefing automático para la próxima actividad comercial accesible.
 - `GET /api/commercial-intelligence/account-intelligence/snapshot`: devuelve el snapshot autorizado y versionado de una cuenta, oportunidad o contacto.
 - `POST /api/commercial-intelligence/executive-briefing/jobs`: inicia una síntesis ejecutiva basada en el snapshot autorizado.
 - `GET /api/commercial-intelligence/executive-briefing/jobs/:jobId`: consulta el resumen ejecutivo generado.
@@ -447,13 +466,11 @@ La observabilidad de Account Intelligence conserva telemetría por ejecución: d
 
 El briefing comercial incluye objetivo de llamada, contacto objetivo, preguntas de descubrimiento, riesgos, guion de llamada, próximos pasos sugeridos y un correo inicial editable. Los próximos pasos pueden convertirse en tareas desde la interfaz cuando exista una oportunidad seleccionada y el usuario tenga permisos de actualización.
 
-El briefing automático detecta la próxima actividad comercial accesible del usuario y genera una preparación rápida con preguntas, riesgos, guion y correo sugerido. Si no hay actividades próximas, devuelve un mensaje claro sin fallar.
-
 La investigación externa controlada usa Tavily cuando `TAVILY_ENABLE_SEARCH=true`, existe `TAVILY_API_KEY` y la gobernanza permite fuentes externas. OpenAI interpreta los resultados de Tavily sin realizar una búsqueda adicional. Si Tavily no está habilitado, el job termina correctamente con una advertencia. Todo hallazgo externo queda como sugerido, con proveedor, URL, evidencia y certeza `evidenced`; no se confirma automáticamente.
 
 ## Prospección asistida
 
-La Fase 4 agrega el dominio backend de prospección para cuentas nuevas. Este dominio permite crear una sesión antes de registrar una cuenta real en el CRM, ejecutar una investigación determinística y guardar una ficha inicial con hallazgos, contactos objetivo e hipótesis de oportunidad.
+La Fase 5 completa la prospección de cuentas nuevas como un espacio separado de preparación comercial. Captura empresa, país del catálogo, sitio web e industria; prepara una ficha sin escribir en cuentas, contactos, leads u oportunidades; y presenta hallazgos con estado, confianza, evidencia y fuente. Los países no reconocidos se rechazan y nunca se sustituyen silenciosamente.
 
 Endpoints principales:
 
@@ -463,12 +480,18 @@ Endpoints principales:
 - `POST /api/prospect-research/sessions/:sessionId/run-external`: ejecuta investigación externa controlada para la cuenta nueva.
 - `POST /api/prospect-research/findings/:findingId/confirm`: confirma un hallazgo sugerido.
 - `POST /api/prospect-research/findings/:findingId/reject`: rechaza un hallazgo sugerido.
+- `POST /api/prospect-research/hypotheses/:hypothesisId/confirm`: confirma con el vendedor una hipótesis de oportunidad.
+- `POST /api/prospect-research/hypotheses/:hypothesisId/reject`: rechaza una hipótesis de oportunidad.
 - `POST /api/prospect-research/sessions/:sessionId/convert-to-account`: crea o vincula una cuenta desde la sesión.
 - `POST /api/prospect-research/sessions/:sessionId/convert-to-lead`: crea un lead/interacción desde la sesión.
 - `POST /api/prospect-research/contacts/:contactId/convert`: convierte un contacto objetivo en contacto CRM.
 - `POST /api/prospect-research/hypotheses/:hypothesisId/convert-to-opportunity`: convierte una hipótesis en oportunidad preliminar.
 
-La prospección no crea cuentas, contactos, leads ni oportunidades automáticamente. El vendedor debe confirmar cada conversión desde la ficha y el API valida los permisos del dominio destino antes de crear registros reales.
+La investigación pública solo se ejecuta mediante una acción explícita del vendedor, con `fuentes_externas.execute`, el permiso y los límites diarios de gobierno. Los hallazgos públicos deben conservar URL HTTP(S) y evidencia cuando la política así lo exige; la interfaz ofrece el enlace de fuente. Las áreas y roles de contacto se muestran como sugerencias no confirmadas, no como contactos existentes del CRM. Las hipótesis siguen sin confirmar hasta que el vendedor las valida y no se pueden convertir en oportunidades antes de esa validación.
+
+Antes de convertir a cuenta, la ficha revisa posibles duplicados por nombre/país y dominio dentro del alcance de lectura autorizado del usuario. La conversión exige que esta revisión haya podido ejecutarse; si hay coincidencias, el vendedor decide vincular una cuenta accesible o crear otra explícitamente. La API repite la comprobación al convertir. La conversión de contactos también rechaza un email ya presente en la cuenta seleccionada.
+
+La prospección no crea registros del CRM durante la investigación. Las conversiones son operaciones explícitas, auditadas, sujetas a permisos y a los módulos oficiales. Vincular una cuenta existente requiere elegir una coincidencia de la revisión; la investigación en sí no la reutiliza automáticamente.
 
 ## Permisos
 
@@ -495,6 +518,7 @@ La prospección asistida requiere además:
 - `prospeccion.create`: crear y ejecutar investigaciones de cuenta nueva.
 - `prospeccion.update`: confirmar o rechazar hallazgos de prospección.
 - `prospeccion.admin`: administrar gobierno y configuración futura del dominio.
+- `cuentas.read` o `cuentas.read_all`: revisar posibles cuentas duplicadas antes de convertir.
 
 Las investigaciones con fuentes públicas requieren además `fuentes_externas.execute`.
 

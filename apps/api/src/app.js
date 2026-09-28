@@ -21,6 +21,7 @@ import commercialTrackingRoutes from "./routes.commercial-tracking.js";
 import commercialEnablementRoutes from "./routes.commercial-enablement.js";
 import commercialPlanningRoutes from "./routes.commercial-planning.js";
 import commercialIntelligenceRoutes from "./routes.commercial-intelligence.js";
+import prospectResearchRoutes from "./routes.prospect-research.js";
 import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.js";
 import settingsRoutes from "./routes.settings.js";
 import documentationRoutes from "./routes.documentation.js";
@@ -152,6 +153,12 @@ export function createApp() {
     authRequired,
     loadUser,
     commercialIntelligenceRoutes,
+  );
+  app.use(
+    "/api/prospect-research",
+    authRequired,
+    loadUser,
+    prospectResearchRoutes,
   );
   app.use("/api", authRequired, loadUser, manufacturerRegistrationRoutes);
   app.use("/api", authRequired, loadUser, quotationRoutes);
