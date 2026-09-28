@@ -88,6 +88,7 @@ async function mockMiCoachApi(
       ],
     },
   };
+  const closedCoachSessions = new Set();
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const { pathname } = url;
@@ -437,12 +438,26 @@ async function mockMiCoachApi(
         },
       });
     if (
+      method === "POST" &&
+      /^\/api\/mi-agent\/coach\/sessions\/\d+\/close$/.test(pathname)
+    ) {
+      const sessionId = Number(pathname.split("/").at(-2));
+      closedCoachSessions.add(sessionId);
+      return json({ session: { id: sessionId, status: "closed" } });
+    }
+    if (
       withCoachInterface &&
       [
         "/api/mi-agent/coach/sessions/active",
         "/api/mi-agent/coach/sessions/70",
       ].includes(pathname)
     ) {
+      if (
+        pathname === "/api/mi-agent/coach/sessions/active" &&
+        closedCoachSessions.has(70)
+      ) {
+        return json({ session: null, operations: [], recentOperations: [] });
+      }
       return json({
         session: {
           id: 70,
@@ -1467,6 +1482,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.getByRole("button", { name: "Coach", exact: true }).click();
     const coachAccount = page.getByLabel("Cuenta activa");
     await coachAccount.selectOption("160");
+    page.once("dialog", (dialog) => dialog.accept());
     await coachAccount.selectOption("170");
     await expect(coachAccount).toHaveValue("170");
     await page
@@ -1475,8 +1491,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.getByRole("button", { name: "Preguntar" }).click();
     await expect(
       page.getByText(
-        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
-      ),
+        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo."
+      )
     ).toBeVisible({ timeout: 10000 });
 
     await page.getByRole("button", { name: "Cliente existente" }).click();
@@ -1500,6 +1516,102 @@ test.describe("Mi Coach governance and workspaces", () => {
         "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
       ),
     ).toBeVisible();
+  });
+
+  test("confirma el cambio de cuenta y no restaura una conversación cerrada", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCoachInterface: true,
+      withResponseContextSwitch: true,
+    });
+    let releaseRestoration;
+    const restorationGate = new Promise((resolve) => {
+      releaseRestoration = resolve;
+    });
+    let sessionClosed = false;
+    await page.route(
+      "**/api/mi-agent/coach/sessions/active",
+      async (route) => {
+        if (!sessionClosed) await restorationGate;
+        const session = sessionClosed
+          ? null
+          : {
+              id: 70,
+              context: { accountId: 170 },
+              messages: [
+                {
+                  id: "old-seller-message",
+                  role: "seller",
+                  text: "Pregunta de la cuenta anterior",
+                },
+                {
+                  id: "old-coach-message",
+                  role: "coach",
+                  result: {
+                    responseType: "informational",
+                    confidence: "high",
+                    answer: "Respuesta de la cuenta anterior",
+                  },
+                },
+              ],
+            };
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ session, operations: [], recentOperations: [] }),
+        });
+      },
+    );
+    await page.route(
+      "**/api/mi-agent/coach/sessions/70/close",
+      async (route) => {
+        sessionClosed = true;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ session: { id: 70, status: "closed" } }),
+        });
+      },
+    );
+
+    const activeSessionRequest = page.waitForRequest((request) =>
+      request.url().endsWith("/api/mi-agent/coach/sessions/active"),
+    );
+    await openMiCoach(page);
+    await activeSessionRequest;
+    const accountSelect = page.getByLabel("Cuenta activa");
+    await expect(accountSelect.locator('option[value="160"]')).toHaveCount(1);
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("No podrás reabrirla desde Coach");
+      await dialog.dismiss();
+    });
+    await accountSelect.selectOption("160");
+    await expect(accountSelect).toHaveValue("");
+
+    releaseRestoration();
+    await expect(accountSelect).toHaveValue("170");
+    await expect(
+      page.getByText("Respuesta de la cuenta anterior"),
+    ).toBeVisible();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await accountSelect.selectOption("160");
+    await expect(accountSelect).toHaveValue("160");
+    await expect(
+      page.getByText("Pregunta de la cuenta anterior"),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Respuesta de la cuenta anterior"),
+    ).toHaveCount(0);
+
+    await page.reload();
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    await expect(page.getByLabel("Cuenta activa")).toHaveValue("");
+    await expect(
+      page.getByText("Respuesta de la cuenta anterior"),
+    ).toHaveCount(0);
   });
 
   test("Resumen concentra el análisis comercial y enlaza cada recomendación", async ({

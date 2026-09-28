@@ -281,6 +281,12 @@ export async function persistCoachOperations({
       const [rows] = await conn.query(sql, params);
       return rows;
     };
+    const sessions = await execute(
+      `SELECT status FROM coach_conversation_sessions
+       WHERE id = ? AND user_id = ? FOR UPDATE`,
+      [Number(sessionId), Number(userId)],
+    );
+    if (sessions[0]?.status !== "active") return [];
     const persisted = [];
     for (const [operationIndex, operation] of operations
       .slice(0, 6)
@@ -828,10 +834,47 @@ export async function getCoachSession(userId, sessionId) {
   return rows[0] ? mapSession(rows[0]) : null;
 }
 
+export async function closeCoachSession(userId, sessionId) {
+  await ensureCoachSchema();
+  const result = await withTransaction(async (conn) => {
+    const execute = async (sql, params) => {
+      const [rows] = await conn.query(sql, params);
+      return rows;
+    };
+    const sessions = await execute(
+      `SELECT status FROM coach_conversation_sessions
+       WHERE id = ? AND user_id = ? FOR UPDATE`,
+      [Number(sessionId), Number(userId)],
+    );
+    if (!sessions[0]) return { outcome: "not_found" };
+    if (sessions[0].status === "closed") return { outcome: "closed" };
+
+    const pendingOperations = await execute(
+      `SELECT id FROM coach_session_operations
+       WHERE session_id = ? AND user_id = ?
+         AND status IN (${ACTIVE_OPERATION_STATUSES.map(() => "?").join(", ")})`,
+      [Number(sessionId), Number(userId), ...ACTIVE_OPERATION_STATUSES],
+    );
+    if (pendingOperations.length)
+      return { outcome: "operations_in_progress" };
+
+    await execute(
+      `UPDATE coach_conversation_sessions
+       SET status = 'closed', closed_at = NOW(3), updated_at = NOW(3)
+       WHERE id = ? AND user_id = ? AND status = 'active'`,
+      [Number(sessionId), Number(userId)],
+    );
+    return { outcome: "closed" };
+  });
+  return result.outcome === "closed"
+    ? { ...result, session: await getCoachSession(userId, sessionId) }
+    : { ...result, session: null };
+}
+
 export async function getOrCreateCoachSession(userId, sessionId, context = {}) {
   if (sessionId) {
     const existing = await getCoachSession(userId, sessionId);
-    if (existing) return existing;
+    if (existing?.status === "active") return existing;
   }
   return createCoachSession(userId, context);
 }
@@ -842,7 +885,7 @@ export async function updateCoachSession(
   { context = {}, messages, draftOperation } = {},
 ) {
   const existing = await getCoachSession(userId, sessionId);
-  if (!existing) return null;
+  if (!existing || existing.status !== "active") return null;
   const normalizedContext = normalizeContext({
     ...existing.context,
     ...context,
@@ -853,7 +896,7 @@ export async function updateCoachSession(
     `UPDATE coach_conversation_sessions
      SET account_id = ?, contact_id = ?, opportunity_id = ?, quotation_id = ?, proposal_id = ?, lead_id = ?,
          context_snapshot = ?, messages = ?, draft_operation = ?, updated_at = NOW(3)
-     WHERE id = ? AND user_id = ?`,
+     WHERE id = ? AND user_id = ? AND status = 'active'`,
     [
       normalizedContext.accountId,
       normalizedContext.contactId,

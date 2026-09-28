@@ -30,6 +30,7 @@ import { ensureOpportunityWorkspaceSchema } from "../src/opportunity-workspace/s
 import { ensureProspectResearchPermissions } from "../src/prospect-research/permissions.js";
 import { ensureProspectResearchSchema } from "../src/prospect-research/schema.js";
 import {
+  appendCoachSessionTurn,
   createCoachSession,
   persistCoachOperations,
 } from "../src/coach/service.js";
@@ -1565,6 +1566,12 @@ describe("API integration baseline", () => {
     const session = await createCoachSession(ctx.miCoachOperatorUserId, {
       accountId,
     });
+    await appendCoachSessionTurn(
+      ctx.miCoachOperatorUserId,
+      session.id,
+      { role: "seller", text: "Mensaje persistido antes del cierre" },
+      { accountId },
+    );
 
     try {
       const invalidProposal = await request(app)
@@ -1814,6 +1821,89 @@ describe("API integration baseline", () => {
           "reverted",
         ]),
       );
+
+      const pendingAtClose = await persistCoachOperations({
+        userId: ctx.miCoachOperatorUserId,
+        sessionId: session.id,
+        sourceJobId: jobId,
+        originalIntent: "Cerrar la conversación",
+        entities: { accountId },
+        operations: [
+          {
+            kind: "create_account",
+            title: "Operación descartada al cambiar de cuenta",
+            targetModule: "accounts",
+            payload: { name: `Cuenta descartada ${TEST_PREFIX}` },
+            missingFields: [],
+            evidence: [],
+            requiresConfirmation: true,
+          },
+        ],
+      });
+      const foreignClose = await request(app)
+        .post(`/api/mi-agent/coach/sessions/${session.id}/close`)
+        .set("Authorization", otherAuthorization);
+      expect(foreignClose.status).toBe(404);
+
+      const blockedClose = await request(app)
+        .post(`/api/mi-agent/coach/sessions/${session.id}/close`)
+        .set("Authorization", authorization);
+      expect(blockedClose.status).toBe(409);
+      const cancelledAtClose = await request(app)
+        .post(
+          `/api/mi-agent/coach/operations/${pendingAtClose[0].id}/status`,
+        )
+        .set("Authorization", authorization)
+        .send({
+          status: "cancelled",
+          cancellationReason: "Cancelada antes de cambiar de cuenta",
+        });
+      expect(cancelledAtClose.status).toBe(200);
+      expect(cancelledAtClose.body.operation.status).toBe("cancelled");
+
+      const closed = await request(app)
+        .post(`/api/mi-agent/coach/sessions/${session.id}/close`)
+        .set("Authorization", authorization);
+      expect(closed.status).toBe(200);
+      expect(closed.body.session.status).toBe("closed");
+      const closedOperationRows = await query(
+        `SELECT status FROM coach_session_operations WHERE id = ?`,
+        [pendingAtClose[0].id],
+      );
+      expect(closedOperationRows[0].status).toBe("cancelled");
+      const closedSession = await request(app)
+        .get(`/api/mi-agent/coach/sessions/${session.id}`)
+        .set("Authorization", authorization);
+      expect(closedSession.status).toBe(404);
+      const persistedClosedSession = await query(
+        `SELECT status, JSON_LENGTH(messages) AS message_count
+         FROM coach_conversation_sessions WHERE id = ? AND user_id = ?`,
+        [session.id, ctx.miCoachOperatorUserId],
+      );
+      expect(persistedClosedSession[0]).toMatchObject({
+        status: "closed",
+        message_count: 1,
+      });
+      const operationOnClosedSession = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", authorization)
+        .send({
+          sessionId: session.id,
+          operation: {
+            kind: "create_account",
+            title: "No debe persistirse",
+            targetModule: "accounts",
+            payload: { name: `Cuenta rechazada por sesión ${TEST_PREFIX}` },
+            missingFields: [],
+            evidence: [],
+            requiresConfirmation: true,
+          },
+        });
+      expect(operationOnClosedSession.status).toBe(409);
+      const activeSession = await request(app)
+        .get("/api/mi-agent/coach/sessions/active")
+        .set("Authorization", authorization);
+      expect(activeSession.body.session?.id).not.toBe(session.id);
     } finally {
       await query(`DELETE FROM coach_operation_events WHERE session_id = ?`, [
         session.id,

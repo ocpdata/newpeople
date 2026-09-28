@@ -15,6 +15,7 @@ import {
   appendCoachSessionTurn,
   cancelCoachHandoff,
   completeCoachHandoff,
+  closeCoachSession,
   createCoachSession,
   createCoachHandoff,
   getCoachHandoff,
@@ -3911,6 +3912,7 @@ router.post(
     let session = requestedSessionId
       ? await getCoachSession(req.user.id, requestedSessionId)
       : null;
+    if (session?.status === "closed") session = null;
     if (session) {
       selectedContext = resolveCoachTurnContext(
         selectedContext,
@@ -4113,7 +4115,7 @@ router.get(
       req.user.id,
       Number(req.params.sessionId || 0),
     );
-    if (!session)
+    if (!session || session.status !== "active")
       return res.status(404).json({ message: "La sesión del Coach no existe" });
     const [operations, allOperations] = await Promise.all([
       listCoachSessionOperations(req.user.id, session.id, {
@@ -4133,6 +4135,25 @@ router.get(
       )
       .slice(0, 6);
     return res.json({ session, operations, recentOperations });
+  },
+);
+
+router.post(
+  "/coach/sessions/:sessionId/close",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!sessionId)
+      return res.status(400).json({ message: "La sesión del Coach no es válida" });
+    const result = await closeCoachSession(req.user.id, sessionId);
+    if (result.outcome === "not_found")
+      return res.status(404).json({ message: "La sesión del Coach no existe" });
+    if (result.outcome === "operations_in_progress")
+      return res.status(409).json({
+        message:
+          "Resuelve las operaciones pendientes antes de cambiar el contexto del Coach",
+      });
+    return res.json({ session: result.session });
   },
 );
 
@@ -4166,6 +4187,11 @@ router.post(
       : await getOrCreateCoachSession(req.user.id, null, req.body?.context);
     if (!session) {
       return res.status(404).json({ message: "La sesión del Coach no existe" });
+    }
+    if (session.status !== "active") {
+      return res.status(409).json({
+        message: "La sesión del Coach está cerrada y no admite nuevas operaciones",
+      });
     }
     const [operation] = await persistCoachOperations({
       userId: req.user.id,

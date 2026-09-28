@@ -854,6 +854,8 @@ export default function MiAgentPage({
   const coachDialogRef = useRef(null);
   const coachReturnFocusRef = useRef(null);
   const coachActiveSessionCheckedRef = useRef(false);
+  const coachActiveSessionRequestRef = useRef(null);
+  const coachContextRevisionRef = useRef(0);
   const coachDraftSaveSignatureRef = useRef("");
 
   useEffect(() => {
@@ -871,11 +873,17 @@ export default function MiAgentPage({
 
   useEffect(() => {
     if (!coachSessionId || coachMessages.length) return undefined;
+    const contextRevision = coachContextRevisionRef.current;
     let cancelled = false;
     api
       .get(`/api/mi-agent/coach/sessions/${coachSessionId}`)
       .then(({ data }) => {
-        if (cancelled || !data?.session) return;
+        if (
+          cancelled ||
+          contextRevision !== coachContextRevisionRef.current ||
+          !data?.session
+        )
+          return;
         const session = data.session;
         setCoachContext((current) => ({
           ...current,
@@ -905,10 +913,16 @@ export default function MiAgentPage({
   useEffect(() => {
     if (coachActiveSessionCheckedRef.current || coachSessionId) return;
     coachActiveSessionCheckedRef.current = true;
-    api
-      .get("/api/mi-agent/coach/sessions/active")
+    const contextRevision = coachContextRevisionRef.current;
+    const request = api.get("/api/mi-agent/coach/sessions/active");
+    coachActiveSessionRequestRef.current = request;
+    request
       .then(({ data }) => {
-        if (!data?.session) return;
+        if (
+          contextRevision !== coachContextRevisionRef.current ||
+          !data?.session
+        )
+          return;
         setCoachSessionId(Number(data.session.id));
         setCoachMessages(data.session.messages || []);
         setCoachPendingOperations(data.operations || []);
@@ -921,7 +935,12 @@ export default function MiAgentPage({
           leadId: String(data.session.context?.leadId || ""),
         }));
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (coachActiveSessionRequestRef.current === request) {
+          coachActiveSessionRequestRef.current = null;
+        }
+      });
   }, [coachSessionId]);
 
   useEffect(() => {
@@ -1032,26 +1051,76 @@ export default function MiAgentPage({
     }
   }
 
+  function requestCoachAccountChange(accountId) {
+    const normalizedId = String(accountId || "");
+    const currentAccountId = String(coachContextRef.current.accountId || "");
+    if (normalizedId === currentAccountId) return;
+    if (coachPendingOperations.length) {
+      setError(
+        "Completa o descarta las operaciones pendientes del Coach antes de cambiar la cuenta.",
+      );
+      return;
+    }
+
+    const hasConversationState = Boolean(
+      currentAccountId ||
+        coachSessionId ||
+      coachActiveSessionRequestRef.current ||
+        coachMessages.length ||
+        coachOperationDraft ||
+        coachPendingOperations.length,
+    );
+    if (hasConversationState) {
+      const nextAccountName =
+        coachAccounts.find((account) => String(account.id) === normalizedId)
+          ?.name || "Sin cuenta";
+      const confirmed = window.confirm(
+        `Cambiar a ${nextAccountName} cerrará esta conversación y limpiará sus mensajes y borradores. No podrás reabrirla desde Coach. ¿Continuar?`,
+      );
+      if (!confirmed) return;
+    }
+
+    void selectCoachAccount(normalizedId);
+  }
+
   async function selectCoachAccount(accountId) {
     const normalizedId = String(accountId || "");
-    setCoachContext({
-      accountId: normalizedId,
-      opportunityId: "",
-      contactId: "",
-      leadId: "",
-    });
-    setCoachSessionId(null);
-    setCoachOpportunities([]);
-    setCoachContacts([]);
-    setCoachMessages([]);
-    setCoachActionDraft(null);
-    setCoachOperationDraft(null);
-    setCoachPendingOperations([]);
-    setCoachRecentOperations([]);
-    setCoachNotice("");
-    if (!normalizedId) return;
     setLoadingCoachContext(true);
+    setError("");
     try {
+      const pendingRestore = coachActiveSessionRequestRef.current;
+      const restoredSessionResponse = pendingRestore
+        ? await pendingRestore.catch(() => null)
+        : null;
+      const sessionIdToClose = Number(
+        coachSessionId || restoredSessionResponse?.data?.session?.id || 0,
+      );
+      if (sessionIdToClose) {
+        await api.post(
+          `/api/mi-agent/coach/sessions/${sessionIdToClose}/close`,
+        );
+      }
+
+      coachContextRevisionRef.current += 1;
+      coachActiveSessionRequestRef.current = null;
+      setCoachContext({
+        accountId: normalizedId,
+        opportunityId: "",
+        contactId: "",
+        leadId: "",
+      });
+      setCoachSessionId(null);
+      setCoachOpportunities([]);
+      setCoachContacts([]);
+      setCoachMessages([]);
+      setCoachActionDraft(null);
+      setCoachOperationDraft(null);
+      setCoachPendingOperations([]);
+      setCoachRecentOperations([]);
+      setCoachNotice("");
+      coachDraftSaveSignatureRef.current = "";
+      if (!normalizedId) return;
+
       const [contextResponse, opportunitiesResponse, contactsResponse] =
         await Promise.all([
           api.get("/api/mi-agent/context"),
@@ -1077,7 +1146,7 @@ export default function MiAgentPage({
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cargar el contexto de la cuenta",
+          "No fue posible cambiar el contexto del Coach",
         ),
       );
     } finally {
@@ -1122,6 +1191,7 @@ export default function MiAgentPage({
     const opportunity = coachOpportunities.find(
       (item) => String(item.id) === String(opportunityId),
     );
+    coachContextRevisionRef.current += 1;
     setCoachContext((current) => ({
       ...current,
       opportunityId: String(opportunityId || ""),
@@ -1152,6 +1222,7 @@ export default function MiAgentPage({
   }
 
   function selectCoachContact(contactId) {
+    coachContextRevisionRef.current += 1;
     setCoachContext((current) => ({
       ...current,
       contactId: String(contactId || ""),
@@ -1166,7 +1237,11 @@ export default function MiAgentPage({
     setCoachNotice("");
   }
 
-  async function applyCoachActiveContext(activeContext) {
+  async function applyCoachActiveContext(
+    activeContext,
+    expectedRevision = coachContextRevisionRef.current,
+  ) {
+    if (expectedRevision !== coachContextRevisionRef.current) return;
     const nextContext = {
       accountId: String(activeContext?.accountId || ""),
       opportunityId: String(activeContext?.opportunityId || ""),
@@ -1197,6 +1272,7 @@ export default function MiAgentPage({
           `/api/contacts?accountId=${nextContext.accountId}&opportunityId=${nextContext.opportunityId}&activeOnly=true`,
         ),
       ]);
+    if (expectedRevision !== coachContextRevisionRef.current) return;
     const accountSnapshot = buildSnapshot(contextResponse.data);
     setDashboard(contextResponse.data);
     setCoachAccounts((current) => {
@@ -1241,14 +1317,6 @@ export default function MiAgentPage({
     snapshot.quota.currencyConversionAvailable && snapshot.quota.gapAmount
       ? snapshot.pipeline.openAmount / snapshot.quota.gapAmount
       : null;
-  const selectedCoachAccount =
-    coachAccounts.find(
-      (item) => String(item.id) === String(coachContext.accountId),
-    ) || null;
-  const selectedCoachOpportunity =
-    coachOpportunities.find(
-      (item) => String(item.id) === String(coachContext.opportunityId),
-    ) || null;
   const coachOpportunityGroups = [
     ["open", "Abiertas"],
     ["won", "Ganadas"],
@@ -1261,10 +1329,6 @@ export default function MiAgentPage({
       (opportunity) => opportunity.contextGroup === code,
     ),
   }));
-  const selectedCoachContact =
-    coachContacts.find(
-      (item) => String(item.id) === String(coachContext.contactId),
-    ) || null;
   const selectedCustomerAccount =
     customerAccounts.find(
       (item) => String(item.id) === String(customerAccountId),
@@ -2074,6 +2138,7 @@ export default function MiAgentPage({
     if (!normalizedQuestion) return;
     const requestContext = { ...contextOverride };
     const contextKey = JSON.stringify(requestContext);
+    const contextRevision = coachContextRevisionRef.current;
     setAskingCoach(true);
     setError("");
     setCoachNotice("");
@@ -2107,6 +2172,7 @@ export default function MiAgentPage({
           leadId: Number(requestContext.leadId || 0) || null,
         },
       });
+      if (contextRevision !== coachContextRevisionRef.current) return;
       if (queued?.sessionId) setCoachSessionId(Number(queued.sessionId));
       const jobId = Number(queued?.job?.id || 0);
       if (!jobId) throw new Error("No se pudo iniciar la consulta al Coach");
@@ -2118,15 +2184,20 @@ export default function MiAgentPage({
           );
         }
         await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (contextRevision !== coachContextRevisionRef.current) return;
         const { data } = await api.get(`/api/mi-agent/coach/jobs/${jobId}`);
         if (data?.job?.status === "completed") {
-          if (JSON.stringify(coachContextRef.current) !== contextKey) {
+          if (
+            contextRevision !== coachContextRevisionRef.current ||
+            JSON.stringify(coachContextRef.current) !== contextKey
+          ) {
             throw new Error(
               "El contexto cambio mientras se analizaba la pregunta. Vuelve a intentarlo.",
             );
           }
           const activeContext = data.result?.activeContext;
-          if (activeContext) await applyCoachActiveContext(activeContext);
+          if (activeContext)
+            await applyCoachActiveContext(activeContext, contextRevision);
           const persistedOperations = (data.result?.operations || [])
             .filter((operation) => operation.persistentId)
             .map((operation) => ({
@@ -3129,24 +3200,6 @@ export default function MiAgentPage({
                       contacto.
                     </small>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => {
-                      setCoachContext({
-                        accountId: "",
-                        opportunityId: "",
-                        contactId: "",
-                        leadId: "",
-                      });
-                      setCoachSessionId(null);
-                      setCoachOpportunities([]);
-                      setCoachContacts([]);
-                    }}
-                  >
-                    <X size={14} aria-hidden="true" />
-                    Limpiar contexto
-                  </button>
                 </div>
                 <div className="mi-agent-coach-context-form">
                   <label>
@@ -3165,11 +3218,11 @@ export default function MiAgentPage({
                     <select
                       value={coachContext.accountId}
                       onChange={(event) =>
-                        selectCoachAccount(event.target.value)
+                        requestCoachAccountChange(event.target.value)
                       }
                       disabled={loadingCoachContext}
                     >
-                      <option value="">Selecciona una cuenta</option>
+                      <option value="">Sin cuenta · conversación general</option>
                       {coachAccounts.map((account) => (
                         <option key={account.id} value={account.id}>
                           {account.name}

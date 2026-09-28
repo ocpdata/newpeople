@@ -49,7 +49,7 @@ Las preguntas de seguimiento como «esa oportunidad», «el contacto», «¿y su
 
 Una respuesta del Coach puede cambiar el contexto activo para el turno siguiente si identifica una entidad accesible con IDs estructurados y relaciones válidas. El frontend actualiza los selectores, pero conserva la conversación. Los nombres mencionados en prosa sin ID verificable no cambian el contexto.
 
-Al cambiar la cuenta, oportunidad o contacto, la interfaz limpia la conversación visible e inicia un contexto nuevo. La opción **Limpiar contexto** hace lo mismo sin seleccionar otra entidad.
+Al cambiar la cuenta, el vendedor confirma antes de continuar. La confirmación cierra la sesión anterior, limpia el chat visible y sus borradores, y establece un contexto nuevo; cancelar conserva el contexto actual. Las operaciones pendientes deben completarse o descartarse antes de cambiar de cuenta. Las sesiones cerradas no se pueden recuperar desde la interfaz. La opción **Sin cuenta · conversación general** aplica el mismo reinicio sin seleccionar una cuenta. Una nueva pregunta crea una sesión para el contexto elegido.
 
 ## Uso del proceso comercial
 
