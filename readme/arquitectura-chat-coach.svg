@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Arquitectura objetivo del Chat Coach</title>
+  <desc id="desc">El vendedor usa el chat React. El Agent Gateway coordina sesiones, intencion, politicas y el modelo LLM. El modelo usa herramientas CRM que consultan servicios de dominio y MySQL. Las acciones pasan por comandos y auditoria.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#56717f"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#173b52" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title { font: 700 26px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #173b52; }
+      .label { font: 700 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #173b52; }
+      .sub { font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #56717f; }
+      .box { stroke: #b9ccd4; stroke-width: 1.5; rx: 10; filter: url(#shadow); }
+      .arrow { stroke: #56717f; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .boundary { fill: #f4f8f9; stroke: #c6d7dd; stroke-width: 1.5; stroke-dasharray: 7 5; rx: 16; }
+      .boundary-label { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #287e86; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <text x="60" y="55" class="title">Arquitectura objetivo del Chat Coach</text>
+  <text x="60" y="82" class="sub">El modelo razona; la aplicacion controla datos, permisos, acciones y auditoria.</text>
+
+  <rect x="35" y="115" width="1130" height="585" class="boundary"/>
+  <text x="60" y="145" class="boundary-label">APLICACION NEWPEOPLE</text>
+
+  <rect x="70" y="270" width="175" height="78" fill="#e3f2f3" class="box"/>
+  <text x="157" y="302" text-anchor="middle" class="label">Chat React</text>
+  <text x="157" y="325" text-anchor="middle" class="sub">Vista y confirmaciones</text>
+
+  <rect x="295" y="220" width="220" height="100" fill="#dcecf7" class="box"/>
+  <text x="405" y="255" text-anchor="middle" class="label">Agent Gateway</text>
+  <text x="405" y="278" text-anchor="middle" class="sub">Sesion y contratos</text>
+  <text x="405" y="297" text-anchor="middle" class="sub">Orquestacion del agente</text>
+
+  <rect x="295" y="370" width="220" height="100" fill="#fff3d9" class="box"/>
+  <text x="405" y="405" text-anchor="middle" class="label">Intencion y entidades</text>
+  <text x="405" y="428" text-anchor="middle" class="sub">Tipo, filtros y contexto</text>
+  <text x="405" y="447" text-anchor="middle" class="sub">Sin mezclar leads y oportunidades</text>
+
+  <rect x="575" y="180" width="210" height="100" fill="#e9e2f7" class="box"/>
+  <text x="680" y="215" text-anchor="middle" class="label">Modelo LLM</text>
+  <text x="680" y="238" text-anchor="middle" class="sub">Razonamiento y lenguaje</text>
+  <text x="680" y="257" text-anchor="middle" class="sub">Tool calling / MCP</text>
+
+  <rect x="575" y="350" width="210" height="100" fill="#e3f2f3" class="box"/>
+  <text x="680" y="385" text-anchor="middle" class="label">Herramientas CRM</text>
+  <text x="680" y="408" text-anchor="middle" class="sub">Busqueda y detalle</text>
+  <text x="680" y="427" text-anchor="middle" class="sub">Resultados estructurados</text>
+
+  <rect x="850" y="180" width="210" height="100" fill="#e8f1e5" class="box"/>
+  <text x="955" y="215" text-anchor="middle" class="label">Politicas</text>
+  <text x="955" y="238" text-anchor="middle" class="sub">Permisos y ownership</text>
+  <text x="955" y="257" text-anchor="middle" class="sub">Estados y alcance</text>
+
+  <rect x="850" y="350" width="210" height="100" fill="#e8f1e5" class="box"/>
+  <text x="955" y="385" text-anchor="middle" class="label">Servicios CRM</text>
+  <text x="955" y="408" text-anchor="middle" class="sub">Reglas de dominio</text>
+  <text x="955" y="427" text-anchor="middle" class="sub">Consultas autorizadas</text>
+
+  <rect x="295" y="535" width="220" height="100" fill="#fce8e6" class="box"/>
+  <text x="405" y="570" text-anchor="middle" class="label">Servicio de comandos</text>
+  <text x="405" y="593" text-anchor="middle" class="sub">Confirmacion e idempotencia</text>
+  <text x="405" y="612" text-anchor="middle" class="sub">Solo acciones autorizadas</text>
+
+  <rect x="575" y="535" width="210" height="100" fill="#fce8e6" class="box"/>
+  <text x="680" y="570" text-anchor="middle" class="label">Auditoria</text>
+  <text x="680" y="593" text-anchor="middle" class="sub">Acciones y resultados</text>
+  <text x="680" y="612" text-anchor="middle" class="sub">Trazabilidad</text>
+
+  <rect x="850" y="535" width="210" height="100" fill="#eef0f2" class="box"/>
+  <text x="955" y="570" text-anchor="middle" class="label">MySQL</text>
+  <text x="955" y="593" text-anchor="middle" class="sub">Datos del CRM</text>
+  <text x="955" y="612" text-anchor="middle" class="sub">Fuente de verdad</text>
+
+  <path d="M245 309 L295 270" class="arrow"/>
+  <path d="M405 320 L405 370" class="arrow"/>
+  <path d="M515 260 L575 230" class="arrow"/>
+  <path d="M515 420 L575 405" class="arrow"/>
+  <path d="M785 230 L850 230" class="arrow"/>
+  <path d="M785 405 L850 405" class="arrow"/>
+  <path d="M955 280 L955 350" class="arrow"/>
+  <path d="M680 450 L680 535" class="arrow"/>
+  <path d="M515 585 L575 585" class="arrow"/>
+  <path d="M785 585 L850 585" class="arrow"/>
+  <path d="M955 450 L955 535" class="arrow"/>
+
+  <text x="600" y="680" class="sub">Las herramientas y los comandos aplican permisos antes de tocar los datos.</text>
+</svg>

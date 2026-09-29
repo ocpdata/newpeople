@@ -6,6 +6,7 @@ async function mockMiCoachApi(
     canAdmin = false,
     withCustomerHealth = false,
     withCoachInterface = false,
+    withCoachPendingOperations = true,
     withHistoricalOpportunityContext = false,
     withResponseContextSwitch = false,
     withSituationAnalysis = false,
@@ -446,6 +447,15 @@ async function mockMiCoachApi(
       return json({ session: { id: sessionId, status: "closed" } });
     }
     if (
+      method === "POST" &&
+      /^\/api\/mi-agent\/coach\/operations\/\d+\/status$/.test(pathname)
+    ) {
+      const operationId = Number(pathname.split("/").at(-2));
+      return json({
+        operation: { id: operationId, status: "cancelled" },
+      });
+    }
+    if (
       withCoachInterface &&
       [
         "/api/mi-agent/coach/sessions/active",
@@ -532,7 +542,8 @@ async function mockMiCoachApi(
             },
           ],
         },
-        operations: [
+        operations: withCoachPendingOperations
+          ? [
           {
             id: 81,
             kind: "activity",
@@ -565,23 +576,24 @@ async function mockMiCoachApi(
               value: "Monterrey",
             },
           },
-          {
-            id: 83,
-            kind: "create_account",
-            status: "handed_off",
-            version: 3,
-            targetModule: "accounts",
-            targetRoute: "/accounts",
-            handedOffAt: "2026-09-26T12:00:00.000Z",
-            handoffExpiresAt: "2027-09-27T12:00:00.000Z",
-            missingFields: [],
-            pendingOperation: {
+            {
+              id: 83,
               kind: "create_account",
-              title: "unknown",
-              payload: { name: "Acme" },
+              status: "handed_off",
+              version: 3,
+              targetModule: "accounts",
+              targetRoute: "/accounts",
+              handedOffAt: "2026-09-26T12:00:00.000Z",
+              handoffExpiresAt: "2027-09-27T12:00:00.000Z",
+              missingFields: [],
+              pendingOperation: {
+                kind: "create_account",
+                title: "unknown",
+                payload: { name: "Acme" },
+              },
             },
-          },
-        ],
+          ]
+          : [],
         recentOperations: [
           {
             id: 79,
@@ -1383,19 +1395,18 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toHaveCount(0);
   });
 
-  test("presenta oportunidades no activadas por separado de pipeline e historial", async ({
+  test("oculta oportunidades no activadas del Resumen", async ({
     page,
   }) => {
     await mockMiCoachApi(page, { withOpportunityStatusMatrix: true });
     await openMiCoach(page, { workspace: "summary" });
 
-    await expect(page.getByText("Oportunidades desactivadas")).toBeVisible();
+    await expect(page.getByText("Oportunidades desactivadas")).toHaveCount(0);
     await expect(
       page.getByRole("button", {
         name: "Oportunidad desactivada terminal",
       }),
-    ).toBeVisible();
-    await expect(page.getByText(/Desactivada\s+·\s+ganada/)).toBeVisible();
+    ).toHaveCount(0);
   });
 
   test("Cuenta nueva completa prospección con revisión humana y sin investigación pública automática", async ({
@@ -1611,6 +1622,36 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(page.getByLabel("Cuenta activa")).toHaveValue("");
     await expect(
       page.getByText("Respuesta de la cuenta anterior"),
+    ).toHaveCount(0);
+  });
+
+  test("limpia la conversación del Coach y no la restaura al recargar", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, { withCoachInterface: true });
+    await openMiCoach(page);
+
+    await expect(
+      page.getByText("La oportunidad aún no está lista para avanzar."),
+    ).toBeVisible();
+    page.once("dialog", (dialog) => {
+      expect(dialog.message()).toContain("Se cerrará esta conversación");
+      expect(dialog.message()).toContain("3 acciones pendientes");
+      dialog.accept();
+    });
+    await page.getByRole("button", { name: "Limpiar conversación" }).click();
+
+    await expect(
+      page.getByText("La oportunidad aún no está lista para avanzar."),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("Inicia una conversación con tu contexto actual"),
+    ).toBeVisible();
+
+    await page.reload();
+    await page.getByRole("button", { name: "Coach", exact: true }).click();
+    await expect(
+      page.getByText("La oportunidad aún no está lista para avanzar."),
     ).toHaveCount(0);
   });
 

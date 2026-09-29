@@ -12,6 +12,7 @@ import {
   Pencil,
   Search,
   Settings2,
+  Trash2,
   X,
 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
@@ -1081,6 +1082,68 @@ export default function MiAgentPage({
     }
 
     void selectCoachAccount(normalizedId);
+  }
+
+  async function clearCoachConversation() {
+    const hasConversationState = Boolean(
+      coachSessionId ||
+        coachMessages.length ||
+        coachRecentOperations.length ||
+        coachOperationDraft,
+    );
+    if (!hasConversationState) return;
+    const pendingOperationCount = coachPendingOperations.length;
+    const pendingOperationNotice =
+      pendingOperationCount === 1
+        ? " También se descartará 1 acción pendiente."
+        : pendingOperationCount
+          ? ` También se descartarán ${pendingOperationCount} acciones pendientes.`
+          : "";
+    const confirmed = window.confirm(
+      `Se cerrará esta conversación y se eliminarán sus mensajes de la vista.${pendingOperationNotice} ¿Continuar?`,
+    );
+    if (!confirmed) return;
+
+    const sessionId = Number(coachSessionId || 0);
+    coachContextRevisionRef.current += 1;
+    coachActiveSessionRequestRef.current = null;
+    setError("");
+    try {
+      if (pendingOperationCount) {
+        await Promise.all(
+          coachPendingOperations.map((operation) =>
+            api.post(
+              `/api/mi-agent/coach/operations/${operation.id}/status`,
+              {
+                status: "cancelled",
+                cancellationReason: "Descartada al limpiar la conversación",
+              },
+            ),
+          ),
+        );
+      }
+      if (sessionId) {
+        await api.post(`/api/mi-agent/coach/sessions/${sessionId}/close`);
+      }
+      setCoachSessionId(null);
+      setCoachMessages([]);
+      setCoachQuestion("");
+      setCoachNotice("");
+      setCoachActionDraft(null);
+      setCoachOperationDraft(null);
+      setCoachPendingOperations([]);
+      setCoachRecentOperations([]);
+      setCoachUndoOperationId(null);
+      setCoachOperationAction({});
+      coachDraftSaveSignatureRef.current = "";
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible limpiar la conversación del Coach",
+        ),
+      );
+    }
   }
 
   async function selectCoachAccount(accountId) {
@@ -2971,6 +3034,12 @@ export default function MiAgentPage({
       result?.recommendation,
     );
   });
+  const hasCoachConversation = Boolean(
+    coachSessionId ||
+      coachMessages.length ||
+      coachRecentOperations.length ||
+      coachOperationDraft,
+  );
 
   if (loading) {
     return (
@@ -3141,42 +3210,6 @@ export default function MiAgentPage({
                   </small>
                 </article>
               </div>
-            </section>
-          ) : null}
-
-          {activeWorkspace === "summary" &&
-          snapshot.inactivePipelineOpportunities.length ? (
-            <section
-              className="mi-agent-prospect-section"
-              aria-label="Oportunidades desactivadas"
-            >
-              <div className="mi-agent-section-heading">
-                <div>
-                  <span className="mi-agent-section-label">Fuente CRM</span>
-                  <h3>Oportunidades desactivadas</h3>
-                </div>
-                <span>{snapshot.inactivePipelineOpportunities.length}</span>
-              </div>
-              <ul>
-                {snapshot.inactivePipelineOpportunities.map((opportunity) => (
-                  <li key={opportunity.id}>
-                    <button
-                      type="button"
-                      className="mi-agent-customer-record-link"
-                      onClick={() =>
-                        navigate(`/opportunities?edit=${opportunity.id}`)
-                      }
-                    >
-                      {opportunity.name}
-                    </button>
-                    <small>
-                      {opportunity.accountName || "Cuenta no disponible"} ·{" "}
-                      {opportunity.activationStatusName || "Desactivada"} ·{" "}
-                      {opportunity.commercialStatusCode || "en_proceso"}
-                    </small>
-                  </li>
-                ))}
-              </ul>
             </section>
           ) : null}
 
@@ -3459,6 +3492,16 @@ export default function MiAgentPage({
                         : "Inicia una conversación con tu contexto actual"}
                     </small>
                   </div>
+                  <button
+                    type="button"
+                    className="btn-ghost mi-agent-coach-clear-button"
+                    disabled={askingCoach || !hasCoachConversation}
+                    onClick={clearCoachConversation}
+                    title="Limpiar conversación"
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                    Limpiar conversación
+                  </button>
                   {hasCoachFoundation ? (
                     <label className="mi-agent-coach-foundation-toggle">
                       <span>Mostrar fundamento</span>

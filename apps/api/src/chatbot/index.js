@@ -66,6 +66,33 @@ export async function runChatbotPipeline({
     }
   }
 
+  if (String(featureCode || "").startsWith("landing.")) {
+    const answer = await generateChatbotAnswerWithAi({
+      user,
+      prompt,
+      contextSnapshot:
+        contextSnapshot && typeof contextSnapshot === "object"
+          ? contextSnapshot
+          : {},
+      evidencePackage: {
+        status: "landing_generation",
+        requestedDomains: [],
+        interpretation: { module: "landing", featureCode },
+        resolver: null,
+        candidates: [],
+        evidence: {},
+      },
+      references: [],
+      featureCode,
+      internalRequestId,
+    });
+    return {
+      ...answer,
+      usage: null,
+      sourceReason: "landing_generation",
+    };
+  }
+
   const loadedOpportunityContext = await loadActiveOpportunityContext({
     user,
     contextSnapshot,

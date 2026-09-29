@@ -489,11 +489,24 @@ function extractHtmlFromAssistantText(value) {
   if (!text) return "";
 
   const fencedMatch = text.match(/```(?:html)?\s*([\s\S]*?)```/i);
+  const jsonObject = !fencedMatch ? extractJsonObjectFromText(text) : null;
+  if (jsonObject) {
+    for (const key of ["html", "page_html", "content_html", "body_html"]) {
+      const nestedHtml = extractHtmlFromAssistantText(jsonObject[key]);
+      if (nestedHtml) return nestedHtml;
+    }
+  }
+
   const candidate = fencedMatch ? fencedMatch[1].trim() : text;
 
   if (!candidate) return "";
-  if (!/<!doctype html>|<html[\s>]|<body[\s>]/i.test(candidate)) return "";
-  return candidate;
+  const htmlStart = candidate.search(/<!doctype html>|<html[\s>]|<body[\s>]/i);
+  if (htmlStart < 0) return "";
+  const htmlCandidate = candidate.slice(htmlStart).trim();
+  const htmlEnd = htmlCandidate.search(/<\/html>/i);
+  return htmlEnd >= 0
+    ? htmlCandidate.slice(0, htmlEnd + "</html>".length).trim()
+    : htmlCandidate;
 }
 
 function extractAssistantText(value) {
@@ -710,7 +723,7 @@ async function generateLandingHtmlWithChatbotAi({
       currentHtml: baseHtml.slice(0, 50_000),
       prompt: promptText,
     },
-    featureCode: "chatbot.assistant",
+    featureCode: "landing.editor",
   });
 
   const jobId = String(messageRes?.data?.jobId || "").trim();
@@ -726,6 +739,7 @@ async function generateLandingHtmlWithChatbotAi({
 
   let attempts = 0;
   let jobCompleted = false;
+  let completedResult = null;
   while (attempts < 35) {
     throwIfCancelled();
     attempts += 1;
@@ -744,6 +758,7 @@ async function generateLandingHtmlWithChatbotAi({
 
     if (status === "completed") {
       jobCompleted = true;
+      completedResult = jobRes?.data?.result || null;
       break;
     }
 
@@ -763,18 +778,21 @@ async function generateLandingHtmlWithChatbotAi({
 
   throwIfCancelled();
 
-  const historyRes = await api.get(
-    `/api/chatbot/sessions/${encodeURIComponent(sessionId)}/messages`,
+  let html = extractHtmlFromAssistantText(
+    extractAssistantText(completedResult),
   );
-  const messages = Array.isArray(historyRes?.data?.items)
-    ? historyRes.data.items
-    : [];
-  const assistantMessage = [...messages]
-    .reverse()
-    .find((item) => String(item?.role || "").trim() === "assistant");
-
-  const assistantContent = String(assistantMessage?.content || "").trim();
-  const html = extractHtmlFromAssistantText(assistantContent);
+  if (!html) {
+    const historyRes = await api.get(
+      `/api/chatbot/sessions/${encodeURIComponent(sessionId)}/messages`,
+    );
+    const messages = Array.isArray(historyRes?.data?.items)
+      ? historyRes.data.items
+      : [];
+    const assistantMessage = [...messages]
+      .reverse()
+      .find((item) => String(item?.role || "").trim() === "assistant");
+    html = extractHtmlFromAssistantText(assistantMessage?.content || "");
+  }
   if (!html) {
     throw new Error("La IA no devolvio HTML utilizable");
   }
@@ -2009,7 +2027,7 @@ export default function LandingModulePage() {
         sessionId,
         message: aiInstruction,
         useContext: false,
-        featureCode: "chatbot.assistant",
+        featureCode: "landing.confirmation_email",
       });
 
       const jobId = String(messageRes?.data?.jobId || "").trim();
@@ -2117,7 +2135,7 @@ export default function LandingModulePage() {
         sessionId,
         message: aiInstruction,
         useContext: false,
-        featureCode: "chatbot.assistant",
+        featureCode: "landing.confirmation_page",
       });
 
       const jobId = String(messageRes?.data?.jobId || "").trim();

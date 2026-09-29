@@ -42,6 +42,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Chatbot](./chatbot.md)
 - [Mi Coach](./mi-coach.md)
 - [Chat del Coach](./chat-coach.md)
+- [Arquitectura del Chat Coach](./arquitectura-chat-coach.md)
 - [Pruebas](./pruebas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)

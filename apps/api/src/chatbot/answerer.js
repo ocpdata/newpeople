@@ -78,7 +78,7 @@ export async function generateChatbotAnswerWithAi({
     messages: [
       {
         role: "system",
-        content: buildAnswererSystemPrompt(),
+        content: buildAnswererSystemPrompt({ featureCode }),
       },
       {
         role: "user",
