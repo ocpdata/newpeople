@@ -148,6 +148,28 @@ router.get("/", requirePermission("configuracion.read"), async (_req, res) => {
   res.json({ items });
 });
 
+router.get("/assets", requirePermission("configuracion.read"), async (req, res) => {
+  const relativePath = String(req.query.path || "").trim().replace(/\\/g, "/");
+  const readmeRoot = path.resolve(REPO_ROOT, "readme");
+  const absolutePath = path.resolve(REPO_ROOT, relativePath);
+  const allowedExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg"]);
+
+  if (
+    !relativePath ||
+    !absolutePath.startsWith(`${readmeRoot}${path.sep}`) ||
+    !allowedExtensions.has(path.extname(absolutePath).toLowerCase())
+  ) {
+    return res.status(400).json({ message: "Asset de documentación no válido" });
+  }
+
+  try {
+    await fs.access(absolutePath);
+    return res.sendFile(absolutePath);
+  } catch {
+    return res.status(404).json({ message: "Asset de documentación no encontrado" });
+  }
+});
+
 router.get("/:docId", requirePermission("configuracion.read"), async (req, res) => {
   const items = await listDocumentationCatalog();
   const item = items.find((entry) => entry.slug === req.params.docId);

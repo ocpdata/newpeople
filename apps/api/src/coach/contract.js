@@ -317,14 +317,17 @@ export const coachClarificationSchema = z
             contactId: nullablePositiveId,
             opportunityId: nullablePositiveId,
             accountName: optionalText(300),
+            stageCode: optionalText(100),
             stageName: optionalText(200),
+            activationStatusCode: optionalText(100),
+            commercialStatusCode: optionalText(100),
+            amountUsd: z.number().nullable().optional(),
+            closeDate: z.iso.date().nullable().optional(),
             email: optionalText(320),
             positionTitle: optionalText(200),
             website: optionalText(500),
             city: optionalText(200),
-            entityType: z
-              .enum(["account", "opportunity", "contact", "lead"])
-              .optional(),
+            entityType: z.enum(["account", "opportunity", "contact", "lead"]),
           })
           .strict(),
       )
@@ -385,13 +388,16 @@ export const coachResponseSchema = z
       "update_record",
       "continue_work",
       "clarification",
+      "error",
       "freeform",
     ]),
     responseType: z.enum([
       "informational",
       "recommendation",
+      "action_proposal",
       "change_request",
       "clarification",
+      "error",
     ]),
     answer: text(6000),
     facts: z.array(coachEvidenceSchema).max(30),

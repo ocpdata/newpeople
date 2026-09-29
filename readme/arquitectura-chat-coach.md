@@ -6,14 +6,55 @@ Este documento define la arquitectura objetivo para que Mi Coach funcione como u
 
 Mi Coach debe ayudar al vendedor a:
 
-- Consultar cuentas, oportunidades, contactos, actividades y pipeline.
-- Entender riesgos, pendientes y próximos pasos comerciales.
-- Resolver preguntas usando datos autorizados y actuales del CRM.
-- Proponer acciones comerciales sin ejecutarlas de forma implícita.
+- Entender la situación de una cuenta, contacto, lead u oportunidad.
+- Avanzar una oportunidad con disciplina a través de las etapas del proceso comercial.
+- Identificar riesgos, bloqueos, necesidades, información faltante y próximos pasos.
+- Consultar información de cuentas, contactos, leads y oportunidades.
+- Preparar reuniones, llamadas, demostraciones, negociaciones y seguimientos.
+- Iniciar la creación de cuentas, contactos, oportunidades, leads, mapeos de contactos, cotizaciones, propuestas y actividades.
+- Proponer actualizaciones de campos de los registros permitidos.
+- Proponer respuestas para preguntas de etapa cuando una afirmación del vendedor coincide claramente con una pregunta existente.
 - Mantener el contexto de la conversación sin mezclar cuentas, oportunidades o usuarios.
 - Pedir una aclaración útil cuando existan varias coincidencias.
 
 El objetivo no es construir un chat que tenga acceso indiscriminado al CRM. El objetivo es construir un agente comercial que razone sobre resultados confiables obtenidos mediante herramientas controladas.
+
+### 1.1 Alcance funcional
+
+La arquitectura debe soportar el alcance funcional definido para Mi Coach:
+
+- Consultar cuentas, contactos, leads, oportunidades, actividades y pipeline.
+- Entender la situación de una entidad y detectar riesgos, bloqueos e información faltante.
+- Preparar llamadas, reuniones, demostraciones, negociaciones y seguimientos.
+- Evaluar si una oportunidad está lista para avanzar en el proceso comercial.
+- Proponer la creación o actualización de registros sin guardar cambios automáticamente.
+- Transferir al vendedor a los módulos oficiales para completar formularios, validaciones y aprobaciones.
+- Recuperar contexto y operaciones pendientes cuando el vendedor regrese a la conversación.
+
+Mi Coach orienta y prepara; no sustituye el criterio del vendedor ni la responsabilidad de los módulos CRM.
+
+### 1.2 Proceso comercial como marco de asesoría
+
+Las recomendaciones deben relacionarse con la etapa actual, sus preguntas, resultados esperados y evidencia disponible. El proceso comercial contempla:
+
+1. Contacto Inicial.
+2. Identificación de Oportunidad.
+3. Desarrollo.
+4. Cotización.
+5. Demostración.
+6. Negociación.
+7. Waiting.
+
+Una evaluación de preparación de etapa debe distinguir:
+
+- Avances confirmados.
+- Preguntas o datos pendientes.
+- Riesgos y bloqueos.
+- Contactos o roles todavía no identificados.
+- Siguiente paso, responsable, fecha objetivo y criterio de éxito.
+- Recomendación de avanzar, avanzar con cautela o permanecer en la etapa.
+
+La existencia de una actividad, cotización o solicitud del vendedor no demuestra por sí sola que la oportunidad esté lista para avanzar.
 
 ## 2. Principios de diseño
 
@@ -53,6 +94,10 @@ Las consultas pueden resolverse directamente con datos autorizados. Las modifica
 ### 2.5 Los errores deben ser visibles y recuperables
 
 Cuando el agente no pueda resolver una entidad, debe explicar qué falta y mostrar opciones diferenciadas. No debe seleccionar una entidad parecida por su cuenta ni cambiar silenciosamente de oportunidad a lead.
+
+### 2.6 El vendedor conserva el control
+
+Toda creación o actualización debe seguir el flujo `pregunta -> propuesta -> revisión editable -> confirmación -> resultado`. El vendedor puede corregir o cancelar la propuesta antes de que el servicio de comandos la ejecute.
 
 ## 3. Arquitectura actual
 
@@ -242,7 +287,37 @@ Una sesión debe conservar:
 
 El `localStorage` puede conservar una referencia auxiliar, pero no debe poder restaurar una sesión que el servidor considera cerrada.
 
-## 6. Contrato de respuestas
+El contexto de sesión es tipado y relacional. Puede contener cuenta, oportunidad, contacto o lead, pero una entidad mencionada de forma clara y única solo reemplaza el contexto anterior después de validar sus IDs y relaciones. Las referencias como "esa oportunidad" o "el contacto" usan el contexto activo compatible; una nueva entidad explícita inicia un tramo contextual nuevo sin borrar los mensajes visibles.
+
+Al cambiar de cuenta, se debe confirmar el cierre de la conversación, limpiar sus borradores y establecer el nuevo contexto. Las operaciones pendientes deben completarse o descartarse antes del cambio. La opción de conversación general aplica el mismo reinicio sin seleccionar una cuenta.
+
+## 6. Contrato funcional del asesor
+
+Además del contrato técnico de respuestas, el asesor debe diferenciar estos tipos de interacción:
+
+- **Consulta de contexto:** informa datos registrados sin generar cambios.
+- **Preparación de etapa:** explica qué está cubierto, qué falta y qué impide avanzar.
+- **Diagnóstico y recomendación:** explica riesgo, impacto, mitigación y resultado esperado.
+- **Preparación de interacción:** organiza objetivo, participantes, preguntas y compromiso esperado.
+- **Creación guiada:** prepara un registro y entrega el control al módulo oficial.
+- **Actualización guiada:** propone un cambio mostrando valor actual, nuevo valor y motivo.
+- **Aclaración:** solicita únicamente el dato necesario para continuar con seguridad.
+
+Las operaciones funcionales pueden incluir actividades, respuestas de etapa, campos de oportunidad, cuenta o contacto, resultados de llamadas, resolución de leads y creación guiada de cuentas, contactos, oportunidades, leads, mapeos, cotizaciones y propuestas. La lista concreta de campos y permisos debe permanecer en los servicios de dominio, no en el prompt.
+
+## 7. Continuidad y handoff a módulos
+
+Cuando una operación requiere un formulario oficial, el agente debe emitir un handoff opaco asociado al usuario, al módulo destino y a la operación. El handoff:
+
+- No autoriza escrituras directas.
+- Tiene vigencia limitada.
+- Puede conservarse si el vendedor cierra el formulario sin guardar.
+- Se completa únicamente después de un guardado exitoso en el módulo destino.
+- Mantiene la intención original y los campos pendientes.
+
+El módulo destino conserva sus catálogos, validaciones, controles de duplicados, permisos y aprobación final. Al regresar al Coach, la sesión debe mostrar si la operación fue completada, cancelada o quedó pendiente.
+
+## 8. Contrato de respuestas
 
 El agente debe devolver un tipo de respuesta estable:
 
@@ -277,7 +352,7 @@ Cada candidato debe incluir, según corresponda:
 
 Los candidatos se deben deduplicar por `entityType` e `id` antes de enviarlos al frontend.
 
-## 7. Seguridad y alcance
+## 9. Seguridad y alcance
 
 El modelo no debe recibir ni decidir el alcance completo del CRM. Cada herramienta debe aplicar:
 
@@ -297,7 +372,7 @@ El resultado debe distinguir entre:
 
 La ausencia de un registro en una herramienta no debe convertirse automáticamente en una afirmación de que el registro no existe en todo el CRM.
 
-## 8. Flujos principales
+## 10. Flujos principales
 
 ### 8.1 Consulta única
 
@@ -347,7 +422,7 @@ No se debe reiniciar la conversación ni cambiar la entidad principal durante es
 7. Se registra auditoría.
 8. El agente informa el resultado real.
 
-## 9. Estados y reglas CRM
+## 11. Estados y reglas CRM
 
 El Coach debe consumir catálogos únicos para:
 
@@ -366,7 +441,7 @@ Las reglas deben ser explícitas:
 - Una cuenta puede ser el criterio de búsqueda de una oportunidad sin convertirse en la entidad principal.
 - Los registros con nombres iguales deben diferenciarse por ID, cuenta, monto o fecha.
 
-## 10. Observabilidad y calidad
+## 12. Observabilidad y calidad
 
 Cada turno debe poder rastrearse con:
 
@@ -397,7 +472,7 @@ Debe existir un conjunto de evaluación con preguntas reales del vendedor. Como 
 
 Cada caso debe tener una expectativa estructurada, no solo una comparación textual de la respuesta.
 
-## 11. Diferencia frente a la implementación actual
+## 13. Diferencia frente a la implementación actual
 
 | Responsabilidad | Implementación actual | Arquitectura objetivo |
 | --- | --- | --- |
@@ -411,7 +486,7 @@ Cada caso debe tener una expectativa estructurada, no solo una comparación text
 | Permisos | Distribuidos entre rutas y consultas | Aplicados dentro de cada herramienta y comando |
 | Calidad | Pruebas por funcionalidad | Evaluación continua con preguntas reales |
 
-## 12. Ruta de transición
+## 14. Ruta de transición
 
 ### Fase 1: estabilizar consultas
 
@@ -421,6 +496,8 @@ Cada caso debe tener una expectativa estructurada, no solo una comparación text
 - Resolver búsquedas por cuenta, etapa y estado.
 - Eliminar aclaraciones reconstruidas en frontend.
 - Agregar deduplicación por ID.
+
+La Fase 0 previa a esta transición está documentada en [Mi Coach - Fase 0: línea base y matriz de evaluación](./chat-coach-fase-0-linea-base.md). Define las preguntas representativas, resultados esperados, casos críticos y criterio de salida antes de modificar el orquestador.
 
 ### Fase 2: validar con preguntas reales
 
@@ -441,7 +518,7 @@ Cada caso debe tener una expectativa estructurada, no solo una comparación text
 
 Solo después de estabilizar el agente principal se deben evaluar agentes especializados para prospección, preparación de reuniones o investigación externa. Estos agentes deben utilizar las mismas herramientas, políticas y contratos del CRM.
 
-## 13. Decisión recomendada
+## 15. Decisión recomendada
 
 La arquitectura recomendada es:
 

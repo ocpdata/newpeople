@@ -19,6 +19,8 @@ export async function ensureCoachSchema() {
           context_snapshot JSON NULL,
           messages JSON NOT NULL,
           draft_operation JSON NULL,
+          pending_question TEXT NULL,
+          session_version INT UNSIGNED NOT NULL DEFAULT 1,
           created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
           updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
           closed_at DATETIME(3) NULL,
@@ -26,6 +28,22 @@ export async function ensureCoachSchema() {
           INDEX idx_coach_sessions_context (user_id, opportunity_id, updated_at)
         )
       `);
+      const sessionColumns = await query(
+        `SHOW COLUMNS FROM coach_conversation_sessions`,
+      );
+      const sessionColumnNames = new Set(
+        sessionColumns.map((column) => column.Field),
+      );
+      if (!sessionColumnNames.has("pending_question")) {
+        await query(
+          `ALTER TABLE coach_conversation_sessions ADD COLUMN pending_question TEXT NULL AFTER draft_operation`,
+        );
+      }
+      if (!sessionColumnNames.has("session_version")) {
+        await query(
+          `ALTER TABLE coach_conversation_sessions ADD COLUMN session_version INT UNSIGNED NOT NULL DEFAULT 1 AFTER pending_question`,
+        );
+      }
       await query(`
         CREATE TABLE IF NOT EXISTS coach_operation_audits (
           id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

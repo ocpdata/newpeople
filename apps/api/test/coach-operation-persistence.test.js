@@ -37,6 +37,12 @@ describe("Coach operation persistence", () => {
       work({ query: async (...args) => [await queryMock(...args)] }),
     );
     queryMock.mockImplementation(async (sql, params = []) => {
+      if (
+        sql.includes("SELECT status FROM coach_conversation_sessions") &&
+        sql.includes("FOR UPDATE")
+      ) {
+        return [{ status: "active" }];
+      }
       if (sql.includes("INSERT INTO coach_session_operations")) {
         const [
           sessionId,

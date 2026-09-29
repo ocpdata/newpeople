@@ -1,3 +1,9 @@
+import {
+  dedupeCoachRecords,
+  getCoachOpportunityRecords,
+  inferCoachOpportunityFilters,
+} from "./read-tools.js";
+
 const NON_IDENTIFYING_TOKENS = new Set([
   "para",
   "esta",
@@ -76,6 +82,10 @@ function normalize(value) {
     .trim();
 }
 
+function readCandidateField(record, field) {
+  return field.split(".").reduce((value, key) => value?.[key], record);
+}
+
 function candidates(
   records,
   text,
@@ -87,7 +97,7 @@ function candidates(
   const matches = records
     .map((record) => {
       const labels = fields
-        .map((field) => normalize(record?.[field]))
+        .map((field) => normalize(readCandidateField(record, field)))
         .filter((label) => label.length >= 3);
       const match = labels
         .map((label) => {
@@ -152,35 +162,17 @@ function candidates(
     );
   const exactMatches = matches.filter(({ record }) =>
     fields.some((field) => {
-      const label = normalize(record?.[field]);
+      const label = normalize(readCandidateField(record, field));
       return label && normalizedText.includes(label);
     }),
   );
-  return (exactMatches.length ? exactMatches : matches).map(
-    ({ record }) => record,
+  return dedupeCoachRecords(
+    (exactMatches.length ? exactMatches : matches).map(({ record }) => record),
   );
 }
 
 export function resolveCoachEntities(snapshot, text) {
-  const activeOpportunities = Array.isArray(snapshot?.coachOpportunities)
-    ? snapshot.coachOpportunities
-    : Array.isArray(snapshot?.pipeline?.opportunities)
-      ? snapshot.pipeline.opportunities
-      : Array.isArray(snapshot?.workboard)
-        ? snapshot.workboard
-        : [];
-  const opportunities = [
-    ...activeOpportunities,
-    ...(Array.isArray(snapshot?.wonOpportunities)
-      ? snapshot.wonOpportunities
-      : []),
-    ...(Array.isArray(snapshot?.lostOpportunities)
-      ? snapshot.lostOpportunities
-      : []),
-    ...(Array.isArray(snapshot?.cancelledOpportunities)
-      ? snapshot.cancelledOpportunities
-      : []),
-  ];
+  const opportunities = getCoachOpportunityRecords(snapshot);
   const accounts = Array.isArray(snapshot?.accounts)
     ? snapshot.accounts
     : Array.from(
@@ -201,7 +193,48 @@ export function resolveCoachEntities(snapshot, text) {
     "website",
     "phone",
   ]);
-  const opportunityMatches = candidates(opportunities, text, ["name"]);
+  const opportunityFilters = inferCoachOpportunityFilters(text);
+  const opportunityMatches = candidates(opportunities, text, [
+    "name",
+    "accountName",
+    "account.name",
+  ]).filter((opportunity) => {
+    if (
+      opportunityFilters.stageCodes.length &&
+      !opportunityFilters.stageCodes.includes(
+        String(opportunity?.stageCode || "").trim(),
+      )
+    )
+      return false;
+    if (
+      opportunityFilters.commercialStatusCodes.length &&
+      opportunity?.commercialStatusCode &&
+      !opportunityFilters.commercialStatusCodes.includes(
+        String(opportunity?.commercialStatusCode || "").trim(),
+      )
+    )
+      return false;
+    const activationStatusCode = String(
+      opportunity?.activationStatusCode || "activada",
+    ).trim();
+    if (
+      opportunityFilters.activeOnly &&
+      activationStatusCode !== "activada"
+    )
+      return false;
+    if (
+      opportunityFilters.inactiveOnly &&
+      activationStatusCode === "activada"
+    )
+      return false;
+    if (
+      opportunityFilters.openOnly &&
+      opportunity?.lifecycle &&
+      String(opportunity.lifecycle) !== "open"
+    )
+      return false;
+    return true;
+  });
   const contactMatches = candidates(
     contacts,
     text,
@@ -214,8 +247,11 @@ export function resolveCoachEntities(snapshot, text) {
   const asksForLead = /\b(?:lead|leads|prospecto|prospectos)\b/.test(
     normalizedText,
   );
-  if (asksForOpportunity && !asksForLead && opportunityMatches.length === 1) {
+  if (asksForOpportunity && !asksForLead) {
     leadMatches = [];
+  }
+  if (asksForLead && !asksForOpportunity) {
+    opportunityMatches.length = 0;
   }
   const account = accountMatches.length === 1 ? accountMatches[0] : null;
   const opportunity =
@@ -240,7 +276,12 @@ export function resolveCoachEntities(snapshot, text) {
         accountId: Number(item.account?.id || item.accountId || 0) || null,
         contactId: Number(item.contact?.id || item.contactId || 0) || null,
         accountName: item.accountName || item.account?.name || "",
+        stageCode: item.stageCode || "",
         stageName: item.stageName || "",
+        activationStatusCode: item.activationStatusCode || "",
+        commercialStatusCode: item.commercialStatusCode || "",
+        amountUsd: Number(item.amountUsd || 0),
+        closeDate: item.closeDate || null,
       })),
       contacts: contactMatches.map((item) => ({
         id: Number(item.id),
@@ -482,8 +523,13 @@ export function buildCoachEntityClarification(
         contactId: Number(item.contactId || 0) || null,
         opportunityId: Number(item.opportunityId || 0) || null,
         accountName: item.accountName || null,
+        stageCode: item.stageCode || null,
         entityType,
         stageName: item.stageName || null,
+        activationStatusCode: item.activationStatusCode || null,
+        commercialStatusCode: item.commercialStatusCode || null,
+        amountUsd: Number(item.amountUsd || 0),
+        closeDate: item.closeDate || null,
         email: item.email || null,
         positionTitle: item.positionTitle || null,
         website: item.website || null,

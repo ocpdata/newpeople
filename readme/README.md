@@ -43,6 +43,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Mi Coach](./mi-coach.md)
 - [Chat del Coach](./chat-coach.md)
 - [Arquitectura del Chat Coach](./arquitectura-chat-coach.md)
+- [Mi Coach - Fase 0: linea base y matriz de evaluacion](./chat-coach-fase-0-linea-base.md)
 - [Pruebas](./pruebas.md)
 - [Patron comun de listas y edicion](./patron-comun-listas-y-edicion.md)
 - [Arquitectura de la aplicacion](./arquitectura-aplicacion.md)

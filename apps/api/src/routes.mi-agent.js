@@ -25,6 +25,7 @@ import {
   getOrCreateCoachSession,
   listCoachSessionOperations,
   persistCoachOperations,
+  setCoachPendingQuestion,
   transitionCoachOperation,
   updateCoachOperation,
 } from "./coach/service.js";
@@ -52,6 +53,11 @@ import {
   getDelegatedCoachOperationPermissions,
   hasAnyPermission,
 } from "./coach/operation-policy.js";
+import {
+  prepareCoachTurn,
+  resolveCoachRolloutMode,
+  runCoachJob,
+} from "./coach/agent-gateway.js";
 import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
 import { getCoachMetrics } from "./coach/metrics.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
@@ -88,57 +94,11 @@ export function classifyCoachOpportunityLifecycle({
   return "open";
 }
 
-export function resolveCoachTurnContext(
-  requestContext = {},
-  sessionContext = {},
-  isExistingSession = false,
-) {
-  const source = isExistingSession ? sessionContext : requestContext;
-  return Object.fromEntries(
-    [
-      "accountId",
-      "contactId",
-      "opportunityId",
-      "quotationId",
-      "proposalId",
-      "leadId",
-    ].map((key) => [key, Number(source?.[key] || 0) || null]),
-  );
-}
-
-export function coachSessionContextMatchesRequest(
-  requestContext,
-  sessionContext = {},
-) {
-  if (!requestContext || typeof requestContext !== "object") return true;
-  return Object.keys(requestContext).every((key) => {
-    const requestedId = Number(requestContext[key] || 0) || null;
-    const storedId = Number(sessionContext?.[key] || 0) || null;
-    return requestedId === storedId;
-  });
-}
-
-export function getCoachConversationHistory(
-  messages = [],
-  requestContext = null,
-  sessionContext = {},
-) {
-  if (!coachSessionContextMatchesRequest(requestContext, sessionContext)) {
-    return [];
-  }
-  return (Array.isArray(messages) ? messages : [])
-    .filter(
-      (message) =>
-        !message.context ||
-        coachSessionContextMatchesRequest(requestContext, message.context),
-    )
-    .slice(-8)
-    .map((message) => ({
-      role: message.role,
-      text: message.text || message.result?.answer || "",
-    }))
-    .filter((message) => message.text);
-}
+export {
+  coachSessionContextMatchesRequest,
+  getCoachConversationHistory,
+  resolveCoachTurnContext,
+} from "./coach/agent-gateway.js";
 
 export function resolveCoachContextEntities(
   snapshot,
@@ -277,6 +237,19 @@ async function ensureMiAgentSchema() {
     ],
     ["question", "TEXT NULL AFTER status"],
     ["context_snapshot", "JSON NULL AFTER question"],
+  ]) {
+    const rows = await query(
+      `SHOW COLUMNS FROM mi_agent_analysis_jobs LIKE '${column}'`,
+    );
+    if (!rows.length) {
+      await query(
+        `ALTER TABLE mi_agent_analysis_jobs ADD COLUMN ${column} ${definition}`,
+      );
+    }
+  }
+  for (const [column, definition] of [
+    ["observability_json", "JSON NULL AFTER result_json"],
+    ["latency_ms", "INT UNSIGNED NULL AFTER observability_json"],
   ]) {
     const rows = await query(
       `SHOW COLUMNS FROM mi_agent_analysis_jobs LIKE '${column}'`,
@@ -1642,6 +1615,7 @@ const COACH_INTENTS = new Set([
   "update_record",
   "continue_work",
   "clarification",
+  "error",
   "freeform",
 ]);
 
@@ -2256,6 +2230,7 @@ export function normalizeCoachResult(
               name: item.name || "Oportunidad sin nombre",
               accountName:
                 item.accountName || item.account?.name || "Sin cuenta",
+              entityType: "opportunity",
             })),
             activity: {
               actionType: /llamada/i.test(normalizedQuestion)
@@ -2276,12 +2251,16 @@ export function normalizeCoachResult(
     responseType: [
       "informational",
       "recommendation",
+      "action_proposal",
       "change_request",
+      "error",
       "clarification",
     ].includes(String(source.responseType || "").trim())
       ? inferredStageAnswer
-        ? "change_request"
-        : String(source.responseType).trim()
+        ? "action_proposal"
+        : String(source.responseType).trim() === "change_request"
+          ? "action_proposal"
+          : String(source.responseType).trim()
       : clarification
         ? "clarification"
         : rawAction
@@ -2404,8 +2383,8 @@ export function normalizeCoachResult(
   return safeParseCoachResponse({
     intent: authoritativeStageReadiness
       ? "opportunity_preparation"
-      : "freeform",
-    responseType: "informational",
+      : "error",
+    responseType: "error",
     answer: normalizedResponse.answer.slice(0, 6000),
     facts: [],
     evidence: normalizedResponse.evidence
@@ -3299,16 +3278,27 @@ function buildCoachPrompt(
           "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si existe selectedRecord de tipo opportunity, ese registro es la fuente principal: para preguntas sobre monto, importe, valor, fecha, etapa o nombre responde primero con sus campos exactos y no uses totales globales del pipeline como sustituto. Los totales globales solo aplican cuando la pregunta es general o no hay una oportunidad seleccionada. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
       },
       {
+        role: "system",
+        content:
+          "Actúa como agente coordinador. Solo interpreta la pregunta, selecciona conceptualmente read tools, interpreta sus resultados y redacta la respuesta. No consultes MySQL, no inventes IDs, no resuelvas permisos, no ejecutes escrituras y no cambies de entidad sin evidencia. Usa responseType informational, clarification, recommendation, action_proposal o error. Toda operation es solo una propuesta que requiere confirmación externa.",
+      },
+      {
         role: "user",
         content: JSON.stringify({
           question,
           stageReadinessPolicy:
             "Si snapshot.deterministicStageReadiness existe, úsalo como diagnóstico autoritativo. No cambies qué criterios están cumplidos, pendientes o bloqueados. Redacta answer explicando sus seis bloques: etapa actual, avances confirmados, pendientes, riesgos, siguiente paso y recomendación de avance.",
+          toolCalls: [
+            {
+              toolName: "searchOpportunities|searchAccounts|searchContacts|searchLeads|getOpportunity|getOpportunityActivities|getSellerPipeline|getOpportunityReadiness",
+              arguments: {},
+            },
+          ],
           expectedJsonShape: {
             intent:
               "seller_status|today_priorities|at_risk_opportunities|neglected_accounts|pipeline_coverage|opportunity_preparation|context_query|risk_diagnosis|recommendation|interaction_preparation|create_record|update_record|continue_work|clarification|freeform",
             responseType:
-              "informational|recommendation|change_request|clarification",
+              "informational|recommendation|action_proposal|clarification|error",
             answer: "",
             facts: [
               {
@@ -3413,6 +3403,7 @@ function buildCoachPrompt(
           processGuide: clip(processGuide, 18000),
           selectedContext,
           conversationHistory,
+          readToolResults: snapshot.readToolResults || [],
           snapshot,
         }),
       },
@@ -3850,6 +3841,63 @@ async function executeMiAgentAnalysisJob({ jobId, user }) {
   }
 }
 
+async function recordCoachShadowComparison(primaryJobId, shadowJobId) {
+  try {
+    const rows = await query(
+      `SELECT id, result_json, observability_json
+       FROM mi_agent_analysis_jobs WHERE id IN (?, ?) ORDER BY id ASC`,
+      [Number(primaryJobId), Number(shadowJobId)],
+    );
+    const primary = rows.find((row) => Number(row.id) === Number(primaryJobId));
+    const shadow = rows.find((row) => Number(row.id) === Number(shadowJobId));
+    if (!primary || !shadow) return;
+    const parse = (value, fallback) => {
+      try {
+        return typeof value === "string" ? JSON.parse(value) : value || fallback;
+      } catch {
+        return fallback;
+      }
+    };
+    const primaryResult = parse(primary.result_json, {});
+    const shadowResult = parse(shadow.result_json, {});
+    const comparable = (result) => ({
+      intent: result?.intent || null,
+      responseType: result?.responseType || null,
+      entities: result?.entities || null,
+      operations: Array.isArray(result?.operations)
+        ? result.operations.map((operation) => ({
+            kind: operation.kind,
+            opportunityId: operation.opportunityId || null,
+            accountId: operation.accountId || null,
+            contactId: operation.contactId || null,
+            interactionId: operation.interactionId || null,
+          }))
+        : [],
+    });
+    const primaryComparable = comparable(primaryResult);
+    const shadowComparable = comparable(shadowResult);
+    const observability = parse(primary.observability_json, {}) || {};
+    await query(
+      `UPDATE mi_agent_analysis_jobs SET observability_json = ? WHERE id = ?`,
+      [
+        JSON.stringify({
+          ...observability,
+          rollout: {
+            mode: "shadow",
+            shadowJobId: Number(shadowJobId),
+            matched: JSON.stringify(primaryComparable) === JSON.stringify(shadowComparable),
+            primary: primaryComparable,
+            shadow: shadowComparable,
+          },
+        }),
+        Number(primaryJobId),
+      ],
+    );
+  } catch (error) {
+    console.warn("[mi-agent] No fue posible comparar ejecución shadow:", error?.message || error);
+  }
+}
+
 router.get(
   "/context",
   requirePermission(MI_COACH_USE_PERMISSION),
@@ -3885,41 +3933,17 @@ router.post(
   "/coach",
   requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
-    const question = String(req.body?.question || "").trim();
-    let conversationHistory = Array.isArray(req.body?.history)
-      ? req.body.history
-          .filter((message) => message && typeof message === "object")
-          .map((message) => ({
-            role: message.role === "coach" ? "coach" : "seller",
-            text: String(message.text || "")
-              .trim()
-              .slice(0, 2000),
-          }))
-          .filter((message) => message.text)
-          .slice(-8)
-      : [];
-    let selectedContext =
-      req.body?.context && typeof req.body.context === "object"
-        ? {
-            accountId: Number(req.body.context.accountId || 0) || null,
-            opportunityId: Number(req.body.context.opportunityId || 0) || null,
-            contactId: Number(req.body.context.contactId || 0) || null,
-            leadId: Number(req.body.context.leadId || 0) || null,
-          }
-        : {};
+    const {
+      question,
+      conversationHistory,
+      selectedContext,
+      requestedSessionId,
+      session,
+    } = await prepareCoachTurn({
+      userId: Number(req.user.id),
+      body: req.body,
+    });
     const userId = Number(req.user.id);
-    const requestedSessionId = Number(req.body?.sessionId || 0) || null;
-    let session = requestedSessionId
-      ? await getCoachSession(req.user.id, requestedSessionId)
-      : null;
-    if (session?.status === "closed") session = null;
-    if (session) {
-      selectedContext = resolveCoachTurnContext(
-        selectedContext,
-        session.context,
-        true,
-      );
-    }
     const hasAccountGlobalScope =
       req.user?.permissionSet?.has("cuentas.read_all");
     if (selectedContext.accountId) {
@@ -4046,15 +4070,11 @@ router.post(
         .json({ message: "La configuracion IA no esta habilitada" });
     if (!session)
       session = await createCoachSession(req.user.id, selectedContext);
-    if (session) {
-      if (!conversationHistory.length) {
-        conversationHistory = getCoachConversationHistory(
-          session.messages,
-          selectedContext,
-          session.context,
-        );
-      }
-    }
+    session = await setCoachPendingQuestion(
+      req.user.id,
+      session.id,
+      question,
+    );
     await ensureMiAgentSchema();
     const result = await query(
       `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, context_snapshot, status)
@@ -4062,16 +4082,78 @@ router.post(
       [Number(req.user.id), question, JSON.stringify(selectedContext)],
     );
     const jobId = Number(result.insertId);
-    setImmediate(() =>
-      executeCoachJob({
+    const rolloutMode = resolveCoachRolloutMode(req.user);
+    let shadowJobId = null;
+    if (rolloutMode === "shadow") {
+      const shadowResult = await query(
+        `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, context_snapshot, status)
+         VALUES (?, 'coach_shadow', ?, ?, 'pending')`,
+        [Number(req.user.id), question, JSON.stringify(selectedContext)],
+      );
+      shadowJobId = Number(shadowResult.insertId);
+    }
+    const gatewayDependencies = {
+      query,
+      getMiAgentContext,
+      resolveCoachContextEntities,
+      applyCoachEntityResolution,
+      normalizeCoachMatchText,
+      buildCoachEntityClarification,
+      getMiAgentEnrichedContext,
+      buildCoachScopedSnapshot,
+      isStagePreparationQuestion,
+      buildStageReadiness,
+      loadProcessGuide,
+      requestMiAgentJson,
+      buildCoachPrompt,
+      resolveCoachResponseContext,
+      normalizeCoachResult,
+      persistCoachOperations,
+      appendCoachSessionTurn,
+      featureCode: MI_COACH_FEATURE_CODE,
+    };
+    setImmediate(() => {
+      if (rolloutMode === "legacy") {
+        return executeCoachJob({
+          jobId,
+          user: req.user,
+          question,
+          selectedContext,
+          conversationHistory,
+          sessionId: session?.id || null,
+        });
+      }
+      if (rolloutMode === "shadow") {
+        return Promise.all([
+          runCoachJob({
+            jobId,
+            user: req.user,
+            question,
+            selectedContext,
+            conversationHistory,
+            sessionId: session?.id || null,
+            dependencies: gatewayDependencies,
+          }),
+          executeCoachJob({
+            jobId: shadowJobId,
+            user: req.user,
+            question,
+            selectedContext,
+            conversationHistory,
+            sessionId: null,
+          }),
+        ]).then(() => recordCoachShadowComparison(jobId, shadowJobId));
+      }
+      return runCoachJob({
         jobId,
         user: req.user,
         question,
         selectedContext,
         conversationHistory,
         sessionId: session?.id || null,
-      }),
-    );
+        dependencies: gatewayDependencies,
+      });
+    });
     return res.status(202).json({
       sessionId: session?.id || null,
       job: { id: jobId, status: "pending", pollAfterMs: 1000 },
@@ -4270,6 +4352,11 @@ router.post(
       return res
         .status(409)
         .json({ message: "La operación no admite handoff" });
+    if (result.outcome === "not_ready")
+      return res.status(409).json({
+        message: "La operación debe revisarse y quedar lista antes del handoff",
+        operation: result.operation,
+      });
     if (result.outcome === "closed")
       return res.status(409).json({ message: "La operación ya está cerrada" });
     const operation = result.operation;
@@ -4823,7 +4910,7 @@ router.get(
   async (req, res) => {
     await ensureMiAgentSchema();
     const rows = await query(
-      `SELECT id, status, question, context_snapshot, result_json, error_message, created_at, updated_at
+      `SELECT id, status, question, context_snapshot, result_json, observability_json, latency_ms, error_message, created_at, updated_at
        FROM mi_agent_analysis_jobs
        WHERE id = ? AND created_by_user_id = ? AND job_kind = 'coach'
        LIMIT 1`,
@@ -4852,17 +4939,70 @@ router.get(
     } catch {
       contextSnapshot = null;
     }
+    let observability = null;
+    try {
+      observability = job.observability_json
+        ? typeof job.observability_json === "string"
+          ? JSON.parse(job.observability_json)
+          : job.observability_json
+        : null;
+    } catch {
+      observability = null;
+    }
     return res.json({
       job: {
         id: Number(job.id),
         status: job.status,
         question: job.question,
         contextSnapshot,
+        observability,
+        latencyMs: Number(job.latency_ms || 0) || null,
         errorMessage: job.error_message || null,
         createdAt: job.created_at,
         updatedAt: job.updated_at,
       },
       result,
+    });
+  },
+);
+
+router.get(
+  "/coach/observability",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    await ensureMiAgentSchema();
+    const limit = Math.min(Math.max(Number(req.query?.limit || 50), 1), 200);
+    const rows = await query(
+      `SELECT id, status, question, observability_json, latency_ms,
+              error_message, created_at, updated_at
+       FROM mi_agent_analysis_jobs
+       WHERE created_by_user_id = ? AND job_kind = 'coach'
+       ORDER BY id DESC LIMIT ?`,
+      [Number(req.user.id), limit],
+    );
+    return res.json({
+      items: rows.map((row) => {
+        let observability = null;
+        try {
+          observability = row.observability_json
+            ? typeof row.observability_json === "string"
+              ? JSON.parse(row.observability_json)
+              : row.observability_json
+            : null;
+        } catch {
+          observability = null;
+        }
+        return {
+          jobId: Number(row.id),
+          status: row.status,
+          question: row.question || "",
+          latencyMs: Number(row.latency_ms || 0) || null,
+          observability,
+          error: row.error_message || null,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        };
+      }),
     });
   },
 );

@@ -12,18 +12,69 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
-function renderInlineMarkdown(text = "") {
+function resolveDocumentationAssetUrl(source, documentPath = "") {
+  const normalizedSource = String(source || "").trim();
+  if (/^https?:\/\//i.test(normalizedSource)) return normalizedSource;
+  if (normalizedSource.startsWith("/")) return normalizedSource;
+
+  const pathParts = String(documentPath || "")
+    .split("/")
+    .filter(Boolean);
+  pathParts.pop();
+  for (const part of normalizedSource.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      pathParts.pop();
+      continue;
+    }
+    pathParts.push(part);
+  }
+
+  return `/api/documentation/assets?path=${encodeURIComponent(pathParts.join("/"))}`;
+}
+
+function getDocumentationImageUrls(markdown = "", documentPath = "") {
+  return Array.from(
+    String(markdown || "").matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g),
+  )
+    .map((match) => resolveDocumentationAssetUrl(match[1], documentPath))
+    .filter((source) => source.startsWith("/api/documentation/assets?"));
+}
+
+function renderInlineMarkdown(text = "", documentPath = "", assetUrls = {}) {
   let html = escapeHtml(text);
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/__(.+?)__/g, "<strong>$1</strong>");
   html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
   html = html.replace(/_(.+?)_/g, "<em>$1</em>");
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_match, alt, source) => {
+    const resolvedSource = resolveDocumentationAssetUrl(source, documentPath);
+    const src = escapeHtml(assetUrls[resolvedSource] || resolvedSource);
+    return `<img src="${src}" alt="${alt}" loading="lazy" />`;
+  });
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   return html;
 }
 
-function renderMarkdownToHtml(markdown = "") {
+function splitMarkdownTableRow(row) {
+  return String(row || "")
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(row) {
+  const cells = splitMarkdownTableRow(row);
+  return (
+    cells.length > 0 &&
+    cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+  );
+}
+
+function renderMarkdownToHtml(markdown = "", documentPath = "", assetUrls = {}) {
   const content = String(markdown || "").replace(/\r\n/g, "\n").trim();
   if (!content) return "";
 
@@ -37,7 +88,7 @@ function renderMarkdownToHtml(markdown = "") {
       const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
       if (headingMatch) {
         const level = headingMatch[1].length;
-        const text = renderInlineMarkdown(headingMatch[2]);
+        const text = renderInlineMarkdown(headingMatch[2], documentPath, assetUrls);
         return `<h${level}>${text}</h${level}>`;
       }
 
@@ -48,6 +99,37 @@ function renderMarkdownToHtml(markdown = "") {
       }
 
       const listLines = trimmed.split(/\n/);
+      if (
+        listLines.length >= 2 &&
+        listLines[0].includes("|") &&
+        isMarkdownTableSeparator(listLines[1])
+      ) {
+        const headers = splitMarkdownTableRow(listLines[0]);
+        const rows = listLines.slice(2).map(splitMarkdownTableRow);
+        const headerHtml = headers
+          .map(
+            (cell) =>
+              `<th>${renderInlineMarkdown(cell, documentPath, assetUrls)}</th>`,
+          )
+          .join("");
+        const bodyHtml = rows
+          .map(
+            (row) =>
+              `<tr>${headers
+                .map(
+                  (_header, index) =>
+                    `<td>${renderInlineMarkdown(
+                      row[index] || "",
+                      documentPath,
+                      assetUrls,
+                    )}</td>`,
+                )
+                .join("")}</tr>`,
+          )
+          .join("");
+        return `<div class="documentation-table-wrap"><table class="documentation-table"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
+      }
+
       const isList = listLines.every((line) => /^([-*+]\s+|\d+\.\s+)/.test(line.trim()));
       if (isList) {
         const ordered = listLines.every((line) => /^\d+\.\s+/.test(line.trim()));
@@ -56,7 +138,7 @@ function renderMarkdownToHtml(markdown = "") {
           .map((line) => {
             const cleaned = line.trim();
             const text = cleaned.replace(/^([-*+]|\d+\.)\s+/, "");
-            return `<li>${renderInlineMarkdown(text)}</li>`;
+            return `<li>${renderInlineMarkdown(text, documentPath, assetUrls)}</li>`;
           })
           .join("");
 
@@ -67,12 +149,14 @@ function renderMarkdownToHtml(markdown = "") {
       const isQuote = quoteLines.every((line) => /^>\s?/.test(line));
       if (isQuote) {
         const quoteHtml = quoteLines
-          .map((line) => renderInlineMarkdown(line.replace(/^>\s?/, "")))
+          .map((line) =>
+            renderInlineMarkdown(line.replace(/^>\s?/, ""), documentPath, assetUrls),
+          )
           .join("<br />");
         return `<blockquote>${quoteHtml}</blockquote>`;
       }
 
-      const paragraph = renderInlineMarkdown(trimmed);
+      const paragraph = renderInlineMarkdown(trimmed, documentPath, assetUrls);
       return `<p>${paragraph}</p>`;
     })
     .join("");
@@ -83,6 +167,7 @@ export default function DocumentationPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [documentationAssetUrls, setDocumentationAssetUrls] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -158,6 +243,38 @@ export default function DocumentationPage() {
     [selectedItem],
   );
 
+  useEffect(() => {
+    let ignore = false;
+    const objectUrls = [];
+    const assetUrls = getDocumentationImageUrls(
+      selectedItem?.content || "",
+      selectedItem?.path || "",
+    );
+
+    setDocumentationAssetUrls({});
+    if (!assetUrls.length) return undefined;
+
+    Promise.all(
+      assetUrls.map(async (assetUrl) => {
+        const response = await api.get(assetUrl, { responseType: "blob" });
+        const objectUrl = URL.createObjectURL(response.data);
+        objectUrls.push(objectUrl);
+        return [assetUrl, objectUrl];
+      }),
+    )
+      .then((entries) => {
+        if (!ignore) setDocumentationAssetUrls(Object.fromEntries(entries));
+      })
+      .catch(() => {
+        if (!ignore) setDocumentationAssetUrls({});
+      });
+
+    return () => {
+      ignore = true;
+      objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
+    };
+  }, [selectedItem]);
+
   const groupedItems = useMemo(() => {
     const buckets = new Map();
     for (const item of items) {
@@ -209,7 +326,11 @@ export default function DocumentationPage() {
           <div
             className="documentation-content"
             dangerouslySetInnerHTML={{
-              __html: renderMarkdownToHtml(selectedItem.content || ""),
+              __html: renderMarkdownToHtml(
+                selectedItem.content || "",
+                selectedItem.path || "",
+                documentationAssetUrls,
+              ),
             }}
           />
         </article>

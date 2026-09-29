@@ -626,40 +626,6 @@ function buildCoachOpportunityOptions(openOpportunities, snapshot, accountId) {
   return [...unique.values()];
 }
 
-function buildCoachClarification(result, snapshot) {
-  const action = result?.action;
-  const unresolvedActivity = Array.isArray(result?.operations)
-    ? result.operations.find(
-        (operation) =>
-          operation?.kind === "activity" && !operation.opportunityId,
-      )
-    : null;
-  if ((!action?.title || action.opportunityId) && !unresolvedActivity)
-    return null;
-  const candidates = Array.isArray(snapshot?.coachOpportunities)
-    ? snapshot.coachOpportunities.slice(0, 8)
-    : [];
-  return {
-    message: "Para registrar esta actividad falta seleccionar la oportunidad.",
-    missing: ["Oportunidad", "Fecha completa"],
-    candidates,
-    activity: {
-      title:
-        unresolvedActivity?.title || action?.title || "Actividad comercial",
-      actionType:
-        unresolvedActivity?.actionType || action?.actionType || "meeting",
-      scheduledAt: unresolvedActivity?.scheduledAt || action?.scheduledAt || "",
-      dueDate: unresolvedActivity?.dueDate || action?.suggestedDueDate || "",
-      priority: unresolvedActivity?.priority || action?.priority || "medium",
-      notes: unresolvedActivity?.notes || "",
-      successCriteria:
-        unresolvedActivity?.successCriteria ||
-        action?.successCriteria ||
-        "Definir el siguiente compromiso del cliente.",
-    },
-  };
-}
-
 function formatCoachOperationLabel(operation) {
   const title = String(operation?.pendingOperation?.title || "").trim();
   if (title && title.toLowerCase() !== "unknown") return title;
@@ -760,12 +726,7 @@ export default function MiAgentPage({
     contactId: "",
     leadId: "",
   });
-  const [coachSessionId, setCoachSessionId] = useState(() => {
-    const storedSessionId = Number(
-      window.localStorage.getItem("mi-agent-coach-session") || 0,
-    );
-    return storedSessionId || null;
-  });
+  const [coachSessionId, setCoachSessionId] = useState(null);
   const [loadingCoachContext, setLoadingCoachContext] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2470,13 +2431,15 @@ export default function MiAgentPage({
   }
 
   async function applyCoachClarification(candidate, clarification) {
-    if (clarification?.activity && candidate?.entityType === "opportunity") {
+    const entityType = candidate?.entityType;
+    if (!entityType) {
+      setError("La aclaración del Coach no incluye el tipo de entidad requerido.");
+      return;
+    }
+    if (clarification?.activity && entityType === "opportunity") {
       openClarifiedCoachActivity(candidate, clarification.activity);
       return;
     }
-    const entityType =
-      candidate?.entityType ||
-      String(clarification?.type || "").replace("select_", "");
     const nextContext = {
       accountId: String(
         candidate?.accountId || (entityType === "account" ? candidate.id : ""),
@@ -3551,17 +3514,10 @@ export default function MiAgentPage({
                   </button>
                 ) : null}
                 {coachMessages
-                  .filter(
-                    (message) =>
-                      message.result &&
-                      (message.result.clarification ||
-                        buildCoachClarification(message.result, snapshot)),
-                  )
+                  .filter((message) => message.result?.clarification)
                   .slice(-1)
                   .map((message) => {
-                    const clarification =
-                      message.result.clarification ||
-                      buildCoachClarification(message.result, snapshot);
+                    const clarification = message.result.clarification;
                     return (
                       <div
                         className="mi-agent-coach-action"
@@ -3574,7 +3530,7 @@ export default function MiAgentPage({
                             <button
                               type="button"
                               className="btn-secondary"
-                              key={`${candidate.entityType || clarification.type}-${candidate.id}`}
+                              key={`${candidate.entityType}-${candidate.id}`}
                               onClick={() =>
                                 applyCoachClarification(
                                   candidate,

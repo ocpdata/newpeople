@@ -86,7 +86,7 @@ describe("Coach entity resolver", () => {
     expect(transition.context.contactId).toBeNull();
   });
 
-  test("un nombre exacto de cuenta no coincide con contacto por dominio ni lead por token compartido", () => {
+  test("una cuenta restringe la busqueda de oportunidades sin mezclar contactos ni leads", () => {
     const raloySnapshot = {
       accounts: [
         { id: 23, name: "Raloy Lubricantes" },
@@ -132,7 +132,7 @@ describe("Coach entity resolver", () => {
     expect(transition).toMatchObject({
       changed: true,
       conflict: null,
-      context: { accountId: 23, opportunityId: null, leadId: null },
+      context: { accountId: 23, opportunityId: 27, leadId: null },
     });
   });
 
@@ -214,6 +214,75 @@ describe("Coach entity resolver", () => {
     const result = resolveCoachEntities(snapshot, "seguridad");
     expect(result.opportunity).toBeNull();
     expect(result.candidates.opportunities).toHaveLength(3);
+  });
+
+  test("busca oportunidades por cuenta y etapa sin ofrecer leads", () => {
+    const totalplaySnapshot = {
+      accounts: [{ id: 40, name: "Totalplay" }],
+      coachOpportunities: [
+        {
+          id: 401,
+          name: "Renovacion de infraestructura",
+          accountId: 40,
+          account: { id: 40, name: "Totalplay" },
+          stageCode: "waiting",
+          stageName: "Waiting",
+        },
+        {
+          id: 402,
+          name: "Servicios administrados",
+          accountId: 40,
+          account: { id: 40, name: "Totalplay" },
+          stageCode: "waiting",
+          stageName: "Waiting",
+        },
+      ],
+      leads: [{ id: 501, title: "Totalplay", accountId: 40 }],
+    };
+    const result = resolveCoachEntities(
+      totalplaySnapshot,
+      "Cual es la oportunidad de Totalplay que esta en waiting?",
+    );
+    const clarification = buildCoachEntityClarification(
+      result,
+      "Cual es la oportunidad de Totalplay que esta en waiting?",
+    );
+
+    expect(result.candidates.opportunities.map((item) => item.id)).toEqual([
+      401,
+      402,
+    ]);
+    expect(result.candidates.leads).toEqual([]);
+    expect(clarification).toMatchObject({
+      type: "select_opportunity",
+      missing: ["Oportunidad"],
+    });
+    expect(clarification.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 401,
+          entityType: "opportunity",
+          accountName: "Totalplay",
+          stageCode: "waiting",
+        }),
+      ]),
+    );
+  });
+
+  test("deduplica registros repetidos por ID", () => {
+    const duplicate = {
+      id: 130,
+      name: "Oportunidad repetida",
+      accountId: 7,
+      account: { id: 7, name: "Acme México" },
+    };
+    const result = resolveCoachEntities(
+      { ...snapshot, coachOpportunities: [duplicate, { ...duplicate }] },
+      "Oportunidad repetida",
+    );
+
+    expect(result.candidates.opportunities).toHaveLength(1);
+    expect(result.opportunity?.id).toBe(130);
   });
 
   test("no trata palabras genéricas de seguimiento como nombre de oportunidad", () => {

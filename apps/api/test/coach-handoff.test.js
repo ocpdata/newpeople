@@ -126,6 +126,17 @@ describe("Coach handoffs", () => {
     expect(renewed.operation.handoffToken).not.toBe(firstToken);
   });
 
+  it("does not hand off proposals that still require review", async () => {
+    installQueryStore(buildRow({ status: "collecting" }));
+
+    const result = await createCoachHandoff(7, 41);
+
+    expect(result).toMatchObject({
+      outcome: "not_ready",
+      operation: { status: "collecting" },
+    });
+  });
+
   it("enforces ownership, module and expiration while loading", async () => {
     const token = "token-accounts";
     const readRow = installQueryStore(

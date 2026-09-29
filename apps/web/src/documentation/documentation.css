@@ -250,6 +250,39 @@
 .documentation-content a {
   color: #1d4ed8;
   text-decoration: underline;
+
+.documentation-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+
+.documentation-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.documentation-table th,
+.documentation-table td {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #dbe3ea;
+  text-align: left;
+  vertical-align: top;
+}
+
+.documentation-table th {
+  background: #eaf2f5;
+  color: #173b52;
+  font-weight: 800;
+}
+
+.documentation-table tr:nth-child(even) td {
+  background: #f8fafb;
+}
 }
 
 .documentation-content blockquote {

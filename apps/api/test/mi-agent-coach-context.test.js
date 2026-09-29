@@ -236,6 +236,7 @@ describe("Coach context optimization", () => {
           name: "Prosa Consolidado",
           accountId: 24,
           account: { id: 24, name: "Prosa" },
+          stageCode: "waiting",
         },
       ],
       leads: [{ id: 209, title: "PROSA", accountId: null }],

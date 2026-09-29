@@ -12,6 +12,38 @@ function parseJson(value, fallback) {
   }
 }
 
+async function recordCoachJobAction(execute, operation, action) {
+  if (!operation?.sourceJobId) return;
+  try {
+    const rows = await execute(
+      `SELECT observability_json FROM mi_agent_analysis_jobs WHERE id = ? LIMIT 1`,
+      [Number(operation.sourceJobId)],
+    );
+    const observability = parseJson(rows[0]?.observability_json, {}) || {};
+    const actions = Array.isArray(observability.actions)
+      ? observability.actions
+      : [];
+    actions.push({
+      ...action,
+      operationId: Number(operation.id),
+      recordedAt: new Date().toISOString(),
+    });
+    await execute(
+      `UPDATE mi_agent_analysis_jobs SET observability_json = ?, updated_at = NOW(3) WHERE id = ?`,
+      [
+        JSON.stringify({
+          ...observability,
+          actions: actions.slice(-20),
+          lastAction: actions.at(-1),
+        }),
+        Number(operation.sourceJobId),
+      ],
+    );
+  } catch {
+    // Observability must never block the business operation.
+  }
+}
+
 function normalizeContext(context = {}) {
   return {
     accountId: Number(context.accountId || 0) || null,
@@ -429,6 +461,9 @@ export async function createCoachHandoff(userId, operationId) {
     if (isActiveHandoff(existing)) {
       return { outcome: "ready", operation: existing };
     }
+    if (!["ready", "failed", "handed_off"].includes(existing.status)) {
+      return { outcome: "not_ready", operation: existing };
+    }
     const token = randomUUID();
     await execute(
       `UPDATE coach_session_operations
@@ -459,6 +494,11 @@ export async function createCoachHandoff(userId, operationId) {
       source: "handoff",
       eventKey: `handed_off:${existing.version + 1}`,
       metadata: { targetModule: existing.targetModule },
+    });
+    await recordCoachJobAction(execute, existing, {
+      event: "handed_off",
+      status: "handed_off",
+      domainModule: existing.targetModule,
     });
     const updatedRows = await execute(
       `SELECT * FROM coach_session_operations
@@ -736,6 +776,12 @@ export async function transitionCoachOperation(
     );
     const eventType = explicitEventType || transitionEventType(status);
     if (eventType) {
+          await recordCoachJobAction(execute, existing, {
+            event: eventType || status,
+            status,
+            domainModule: domainModule || existing.targetModule,
+            domainAuditId: domainAuditId || null,
+          });
       await insertCoachOperationEvent(execute, {
         operationId: existing.id,
         sessionId: existing.sessionId,
@@ -797,6 +843,8 @@ function mapSession(row) {
     contextSnapshot: parseJson(row.context_snapshot, null),
     messages: normalizeMessages(parseJson(row.messages, [])),
     draftOperation: parseJson(row.draft_operation, null),
+    pendingQuestion: row.pending_question || null,
+    version: Number(row.session_version || 1),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -882,7 +930,7 @@ export async function getOrCreateCoachSession(userId, sessionId, context = {}) {
 export async function updateCoachSession(
   userId,
   sessionId,
-  { context = {}, messages, draftOperation } = {},
+  { context = {}, messages, draftOperation, pendingQuestion } = {},
 ) {
   const existing = await getCoachSession(userId, sessionId);
   if (!existing || existing.status !== "active") return null;
@@ -895,7 +943,8 @@ export async function updateCoachSession(
   await query(
     `UPDATE coach_conversation_sessions
      SET account_id = ?, contact_id = ?, opportunity_id = ?, quotation_id = ?, proposal_id = ?, lead_id = ?,
-         context_snapshot = ?, messages = ?, draft_operation = ?, updated_at = NOW(3)
+       context_snapshot = ?, messages = ?, draft_operation = ?, pending_question = ?,
+       session_version = session_version + 1, updated_at = NOW(3)
      WHERE id = ? AND user_id = ? AND status = 'active'`,
     [
       normalizedContext.accountId,
@@ -909,11 +958,20 @@ export async function updateCoachSession(
       draftOperation === undefined
         ? JSON.stringify(existing.draftOperation)
         : JSON.stringify(draftOperation),
+      pendingQuestion === undefined
+        ? existing.pendingQuestion
+        : String(pendingQuestion || "").trim() || null,
       Number(sessionId),
       Number(userId),
     ],
   );
   return getCoachSession(userId, sessionId);
+}
+
+export async function setCoachPendingQuestion(userId, sessionId, question) {
+  return updateCoachSession(userId, sessionId, {
+    pendingQuestion: question,
+  });
 }
 
 export async function appendCoachSessionTurn(

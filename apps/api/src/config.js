@@ -42,6 +42,17 @@ export const config = {
       String(
         process.env.OPPORTUNITY_STAGE_ANSWER_SUGGESTIONS_ENABLED || "true",
       ) === "true",
+    coachAgentGatewayMode: String(
+      process.env.COACH_AGENT_GATEWAY_MODE || "gateway",
+    )
+      .trim()
+      .toLowerCase(),
+    coachAgentGatewayPilotUserIds: String(
+      process.env.COACH_AGENT_GATEWAY_PILOT_USER_IDS || "",
+    )
+      .split(",")
+      .map((value) => Number(value.trim() || 0))
+      .filter((value) => value > 0),
   },
   app: {
     baseUrl: process.env.APP_BASE_URL || "",

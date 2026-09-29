@@ -160,7 +160,7 @@ describe("Coach operation normalization", () => {
       { opportunityId: 10 },
     );
 
-    expect(result.responseType).toBe("change_request");
+    expect(result.responseType).toBe("action_proposal");
     expect(result.operations).toHaveLength(1);
     expect(result.operations[0].kind).toBe("stage_answer");
     expect(result.operations[0].questionId).toBe(7);
@@ -273,7 +273,7 @@ describe("Coach operation normalization", () => {
       { opportunityId: 10 },
     );
 
-    expect(result.responseType).toBe("informational");
+    expect(result.responseType).toBe("error");
     expect(result.confidence).toBe("low");
     expect(result.operations).toEqual([]);
   });
