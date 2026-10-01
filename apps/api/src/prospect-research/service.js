@@ -8,6 +8,7 @@ import {
   getMiCoachGovernanceSettings,
 } from "../commercial-intelligence/service.js";
 import { ensureProspectResearchSchema } from "./schema.js";
+import { createProspectChatAdapter } from "./prospect-chat-adapter.js";
 
 function clip(value, max = 1200) {
   const text = String(value || "")
@@ -809,6 +810,20 @@ export async function getProspectResearchSession({ user, sessionId }) {
     duplicateReview: mappedSession.result
       ? await findProspectAccountDuplicates({ user, session: mappedSession })
       : null,
+  };
+}
+
+export async function runProspectChat({ user, sessionId, question }) {
+  await ensureProspectResearchSchema();
+  const session = await getProspectResearchSession({ user, sessionId });
+  if (!session) return null;
+  const adapter = createProspectChatAdapter({ user, session, jobId: null });
+  const result = await adapter.runTurn({ question });
+  return {
+    ...result.response,
+    channel: "prospect",
+    sessionId: Number(sessionId),
+    source: "prospect_research",
   };
 }
 

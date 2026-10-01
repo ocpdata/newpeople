@@ -369,7 +369,9 @@ export function normalizeCustomerIntelligenceFinding(input = {}) {
         ? "public_web"
         : "crm_internal"),
     category: input.category,
-    title: input.title,
+    title: String(input.title || "")
+      .trim()
+      .slice(0, 190),
     summary: input.summary,
     evidence: input.evidence ?? input.evidenceText ?? "",
     source: input.source ?? input.sourceType ?? "crm",

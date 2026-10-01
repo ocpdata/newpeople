@@ -41,6 +41,8 @@ const ACTION_STATUS_LABELS = {
 
 const COACH_POLL_TIMEOUT_MS = 180000;
 const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
+const CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY =
+  "mi-agent-customer-chat-show-foundation";
 
 const COACH_HANDOFF_OPERATION_KINDS = new Set([
   "activity",
@@ -786,6 +788,13 @@ export default function MiAgentPage({
   const [customerChatQuestion, setCustomerChatQuestion] = useState("");
   const [customerChatMessages, setCustomerChatMessages] = useState([]);
   const [customerChatLoading, setCustomerChatLoading] = useState(false);
+  const [showCustomerChatFoundation, setShowCustomerChatFoundation] =
+    useState(
+      () =>
+        window.localStorage.getItem(
+          CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY,
+        ) === "true",
+    );
   const [customerChatPublicResearch, setCustomerChatPublicResearch] =
     useState(false);
   const [prospectForm, setProspectForm] = useState({
@@ -795,6 +804,9 @@ export default function MiAgentPage({
     industry: "",
   });
   const [prospectSession, setProspectSession] = useState(null);
+  const [prospectChatQuestion, setProspectChatQuestion] = useState("");
+  const [prospectChatMessages, setProspectChatMessages] = useState([]);
+  const [prospectChatLoading, setProspectChatLoading] = useState(false);
   const [prospectPreparing, setProspectPreparing] = useState(false);
   const [prospectError, setProspectError] = useState("");
   const [prospectFindingUpdatingId, setProspectFindingUpdatingId] =
@@ -1885,6 +1897,7 @@ export default function MiAgentPage({
       if (!sessionId)
         throw new Error("No se pudo crear la sesión de prospección");
       setProspectSession(createResponse.data.session);
+      setProspectChatMessages([]);
       const runResponse = await api.post(
         `/api/prospect-research/sessions/${sessionId}/run`,
         {},
@@ -1904,6 +1917,34 @@ export default function MiAgentPage({
       );
     } finally {
       setProspectPreparing(false);
+    }
+  }
+
+  async function askProspectChat(question = prospectChatQuestion) {
+    const normalizedQuestion = String(question || "").trim();
+    if (!normalizedQuestion || !prospectSession?.id) return;
+    setProspectChatLoading(true);
+    setProspectError("");
+    setProspectChatMessages((current) => [
+      ...current,
+      { role: "seller", text: normalizedQuestion },
+    ]);
+    setProspectChatQuestion("");
+    try {
+      const response = await api.post(
+        `/api/prospect-research/sessions/${prospectSession.id}/chat`,
+        { question: normalizedQuestion },
+      );
+      setProspectChatMessages((current) => [
+        ...current,
+        { role: "assistant", ...(response.data?.result || {}) },
+      ]);
+    } catch (requestError) {
+      setProspectError(
+        getApiErrorMessage(requestError, "No fue posible responder sobre el prospecto"),
+      );
+    } finally {
+      setProspectChatLoading(false);
     }
   }
 
@@ -2981,6 +3022,14 @@ export default function MiAgentPage({
     );
   }
 
+  function updateCustomerChatFoundationVisibility(visible) {
+    setShowCustomerChatFoundation(visible);
+    window.localStorage.setItem(
+      CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY,
+      String(visible),
+    );
+  }
+
   const coachDraftSerialized = coachOperationDraft
     ? serializeCoachOperationDraft(coachOperationDraft)
     : null;
@@ -2997,6 +3046,14 @@ export default function MiAgentPage({
       result?.recommendation,
     );
   });
+  const hasCustomerChatFoundation = customerChatMessages.some(
+    (message) =>
+      message.role !== "seller" &&
+      (message.evidence?.length ||
+        message.inferences?.length ||
+        message.publicSources?.length ||
+        message.agents?.length),
+  );
   const hasCoachConversation = Boolean(
     coachSessionId ||
       coachMessages.length ||
@@ -4566,7 +4623,26 @@ export default function MiAgentPage({
                 <span className="mi-agent-section-label">Chat de cuenta</span>
                 <h3>Pregúntale sobre esta cuenta</h3>
               </div>
-              <span>Contexto separado de Coach</span>
+              <div>
+                <label className="mi-agent-coach-foundation-toggle">
+                  <span>Mostrar fundamento</span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={showCustomerChatFoundation}
+                    disabled={!hasCustomerChatFoundation}
+                    onChange={(event) =>
+                      updateCustomerChatFoundationVisibility(
+                        event.target.checked,
+                      )
+                    }
+                  />
+                  <span
+                    className="mi-agent-coach-foundation-toggle-track"
+                    aria-hidden="true"
+                  />
+                </label>
+              </div>
             </div>
             <div className="mi-agent-coach-suggestions">
               <button
@@ -4661,7 +4737,7 @@ export default function MiAgentPage({
                           : ""}
                       </small>
                       <h4>{message.answer}</h4>
-                      {message.evidence?.length ? (
+                      {showCustomerChatFoundation && message.evidence?.length ? (
                         <div className="mi-agent-customer-chat-evidence">
                           <strong>Evidencia</strong>
                           <ul>
@@ -4671,7 +4747,7 @@ export default function MiAgentPage({
                           </ul>
                         </div>
                       ) : null}
-                      {message.inferences?.length ? (
+                      {showCustomerChatFoundation && message.inferences?.length ? (
                         <div className="mi-agent-customer-chat-inferences">
                           <strong>Hipótesis por validar</strong>
                           <ul>
@@ -4681,7 +4757,7 @@ export default function MiAgentPage({
                           </ul>
                         </div>
                       ) : null}
-                      {message.publicSources?.length ? (
+                      {showCustomerChatFoundation && message.publicSources?.length ? (
                         <div className="mi-agent-customer-public-sources">
                           <strong>Fuentes públicas</strong>
                           <ul>
@@ -4723,7 +4799,7 @@ export default function MiAgentPage({
                           </ul>
                         </div>
                       ) : null}
-                      {message.agents?.length ? (
+                      {showCustomerChatFoundation && message.agents?.length ? (
                         <small>
                           Agentes:{" "}
                           {message.agents
@@ -5930,6 +6006,8 @@ export default function MiAgentPage({
                   industry: "",
                 });
                 setProspectSession(null);
+                setProspectChatMessages([]);
+                setProspectChatQuestion("");
                 setProspectError("");
               }}
               disabled={prospectPreparing}
@@ -5982,6 +6060,65 @@ export default function MiAgentPage({
               <p className="mi-agent-customer-summary">
                 {prospectSession.result.summary}
               </p>
+              <section className="mi-agent-coach-panel mi-agent-customer-chat">
+                <div className="mi-agent-section-heading">
+                  <div>
+                    <span className="mi-agent-section-label">Chat de prospecto</span>
+                    <h4>Pregúntale sobre esta cuenta nueva</h4>
+                  </div>
+                  <span>Datos de prospección, no CRM confirmado</span>
+                </div>
+                {prospectChatMessages.length ? (
+                  <div className="mi-agent-coach-thread" aria-live="polite">
+                    {prospectChatMessages.map((message, index) => (
+                      <div
+                        key={`${message.role}-${index}`}
+                        className={`mi-agent-coach-message ${message.role === "seller" ? "is-seller" : "is-coach"}`}
+                      >
+                        <span>{message.role === "seller" ? "Vendedor" : "Prospecto"}</span>
+                        <p>{message.text || message.answer}</p>
+                        {message.evidence?.length ? (
+                          <small>{message.evidence.join(" ")}</small>
+                        ) : null}
+                        {message.recommendedActions?.length ? (
+                          <div className="mi-agent-customer-chat-actions">
+                            <strong>Acciones sugeridas · requieren confirmación</strong>
+                            {message.recommendedActions.map((action, actionIndex) => (
+                              <article key={`${action.title}-${actionIndex}`}>
+                                <span>{action.title || "Acción de prospección"}</span>
+                                <small>
+                                  Confirma esta acción desde la ficha antes de convertir datos a CRM.
+                                </small>
+                              </article>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <form
+                  className="mi-agent-coach-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    askProspectChat();
+                  }}
+                >
+                  <input
+                    value={prospectChatQuestion}
+                    onChange={(event) => setProspectChatQuestion(event.target.value)}
+                    placeholder="Pregunta sobre el prospecto..."
+                    disabled={prospectChatLoading}
+                  />
+                  <button
+                    type="submit"
+                    className="mi-agent-primary-button"
+                    disabled={prospectChatLoading || !prospectChatQuestion.trim()}
+                  >
+                    {prospectChatLoading ? "Consultando..." : "Preguntar"}
+                  </button>
+                </form>
+              </section>
               {prospectSession.result.externalResearch?.warnings?.length ? (
                 <p className="mi-agent-inline-notice">
                   {prospectSession.result.externalResearch.warnings.join(" ")}

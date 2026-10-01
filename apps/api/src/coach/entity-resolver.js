@@ -194,11 +194,12 @@ export function resolveCoachEntities(snapshot, text) {
     "phone",
   ]);
   const opportunityFilters = inferCoachOpportunityFilters(text);
-  const opportunityMatches = candidates(opportunities, text, [
-    "name",
-    "accountName",
-    "account.name",
-  ]).filter((opportunity) => {
+  const opportunityNameMatches = candidates(opportunities, text, ["name"]);
+  const opportunityMatches = (
+    opportunityNameMatches.length
+      ? opportunityNameMatches
+      : candidates(opportunities, text, ["accountName", "account.name"])
+  ).filter((opportunity) => {
     if (
       opportunityFilters.stageCodes.length &&
       !opportunityFilters.stageCodes.includes(
@@ -492,6 +493,10 @@ export function buildCoachEntityClarification(
   originalRequest,
   selectedContext = {},
 ) {
+  const asksForOpportunityCollection =
+    /\boportunidades\b|\b(?:cuantas|cuales|lista|listado|ranking|top)\b/i.test(
+      String(originalRequest || ""),
+    );
   const ambiguousTypes = [
     [
       "opportunities",
@@ -506,7 +511,8 @@ export function buildCoachEntityClarification(
   ];
   const ambiguous = ambiguousTypes.find(
     ([candidateKey]) =>
-      (resolution?.candidates?.[candidateKey] || []).length > 1,
+      (resolution?.candidates?.[candidateKey] || []).length > 1 &&
+      !(candidateKey === "opportunities" && asksForOpportunityCollection),
   );
   if (!ambiguous) return null;
   const [candidateKey, type, label, entityType] = ambiguous;

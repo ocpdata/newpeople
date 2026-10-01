@@ -63,4 +63,35 @@ describe("Coach read tools", () => {
       }).map((opportunity) => opportunity.id),
     ).toEqual([10]);
   });
+
+  it("distingue oportunidades activadas de oportunidades abiertas", () => {
+    const snapshot = {
+      coachOpportunities: [
+        {
+          id: 20,
+          name: "Proyecto abierto",
+          accountId: 7,
+          activationStatusCode: "activada",
+          lifecycle: "open",
+        },
+      ],
+      wonOpportunities: [
+        {
+          id: 21,
+          name: "Proyecto ganado",
+          accountId: 7,
+          activationStatusCode: "activada",
+          lifecycle: "historical",
+          commercialStatusCode: "ganada",
+        },
+      ],
+    };
+
+    expect(
+      searchCoachOpportunities(snapshot, { accountId: 7, activeOnly: true }),
+    ).toMatchObject([{ id: 20 }, { id: 21 }]);
+    expect(
+      searchCoachOpportunities(snapshot, { accountId: 7, openOnly: true }),
+    ).toMatchObject([{ id: 20 }]);
+  });
 });

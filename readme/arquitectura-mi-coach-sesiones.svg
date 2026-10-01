@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="270" viewBox="0 0 1050 270" role="img" aria-labelledby="title desc">
+  <title id="title">Sesiones separadas de Mi Coach</title>
+  <desc id="desc">El motor comun alimenta tres almacenes separados para Coach, Cliente existente y Cuenta nueva.</desc>
+  <defs>
+    <style>
+      .box { fill: #e5f4f2; stroke: #1c7a70; stroke-width: 2; rx: 12; }
+      .store { fill: #f7fafc; stroke: #256b80; stroke-width: 2; rx: 12; }
+      .label { font: 600 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172b3a; text-anchor: middle; }
+      .small { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #476273; text-anchor: middle; }
+      .arrow { stroke: #587887; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#587887" /></marker>
+  </defs>
+  <rect class="box" x="365" y="24" width="320" height="66" />
+  <text class="label" x="525" y="53">Motor comun</text>
+  <text class="small" x="525" y="74">misma interpretacion</text>
+  <rect class="store" x="35" y="170" width="270" height="65" />
+  <text class="label" x="170" y="199">Sesiones Coach</text>
+  <text class="small" x="170" y="220">historial y operaciones</text>
+  <rect class="store" x="390" y="170" width="270" height="65" />
+  <text class="label" x="525" y="199">Jobs Cliente existente</text>
+  <text class="small" x="525" y="220">snapshot de cuenta</text>
+  <rect class="store" x="745" y="170" width="270" height="65" />
+  <text class="label" x="880" y="199">Sesiones Prospecto</text>
+  <text class="small" x="880" y="220">investigacion y conversion</text>
+  <path class="arrow" d="M450 90 V125 H170 V170" />
+  <path class="arrow" d="M525 90 V170" />
+  <path class="arrow" d="M600 90 V125 H880 V170" />
+</svg>

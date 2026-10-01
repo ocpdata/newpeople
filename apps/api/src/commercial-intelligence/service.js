@@ -9,6 +9,10 @@ import { ensureManufacturerRegistrationsSchema } from "../manufacturer-registrat
 import { ensureProspectResearchSchema } from "../prospect-research/schema.js";
 import { ensureCommercialIntelligenceSchema } from "./schema.js";
 import {
+  buildCustomerFallback,
+  createCustomerAccountAdapter,
+} from "./customer-chat-adapter.js";
+import {
   CUSTOMER_INTELLIGENCE_CATEGORIES,
   normalizeCustomerIntelligenceFinding,
   normalizeCustomerIntelligenceOrchestration,
@@ -2165,60 +2169,6 @@ export async function getAccountIntelligenceMetrics({ user }) {
   };
 }
 
-function buildAccountChatFallback(snapshot, question) {
-  const normalized = String(question || "").toLowerCase();
-  const openOpportunities = snapshot.opportunities.filter(
-    isOpenCustomerOpportunity,
-  );
-  const risk =
-    snapshot.accountHealth.signals.find(
-      (signal) => signal.severity === "high",
-    ) || snapshot.accountHealth.signals[0];
-  const answer = normalized.includes("riesgo")
-    ? risk?.summary ||
-      "No se detectaron riesgos determinísticos en el contexto disponible."
-    : normalized.includes("contact")
-      ? `La cuenta tiene ${snapshot.contacts.length} contacto(s) accesible(s). ${
-          snapshot.contacts
-            .slice(0, 3)
-            .map((contact) => contact.name || "Contacto sin nombre")
-            .join(", ") || "No hay contactos documentados."
-        }`
-      : normalized.includes("oportun")
-        ? `La cuenta tiene ${openOpportunities.length} oportunidad(es) abierta(s): ${
-            openOpportunities
-              .slice(0, 3)
-              .map((opportunity) => opportunity.name)
-              .join(", ") || "ninguna"
-          }.`
-        : `La cuenta ${snapshot.account?.name || "seleccionada"} tiene salud ${snapshot.accountHealth.status} (${snapshot.accountHealth.score}/100), ${snapshot.contacts.length} contacto(s), ${openOpportunities.length} oportunidad(es) abiertas y ${snapshot.interactions.length} interacción(es) recientes.`;
-  return {
-    answer,
-    evidence: [
-      risk?.evidence,
-      `Snapshot capturado: ${snapshot.capturedAt}`,
-    ].filter(Boolean),
-    inferences: [],
-    confidence: risk ? "medium" : "low",
-    recommendedActions: risk
-      ? [
-          {
-            title: risk.title,
-            opportunityId:
-              risk.entityType === "opportunity"
-                ? risk.entityId
-                : snapshot.opportunities[0]?.id || null,
-            actionType: "call",
-            notes: "Revisar desde Cliente existente.",
-            successCriteria: "Validar la señal con el cliente.",
-            requiresConfirmation: true,
-          },
-        ]
-      : [],
-    source: "account_intelligence",
-  };
-}
-
 export async function createCustomerAccountChatJob({ user, payload }) {
   await ensureCommercialIntelligenceSchema();
   if (payload.includePublicResearch) {
@@ -2253,107 +2203,52 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   );
   const job = rows[0];
   if (!job) return null;
-  const request = parseJson(job.request_json, {});
-  const snapshot = await buildAuthorizedCustomerSnapshot({
+  let request;
+  let snapshot;
+  let agents;
+  try {
+    request = parseJson(job.request_json, {});
+    snapshot = await buildAuthorizedCustomerSnapshot({
+      user,
+      accountId: job.account_id,
+      opportunityId: job.opportunity_id,
+      contactId: job.contact_id,
+    });
+    agents = await runAccountIntelligenceAgents(snapshot, {
+      includePublicResearch: Boolean(request.includePublicResearch),
+      user,
+      jobId,
+    });
+  } catch (error) {
+    await query(
+      `UPDATE customer_intelligence_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ?`,
+      [
+        clip(error?.message || "No fue posible preparar el chat de cuenta", 1000),
+        Number(jobId),
+      ],
+    ).catch(() => undefined);
+    return null;
+  }
+  const adapter = createCustomerAccountAdapter({
     user,
-    accountId: job.account_id,
-    opportunityId: job.opportunity_id,
-    contactId: job.contact_id,
-  });
-  const agents = await runAccountIntelligenceAgents(snapshot, {
-    includePublicResearch: Boolean(request.includePublicResearch),
-    user,
+    snapshot,
+    agents,
     jobId,
   });
-  const fallback = buildAccountChatFallback(snapshot, request.question);
-  let response = fallback;
+  let response;
   try {
-    const aiResult = await runStructuredTextResearch({
-      schemaName: "account_contextual_chat",
-      systemPrompt:
-        "Responde preguntas comerciales sobre una cuenta usando exclusivamente el snapshot autorizado. No inventes datos. Separa evidencia CRM de inferencias; estas últimas son hipótesis por validar, nunca hechos confirmados. Incluye evidencia y acciones que siempre requieran confirmación.",
-      subject: snapshot.account?.name || "cuenta",
-      context: { question: request.question, snapshot, agents },
-      currentValues: {},
-      fields: [
-        { key: "answer", type: "string", example: "Respuesta contextual" },
-        {
-          key: "evidence",
-          type: "array",
-          example: ["Evidencia"],
-          items: { type: "string", example: "Evidencia" },
-        },
-        {
-          key: "inferences",
-          type: "array",
-          example: [],
-          items: { type: "string", example: "Hipótesis por validar" },
-        },
-        {
-          key: "confidence",
-          type: "enum",
-          enum: ["high", "medium", "low"],
-          example: "medium",
-        },
-        {
-          key: "recommendedActions",
-          type: "array",
-          example: [],
-          items: {
-            type: "object",
-            fields: [
-              { key: "title", type: "string", example: "Acción" },
-              { key: "opportunityId", type: "string", example: "" },
-              { key: "actionType", type: "string", example: "call" },
-              { key: "notes", type: "string", example: "Notas" },
-              { key: "successCriteria", type: "string", example: "Criterio" },
-              { key: "requiresConfirmation", type: "string", example: "true" },
-            ],
-          },
-        },
-        { key: "source", type: "string", example: "account_intelligence" },
-      ],
-      aiUsageContext: {
-        userId: Number(user.id),
-        featureCode: "commercial_intelligence.account_chat",
-        jobType: "account_chat",
-        jobId,
+    const engineResult = await adapter.runTurn({
+      question: request.question,
+      context: {
+        accountId: snapshot.account?.id || null,
+        opportunityId: snapshot.selectedOpportunity?.id || null,
+        contactId: snapshot.selectedContact?.id || null,
+        leadId: null,
       },
     });
-    if (aiResult)
-      response = {
-        ...fallback,
-        ...aiResult,
-        source: "account_intelligence",
-        inferences: (Array.isArray(aiResult.inferences)
-          ? aiResult.inferences
-          : []
-        )
-          .map((item) => clip(item, 1200))
-          .filter(Boolean)
-          .slice(0, 8),
-        recommendedActions: (aiResult.recommendedActions || [])
-          .map((action) => {
-            const requestedOpportunityId =
-              Number(action.opportunityId || 0) || null;
-            const authorizedOpportunity = requestedOpportunityId
-              ? snapshot.opportunities.find(
-                  (item) => Number(item.id) === requestedOpportunityId,
-                )
-              : null;
-            if (requestedOpportunityId && !authorizedOpportunity) return null;
-            return {
-              ...action,
-              opportunityId: requestedOpportunityId,
-              opportunityName: authorizedOpportunity?.name || "",
-              requiresConfirmation: true,
-            };
-          })
-          .filter(Boolean)
-          .slice(0, 5),
-      };
+    response = engineResult.response;
   } catch {
-    response = fallback;
+    response = buildCustomerFallback(snapshot, request.question);
   }
   const publicSources =
     agents.find((agent) => agent.agentId === "public_research")?.evidence || [];

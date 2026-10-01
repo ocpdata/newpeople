@@ -216,6 +216,35 @@ describe("Coach entity resolver", () => {
     expect(result.candidates.opportunities).toHaveLength(3);
   });
 
+  test("prioriza el nombre de oportunidad sobre la cuenta", () => {
+    const totalplaySnapshot = {
+      accounts: [{ id: 40, name: "Totalplay" }],
+      coachOpportunities: [
+        {
+          id: 401,
+          name: "Vrf 2027",
+          accountId: 40,
+          account: { id: 40, name: "Totalplay" },
+        },
+        {
+          id: 402,
+          name: "Renovacion de infraestructura",
+          accountId: 40,
+          account: { id: 40, name: "Totalplay" },
+        },
+      ],
+    };
+    const result = resolveCoachEntities(
+      totalplaySnapshot,
+      "Dame el detalle de la oportunidad Vrf 2027 de Totalplay",
+    );
+
+    expect(result.opportunity?.id).toBe(401);
+    expect(result.candidates.opportunities.map((item) => item.id)).toEqual([
+      401,
+    ]);
+  });
+
   test("busca oportunidades por cuenta y etapa sin ofrecer leads", () => {
     const totalplaySnapshot = {
       accounts: [{ id: 40, name: "Totalplay" }],
@@ -380,6 +409,41 @@ describe("Coach entity resolver", () => {
       buildCoachEntityClarification(ambiguous, "Revisa Renovación"),
     ).toMatchObject({ type: "select_lead" });
     expect(exact.lead?.id).toBe(88);
+  });
+
+  test("no pide seleccionar una oportunidad cuando se solicita la coleccion", () => {
+    const collectionSnapshot = {
+      accounts: [{ id: 7, name: "Totalplay" }],
+      coachOpportunities: [
+        {
+          id: 201,
+          name: "Proyecto uno",
+          accountId: 7,
+          account: { id: 7, name: "Totalplay" },
+          activationStatusCode: "activada",
+        },
+        {
+          id: 202,
+          name: "Proyecto dos",
+          accountId: 7,
+          account: { id: 7, name: "Totalplay" },
+          activationStatusCode: "activada",
+        },
+      ],
+    };
+    const resolution = resolveCoachEntities(
+      collectionSnapshot,
+      "Dime las oportunidades activas de Totalplay",
+    );
+
+    expect(resolution.account?.id).toBe(7);
+    expect(resolution.opportunity).toBeNull();
+    expect(
+      buildCoachEntityClarification(
+        resolution,
+        "Dime las oportunidades activas de Totalplay",
+      ),
+    ).toBeNull();
   });
 
   test("no interpreta una pregunta genérica de productos como referencia a leads", () => {

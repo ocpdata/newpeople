@@ -114,6 +114,31 @@ async function mockMiCoachApi(
       return json({ session: prospectSession });
     if (
       withProspect &&
+      pathname === `/api/prospect-research/sessions/${prospectSession.id}/chat` &&
+      method === "POST"
+    )
+      return json({
+        result: {
+          source: "prospect_research",
+          answer: "La hipótesis principal requiere validar continuidad operativa.",
+          evidence: ["Hallazgo de la sesión de prospección."],
+          inferences: ["Podría existir una iniciativa de modernización."],
+          confidence: "medium",
+          entities: { accountId: null, opportunityId: null },
+          operations: [
+            {
+              kind: "create_account",
+              title: "Revisar conversión del prospecto",
+              requiresConfirmation: true,
+            },
+          ],
+          recommendedActions: [
+            { title: "Validar hipótesis", requiresConfirmation: true },
+          ],
+        },
+      });
+    if (
+      withProspect &&
       pathname ===
         `/api/prospect-research/sessions/${prospectSession.id}/run-external`
     ) {
@@ -1068,6 +1093,8 @@ async function openMiCoach(page, { workspace = "coach" } = {}) {
     await page.getByRole("button", { name: "Coach", exact: true }).click();
   if (workspace === "prospect")
     await page.getByRole("button", { name: "Cuenta nueva" }).click();
+  if (workspace === "customer")
+    await page.getByRole("button", { name: "Cliente existente" }).click();
 }
 
 const coachCreationJourneys = [
@@ -1465,6 +1492,39 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByRole("button", { name: "Oportunidad creada" }),
     ).toBeVisible();
+  });
+
+  test("los chats de cuenta nueva y cliente existente muestran fundamentos y confirmacion", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true, withProspect: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const customerChat = page.getByRole("region", { name: "Chat de cuenta" });
+    await customerChat.getByRole("button", { name: "Resumen para reunión" }).click();
+    await expect(
+      customerChat.getByText("La cuenta requiere seguimiento comercial."),
+    ).toBeVisible();
+    const customerFoundation = customerChat.getByRole("switch");
+    await expect(customerFoundation).toBeVisible();
+    await customerFoundation.check();
+    await expect(customerChat.getByText("Snapshot autorizado")).toBeVisible();
+
+    await page.getByRole("button", { name: "Cuenta nueva" }).click();
+    await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
+    await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
+    await page.getByRole("button", { name: "Preparar cuenta" }).click();
+    await page
+      .getByPlaceholder("Pregunta sobre el prospecto...")
+      .fill("¿Qué hipótesis debo validar?");
+    await page.getByRole("button", { name: "Preguntar" }).last().click();
+    await expect(
+      page.getByText("La hipótesis principal requiere validar continuidad operativa."),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Acciones sugeridas · requieren confirmación"),
+    ).toBeVisible();
+    await expect(page.getByText("no confirmado en el CRM")).toBeVisible();
   });
 
   test("cambiar de espacio conserva contexto separado de Coach, Cliente existente y Cuenta nueva", async ({
@@ -2018,6 +2078,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       accountChat.getByText("CRM + investigación pública"),
     ).toBeVisible();
+    await accountChat.getByRole("switch").check();
     await expect(accountChat.getByText("Hipótesis por validar")).toBeVisible();
     await expect(
       accountChat.getByRole("link", {

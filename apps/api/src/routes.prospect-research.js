@@ -11,6 +11,7 @@ import {
   convertProspectSessionToLead,
   createProspectResearchSession,
   getProspectResearchSession,
+  runProspectChat,
   runProspectExternalResearchSession,
   runProspectResearchSession,
   updateProspectResearchFindingStatus,
@@ -24,6 +25,10 @@ const createSessionSchema = z.object({
   country: z.string().trim().min(2).max(120),
   website: z.string().trim().max(500).optional().default(""),
   industry: z.string().trim().max(160).optional().default(""),
+});
+
+const prospectChatSchema = z.object({
+  question: z.string().trim().min(1).max(2000),
 });
 
 const convertContactSchema = z.object({
@@ -114,6 +119,35 @@ router.get(
       return res.status(404).json({ message: "Prospeccion no encontrada" });
     }
     return res.json({ session });
+  },
+);
+
+router.post(
+  "/sessions/:sessionId/chat",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.read"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ message: "Sesion invalida" });
+    }
+    try {
+      const payload = prospectChatSchema.parse(req.body || {});
+      const result = await runProspectChat({
+        user: req.user,
+        sessionId,
+        question: payload.question,
+      });
+      if (!result) {
+        return res.status(404).json({ message: "Prospeccion no encontrada" });
+      }
+      return res.json({ result });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Payload invalido", issues: error.issues });
+      }
+      return sendRouteError(res, error, "No fue posible responder sobre el prospecto");
+    }
   },
 );
 

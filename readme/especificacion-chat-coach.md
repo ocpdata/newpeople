@@ -1,4 +1,6 @@
-# Mi Coach
+# Especificación funcional del Chat Coach
+
+Este documento describe exclusivamente el tab **Coach**. El módulo completo, el motor compartido y las integraciones con Cliente existente y Cuenta nueva se documentan en [Arquitectura Mi Coach](./arquitectura-mi-coach.md), [Motor Conversacional Mi Coach](./motor-conversacional-mi-coach.md) e [Integraciones Mi Coach](./integraciones-mi-coach.md).
 
 Mi Coach es el asistente comercial del vendedor dentro del CRM. Usa el contexto real del CRM para responder preguntas sobre cuentas, contactos, leads y oportunidades, y guía al vendedor para avanzar de manera ordenada y sólida a través de las etapas del proceso comercial.
 

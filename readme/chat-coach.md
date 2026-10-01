@@ -686,7 +686,7 @@ suite API completa, build, lint y la matriz E2E de Coach.
 
 ## Documentación relacionada
 
-- [Mi Coach](./mi-coach.md)
+- [Especificación funcional del Chat Coach](./especificacion-chat-coach.md)
 - [Proceso Comercial](./proceso-comercial.md)
 - [Preguntas por etapa](./preguntas-etapas-proceso-comercial.md)
 - [Desarrollo Comercial](./desarrollo-comercial.md)

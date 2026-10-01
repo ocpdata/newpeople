@@ -87,6 +87,9 @@ const operationCommon = {
   evidence: z.array(coachEvidenceSchema).max(12).default([]),
   missingFields: z.array(text(120)).max(30).default([]),
   requiresConfirmation: z.literal(true).default(true),
+  sourceChannel: z
+    .enum(["coach", "customer_account", "prospect"])
+    .optional(),
   persistentId: positiveId.optional(),
   persistenceVersion: positiveId.optional(),
   persistenceStatus: z

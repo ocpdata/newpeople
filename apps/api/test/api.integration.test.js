@@ -1390,6 +1390,128 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("Coach shadow compara la ejecucion nueva y legacy en un caso real", async () => {
+    const shadowRoleId = await createRole({
+      name: `${TEST_PREFIX}_coach_shadow_equivalence`,
+      permissionCodes: [
+        "mi_coach.use",
+        "oportunidades.read",
+        "cuentas.read",
+        "contactos.read",
+      ],
+    });
+    cleanup.roleIds.push(shadowRoleId);
+    const shadowUserEmail = `${TEST_PREFIX}.coach.shadow@example.com`;
+    const shadowUserId = await createUser({
+      fullName: "API Mi Coach Shadow",
+      email: shadowUserEmail,
+      roleIds: [
+        shadowRoleId,
+        ctx.opportunityFlowRoleId,
+        ctx.accountReadRoleId,
+        ctx.contactReadRoleId,
+      ],
+    });
+    cleanup.userIds.push(shadowUserId);
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_coach_shadow_equivalence`,
+      {
+        ownerUserId: shadowUserId,
+        actorUserId: shadowUserId,
+        loginEmail: shadowUserEmail,
+      },
+    );
+    const originalApiKey = config.openai.apiKey;
+    const originalGatewayMode = config.features.coachAgentGatewayMode;
+    const originalFetch = global.fetch;
+    const response = {
+      intent: "context_query",
+      responseType: "informational",
+      answer: "La oportunidad seleccionada esta en Waiting.",
+      facts: [
+        {
+          sourceType: "opportunity",
+          sourceId: fixture.opportunityId,
+          label: "Etapa actual: Waiting",
+          excerpt: "La oportunidad sigue abierta en Waiting.",
+        },
+      ],
+      evidence: ["Oportunidad registrada en el CRM."],
+      inferences: [],
+      pendingItems: [],
+      recommendation: null,
+      confidence: "high",
+      entities: {
+        opportunityId: fixture.opportunityId,
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        leadId: null,
+        names: [],
+      },
+      operations: [],
+      clarification: null,
+      action: null,
+      stageReadiness: null,
+    };
+    config.openai.apiKey = "test-key";
+    config.features.coachAgentGatewayMode = "shadow";
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        output_text: JSON.stringify(response),
+        usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+      }),
+    }));
+
+    try {
+      const loginResponse = await login(
+        request(app),
+        shadowUserEmail,
+      );
+      const authorization = `Bearer ${loginResponse.body.token}`;
+      const queuedResponse = await request(app)
+        .post("/api/mi-agent/coach")
+        .set("Authorization", authorization)
+        .send({
+          question: "Resume esta oportunidad",
+          context: {
+            accountId: fixture.accountId,
+            opportunityId: fixture.opportunityId,
+            contactId: fixture.contactId,
+          },
+        });
+
+      expect(queuedResponse.status).toBe(202);
+      let jobResponse;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        jobResponse = await request(app)
+          .get(`/api/mi-agent/coach/jobs/${queuedResponse.body.job.id}`)
+          .set("Authorization", authorization);
+        if (
+          jobResponse.body.job?.status === "completed" &&
+          jobResponse.body.job?.observability?.rollout
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(jobResponse.status).toBe(200);
+      expect(jobResponse.body.job.status).toBe("completed");
+      expect(jobResponse.body.job.observability.rollout).toMatchObject({
+        mode: "shadow",
+        matched: false,
+        regression: false,
+        differences: ["tools"],
+        approvedDifferences: ["tools"],
+        unexplainedDifferences: [],
+      });
+    } finally {
+      config.openai.apiKey = originalApiKey;
+      config.features.coachAgentGatewayMode = originalGatewayMode;
+      global.fetch = originalFetch;
+    }
+  });
+
   test("mi agente analysis job conserva solo recomendaciones de oportunidades autorizadas", async () => {
     const analysisRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_agent_analysis_scope`,
@@ -2101,6 +2223,33 @@ describe("API integration baseline", () => {
       }),
     );
 
+    const emailChatResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({
+        accountId,
+        question:
+          "Dame un modelo de correo para enviarlo a Eduardo para buscar mas oportunidades",
+      });
+    expect(emailChatResponse.status).toBe(202);
+    const emailChatJobId = Number(emailChatResponse.body.job.id);
+    let emailChatJob;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      emailChatJob = await request(app)
+        .get(
+          `/api/commercial-intelligence/account-chat/jobs/${emailChatJobId}`,
+        )
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(emailChatJob.body.job?.status))
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(emailChatJob.status).toBe(200);
+    expect(emailChatJob.body.job.status).toBe("completed");
+    expect(emailChatJob.body.job.result.answer).not.toMatch(
+      /\b\d+ oportunidad\(es\)/i,
+    );
+
     const agentsResponse = await request(app)
       .post("/api/commercial-intelligence/agents/jobs")
       .set("Authorization", `Bearer ${updateLogin.body.token}`)
@@ -2321,6 +2470,30 @@ describe("API integration baseline", () => {
       "Prospecto",
     );
 
+    const prospectChatResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/chat`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ question: "Que hipotesis de oportunidad deberia validar?" });
+    expect(prospectChatResponse.status).toBe(200);
+    expect(prospectChatResponse.body.result).toEqual(
+      expect.objectContaining({
+        source: "prospect_research",
+        answer: expect.any(String),
+        entities: expect.objectContaining({
+          accountId: null,
+          opportunityId: null,
+        }),
+        operations: expect.any(Array),
+      }),
+    );
+    expect(prospectChatResponse.body.result.operations).toEqual(
+      expect.arrayContaining(
+        prospectChatResponse.body.result.operations.map((operation) =>
+          expect.objectContaining({ requiresConfirmation: true }),
+        ),
+      ),
+    );
+
     const findingId = Number(runResponse.body.session.findings[0].id);
     const confirmResponse = await request(app)
       .post(`/api/prospect-research/findings/${findingId}/confirm`)
@@ -2351,10 +2524,28 @@ describe("API integration baseline", () => {
       "mi_coach.admin",
     );
 
-    const accountConversionResponse = await request(app)
-      .post(`/api/prospect-research/sessions/${sessionId}/convert-to-account`)
-      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
-      .send({ duplicateDecision: "create_new" });
+    const governanceRows = await query(
+      "SELECT settings_json FROM mi_coach_governance_settings WHERE singleton_key = 'default' LIMIT 1",
+    );
+    const originalGovernanceSettings =
+      typeof governanceRows[0]?.settings_json === "string"
+        ? governanceRows[0].settings_json
+        : JSON.stringify(governanceRows[0]?.settings_json || {});
+    await query(
+      "UPDATE mi_coach_governance_settings SET settings_json = JSON_SET(settings_json, '$.allowProspectConversion', true) WHERE singleton_key = 'default'",
+    );
+    let accountConversionResponse;
+    try {
+      accountConversionResponse = await request(app)
+        .post(`/api/prospect-research/sessions/${sessionId}/convert-to-account`)
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+        .send({ duplicateDecision: "create_new" });
+    } finally {
+      await query(
+        "UPDATE mi_coach_governance_settings SET settings_json = ? WHERE singleton_key = 'default'",
+        [originalGovernanceSettings],
+      );
+    }
 
     expect([200, 201]).toContain(accountConversionResponse.status);
     const accountId = Number(accountConversionResponse.body.accountId);

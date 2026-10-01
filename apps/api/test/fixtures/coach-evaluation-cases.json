@@ -1,0 +1,53 @@
+[
+  {
+    "id": "COACH-GEN-001",
+    "question": "Que cuentas tienen la mayor cantidad de oportunidades abiertas?",
+    "kind": "account_ranking",
+    "expected": { "topAccountId": 22, "topCount": 8 }
+  },
+  {
+    "id": "COACH-ACCOUNT-001",
+    "question": "Cuales son las oportunidades abiertas de Totalplay?",
+    "kind": "opportunity_search",
+    "filters": { "accountId": 22, "openOnly": true },
+    "expected": { "ids": [1, 2, 4, 5, 6, 7, 8, 9] }
+  },
+  {
+    "id": "COACH-ACCOUNT-002",
+    "question": "Cuantas oportunidades activadas tiene Totalplay, aunque esten ganadas?",
+    "kind": "opportunity_search",
+    "filters": { "accountId": 22, "activeOnly": true },
+    "expected": { "ids": [1, 2, 3, 4, 5, 6, 7, 8, 9] }
+  },
+  {
+    "id": "COACH-ACCOUNT-003",
+    "question": "Que oportunidades ganadas tiene Totalplay?",
+    "kind": "opportunity_search",
+    "filters": { "accountId": 22, "commercialStatusCodes": ["ganada"] },
+    "expected": { "ids": [3] }
+  },
+  {
+    "id": "COACH-OPP-001",
+    "question": "Dame el detalle de la oportunidad Vrf 2027 de Totalplay.",
+    "kind": "exact_entity",
+    "expected": { "opportunityId": 3 }
+  },
+  {
+    "id": "COACH-OPP-004",
+    "question": "Dame el detalle de la oportunidad de Totalplay.",
+    "kind": "clarification",
+    "expected": { "type": "select_opportunity" }
+  },
+  {
+    "id": "COACH-ENTITY-002",
+    "question": "Dime las oportunidades activas de Totalplay.",
+    "kind": "collection",
+    "expected": { "clarification": null }
+  },
+  {
+    "id": "COACH-ACTION-001",
+    "question": "Agenda una llamada con el cliente para confirmar el siguiente paso.",
+    "kind": "operation",
+    "expected": { "kind": "activity", "requiresConfirmation": true }
+  }
+]

@@ -58,6 +58,9 @@ import {
   resolveCoachRolloutMode,
   runCoachJob,
 } from "./coach/agent-gateway.js";
+import {
+  compareCoachExecutions,
+} from "./coach/coach-adapter.js";
 import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
 import { getCoachMetrics } from "./coach/metrics.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
@@ -3274,7 +3277,7 @@ function buildCoachPrompt(
           "inactivePipelineOpportunities contiene oportunidades no terminales que están desactivadas o pendientes de activación. Nunca las cuentes como oportunidades abiertas, activas o parte del forecast; si la pregunta busca oportunidades abiertas y esta colección tiene registros de la cuenta consultada, responde que no hay activas y menciona aparte las oportunidades en proceso no activas con su estado de activación. No afirmes que no existen oportunidades de la cuenta cuando haya registros en esta colección. " +
           "Si la respuesta establece una cuenta, oportunidad, contacto o lead como referente para la siguiente pregunta, llena entities con su ID exacto del snapshot autorizado y con sus entidades padre compatibles. Si menciona varios registros del mismo tipo o el referente no es inequívoco, deja ese ID en null y no cambies el contexto activo. " +
           "Para preguntas sobre el número de cotizaciones ganadas, cuenta documentos quotation distintos de la oportunidad seleccionada cuyo statusCode sea ganada; no cuentes versiones ni partidas. Para preguntas sobre productos, servicios, partidas o cantidades cotizadas, usa exclusivamente quotations[].products de la oportunidad correspondiente; conserva la separación por cotización y no infieras productos desde el nombre o la narrativa. " +
-          "coachOpportunities contiene pipeline abierto; wonOpportunities, lostOpportunities y cancelledOpportunities contienen historial terminal separado. Nunca sumes registros terminales al pipeline, forecast o preparación de etapa. La ausencia de una entidad en el contexto no demuestra que no exista en el CRM: expresa que no está disponible en el contexto consultado. " +
+          "coachOpportunities contiene pipeline abierto por defecto; una búsqueda con activeOnly también puede devolver oportunidades terminales que siguen activadas. No confundas activada con abierta: las oportunidades ganadas, perdidas o anuladas no se suman al pipeline o forecast, pero sí deben incluirse cuando el vendedor pide oportunidades activas sin limitarse a abiertas. La ausencia de una entidad en el contexto no demuestra que no exista en el CRM: expresa que no está disponible en el contexto consultado. " +
           "Eres el Coach comercial de un CRM. Responde usando únicamente el contexto enriquecido real y el proceso comercial disponible. Clasifica la solicitud como informativa, recomendación o cambio solicitado; en esta fase no ejecutes cambios. Identifica entidades solo con IDs presentes en el contexto. Separa hechos, evidencia e inferencias. Si existe selectedRecord de tipo opportunity, ese registro es la fuente principal: para preguntas sobre monto, importe, valor, fecha, etapa o nombre responde primero con sus campos exactos y no uses totales globales del pipeline como sustituto. Los totales globales solo aplican cuando la pregunta es general o no hay una oportunidad seleccionada. Si el vendedor pide crear o modificar algo y ya identificaste la entidad, DEBES devolver una operación estructurada editable con todos los datos explícitos: para crear una actividad usa kind=activity sin activityId; para modificar una actividad existente usa kind=activity con activityId tomado únicamente de la lista workspace.actions de la oportunidad, además de actionType, title, status, priority, scheduledAt, dueDate, notes y successCriteria. No conviertas una solicitud explícita de cambio en una recomendación solamente. Si falta la entidad, devuelve la entidad candidata y pide selección. Si el vendedor comparte una afirmación factual que responde claramente una pregunta de etapa existente en el contexto de una oportunidad, puedes proponer una operación kind=stage_answer aunque no use verbos como registrar o actualizar: incluye el questionId real, el answerValue con el texto propuesto, el title y la evidencia de la coincidencia. En ese caso, explica en answer que identificaste una posible respuesta de etapa y que debe revisarse antes de guardarse. Solo propón stage_answer con confianza high o medium y cuando la coincidencia sea clara; si hay varias preguntas posibles o la coincidencia es débil, no propongas ninguna operación. Una solicitud explícita de actividad siempre conserva prioridad y debe seguir produciendo kind=activity sin sustituirla por stage_answer. Devuelve solo JSON válido.",
       },
       {
@@ -3844,7 +3847,7 @@ async function executeMiAgentAnalysisJob({ jobId, user }) {
 async function recordCoachShadowComparison(primaryJobId, shadowJobId) {
   try {
     const rows = await query(
-      `SELECT id, result_json, observability_json
+      `SELECT id, result_json, observability_json, error_message
        FROM mi_agent_analysis_jobs WHERE id IN (?, ?) ORDER BY id ASC`,
       [Number(primaryJobId), Number(shadowJobId)],
     );
@@ -3860,22 +3863,18 @@ async function recordCoachShadowComparison(primaryJobId, shadowJobId) {
     };
     const primaryResult = parse(primary.result_json, {});
     const shadowResult = parse(shadow.result_json, {});
-    const comparable = (result) => ({
-      intent: result?.intent || null,
-      responseType: result?.responseType || null,
-      entities: result?.entities || null,
-      operations: Array.isArray(result?.operations)
-        ? result.operations.map((operation) => ({
-            kind: operation.kind,
-            opportunityId: operation.opportunityId || null,
-            accountId: operation.accountId || null,
-            contactId: operation.contactId || null,
-            interactionId: operation.interactionId || null,
-          }))
-        : [],
-    });
-    const primaryComparable = comparable(primaryResult);
-    const shadowComparable = comparable(shadowResult);
+    const comparison = compareCoachExecutions(
+      {
+        result: primaryResult,
+        observability: parse(primary.observability_json, {}),
+        errorMessage: primary.error_message,
+      },
+      {
+        result: shadowResult,
+        observability: parse(shadow.observability_json, {}),
+        errorMessage: shadow.error_message,
+      },
+    );
     const observability = parse(primary.observability_json, {}) || {};
     await query(
       `UPDATE mi_agent_analysis_jobs SET observability_json = ? WHERE id = ?`,
@@ -3885,9 +3884,13 @@ async function recordCoachShadowComparison(primaryJobId, shadowJobId) {
           rollout: {
             mode: "shadow",
             shadowJobId: Number(shadowJobId),
-            matched: JSON.stringify(primaryComparable) === JSON.stringify(shadowComparable),
-            primary: primaryComparable,
-            shadow: shadowComparable,
+            matched: comparison.matched,
+            regression: comparison.regression,
+            differences: comparison.differences,
+            approvedDifferences: comparison.approvedDifferences,
+            unexplainedDifferences: comparison.unexplainedDifferences,
+            primary: comparison.primary,
+            shadow: comparison.legacy,
           },
         }),
         Number(primaryJobId),
@@ -3933,7 +3936,7 @@ router.post(
   "/coach",
   requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
-    const {
+    let {
       question,
       conversationHistory,
       selectedContext,
