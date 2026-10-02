@@ -3,6 +3,9 @@ import {
   buildCoachDetailHandoff,
   buildCoachIntentCatalogForPrompt,
   getMissingCoachIntentContext,
+  isCoachEmailHelpQuestion,
+  isCoachQuestionPhrasingHelp,
+  isGeneralCoachProcessInformationQuestion,
   normalizeIntentExamples,
   validateCoachIntentClassification,
 } from "../src/coach/intent-governance.js";
@@ -21,6 +24,48 @@ describe("Coach intent governance", () => {
     expect(processIntent.examples).toContain(
       "¿Qué etapas tiene el proceso de venta?",
     );
+    expect(processIntent.examples).toContain("¿Cuál es el proceso de ventas?");
+  });
+
+  it("recognizes general process questions without capturing entity-specific requests", () => {
+    expect(
+      isGeneralCoachProcessInformationQuestion("¿Cuál es el proceso de ventas?"),
+    ).toBe(true);
+    expect(
+      isGeneralCoachProcessInformationQuestion(
+        "¿Qué etapas tiene el proceso de venta?",
+      ),
+    ).toBe(true);
+    expect(
+      isGeneralCoachProcessInformationQuestion(
+        "¿Cuál es el proceso de ventas para esta oportunidad?",
+      ),
+    ).toBe(false);
+  });
+
+  it("recognizes email capability and draft questions but not unrelated email mentions", () => {
+    expect(isCoachEmailHelpQuestion("¿Le puedo enviar un correo?")).toBe(true);
+    expect(
+      isCoachEmailHelpQuestion(
+        "Pregunto por un ejemplo de un correo para esta oportunidad.",
+      ),
+    ).toBe(true);
+    expect(isCoachEmailHelpQuestion("¿Qué correo envió el cliente?")).toBe(
+      false,
+    );
+  });
+
+  it("recognizes a request to rephrase an embedded customer question", () => {
+    expect(
+      isCoachQuestionPhrasingHelp(
+        "¿Cómo puedo preguntar de otra manera: ¿Qué problema específico está tratando de resolver?",
+      ),
+    ).toBe(true);
+    expect(
+      isCoachQuestionPhrasingHelp(
+        "¿Qué problema específico está tratando de resolver?",
+      ),
+    ).toBe(false);
   });
 
   it("gives seller coaching aggregate performance tools without requiring a selected record", () => {

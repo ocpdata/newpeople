@@ -1212,6 +1212,7 @@ describe("API integration baseline", () => {
       const receivedPrompt = JSON.parse(userMessage.content);
       if (Array.isArray(receivedPrompt.catalog)) {
         expect(payload.temperature).toBe(0);
+        expect(payload.text).toEqual({ format: { type: "json_object" } });
         return {
           ok: true,
           json: async () => ({
@@ -1233,6 +1234,19 @@ describe("API integration baseline", () => {
         };
       }
       expect(payload.temperature).toBe(0.2);
+      expect(payload.text).toEqual({ format: { type: "json_object" } });
+      expect(
+        payload.input
+          .filter((item) => item.role === "system")
+          .map((item) => item.content)
+          .join("\n"),
+      ).toContain("pero no enviarlo");
+      expect(
+        payload.input
+          .filter((item) => item.role === "system")
+          .map((item) => item.content)
+          .join("\n"),
+      ).toContain("responde a esa solicitud exterior");
       receivedPrompts.push(receivedPrompt);
       const answer =
         receivedPrompt.question === followUpQuestion

@@ -13,6 +13,9 @@ import {
   buildCoachDetailHandoff,
   getMissingCoachIntentContext,
   getCoachInteractionModePolicy,
+  isCoachEmailHelpQuestion,
+  isCoachQuestionPhrasingHelp,
+  isGeneralCoachProcessInformationQuestion,
   listCoachIntentCatalog,
   validateCoachIntentClassification,
 } from "./intent-governance.js";
@@ -57,6 +60,37 @@ export function getConversationChannelJobType(channel = "coach") {
   if (channel === "customer_account") return "account_chat";
   if (channel === "prospect") return "prospect_chat";
   return "mi_coach_chat";
+}
+
+export function shouldPreserveCoachContextForQuestion(
+  question = "",
+  context = {},
+) {
+  const text = String(question || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const references = [
+    [
+      context.opportunityId,
+      /\b(?:esta|este|esa|ese|actual|misma|mismo) oportunidad\b|\boportunidad (?:actual|seleccionada|en contexto)\b/,
+    ],
+    [
+      context.accountId,
+      /\b(?:esta|este|esa|ese|actual|misma|mismo) (?:cuenta|cliente)\b|\b(?:cuenta|cliente) (?:actual|seleccionada|en contexto)\b/,
+    ],
+    [
+      context.contactId,
+      /\b(?:este|esta|ese|esa|actual|mismo|misma) contacto\b|\bcontacto (?:actual|seleccionado|en contexto)\b/,
+    ],
+    [
+      context.leadId,
+      /\b(?:este|esta|ese|esa|actual|mismo|misma) lead\b|\blead (?:actual|seleccionado|en contexto)\b/,
+    ],
+  ];
+  return references.some(([id, pattern]) => Number(id || 0) > 0 && pattern.test(text));
 }
 
 function normalizeRequestContext(context) {
@@ -603,9 +637,39 @@ export async function runConversationEngine({
       );
     }
   }
+  const processInformationQuestion =
+    channel === "coach" &&
+    isGeneralCoachProcessInformationQuestion(question);
+  const emailHelpQuestion =
+    channel === "coach" && isCoachEmailHelpQuestion(question);
+  const questionPhrasingHelp =
+    channel === "coach" && isCoachQuestionPhrasingHelp(question);
   const intentRouting =
     channel === "coach"
-      ? validateCoachIntentClassification(rawIntentClassification)
+      ? validateCoachIntentClassification(
+          processInformationQuestion
+            ? {
+                intent: "process_information",
+                mode: "coaching",
+                confidence: 1,
+                contextNeeded: [],
+              }
+            : emailHelpQuestion
+              ? {
+                  intent: "general_query",
+                  mode: "coaching",
+                  confidence: 1,
+                  contextNeeded: [],
+                }
+              : questionPhrasingHelp
+                ? {
+                    intent: "general_query",
+                    mode: "coaching",
+                    confidence: 1,
+                    contextNeeded: [],
+                  }
+                : rawIntentClassification,
+        )
       : null;
   const coachingPermissionSet = user?.permissionSet || permissions;
   const canOpenCustomerWorkspace =
@@ -843,8 +907,13 @@ export async function runConversationEngine({
         stageReadiness: authoritativeStageReadiness,
       }
     : result;
+  const preserveQuestionContext =
+    questionContextTransition.changed ||
+    shouldPreserveCoachContextForQuestion(question, effectiveContext);
   const responseContextTransition =
-    !clarification && !result?.clarification
+    !preserveQuestionContext &&
+    !clarification &&
+    !result?.clarification
       ? resolveResponseContext(scopedSnapshot, effectiveContext, result)
       : null;
   const activeContext =
@@ -899,6 +968,8 @@ export async function runConversationEngine({
   const isProcessGuideCoaching =
     intentRouting?.intent === "process_information" &&
     intentRouting?.mode === "coaching";
+  const mayAnswerFromCoachPolicy =
+    isProcessGuideCoaching || emailHelpQuestion || questionPhrasingHelp;
   const modeLimitedResponse = applyCoachInteractionModeLimits(
     normalizedResponse,
     intentRouting?.mode,
@@ -920,7 +991,7 @@ export async function runConversationEngine({
   if (
     (businessRules.validation.requireEvidence ||
       businessRules.scope.requireBusinessEvidence) &&
-    !isProcessGuideCoaching &&
+    !mayAnswerFromCoachPolicy &&
     !evidenceCount &&
     !["clarification", "error", "handoff"].includes(
       modeLimitedResponse?.responseType,
@@ -939,7 +1010,7 @@ export async function runConversationEngine({
     modeLimitedResponse,
     question,
     businessRules,
-    isProcessGuideCoaching,
+    mayAnswerFromCoachPolicy,
   );
   if (intentRouting) {
     response.intentRouting = {
@@ -1101,13 +1172,43 @@ export async function prepareCoachReadModel({
     effectiveContext,
     businessRules,
   );
-  const questionContextTransition = applyCoachEntityResolution(
+  let questionContextTransition = applyCoachEntityResolution(
     baseSnapshot,
     effectiveContext,
     explicitEntities,
   );
   effectiveContext = questionContextTransition.context;
   if (questionContextTransition.changed) conversationHistory = [];
+  const normalizedQuestion = normalizeCoachMatchText(question);
+  const hasExplicitEntity = Boolean(
+    explicitEntities.account ||
+      explicitEntities.opportunity ||
+      explicitEntities.contact ||
+      explicitEntities.lead,
+  );
+  const hasExplicitRecordFocus =
+    /\b(?:esta|este|esa|ese|mi|mis)\s+(?:cuenta|oportunidad|contacto|lead)\b/.test(
+      normalizedQuestion,
+    );
+  const isPortfolioWideCoachingRequest =
+    intentRouting?.intent === "seller_coaching" &&
+    !hasExplicitEntity &&
+    !hasExplicitRecordFocus &&
+    /\b(cartera|pipeline|oportunidades|priorizar|prioridades)\b/.test(
+      normalizedQuestion,
+    );
+  if (isPortfolioWideCoachingRequest) {
+    const generalContext = Object.fromEntries(
+      CONTEXT_KEYS.map((key) => [key, null]),
+    );
+    effectiveContext = generalContext;
+    questionContextTransition = {
+      ...questionContextTransition,
+      context: generalContext,
+      changed: true,
+    };
+    conversationHistory = [];
+  }
   const relationshipClarification = questionContextTransition.conflict
     ? {
         type: "select_opportunity",
@@ -1126,7 +1227,6 @@ export async function prepareCoachReadModel({
     /\b(vend|vent|compr|adquiri|ganad|perdid|anulad|cancelad|cerrad|historial|cotiz|propuest)/.test(
       normalizeCoachMatchText(question),
     );
-  const normalizedQuestion = normalizeCoachMatchText(question);
   const opportunityFilters = inferCoachOpportunityFilters(
     question,
     businessRules,

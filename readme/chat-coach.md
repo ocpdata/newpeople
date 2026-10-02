@@ -46,7 +46,7 @@ Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis 
 
 1. Abre el módulo **Mi Coach**.
 2. Entra a la pestaña **Coach** para usar la experiencia actual.
-3. Selecciona una cuenta, oportunidad o contacto cuando ayude a recibir coaching más específico. También puedes mencionar la entidad directamente en la conversación.
+3. Empieza con una pregunta general sobre tu desempeño, cartera o prioridades. Para enfocar el coaching, menciona una cuenta, oportunidad, contacto o lead en la conversación.
 4. Revisa las estadísticas y preguntas rápidas.
 5. Escribe una pregunta, una necesidad o una instrucción en el campo del Coach.
 6. Revisa la recomendación, la evidencia resumida y cualquier dato faltante. Si necesitas investigar a fondo una cuenta o registro, continúa en el espacio que Coach propone.
@@ -54,13 +54,13 @@ Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis 
 8. Revisa, completa y aprueba el formulario antes de guardarlo.
 9. Regresa al chat para continuar la conversación desde el mismo contexto.
 
-La conversación mantiene un contexto activo tipado de cuenta, oportunidad, contacto o lead. El selector inicia ese contexto, pero no tiene prioridad permanente: una entidad mencionada de forma clara y única en la pregunta actual reemplaza la selección anterior. Una respuesta del Coach también puede establecer otra entidad para el siguiente turno, pero solo con IDs estructurados presentes en el snapshot autorizado o con un nombre estructurado inequívoco. La nueva combinación debe ser relacionalmente compatible; por ejemplo, una oportunidad determina su cuenta y un contacto debe corresponder a la misma cuenta. Si las entidades mencionadas se contradicen o son ambiguas, el Coach solicita aclaración en vez de elegir una en silencio.
+El tab Coach inicia en el ámbito general del vendedor y no requiere seleccionar una cuenta, oportunidad o contacto. La conversación puede adquirir un contexto activo tipado cuando el servidor resuelve de manera inequívoca una entidad mencionada por el vendedor. Una respuesta del Coach también puede establecer otra entidad para el siguiente turno, pero solo con IDs estructurados presentes en el contexto autorizado. La nueva combinación debe ser relacionalmente compatible; por ejemplo, una oportunidad determina su cuenta y un contacto debe corresponder a la misma cuenta. Si las entidades mencionadas se contradicen o son ambiguas, el Coach solicita aclaración en vez de elegir una en silencio.
 
 Las preguntas de seguimiento como «esa oportunidad», «el contacto», «¿y sus cotizaciones?» o «¿en qué etapa está?» usan los IDs activos persistidos en la sesión. Términos genéricos de consulta —como etapa, estado, cotizaciones o productos— no identifican por sí solos otra entidad, aunque aparezcan dentro del título de un registro distinto. El historial anterior no se vuelve a analizar como una bolsa de nombres: cada turno está asociado a su contexto y solo se reutiliza el historial compatible. Si no hay entidad activa, el Coach intenta resolver nombres inequívocos de la pregunta; las referencias deícticas usan el último contexto activo compatible. Un cambio explícito de entidad inicia un tramo contextual nuevo sin borrar los mensajes visibles de la conversación.
 
-Una respuesta del Coach puede cambiar el contexto activo para el turno siguiente si identifica una entidad accesible con IDs estructurados y relaciones válidas. El frontend actualiza los selectores, pero conserva la conversación. Los nombres mencionados en prosa sin ID verificable no cambian el contexto.
+Una respuesta del Coach puede cambiar el contexto activo para el turno siguiente si identifica una entidad accesible con IDs estructurados y relaciones válidas. El frontend muestra el foco activo sin convertirlo en un selector y conserva la conversación. Los nombres mencionados en prosa sin ID verificable no cambian el contexto.
 
-Al cambiar la cuenta, el vendedor confirma antes de continuar. La confirmación cierra la sesión anterior, limpia el chat visible y sus borradores, y establece un contexto nuevo; cancelar conserva el contexto actual. Las operaciones pendientes deben completarse o descartarse antes de cambiar de cuenta. Las sesiones cerradas no se pueden recuperar desde la interfaz. La opción **Sin cuenta · conversación general** aplica el mismo reinicio sin seleccionar una cuenta. Una nueva pregunta crea una sesión para el contexto elegido.
+Para volver al ámbito general desde un foco de entidad, el vendedor confirma el cierre de la conversación contextual. El reinicio limpia los mensajes y borradores y cierra la sesión anterior; cancelar conserva el contexto. Las operaciones pendientes deben completarse o descartarse antes del reinicio. Las sesiones cerradas no se pueden recuperar desde la interfaz. Una nueva pregunta inicia una conversación general y el vendedor puede volver a enfocar el Coach mencionando otra entidad.
 
 ## Uso del proceso comercial
 
@@ -185,13 +185,15 @@ La conversación debe conservarse como un espacio de trabajo persistente. Cuando
 
 El Coach debe continuar desde el punto en que quedó la conversación, sin obligar al vendedor a repetir el contexto. Si una acción quedó incompleta o fue cancelada, debe indicarlo y ofrecer continuarla, corregirla o iniciar otra.
 
-## Contexto comercial
+## Contexto de conversación y alcance comercial
 
-La cuenta es el contexto principal de selección. Las oportunidades y contactos disponibles dependen de ella y se limitan a registros activos y accesibles.
+Coach opera en el ámbito general del vendedor o en el contexto de una entidad específica. Las consultas generales sobre desempeño, prioridades, cuota o pipeline no requieren elegir una cuenta. La cuenta, oportunidad, contacto o lead se convierte en foco solo cuando el vendedor lo menciona o lo retoma claramente en la conversación.
 
-El contexto del chat puede incluir:
+Las preguntas conceptuales sobre las etapas o el funcionamiento del proceso comercial se responden con la guía del proceso y no requieren evidencia de una cuenta u oportunidad.
 
-- Cuenta, oportunidad y contacto seleccionados.
+El contexto autorizado puede incluir:
+
+- Cuenta, oportunidad, contacto o lead resueltos para la conversación.
 - Oportunidades activas y abiertas del vendedor.
 - Historial autorizado de oportunidades ganadas, perdidas y anuladas, conforme a la configuración de gobierno.
 - Etapa, importe, fecha de cierre y estado comercial.
@@ -203,7 +205,7 @@ El contexto del chat puede incluir:
 - Historial reciente de la conversación.
 - Guía del proceso comercial.
 
-Cuando existe una oportunidad seleccionada, sus datos son la fuente principal para preguntas sobre nombre, importe, fecha o etapa. Los totales del pipeline no deben sustituir los datos de esa oportunidad.
+Cuando una pregunta identifica una oportunidad, sus datos son la fuente principal para responder sobre nombre, importe, fecha o etapa. Los totales del pipeline no deben sustituir los datos de esa oportunidad. La ausencia de un dato en el contexto recuperado no demuestra que no exista en el CRM.
 
 ### Herramientas de lectura
 
@@ -213,7 +215,7 @@ La respuesta puede describir secciones, productos o servicios, cantidades, preci
 
 Cliente existente utiliza el mismo catalogo de lectura dentro de la cuenta fija autorizada, mas busqueda de interacciones propia del canal. Sus consultas nunca amplian el snapshot a otras cuentas. La matriz completa por canal esta en [Integraciones Mi Coach](./integraciones-mi-coach.md).
 
-Una entidad inequívoca en la pregunta actual prevalece sobre el contexto activo; una referencia deíctica conserva la entidad activa. Si hay varias coincidencias explícitas, la selección anterior no las desambigua automáticamente y el Coach debe pedir aclaración. Las entidades que el Coach identifica en una respuesta solo se convierten en el contexto del siguiente turno después de validar sus IDs y relaciones contra el snapshot autorizado. Si una respuesta enumera varias entidades del mismo tipo, no se selecciona una de ellas arbitrariamente.
+Una entidad inequívoca en la pregunta actual prevalece sobre el contexto activo; una referencia deíctica conserva la entidad activa. Si hay varias coincidencias explícitas, el contexto anterior no las desambigua automáticamente y el Coach debe pedir aclaración. El backend aplica permisos, ownership y relaciones antes de fijar el contexto, y consulta solo los datos necesarios mediante herramientas autorizadas. Las entidades que el Coach identifica en una respuesta solo se convierten en el contexto del siguiente turno después de validar sus IDs y relaciones. Si una respuesta enumera varias entidades del mismo tipo, no se selecciona una de ellas arbitrariamente.
 
 ## Tipos de interacción
 
@@ -705,7 +707,9 @@ suite API completa, build, lint y la matriz E2E de Coach.
 
 ## Documentación relacionada
 
-- [Especificación funcional del Chat Coach](./especificacion-chat-coach.md)
+- [Arquitectura Mi Coach](./arquitectura-mi-coach.md)
+- [Motor Conversacional Mi Coach](./motor-conversacional-mi-coach.md)
+- [Integraciones Mi Coach](./integraciones-mi-coach.md)
 - [Proceso Comercial](./proceso-comercial.md)
 - [Preguntas por etapa](./preguntas-etapas-proceso-comercial.md)
 - [Desarrollo Comercial](./desarrollo-comercial.md)

@@ -278,6 +278,57 @@ describe("Coach operation normalization", () => {
     expect(result.operations).toEqual([]);
   });
 
+  it("keeps a coaching recommendation when optional model fields are incomplete", () => {
+    const result = normalizeCoachResult(
+      {
+        intent: "recommendation",
+        responseType: "recommendation",
+        answer: "Prioriza la oportunidad y confirma la fecha de decisión.",
+        facts: [
+          {
+            sourceType: "opportunity",
+            sourceId: 0,
+            label: "Oportunidad abierta",
+            excerpt: "La oportunidad sigue activa.",
+          },
+        ],
+        evidence: ["La oportunidad sigue activa."],
+        inferences: [],
+        pendingItems: [],
+        recommendation: {
+          action: "Confirmar la fecha de decisión.",
+          rationale: "La fecha aún no está definida.",
+        },
+        confidence: "medium",
+        entities: {
+          opportunityId: 10,
+          accountId: 1,
+          contactId: 2,
+          leadId: null,
+          names: [],
+        },
+        operations: [],
+        clarification: null,
+        action: {},
+        intentRouting: { intent: "seller_coaching" },
+        stageReadiness: {},
+      },
+      snapshot,
+      "¿Qué me sugieres hacer?",
+      { opportunityId: 10 },
+    );
+
+    expect(result.responseType).toBe("recommendation");
+    expect(result.confidence).toBe("medium");
+    expect(result.answer).toBe(
+      "Prioriza la oportunidad y confirma la fecha de decisión.",
+    );
+    expect(result.facts[0].sourceId).toBeNull();
+    expect(result.recommendation).toContain("Confirmar la fecha de decisión.");
+    expect(result.action).toBeNull();
+    expect(result.stageReadiness).toBeNull();
+  });
+
   it("does not let the model override authoritative stage readiness", () => {
     const result = normalizeCoachResult(
       {

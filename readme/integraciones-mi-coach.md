@@ -43,11 +43,27 @@ La lectura de la cotizacion conserva ownership de cuenta (excepto para administr
 
 Cliente existente puede proponer las mismas operaciones controladas que Coach: actividades, respuestas de etapa, resultados de llamadas de lead y cambios de campos de cuenta, contacto u oportunidad. Las propuestas se limitan a entidades del snapshot de la cuenta fija; la API vuelve a comprobar la cuenta, la relación del registro, `mi_coach.execute` y los permisos de dominio. Al revisarlas, se trasladan a un borrador persistido en una sesión de Coach y usan su flujo estándar de revisión, confirmación y ejecución; el chat de Cliente existente no ejecuta escrituras directamente. Una solicitud de correo produce un borrador y nunca lo envía automáticamente.
 
+### Account Intelligence
+
+Además del chat, Cliente existente ofrece análisis e investigación sobre un snapshot CRM autorizado y versionado como `account-intelligence.v1`. Puede generar salud y riesgos de cuenta, contexto comercial, renovación y expansión, briefings y hallazgos sugeridos. El snapshot incluye datos CRM autorizados y partidas comerciales de cotización; una partida aceptada o ganada no demuestra compra ni entrega y conserva `fulfillmentStatus: not_verified`. Los casos de soporte no están disponibles en este contrato.
+
+Los hallazgos conservan evidencia, fuente, confianza y certeza. CRM interno, investigación pública e inferencias se presentan por separado. Los hallazgos que podrían cambiar el CRM requieren confirmación del vendedor; ninguna investigación escribe registros automáticamente. La investigación pública depende de la acción explícita del vendedor, permisos y gobierno de fuentes externas.
+
+Rutas principales bajo `/api/commercial-intelligence`:
+
+- Creación `POST` y consulta `GET .../:jobId` para `/customer-research/jobs`, `/account-internal-analysis/jobs`, `/external-research/jobs`, `/commercial-discovery/jobs`, `/executive-briefing/jobs` y `/agents/jobs`.
+- `GET` `/agents/metrics`, `/account-intelligence/snapshot` y `/findings`.
+- `POST` `/findings/:findingId/confirm`, `/reject`, `/apply` y `/apply-contact`.
+
+Las rutas requieren `mi_coach.use` y los permisos de inteligencia comercial correspondientes; la investigación externa también requiere `fuentes_externas.execute`. Las acciones sobre hallazgos validan permisos de escritura y confirmación según el destino.
+
 ## Cuenta nueva
 
 Entrada conversacional:
 
 - `POST /api/prospect-research/sessions/:sessionId/chat`
+
+La sesión también puede consultarse y enriquecerse mediante las rutas `/api/prospect-research/sessions/:sessionId`, `/run` y `/run-external`. La investigación puede proponer hallazgos, contactos e hipótesis, pero no crea entidades CRM. Las conversiones explícitas a cuenta, contacto, lead u oportunidad requieren confirmación, permisos y auditoría; la revisión de duplicados se realiza antes de convertir. La investigación pública requiere una acción explícita y la política de fuentes externas vigente.
 
 El adaptador trabaja con:
 

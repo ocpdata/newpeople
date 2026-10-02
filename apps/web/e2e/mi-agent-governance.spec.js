@@ -1463,7 +1463,10 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByRole("heading", { name: "Pregúntale a tu Coach" }),
     ).toBeVisible();
-    await expect(page.getByPlaceholder("Nombre de la cuenta")).toBeVisible();
+    await expect(page.getByLabel("Alcance actual del Coach")).toContainText(
+      "Ámbito general del vendedor",
+    );
+    await expect(page.getByLabel("Cuenta activa")).toHaveCount(0);
     await expect(
       page.getByPlaceholder("Escribe tu pregunta para el Coach..."),
     ).toBeVisible();
@@ -1629,14 +1632,12 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Coach", exact: true }).click();
-    const coachAccount = page.getByLabel("Cuenta activa");
-    await coachAccount.selectOption("160");
-    page.once("dialog", (dialog) => dialog.accept());
-    await coachAccount.selectOption("170");
-    await expect(coachAccount).toHaveValue("170");
+    const coachScope = page.getByLabel("Alcance actual del Coach");
+    await expect(coachScope).toContainText("Ámbito general del vendedor");
+    await expect(page.getByLabel("Cuenta activa")).toHaveCount(0);
     await page
       .getByPlaceholder("Escribe tu pregunta para el Coach...")
-      .fill("¿Qué seguimiento corresponde a esta oportunidad?");
+      .fill("¿Qué seguimiento corresponde a Proyecto B de Cuenta Alterna?");
     await page.getByRole("button", { name: "Preguntar" }).click();
     await expect(
       page.getByText(
@@ -1656,9 +1657,12 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     await page.getByRole("button", { name: "Coach", exact: true }).click();
-    await expect(page.getByLabel("Cuenta activa")).toHaveValue("170");
+    await expect(coachScope).toContainText("Enfoque activo");
+    await expect(coachScope).toContainText("Proyecto B");
     await expect(
-      page.getByText("¿Qué seguimiento corresponde a esta oportunidad?"),
+      page.getByText(
+        "¿Qué seguimiento corresponde a Proyecto B de Cuenta Alterna?",
+      ),
     ).toBeVisible();
     await expect(
       page.getByText(
@@ -1819,7 +1823,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
   });
 
-  test("confirma el cambio de cuenta y no restaura una conversación cerrada", async ({
+  test("confirma el regreso al ámbito general y no restaura una conversación cerrada", async ({
     page,
   }) => {
     await mockMiCoachApi(page, {
@@ -1858,7 +1862,28 @@ test.describe("Mi Coach governance and workspaces", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ session, operations: [], recentOperations: [] }),
+        body: JSON.stringify({
+          session,
+          operations: sessionClosed
+            ? []
+            : [
+                {
+                  id: 84,
+                  kind: "activity",
+                  status: "collecting",
+                  version: 1,
+                  targetModule: "commercial_development",
+                  missingFields: ["scheduledAt"],
+                  pendingOperation: {
+                    kind: "activity",
+                    title: "Llamar al cliente",
+                    opportunityId: 22,
+                    missingFields: ["scheduledAt"],
+                  },
+                },
+              ],
+          recentOperations: [],
+        }),
       });
     });
     await page.route(
@@ -1878,25 +1903,36 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
     await openMiCoach(page);
     await activeSessionRequest;
-    const accountSelect = page.getByLabel("Cuenta activa");
-    await expect(accountSelect.locator('option[value="160"]')).toHaveCount(1);
+    releaseRestoration();
+    await expect(
+      page.getByText("Respuesta de la cuenta anterior"),
+    ).toBeVisible();
+    const coachScope = page.getByLabel("Alcance actual del Coach");
+    await expect(coachScope).toContainText("Enfoque activo");
 
     page.once("dialog", async (dialog) => {
-      expect(dialog.message()).toContain("No podrás reabrirla desde Coach");
+      expect(dialog.message()).toContain("Volver al ámbito general");
+      expect(dialog.message()).toContain("1 acción pendiente");
       await dialog.dismiss();
     });
-    await accountSelect.selectOption("160");
-    await expect(accountSelect).toHaveValue("");
-
-    releaseRestoration();
-    await expect(accountSelect).toHaveValue("170");
+    await page.getByRole("button", { name: "Volver al ámbito general" }).click();
+    await expect(coachScope).toContainText("Cuenta Alterna");
     await expect(
       page.getByText("Respuesta de la cuenta anterior"),
     ).toBeVisible();
 
     page.once("dialog", (dialog) => dialog.accept());
-    await accountSelect.selectOption("160");
-    await expect(accountSelect).toHaveValue("160");
+    const cancelledOperationRequest = page.waitForRequest(
+      (request) =>
+        request.url().endsWith("/api/mi-agent/coach/operations/84/status") &&
+        request.method() === "POST",
+    );
+    await page.getByRole("button", { name: "Volver al ámbito general" }).click();
+    expect((await cancelledOperationRequest).postDataJSON()).toMatchObject({
+      status: "cancelled",
+      cancellationReason: "Descartada al volver al ámbito general",
+    });
+    await expect(coachScope).toContainText("Ámbito general del vendedor");
     await expect(page.getByText("Pregunta de la cuenta anterior")).toHaveCount(
       0,
     );
@@ -1906,7 +1942,9 @@ test.describe("Mi Coach governance and workspaces", () => {
 
     await page.reload();
     await page.getByRole("button", { name: "Coach", exact: true }).click();
-    await expect(page.getByLabel("Cuenta activa")).toHaveValue("");
+    await expect(page.getByLabel("Alcance actual del Coach")).toContainText(
+      "Ámbito general del vendedor",
+    );
     await expect(page.getByText("Respuesta de la cuenta anterior")).toHaveCount(
       0,
     );
@@ -2103,7 +2141,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
   });
 
-  test("agrupa oportunidades abiertas y terminales habilitadas por cuenta", async ({
+  test("inicia Coach en ámbito general sin selectores de entidad", async ({
     page,
   }) => {
     await mockMiCoachApi(page, {
@@ -2112,34 +2150,16 @@ test.describe("Mi Coach governance and workspaces", () => {
     });
     await openMiCoach(page);
 
-    await page.getByLabel("Cuenta activa").selectOption("160");
-
+    await expect(page.getByLabel("Alcance actual del Coach")).toContainText(
+      "Ámbito general del vendedor",
+    );
+    await expect(page.getByLabel("Cuenta activa")).toHaveCount(0);
     await expect(
-      page.getByRole("option", {
-        name: /Abierta · Proyecto abierto/,
-      }),
-    ).toHaveCount(1);
+      page.getByRole("combobox", { name: "Oportunidad", exact: true }),
+    ).toHaveCount(0);
     await expect(
-      page.getByRole("option", {
-        name: /Ganada · Renovación ganada/,
-      }),
-    ).toHaveCount(1);
-    await expect(
-      page.getByRole("option", {
-        name: /Perdida · Proyecto perdido/,
-      }),
-    ).toHaveCount(1);
-    await expect(
-      page.getByRole("option", {
-        name: /Anulada · Proyecto anulado/,
-      }),
-    ).toHaveCount(1);
-    const opportunitySelect = page.getByRole("combobox", {
-      name: "Oportunidad",
-      exact: true,
-    });
-    await opportunitySelect.selectOption("301");
-    await expect(opportunitySelect).toHaveValue("301");
+      page.getByRole("combobox", { name: "Contacto", exact: true }),
+    ).toHaveCount(0);
   });
 
   test("adopta la entidad autorizada mencionada por Coach sin limpiar la conversación", async ({
@@ -2149,13 +2169,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       withResponseContextSwitch: true,
     });
     await openMiCoach(page);
-    await page.getByLabel("Cuenta activa").selectOption("160");
-    await page
-      .getByRole("combobox", { name: "Oportunidad", exact: true })
-      .selectOption("300");
     await page
       .getByPlaceholder("Escribe tu pregunta para el Coach...")
-      .fill("¿Qué otra oportunidad requiere seguimiento?");
+      .fill("¿Qué otra oportunidad de Cuenta Demo requiere seguimiento?");
     await page.getByRole("button", { name: "Preguntar" }).click();
 
     await expect(
@@ -2163,12 +2179,11 @@ test.describe("Mi Coach governance and workspaces", () => {
         "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
       ),
     ).toBeVisible({ timeout: 10000 });
-    await expect(page.getByLabel("Cuenta activa")).toHaveValue("170");
+    const coachScope = page.getByLabel("Alcance actual del Coach");
+    await expect(coachScope).toContainText("Cuenta Alterna");
+    await expect(coachScope).toContainText("Proyecto B");
     await expect(
-      page.getByRole("combobox", { name: "Oportunidad", exact: true }),
-    ).toHaveValue("320");
-    await expect(
-      page.getByText("¿Qué otra oportunidad requiere seguimiento?"),
+      page.getByText("¿Qué otra oportunidad de Cuenta Demo requiere seguimiento?"),
     ).toBeVisible();
   });
 
@@ -2177,7 +2192,9 @@ test.describe("Mi Coach governance and workspaces", () => {
   }) => {
     await mockMiCoachApi(page, { withCustomerHealth: true });
     await openMiCoach(page);
-    await page.getByLabel("Cuenta activa").selectOption("170");
+    await expect(page.getByLabel("Alcance actual del Coach")).toContainText(
+      "Ámbito general del vendedor",
+    );
     await page.getByRole("button", { name: "Cliente existente" }).click();
     await expect(page.getByLabel("Cuenta existente")).toHaveValue("");
     await page.getByLabel("Cuenta existente").selectOption("160");
@@ -2316,7 +2333,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       accountChat.getByRole("button", { name: "Preparar actividad" }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Coach", exact: true }).click();
-    await expect(page.getByLabel("Cuenta activa")).toHaveValue("170");
+    await expect(page.getByLabel("Alcance actual del Coach")).toContainText(
+      "Ámbito general del vendedor",
+    );
   });
 
   test("restaura diagnóstico estructurado y operaciones accionables", async ({

@@ -2,13 +2,17 @@
 
 ## 1. Proposito
 
-Mi Coach ofrece tres espacios de trabajo:
+Mi Coach organiza la experiencia en cinco espacios de trabajo:
 
-- **Coach:** asesoria comercial con contexto, historial y operaciones.
-- **Cliente existente:** analisis conversacional de una cuenta CRM autorizada.
-- **Cuenta nueva:** investigacion de un prospecto antes de convertirlo en registros CRM.
+- **Resumen:** indicadores de cuota y pipeline, junto con el análisis de situación comercial y prioridades del vendedor.
+- **Coach:** asesoría comercial conversacional con contexto, historial y operaciones.
+- **Cliente existente:** análisis de una cuenta CRM autorizada, riesgos y oportunidades de desarrollo.
+- **Cuenta nueva:** investigación de un prospecto antes de convertirlo en registros CRM.
+- **Administración:** gobierno de reglas, permisos y configuración de los espacios de Mi Coach.
 
-Los tres chats comparten el mismo motor de interpretacion. Cada uno conserva su propio contexto, sesion, permisos y operaciones.
+Resumen presenta indicadores de cuota y pipeline y puede iniciar un análisis asíncrono de situación comercial. Ese análisis prioriza riesgos y acciones sobre datos autorizados; no es una conversación ni modifica registros.
+
+Coach, Cliente existente y Cuenta nueva son los tres canales conversacionales y comparten el motor de interpretación. Cada uno conserva su propio contexto, sesión, permisos y operaciones. Resumen y Administración son espacios distintos; no comparten sesiones de chat.
 
 ## 2. Vista simple
 

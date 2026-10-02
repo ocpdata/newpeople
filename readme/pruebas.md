@@ -112,32 +112,26 @@ La cantidad de casos puede cambiar al agregar escenarios o al ampliar las suites
 
 ## Pruebas de Mi Coach
 
-La suite focalizada de Mi Coach valida la normalización y seguridad de las operaciones propuestas:
+Desde la raíz del repositorio, los comandos principales son:
 
-- Contexto seleccionado de cuenta, oportunidad y contacto.
-- Actividades nuevas y actualización de actividades existentes.
-- Rechazo de actividades con `activityId` fuera de la oportunidad.
-- Herencia de la oportunidad seleccionada cuando el modelo omite el ID.
-- Respuestas de preguntas de etapa (`stage_answer`).
-- Detección de respuestas relacionadas con motivación o necesidad.
-- Consulta del importe exacto de la oportunidad seleccionada.
-- Cambio del importe de una oportunidad seleccionada.
-- Reemplazo de respuestas narrativas contradictorias del modelo.
-- Rechazo de operaciones contra cuentas, contactos o leads inaccesibles.
+```bash
+npm run test:coach
+npm run test:coach:baseline
+```
 
-Prueba focalizada:
+`test:coach` ejecuta las suites focalizadas del API y la matriz E2E de Coach. `test:coach:baseline` añade los casos de integración API seleccionados para el flujo conversacional. La matriz de preguntas representativas puede ejecutarse por separado:
+
+```bash
+npm exec --prefix apps/api vitest run --maxWorkers=1 test/coach-evaluation-matrix.test.js
+```
+
+Para aislar las pruebas de normalización y seguridad de operaciones:
 
 ```bash
 npm exec --prefix apps/api vitest run test/mi-agent-coach-operations.test.js
 ```
 
-Las operaciones de Mi Coach deben conservar el flujo:
-
-```text
-respuesta del Coach -> revisar y confirmar -> modal editable -> guardar -> mensaje de éxito o error
-```
-
-No se debe guardar ninguna operación automáticamente. Las pruebas deben confirmar que los selectores de cuenta, oportunidad y contacto determinan el contexto de la operación.
+Las pruebas deben confirmar que las operaciones requieren revisión y confirmación, respetan permisos y ownership, y que los selectores de cuenta, oportunidad y contacto determinan el contexto.
 
 ## Pruebas de seguridad y protección
 

@@ -11,6 +11,7 @@ import {
   prepareCoachReadModel,
   resolveAvailableCoachTools,
   runConversationEngine,
+  shouldPreserveCoachContextForQuestion,
 } from "../src/coach/conversation-engine.js";
 import { getCoachReadToolCatalog } from "../src/coach/read-tools.js";
 
@@ -33,6 +34,24 @@ describe("Coach conversation engine", () => {
       "account_chat",
     );
     expect(getConversationChannelJobType("prospect")).toBe("prospect_chat");
+  });
+
+  it("preserves the active entity for deictic follow-ups but not requests for another record", () => {
+    expect(
+      shouldPreserveCoachContextForQuestion(
+        "Para esta oportunidad, ¿ves adecuado que le envíe un correo?",
+        { opportunityId: 41 },
+      ),
+    ).toBe(true);
+    expect(
+      shouldPreserveCoachContextForQuestion(
+        "¿Qué otra oportunidad debería priorizar?",
+        { opportunityId: 41 },
+      ),
+    ).toBe(false);
+    expect(
+      shouldPreserveCoachContextForQuestion("¿Qué hago con esta oportunidad?", {}),
+    ).toBe(false);
   });
 
   it("normaliza tool calls de ambos formatos y limita el lote", () => {
@@ -386,7 +405,7 @@ describe("Coach conversation engine", () => {
       responseType: "informational",
       answer: "Respuesta comun.",
       facts: [],
-      evidence: ["Evidencia CRM"],
+      evidence: [],
       inferences: [],
       pendingItems: [],
       recommendation: null,
@@ -413,13 +432,13 @@ describe("Coach conversation engine", () => {
     ];
     const loadAdministrativeRules = vi.fn().mockResolvedValue(activeAdminRules);
     const classifyCoachIntentWithModel = vi.fn().mockResolvedValue({
-      intent: "process_information",
+      intent: "general_query",
       confidence: 0.97,
       contextNeeded: [],
     });
     let promptSnapshot = null;
     const result = await runConversationEngine({
-      question: "¿Qué etapas tiene el proceso de venta?",
+      question: "¿Cuál es el proceso de ventas?",
       context: { accountId: 7 },
       history: [],
       user: { id: 31 },
@@ -480,7 +499,7 @@ describe("Coach conversation engine", () => {
     expect(result).toMatchObject({
       response: expect.objectContaining({ answer: "Respuesta comun." }),
       entities: expect.objectContaining({ accountId: 7 }),
-      evidence: ["Evidencia CRM"],
+      evidence: [],
       inferences: [],
       confidence: "high",
       clarification: null,
@@ -492,7 +511,7 @@ describe("Coach conversation engine", () => {
       process: "process_information",
       validationStatus: "valid",
       primaryEntity: "account",
-      evidenceCount: 1,
+      evidenceCount: 0,
     });
     expect(loadAdministrativeRules).toHaveBeenCalledWith({
       channel: "coach",
@@ -502,7 +521,7 @@ describe("Coach conversation engine", () => {
     expect(result.response.intentRouting).toMatchObject({
       intent: "process_information",
       mode: "coaching",
-      confidence: 0.97,
+      confidence: 1,
       requiredContext: [],
       allowedTools: [],
     });
@@ -690,7 +709,7 @@ describe("Coach conversation engine", () => {
     expect(readModel.preparationRequested).toBe(false);
   });
 
-  it("carga el agregado de pipeline para una pregunta general de desempeño del vendedor", async () => {
+  it("restaura el alcance completo de cartera para priorizar oportunidades tras un foco previo", async () => {
     const snapshot = {
       accounts: [],
       coachOpportunities: [
@@ -703,6 +722,15 @@ describe("Coach conversation engine", () => {
           lifecycle: "open",
           riskLevel: "high",
         },
+        {
+          id: 42,
+          name: "Proyecto de renovación",
+          accountId: 13,
+          amountUsd: 30000,
+          activationStatusCode: "activada",
+          lifecycle: "open",
+          riskLevel: "medium",
+        },
       ],
       wonOpportunities: [],
       lostOpportunities: [],
@@ -710,16 +738,21 @@ describe("Coach conversation engine", () => {
       leads: [],
       contactMappings: [],
     };
+    const scopedContexts = [];
     const readModel = await prepareCoachReadModel({
       user: { id: 31 },
-      question: "¿Cómo puedo mejorar mi desempeño comercial?",
-      availableTools: [{ name: "getSellerPipeline" }],
+      question: "Ayúdame a identificar las oportunidades más críticas para priorizar.",
+      selectedContext: { accountId: 12, opportunityId: 41 },
+      availableTools: [
+        { name: "getSellerPipeline" },
+        { name: "searchOpportunities" },
+      ],
       businessRules: {},
       intentRouting: {
         intent: "seller_coaching",
         mode: "coaching",
         requiredContext: [],
-        allowedTools: ["getSellerPipeline"],
+        allowedTools: ["getSellerPipeline", "searchOpportunities"],
       },
       dependencies: {
         getMiAgentContext: async () => snapshot,
@@ -746,7 +779,18 @@ describe("Coach conversation engine", () => {
         buildCoachEntityClarification: () => null,
         getMiAgentEnrichedContext: async (_user, scopedSnapshot) =>
           scopedSnapshot,
-        buildCoachScopedSnapshot: (value) => value,
+        buildCoachScopedSnapshot: (value, context) => {
+          scopedContexts.push(context);
+          const opportunityId = Number(context?.opportunityId || 0);
+          return opportunityId
+            ? {
+                ...value,
+                coachOpportunities: value.coachOpportunities.filter(
+                  (opportunity) => Number(opportunity.id) === opportunityId,
+                ),
+              }
+            : value;
+        },
         isStagePreparationQuestion: () => false,
         buildStageReadiness: () => null,
       },
@@ -754,11 +798,21 @@ describe("Coach conversation engine", () => {
 
     expect(readModel.readToolResults.map((item) => item.toolName)).toEqual([
       "getSellerPipeline",
+      "searchOpportunities",
     ]);
-    expect(readModel.modelSnapshot.pipeline).toMatchObject({
-      openCount: 1,
-      riskCount: 1,
+    expect(readModel.effectiveContext).toMatchObject({
+      accountId: null,
+      opportunityId: null,
     });
+    expect(scopedContexts[0]).toMatchObject({
+      accountId: null,
+      opportunityId: null,
+    });
+    expect(readModel.modelSnapshot.pipeline).toMatchObject({
+      openCount: 2,
+      riskCount: 2,
+    });
+    expect(readModel.modelSnapshot.coachOpportunities).toHaveLength(2);
   });
 
   it("no carga detalles enriquecidos ni ejecuta herramientas para exploración detallada", async () => {

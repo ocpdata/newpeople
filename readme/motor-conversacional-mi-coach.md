@@ -172,6 +172,21 @@ flowchart TB
     GATEWAY --> UI
 ```
 
+### 4.1 Separación lógica en seis capas
+
+![Arquitectura lógica del motor de Mi Coach en seis capas](./arquitectura-motor-mi-coach-6capas.svg)
+
+Este modelo describe límites de responsabilidad, no seis módulos de código independientes. La implementación puede distribuir una responsabilidad entre varios componentes:
+
+1. **Clasificación de intención:** interpreta la solicitud y propone su categoría; no decide permisos ni hechos del CRM.
+2. **Resolución de entidades:** identifica candidatos y ambigüedades; la validación de acceso ocurre después, en el servidor.
+3. **Reglas de negocio:** aplica ciclo de vida, etapas, permisos, alcance por canal y condiciones de operación.
+4. **Acceso a datos:** consulta herramientas CRM autorizadas y devuelve hechos estructurados.
+5. **Validación de respuesta:** comprueba coherencia con la entidad, los filtros, la evidencia y el proceso comercial.
+6. **Calidad y aprendizaje supervisado:** observa trazas y feedback para proponer mejoras; no cambia reglas, permisos ni datos automáticamente.
+
+La fuente de verdad continúa siendo el CRM y las reglas deterministas del servidor. Las señales de calidad sirven para revisión y pruebas, no para sustituir esas autoridades.
+
 ## 5. Componentes
 
 ### 5.1 Chat integrado
@@ -297,7 +312,7 @@ El `localStorage` puede conservar una referencia auxiliar, pero no debe poder re
 
 El contexto de sesión es tipado y relacional. Puede contener cuenta, oportunidad, contacto o lead, pero una entidad mencionada de forma clara y única solo reemplaza el contexto anterior después de validar sus IDs y relaciones. Las referencias como "esa oportunidad" o "el contacto" usan el contexto activo compatible; una nueva entidad explícita inicia un tramo contextual nuevo sin borrar los mensajes visibles.
 
-Al cambiar de cuenta, se debe confirmar el cierre de la conversación, limpiar sus borradores y establecer el nuevo contexto. Las operaciones pendientes deben completarse o descartarse antes del cambio. La opción de conversación general aplica el mismo reinicio sin seleccionar una cuenta.
+Coach inicia en el ámbito general del vendedor. Si una entidad se resuelve durante la conversación, el foco se conserva en la sesión; volver al ámbito general requiere confirmar el cierre de esa sesión y limpiar sus mensajes y borradores. Las operaciones pendientes deben completarse o descartarse antes del reinicio. Cliente existente conserva la selección de cuenta y oportunidad de su canal; la oportunidad siempre queda dentro del alcance de la cuenta autorizada.
 
 ## 6. Contrato funcional del asesor
 

@@ -31,6 +31,8 @@ import {
   updateCoachOperation,
 } from "./coach/service.js";
 import {
+  coachRecommendationSchema,
+  stageReadinessSchema,
   coachOperationSchema,
   filterValidCoachOperations,
   safeParseCoachResponse,
@@ -1728,8 +1730,19 @@ export function normalizeCoachResult(
     const accountId = Number(lead?.accountId || 0);
     if (accountId > 0) accountIds.add(accountId);
   });
-  const rawAction =
+  const actionCandidate =
     source.action && typeof source.action === "object" ? source.action : null;
+  const rawAction =
+    actionCandidate &&
+    [
+      actionCandidate.title,
+      actionCandidate.notes,
+      actionCandidate.successCriteria,
+      actionCandidate.scheduledAt,
+      actionCandidate.opportunityId,
+    ].some((value) => String(value || "").trim())
+      ? actionCandidate
+      : null;
   const actionOpportunityId = Number(rawAction?.opportunityId || 0);
   const entities =
     source.entities && typeof source.entities === "object"
@@ -2333,7 +2346,16 @@ export function normalizeCoachResult(
       .map((item) => String(item || "").trim())
       .filter(Boolean)
       .slice(0, 8),
-    facts: Array.isArray(source.facts) ? source.facts : [],
+    facts: Array.isArray(source.facts)
+      ? source.facts.map((fact) =>
+          fact && typeof fact === "object"
+            ? {
+                ...fact,
+                sourceId: Number(fact.sourceId || 0) || null,
+              }
+            : fact,
+        )
+      : [],
     inferences: (Array.isArray(source.inferences) ? source.inferences : [])
       .map((item) => String(item || "").trim())
       .filter(Boolean)
@@ -2345,10 +2367,23 @@ export function normalizeCoachResult(
       .map((item) => String(item || "").trim())
       .filter(Boolean)
       .slice(0, 30),
-    recommendation:
-      source.recommendation && typeof source.recommendation === "object"
-        ? source.recommendation
-        : String(source.recommendation || "").trim() || null,
+    recommendation: (() => {
+      const recommendation = source.recommendation;
+      if (!recommendation || typeof recommendation !== "object")
+        return String(recommendation || "").trim() || null;
+      const parsed = coachRecommendationSchema.safeParse(recommendation);
+      if (parsed.success) return parsed.data;
+      return [
+        recommendation.action,
+        recommendation.rationale,
+        recommendation.expectedOutcome,
+        recommendation.successCriteria,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 2400) || null;
+    })(),
     operations,
     clarification,
     confidence: ["high", "medium", "low"].includes(
@@ -2356,9 +2391,6 @@ export function normalizeCoachResult(
     )
       ? String(source.confidence).trim()
       : "medium",
-    ...(source.intentRouting && typeof source.intentRouting === "object"
-      ? { intentRouting: source.intentRouting }
-      : {}),
     detailHandoff: null,
     entities: {
       opportunityId: opportunityIds.has(selectedOpportunityId)
@@ -2386,7 +2418,8 @@ export function normalizeCoachResult(
     },
     action: rawAction
       ? {
-          title: String(rawAction.title || "").trim(),
+          title:
+            String(rawAction.title || "").trim() || "Siguiente paso sugerido",
           opportunityId: opportunityIds.has(actionOpportunityId)
             ? actionOpportunityId
             : null,
@@ -2410,9 +2443,7 @@ export function normalizeCoachResult(
       : null,
     stageReadiness:
       authoritativeStageReadiness ||
-      (source.stageReadiness && typeof source.stageReadiness === "object"
-        ? source.stageReadiness
-        : null),
+      stageReadinessSchema.safeParse(source.stageReadiness).data || null,
   };
 
   const parsedResponse = safeParseCoachResponse(normalizedResponse);
@@ -3244,6 +3275,19 @@ async function requestMiAgentJson({
 }) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+  const isCoachChatResponse =
+    featureCode === MI_COACH_FEATURE_CODE &&
+    jobType === "mi_coach_chat" &&
+    ["coach_intent_route", "coach"].includes(phase);
+  const requestPayload = isCoachChatResponse
+    ? {
+        ...payload,
+        text: {
+          ...payload.text,
+          format: { type: "json_object" },
+        },
+      }
+    : payload;
   let response;
   try {
     response = await fetch(
@@ -3254,7 +3298,7 @@ async function requestMiAgentJson({
           "Content-Type": "application/json",
           Authorization: `Bearer ${config.openai.apiKey}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(requestPayload),
         signal: controller.signal,
       },
     );
@@ -3327,6 +3371,16 @@ function buildCoachPrompt(
         role: "system",
         content:
           "El intentRouting incluido en el contexto ya fue clasificado y validado por el servidor: consérvalo sin reclasificar. Basa la respuesta en esa intención, respeta sus requiredContext y solicita únicamente herramientas de allowedTools. El catálogo es metadato del servidor. Una consulta process_information es conceptual y no requiere cuenta ni oportunidad.",
+      },
+      {
+        role: "system",
+        content:
+          "Política de correo del Coach: si preguntan si pueden enviar un correo, explica que el Coach puede redactar un borrador para revisión, pero no enviarlo. Si piden un ejemplo o una redacción, entrega el borrador directamente usando solo datos presentes en el contexto autorizado y deja marcadores para la información faltante. No afirmes que el correo fue enviado ni propongas registrar una actividad de seguimiento a menos que el vendedor lo solicite explícitamente.",
+      },
+      {
+        role: "system",
+        content:
+          "Si el vendedor pide cómo formular o preguntar algo de otra manera, responde a esa solicitud exterior y ofrece una o varias frases abiertas, claras y naturales en español. Trata el texto citado como el tema que quiere reformular, no como una consulta que requiera identificar una cuenta o consultar el CRM. No inventes hechos del cliente.",
       },
       ...(snapshot?.interactionModePolicy
         ? [

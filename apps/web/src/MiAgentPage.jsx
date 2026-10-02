@@ -987,7 +987,6 @@ export default function MiAgentPage({
   const [activeWorkspace, setActiveWorkspace] = useState("summary");
   const [dashboard, setDashboard] = useState(null);
   const [coachAccounts, setCoachAccounts] = useState([]);
-  const [coachAccountSearch, setCoachAccountSearch] = useState("");
   const [coachOpportunities, setCoachOpportunities] = useState([]);
   const [coachContacts, setCoachContacts] = useState([]);
   const [coachContext, setCoachContext] = useState({
@@ -1292,9 +1291,7 @@ export default function MiAgentPage({
       ]);
       setDashboard(data);
       setCoachMetrics(metricsResponse.data);
-      const accountsResponse = await api.get(
-        `/api/accounts?activeOnly=true&search=${encodeURIComponent(coachAccountSearch)}`,
-      );
+      const accountsResponse = await api.get("/api/accounts?activeOnly=true");
       setCoachAccounts(
         Array.isArray(accountsResponse.data) ? accountsResponse.data : [],
       );
@@ -1313,36 +1310,18 @@ export default function MiAgentPage({
     }
   }
 
-  function requestCoachAccountChange(accountId) {
-    const normalizedId = String(accountId || "");
-    const currentAccountId = String(coachContextRef.current.accountId || "");
-    if (normalizedId === currentAccountId) return;
-    if (coachPendingOperations.length) {
-      setError(
-        "Completa o descarta las operaciones pendientes del Coach antes de cambiar la cuenta.",
-      );
-      return;
-    }
+  function requestCoachGeneralScope() {
+    const pendingOperationCount = coachPendingOperations.length;
+    const pendingOperationNotice = pendingOperationCount
+      ? pendingOperationCount === 1
+        ? " También se descartará 1 acción pendiente."
+        : ` También se descartarán ${pendingOperationCount} acciones pendientes.`
+      : "";
 
-    const hasConversationState = Boolean(
-      currentAccountId ||
-      coachSessionId ||
-      coachActiveSessionRequestRef.current ||
-      coachMessages.length ||
-      coachOperationDraft ||
-      coachPendingOperations.length,
+    const confirmed = window.confirm(
+      `Volver al ámbito general cerrará esta conversación y limpiará sus mensajes y borradores.${pendingOperationNotice} No podrás reabrirla desde Coach. ¿Continuar?`,
     );
-    if (hasConversationState) {
-      const nextAccountName =
-        coachAccounts.find((account) => String(account.id) === normalizedId)
-          ?.name || "Sin cuenta";
-      const confirmed = window.confirm(
-        `Cambiar a ${nextAccountName} cerrará esta conversación y limpiará sus mensajes y borradores. No podrás reabrirla desde Coach. ¿Continuar?`,
-      );
-      if (!confirmed) return;
-    }
-
-    void selectCoachAccount(normalizedId);
+    if (confirmed) void resetCoachToGeneral();
   }
 
   async function clearCoachConversation() {
@@ -1404,88 +1383,65 @@ export default function MiAgentPage({
     }
   }
 
-  async function selectCoachAccount(accountId) {
-    const normalizedId = String(accountId || "");
+  async function resetCoachToGeneral() {
     setLoadingCoachContext(true);
     setError("");
+    const pendingRestore = coachActiveSessionRequestRef.current;
+    coachContextRevisionRef.current += 1;
+    coachActiveSessionRequestRef.current = null;
     try {
-      const pendingRestore = coachActiveSessionRequestRef.current;
       const restoredSessionResponse = pendingRestore
         ? await pendingRestore.catch(() => null)
         : null;
+      const generalContext = {
+        accountId: "",
+        opportunityId: "",
+        contactId: "",
+        leadId: "",
+      };
       const sessionIdToClose = Number(
         coachSessionId || restoredSessionResponse?.data?.session?.id || 0,
       );
+      if (coachPendingOperations.length) {
+        await Promise.all(
+          coachPendingOperations.map((operation) =>
+            api.post(`/api/mi-agent/coach/operations/${operation.id}/status`, {
+              status: "cancelled",
+              cancellationReason: "Descartada al volver al ámbito general",
+            }),
+          ),
+        );
+      }
       if (sessionIdToClose) {
         await api.post(
           `/api/mi-agent/coach/sessions/${sessionIdToClose}/close`,
         );
       }
 
-      coachContextRevisionRef.current += 1;
-      coachActiveSessionRequestRef.current = null;
-      setCoachContext({
-        accountId: normalizedId,
-        opportunityId: "",
-        contactId: "",
-        leadId: "",
-      });
+      setCoachContext(generalContext);
+      coachContextRef.current = generalContext;
       setCoachSessionId(null);
       setCoachOpportunities([]);
       setCoachContacts([]);
       setCoachMessages([]);
+      setCoachQuestion("");
       setCoachActionDraft(null);
       setCoachOperationDraft(null);
       setCoachPendingOperations([]);
       setCoachRecentOperations([]);
+      setCoachUndoOperationId(null);
+      setCoachOperationAction({});
       setCoachNotice("");
       coachDraftSaveSignatureRef.current = "";
-      if (!normalizedId) return;
-
-      const [contextResponse, opportunitiesResponse, contactsResponse] =
-        await Promise.all([
-          api.get("/api/mi-agent/context"),
-          api.get(
-            `/api/opportunities?accountId=${normalizedId}&activeOnly=true&openOnly=true`,
-          ),
-          api.get(
-            `/api/contacts?accountId=${normalizedId}&opportunityId=${coachContext.opportunityId || ""}&activeOnly=true`,
-          ),
-        ]);
-      setDashboard(contextResponse.data);
-      setCoachOpportunities(
-        buildCoachOpportunityOptions(
-          opportunitiesResponse.data,
-          buildSnapshot(contextResponse.data),
-          normalizedId,
-        ),
-      );
-      setCoachContacts(
-        Array.isArray(contactsResponse.data) ? contactsResponse.data : [],
-      );
     } catch (requestError) {
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cambiar el contexto del Coach",
+          "No fue posible volver al ámbito general del Coach",
         ),
       );
     } finally {
       setLoadingCoachContext(false);
-    }
-  }
-
-  async function searchCoachAccounts(value) {
-    setCoachAccountSearch(value);
-    try {
-      const response = await api.get(
-        `/api/accounts?activeOnly=true&search=${encodeURIComponent(value)}`,
-      );
-      setCoachAccounts(Array.isArray(response.data) ? response.data : []);
-    } catch (requestError) {
-      setError(
-        getApiErrorMessage(requestError, "No fue posible buscar cuentas"),
-      );
     }
   }
 
@@ -1524,56 +1480,6 @@ export default function MiAgentPage({
     ) {
       navigate(`/interactions?leadId=${Number(handoff.leadId)}`);
     }
-  }
-
-  async function selectCoachOpportunity(opportunityId) {
-    const opportunity = coachOpportunities.find(
-      (item) => String(item.id) === String(opportunityId),
-    );
-    coachContextRevisionRef.current += 1;
-    setCoachContext((current) => ({
-      ...current,
-      opportunityId: String(opportunityId || ""),
-      contactId: "",
-      leadId: "",
-    }));
-    setCoachSessionId(null);
-    setCoachMessages([]);
-    setCoachActionDraft(null);
-    setCoachOperationDraft(null);
-    setCoachPendingOperations([]);
-    setCoachRecentOperations([]);
-    setCoachNotice("");
-    if (
-      opportunityId &&
-      coachContext.accountId &&
-      opportunity?.contextGroup === "open"
-    ) {
-      const response = await api.get(
-        `/api/contacts?accountId=${coachContext.accountId}&opportunityId=${opportunityId}&activeOnly=true`,
-      );
-      setCoachContacts(
-        Array.isArray(response.data) && response.data.length
-          ? response.data
-          : coachContacts,
-      );
-    }
-  }
-
-  function selectCoachContact(contactId) {
-    coachContextRevisionRef.current += 1;
-    setCoachContext((current) => ({
-      ...current,
-      contactId: String(contactId || ""),
-      leadId: "",
-    }));
-    setCoachSessionId(null);
-    setCoachMessages([]);
-    setCoachActionDraft(null);
-    setCoachOperationDraft(null);
-    setCoachPendingOperations([]);
-    setCoachRecentOperations([]);
-    setCoachNotice("");
   }
 
   async function applyCoachActiveContext(
@@ -1637,18 +1543,7 @@ export default function MiAgentPage({
 
   useEffect(() => {
     loadDashboard();
-    // Dashboard hydration intentionally runs once when the workspace mounts.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (coachAccountSearch !== "") {
-        searchCoachAccounts(coachAccountSearch);
-      }
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [coachAccountSearch]);
 
   const snapshot = useMemo(() => buildSnapshot(dashboard), [dashboard]);
   const currency = snapshot.quota.currencyCode;
@@ -1656,18 +1551,6 @@ export default function MiAgentPage({
     snapshot.quota.currencyConversionAvailable && snapshot.quota.gapAmount
       ? snapshot.pipeline.openAmount / snapshot.quota.gapAmount
       : null;
-  const coachOpportunityGroups = [
-    ["open", "Abiertas"],
-    ["won", "Ganadas"],
-    ["lost", "Perdidas"],
-    ["cancelled", "Anuladas"],
-  ].map(([code, label]) => ({
-    code,
-    label,
-    opportunities: coachOpportunities.filter(
-      (opportunity) => opportunity.contextGroup === code,
-    ),
-  }));
   const selectedCustomerAccount =
     customerAccounts.find(
       (item) => String(item.id) === String(customerAccountId),
@@ -4287,158 +4170,75 @@ export default function MiAgentPage({
                     </span>
                     <h3>Pregúntale a tu Coach</h3>
                   </div>
-                  <span>Usa tu contexto real del CRM</span>
+                  <span>Asesoría general para tu desempeño comercial</span>
                 </div>
                 <div className="mi-agent-coach-context-heading">
                   <div>
-                    <strong>Contexto de la conversación</strong>
+                    <strong>Ámbito de la conversación</strong>
                     <small>
-                      Limita las respuestas a una cuenta, oportunidad o
-                      contacto.
+                      Empieza con tu cartera y prioridades generales. Menciona
+                      una cuenta, oportunidad, contacto o lead para enfocar la
+                      conversación.
                     </small>
                   </div>
                 </div>
-                <div className="mi-agent-coach-context-form">
-                  <label>
-                    Buscar cuenta
-                    <input
-                      value={coachAccountSearch}
-                      onChange={(event) =>
-                        searchCoachAccounts(event.target.value)
-                      }
-                      placeholder="Nombre de la cuenta"
-                      disabled={loadingCoachContext}
-                    />
-                  </label>
-                  <label>
-                    Cuenta activa
-                    <select
-                      value={coachContext.accountId}
-                      onChange={(event) =>
-                        requestCoachAccountChange(event.target.value)
-                      }
-                      disabled={loadingCoachContext}
-                    >
-                      <option value="">
-                        Sin cuenta · conversación general
-                      </option>
-                      {coachAccounts.map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Oportunidad
-                    <select
-                      value={coachContext.opportunityId}
-                      onChange={(event) =>
-                        selectCoachOpportunity(event.target.value)
-                      }
-                      disabled={!coachContext.accountId || loadingCoachContext}
-                    >
-                      <option value="">
-                        {loadingCoachContext
-                          ? "Cargando oportunidades..."
-                          : coachContext.accountId && !coachOpportunities.length
-                            ? "Sin oportunidades disponibles"
-                            : "Selecciona una oportunidad"}
-                      </option>
-                      {coachOpportunityGroups.map((group) =>
-                        group.opportunities.length ? (
-                          <optgroup key={group.code} label={group.label}>
-                            {group.opportunities.map((opportunity) => (
-                              <option
-                                key={opportunity.id}
-                                value={opportunity.id}
-                              >
-                                {group.label.slice(0, -1)} · {opportunity.name}{" "}
-                                ·{" "}
-                                {opportunity.sales_stage ||
-                                  opportunity.sales_stage_name ||
-                                  opportunity.stage_name ||
-                                  opportunity.stageName ||
-                                  "Sin etapa"}{" "}
-                                ·{" "}
-                                {formatCurrency(
-                                  opportunity.amount_usd ??
-                                    opportunity.amountUsd,
-                                  "USD",
-                                )}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null,
-                      )}
-                    </select>
-                  </label>
-                  <label>
-                    Contacto
-                    <select
-                      value={coachContext.contactId}
-                      onChange={(event) =>
-                        selectCoachContact(event.target.value)
-                      }
-                      disabled={!coachContext.accountId || loadingCoachContext}
-                    >
-                      <option value="">
-                        {loadingCoachContext
-                          ? "Cargando contactos..."
-                          : coachContext.accountId && !coachContacts.length
-                            ? "Sin contactos activos"
-                            : "Selecciona un contacto"}
-                      </option>
-                      {coachContacts.map((contact) => (
-                        <option key={contact.id} value={contact.id}>
-                          {contact.full_name ||
-                            `${contact.first_name || ""} ${contact.last_name || ""}`.trim()}{" "}
-                          · {contact.position_title || "Sin cargo"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                {coachContext.accountId ? (
-                  <div className="mi-agent-coach-context-summary">
-                    <strong>Contexto aplicado</strong>
+                <div
+                  className="mi-agent-coach-context-summary"
+                  aria-label="Alcance actual del Coach"
+                  role="group"
+                >
+                  <strong>
+                    {coachContext.accountId ||
+                    coachContext.opportunityId ||
+                    coachContext.contactId ||
+                    coachContext.leadId
+                      ? "Enfoque activo"
+                      : "Ámbito general del vendedor"}
+                  </strong>
+                  {coachContext.accountId ? (
                     <span>
                       {coachAccounts.find(
                         (item) =>
                           String(item.id) === String(coachContext.accountId),
-                      )?.name || "Cuenta seleccionada"}
+                      )?.name || "Cuenta en contexto"}
                     </span>
-                    {coachContext.opportunityId ? (
-                      <span>
-                        {coachOpportunities.find(
-                          (item) =>
-                            String(item.id) ===
-                            String(coachContext.opportunityId),
-                        )?.name || "Oportunidad seleccionada"}
-                      </span>
-                    ) : null}
-                    {coachContext.contactId ? (
-                      <span>
-                        {coachContacts.find(
-                          (item) =>
-                            String(item.id) === String(coachContext.contactId),
-                        )?.full_name || "Contacto seleccionado"}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {coachContext.accountId &&
-                !loadingCoachContext &&
-                (!coachOpportunities.length || !coachContacts.length) ? (
-                  <div className="mi-agent-coach-context-notices">
-                    {!coachOpportunities.length ? (
-                      <span>Sin oportunidades disponibles.</span>
-                    ) : null}
-                    {!coachContacts.length ? (
-                      <span>Sin contactos activos.</span>
-                    ) : null}
-                  </div>
-                ) : null}
+                  ) : null}
+                  {coachContext.opportunityId ? (
+                    <span>
+                      {coachOpportunities.find(
+                        (item) =>
+                          String(item.id) === String(coachContext.opportunityId),
+                      )?.name || "Oportunidad en contexto"}
+                    </span>
+                  ) : null}
+                  {coachContext.contactId ? (
+                    <span>
+                      {coachContacts.find(
+                        (item) =>
+                          String(item.id) === String(coachContext.contactId),
+                      )?.full_name || "Contacto en contexto"}
+                    </span>
+                  ) : null}
+                  {coachContext.leadId ? <span>Lead en contexto</span> : null}
+                  {coachContext.accountId ||
+                  coachContext.opportunityId ||
+                  coachContext.contactId ||
+                  coachContext.leadId ? (
+                    <button
+                      type="button"
+                      className="mi-agent-secondary-button"
+                      onClick={requestCoachGeneralScope}
+                      disabled={loadingCoachContext || askingCoach}
+                    >
+                      Volver al ámbito general
+                    </button>
+                  ) : (
+                    <span>
+                      Menciona una entidad en tu pregunta para centrar el
+                      análisis.
+                    </span>
+                  )}
+                </div>
                 {coachMetrics ? (
                   <div
                     className="mi-agent-coach-metrics"

@@ -34,6 +34,7 @@ export const COACH_INTENT_CATALOG = Object.freeze([
       "Explica etapas, conceptos o prácticas generales del proceso comercial.",
     examples: [
       "¿Qué etapas tiene el proceso de venta?",
+      "¿Cuál es el proceso de ventas?",
       "¿Qué ocurre durante la etapa de demostración?",
     ],
     requiredContext: [],
@@ -46,6 +47,7 @@ export const COACH_INTENT_CATALOG = Object.freeze([
       "Ayuda al vendedor a priorizar, mejorar seguimiento y avanzar el proceso con señales resumidas de su cartera.",
     examples: [
       "¿Cómo puedo mejorar mi desempeño comercial?",
+      "¿Qué me sugieres hacer?",
       "Ayúdame a priorizar las oportunidades que debo atender esta semana.",
     ],
     requiredContext: [],
@@ -142,7 +144,7 @@ export const COACH_INTENT_CATALOG = Object.freeze([
     code: "operation",
     label: "Solicitud de operación",
     description:
-      "Solicita proponer una acción o cambio sujeto al flujo de confirmación.",
+      "Solicita explícitamente crear o modificar un registro CRM mediante el flujo de confirmación. No incluye pedir recomendaciones, preguntar si se puede enviar un correo ni solicitar un borrador de correo.",
     examples: ["Agenda una llamada con el cliente."],
     requiredContext: [],
     tools: [
@@ -159,7 +161,13 @@ export const COACH_INTENT_CATALOG = Object.freeze([
     label: "Consulta general",
     description:
       "Pregunta que no corresponde claramente a otra intención del catálogo.",
-    examples: ["Ayúdame a preparar mi siguiente conversación."],
+    examples: [
+      "Ayúdame a preparar mi siguiente conversación.",
+      "¿Cómo puedo preguntar esto de otra manera?",
+      "Ayúdame a formular una pregunta para el cliente.",
+      "¿Le puedo enviar un correo a esta cuenta?",
+      "Dame un ejemplo de correo para esta oportunidad.",
+    ],
     requiredContext: [],
     tools: [],
   },
@@ -178,6 +186,65 @@ const CONTEXT_KEYS = new Set(["account", "opportunity", "contact", "lead"]);
 const CATALOG_BY_CODE = new Map(
   COACH_INTENT_CATALOG.map((item) => [item.code, item]),
 );
+
+export function isGeneralCoachProcessInformationQuestion(question = "") {
+  const text = String(question || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (
+    /\b(mi|mis|esta|este|esa|ese|cuenta|cuentas|oportunidad|oportunidades|cliente|contacto|contactos|lead|leads)\b/.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+  return (
+    /\b(?:cual es|que es|como funciona|como es|explica|describe|resume|dime)\b.*\b(?:proceso (?:de )?(?:venta|ventas|comercial)|ciclo (?:de )?ventas)\b/.test(
+      text,
+    ) ||
+    /^que etapas? (?:tiene|contempla|incluye)\b.*\bproceso\b/.test(text) ||
+    /^que (?:ocurre|pasa) (?:durante|en) (?:la )?etapa\b/.test(text)
+  );
+}
+
+export function isCoachEmailHelpQuestion(question = "") {
+  const text = String(question || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (!/\b(correo|correos|email|emails)\b/.test(text)) return false;
+  return (
+    /\b(puedo|podemos|puede|se puede|es posible)\b.*\b(enviar|mandar|redactar|escribir)\b/.test(
+      text,
+    ) ||
+    /\b(ejemplo|borrador)\b/.test(text) ||
+    /\b(redacta|redactar|escribe|escribir|prepara|preparar|envia|enviar|manda|mandar)\b.*\b(correo|correos|email|emails)\b/.test(
+      text,
+    )
+  );
+}
+
+export function isCoachQuestionPhrasingHelp(question = "") {
+  const text = String(question || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return (
+    /\b(como puedo|como podria|como debo|de que manera puedo)\b.*\b(preguntar|formular|plantear|decir)\b/.test(
+      text,
+    ) ||
+    /\b(otra manera|otra forma|reformular)\b.*\b(pregunta|preguntar)\b/.test(
+      text,
+    )
+  );
+}
 
 function getDefaultInteractionMode(intent) {
   if (intent === "operation") return "operation";

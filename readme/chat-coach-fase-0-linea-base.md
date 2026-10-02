@@ -1,6 +1,8 @@
 # Mi Coach - Fase 0: linea base y matriz de evaluacion
 
-Este documento implementa la Fase 0 del plan de arquitectura de Chat Coach. Su objetivo es fijar el alcance funcional, registrar preguntas representativas del vendedor y definir resultados esperados antes de migrar el orquestador o agregar nuevas herramientas.
+> Documento histórico: conserva la línea base ejecutada el 2026-09-29, antes de completar la migración del motor. No es una especificación vigente ni representa la cobertura actual. Los casos ejecutables actuales están en [Preguntas de evaluación del Chat Coach](./coach-evaluation-questions.md) y `apps/api/test/coach-evaluation-matrix.test.js`.
+
+Este documento conserva el alcance y los resultados de la Fase 0 del plan de arquitectura de Chat Coach para referencia histórica. Sus pendientes y cobertura deben interpretarse según el commit y la fecha registrados aquí, no como el estado actual del motor.
 
 ## 1. Fecha y alcance
 

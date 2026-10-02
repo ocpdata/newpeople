@@ -146,4 +146,4 @@ El contexto seleccionado de cuenta, oportunidad y contacto determina el alcance 
 - [Configuración del proceso comercial](./configuracion-proceso-comercial.md)
 - [Oportunidades](./oportunidades.md)
 - [Proceso comercial](./proceso-comercial.md)
-- [Especificación funcional del Chat Coach](./especificacion-chat-coach.md)
+- [Chat del Coach](./chat-coach.md)
