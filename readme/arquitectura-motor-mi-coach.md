@@ -271,6 +271,10 @@ El panel de gobierno de Mi Coach permite seleccionar el canal y proceso, editar 
 
 La configuracion puede estrechar alcance de lectura y tipos de operacion, definir filtros predeterminados y agregar aliases. No puede desactivar validacion de permisos, resolucion de entidad ni evidencia. Las reglas se aplican antes de exponer datos al modelo; el CRM y los permisos efectivos siguen siendo autoridad.
 
+Administracion incluye ademas un catalogo CRUD de reglas conversacionales: las reglas comunes aplican a los tres chats y las reglas especificas se filtran por canal y proceso. Cada regla tiene nombre, instruccion, orden y estado activo; las reglas activas se incluyen en la primera respuesta del modelo y en las pasadas posteriores con herramientas. Este catalogo orienta la interpretacion, pero no sustituye filtros, permisos, ownership, politicas de operacion ni validaciones deterministas del servidor. Altas, ediciones y eliminaciones requieren `mi_coach.admin` y quedan auditadas.
+
+Gobierno tambien expone controles deterministas por dominio. En oportunidades, Administracion puede elegir las etapas del pipeline calificado y del monto comprometido desde el catalogo vigente; el monto comprometido debe ser subconjunto del pipeline calificado. La definicion de oportunidad abierta permanece protegida y comun: estado comercial `en_proceso` y activacion `activada`; las etapas no cambian ese ciclo de vida. Las reglas de lectura y tipos de operacion se pueden estrechar por canal, pero permisos, ownership y las restricciones base de cada canal no se pueden ampliar desde la interfaz.
+
 ## 15. Adaptadores y aislamiento por canal
 
 Los tres adaptadores reutilizan `runConversationEngine`, pero construyen su propio snapshot, herramientas y politica:
@@ -284,10 +288,11 @@ Cliente existente crea una sesion con `POST /account-chat/sessions`, la consulta
 Cada herramienta del Coach declara sus permisos de dominio; un catálogo vacio deniega todas las llamadas. El motor etiqueta las llamadas de IA por canal y tipo de job, no aplica el ranking exclusivo de Coach a otros chats y filtra las operaciones por `sourceChannel` y tipos permitidos. Las operaciones de un canal no se guardan en sesiones de otro. Si el usuario solicita preparar una actividad desde Cliente existente, la aplicacion crea una nueva sesion Coach con el contexto autorizado de esa oportunidad; no reutiliza el historial de Cliente existente ni una sesion Coach previa. Las conversiones de Cuenta nueva permanecen en sus rutas y persistencia de Prospeccion.
 
 Los adaptadores no comparten historial ni cargan entidades de otro canal en su contexto.
+
 - La validacion final debe confirmar que la respuesta se corresponde con la pregunta.
 - Los cambios sugeridos por aprendizaje deben pasar por revision y pruebas antes de activarse.
 
-## 16. Observabilidad y rollout
+## 16. Observabilidad del motor
 
 Cada turno produce una traza de calidad asociada a canal, proceso, usuario, sesion y job. Registra intención, tipos e IDs de entidad resuelta, ambigüedad, reglas/filtros aplicados, validación, evidencia, herramientas, operaciones propuestas/rechazadas, latencia y código de error. No conserva el texto libre de la pregunta.
 
@@ -295,7 +300,7 @@ El feedback se asocia al `qualityTraceId` y solo puede enviarlo el propietario d
 
 El dashboard agrupa por canal y proceso las tasas de clasificación correcta, calidad de entidad, aclaración, respuesta inválida, rechazo de operaciones y corrección por feedback. La accuracy de intención/entidad usa feedback positivo/(positivo + negativo) de esa categoría; la tasa de corrección usa feedback marcado como corrección/feedback recibido. Sin denominador se muestra “sin medición”, no 0%. Las tasas de aclaración e inválidas usan turnos; el rechazo de operaciones usa propuestas. Las señales de regresión se presentan por proceso para corregirlas en la capa responsable.
 
-El rollout se controla por canal mediante porcentaje determinista por usuario, allowlist y kill switch. El 100% inicial conserva el comportamiento ya desplegado antes de añadir este gobierno; para una nueva versión se reduce explícitamente antes de la canaria. El orden recomendado es Coach, Cliente existente y Cuenta nueva/Prospección: habilitar hasta 5% con allowlist, observar al menos 20 turnos y 5 feedbacks en 30 días, y expandir en etapas de 25%, 50% y 100% solo si respuestas inválidas <= 5%, feedback negativo <= 15%, correcciones <= 10% y operaciones rechazadas <= 20%. Si la calidad no cumple, no se amplía; administración puede reducir el porcentaje o apagar el canal. Los cambios quedan auditados.
+Los tres canales ejecutan siempre el motor nuevo; la selección por porcentaje, allowlist o modo legacy/shadow ya no interviene en la ruta de conversación ni se expone en Administración. El dashboard conserva las métricas por canal y proceso para observar calidad y corregir reglas. Un error de ejecución puede activar el fallback local de resiliencia del canal, pero no una selección administrativa de motor.
 
 ## 17. Expansion del catalogo comercial
 

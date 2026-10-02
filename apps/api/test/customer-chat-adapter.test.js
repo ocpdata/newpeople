@@ -11,6 +11,7 @@ import {
   buildCustomerReadModel,
   buildCustomerFallback,
   createCustomerAccountAdapter,
+  normalizeCustomerOperations,
 } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import { getCoachBusinessRules } from "../src/coach/business-rules.js";
 
@@ -48,13 +49,66 @@ describe("Customer account chat adapter", () => {
       noSharedCoachSession: true,
     });
     expect(adapter.operationPolicy).toEqual({
-      allowedKinds: ["activity"],
+      allowedKinds: [
+        "activity",
+        "stage_answer",
+        "lead_call_outcome",
+        "account_field",
+        "contact_field",
+        "opportunity_field",
+      ],
       sourceChannel: "customer_account",
     });
     expect(adapter.availableTools.map((tool) => tool.name)).toEqual([
       ...getCoachReadToolCatalog().map((tool) => tool.name),
       "searchInteractions",
     ]);
+  });
+
+  it("normaliza operaciones controladas y descarta referencias fuera de la cuenta fija", () => {
+    const operations = normalizeCustomerOperations(
+      [
+        {
+          kind: "account_field",
+          title: "Actualizar ciudad",
+          accountId: 7,
+          field: "city",
+          currentValue: "Monterrey",
+          value: "Guadalajara",
+        },
+        {
+          kind: "opportunity_field",
+          title: "Actualizar importe",
+          opportunityId: 11,
+          field: "amountUsd",
+          currentValue: 10000,
+          value: 12000,
+        },
+        {
+          kind: "opportunity_field",
+          title: "No tocar otra cuenta",
+          opportunityId: 99,
+          field: "amountUsd",
+          currentValue: 10000,
+          value: 12000,
+        },
+      ],
+      snapshot,
+      { accountId: 7 },
+    );
+
+    expect(operations.map((operation) => operation.kind)).toEqual([
+      "account_field",
+      "opportunity_field",
+    ]);
+    expect(
+      operations.every((operation) => operation.requiresConfirmation),
+    ).toBe(true);
+    expect(
+      operations.every(
+        (operation) => operation.sourceChannel === "customer_account",
+      ),
+    ).toBe(true);
   });
 
   it("prioriza la intencion de correo en el fallback", () => {
@@ -134,7 +188,12 @@ describe("Customer account chat adapter", () => {
           { id: 12, name: "Proyecto ajeno", accountId: 8, lifecycle: "open" },
         ],
         inactiveOpportunities: [
-          { id: 13, name: "Inactiva ajena", accountId: 8, lifecycle: "inactive" },
+          {
+            id: 13,
+            name: "Inactiva ajena",
+            accountId: 8,
+            lifecycle: "inactive",
+          },
         ],
       },
       availableTools: [
@@ -147,12 +206,12 @@ describe("Customer account chat adapter", () => {
       (tool) => tool.toolName === "getSellerPipeline",
     ).result;
 
-    expect(pipeline.opportunities.map((opportunity) => opportunity.id)).toEqual([
-      11,
-    ]);
-    expect(model.modelSnapshot.opportunities.map((opportunity) => opportunity.id)).toEqual([
-      11,
-    ]);
+    expect(pipeline.opportunities.map((opportunity) => opportunity.id)).toEqual(
+      [11],
+    );
+    expect(
+      model.modelSnapshot.opportunities.map((opportunity) => opportunity.id),
+    ).toEqual([11]);
   });
 
   it("consulta actividades únicamente de la oportunidad seleccionada", async () => {
@@ -224,7 +283,9 @@ describe("Customer account chat adapter", () => {
     expect(readiness).toMatchObject({
       currentStage: { code: "desarrollo" },
       recommendation: "remain",
-      pendingItems: [expect.objectContaining({ title: "Necesidad confirmada" })],
+      pendingItems: [
+        expect.objectContaining({ title: "Necesidad confirmada" }),
+      ],
     });
   });
 
@@ -265,7 +326,9 @@ describe("Customer account chat adapter", () => {
     const quotation = {
       quotationId: 51,
       opportunityId: 11,
-      sections: [{ title: "Licencias", items: [{ description: "Licencia anual" }] }],
+      sections: [
+        { title: "Licencias", items: [{ description: "Licencia anual" }] },
+      ],
     };
     getAuthorizedCoachQuotationContent.mockResolvedValue(quotation);
     const model = await buildCustomerReadModel({
@@ -336,11 +399,7 @@ describe("Customer account chat adapter", () => {
     );
 
     expect(
-      appendCustomerAccountChatHistory(
-        history,
-        "Pregunta 7",
-        "Respuesta 7",
-      ),
+      appendCustomerAccountChatHistory(history, "Pregunta 7", "Respuesta 7"),
     ).toEqual(
       [4, 5, 6, 7].flatMap((turn) => [
         { role: "user", text: `Pregunta ${turn}` },

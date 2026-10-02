@@ -50,17 +50,12 @@ import {
   reviewControlledCoachOperation,
 } from "./coach/controlled-operation-service.js";
 import {
+  getControlledCoachOperationPolicy,
   getDelegatedCoachOperationPermissions,
   hasAnyPermission,
 } from "./coach/operation-policy.js";
-import {
-  prepareCoachTurn,
-  resolveCoachRolloutMode,
-  runCoachJob,
-} from "./coach/agent-gateway.js";
-import {
-  compareCoachExecutions,
-} from "./coach/coach-adapter.js";
+import { prepareCoachTurn, runCoachJob } from "./coach/agent-gateway.js";
+import { compareCoachExecutions } from "./coach/coach-adapter.js";
 import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
 import { getCoachMetrics } from "./coach/metrics.js";
 import { classifyCoachIntent } from "./coach/phase-one-engine.js";
@@ -70,7 +65,6 @@ import {
   listCoachQualityTraces,
   listCoachChannelRollouts,
   saveCoachChannelRollouts,
-  isCoachChannelInRollout,
   submitCoachTurnFeedback,
 } from "./coach/observability.js";
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
@@ -102,10 +96,7 @@ export function classifyCoachOpportunityLifecycle({
   if (activationStatusCode && activationStatusCode !== "activada") {
     return "inactive";
   }
-  if (["ganada", "perdida", "anulada"].includes(commercialStatusCode)) {
-    return "historical";
-  }
-  return "open";
+  return commercialStatusCode === "en_proceso" ? "open" : "historical";
 }
 
 export {
@@ -121,7 +112,11 @@ export function resolveCoachContextEntities(
   _selectedContext = {},
   businessRules = {},
 ) {
-  const explicitEntities = resolveCoachEntities(snapshot, question, businessRules);
+  const explicitEntities = resolveCoachEntities(
+    snapshot,
+    question,
+    businessRules,
+  );
   return {
     explicitEntities,
     resolvedEntities: explicitEntities,
@@ -276,18 +271,16 @@ async function ensureMiAgentSchema() {
     }
   }
 }
-const QUALIFIED_STAGE_CODES = [
+const OPPORTUNITY_STAGE_CODES = [
+  "contacto_inicial",
+  "identificacion_oportunidad",
   "desarrollo",
   "cotizacion",
   "demostracion",
   "negociacion",
   "waiting",
 ];
-const COACH_STAGE_CODES = [
-  "contacto_inicial",
-  "identificacion_oportunidad",
-  ...QUALIFIED_STAGE_CODES,
-];
+const COACH_STAGE_CODES = [...OPPORTUNITY_STAGE_CODES];
 
 function buildInClause(values) {
   return values.map(() => "?").join(", ");
@@ -589,6 +582,12 @@ async function getMiAgentContext(user) {
   const canReadLeads = hasReadPermission(user, "interacciones");
   const stageParams = [...COACH_STAGE_CODES];
   const governanceSettings = await getMiCoachGovernanceSettings();
+  const qualifiedStageCodes = new Set(
+    governanceSettings.qualifiedOpportunityStageCodes,
+  );
+  const committedStageCodes = new Set(
+    governanceSettings.committedOpportunityStageCodes,
+  );
   const terminalStatusCodes =
     getEnabledCoachTerminalStatusCodes(governanceSettings);
   const opportunityParams = [];
@@ -658,7 +657,7 @@ async function getMiAgentContext(user) {
        INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
        INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
        WHERE oas.code = 'activada'
-         AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')
+         AND ocs.code = 'en_proceso'
          AND oss.code IN (${stagePlaceholders})
          ${hasMiAgentGlobalScope(user) ? "" : "AND (ao_scope.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
        ORDER BY o.close_date IS NULL, o.close_date ASC, o.amount_usd DESC`,
@@ -908,7 +907,7 @@ async function getMiAgentContext(user) {
       stageCode: row.stage_code || "",
       stageName: row.stage_name || "",
       stageOrder: Number(row.stage_order),
-      isQualified: QUALIFIED_STAGE_CODES.includes(row.stage_code),
+      isQualified: qualifiedStageCodes.has(row.stage_code),
       salesStageId: Number(row.sales_stage_id || 0) || null,
       commercialStatusCode: row.commercial_status_code || null,
       activationStatusCode: row.activation_status_code || "activada",
@@ -936,7 +935,7 @@ async function getMiAgentContext(user) {
   const inactivePipelineOpportunities = inactiveRows.map(mapOpportunity);
   const historicalOpportunities = historicalRows.map(mapOpportunity);
   const opportunities = coachOpportunities.filter((item) =>
-    QUALIFIED_STAGE_CODES.includes(item.stageCode),
+    qualifiedStageCodes.has(item.stageCode),
   );
 
   const qualifiedAmount = opportunities.reduce(
@@ -969,7 +968,7 @@ async function getMiAgentContext(user) {
     actualAmountUsd,
     qualifiedAmountUsd: qualifiedAmount,
     committedOpenAmountUsd: opportunities
-      .filter((item) => ["negociacion", "waiting"].includes(item.stageCode))
+      .filter((item) => committedStageCodes.has(item.stageCode))
       .reduce((sum, item) => sum + item.amountUsd, 0),
     usdToQuotaRate,
     exchangeRateFetchedAt,
@@ -2396,9 +2395,7 @@ export function normalizeCoachResult(
   if (parsedResponse.success) return parsedResponse.data;
 
   return safeParseCoachResponse({
-    intent: authoritativeStageReadiness
-      ? "opportunity_preparation"
-      : "error",
+    intent: authoritativeStageReadiness ? "opportunity_preparation" : "error",
     responseType: "error",
     answer: normalizedResponse.answer.slice(0, 6000),
     facts: [],
@@ -3279,6 +3276,11 @@ function buildCoachPrompt(
   conversationHistory = [],
 ) {
   const activeOpportunityId = Number(selectedContext?.opportunityId || 0);
+  const administrativeRules = Array.isArray(snapshot?.administrativeRules)
+    ? snapshot.administrativeRules
+        .filter((rule) => rule?.enabled && rule?.instruction)
+        .map((rule) => `- ${rule.title}: ${rule.instruction}`)
+    : [];
   return {
     model: config.openai.model,
     temperature: 0.2,
@@ -3297,6 +3299,16 @@ function buildCoachPrompt(
         content:
           "Actúa como agente coordinador. Solo interpreta la pregunta, selecciona conceptualmente read tools, interpreta sus resultados y redacta la respuesta. No consultes MySQL, no inventes IDs, no resuelvas permisos, no ejecutes escrituras y no cambies de entidad sin evidencia. Usa responseType informational, clarification, recommendation, action_proposal o error. Toda operation es solo una propuesta que requiere confirmación externa.",
       },
+      ...(administrativeRules.length
+        ? [
+            {
+              role: "system",
+              content:
+                "Reglas administrativas activas para este canal. Aplícalas como criterios de interpretación, subordinadas a los datos del CRM, permisos, alcance del canal y validaciones deterministas; no las uses para omitir esas salvaguardas:\n" +
+                administrativeRules.join("\n"),
+            },
+          ]
+        : []),
       {
         role: "user",
         content: JSON.stringify({
@@ -3305,7 +3317,8 @@ function buildCoachPrompt(
             "Si snapshot.deterministicStageReadiness existe, úsalo como diagnóstico autoritativo. No cambies qué criterios están cumplidos, pendientes o bloqueados. Redacta answer explicando sus seis bloques: etapa actual, avances confirmados, pendientes, riesgos, siguiente paso y recomendación de avance.",
           toolCalls: [
             {
-              toolName: "searchOpportunities|searchAccounts|searchContacts|searchLeads|getOpportunity|getOpportunityActivities|getSellerPipeline|getOpportunityReadiness",
+              toolName:
+                "searchOpportunities|searchAccounts|searchContacts|searchLeads|getOpportunity|getOpportunityActivities|getSellerPipeline|getOpportunityReadiness",
               arguments: {},
             },
           ],
@@ -3637,7 +3650,10 @@ async function executeCoachJob({
             explicitEntities.lead && "lead",
           ].filter(Boolean),
           ambiguousTypes: Object.entries(explicitEntities.candidates || {})
-            .filter(([, candidates]) => Array.isArray(candidates) && candidates.length > 1)
+            .filter(
+              ([, candidates]) =>
+                Array.isArray(candidates) && candidates.length > 1,
+            )
             .map(([type]) => type),
           clarificationRequired: Boolean(clarification),
         },
@@ -3662,7 +3678,10 @@ async function executeCoachJob({
         latencyMs: 0,
       },
     }).catch((error) => {
-      console.warn("[mi-agent] No fue posible registrar traza legacy:", error?.message || error);
+      console.warn(
+        "[mi-agent] No fue posible registrar traza legacy:",
+        error?.message || error,
+      );
       return null;
     });
     if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
@@ -3734,7 +3753,9 @@ async function executeCoachJob({
         appliedRules: { channel: "coach", engineMode: "legacy" },
         validationStatus: "error",
         validationReasons: ["turn_execution_failed"],
-        errorCode: String(error?.code || error?.name || "turn_execution_failed"),
+        errorCode: String(
+          error?.code || error?.name || "turn_execution_failed",
+        ),
       },
     }).catch(() => undefined);
     await query(
@@ -3952,7 +3973,9 @@ async function recordCoachShadowComparison(primaryJobId, shadowJobId) {
     if (!primary || !shadow) return;
     const parse = (value, fallback) => {
       try {
-        return typeof value === "string" ? JSON.parse(value) : value || fallback;
+        return typeof value === "string"
+          ? JSON.parse(value)
+          : value || fallback;
       } catch {
         return fallback;
       }
@@ -3993,7 +4016,10 @@ async function recordCoachShadowComparison(primaryJobId, shadowJobId) {
       ],
     );
   } catch (error) {
-    console.warn("[mi-agent] No fue posible comparar ejecución shadow:", error?.message || error);
+    console.warn(
+      "[mi-agent] No fue posible comparar ejecución shadow:",
+      error?.message || error,
+    );
   }
 }
 
@@ -4076,8 +4102,8 @@ router.post(
       const enabledTerminalStatusCodes =
         getEnabledCoachTerminalStatusCodes(governanceSettings);
       const terminalStatusCondition = enabledTerminalStatusCodes.length
-        ? `AND (ocs.code NOT IN ('ganada', 'perdida', 'anulada') OR ocs.code IN (${enabledTerminalStatusCodes.map(() => "?").join(", ")}))`
-        : "AND ocs.code NOT IN ('ganada', 'perdida', 'anulada')";
+        ? `AND (ocs.code = 'en_proceso' OR ocs.code IN (${enabledTerminalStatusCodes.map(() => "?").join(", ")}))`
+        : "AND ocs.code = 'en_proceso'";
       const opportunityParams = [
         selectedContext.opportunityId,
         ...enabledTerminalStatusCodes,
@@ -4169,11 +4195,7 @@ router.post(
         .json({ message: "La configuracion IA no esta habilitada" });
     if (!session)
       session = await createCoachSession(req.user.id, selectedContext);
-    session = await setCoachPendingQuestion(
-      req.user.id,
-      session.id,
-      question,
-    );
+    session = await setCoachPendingQuestion(req.user.id, session.id, question);
     await ensureMiAgentSchema();
     const result = await query(
       `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, context_snapshot, status)
@@ -4181,22 +4203,6 @@ router.post(
       [Number(req.user.id), question, JSON.stringify(selectedContext)],
     );
     const jobId = Number(result.insertId);
-    const channelRolloutEnabled = await isCoachChannelInRollout({
-      channel: "coach",
-      userId: req.user.id,
-    });
-    const rolloutMode = channelRolloutEnabled
-      ? resolveCoachRolloutMode(req.user)
-      : "legacy";
-    let shadowJobId = null;
-    if (rolloutMode === "shadow") {
-      const shadowResult = await query(
-        `INSERT INTO mi_agent_analysis_jobs (created_by_user_id, job_kind, question, context_snapshot, status)
-         VALUES (?, 'coach_shadow', ?, ?, 'pending')`,
-        [Number(req.user.id), question, JSON.stringify(selectedContext)],
-      );
-      shadowJobId = Number(shadowResult.insertId);
-    }
     const gatewayDependencies = {
       query,
       getMiAgentContext,
@@ -4219,37 +4225,6 @@ router.post(
       getAuthorizedCoachQuotationContent,
     };
     setImmediate(() => {
-      if (rolloutMode === "legacy") {
-        return executeCoachJob({
-          jobId,
-          user: req.user,
-          question,
-          selectedContext,
-          conversationHistory,
-          sessionId: session?.id || null,
-        });
-      }
-      if (rolloutMode === "shadow") {
-        return Promise.all([
-          runCoachJob({
-            jobId,
-            user: req.user,
-            question,
-            selectedContext,
-            conversationHistory,
-            sessionId: session?.id || null,
-            dependencies: gatewayDependencies,
-          }),
-          executeCoachJob({
-            jobId: shadowJobId,
-            user: req.user,
-            question,
-            selectedContext,
-            conversationHistory,
-            sessionId: null,
-          }),
-        ]).then(() => recordCoachShadowComparison(jobId, shadowJobId));
-      }
       return runCoachJob({
         jobId,
         user: req.user,
@@ -4332,7 +4307,9 @@ router.post(
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
     if (!sessionId)
-      return res.status(400).json({ message: "La sesión del Coach no es válida" });
+      return res
+        .status(400)
+        .json({ message: "La sesión del Coach no es válida" });
     const result = await closeCoachSession(req.user.id, sessionId);
     if (result.outcome === "not_found")
       return res.status(404).json({ message: "La sesión del Coach no existe" });
@@ -4356,24 +4333,112 @@ router.post(
         issues: parsed.error.issues,
       });
     }
-    if (parsed.data.sourceChannel && parsed.data.sourceChannel !== "coach") {
+    const originChannel = String(req.body?.originChannel || "coach");
+    if (
+      parsed.data.sourceChannel &&
+      parsed.data.sourceChannel !== "coach" &&
+      !(
+        originChannel === "customer_account" &&
+        parsed.data.sourceChannel === "customer_account"
+      )
+    ) {
       return res.status(409).json({
-        message: "La operación debe crearse desde una sesión de su canal de origen",
+        message:
+          "La operación debe crearse desde una sesión de su canal de origen",
         requiredChannel: parsed.data.sourceChannel,
       });
     }
+    if (!new Set(["coach", "customer_account"]).has(originChannel)) {
+      return res.status(400).json({ message: "Canal de origen no valido" });
+    }
     const coachOperation = { ...parsed.data, sourceChannel: "coach" };
+    if (originChannel === "customer_account") {
+      const accountId = Number(req.body?.context?.accountId || 0);
+      if (!accountId || Number(req.body?.sessionId || 0)) {
+        return res.status(400).json({
+          message: "La propuesta de Cliente existente requiere una cuenta fija",
+        });
+      }
+      const accountRows = await query(
+        `SELECT a.id FROM accounts a
+         INNER JOIN account_activation_statuses aas ON aas.id = a.activation_status_id
+         WHERE a.id = ? AND aas.code = 'activada'
+           AND (? = 1 OR EXISTS (
+             SELECT 1 FROM account_owners ao
+             WHERE ao.account_id = a.id AND ao.user_id = ?
+           ))
+         LIMIT 1`,
+        [
+          accountId,
+          hasPermission(req.user, "cuentas.read_all") ? 1 : 0,
+          Number(req.user.id),
+        ],
+      );
+      if (!accountRows.length) {
+        return res.status(404).json({
+          message: "La cuenta fija no está disponible para este usuario",
+        });
+      }
+      let relationRows = [];
+      if (coachOperation.kind === "account_field") {
+        if (Number(coachOperation.accountId) !== accountId) {
+          return res.status(403).json({
+            message: "La operación debe limitarse a la cuenta fija",
+          });
+        }
+      } else if (coachOperation.kind === "contact_field") {
+        relationRows = await query(
+          "SELECT id FROM contacts WHERE id = ? AND account_id = ? LIMIT 1",
+          [Number(coachOperation.contactId || 0), accountId],
+        );
+      } else if (
+        ["activity", "stage_answer", "opportunity_field"].includes(
+          coachOperation.kind,
+        )
+      ) {
+        relationRows = await query(
+          "SELECT id FROM opportunities WHERE id = ? AND account_id = ? LIMIT 1",
+          [Number(coachOperation.opportunityId || 0), accountId],
+        );
+      } else if (coachOperation.kind === "lead_call_outcome") {
+        relationRows = await query(
+          "SELECT id FROM interactions WHERE id = ? AND account_id = ? LIMIT 1",
+          [Number(coachOperation.interactionId || 0), accountId],
+        );
+      } else {
+        return res.status(403).json({
+          message:
+            "Este tipo de operación no está disponible en Cliente existente",
+        });
+      }
+      if (coachOperation.kind !== "account_field" && !relationRows.length) {
+        return res.status(404).json({
+          message: "El registro relacionado no pertenece a la cuenta fija",
+        });
+      }
+    }
     const delegatedPermissions = getDelegatedCoachOperationPermissions(
       coachOperation.kind,
     );
+    const controlledPolicy = getControlledCoachOperationPolicy(
+      coachOperation.kind,
+    );
+    const hasDomainPermission = controlledPolicy
+      ? hasPermission(req.user, controlledPolicy.domainPermission) &&
+        hasAnyPermission(req.user, controlledPolicy.domainReadPermissions)
+      : delegatedPermissions &&
+        hasAnyPermission(req.user, delegatedPermissions);
     if (
-      !delegatedPermissions ||
+      (!delegatedPermissions && !controlledPolicy) ||
       !hasPermission(req.user, MI_COACH_EXECUTE_PERMISSION) ||
-      !hasAnyPermission(req.user, delegatedPermissions)
+      !hasDomainPermission
     ) {
       return res.status(403).json({
         message: "No autorizado para proponer esta operación",
-        requiredPermission: delegatedPermissions || MI_COACH_EXECUTE_PERMISSION,
+        requiredPermission:
+          controlledPolicy?.domainPermission ||
+          delegatedPermissions ||
+          MI_COACH_EXECUTE_PERMISSION,
       });
     }
     const requestedSessionId = Number(req.body?.sessionId || 0) || null;
@@ -4385,7 +4450,8 @@ router.post(
     }
     if (session.status !== "active") {
       return res.status(409).json({
-        message: "La sesión del Coach está cerrada y no admite nuevas operaciones",
+        message:
+          "La sesión del Coach está cerrada y no admite nuevas operaciones",
       });
     }
     const [operation] = await persistCoachOperations({
@@ -4751,13 +4817,18 @@ router.put(
       !Array.isArray(rollouts) ||
       rollouts.some(
         (rollout) =>
-          !["coach", "customer_account", "prospect"].includes(rollout?.channel) ||
+          !["coach", "customer_account", "prospect"].includes(
+            rollout?.channel,
+          ) ||
           typeof rollout.enabled !== "boolean" ||
           !Number.isFinite(Number(rollout.rolloutPercentage)) ||
-          (rollout.allowlist !== undefined && !Array.isArray(rollout.allowlist)),
+          (rollout.allowlist !== undefined &&
+            !Array.isArray(rollout.allowlist)),
       )
     ) {
-      return res.status(400).json({ message: "Configuracion de rollout invalida" });
+      return res
+        .status(400)
+        .json({ message: "Configuracion de rollout invalida" });
     }
     try {
       const saved = await saveCoachChannelRollouts({
@@ -4798,7 +4869,9 @@ router.post(
       corrected,
     });
     if (result.outcome === "not_found") {
-      return res.status(404).json({ message: "Traza de respuesta no encontrada" });
+      return res
+        .status(404)
+        .json({ message: "Traza de respuesta no encontrada" });
     }
     if (result.outcome !== "saved") {
       return res.status(400).json({ message: "Feedback invalido" });

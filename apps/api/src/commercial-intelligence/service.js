@@ -9,10 +9,7 @@ import { ensureManufacturerRegistrationsSchema } from "../manufacturer-registrat
 import { ensureProspectResearchSchema } from "../prospect-research/schema.js";
 import { ensureCommercialIntelligenceSchema } from "./schema.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
-import {
-  isCoachChannelInRollout,
-  recordCoachTurnQualityTrace,
-} from "../coach/observability.js";
+import { recordCoachTurnQualityTrace } from "../coach/observability.js";
 import {
   appendCustomerAccountChatHistory,
   buildCustomerFallback,
@@ -52,8 +49,33 @@ const DEFAULT_GOVERNANCE_SETTINGS = {
   findingRetentionDays: 365,
   requireEvidenceForExternalFindings: true,
   allowProspectConversion: true,
+  qualifiedOpportunityStageCodes: [
+    "desarrollo",
+    "cotizacion",
+    "demostracion",
+    "negociacion",
+    "waiting",
+  ],
+  committedOpportunityStageCodes: ["negociacion", "waiting"],
   notes: "Configuracion inicial de gobierno de Mi Coach",
 };
+const OPPORTUNITY_STAGE_CODES = new Set([
+  "contacto_inicial",
+  "identificacion_oportunidad",
+  "desarrollo",
+  "cotizacion",
+  "demostracion",
+  "negociacion",
+  "waiting",
+]);
+
+function normalizeStageCodeList(value, fallback) {
+  const candidates = Array.isArray(value) ? value : fallback;
+  const normalized = [
+    ...new Set(candidates.map((code) => String(code || "").trim())),
+  ].filter((code) => OPPORTUNITY_STAGE_CODES.has(code));
+  return normalized.length ? normalized : [...fallback];
+}
 
 function clip(value, max = 1200) {
   const text = String(value || "")
@@ -137,6 +159,21 @@ function parseJson(value, fallback = null) {
 
 function normalizeGovernanceSettings(value) {
   const source = value && typeof value === "object" ? value : {};
+  const qualifiedOpportunityStageCodes = normalizeStageCodeList(
+    source.qualifiedOpportunityStageCodes,
+    DEFAULT_GOVERNANCE_SETTINGS.qualifiedOpportunityStageCodes,
+  );
+  const requestedCommittedStages = normalizeStageCodeList(
+    source.committedOpportunityStageCodes,
+    DEFAULT_GOVERNANCE_SETTINGS.committedOpportunityStageCodes,
+  ).filter((code) => qualifiedOpportunityStageCodes.includes(code));
+  const committedOpportunityStageCodes = requestedCommittedStages.length
+    ? requestedCommittedStages
+    : [
+        qualifiedOpportunityStageCodes[
+          qualifiedOpportunityStageCodes.length - 1
+        ],
+      ];
   return {
     externalSourcesEnabled: Boolean(source.externalSourcesEnabled),
     includeWonOpportunities: source.includeWonOpportunities !== false,
@@ -167,6 +204,8 @@ function normalizeGovernanceSettings(value) {
     requireEvidenceForExternalFindings:
       source.requireEvidenceForExternalFindings !== false,
     allowProspectConversion: source.allowProspectConversion !== false,
+    qualifiedOpportunityStageCodes,
+    committedOpportunityStageCodes,
     notes: clip(source.notes || DEFAULT_GOVERNANCE_SETTINGS.notes, 1000),
   };
 }
@@ -345,7 +384,7 @@ async function getAccessibleOpportunity({ user, opportunityId }) {
   }
 
   const rows = await query(
-        `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+    `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
           o.sales_stage_id,
             o.updated_at, oss.code AS stage_code, oss.name AS stage_name,
             ocs.code AS commercial_status_code,
@@ -418,8 +457,18 @@ function daysUntil(value, now = Date.now()) {
 }
 
 function isOpenCustomerOpportunity(opportunity) {
-  return !["ganada", "perdida", "anulada"].includes(
-    String(opportunity?.commercialStatusCode || "").toLowerCase(),
+  const activationStatusCode = String(
+    opportunity?.activationStatusCode ||
+      opportunity?.activation_status_code ||
+      "activada",
+  ).toLowerCase();
+  const commercialStatusCode = String(
+    opportunity?.commercialStatusCode ||
+      opportunity?.commercial_status_code ||
+      "",
+  ).toLowerCase();
+  return (
+    activationStatusCode === "activada" && commercialStatusCode === "en_proceso"
   );
 }
 
@@ -795,7 +844,7 @@ export async function buildAuthorizedCustomerSnapshot({
   const relatedOpportunities =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
       ? await query(
-            `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date, o.updated_at,
+          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date, o.updated_at,
               o.sales_stage_id,
                   oss.code AS stage_code, oss.name AS stage_name,
                   ocs.code AS commercial_status_code
@@ -829,7 +878,7 @@ export async function buildAuthorizedCustomerSnapshot({
   const relatedInactiveOpportunities =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
       ? await query(
-            `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
+          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
               o.close_date, o.updated_at, o.sales_stage_id, oss.code AS stage_code,
                   oss.name AS stage_name, ocs.code AS commercial_status_code,
                   oas.code AS activation_status_code
@@ -948,18 +997,29 @@ export async function buildAuthorizedCustomerSnapshot({
     relatedProducts,
     visibleOpportunityIds,
   );
-  const coachOpportunityIds = [...new Set([
-    ...visibleRelatedOpportunities,
-    ...relatedInactiveOpportunities,
-    ...(opportunity ? [opportunity] : []),
-  ].map((item) => Number(item.id)).filter(Boolean))];
+  const coachOpportunityIds = [
+    ...new Set(
+      [
+        ...visibleRelatedOpportunities,
+        ...relatedInactiveOpportunities,
+        ...(opportunity ? [opportunity] : []),
+      ]
+        .map((item) => Number(item.id))
+        .filter(Boolean),
+    ),
+  ];
   const coachContextByOpportunity = new Map();
   if (coachOpportunityIds.length) {
     const placeholders = coachOpportunityIds.map(() => "?").join(",");
-    const [stageQuestions, workspaceActions, workspaceWeaknesses, assessments, playbookRows] =
-      await Promise.all([
-        query(
-          `SELECT o.id AS opportunity_id, q.id AS question_id,
+    const [
+      stageQuestions,
+      workspaceActions,
+      workspaceWeaknesses,
+      assessments,
+      playbookRows,
+    ] = await Promise.all([
+      query(
+        `SELECT o.id AS opportunity_id, q.id AS question_id,
                   q.sales_stage_id, q.code, q.prompt, q.is_required,
                   a.answer_value
            FROM opportunities o
@@ -972,33 +1032,33 @@ export async function buildAuthorizedCustomerSnapshot({
                         ORDER BY a2.id DESC LIMIT 1)
            WHERE o.id IN (${placeholders})
            ORDER BY o.id, q.display_order`,
-          coachOpportunityIds,
-        ).catch(() => []),
-        query(
-          `SELECT opportunity_id, id, title, action_type, status, priority,
+        coachOpportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, id, title, action_type, status, priority,
                   owner_user_id, due_date, scheduled_at, success_criteria,
                   notes, is_primary_next_step
            FROM opportunity_workspace_actions
            WHERE opportunity_id IN (${placeholders})
            ORDER BY opportunity_id, due_date IS NULL, due_date, updated_at DESC`,
-          coachOpportunityIds,
-        ).catch(() => []),
-        query(
-          `SELECT opportunity_id, title, category, severity, status, detail,
+        coachOpportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, title, category, severity, status, detail,
                   mitigation_plan
            FROM opportunity_workspace_weaknesses
            WHERE opportunity_id IN (${placeholders})
            ORDER BY opportunity_id, FIELD(severity, 'high', 'medium', 'low'), updated_at DESC`,
-          coachOpportunityIds,
-        ).catch(() => []),
-        query(
-          `SELECT opportunity_id, criterion_code, status, summary, evidence_count
+        coachOpportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT opportunity_id, criterion_code, status, summary, evidence_count
            FROM opportunity_workspace_criterion_assessments
            WHERE opportunity_id IN (${placeholders})`,
-          coachOpportunityIds,
-        ).catch(() => []),
-        query(
-          `SELECT st.sales_stage_id, sales.code AS stage_code,
+        coachOpportunityIds,
+      ).catch(() => []),
+      query(
+        `SELECT st.sales_stage_id, sales.code AS stage_code,
                   sales.name AS stage_name, st.objective,
                   st.exit_criteria_summary, c.code AS criterion_code,
                   c.title AS criterion_title, c.description AS criterion_description,
@@ -1017,16 +1077,17 @@ export async function buildAuthorizedCustomerSnapshot({
                WHERE id IN (${placeholders})
              )
            ORDER BY st.display_order, c.display_order, c.id`,
-          coachOpportunityIds,
-        ).catch(() => []),
-      ]);
-    const groupRows = (rows) => rows.reduce((groups, row) => {
-      const id = Number(row.opportunity_id);
-      const group = groups.get(id) || [];
-      group.push(row);
-      groups.set(id, group);
-      return groups;
-    }, new Map());
+        coachOpportunityIds,
+      ).catch(() => []),
+    ]);
+    const groupRows = (rows) =>
+      rows.reduce((groups, row) => {
+        const id = Number(row.opportunity_id);
+        const group = groups.get(id) || [];
+        group.push(row);
+        groups.set(id, group);
+        return groups;
+      }, new Map());
     const questionsByOpportunity = groupRows(stageQuestions);
     const actionsByOpportunity = groupRows(workspaceActions);
     const weaknessesByOpportunity = groupRows(workspaceWeaknesses);
@@ -2482,13 +2543,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   let snapshot;
   let agents;
   let conversationHistory;
-  let channelInRollout = false;
   try {
     request = parseJson(job.request_json, {});
-    channelInRollout = await isCoachChannelInRollout({
-      channel: "customer_account",
-      userId: user.id,
-    });
     snapshot = await buildAuthorizedCustomerSnapshot({
       user,
       accountId: job.account_id,
@@ -2512,18 +2568,19 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
     }
     conversationHistory = parseJson(sessionRows[0].history_json, []);
-    agents = channelInRollout
-      ? await runAccountIntelligenceAgents(snapshot, {
-          includePublicResearch: Boolean(request.includePublicResearch),
-          user,
-          jobId,
-        })
-      : [];
+    agents = await runAccountIntelligenceAgents(snapshot, {
+      includePublicResearch: Boolean(request.includePublicResearch),
+      user,
+      jobId,
+    });
   } catch (error) {
     await query(
       `UPDATE customer_intelligence_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ?`,
       [
-        clip(error?.message || "No fue posible preparar el chat de cuenta", 1000),
+        clip(
+          error?.message || "No fue posible preparar el chat de cuenta",
+          1000,
+        ),
         Number(jobId),
       ],
     ).catch(() => undefined);
@@ -2537,15 +2594,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   });
   let response;
   let qualityTrace;
-  if (!channelInRollout) {
-    response = buildCustomerFallback(snapshot, request.question);
-    qualityTrace = {
-      process: "account_chat",
-      validationStatus: "valid",
-      validationReasons: [],
-      errorCode: null,
-    };
-  } else try {
+  try {
     const engineResult = await adapter.runTurn({
       question: request.question,
       history: conversationHistory,
@@ -2596,7 +2645,10 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     jobId,
     trace: qualityTrace,
   }).catch((error) => {
-    console.warn("[mi-agent] No fue posible registrar traza de Cliente existente:", error?.message || error);
+    console.warn(
+      "[mi-agent] No fue posible registrar traza de Cliente existente:",
+      error?.message || error,
+    );
     return null;
   });
   if (qualityTraceId) response.qualityTraceId = qualityTraceId;
@@ -2626,7 +2678,11 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       `UPDATE customer_intelligence_chat_sessions
        SET history_json = ?, updated_at = NOW(3)
        WHERE id = ? AND requested_by_user_id = ?`,
-      [JSON.stringify(nextHistory), Number(request.chatSessionId), Number(user.id)],
+      [
+        JSON.stringify(nextHistory),
+        Number(request.chatSessionId),
+        Number(user.id),
+      ],
     );
     await conn.query(
       `UPDATE customer_intelligence_jobs
@@ -3931,7 +3987,10 @@ export async function getMiCoachGovernanceOverview() {
     updatedByUserId: settingsRow.updated_by_user_id
       ? Number(settingsRow.updated_by_user_id)
       : null,
-    businessRules: await loadCoachBusinessRules({ channel: "coach", process: "default" }),
+    businessRules: await loadCoachBusinessRules({
+      channel: "coach",
+      process: "default",
+    }),
     metrics: {
       jobsLast30Days: jobRows.map((row) => ({
         status: row.status,

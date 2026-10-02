@@ -1,5 +1,8 @@
 import { executeCoachReadTool } from "./crm-read-tools.js";
-import { applyCoachPhaseOneRules, classifyCoachIntent } from "./phase-one-engine.js";
+import {
+  applyCoachPhaseOneRules,
+  classifyCoachIntent,
+} from "./phase-one-engine.js";
 import {
   getCoachReadToolCatalog,
   inferCoachOpportunityFilters,
@@ -16,7 +19,10 @@ export const CONTEXT_KEYS = [
   "leadId",
 ];
 
-export function normalizeChannelConversationHistory(history, channel = "coach") {
+export function normalizeChannelConversationHistory(
+  history,
+  channel = "coach",
+) {
   const isCoachChannel = channel === "coach";
   return (Array.isArray(history) ? history : [])
     .filter((message) => message && typeof message === "object")
@@ -104,35 +110,31 @@ function permissionGranted(permissions, permissionCode) {
 export function resolveAvailableCoachTools(tools = [], permissions = {}) {
   return tools
     .map((tool) =>
-      typeof tool === "string"
-        ? { name: tool, readOnly: true }
-        : tool,
+      typeof tool === "string" ? { name: tool, readOnly: true } : tool,
     )
-    .filter(
-      (tool) => {
-        if (!tool?.name) return false;
-        if (
-          tool.requiredPermission &&
-          !permissionGranted(permissions, tool.requiredPermission)
-        ) {
-          return false;
-        }
-        if (
-          Array.isArray(tool.requiredPermissions) &&
-          !tool.requiredPermissions.every((permission) =>
-            permissionGranted(permissions, permission),
-          )
-        ) {
-          return false;
-        }
-        return (
-          !Array.isArray(tool.requiredAnyPermissions) ||
-          tool.requiredAnyPermissions.some((permission) =>
-            permissionGranted(permissions, permission),
-          )
-        );
-      },
-    );
+    .filter((tool) => {
+      if (!tool?.name) return false;
+      if (
+        tool.requiredPermission &&
+        !permissionGranted(permissions, tool.requiredPermission)
+      ) {
+        return false;
+      }
+      if (
+        Array.isArray(tool.requiredPermissions) &&
+        !tool.requiredPermissions.every((permission) =>
+          permissionGranted(permissions, permission),
+        )
+      ) {
+        return false;
+      }
+      return (
+        !Array.isArray(tool.requiredAnyPermissions) ||
+        tool.requiredAnyPermissions.some((permission) =>
+          permissionGranted(permissions, permission),
+        )
+      );
+    });
 }
 
 export function applyCoachOperationPolicy(operations = [], policy = {}) {
@@ -163,16 +165,23 @@ export function applyCoachOperationPolicy(operations = [], policy = {}) {
     }));
 }
 
-export function enforceCoachBusinessEvidence(response = {}, question = "", rules = {}) {
+export function enforceCoachBusinessEvidence(
+  response = {},
+  question = "",
+  rules = {},
+) {
   const hasEvidence =
     (Array.isArray(response.evidence) && response.evidence.length > 0) ||
     (Array.isArray(response.facts) && response.facts.length > 0) ||
     (Array.isArray(response.operations) &&
       response.operations.some(
-        (operation) => Array.isArray(operation?.evidence) && operation.evidence.length > 0,
+        (operation) =>
+          Array.isArray(operation?.evidence) && operation.evidence.length > 0,
       ));
   if (
-    (!(rules.validation?.requireEvidence || rules.scope?.requireBusinessEvidence)) ||
+    !(
+      rules.validation?.requireEvidence || rules.scope?.requireBusinessEvidence
+    ) ||
     hasEvidence ||
     ["clarification", "error"].includes(response.responseType)
   ) {
@@ -202,6 +211,7 @@ export function applyCoachBusinessRuleScope(snapshot = {}, rules = {}) {
     [
       rules.scope?.accountSearchAllowed === false && "account",
       rules.scope?.opportunitySearchAllowed === false && "opportunity",
+      rules.scope?.quotationSearchAllowed === false && "quotation",
       rules.scope?.contactSearchAllowed === false && "contact",
       rules.scope?.leadSearchAllowed === false && "lead",
     ].filter(Boolean),
@@ -209,8 +219,13 @@ export function applyCoachBusinessRuleScope(snapshot = {}, rules = {}) {
   return {
     ...snapshot,
     ...(rules.scope?.accountSearchAllowed === false ? { accounts: [] } : {}),
-    ...(rules.scope?.contactSearchAllowed === false ? { contactMappings: [] } : {}),
+    ...(rules.scope?.contactSearchAllowed === false
+      ? { contactMappings: [] }
+      : {}),
     ...(rules.scope?.leadSearchAllowed === false ? { leads: [] } : {}),
+    ...(rules.scope?.quotationSearchAllowed === false
+      ? { selectedOpportunityQuotation: null }
+      : {}),
     ...(rules.scope?.opportunitySearchAllowed === false
       ? {
           coachOpportunities: [],
@@ -245,9 +260,7 @@ export function buildDeterministicAccountOpportunityRanking(
   const isAccountRanking =
     /\bcuentas?\b/.test(normalizedQuestion) &&
     /\boportunidades?\b/.test(normalizedQuestion) &&
-    /\b(mayor|mayores|mas|cantidad|numero|numero)\b/.test(
-      normalizedQuestion,
-    );
+    /\b(mayor|mayores|mas|cantidad|numero|numero)\b/.test(normalizedQuestion);
   if (!isAccountRanking) return null;
   const groups = new Map();
   for (const opportunity of opportunities) {
@@ -265,7 +278,9 @@ export function buildDeterministicAccountOpportunityRanking(
       opportunity?.account?.id || opportunity?.accountId || 0,
     );
     const accountName =
-      opportunity?.accountName || opportunity?.account?.name || "Cuenta sin nombre";
+      opportunity?.accountName ||
+      opportunity?.account?.name ||
+      "Cuenta sin nombre";
     if (!accountId) continue;
     const current = groups.get(accountId) || {
       accountId,
@@ -278,14 +293,21 @@ export function buildDeterministicAccountOpportunityRanking(
     groups.set(accountId, current);
   }
   const ranking = [...groups.values()]
-    .sort((left, right) => right.count - left.count || left.accountName.localeCompare(right.accountName))
+    .sort(
+      (left, right) =>
+        right.count - left.count ||
+        left.accountName.localeCompare(right.accountName),
+    )
     .slice(0, 5);
   return {
     intent: "pipeline_coverage",
     responseType: "informational",
     answer: ranking.length
       ? `Las cuentas con mayor cantidad de oportunidades abiertas son: ${ranking
-          .map((item, index) => `${index + 1}) ${item.accountName} con ${item.count} oportunidad(es) abiertas`)
+          .map(
+            (item, index) =>
+              `${index + 1}) ${item.accountName} con ${item.count} oportunidad(es) abiertas`,
+          )
           .join(", ")}.`
       : "No hay oportunidades abiertas autorizadas para agrupar por cuenta.",
     facts: ranking.map((item) => ({
@@ -294,7 +316,9 @@ export function buildDeterministicAccountOpportunityRanking(
       label: `${item.accountName}: ${item.count} oportunidades abiertas`,
       excerpt: `IDs de oportunidades consultadas: ${item.opportunityIds.join(", ")}`,
     })),
-    evidence: ["Conteo determinista sobre oportunidades autorizadas y abiertas."],
+    evidence: [
+      "Conteo determinista sobre oportunidades autorizadas y abiertas.",
+    ],
     inferences: [],
     pendingItems: [],
     recommendation: null,
@@ -445,18 +469,21 @@ export async function runConversationEngine({
     channelRules.scope ||
     operationPolicy.sourceChannel ||
     "coach";
-  const businessRules = configuredBusinessRules || getCoachBusinessRules({
-    channel,
-    overrides: channelRules,
-  });
+  const businessRules =
+    configuredBusinessRules ||
+    getCoachBusinessRules({
+      channel,
+      overrides: channelRules,
+    });
   const jobType = getConversationChannelJobType(channel);
   const channelHistory = normalizeChannelConversationHistory(history, channel);
   const effectiveOperationPolicy = {
     ...businessRules.operationPolicy,
     ...operationPolicy,
-    allowedKinds: businessRules.operationPolicy.allowedKinds.filter((kind) =>
-      !Array.isArray(operationPolicy.allowedKinds) ||
-      operationPolicy.allowedKinds.includes(kind),
+    allowedKinds: businessRules.operationPolicy.allowedKinds.filter(
+      (kind) =>
+        !Array.isArray(operationPolicy.allowedKinds) ||
+        operationPolicy.allowedKinds.includes(kind),
     ),
     sourceChannel: channel,
   };
@@ -465,7 +492,8 @@ export async function runConversationEngine({
     ...channelRules,
     scope: channel,
   };
-  const prepareReadModel = dependencies.prepareReadModel || prepareCoachReadModel;
+  const prepareReadModel =
+    dependencies.prepareReadModel || prepareCoachReadModel;
   const buildPrompt = dependencies.buildPrompt || buildCoachPrompt;
   const requestResponse = dependencies.requestResponse || requestMiAgentJson;
   const resolveResponseContext =
@@ -476,10 +504,19 @@ export async function runConversationEngine({
     availableTools,
     permissions,
   ).filter((tool) => {
-    if (tool.name === "searchLeads") return businessRules.scope.leadSearchAllowed;
-    if (tool.name === "searchOpportunities") return businessRules.scope.opportunitySearchAllowed;
-    if (tool.name === "searchContacts") return businessRules.scope.contactSearchAllowed;
-    if (tool.name === "searchAccounts") return businessRules.scope.accountSearchAllowed !== false;
+    if (tool.name === "searchLeads")
+      return businessRules.scope.leadSearchAllowed;
+    if (tool.name === "searchOpportunities")
+      return businessRules.scope.opportunitySearchAllowed;
+    if (tool.name === "getOpportunityQuotation")
+      return (
+        businessRules.scope.quotationSearchAllowed !== false &&
+        businessRules.scope.opportunitySearchAllowed !== false
+      );
+    if (tool.name === "searchContacts")
+      return businessRules.scope.contactSearchAllowed;
+    if (tool.name === "searchAccounts")
+      return businessRules.scope.accountSearchAllowed !== false;
     return true;
   });
   const readModel = await prepareReadModel({
@@ -504,9 +541,20 @@ export async function runConversationEngine({
     conversationHistory,
     explicitEntities,
   } = readModel;
+  const administrativeRules =
+    typeof dependencies.loadAdministrativeRules === "function"
+      ? await dependencies.loadAdministrativeRules({
+          channel,
+          process: businessRules.process || "default",
+        })
+      : [];
+  const promptModelSnapshot = {
+    ...modelSnapshot,
+    administrativeRules: administrativeRules.filter((rule) => rule.enabled),
+  };
   const processGuide = await loadProcessGuide();
   const promptArguments = [
-    modelSnapshot,
+    promptModelSnapshot,
     question,
     processGuide,
     effectiveContext,
@@ -517,14 +565,19 @@ export async function runConversationEngine({
     Object.keys(permissions).length ||
     Object.keys(effectiveOperationPolicy).length
   ) {
-    promptArguments.push(effectiveChannelRules, permissions, effectiveOperationPolicy);
+    promptArguments.push(
+      effectiveChannelRules,
+      permissions,
+      effectiveOperationPolicy,
+    );
   }
-  const deterministicResult = clarification || channel !== "coach"
-    ? null
-    : buildDeterministicAccountOpportunityRanking(
-        question,
-        modelSnapshot.coachOpportunities || [],
-      );
+  const deterministicResult =
+    clarification || channel !== "coach"
+      ? null
+      : buildDeterministicAccountOpportunityRanking(
+          question,
+          modelSnapshot.coachOpportunities || [],
+        );
   let result = clarification
     ? {
         intent: "clarification",
@@ -534,8 +587,9 @@ export async function runConversationEngine({
         clarification,
         operations: [],
       }
-    : deterministicResult || (await requestResponse({
-      payload: buildPrompt(...promptArguments),
+    : deterministicResult ||
+      (await requestResponse({
+        payload: buildPrompt(...promptArguments),
         user,
         jobId,
         startedAt: new Date(),
@@ -547,7 +601,7 @@ export async function runConversationEngine({
     result,
     clarification,
     snapshot: scopedSnapshot,
-    modelSnapshot,
+    modelSnapshot: promptModelSnapshot,
     question,
     processGuide,
     effectiveContext,
@@ -604,30 +658,31 @@ export async function runConversationEngine({
     : responseContextTransition?.changed
       ? "coach_response"
       : "existing_context";
-  const phaseOneDecision = channel === "coach"
-    ? applyCoachPhaseOneRules({
-        question,
-        snapshot: scopedSnapshot,
-        context: effectiveContext,
-        channel,
-        intent: classifyCoachIntent(question),
-        businessRules,
-      })
-    : {
-        intent: {
-          type: "channel_query",
-          subtype: channel,
+  const phaseOneDecision =
+    channel === "coach"
+      ? applyCoachPhaseOneRules({
+          question,
+          snapshot: scopedSnapshot,
+          context: effectiveContext,
+          channel,
+          intent: classifyCoachIntent(question),
+          businessRules,
+        })
+      : {
+          intent: {
+            type: "channel_query",
+            subtype: channel,
+            requiresClarification: Boolean(result?.clarification),
+            operationRequested: Boolean(result?.operations?.length),
+          },
           requiresClarification: Boolean(result?.clarification),
-          operationRequested: Boolean(result?.operations?.length),
-        },
-        requiresClarification: Boolean(result?.clarification),
-        allowOperations: Boolean(result?.operations?.length),
-        filters: {
-          sourceChannel: channel,
-          scope: channel,
-          entityContext: effectiveContext,
-        },
-      };
+          allowOperations: Boolean(result?.operations?.length),
+          filters: {
+            sourceChannel: channel,
+            scope: channel,
+            entityContext: effectiveContext,
+          },
+        };
   const normalizedResponse = normalizeResponse(
     authoritativeResult,
     scopedSnapshot,
@@ -646,7 +701,9 @@ export async function runConversationEngine({
     (Array.isArray(normalizedResponse?.evidence)
       ? normalizedResponse.evidence.length
       : 0) +
-    (Array.isArray(normalizedResponse?.facts) ? normalizedResponse.facts.length : 0);
+    (Array.isArray(normalizedResponse?.facts)
+      ? normalizedResponse.facts.length
+      : 0);
   if (
     (businessRules.validation.requireEvidence ||
       businessRules.scope.requireBusinessEvidence) &&
@@ -655,14 +712,13 @@ export async function runConversationEngine({
   ) {
     validationReasons.push("missing_business_evidence");
   }
-  const validationStatus =
-    ["error"].includes(normalizedResponse?.responseType)
-      ? "error"
-      : validationReasons.length
-        ? "invalid"
-        : normalizedResponse?.responseType === "clarification"
-          ? "clarification"
-          : "valid";
+  const validationStatus = ["error"].includes(normalizedResponse?.responseType)
+    ? "error"
+    : validationReasons.length
+      ? "invalid"
+      : normalizedResponse?.responseType === "clarification"
+        ? "clarification"
+        : "valid";
   const response = enforceCoachBusinessEvidence(
     normalizedResponse,
     question,
@@ -703,9 +759,10 @@ export async function runConversationEngine({
   const qualityTrace = {
     channel,
     caseId: phaseOneDecision.intent.caseId || null,
-    process: channel === "coach"
-      ? phaseOneDecision.intent.type
-      : getConversationChannelJobType(channel),
+    process:
+      channel === "coach"
+        ? phaseOneDecision.intent.type
+        : getConversationChannelJobType(channel),
     intentType: phaseOneDecision.intent.type,
     intentSubtype: phaseOneDecision.intent.subtype || null,
     primaryEntity: activeContext.opportunityId
@@ -748,10 +805,9 @@ export async function runConversationEngine({
     responseType: response.responseType,
     confidence: response.confidence,
     evidenceCount,
-    toolsUsed: [
-      ...readToolResults,
-      ...completedModelTurn.requestedToolResults,
-    ].map((tool) => tool.toolName).filter(Boolean),
+    toolsUsed: [...readToolResults, ...completedModelTurn.requestedToolResults]
+      .map((tool) => tool.toolName)
+      .filter(Boolean),
     operationsProposed: proposedOperationCount,
     operationsRejected: Math.max(
       0,
@@ -833,18 +889,17 @@ export async function prepareCoachReadModel({
     : null;
   const entityClarification =
     relationshipClarification ||
-    buildCoachEntityClarification(
-      explicitEntities,
-      question,
-      effectiveContext,
-    );
+    buildCoachEntityClarification(explicitEntities, question, effectiveContext);
   const historicalQuestion =
     explicitEntities.opportunity?.lifecycle === "historical" ||
     /\b(vend|vent|compr|adquiri|ganad|perdid|anulad|cancelad|cerrad|historial|cotiz|propuest)/.test(
       normalizeCoachMatchText(question),
     );
   const normalizedQuestion = normalizeCoachMatchText(question);
-  const opportunityFilters = inferCoachOpportunityFilters(question, businessRules);
+  const opportunityFilters = inferCoachOpportunityFilters(
+    question,
+    businessRules,
+  );
   const asksForActivatedOpportunities =
     opportunityFilters.activeOnly && !opportunityFilters.openOnly;
   const analysisBaseSnapshot =
@@ -873,6 +928,7 @@ export async function prepareCoachReadModel({
     queryCase?.readTool === "getOpportunityQuotation" &&
     selectedOpportunity &&
     businessRules.scope?.opportunitySearchAllowed !== false &&
+    businessRules.scope?.quotationSearchAllowed !== false &&
     availableToolNames.has("getOpportunityQuotation") &&
     typeof dependencies.getAuthorizedCoachQuotationContent === "function"
       ? await dependencies.getAuthorizedCoachQuotationContent({
@@ -913,7 +969,11 @@ export async function prepareCoachReadModel({
       opportunityId: selectedOpportunity.id,
     });
   }
-  if (queryCase?.readTool === "getOpportunityQuotation" && selectedOpportunity) {
+  if (
+    queryCase?.readTool === "getOpportunityQuotation" &&
+    selectedOpportunity &&
+    businessRules.scope?.quotationSearchAllowed !== false
+  ) {
     pushReadTool("getOpportunityQuotation", {
       opportunityId: selectedOpportunity.id,
     });
@@ -933,7 +993,11 @@ export async function prepareCoachReadModel({
       accountId: effectiveContext.accountId,
     });
   }
-  if (/(contacto|contactos|decisor|participantes|roles)\b/.test(normalizedQuestion)) {
+  if (
+    /(contacto|contactos|decisor|participantes|roles)\b/.test(
+      normalizedQuestion,
+    )
+  ) {
     pushReadTool("searchContacts", {
       accountId: effectiveContext.accountId,
     });
@@ -943,7 +1007,11 @@ export async function prepareCoachReadModel({
       accountId: effectiveContext.accountId,
     });
   }
-  if (/\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(normalizedQuestion)) {
+  if (
+    /\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(
+      normalizedQuestion,
+    )
+  ) {
     pushReadTool("getSellerPipeline");
   }
   if (
@@ -987,7 +1055,8 @@ export async function prepareCoachReadModel({
     contactMappings: getToolResult("searchContacts") || [],
     pipeline: getToolResult("getSellerPipeline") || null,
     selectedOpportunityDetail: getToolResult("getOpportunity") || null,
-    selectedOpportunityActivities: getToolResult("getOpportunityActivities") || [],
+    selectedOpportunityActivities:
+      getToolResult("getOpportunityActivities") || [],
     deterministicStageReadiness,
     readToolCatalog: toolCatalog,
     readToolResults,
@@ -1005,13 +1074,11 @@ export async function prepareCoachReadModel({
               id: Number(opportunity.id),
               name: opportunity.name || "Oportunidad sin nombre",
               accountId:
-                Number(
-                  opportunity.account?.id || opportunity.accountId || 0,
-                ) || null,
+                Number(opportunity.account?.id || opportunity.accountId || 0) ||
+                null,
               contactId:
-                Number(
-                  opportunity.contact?.id || opportunity.contactId || 0,
-                ) || null,
+                Number(opportunity.contact?.id || opportunity.contactId || 0) ||
+                null,
               opportunityId: Number(opportunity.id),
               accountName:
                 opportunity.accountName || opportunity.account?.name || null,
@@ -1026,9 +1093,10 @@ export async function prepareCoachReadModel({
     queryCase?.requiresOpportunityContext && !selectedOpportunity
       ? {
           type: "select_opportunity",
-          message: queryCase.type === "quotation_query"
-            ? "Selecciona una oportunidad para consultar el contenido de su cotización."
-            : "Selecciona una oportunidad para consultar sus actividades y siguientes pasos.",
+          message:
+            queryCase.type === "quotation_query"
+              ? "Selecciona una oportunidad para consultar el contenido de su cotización."
+              : "Selecciona una oportunidad para consultar sus actividades y siguientes pasos.",
           missing: ["Oportunidad"],
           candidates: (toolScopedSnapshot.coachOpportunities || [])
             .slice(0, 20)
@@ -1036,9 +1104,11 @@ export async function prepareCoachReadModel({
               id: Number(opportunity.id),
               name: opportunity.name || "Oportunidad sin nombre",
               accountId:
-                Number(opportunity.account?.id || opportunity.accountId || 0) || null,
+                Number(opportunity.account?.id || opportunity.accountId || 0) ||
+                null,
               contactId:
-                Number(opportunity.contact?.id || opportunity.contactId || 0) || null,
+                Number(opportunity.contact?.id || opportunity.contactId || 0) ||
+                null,
               opportunityId: Number(opportunity.id),
               accountName:
                 opportunity.accountName || opportunity.account?.name || null,
@@ -1054,27 +1124,29 @@ export async function prepareCoachReadModel({
     !availableToolNames.has("getOpportunityQuotation")
       ? {
           type: "missing_fields",
-          message: "No tienes permisos para consultar cotizaciones de esta oportunidad.",
+          message:
+            "No tienes permisos para consultar cotizaciones de esta oportunidad.",
           missing: ["Permiso de lectura de cotizaciones"],
           candidates: [],
           originalRequest: question,
           intendedAction: "continue_request",
         }
       : null;
-    const quotationNotFoundClarification =
-      queryCase?.type === "quotation_query" &&
-      selectedOpportunity &&
-      availableToolNames.has("getOpportunityQuotation") &&
-      !quotationContent
-        ? {
-            type: "missing_fields",
-            message: "No encontré una cotización accesible para esta oportunidad.",
-            missing: ["Cotización vigente y accesible"],
-            candidates: [],
-            originalRequest: question,
-            intendedAction: "continue_request",
-          }
-        : null;
+  const quotationNotFoundClarification =
+    queryCase?.type === "quotation_query" &&
+    selectedOpportunity &&
+    availableToolNames.has("getOpportunityQuotation") &&
+    !quotationContent
+      ? {
+          type: "missing_fields",
+          message:
+            "No encontré una cotización accesible para esta oportunidad.",
+          missing: ["Cotización vigente y accesible"],
+          candidates: [],
+          originalRequest: question,
+          intendedAction: "continue_request",
+        }
+      : null;
 
   return {
     baseSnapshot,

@@ -4,11 +4,11 @@ Este documento describe como los tres canales consumen el motor conversacional c
 
 ## Canales
 
-| Canal | Adaptador | Contexto | Persistencia |
-| --- | --- | --- | --- |
-| Coach | `apps/api/src/coach/coach-adapter.js` | CRM autorizado | Sesiones e historial Coach |
-| Cliente existente | `apps/api/src/commercial-intelligence/customer-chat-adapter.js` | Cuenta CRM fija | Jobs `account_chat` |
-| Cuenta nueva | `apps/api/src/prospect-research/prospect-chat-adapter.js` | Sesion de prospecto | `prospect_research_sessions` |
+| Canal             | Adaptador                                                       | Contexto            | Persistencia                 |
+| ----------------- | --------------------------------------------------------------- | ------------------- | ---------------------------- |
+| Coach             | `apps/api/src/coach/coach-adapter.js`                           | CRM autorizado      | Sesiones e historial Coach   |
+| Cliente existente | `apps/api/src/commercial-intelligence/customer-chat-adapter.js` | Cuenta CRM fija     | Jobs `account_chat`          |
+| Cuenta nueva      | `apps/api/src/prospect-research/prospect-chat-adapter.js`       | Sesion de prospecto | `prospect_research_sessions` |
 
 ## Cliente existente
 
@@ -29,19 +29,19 @@ Las herramientas comunes de lectura son las del catalogo de Coach: `searchAccoun
 
 Cada herramienta sigue requiriendo sus permisos de lectura:
 
-| Herramienta | Permisos requeridos |
-| --- | --- |
-| `searchAccounts` | `cuentas.read` |
-| `searchOpportunities`, `getOpportunity` | `oportunidades.read` |
-| `getOpportunityActivities`, `getSellerPipeline`, `getOpportunityReadiness` | `oportunidades.read` y `desarrollo_comercial.read` |
-| `getOpportunityQuotation` | `oportunidades.read` y al menos un permiso `cotizaciones.*` |
-| `searchContacts` | `contactos.read` |
-| `searchLeads` | `interacciones.read` |
-| `searchInteractions` (solo Cliente existente) | `interacciones.read` |
+| Herramienta                                                                | Permisos requeridos                                         |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `searchAccounts`                                                           | `cuentas.read`                                              |
+| `searchOpportunities`, `getOpportunity`                                    | `oportunidades.read`                                        |
+| `getOpportunityActivities`, `getSellerPipeline`, `getOpportunityReadiness` | `oportunidades.read` y `desarrollo_comercial.read`          |
+| `getOpportunityQuotation`                                                  | `oportunidades.read` y al menos un permiso `cotizaciones.*` |
+| `searchContacts`                                                           | `contactos.read`                                            |
+| `searchLeads`                                                              | `interacciones.read`                                        |
+| `searchInteractions` (solo Cliente existente)                              | `interacciones.read`                                        |
 
 La lectura de la cotizacion conserva ownership de cuenta (excepto para administracion de cotizaciones) y expone solo contenido comercial, no costo interno, margen ni notas internas.
 
-Las operaciones se limitan a actividades de la cuenta y siempre requieren confirmacion. Una solicitud de correo produce un borrador; no envia mensajes automaticamente. Esta paridad de lectura no habilita a Cliente existente para proponer las operaciones de campos o etapa disponibles en Coach.
+Cliente existente puede proponer las mismas operaciones controladas que Coach: actividades, respuestas de etapa, resultados de llamadas de lead y cambios de campos de cuenta, contacto u oportunidad. Las propuestas se limitan a entidades del snapshot de la cuenta fija; la API vuelve a comprobar la cuenta, la relación del registro, `mi_coach.execute` y los permisos de dominio. Al revisarlas, se trasladan a un borrador persistido en una sesión de Coach y usan su flujo estándar de revisión, confirmación y ejecución; el chat de Cliente existente no ejecuta escrituras directamente. Una solicitud de correo produce un borrador y nunca lo envía automáticamente.
 
 ## Cuenta nueva
 

@@ -1727,8 +1727,14 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
   }
 
   const whereClauses = [];
-  const activeOnly = String(req.query.activeOnly || "").trim().toLowerCase() === "true";
-  const openOnly = String(req.query.openOnly || "").trim().toLowerCase() === "true";
+  const activeOnly =
+    String(req.query.activeOnly || "")
+      .trim()
+      .toLowerCase() === "true";
+  const openOnly =
+    String(req.query.openOnly || "")
+      .trim()
+      .toLowerCase() === "true";
   if (accountIdFilter !== null) {
     whereClauses.push("o.account_id = ?");
   }
@@ -1739,7 +1745,7 @@ router.get("/", requirePermission("oportunidades.read"), async (req, res) => {
     whereClauses.push("oas.code = 'activada'");
   }
   if (openOnly) {
-    whereClauses.push("ocs.code NOT IN ('ganada', 'perdida', 'anulada')");
+    whereClauses.push("oas.code = 'activada' AND ocs.code = 'en_proceso'");
   }
 
   const rows = await query(
@@ -2129,7 +2135,10 @@ router.post(
         .json(opportunityAccess.response.body);
     }
     const opportunityState = await getOpportunityStateById(id);
-    if (opportunityState && isClosedCommercialStatus(opportunityState.commercial_status_code)) {
+    if (
+      opportunityState &&
+      isClosedCommercialStatus(opportunityState.commercial_status_code)
+    ) {
       return res.status(400).json({
         message: "No puedes guardar acciones en una oportunidad cerrada",
       });
@@ -2137,20 +2146,24 @@ router.post(
     const contextSnapshot = parsed.data.contextSnapshot;
     if (
       contextSnapshot?.updatedAt &&
-      new Date(contextSnapshot.updatedAt).getTime() !== new Date(opportunityState.updated_at).getTime()
+      new Date(contextSnapshot.updatedAt).getTime() !==
+        new Date(opportunityState.updated_at).getTime()
     ) {
       return res.status(409).json({
         code: "STALE_CONTEXT_DETECTED",
-        message: "La oportunidad cambio desde el analisis del Coach. Solicita una nueva propuesta.",
+        message:
+          "La oportunidad cambio desde el analisis del Coach. Solicita una nueva propuesta.",
       });
     }
     if (
       contextSnapshot?.salesStageId &&
-      Number(contextSnapshot.salesStageId) !== Number(opportunityState.sales_stage_id)
+      Number(contextSnapshot.salesStageId) !==
+        Number(opportunityState.sales_stage_id)
     ) {
       return res.status(409).json({
         code: "STALE_CONTEXT_DETECTED",
-        message: "La etapa de la oportunidad cambio desde el analisis del Coach.",
+        message:
+          "La etapa de la oportunidad cambio desde el analisis del Coach.",
       });
     }
     const savedId = await saveOpportunityAction({
@@ -2171,7 +2184,16 @@ router.post(
         success_criteria: parsed.data.successCriteria || null,
         notes: parsed.data.notes || null,
         details_json: JSON.stringify({
-          entryKind: ["call", "meeting", "demo", "presentation", "conference", "visit", "other", "follow_up"].includes(parsed.data.actionType)
+          entryKind: [
+            "call",
+            "meeting",
+            "demo",
+            "presentation",
+            "conference",
+            "visit",
+            "other",
+            "follow_up",
+          ].includes(parsed.data.actionType)
             ? "activity"
             : "action",
           source: "mi_agent_coach",
@@ -2213,7 +2235,9 @@ router.patch(
       return res.status(400).json({ message: "Id de oportunidad invalido" });
     }
     if (!["name", "amountUsd", "closeDate"].includes(field)) {
-      return res.status(400).json({ message: "Campo de oportunidad no permitido" });
+      return res
+        .status(400)
+        .json({ message: "Campo de oportunidad no permitido" });
     }
     const opportunityAccess = await requireAccessibleOpportunityOr404({
       user: req.user,
@@ -2221,46 +2245,69 @@ router.patch(
       message: "Oportunidad no encontrada",
     });
     if (!opportunityAccess.ok) {
-      return res.status(opportunityAccess.response.status).json(opportunityAccess.response.body);
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
     }
     const rows = await query(
       `SELECT id, name, amount_usd, close_date, commercial_status_id FROM opportunities WHERE id = ? LIMIT 1`,
       [id],
     );
     const current = rows[0];
-    if (!current) return res.status(404).json({ message: "Oportunidad no encontrada" });
+    if (!current)
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
     const state = await getOpportunityStateById(id);
     if (state && isClosedCommercialStatus(state.commercial_status_code)) {
-      return res.status(400).json({ message: "No puedes modificar una oportunidad cerrada" });
+      return res
+        .status(400)
+        .json({ message: "No puedes modificar una oportunidad cerrada" });
     }
     let column;
     let nextValue = value;
     if (field === "name") {
       nextValue = String(value || "").trim();
       if (nextValue.length < 2 || nextValue.length > 180) {
-        return res.status(400).json({ message: "El nombre de la oportunidad no es valido" });
+        return res
+          .status(400)
+          .json({ message: "El nombre de la oportunidad no es valido" });
       }
       column = "name";
     } else if (field === "amountUsd") {
       nextValue = Number(value);
       if (!Number.isFinite(nextValue) || nextValue < 0) {
-        return res.status(400).json({ message: "El importe de la oportunidad no es valido" });
+        return res
+          .status(400)
+          .json({ message: "El importe de la oportunidad no es valido" });
       }
       column = "amount_usd";
     } else {
       nextValue = value === null || value === "" ? null : String(value).trim();
       if (nextValue !== null && !/^\d{4}-\d{2}-\d{2}$/.test(nextValue)) {
-        return res.status(400).json({ message: "La fecha de cierre no es valida" });
+        return res
+          .status(400)
+          .json({ message: "La fecha de cierre no es valida" });
       }
       column = "close_date";
     }
-    await query(`UPDATE opportunities SET ${column} = ?, updated_at = NOW(3) WHERE id = ?`, [nextValue, id]);
+    await query(
+      `UPDATE opportunities SET ${column} = ?, updated_at = NOW(3) WHERE id = ?`,
+      [nextValue, id],
+    );
     const auditId = await logOpportunityWorkspaceMutation({
       req,
       opportunityId: id,
       action: "coach_opportunity_field_updated",
       detail: `Campo actualizado desde Coach: ${field}`,
-      before: { [field]: current[field === "amountUsd" ? "amount_usd" : field === "closeDate" ? "close_date" : "name"] },
+      before: {
+        [field]:
+          current[
+            field === "amountUsd"
+              ? "amount_usd"
+              : field === "closeDate"
+                ? "close_date"
+                : "name"
+          ],
+      },
       after: { [field]: nextValue },
     });
     return res.json({ id, field, value: nextValue, auditId });
@@ -2546,7 +2593,12 @@ router.post(
   async (req, res) => {
     const opportunityId = Number(req.params.id);
     const actionId = Number(req.params.workspaceItemId);
-    if (!Number.isInteger(opportunityId) || opportunityId <= 0 || !Number.isInteger(actionId) || actionId <= 0) {
+    if (
+      !Number.isInteger(opportunityId) ||
+      opportunityId <= 0 ||
+      !Number.isInteger(actionId) ||
+      actionId <= 0
+    ) {
       return res.status(400).json({ message: "Parametros invalidos" });
     }
     const access = await requireAccessibleOpportunityOr404({
@@ -2554,7 +2606,8 @@ router.post(
       opportunityId,
       message: "Oportunidad no encontrada",
     });
-    if (!access.ok) return res.status(access.response.status).json(access.response.body);
+    if (!access.ok)
+      return res.status(access.response.status).json(access.response.body);
     const rows = await query(
       `SELECT id, title, action_type, status, priority, due_date, scheduled_at,
               success_criteria, notes, created_by_user_id
@@ -2563,13 +2616,23 @@ router.post(
       [actionId, opportunityId],
     );
     const action = rows[0];
-    if (!action) return res.status(404).json({ message: "Accion no encontrada" });
-    const canReadAll = Boolean(req.user?.permissionSet?.has("oportunidades.read_all"));
-    if (Number(action.created_by_user_id) !== Number(req.user.id) && !canReadAll) {
-      return res.status(403).json({ message: "Solo puedes deshacer tus propias acciones del Coach" });
+    if (!action)
+      return res.status(404).json({ message: "Accion no encontrada" });
+    const canReadAll = Boolean(
+      req.user?.permissionSet?.has("oportunidades.read_all"),
+    );
+    if (
+      Number(action.created_by_user_id) !== Number(req.user.id) &&
+      !canReadAll
+    ) {
+      return res.status(403).json({
+        message: "Solo puedes deshacer tus propias acciones del Coach",
+      });
     }
     if (String(action.notes || "").indexOf("Coach Comercial") < 0) {
-      return res.status(409).json({ message: "Esta accion no fue creada desde el Coach" });
+      return res
+        .status(409)
+        .json({ message: "Esta accion no fue creada desde el Coach" });
     }
     await deleteOpportunityAction({ opportunityId, actionId });
     await logOpportunityWorkspaceMutation({
@@ -2580,7 +2643,10 @@ router.post(
       before: action,
       after: null,
     });
-    await refreshOpportunityRecommendedStrategy({ opportunityId, userId: Number(req.user.id) });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId,
+      userId: Number(req.user.id),
+    });
     return res.json({ ok: true, actionId });
   },
 );
@@ -3468,14 +3534,26 @@ router.post(
   async (req, res) => {
     const opportunityId = Number(req.params.id);
     const questionId = Number(req.params.questionId);
-    if (!Number.isInteger(opportunityId) || opportunityId <= 0 || !Number.isInteger(questionId) || questionId <= 0) {
+    if (
+      !Number.isInteger(opportunityId) ||
+      opportunityId <= 0 ||
+      !Number.isInteger(questionId) ||
+      questionId <= 0
+    ) {
       return res.status(400).json({ message: "Parametros invalidos" });
     }
-    const access = await requireAccessibleOpportunityOr404({ user: req.user, opportunityId, message: "Oportunidad no encontrada" });
-    if (!access.ok) return res.status(access.response.status).json(access.response.body);
+    const access = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId,
+      message: "Oportunidad no encontrada",
+    });
+    if (!access.ok)
+      return res.status(access.response.status).json(access.response.body);
     const state = await getOpportunityStateById(opportunityId);
     if (!state || isClosedCommercialStatus(state.commercial_status_code)) {
-      return res.status(409).json({ message: "No puedes corregir respuestas en una oportunidad cerrada" });
+      return res.status(409).json({
+        message: "No puedes corregir respuestas en una oportunidad cerrada",
+      });
     }
     const answers = await query(
       `SELECT a.answer_value, a.question_code_snapshot, a.question_prompt_snapshot,
@@ -3485,14 +3563,25 @@ router.post(
        ORDER BY a.id DESC LIMIT 2`,
       [opportunityId, questionId],
     );
-    if (answers.length < 2) return res.status(409).json({ message: "No existe una respuesta anterior para revertir" });
+    if (answers.length < 2)
+      return res
+        .status(409)
+        .json({ message: "No existe una respuesta anterior para revertir" });
     const previous = answers[1];
     await query(
       `INSERT INTO opportunity_stage_question_answers
        (opportunity_id, sales_stage_id, question_id, question_code_snapshot,
         question_prompt_snapshot, answer_value, answered_by_user_id, answered_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(3))`,
-      [opportunityId, previous.sales_stage_id, questionId, previous.question_code_snapshot, previous.question_prompt_snapshot, previous.answer_value, Number(req.user.id)],
+      [
+        opportunityId,
+        previous.sales_stage_id,
+        questionId,
+        previous.question_code_snapshot,
+        previous.question_prompt_snapshot,
+        previous.answer_value,
+        Number(req.user.id),
+      ],
     );
     await logAuditEvent({
       req,
@@ -3504,7 +3593,11 @@ router.post(
       before: { questionId, answerValue: answers[0].answer_value },
       after: { questionId, answerValue: previous.answer_value },
     });
-    await refreshOpportunityRecommendedStrategy({ opportunityId, selectedSalesStageId: Number(state.sales_stage_id), userId: Number(req.user.id) });
+    await refreshOpportunityRecommendedStrategy({
+      opportunityId,
+      selectedSalesStageId: Number(state.sales_stage_id),
+      userId: Number(req.user.id),
+    });
     return res.json({ ok: true, questionId });
   },
 );

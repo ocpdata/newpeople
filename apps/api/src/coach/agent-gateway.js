@@ -1,5 +1,4 @@
 import { getCoachSession, setCoachPendingQuestion } from "./service.js";
-import { config } from "../config.js";
 import {
   normalizeCoachGatewayRequest,
   resolveCoachTurnContext,
@@ -8,18 +7,6 @@ import { classifyCoachIntent } from "./phase-one-engine.js";
 import { createCoachAdapter } from "./coach-adapter.js";
 import { loadCoachBusinessRules } from "./business-rules.js";
 import { recordCoachTurnQualityTrace } from "./observability.js";
-
-export function resolveCoachRolloutMode(user = {}) {
-  const configuredMode = ["legacy", "gateway", "shadow", "pilot"].includes(
-    config.features.coachAgentGatewayMode,
-  )
-    ? config.features.coachAgentGatewayMode
-    : "gateway";
-  if (configuredMode !== "pilot") return configuredMode;
-  return config.features.coachAgentGatewayPilotUserIds.includes(Number(user.id))
-    ? "gateway"
-    : "legacy";
-}
 
 export function coachSessionContextMatchesRequest(
   requestContext,
@@ -108,13 +95,15 @@ function buildTurnObservability({
     },
     latencyMs: Math.max(0, Date.now() - startedAt),
     error: error ? String(error.message || error).slice(0, 1000) : null,
-    action: Array.isArray(result?.operations) && result.operations.length
-      ? result.operations.map((operation) => ({
-          kind: operation.kind,
-          status: operation.persistenceStatus || operation.status || "proposed",
-          id: operation.persistentId || null,
-        }))
-      : null,
+    action:
+      Array.isArray(result?.operations) && result.operations.length
+        ? result.operations.map((operation) => ({
+            kind: operation.kind,
+            status:
+              operation.persistenceStatus || operation.status || "proposed",
+            id: operation.persistentId || null,
+          }))
+        : null,
   };
 }
 
@@ -132,13 +121,14 @@ export async function prepareCoachTurn({ userId, body = {} }) {
     session?.context,
     Boolean(session),
   );
-  const conversationHistory = session && !request.conversationHistory.length
-    ? getCoachConversationHistory(
-        session.messages,
-        session.context,
-        session.context,
-      )
-    : request.conversationHistory;
+  const conversationHistory =
+    session && !request.conversationHistory.length
+      ? getCoachConversationHistory(
+          session.messages,
+          session.context,
+          session.context,
+        )
+      : request.conversationHistory;
 
   return {
     ...request,
@@ -158,11 +148,8 @@ export async function runCoachJob({
   dependencies,
 }) {
   const startedAt = Date.now();
-  const {
-    query,
-    persistCoachOperations,
-    appendCoachSessionTurn,
-  } = dependencies;
+  const { query, persistCoachOperations, appendCoachSessionTurn } =
+    dependencies;
 
   try {
     await query(
@@ -178,7 +165,11 @@ export async function runCoachJob({
           channel: "coach",
           process: classifyCoachIntent(question).type,
         });
-    const coachAdapter = createCoachAdapter({ user, dependencies, businessRules });
+    const coachAdapter = createCoachAdapter({
+      user,
+      dependencies,
+      businessRules,
+    });
     const engineResult = await coachAdapter.runTurn({
       question,
       context: selectedContext,
@@ -193,11 +184,17 @@ export async function runCoachJob({
       jobId,
       trace: engineResult.qualityTrace,
     }).catch((error) => {
-      console.warn("[mi-agent] No fue posible registrar traza de calidad:", error?.message || error);
+      console.warn(
+        "[mi-agent] No fue posible registrar traza de calidad:",
+        error?.message || error,
+      );
       return null;
     });
-    const { response: normalizedResult, activeContext, readToolResults } =
-      engineResult;
+    const {
+      response: normalizedResult,
+      activeContext,
+      readToolResults,
+    } = engineResult;
     if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
     conversationHistory = engineResult.conversationHistory;
     const persistedOperations = sessionId
@@ -282,7 +279,9 @@ export async function runCoachJob({
         appliedRules: { channel: "coach", engineMode: "gateway" },
         validationStatus: "error",
         validationReasons: ["turn_execution_failed"],
-        errorCode: String(error?.code || error?.name || "turn_execution_failed"),
+        errorCode: String(
+          error?.code || error?.name || "turn_execution_failed",
+        ),
         latencyMs: Math.max(0, Date.now() - startedAt),
       },
     }).catch(() => undefined);

@@ -81,7 +81,8 @@ describe("API integration baseline", () => {
       `SELECT settings_json FROM mi_coach_governance_settings
        WHERE singleton_key = 'default' LIMIT 1`,
     );
-    ctx.originalMiCoachGovernanceSettings = governanceSettingsRows[0]?.settings_json;
+    ctx.originalMiCoachGovernanceSettings =
+      governanceSettingsRows[0]?.settings_json;
     await ensureProspectResearchPermissions();
     await ensureProspectResearchSchema();
     await ensureCommercialTrackingPermissions();
@@ -1298,7 +1299,9 @@ describe("API integration baseline", () => {
       expect(jobResponse.body.job.errorMessage).toBeNull();
       expect(jobResponse.body.job.status).toBe("completed");
       expect(jobResponse.body.result.answer).toBe(expectedAnswer);
-      expect(jobResponse.body.result.qualityTraceId).toEqual(expect.any(Number));
+      expect(jobResponse.body.result.qualityTraceId).toEqual(
+        expect.any(Number),
+      );
       const coachTraceRows = await query(
         `SELECT channel, process_key FROM coach_turn_quality_traces
          WHERE id = ? AND user_id = ? LIMIT 1`,
@@ -1422,7 +1425,7 @@ describe("API integration baseline", () => {
     }
   });
 
-  test("Coach shadow compara la ejecucion nueva y legacy en un caso real", async () => {
+  test("Coach siempre usa el motor nuevo aunque la configuracion legacy y rollout esten apagados", async () => {
     const shadowRoleId = await createRole({
       name: `${TEST_PREFIX}_coach_shadow_equivalence`,
       permissionCodes: [
@@ -1433,10 +1436,10 @@ describe("API integration baseline", () => {
       ],
     });
     cleanup.roleIds.push(shadowRoleId);
-    const shadowUserEmail = `${TEST_PREFIX}.coach.shadow@example.com`;
-    const shadowUserId = await createUser({
-      fullName: "API Mi Coach Shadow",
-      email: shadowUserEmail,
+    const gatewayUserEmail = `${TEST_PREFIX}.coach.always.gateway@example.com`;
+    const gatewayUserId = await createUser({
+      fullName: "API Mi Coach Gateway",
+      email: gatewayUserEmail,
       roleIds: [
         shadowRoleId,
         ctx.opportunityFlowRoleId,
@@ -1444,18 +1447,22 @@ describe("API integration baseline", () => {
         ctx.contactReadRoleId,
       ],
     });
-    cleanup.userIds.push(shadowUserId);
+    cleanup.userIds.push(gatewayUserId);
     const fixture = await createOwnedOpportunityFlowFixture(
-      `${TEST_PREFIX}_coach_shadow_equivalence`,
+      `${TEST_PREFIX}_coach_always_gateway`,
       {
-        ownerUserId: shadowUserId,
-        actorUserId: shadowUserId,
-        loginEmail: shadowUserEmail,
+        ownerUserId: gatewayUserId,
+        actorUserId: gatewayUserId,
+        loginEmail: gatewayUserEmail,
       },
     );
     const originalApiKey = config.openai.apiKey;
     const originalGatewayMode = config.features.coachAgentGatewayMode;
     const originalFetch = global.fetch;
+    const originalRolloutRows = await query(
+      `SELECT enabled, rollout_percentage, allowlist_json
+       FROM coach_channel_rollouts WHERE channel = 'coach' LIMIT 1`,
+    );
     const response = {
       intent: "context_query",
       responseType: "informational",
@@ -1486,7 +1493,12 @@ describe("API integration baseline", () => {
       stageReadiness: null,
     };
     config.openai.apiKey = "test-key";
-    config.features.coachAgentGatewayMode = "shadow";
+    config.features.coachAgentGatewayMode = "legacy";
+    await query(
+      `UPDATE coach_channel_rollouts
+       SET enabled = 0, rollout_percentage = 0, allowlist_json = '[]'
+       WHERE channel = 'coach'`,
+    );
     global.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -1496,10 +1508,7 @@ describe("API integration baseline", () => {
     }));
 
     try {
-      const loginResponse = await login(
-        request(app),
-        shadowUserEmail,
-      );
+      const loginResponse = await login(request(app), gatewayUserEmail);
       const authorization = `Bearer ${loginResponse.body.token}`;
       const queuedResponse = await request(app)
         .post("/api/mi-agent/coach")
@@ -1519,28 +1528,35 @@ describe("API integration baseline", () => {
         jobResponse = await request(app)
           .get(`/api/mi-agent/coach/jobs/${queuedResponse.body.job.id}`)
           .set("Authorization", authorization);
-        if (
-          jobResponse.body.job?.status === "completed" &&
-          jobResponse.body.job?.observability?.rollout
-        )
-          break;
+        if (jobResponse.body.job?.status === "completed") break;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
 
       expect(jobResponse.status).toBe(200);
       expect(jobResponse.body.job.status).toBe("completed");
-      expect(jobResponse.body.job.observability.rollout).toMatchObject({
-        mode: "shadow",
-        matched: false,
-        regression: false,
-        differences: ["tools"],
-        approvedDifferences: ["tools"],
-        unexplainedDifferences: [],
-      });
+      expect(jobResponse.body.result.answer).toBe(response.answer);
+      expect(jobResponse.body.job.observability).not.toHaveProperty("rollout");
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     } finally {
       config.openai.apiKey = originalApiKey;
       config.features.coachAgentGatewayMode = originalGatewayMode;
       global.fetch = originalFetch;
+      if (originalRolloutRows[0]) {
+        await query(
+          `UPDATE coach_channel_rollouts
+           SET enabled = ?, rollout_percentage = ?, allowlist_json = ?
+           WHERE channel = 'coach'`,
+          [
+            originalRolloutRows[0].enabled,
+            originalRolloutRows[0].rollout_percentage,
+            JSON.stringify(
+              typeof originalRolloutRows[0].allowlist_json === "string"
+                ? JSON.parse(originalRolloutRows[0].allowlist_json)
+                : originalRolloutRows[0].allowlist_json,
+            ),
+          ],
+        );
+      }
     }
   });
 
@@ -1688,8 +1704,10 @@ describe("API integration baseline", () => {
       request(app),
       `${TEST_PREFIX}.mi.coach.admin@example.com`,
     );
-    const processKey = `phase5_${TEST_PREFIX}`.replace(/[^a-z0-9_-]/gi, "_").slice(0, 80);
-    const traceSessionId = 900000 + Date.now() % 100000;
+    const processKey = `phase5_${TEST_PREFIX}`
+      .replace(/[^a-z0-9_-]/gi, "_")
+      .slice(0, 80);
+    const traceSessionId = 900000 + (Date.now() % 100000);
     const traceInsert = await query(
       `INSERT INTO coach_turn_quality_traces
         (channel, process_key, user_id, session_id, primary_entity, entity_resolution_json,
@@ -1721,7 +1739,9 @@ describe("API integration baseline", () => {
       expect(feedbackResponse.status).toBe(200);
 
       const ownerTraces = await request(app)
-        .get(`/api/mi-agent/coach/quality/traces?channel=coach&sessionId=${traceSessionId}`)
+        .get(
+          `/api/mi-agent/coach/quality/traces?channel=coach&sessionId=${traceSessionId}`,
+        )
         .set("Authorization", `Bearer ${ownerLogin.body.token}`);
       expect(ownerTraces.status).toBe(200);
       expect(ownerTraces.body.traces).toEqual(
@@ -1739,7 +1759,9 @@ describe("API integration baseline", () => {
         ]),
       );
       const foreignTraces = await request(app)
-        .get(`/api/mi-agent/coach/quality/traces?channel=coach&sessionId=${traceSessionId}`)
+        .get(
+          `/api/mi-agent/coach/quality/traces?channel=coach&sessionId=${traceSessionId}`,
+        )
         .set("Authorization", `Bearer ${adminLogin.body.token}`);
       expect(foreignTraces.status).toBe(200);
       expect(foreignTraces.body.traces).toEqual([]);
@@ -1779,7 +1801,9 @@ describe("API integration baseline", () => {
         rolloutPercentage: 0,
       });
     } finally {
-      await query(`DELETE FROM coach_turn_quality_traces WHERE id = ?`, [traceId]);
+      await query(`DELETE FROM coach_turn_quality_traces WHERE id = ?`, [
+        traceId,
+      ]);
       if (originalRollout) {
         await query(
           `UPDATE coach_channel_rollouts
@@ -1874,26 +1898,26 @@ describe("API integration baseline", () => {
         });
       expect(forbiddenProposal.status).toBe(403);
 
-        const foreignChannelProposal = await request(app)
-          .post("/api/mi-agent/coach/operations")
-          .set("Authorization", authorization)
-          .send({
-            sessionId: session.id,
-            operation: {
-              kind: "activity",
-              sourceChannel: "customer_account",
-              title: "Operacion ajena al Coach",
-              opportunityId: null,
-              activityId: null,
-              actionType: "follow_up",
-              status: "pending",
-              priority: "medium",
-              evidence: [],
-              missingFields: [],
-              requiresConfirmation: true,
-            },
-          });
-        expect(foreignChannelProposal.status).toBe(409);
+      const foreignChannelProposal = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", authorization)
+        .send({
+          sessionId: session.id,
+          operation: {
+            kind: "activity",
+            sourceChannel: "customer_account",
+            title: "Operacion ajena al Coach",
+            opportunityId: null,
+            activityId: null,
+            actionType: "follow_up",
+            status: "pending",
+            priority: "medium",
+            evidence: [],
+            missingFields: [],
+            requiresConfirmation: true,
+          },
+        });
+      expect(foreignChannelProposal.status).toBe(409);
 
       const proposedActivity = await request(app)
         .post("/api/mi-agent/coach/operations")
@@ -1923,6 +1947,61 @@ describe("API integration baseline", () => {
         status: "ready",
         targetModule: "commercial_development",
       });
+
+      const customerAccountFieldProposal = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", authorization)
+        .send({
+          sessionId: null,
+          originChannel: "customer_account",
+          context: { accountId },
+          originalIntent: "Actualizar cuenta desde Cliente existente",
+          operation: {
+            kind: "account_field",
+            sourceChannel: "coach",
+            title: "Actualizar ciudad desde Cliente existente",
+            accountId,
+            field: "city",
+            currentValue: "Guadalajara",
+            value: "Monterrey",
+            evidence: [],
+            missingFields: [],
+            requiresConfirmation: true,
+          },
+        });
+      expect(customerAccountFieldProposal.status).toBe(201);
+      expect(customerAccountFieldProposal.body.operation).toMatchObject({
+        kind: "account_field",
+        sourceChannel: "coach",
+        status: "ready",
+      });
+
+      const foreignAccountId = await createDirectAccount({
+        ownerUserId: ctx.miCoachOperatorUserId,
+        actorUserId: ctx.miCoachOperatorUserId,
+        suffix: `${TEST_PREFIX}_coach_lifecycle_foreign`,
+      });
+      cleanup.accountIds.push(foreignAccountId);
+      const crossAccountProposal = await request(app)
+        .post("/api/mi-agent/coach/operations")
+        .set("Authorization", authorization)
+        .send({
+          sessionId: null,
+          originChannel: "customer_account",
+          context: { accountId },
+          operation: {
+            kind: "account_field",
+            sourceChannel: "coach",
+            title: "No modificar otra cuenta",
+            accountId: foreignAccountId,
+            field: "city",
+            value: "Puebla",
+            evidence: [],
+            missingFields: [],
+            requiresConfirmation: true,
+          },
+        });
+      expect(crossAccountProposal.status).toBe(403);
 
       const operations = await persistCoachOperations({
         userId: ctx.miCoachOperatorUserId,
@@ -2146,9 +2225,7 @@ describe("API integration baseline", () => {
         .set("Authorization", authorization);
       expect(blockedClose.status).toBe(409);
       const cancelledAtClose = await request(app)
-        .post(
-          `/api/mi-agent/coach/operations/${pendingAtClose[0].id}/status`,
-        )
+        .post(`/api/mi-agent/coach/operations/${pendingAtClose[0].id}/status`)
         .set("Authorization", authorization)
         .send({
           status: "cancelled",
@@ -2500,9 +2577,7 @@ describe("API integration baseline", () => {
     let emailChatJob;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       emailChatJob = await request(app)
-        .get(
-          `/api/commercial-intelligence/account-chat/jobs/${emailChatJobId}`,
-        )
+        .get(`/api/commercial-intelligence/account-chat/jobs/${emailChatJobId}`)
         .set("Authorization", `Bearer ${updateLogin.body.token}`);
       if (["completed", "failed"].includes(emailChatJob.body.job?.status))
         break;
@@ -3075,6 +3150,18 @@ describe("API integration baseline", () => {
         deactivatedTerminalOpportunity.opportunityId,
       ],
     );
+    const qualifiedPolicyOpportunity = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_governance_qualified_policy`,
+      {
+        ownerUserId: governanceContextUserId,
+        actorUserId: governanceContextUserId,
+        loginEmail: `${TEST_PREFIX}.governance.context@example.com`,
+      },
+    );
+    await query(`UPDATE opportunities SET sales_stage_id = ? WHERE id = ?`, [
+      ctx.catalogIds.salesStageInitialId,
+      qualifiedPolicyOpportunity.opportunityId,
+    ]);
 
     const regularLogin = await login(
       request(app),
@@ -3086,6 +3173,12 @@ describe("API integration baseline", () => {
 
     expect(forbiddenResponse.status).toBe(403);
     expect(forbiddenResponse.body.requiredPermission).toBe("mi_coach.admin");
+    const forbiddenRuleListResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=coach&process=default",
+      )
+      .set("Authorization", `Bearer ${regularLogin.body.token}`);
+    expect(forbiddenRuleListResponse.status).toBe(403);
 
     const adminLogin = await login(
       request(app),
@@ -3132,17 +3225,157 @@ describe("API integration baseline", () => {
       aliases: { stage: { "fase empresarial": "negociacion" } },
     });
     const reloadedRulesResponse = await request(app)
-      .get("/api/commercial-intelligence/governance/business-rules?channel=coach&process=opportunity_query")
+      .get(
+        "/api/commercial-intelligence/governance/business-rules?channel=coach&process=opportunity_query",
+      )
       .set("Authorization", `Bearer ${adminLogin.body.token}`);
     expect(reloadedRulesResponse.status).toBe(200);
-    expect(reloadedRulesResponse.body.businessRules.filters.defaultActiveOnly).toBe(
-      false,
-    );
+    expect(
+      reloadedRulesResponse.body.businessRules.filters.defaultActiveOnly,
+    ).toBe(false);
     const resetRulesResponse = await request(app)
-      .delete("/api/commercial-intelligence/governance/business-rules?channel=coach&process=opportunity_query")
+      .delete(
+        "/api/commercial-intelligence/governance/business-rules?channel=coach&process=opportunity_query",
+      )
       .set("Authorization", `Bearer ${adminLogin.body.token}`);
     expect(resetRulesResponse.status).toBe(200);
-    expect(resetRulesResponse.body.businessRules.process).toBe("opportunity_query");
+    expect(resetRulesResponse.body.businessRules.process).toBe(
+      "opportunity_query",
+    );
+
+    const initialAdminRulesResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=coach&process=default",
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(initialAdminRulesResponse.status).toBe(200);
+    expect(initialAdminRulesResponse.body.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "common",
+          title: "Estado y etapa son dimensiones distintas",
+          enabled: true,
+        }),
+        expect.objectContaining({
+          scope: "channel",
+          channel: "coach",
+          title: "Sustentar recomendaciones de avance",
+        }),
+        expect.objectContaining({
+          scope: "common",
+          title: "Mantener continuidad sin mezclar entidades",
+        }),
+        expect.objectContaining({
+          scope: "channel",
+          channel: "coach",
+          title: "Respetar el diagnóstico determinista de etapa",
+        }),
+      ]),
+    );
+    expect(
+      initialAdminRulesResponse.body.rules.filter(
+        (rule) => rule.scope === "common",
+      ),
+    ).toHaveLength(8);
+    const allAdminRulesResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=all&process=default",
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(allAdminRulesResponse.status).toBe(200);
+    expect(allAdminRulesResponse.body.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "channel",
+          channel: "coach",
+          title: "Sustentar recomendaciones de avance",
+        }),
+        expect.objectContaining({
+          scope: "channel",
+          channel: "customer_account",
+          title: "Mantener el alcance de la cuenta seleccionada",
+        }),
+        expect.objectContaining({
+          scope: "channel",
+          channel: "prospect",
+          title: "Separar datos del prospecto y evidencia pública",
+        }),
+      ]),
+    );
+    expect(
+      allAdminRulesResponse.body.rules.filter(
+        (rule) => rule.scope === "common",
+      ),
+    ).toHaveLength(8);
+    const createAdminRuleResponse = await request(app)
+      .post("/api/commercial-intelligence/governance/rules")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        scope: "channel",
+        channel: "customer_account",
+        process: "account_chat",
+        title: "Regla temporal de prueba",
+        instruction: "Respeta el ámbito de la cuenta de prueba.",
+      });
+    expect(createAdminRuleResponse.status).toBe(201);
+    const createdAdminRuleId = createAdminRuleResponse.body.rule.id;
+    const customerAdminRulesResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=customer_account&process=account_chat",
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(customerAdminRulesResponse.body.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: createdAdminRuleId, scope: "channel" }),
+        expect.objectContaining({ scope: "common" }),
+        expect.objectContaining({
+          scope: "channel",
+          channel: "customer_account",
+          title: "Proteger contenido interno de cotizaciones",
+        }),
+      ]),
+    );
+    const prospectAdminRulesResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=prospect&process=prospect_chat",
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(prospectAdminRulesResponse.status).toBe(200);
+    expect(prospectAdminRulesResponse.body.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "channel",
+          channel: "prospect",
+          title: "No confundir hipótesis con oportunidad CRM",
+        }),
+        expect.objectContaining({ scope: "common" }),
+      ]),
+    );
+    const updateAdminRuleResponse = await request(app)
+      .put(
+        `/api/commercial-intelligence/governance/rules/${createdAdminRuleId}`,
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        title: "Regla temporal editada",
+        instruction: "Texto editado.",
+        enabled: false,
+        sortOrder: 15,
+      });
+    expect(updateAdminRuleResponse.status).toBe(200);
+    expect(updateAdminRuleResponse.body.rule).toMatchObject({
+      title: "Regla temporal editada",
+      enabled: false,
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    const deleteAdminRuleResponse = await request(app)
+      .delete(
+        `/api/commercial-intelligence/governance/rules/${createdAdminRuleId}`,
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(deleteAdminRuleResponse.status).toBe(200);
+    expect(deleteAdminRuleResponse.body.rule.id).toBe(createdAdminRuleId);
 
     const enableWonHistoryResponse = await request(app)
       .put("/api/commercial-intelligence/governance/settings")
@@ -3183,6 +3416,13 @@ describe("API integration baseline", () => {
         findingRetentionDays: 90,
         requireEvidenceForExternalFindings: true,
         allowProspectConversion: false,
+        qualifiedOpportunityStageCodes: [
+          "contacto_inicial",
+          "cotizacion",
+          "negociacion",
+          "waiting",
+        ],
+        committedOpportunityStageCodes: ["waiting"],
         notes: "Configuracion temporal de prueba",
       });
 
@@ -3194,6 +3434,13 @@ describe("API integration baseline", () => {
       dailyResearchLimitPerUser: 7,
       findingRetentionDays: 90,
       allowProspectConversion: false,
+      qualifiedOpportunityStageCodes: [
+        "contacto_inicial",
+        "cotizacion",
+        "negociacion",
+        "waiting",
+      ],
+      committedOpportunityStageCodes: ["waiting"],
     });
     const [statusAfterGovernanceUpdate] = await query(
       `SELECT o.commercial_status_id, o.activation_status_id
@@ -3207,6 +3454,22 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${governedOpportunity.token}`);
 
     expect(contextResponse.status).toBe(200);
+    expect(contextResponse.body.coachOpportunities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: qualifiedPolicyOpportunity.opportunityId,
+          lifecycle: "open",
+          isQualified: true,
+        }),
+      ]),
+    );
+    expect(contextResponse.body.workboard).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: qualifiedPolicyOpportunity.opportunityId,
+        }),
+      ]),
+    );
     expect(contextResponse.body.wonOpportunities).toEqual([]);
     expect(contextResponse.body.lostOpportunities).toEqual([]);
     expect(contextResponse.body.cancelledOpportunities).toEqual(
@@ -11898,6 +12161,26 @@ describe("API integration baseline", () => {
     expect(globalListResponse.status).toBe(200);
     expect(
       globalListResponse.body.some(
+        (opportunity) =>
+          Number(opportunity.id) === Number(createResponse.body.id),
+      ),
+    ).toBe(true);
+    await query(
+      `UPDATE opportunities
+       SET activation_status_id = ?, commercial_status_id = ?
+       WHERE id = ?`,
+      [
+        ctx.catalogIds.opportunityActiveStatusId,
+        ctx.catalogIds.opportunityCommercialInProgressStatusId,
+        Number(createResponse.body.id),
+      ],
+    );
+    const openOnlyListResponse = await request(app)
+      .get("/api/opportunities?openOnly=true")
+      .set("Authorization", `Bearer ${globalLoginResponse.body.token}`);
+    expect(openOnlyListResponse.status).toBe(200);
+    expect(
+      openOnlyListResponse.body.some(
         (opportunity) =>
           Number(opportunity.id) === Number(createResponse.body.id),
       ),

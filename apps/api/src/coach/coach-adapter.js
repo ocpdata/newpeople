@@ -1,8 +1,13 @@
 import { getCoachReadToolCatalog } from "./read-tools.js";
 import { runConversationEngine } from "./conversation-engine.js";
 import { getCoachBusinessRules } from "./business-rules.js";
+import { listCoachAdminRules } from "./admin-rules.js";
 
-export function createCoachAdapter({ user, dependencies, businessRules = null }) {
+export function createCoachAdapter({
+  user,
+  dependencies,
+  businessRules = null,
+}) {
   const availableTools = getCoachReadToolCatalog();
   const permissions = user?.permissionSet || new Set();
   const effectiveBusinessRules =
@@ -26,7 +31,11 @@ export function createCoachAdapter({ user, dependencies, businessRules = null })
         permissions,
         operationPolicy: effectiveBusinessRules.operationPolicy,
         businessRules: effectiveBusinessRules,
-        dependencies,
+        dependencies: {
+          ...dependencies,
+          loadAdministrativeRules:
+            dependencies.loadAdministrativeRules || listCoachAdminRules,
+        },
       });
     },
   };
@@ -109,9 +118,7 @@ export function compareCoachExecutions(primary, legacy) {
       JSON.stringify(primaryComparable[key]) !==
       JSON.stringify(legacyComparable[key]),
   );
-  const approvedDifferences = differences.filter(
-    (key) => key === "tools",
-  );
+  const approvedDifferences = differences.filter((key) => key === "tools");
   const unexplainedDifferences = differences.filter(
     (key) => !approvedDifferences.includes(key),
   );

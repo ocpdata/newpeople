@@ -9,6 +9,7 @@ const COACH_BASE_RULES = Object.freeze({
     leadSearchAllowed: true,
     opportunitySearchAllowed: true,
     contactSearchAllowed: true,
+    quotationSearchAllowed: true,
     requireContextForOperation: true,
     requireBusinessEvidence: true,
     requirePermissionValidation: true,
@@ -22,9 +23,9 @@ const COACH_BASE_RULES = Object.freeze({
   aliases: Object.freeze({
     stage: Object.freeze({
       "contacto inicial": "contacto_inicial",
-      "contacto_inicial": "contacto_inicial",
+      contacto_inicial: "contacto_inicial",
       "identificacion de oportunidad": "identificacion_oportunidad",
-      "identificacion_oportunidad": "identificacion_oportunidad",
+      identificacion_oportunidad: "identificacion_oportunidad",
       desarrollo: "desarrollo",
       cotizacion: "cotizacion",
       demostracion: "demostracion",
@@ -73,22 +74,24 @@ const COACH_BASE_RULES = Object.freeze({
   }),
 });
 
-const ALLOWED_OPERATION_KINDS = new Set(
-  [
-    ...COACH_BASE_RULES.operationPolicy.allowedKinds,
-    "create_account",
-    "create_contact",
-    "create_opportunity",
-  ],
-);
+const ALLOWED_OPERATION_KINDS = new Set([
+  ...COACH_BASE_RULES.operationPolicy.allowedKinds,
+  "create_account",
+  "create_contact",
+  "create_opportunity",
+]);
 const RULE_CHANNELS = new Set(["coach", "customer_account", "prospect"]);
 let ensureCoachBusinessRulesSchemaPromise;
 
 function normalizeAliasMap(base, overrides) {
   const aliases = { ...base };
   for (const [label, code] of Object.entries(overrides || {})) {
-    const normalizedLabel = String(label || "").trim().toLowerCase();
-    const normalizedCode = String(code || "").trim().toLowerCase();
+    const normalizedLabel = String(label || "")
+      .trim()
+      .toLowerCase();
+    const normalizedCode = String(code || "")
+      .trim()
+      .toLowerCase();
     if (normalizedLabel && normalizedCode && normalizedLabel.length <= 80) {
       aliases[normalizedLabel] = normalizedCode;
     }
@@ -98,7 +101,9 @@ function normalizeAliasMap(base, overrides) {
 
 function normalizeStringList(value, fallback) {
   if (!Array.isArray(value)) return [...fallback];
-  return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  return [
+    ...new Set(value.map((item) => String(item || "").trim()).filter(Boolean)),
+  ];
 }
 
 function getChannelBaseRules(channel) {
@@ -111,7 +116,7 @@ function getChannelBaseRules(channel) {
       },
       operationPolicy: {
         sourceChannel: channel,
-        allowedKinds: ["activity"],
+        allowedKinds: [...COACH_BASE_RULES.operationPolicy.allowedKinds],
       },
       channelRules: {
         scope: channel,
@@ -129,10 +134,15 @@ function getChannelBaseRules(channel) {
         leadSearchAllowed: false,
         opportunitySearchAllowed: false,
         contactSearchAllowed: false,
+        quotationSearchAllowed: false,
       },
       operationPolicy: {
         sourceChannel: channel,
-        allowedKinds: ["create_account", "create_contact", "create_opportunity"],
+        allowedKinds: [
+          "create_account",
+          "create_contact",
+          "create_opportunity",
+        ],
       },
       channelRules: {
         scope: channel,
@@ -171,8 +181,11 @@ export function normalizeCoachBusinessRules({
   process = "default",
   overrides = {},
 } = {}) {
-  if (!RULE_CHANNELS.has(channel)) throw new Error("Canal de reglas no soportado");
-  const normalizedProcess = String(process || "default").trim().toLowerCase();
+  if (!RULE_CHANNELS.has(channel))
+    throw new Error("Canal de reglas no soportado");
+  const normalizedProcess = String(process || "default")
+    .trim()
+    .toLowerCase();
   if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
     throw new Error("Proceso de reglas invalido");
   }
@@ -182,8 +195,9 @@ export function normalizeCoachBusinessRules({
     overrides.operationPolicy?.allowedKinds,
     baseRules.operationPolicy.allowedKinds,
   );
-  const allowedKinds = requestedOperationKinds.filter((kind) =>
-    ALLOWED_OPERATION_KINDS.has(kind) && channelOperationKinds.has(kind),
+  const allowedKinds = requestedOperationKinds.filter(
+    (kind) =>
+      ALLOWED_OPERATION_KINDS.has(kind) && channelOperationKinds.has(kind),
   );
   const filters = {
     ...COACH_BASE_RULES.filters,
@@ -192,6 +206,35 @@ export function normalizeCoachBusinessRules({
   };
   if (filters.defaultActiveOnly && filters.defaultInactiveOnly) {
     filters.defaultInactiveOnly = false;
+  }
+  const scope = {
+    ...baseRules.scope,
+    ...(overrides.scope || {}),
+    requireContextForOperation: true,
+    requireBusinessEvidence: true,
+    requirePermissionValidation: true,
+  };
+  for (const key of [
+    "accountSearchAllowed",
+    "leadSearchAllowed",
+    "opportunitySearchAllowed",
+    "contactSearchAllowed",
+  ]) {
+    if (baseRules.scope[key] === false) scope[key] = false;
+  }
+  if (baseRules.scope.accountScoped) scope.accountScoped = true;
+  const channelRules = {
+    ...baseRules.channelRules,
+    ...(overrides.channelRules || {}),
+    scope: channel,
+  };
+  for (const key of [
+    "accountScoped",
+    "prospectScoped",
+    "crmRecordsConfirmedOnly",
+    "noSharedCoachSession",
+  ]) {
+    if (baseRules.channelRules[key] === true) channelRules[key] = true;
   }
   return {
     channel,
@@ -202,19 +245,9 @@ export function normalizeCoachBusinessRules({
       sourceChannel: channel,
       allowedKinds,
     },
-    channelRules: {
-      ...baseRules.channelRules,
-      ...(overrides.channelRules || {}),
-      scope: channel,
-    },
+    channelRules,
     filters,
-    scope: {
-      ...baseRules.scope,
-      ...(overrides.scope || {}),
-      requireContextForOperation: true,
-      requireBusinessEvidence: true,
-      requirePermissionValidation: true,
-    },
+    scope,
     aliases: {
       stage: {
         ...normalizeAliasMap(
@@ -252,19 +285,25 @@ export function getCoachBusinessRules({
   return normalizeCoachBusinessRules({ channel, process, overrides });
 }
 
-export async function loadCoachBusinessRules({ channel = "coach", process = "default" } = {}) {
+export async function loadCoachBusinessRulesWithSource({
+  channel = "coach",
+  process = "default",
+} = {}) {
   await ensureRulesSchema();
-  let rows = await query(
+  const exactRows = await query(
     `SELECT rules_json FROM mi_coach_business_rules
      WHERE channel = ? AND process_key = ? LIMIT 1`,
     [channel, process],
   );
+  let rows = exactRows;
+  let sourceProcess = exactRows.length ? process : null;
   if (!rows.length && process !== "default") {
     rows = await query(
       `SELECT rules_json FROM mi_coach_business_rules
        WHERE channel = ? AND process_key = 'default' LIMIT 1`,
       [channel],
     );
+    if (rows.length) sourceProcess = "default";
   }
   let overrides = {};
   try {
@@ -276,7 +315,19 @@ export async function loadCoachBusinessRules({ channel = "coach", process = "def
   } catch {
     overrides = {};
   }
-  return getCoachBusinessRules({ channel, process, overrides });
+  return {
+    businessRules: getCoachBusinessRules({ channel, process, overrides }),
+    configurationSource: {
+      sourceProcess,
+      hasSavedOverride: Boolean(rows.length),
+      inheritedFromDefault: process !== "default" && !exactRows.length,
+    },
+  };
+}
+
+export async function loadCoachBusinessRules(options = {}) {
+  const { businessRules } = await loadCoachBusinessRulesWithSource(options);
+  return businessRules;
 }
 
 export async function saveCoachBusinessRules({
@@ -285,7 +336,11 @@ export async function saveCoachBusinessRules({
   process = "default",
   rules = {},
 } = {}) {
-  const normalized = normalizeCoachBusinessRules({ channel, process, overrides: rules });
+  const normalized = normalizeCoachBusinessRules({
+    channel,
+    process,
+    overrides: rules,
+  });
   await ensureRulesSchema();
   await query(
     `INSERT INTO mi_coach_business_rules
@@ -300,9 +355,15 @@ export async function saveCoachBusinessRules({
   return normalized;
 }
 
-export async function resetCoachBusinessRules({ channel = "coach", process = "default" } = {}) {
-  if (!RULE_CHANNELS.has(channel)) throw new Error("Canal de reglas no soportado");
-  const normalizedProcess = String(process || "default").trim().toLowerCase();
+export async function resetCoachBusinessRules({
+  channel = "coach",
+  process = "default",
+} = {}) {
+  if (!RULE_CHANNELS.has(channel))
+    throw new Error("Canal de reglas no soportado");
+  const normalizedProcess = String(process || "default")
+    .trim()
+    .toLowerCase();
   if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
     throw new Error("Proceso de reglas invalido");
   }

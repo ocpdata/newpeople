@@ -10,6 +10,7 @@ import {
   saveCoachBusinessRules,
 } from "../src/coach/business-rules.js";
 import { applyCoachBusinessRuleScope } from "../src/coach/conversation-engine.js";
+import { resolveAvailableCoachTools } from "../src/coach/conversation-engine.js";
 import { executeCoachReadTool } from "../src/coach/crm-read-tools.js";
 import { inferCoachOpportunityFilters } from "../src/coach/read-tools.js";
 
@@ -25,7 +26,10 @@ describe("Coach business rules", () => {
   it("normalizes channel policies without allowing authorization safeguards to be disabled", () => {
     const rules = normalizeCoachBusinessRules({
       overrides: {
-        scope: { requirePermissionValidation: false, requireBusinessEvidence: false },
+        scope: {
+          requirePermissionValidation: false,
+          requireBusinessEvidence: false,
+        },
         validation: {
           requirePermissionValidation: false,
           requireEvidence: false,
@@ -47,6 +51,50 @@ describe("Coach business rules", () => {
       allowAmbiguousEntitySelection: false,
     });
     expect(rules.operationPolicy.allowedKinds).toEqual(["activity"]);
+  });
+
+  it("keeps channel isolation invariants locked against administrative overrides", () => {
+    const prospectRules = normalizeCoachBusinessRules({
+      channel: "prospect",
+      overrides: {
+        scope: {
+          accountScoped: false,
+          opportunitySearchAllowed: true,
+          contactSearchAllowed: true,
+          leadSearchAllowed: true,
+        },
+        channelRules: {
+          prospectScoped: false,
+          crmRecordsConfirmedOnly: false,
+        },
+      },
+    });
+
+    expect(prospectRules.scope).toMatchObject({
+      accountScoped: true,
+      opportunitySearchAllowed: false,
+      contactSearchAllowed: false,
+      leadSearchAllowed: false,
+    });
+    expect(prospectRules.channelRules).toMatchObject({
+      prospectScoped: true,
+      crmRecordsConfirmedOnly: true,
+    });
+  });
+
+  it("allows Cliente existente the same controlled operation kinds as Coach", () => {
+    const coachRules = getCoachBusinessRules({ channel: "coach" });
+    const customerRules = getCoachBusinessRules({
+      channel: "customer_account",
+    });
+
+    expect(customerRules.operationPolicy.allowedKinds).toEqual(
+      coachRules.operationPolicy.allowedKinds,
+    );
+    expect(customerRules.operationPolicy.sourceChannel).toBe(
+      "customer_account",
+    );
+    expect(customerRules.scope.accountScoped).toBe(true);
   });
 
   it("normalizes contradictory default active/inactive filters", () => {
@@ -90,9 +138,24 @@ describe("Coach business rules", () => {
       businessRules: rules,
       snapshot: {
         coachOpportunities: [
-          { id: 1, name: "Activa", lifecycle: "open", activationStatusCode: "activada" },
-          { id: 2, name: "Inactiva", lifecycle: "open", activationStatusCode: "desactivada" },
-          { id: 3, name: "Historica", lifecycle: "historical", activationStatusCode: "activada" },
+          {
+            id: 1,
+            name: "Activa",
+            lifecycle: "open",
+            activationStatusCode: "activada",
+          },
+          {
+            id: 2,
+            name: "Inactiva",
+            lifecycle: "open",
+            activationStatusCode: "desactivada",
+          },
+          {
+            id: 3,
+            name: "Historica",
+            lifecycle: "historical",
+            activationStatusCode: "activada",
+          },
         ],
       },
     });
@@ -170,5 +233,33 @@ describe("Coach business rules", () => {
       expect.stringContaining("ON DUPLICATE KEY UPDATE"),
       expect.arrayContaining(["coach", "qualification"]),
     );
+  });
+
+  it("allows quotation reading to be disabled without weakening its permission checks", () => {
+    const rules = getCoachBusinessRules({
+      channel: "coach",
+      overrides: { scope: { quotationSearchAllowed: false } },
+    });
+    const tools = resolveAvailableCoachTools(
+      [
+        {
+          name: "getOpportunityQuotation",
+          requiredPermission: "oportunidades.read",
+          requiredAnyPermissions: [
+            "cotizaciones.revision",
+            "cotizaciones.operacion",
+          ],
+        },
+      ],
+      new Set(["oportunidades.read", "cotizaciones.revision"]),
+    ).filter((tool) => rules.scope.quotationSearchAllowed !== false);
+
+    expect(tools).toEqual([]);
+    expect(
+      applyCoachBusinessRuleScope(
+        { selectedOpportunityQuotation: { quotationId: 21 } },
+        rules,
+      ).selectedOpportunityQuotation,
+    ).toBeNull();
   });
 });

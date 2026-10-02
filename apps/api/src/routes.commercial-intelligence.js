@@ -1,8 +1,15 @@
 import {
-  loadCoachBusinessRules,
+  loadCoachBusinessRulesWithSource,
   resetCoachBusinessRules,
   saveCoachBusinessRules,
 } from "./coach/business-rules.js";
+import {
+  createCoachAdminRule,
+  deleteCoachAdminRule,
+  getCoachAdminRule,
+  listCoachAdminRules,
+  updateCoachAdminRule,
+} from "./coach/admin-rules.js";
 import express from "express";
 import { z } from "zod";
 import { requirePermission } from "./auth.js";
@@ -75,65 +82,162 @@ const governanceSettingsSchema = z.object({
   findingRetentionDays: z.number().int().min(30).max(3650).optional(),
   requireEvidenceForExternalFindings: z.boolean().optional(),
   allowProspectConversion: z.boolean().optional(),
+  qualifiedOpportunityStageCodes: z
+    .array(
+      z.enum([
+        "contacto_inicial",
+        "identificacion_oportunidad",
+        "desarrollo",
+        "cotizacion",
+        "demostracion",
+        "negociacion",
+        "waiting",
+      ]),
+    )
+    .min(1)
+    .optional(),
+  committedOpportunityStageCodes: z
+    .array(
+      z.enum([
+        "contacto_inicial",
+        "identificacion_oportunidad",
+        "desarrollo",
+        "cotizacion",
+        "demostracion",
+        "negociacion",
+        "waiting",
+      ]),
+    )
+    .min(1)
+    .optional(),
   notes: z.string().trim().max(1000).optional(),
 });
 
 const coachBusinessRulesSchema = z.object({
   channel: z.enum(["coach", "customer_account", "prospect"]).default("coach"),
-  process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).default("default"),
-  rules: z.object({
-    channel: z.enum(["coach", "customer_account", "prospect"]).optional(),
-    process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
-    scope: z.object({
-      accountScoped: z.boolean().optional(),
-      accountSearchAllowed: z.boolean().optional(),
-      leadSearchAllowed: z.boolean().optional(),
-      opportunitySearchAllowed: z.boolean().optional(),
-      contactSearchAllowed: z.boolean().optional(),
-      requireContextForOperation: z.boolean().optional(),
-      requireBusinessEvidence: z.boolean().optional(),
-      requirePermissionValidation: z.boolean().optional(),
-    }).partial().optional(),
-    filters: z.object({
-      defaultOpenOnly: z.boolean().optional(),
-      defaultActiveOnly: z.boolean().optional(),
-      defaultInactiveOnly: z.boolean().optional(),
-      defaultRequireEvidence: z.boolean().optional(),
-    }).partial().optional(),
-    aliases: z.object({
-      stage: z.record(z.string(), z.string()).optional(),
-      opportunityStatus: z.record(z.string(), z.string()).optional(),
-      inactivity: z.array(z.string().trim().min(1).max(80)).optional(),
-    }).partial().optional(),
-    operationPolicy: z.object({
-      allowedKinds: z.array(z.enum([
-        "activity",
-        "stage_answer",
-        "lead_call_outcome",
-        "account_field",
-        "contact_field",
-        "opportunity_field",
-        "create_account",
-        "create_contact",
-        "create_opportunity",
-      ])).optional(),
-      sourceChannel: z.enum(["coach", "customer_account", "prospect"]).optional(),
-    }).partial().optional(),
-    channelRules: z.object({
-      scope: z.enum(["coach", "customer_account", "prospect"]).optional(),
-      accountScoped: z.boolean().optional(),
-      prospectScoped: z.boolean().optional(),
-      crmRecordsConfirmedOnly: z.boolean().optional(),
-      noSharedCoachSession: z.boolean().optional(),
-    }).partial().optional(),
-    validation: z.object({
-      requireEvidence: z.boolean().optional(),
-      requireEntityResolution: z.boolean().optional(),
-      requirePermissionValidation: z.boolean().optional(),
-      allowAmbiguousEntitySelection: z.boolean().optional(),
-    }).partial().optional(),
-  }).strict(),
+  process: z
+    .string()
+    .trim()
+    .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+    .default("default"),
+  rules: z
+    .object({
+      channel: z.enum(["coach", "customer_account", "prospect"]).optional(),
+      process: z
+        .string()
+        .trim()
+        .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+        .optional(),
+      scope: z
+        .object({
+          accountScoped: z.boolean().optional(),
+          accountSearchAllowed: z.boolean().optional(),
+          leadSearchAllowed: z.boolean().optional(),
+          opportunitySearchAllowed: z.boolean().optional(),
+          contactSearchAllowed: z.boolean().optional(),
+          quotationSearchAllowed: z.boolean().optional(),
+          requireContextForOperation: z.boolean().optional(),
+          requireBusinessEvidence: z.boolean().optional(),
+          requirePermissionValidation: z.boolean().optional(),
+        })
+        .partial()
+        .optional(),
+      filters: z
+        .object({
+          defaultOpenOnly: z.boolean().optional(),
+          defaultActiveOnly: z.boolean().optional(),
+          defaultInactiveOnly: z.boolean().optional(),
+          defaultRequireEvidence: z.boolean().optional(),
+        })
+        .partial()
+        .optional(),
+      aliases: z
+        .object({
+          stage: z.record(z.string(), z.string()).optional(),
+          opportunityStatus: z.record(z.string(), z.string()).optional(),
+          inactivity: z.array(z.string().trim().min(1).max(80)).optional(),
+        })
+        .partial()
+        .optional(),
+      operationPolicy: z
+        .object({
+          allowedKinds: z
+            .array(
+              z.enum([
+                "activity",
+                "stage_answer",
+                "lead_call_outcome",
+                "account_field",
+                "contact_field",
+                "opportunity_field",
+                "create_account",
+                "create_contact",
+                "create_opportunity",
+              ]),
+            )
+            .optional(),
+          sourceChannel: z
+            .enum(["coach", "customer_account", "prospect"])
+            .optional(),
+        })
+        .partial()
+        .optional(),
+      channelRules: z
+        .object({
+          scope: z.enum(["coach", "customer_account", "prospect"]).optional(),
+          accountScoped: z.boolean().optional(),
+          prospectScoped: z.boolean().optional(),
+          crmRecordsConfirmedOnly: z.boolean().optional(),
+          noSharedCoachSession: z.boolean().optional(),
+        })
+        .partial()
+        .optional(),
+      validation: z
+        .object({
+          requireEvidence: z.boolean().optional(),
+          requireEntityResolution: z.boolean().optional(),
+          requirePermissionValidation: z.boolean().optional(),
+          allowAmbiguousEntitySelection: z.boolean().optional(),
+        })
+        .partial()
+        .optional(),
+    })
+    .strict(),
 });
+
+const coachAdminRuleCreateSchema = z
+  .object({
+    scope: z.enum(["common", "channel"]),
+    channel: z.enum(["coach", "customer_account", "prospect"]).optional(),
+    process: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+      .default("default"),
+    title: z.string().trim().min(1).max(180),
+    instruction: z.string().trim().min(1).max(5000),
+    enabled: z.boolean().default(true),
+    sortOrder: z.number().int().min(-1000).max(1000).default(0),
+  })
+  .strict()
+  .superRefine((rule, context) => {
+    if (rule.scope === "channel" && !rule.channel) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["channel"],
+        message: "Selecciona el chat para esta regla.",
+      });
+    }
+  });
+
+const coachAdminRuleUpdateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(180),
+    instruction: z.string().trim().min(1).max(5000),
+    enabled: z.boolean(),
+    sortOrder: z.number().int().min(-1000).max(1000),
+  })
+  .strict();
 
 function sendRouteError(res, error, fallbackMessage) {
   const status = Number(error?.status || 500);
@@ -476,9 +580,15 @@ router.post(
       return res.status(201).json({ session });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Payload invalido", issues: error.issues });
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
       }
-      return sendRouteError(res, error, "No fue posible crear la sesion de chat");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible crear la sesion de chat",
+      );
     }
   },
 );
@@ -653,17 +763,27 @@ router.get(
   "/governance/business-rules",
   requirePermission("mi_coach.admin"),
   async (req, res) => {
-    const parsed = z.object({
-      channel: z.enum(["coach", "customer_account", "prospect"]).default("coach"),
-      process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).default("default"),
-    }).safeParse(req.query || {});
+    const parsed = z
+      .object({
+        channel: z
+          .enum(["coach", "customer_account", "prospect"])
+          .default("coach"),
+        process: z
+          .string()
+          .trim()
+          .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+          .default("default"),
+      })
+      .safeParse(req.query || {});
     if (!parsed.success) {
-      return res
-        .status(400)
-        .json({ message: "Ambito de reglas invalido", issues: parsed.error.issues });
+      return res.status(400).json({
+        message: "Ambito de reglas invalido",
+        issues: parsed.error.issues,
+      });
     }
-    const businessRules = await loadCoachBusinessRules(parsed.data);
-    return res.json({ businessRules });
+    const { businessRules, configurationSource } =
+      await loadCoachBusinessRulesWithSource(parsed.data);
+    return res.json({ businessRules, configurationSource });
   },
 );
 
@@ -673,9 +793,10 @@ router.put(
   async (req, res) => {
     const parsed = coachBusinessRulesSchema.safeParse(req.body || {});
     if (!parsed.success) {
-      return res
-        .status(400)
-        .json({ message: "Reglas de negocio invalidas", issues: parsed.error.issues });
+      return res.status(400).json({
+        message: "Reglas de negocio invalidas",
+        issues: parsed.error.issues,
+      });
     }
     try {
       const businessRules = await saveCoachBusinessRules({
@@ -691,9 +812,20 @@ router.put(
         detail: `Reglas de ${parsed.data.channel}/${parsed.data.process} actualizadas`,
         after: businessRules,
       });
-      return res.json({ businessRules });
+      return res.json({
+        businessRules,
+        configurationSource: {
+          sourceProcess: businessRules.process,
+          hasSavedOverride: true,
+          inheritedFromDefault: false,
+        },
+      });
     } catch (error) {
-      return sendRouteError(res, error, "No fue posible guardar las reglas de negocio");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible guardar las reglas de negocio",
+      );
     }
   },
 );
@@ -702,17 +834,28 @@ router.delete(
   "/governance/business-rules",
   requirePermission("mi_coach.admin"),
   async (req, res) => {
-    const parsed = z.object({
-      channel: z.enum(["coach", "customer_account", "prospect"]).default("coach"),
-      process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).default("default"),
-    }).safeParse(req.query || {});
+    const parsed = z
+      .object({
+        channel: z
+          .enum(["coach", "customer_account", "prospect"])
+          .default("coach"),
+        process: z
+          .string()
+          .trim()
+          .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+          .default("default"),
+      })
+      .safeParse(req.query || {});
     if (!parsed.success) {
-      return res
-        .status(400)
-        .json({ message: "Ambito de reglas invalido", issues: parsed.error.issues });
+      return res.status(400).json({
+        message: "Ambito de reglas invalido",
+        issues: parsed.error.issues,
+      });
     }
     try {
-      const businessRules = await resetCoachBusinessRules(parsed.data);
+      await resetCoachBusinessRules(parsed.data);
+      const { businessRules, configurationSource } =
+        await loadCoachBusinessRulesWithSource(parsed.data);
       await logAuditEvent({
         req,
         module: "mi_coach",
@@ -722,10 +865,120 @@ router.delete(
         detail: `Reglas de ${parsed.data.channel}/${parsed.data.process} restablecidas`,
         after: businessRules,
       });
-      return res.json({ businessRules });
+      return res.json({ businessRules, configurationSource });
     } catch (error) {
-      return sendRouteError(res, error, "No fue posible restablecer las reglas");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible restablecer las reglas",
+      );
     }
+  },
+);
+
+router.get(
+  "/governance/rules",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = z
+      .object({
+        channel: z
+          .enum(["coach", "customer_account", "prospect", "all"])
+          .default("coach"),
+        process: z
+          .string()
+          .trim()
+          .regex(/^[a-zA-Z0-9_-]{1,80}$/)
+          .default("default"),
+      })
+      .safeParse(req.query || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Ambito de reglas invalido",
+        issues: parsed.error.issues,
+      });
+    }
+    const rules = await listCoachAdminRules(parsed.data);
+    return res.json({ rules });
+  },
+);
+
+router.post(
+  "/governance/rules",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = coachAdminRuleCreateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Regla invalida",
+        issues: parsed.error.issues,
+      });
+    }
+    const rule = await createCoachAdminRule({
+      user: req.user,
+      rule: parsed.data,
+    });
+    await logAuditEvent({
+      req,
+      module: "mi_coach",
+      action: "mi_coach_admin_rule_created",
+      entityType: "mi_coach_admin_rule",
+      entityId: null,
+      detail: `Regla ${rule.id} creada: ${rule.scope}/${rule.channel || "all"}/${rule.process}`,
+      after: rule,
+    });
+    return res.status(201).json({ rule });
+  },
+);
+
+router.put(
+  "/governance/rules/:ruleId",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = coachAdminRuleUpdateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Regla invalida",
+        issues: parsed.error.issues,
+      });
+    }
+    const before = await getCoachAdminRule(req.params.ruleId);
+    const rule = await updateCoachAdminRule({
+      user: req.user,
+      id: req.params.ruleId,
+      rule: parsed.data,
+    });
+    if (!rule) return res.status(404).json({ message: "Regla no encontrada" });
+    await logAuditEvent({
+      req,
+      module: "mi_coach",
+      action: "mi_coach_admin_rule_updated",
+      entityType: "mi_coach_admin_rule",
+      entityId: null,
+      detail: `Regla ${rule.id} actualizada: ${rule.title}`,
+      before,
+      after: rule,
+    });
+    return res.json({ rule });
+  },
+);
+
+router.delete(
+  "/governance/rules/:ruleId",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const rule = await deleteCoachAdminRule(req.params.ruleId);
+    if (!rule) return res.status(404).json({ message: "Regla no encontrada" });
+    await logAuditEvent({
+      req,
+      module: "mi_coach",
+      action: "mi_coach_admin_rule_deleted",
+      entityType: "mi_coach_admin_rule",
+      entityId: null,
+      detail: `Regla ${rule.id} eliminada: ${rule.title}`,
+      before: rule,
+    });
+    return res.json({ rule });
   },
 );
 
@@ -804,12 +1057,10 @@ router.post(
     const findingId = Number(req.params.findingId || 0);
     const parsed = applyFindingSchema.safeParse(req.body || {});
     if (!Number.isInteger(findingId) || findingId <= 0 || !parsed.success) {
-      return res
-        .status(400)
-        .json({
-          message: "Aplicacion de hallazgo invalida",
-          issues: parsed.success ? [] : parsed.error.issues,
-        });
+      return res.status(400).json({
+        message: "Aplicacion de hallazgo invalida",
+        issues: parsed.success ? [] : parsed.error.issues,
+      });
     }
     try {
       const result = await applyCustomerIntelligenceFinding({

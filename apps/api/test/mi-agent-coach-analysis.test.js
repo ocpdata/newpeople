@@ -32,6 +32,12 @@ describe("Mi Coach commercial analysis", () => {
         commercialStatusCode: "en_proceso",
       }),
     ).toBe("open");
+    expect(
+      classifyCoachOpportunityLifecycle({
+        activationStatusCode: "activada",
+        commercialStatusCode: "estado_desconocido",
+      }),
+    ).not.toBe("open");
   });
 
   it("uses administration switches only to select terminal history", () => {

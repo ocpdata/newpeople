@@ -27,6 +27,7 @@ import "./mi-agent-alerts.css";
 import "./mi-agent-activity-progress.css";
 import "./mi-agent-activity-message.css";
 import "./mi-agent-coach.css";
+import "./mi-agent-rules.css";
 import "./mi-agent-coach-thread.css";
 
 const PRIORITY_LABELS = {
@@ -66,6 +67,49 @@ const COACH_RESPONSE_TYPE_LABELS = {
   change_request: "Solicitud de cambio",
   operation: "Operación completada",
   error: "Error de operación",
+};
+
+const COACH_RULE_CHANNEL_LABELS = {
+  coach: "Coach",
+  customer_account: "Cliente existente",
+  prospect: "Cuenta nueva",
+};
+
+const COACH_OPPORTUNITY_STAGE_OPTIONS = [
+  { code: "contacto_inicial", label: "Contacto Inicial" },
+  {
+    code: "identificacion_oportunidad",
+    label: "Identificación de Oportunidad",
+  },
+  { code: "desarrollo", label: "Desarrollo" },
+  { code: "cotizacion", label: "Cotización" },
+  { code: "demostracion", label: "Demostración" },
+  { code: "negociacion", label: "Negociación" },
+  { code: "waiting", label: "Waiting" },
+];
+
+const COACH_OPERATION_OPTIONS = {
+  coach: [
+    ["activity", "Actividad"],
+    ["stage_answer", "Respuesta de etapa"],
+    ["lead_call_outcome", "Resultado de llamada de lead"],
+    ["account_field", "Campo de cuenta"],
+    ["contact_field", "Campo de contacto"],
+    ["opportunity_field", "Campo de oportunidad"],
+  ],
+  customer_account: [
+    ["activity", "Actividad"],
+    ["stage_answer", "Respuesta de etapa"],
+    ["lead_call_outcome", "Resultado de llamada de lead"],
+    ["account_field", "Campo de cuenta"],
+    ["contact_field", "Campo de contacto"],
+    ["opportunity_field", "Campo de oportunidad"],
+  ],
+  prospect: [
+    ["create_account", "Crear cuenta"],
+    ["create_contact", "Crear contacto"],
+    ["create_opportunity", "Crear oportunidad"],
+  ],
 };
 
 const COACH_CONFIDENCE_LABELS = {
@@ -526,7 +570,10 @@ function CoachQualityFeedback({ traceId }) {
 
   if (!traceId) return null;
   return (
-    <div className="mi-agent-quality-feedback" aria-label="Calidad de respuesta">
+    <div
+      className="mi-agent-quality-feedback"
+      aria-label="Calidad de respuesta"
+    >
       <label>
         <span>Aspecto a evaluar</span>
         <select
@@ -828,14 +875,16 @@ export default function MiAgentPage({
   const [coachGovernanceLoading, setCoachGovernanceLoading] = useState(false);
   const [coachGovernanceSaving, setCoachGovernanceSaving] = useState(false);
   const [coachQualityDashboard, setCoachQualityDashboard] = useState(null);
-  const [coachChannelRollouts, setCoachChannelRollouts] = useState([]);
-  const [coachChannelAllowlistDrafts, setCoachChannelAllowlistDrafts] =
-    useState({});
   const [coachBusinessRulesDraft, setCoachBusinessRulesDraft] = useState("");
   const [coachBusinessRulesChannel, setCoachBusinessRulesChannel] =
     useState("coach");
   const [coachBusinessRulesProcess, setCoachBusinessRulesProcess] =
     useState("default");
+  const [coachBusinessRulesSource, setCoachBusinessRulesSource] =
+    useState(null);
+  const [coachAdminRules, setCoachAdminRules] = useState([]);
+  const [coachAdminRuleDraft, setCoachAdminRuleDraft] = useState(null);
+  const [coachAdminRuleEditingId, setCoachAdminRuleEditingId] = useState(null);
   const [customerIntelligenceJob, setCustomerIntelligenceJob] = useState(null);
   const [customerAccounts, setCustomerAccounts] = useState([]);
   const [customerAccountSearch, setCustomerAccountSearch] = useState("");
@@ -871,13 +920,11 @@ export default function MiAgentPage({
   const [customerChatSessionId, setCustomerChatSessionId] = useState(null);
   const [customerChatSessionLoading, setCustomerChatSessionLoading] =
     useState(false);
-  const [showCustomerChatFoundation, setShowCustomerChatFoundation] =
-    useState(
-      () =>
-        window.localStorage.getItem(
-          CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY,
-        ) === "true",
-    );
+  const [showCustomerChatFoundation, setShowCustomerChatFoundation] = useState(
+    () =>
+      window.localStorage.getItem(CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY) ===
+      "true",
+  );
   const [customerChatPublicResearch, setCustomerChatPublicResearch] =
     useState(false);
   const [prospectForm, setProspectForm] = useState({
@@ -1100,7 +1147,7 @@ export default function MiAgentPage({
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible cargar tu situación comercial",
+          "No fue posible cargar el contexto de Mi Coach",
         ),
       );
     } finally {
@@ -1121,11 +1168,11 @@ export default function MiAgentPage({
 
     const hasConversationState = Boolean(
       currentAccountId ||
-        coachSessionId ||
+      coachSessionId ||
       coachActiveSessionRequestRef.current ||
-        coachMessages.length ||
-        coachOperationDraft ||
-        coachPendingOperations.length,
+      coachMessages.length ||
+      coachOperationDraft ||
+      coachPendingOperations.length,
     );
     if (hasConversationState) {
       const nextAccountName =
@@ -1143,9 +1190,9 @@ export default function MiAgentPage({
   async function clearCoachConversation() {
     const hasConversationState = Boolean(
       coachSessionId ||
-        coachMessages.length ||
-        coachRecentOperations.length ||
-        coachOperationDraft,
+      coachMessages.length ||
+      coachRecentOperations.length ||
+      coachOperationDraft,
     );
     if (!hasConversationState) return;
     const pendingOperationCount = coachPendingOperations.length;
@@ -1168,13 +1215,10 @@ export default function MiAgentPage({
       if (pendingOperationCount) {
         await Promise.all(
           coachPendingOperations.map((operation) =>
-            api.post(
-              `/api/mi-agent/coach/operations/${operation.id}/status`,
-              {
-                status: "cancelled",
-                cancellationReason: "Descartada al limpiar la conversación",
-              },
-            ),
+            api.post(`/api/mi-agent/coach/operations/${operation.id}/status`, {
+              status: "cancelled",
+              cancellationReason: "Descartada al limpiar la conversación",
+            }),
           ),
         );
       }
@@ -1509,7 +1553,9 @@ export default function MiAgentPage({
     setCustomerChatSessionId(storedSessionId);
     setCustomerChatSessionLoading(true);
     api
-      .get(`/api/commercial-intelligence/account-chat/sessions/${storedSessionId}`)
+      .get(
+        `/api/commercial-intelligence/account-chat/sessions/${storedSessionId}`,
+      )
       .then((response) => {
         if (cancelled) return;
         const session = response.data?.session;
@@ -2016,9 +2062,7 @@ export default function MiAgentPage({
 
   function startNewCustomerChat() {
     if (customerChatLoading || customerChatSessionLoading) return;
-    window.sessionStorage.removeItem(
-      customerChatSessionKey(customerAccountId),
-    );
+    window.sessionStorage.removeItem(customerChatSessionKey(customerAccountId));
     setCustomerChatSessionId(null);
     setCustomerChatMessages([]);
     setCustomerChatQuestion("");
@@ -2062,7 +2106,9 @@ export default function MiAgentPage({
       const persistedOperation = response.data?.operation;
       const destinationSessionId = Number(response.data?.sessionId || 0);
       if (!persistedOperation?.id || !destinationSessionId) {
-        throw new Error("No se pudo persistir la actividad en una sesión nueva del Coach");
+        throw new Error(
+          "No se pudo persistir la actividad en una sesión nueva del Coach",
+        );
       }
       const coachContextForHandoff = {
         accountId: String(customerAccountId || ""),
@@ -2086,7 +2132,83 @@ export default function MiAgentPage({
       });
     } catch (requestError) {
       setError(
-        getApiErrorMessage(requestError, "No fue posible preparar la actividad"),
+        getApiErrorMessage(
+          requestError,
+          "No fue posible preparar la actividad",
+        ),
+      );
+    } finally {
+      setSavingCoachOperation(false);
+    }
+  }
+
+  function canReviewCustomerOperation(operation) {
+    if (!canExecuteCoach) return false;
+    if (operation?.kind === "activity") return canUpdateCommercialDevelopment;
+    if (operation?.kind === "lead_call_outcome") return canUpdateLeads;
+    if (operation?.kind === "account_field") return canUpdateAccounts;
+    if (operation?.kind === "contact_field") return canUpdateContacts;
+    if (["stage_answer", "opportunity_field"].includes(operation?.kind))
+      return canCreateActions;
+    return false;
+  }
+
+  async function openCustomerChatOperation(operation) {
+    if (!operation || !canReviewCustomerOperation(operation)) return;
+    setSavingCoachOperation(true);
+    setError("");
+    try {
+      const accountId = Number(customerAccountId || 0) || null;
+      const opportunityId = Number(operation.opportunityId || 0) || null;
+      const contactId = Number(operation.contactId || 0) || null;
+      const coachOperation = {
+        ...operation,
+        sourceChannel: "coach",
+        requiresConfirmation: true,
+      };
+      const response = await api.post("/api/mi-agent/coach/operations", {
+        sessionId: null,
+        originChannel: "customer_account",
+        originalIntent: `Propuesta desde Cliente existente: ${operation.title || operation.kind}`,
+        context: {
+          accountId,
+          opportunityId,
+          contactId,
+          leadId: null,
+        },
+        operation: coachOperation,
+      });
+      const persistedOperation = response.data?.operation;
+      const destinationSessionId = Number(response.data?.sessionId || 0);
+      if (!persistedOperation?.id || !destinationSessionId) {
+        throw new Error("No se pudo preparar la operación en el Coach");
+      }
+      const coachContextForHandoff = {
+        accountId: String(accountId || ""),
+        opportunityId: String(opportunityId || ""),
+        contactId: String(contactId || ""),
+        leadId: "",
+      };
+      setCoachContext(coachContextForHandoff);
+      coachContextRef.current = coachContextForHandoff;
+      setCoachMessages([]);
+      setCoachSessionId(destinationSessionId);
+      setCoachPendingOperations((current) => [
+        persistedOperation,
+        ...current.filter((item) => item.id !== persistedOperation.id),
+      ]);
+      await openCoachOperationConfirmation({
+        ...persistedOperation.pendingOperation,
+        persistentId: persistedOperation.id,
+        persistenceVersion: persistedOperation.version,
+        persistenceStatus: persistedOperation.status,
+      });
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible preparar la operación en el Coach",
+        ),
       );
     } finally {
       setSavingCoachOperation(false);
@@ -2163,7 +2285,10 @@ export default function MiAgentPage({
       ]);
     } catch (requestError) {
       setProspectError(
-        getApiErrorMessage(requestError, "No fue posible responder sobre el prospecto"),
+        getApiErrorMessage(
+          requestError,
+          "No fue posible responder sobre el prospecto",
+        ),
       );
     } finally {
       setProspectChatLoading(false);
@@ -2600,24 +2725,30 @@ export default function MiAgentPage({
     setCoachGovernanceLoading(true);
     setError("");
     try {
-      const [response, qualityResponse] = await Promise.all([
-        api.get("/api/commercial-intelligence/governance"),
-        api.get("/api/mi-agent/coach/quality"),
-      ]);
+      const [response, qualityResponse, rulesResponse, businessRulesResponse] =
+        await Promise.all([
+          api.get("/api/commercial-intelligence/governance"),
+          api.get("/api/mi-agent/coach/quality"),
+          api.get(
+            "/api/commercial-intelligence/governance/rules?channel=all&process=default",
+          ),
+          api.get(
+            "/api/commercial-intelligence/governance/business-rules?channel=coach&process=default",
+          ),
+        ]);
       setCoachGovernance(response.data || null);
       setCoachQualityDashboard(qualityResponse.data?.quality || null);
-      setCoachChannelRollouts(qualityResponse.data?.rollouts || []);
-      setCoachChannelAllowlistDrafts(
-        Object.fromEntries(
-          (qualityResponse.data?.rollouts || []).map((rollout) => [
-            rollout.channel,
-            (rollout.allowlist || []).join(", "),
-          ]),
+      setCoachBusinessRulesDraft(
+        JSON.stringify(
+          businessRulesResponse.data?.businessRules || {},
+          null,
+          2,
         ),
       );
-      setCoachBusinessRulesDraft(
-        JSON.stringify(response.data?.businessRules || {}, null, 2),
+      setCoachBusinessRulesSource(
+        businessRulesResponse.data?.configurationSource || null,
       );
+      setCoachAdminRules(rulesResponse.data?.rules || []);
     } catch (requestError) {
       setError(
         getApiErrorMessage(
@@ -2667,41 +2798,73 @@ export default function MiAgentPage({
     }
   }
 
-  async function saveCoachChannelRollouts() {
-    setCoachGovernanceSaving(true);
-    setError("");
+  function updateCoachBusinessRuleField(section, field, value) {
+    setCoachBusinessRulesDraft((current) => {
+      let rules = {};
+      try {
+        rules = JSON.parse(current || "{}");
+      } catch {
+        return current;
+      }
+      return JSON.stringify(
+        {
+          ...rules,
+          [section]: {
+            ...(rules[section] || {}),
+            [field]: value,
+          },
+        },
+        null,
+        2,
+      );
+    });
+  }
+
+  function updateCoachOperationKind(kind, enabled) {
+    let rules = {};
     try {
-      const response = await api.put("/api/mi-agent/coach/rollouts", {
-        rollouts: coachChannelRollouts.map((rollout) => ({
-          ...rollout,
-          allowlist: String(
-            coachChannelAllowlistDrafts[rollout.channel] ??
-              (rollout.allowlist || []).join(","),
-          )
-            .split(",")
-            .map((value) => Number(value.trim()))
-            .filter((value) => Number.isInteger(value) && value > 0),
-        })),
-      });
-      setCoachChannelRollouts(response.data?.rollouts || coachChannelRollouts);
-      setCoachChannelAllowlistDrafts(
-        Object.fromEntries(
-          (response.data?.rollouts || []).map((rollout) => [
-            rollout.channel,
-            (rollout.allowlist || []).join(", "),
-          ]),
-        ),
-      );
-      const qualityResponse = await api.get("/api/mi-agent/coach/quality");
-      setCoachQualityDashboard(qualityResponse.data?.quality || null);
-      setCoachNotice("Rollout por canal guardado.");
-    } catch (requestError) {
-      setError(
-        getApiErrorMessage(requestError, "No fue posible guardar el rollout"),
-      );
-    } finally {
-      setCoachGovernanceSaving(false);
+      rules = JSON.parse(coachBusinessRulesDraft || "{}");
+    } catch {
+      return;
     }
+    const currentKinds = Array.isArray(rules.operationPolicy?.allowedKinds)
+      ? rules.operationPolicy.allowedKinds
+      : (COACH_OPERATION_OPTIONS[coachBusinessRulesChannel] || []).map(
+          ([code]) => code,
+        );
+    const allowedKinds = enabled
+      ? [...new Set([...currentKinds, kind])]
+      : currentKinds.filter((currentKind) => currentKind !== kind);
+    updateCoachBusinessRuleField(
+      "operationPolicy",
+      "allowedKinds",
+      allowedKinds,
+    );
+  }
+
+  function updateOpportunityStageSet(settingKey, stageCode, enabled) {
+    setCoachGovernance((current) => {
+      if (!current?.settings) return current;
+      const settings = current.settings;
+      const existing = Array.isArray(settings[settingKey])
+        ? settings[settingKey]
+        : [];
+      const next = enabled
+        ? [...new Set([...existing, stageCode])]
+        : existing.filter((code) => code !== stageCode);
+      if (!next.length) return current;
+      const nextSettings = { ...settings, [settingKey]: next };
+      if (settingKey === "qualifiedOpportunityStageCodes" && !enabled) {
+        const remainingCommittedStages = (
+          settings.committedOpportunityStageCodes || []
+        ).filter((code) => code !== stageCode);
+        nextSettings.committedOpportunityStageCodes =
+          remainingCommittedStages.length > 0
+            ? remainingCommittedStages
+            : [next[next.length - 1]];
+      }
+      return { ...current, settings: nextSettings };
+    });
   }
 
   async function saveCoachBusinessRules() {
@@ -2720,6 +2883,13 @@ export default function MiAgentPage({
       setCoachBusinessRulesDraft(
         JSON.stringify(response.data?.businessRules || rules, null, 2),
       );
+      setCoachBusinessRulesSource(
+        response.data?.configurationSource || {
+          sourceProcess: coachBusinessRulesProcess,
+          hasSavedOverride: true,
+          inheritedFromDefault: false,
+        },
+      );
       setCoachGovernance((current) => ({
         ...current,
         businessRules: response.data?.businessRules || rules,
@@ -2729,20 +2899,26 @@ export default function MiAgentPage({
       setError(
         requestError instanceof SyntaxError
           ? "El JSON de reglas no es valido."
-          : getApiErrorMessage(requestError, "No fue posible guardar las reglas del motor"),
+          : getApiErrorMessage(
+              requestError,
+              "No fue posible guardar las reglas del motor",
+            ),
       );
     } finally {
       setCoachGovernanceSaving(false);
     }
   }
 
-  async function loadCoachBusinessRulesForScope() {
+  async function loadCoachBusinessRulesForScope(
+    channel = coachBusinessRulesChannel,
+    process = coachBusinessRulesProcess,
+  ) {
     setCoachGovernanceSaving(true);
     setError("");
     try {
       const params = new URLSearchParams({
-        channel: coachBusinessRulesChannel,
-        process: coachBusinessRulesProcess,
+        channel,
+        process,
       });
       const response = await api.get(
         `/api/commercial-intelligence/governance/business-rules?${params}`,
@@ -2750,9 +2926,13 @@ export default function MiAgentPage({
       setCoachBusinessRulesDraft(
         JSON.stringify(response.data?.businessRules || {}, null, 2),
       );
+      setCoachBusinessRulesSource(response.data?.configurationSource || null);
     } catch (requestError) {
       setError(
-        getApiErrorMessage(requestError, "No fue posible cargar las reglas del motor"),
+        getApiErrorMessage(
+          requestError,
+          "No fue posible cargar las reglas del motor",
+        ),
       );
     } finally {
       setCoachGovernanceSaving(false);
@@ -2773,10 +2953,142 @@ export default function MiAgentPage({
       setCoachBusinessRulesDraft(
         JSON.stringify(response.data?.businessRules || {}, null, 2),
       );
+      setCoachBusinessRulesSource(response.data?.configurationSource || null);
       setCoachNotice("Reglas restablecidas al valor predeterminado.");
     } catch (requestError) {
       setError(
-        getApiErrorMessage(requestError, "No fue posible restablecer las reglas"),
+        getApiErrorMessage(
+          requestError,
+          "No fue posible restablecer las reglas",
+        ),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function loadCoachAdminRules(
+    channel = "all",
+    process = coachBusinessRulesProcess,
+  ) {
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ channel, process });
+      const response = await api.get(
+        `/api/commercial-intelligence/governance/rules?${params}`,
+      );
+      setCoachAdminRules(response.data?.rules || []);
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible cargar las reglas"),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  function startCoachAdminRuleCreate(scope) {
+    setCoachAdminRuleEditingId(null);
+    setCoachAdminRuleDraft({
+      scope,
+      channel: scope === "channel" ? coachBusinessRulesChannel : null,
+      process: scope === "channel" ? coachBusinessRulesProcess : "default",
+      title: "",
+      instruction: "",
+      enabled: true,
+      sortOrder:
+        Math.max(
+          0,
+          ...coachAdminRules.map((rule) => Number(rule.sortOrder || 0)),
+        ) + 10,
+    });
+  }
+
+  function startCoachAdminRuleEdit(rule) {
+    setCoachAdminRuleEditingId(rule.id);
+    setCoachAdminRuleDraft({ ...rule });
+  }
+
+  async function saveCoachAdminRule() {
+    if (!coachAdminRuleDraft) return;
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      const payload = {
+        title: coachAdminRuleDraft.title.trim(),
+        instruction: coachAdminRuleDraft.instruction.trim(),
+        enabled: Boolean(coachAdminRuleDraft.enabled),
+        sortOrder: Number(coachAdminRuleDraft.sortOrder || 0),
+      };
+      if (coachAdminRuleEditingId) {
+        await api.put(
+          `/api/commercial-intelligence/governance/rules/${coachAdminRuleEditingId}`,
+          payload,
+        );
+      } else {
+        await api.post("/api/commercial-intelligence/governance/rules", {
+          ...payload,
+          scope: coachAdminRuleDraft.scope,
+          channel: coachAdminRuleDraft.channel,
+          process: coachAdminRuleDraft.process,
+        });
+      }
+      setCoachAdminRuleDraft(null);
+      setCoachAdminRuleEditingId(null);
+      await loadCoachAdminRules();
+      setCoachNotice("Regla guardada.");
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible guardar la regla"),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function toggleCoachAdminRule(rule) {
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      await api.put(
+        `/api/commercial-intelligence/governance/rules/${rule.id}`,
+        {
+          title: rule.title,
+          instruction: rule.instruction,
+          enabled: !rule.enabled,
+          sortOrder: rule.sortOrder,
+        },
+      );
+      await loadCoachAdminRules();
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible actualizar la regla"),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function deleteCoachAdminRule(rule) {
+    if (!window.confirm(`¿Eliminar la regla “${rule.title}”?`)) return;
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      await api.delete(
+        `/api/commercial-intelligence/governance/rules/${rule.id}`,
+      );
+      setCoachAdminRules((current) =>
+        current.filter((item) => item.id !== rule.id),
+      );
+      if (coachAdminRuleEditingId === rule.id) {
+        setCoachAdminRuleDraft(null);
+        setCoachAdminRuleEditingId(null);
+      }
+      setCoachNotice("Regla eliminada.");
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible eliminar la regla"),
       );
     } finally {
       setCoachGovernanceSaving(false);
@@ -2828,7 +3140,9 @@ export default function MiAgentPage({
   async function applyCoachClarification(candidate, clarification) {
     const entityType = candidate?.entityType;
     if (!entityType) {
-      setError("La aclaración del Coach no incluye el tipo de entidad requerido.");
+      setError(
+        "La aclaración del Coach no incluye el tipo de entidad requerido.",
+      );
       return;
     }
     if (clarification?.activity && entityType === "opportunity") {
@@ -3410,10 +3724,34 @@ export default function MiAgentPage({
   );
   const hasCoachConversation = Boolean(
     coachSessionId ||
-      coachMessages.length ||
-      coachRecentOperations.length ||
-      coachOperationDraft,
+    coachMessages.length ||
+    coachRecentOperations.length ||
+    coachOperationDraft,
   );
+  let selectedCoachBusinessRules = {};
+  try {
+    selectedCoachBusinessRules = JSON.parse(coachBusinessRulesDraft || "{}");
+  } catch {
+    selectedCoachBusinessRules = {};
+  }
+  const coachBusinessRulesSourceLabel =
+    coachBusinessRulesSource?.hasSavedOverride &&
+    coachBusinessRulesSource.sourceProcess === coachBusinessRulesProcess
+      ? coachBusinessRulesProcess === "default"
+        ? "Configuración predeterminada guardada"
+        : "Configuración específica guardada"
+      : coachBusinessRulesSource?.inheritedFromDefault
+        ? "Sin configuración específica; hereda Predeterminado"
+        : "Valores predeterminados del sistema";
+  const getVisibleChannelRules = (channel) =>
+    coachAdminRules.filter(
+      (rule) =>
+        rule.scope === "channel" &&
+        rule.channel === channel &&
+        (channel !== coachBusinessRulesChannel ||
+          rule.process === "default" ||
+          rule.process === coachBusinessRulesProcess),
+    );
 
   if (loading) {
     return (
@@ -3629,7 +3967,9 @@ export default function MiAgentPage({
                       }
                       disabled={loadingCoachContext}
                     >
-                      <option value="">Sin cuenta · conversación general</option>
+                      <option value="">
+                        Sin cuenta · conversación general
+                      </option>
                       {coachAccounts.map((account) => (
                         <option key={account.id} value={account.id}>
                           {account.name}
@@ -5116,7 +5456,8 @@ export default function MiAgentPage({
                       </small>
                       <h4>{message.answer}</h4>
                       <CoachQualityFeedback traceId={message.qualityTraceId} />
-                      {showCustomerChatFoundation && message.evidence?.length ? (
+                      {showCustomerChatFoundation &&
+                      message.evidence?.length ? (
                         <div className="mi-agent-customer-chat-evidence">
                           <strong>Evidencia</strong>
                           <ul>
@@ -5126,7 +5467,8 @@ export default function MiAgentPage({
                           </ul>
                         </div>
                       ) : null}
-                      {showCustomerChatFoundation && message.inferences?.length ? (
+                      {showCustomerChatFoundation &&
+                      message.inferences?.length ? (
                         <div className="mi-agent-customer-chat-inferences">
                           <strong>Hipótesis por validar</strong>
                           <ul>
@@ -5136,7 +5478,8 @@ export default function MiAgentPage({
                           </ul>
                         </div>
                       ) : null}
-                      {showCustomerChatFoundation && message.publicSources?.length ? (
+                      {showCustomerChatFoundation &&
+                      message.publicSources?.length ? (
                         <div className="mi-agent-customer-public-sources">
                           <strong>Fuentes públicas</strong>
                           <ul>
@@ -5229,6 +5572,44 @@ export default function MiAgentPage({
                               </article>
                             ),
                           )}
+                        </div>
+                      ) : null}
+                      {message.operations?.some(
+                        (operation) => operation.kind !== "activity",
+                      ) ? (
+                        <div className="mi-agent-customer-chat-actions">
+                          <strong>Operaciones propuestas</strong>
+                          {message.operations
+                            .filter(
+                              (operation) => operation.kind !== "activity",
+                            )
+                            .map((operation, operationIndex) => (
+                              <article
+                                key={`${operation.kind}-${operation.title}-${operationIndex}`}
+                              >
+                                <span>
+                                  {operation.title || operation.kind} · requiere
+                                  revisión y confirmación
+                                </span>
+                                {canReviewCustomerOperation(operation) ? (
+                                  <button
+                                    type="button"
+                                    className="mi-agent-link-button"
+                                    disabled={savingCoachOperation}
+                                    onClick={() =>
+                                      openCustomerChatOperation(operation)
+                                    }
+                                  >
+                                    Revisar operación
+                                  </button>
+                                ) : (
+                                  <small>
+                                    No tienes permisos para proponer este tipo
+                                    de cambio.
+                                  </small>
+                                )}
+                              </article>
+                            ))}
                         </div>
                       ) : null}
                     </div>
@@ -6442,7 +6823,9 @@ export default function MiAgentPage({
               <section className="mi-agent-coach-panel mi-agent-customer-chat">
                 <div className="mi-agent-section-heading">
                   <div>
-                    <span className="mi-agent-section-label">Chat de prospecto</span>
+                    <span className="mi-agent-section-label">
+                      Chat de prospecto
+                    </span>
                     <h4>Pregúntale sobre esta cuenta nueva</h4>
                   </div>
                   <span>Datos de prospección, no CRM confirmado</span>
@@ -6454,23 +6837,72 @@ export default function MiAgentPage({
                         key={`${message.role}-${index}`}
                         className={`mi-agent-coach-message ${message.role === "seller" ? "is-seller" : "is-coach"}`}
                       >
-                        <span>{message.role === "seller" ? "Vendedor" : "Prospecto"}</span>
+                        <span>
+                          {message.role === "seller" ? "Vendedor" : "Prospecto"}
+                        </span>
                         <p>{message.text || message.answer}</p>
-                        <CoachQualityFeedback traceId={message.qualityTraceId} />
+                        <CoachQualityFeedback
+                          traceId={message.qualityTraceId}
+                        />
                         {message.evidence?.length ? (
                           <small>{message.evidence.join(" ")}</small>
                         ) : null}
                         {message.recommendedActions?.length ? (
                           <div className="mi-agent-customer-chat-actions">
-                            <strong>Acciones sugeridas · requieren confirmación</strong>
-                            {message.recommendedActions.map((action, actionIndex) => (
-                              <article key={`${action.title}-${actionIndex}`}>
-                                <span>{action.title || "Acción de prospección"}</span>
-                                <small>
-                                  Confirma esta acción desde la ficha antes de convertir datos a CRM.
-                                </small>
-                              </article>
-                            ))}
+                            <strong>
+                              Acciones sugeridas · requieren confirmación
+                            </strong>
+                            {message.recommendedActions.map(
+                              (action, actionIndex) => (
+                                <article key={`${action.title}-${actionIndex}`}>
+                                  <span>
+                                    {action.title || "Acción de prospección"}
+                                  </span>
+                                  <small>
+                                    Confirma esta acción desde la ficha antes de
+                                    convertir datos a CRM.
+                                  </small>
+                                </article>
+                              ),
+                            )}
+                          </div>
+                        ) : null}
+                        {message.operations?.some(
+                          (operation) => operation.kind !== "activity",
+                        ) ? (
+                          <div className="mi-agent-customer-chat-actions">
+                            <strong>Operaciones propuestas</strong>
+                            {message.operations
+                              .filter(
+                                (operation) => operation.kind !== "activity",
+                              )
+                              .map((operation, operationIndex) => (
+                                <article
+                                  key={`${operation.kind}-${operation.title}-${operationIndex}`}
+                                >
+                                  <span>
+                                    {operation.title || operation.kind} ·
+                                    requiere revisión y confirmación
+                                  </span>
+                                  {canReviewCustomerOperation(operation) ? (
+                                    <button
+                                      type="button"
+                                      className="mi-agent-link-button"
+                                      disabled={savingCoachOperation}
+                                      onClick={() =>
+                                        openCustomerChatOperation(operation)
+                                      }
+                                    >
+                                      Revisar operación
+                                    </button>
+                                  ) : (
+                                    <small>
+                                      No tienes permisos para proponer este tipo
+                                      de cambio.
+                                    </small>
+                                  )}
+                                </article>
+                              ))}
                           </div>
                         ) : null}
                       </div>
@@ -6486,14 +6918,18 @@ export default function MiAgentPage({
                 >
                   <input
                     value={prospectChatQuestion}
-                    onChange={(event) => setProspectChatQuestion(event.target.value)}
+                    onChange={(event) =>
+                      setProspectChatQuestion(event.target.value)
+                    }
                     placeholder="Pregunta sobre el prospecto..."
                     disabled={prospectChatLoading}
                   />
                   <button
                     type="submit"
                     className="mi-agent-primary-button"
-                    disabled={prospectChatLoading || !prospectChatQuestion.trim()}
+                    disabled={
+                      prospectChatLoading || !prospectChatQuestion.trim()
+                    }
                   >
                     {prospectChatLoading ? "Consultando..." : "Preguntar"}
                   </button>
@@ -7075,14 +7511,82 @@ export default function MiAgentPage({
                   />
                 </label>
               </div>
+              <section className="mi-agent-domain-policy">
+                <div>
+                  <span className="mi-agent-section-label">Oportunidades</span>
+                  <h4>Clasificación del pipeline</h4>
+                  <p>
+                    Abierta es una regla protegida del CRM: activada y En
+                    proceso. Ganada, Perdida y Anulada son terminales. La etapa
+                    no determina si está abierta.
+                  </p>
+                </div>
+                <div className="mi-agent-domain-policy-groups">
+                  {[
+                    {
+                      key: "qualifiedOpportunityStageCodes",
+                      title: "Etapas incluidas en pipeline calificado",
+                      selected:
+                        coachGovernance.settings
+                          .qualifiedOpportunityStageCodes || [],
+                    },
+                    {
+                      key: "committedOpportunityStageCodes",
+                      title: "Etapas incluidas en monto comprometido",
+                      selected:
+                        coachGovernance.settings
+                          .committedOpportunityStageCodes || [],
+                    },
+                  ].map((group) => (
+                    <fieldset
+                      className="mi-agent-domain-stage-group"
+                      key={group.key}
+                    >
+                      <legend>{group.title}</legend>
+                      {COACH_OPPORTUNITY_STAGE_OPTIONS.map((stage) => {
+                        const isQualified = (
+                          coachGovernance.settings
+                            .qualifiedOpportunityStageCodes || []
+                        ).includes(stage.code);
+                        return (
+                          <label key={`${group.key}-${stage.code}`}>
+                            <input
+                              type="checkbox"
+                              checked={group.selected.includes(stage.code)}
+                              disabled={
+                                (group.key ===
+                                  "committedOpportunityStageCodes" &&
+                                  !isQualified) ||
+                                (group.selected.length === 1 &&
+                                  group.selected.includes(stage.code))
+                              }
+                              onChange={(event) =>
+                                updateOpportunityStageSet(
+                                  group.key,
+                                  stage.code,
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                            {stage.label}
+                          </label>
+                        );
+                      })}
+                    </fieldset>
+                  ))}
+                </div>
+              </section>
               <div className="mi-agent-governance-grid">
                 <label>
                   Canal
                   <select
                     value={coachBusinessRulesChannel}
                     onChange={(event) => {
-                      setCoachBusinessRulesChannel(event.target.value)
-                      setCoachBusinessRulesProcess("default")
+                      const channel = event.target.value;
+                      setCoachBusinessRulesChannel(channel);
+                      setCoachBusinessRulesProcess("default");
+                      loadCoachAdminRules("all", "default");
+                      loadCoachBusinessRulesForScope(channel, "default");
                     }}
                   >
                     <option value="coach">Coach</option>
@@ -7094,9 +7598,15 @@ export default function MiAgentPage({
                   Proceso
                   <select
                     value={coachBusinessRulesProcess}
-                    onChange={(event) =>
-                      setCoachBusinessRulesProcess(event.target.value)
-                    }
+                    onChange={(event) => {
+                      const process = event.target.value;
+                      setCoachBusinessRulesProcess(process);
+                      loadCoachAdminRules("all", process);
+                      loadCoachBusinessRulesForScope(
+                        coachBusinessRulesChannel,
+                        process,
+                      );
+                    }}
                   >
                     <option value="default">Predeterminado</option>
                     {coachBusinessRulesChannel === "coach"
@@ -7125,46 +7635,345 @@ export default function MiAgentPage({
                         ))}
                   </select>
                 </label>
-                <button
-                  type="button"
-                  className="mi-agent-secondary-button"
-                  onClick={loadCoachBusinessRulesForScope}
-                  disabled={coachGovernanceSaving}
-                >
-                  Cargar ámbito
-                </button>
               </div>
-              <label className="mi-agent-governance-wide">
-                Reglas deterministas del Coach
-                <textarea
-                  rows={20}
-                  spellCheck={false}
-                  value={coachBusinessRulesDraft}
-                  onChange={(event) =>
-                    setCoachBusinessRulesDraft(event.target.value)
-                  }
-                />
-              </label>
-              <div className="mi-agent-workspace-actions">
-                <button
-                  type="button"
-                  className="mi-agent-primary-button"
-                  onClick={saveCoachBusinessRules}
-                  disabled={coachGovernanceSaving}
-                >
-                  {coachGovernanceSaving
-                    ? "Guardando..."
-                    : "Guardar reglas del ámbito"}
-                </button>
-                <button
-                  type="button"
-                  className="mi-agent-secondary-button"
-                  onClick={resetCoachBusinessRules}
-                  disabled={coachGovernanceSaving}
-                >
-                  Restablecer ámbito
-                </button>
-              </div>
+              <section className="mi-agent-domain-policy">
+                <div>
+                  <span className="mi-agent-section-label">
+                    {COACH_RULE_CHANNEL_LABELS[coachBusinessRulesChannel]}
+                  </span>
+                  <div className="mi-agent-admin-scope-status" role="status">
+                    <strong>
+                      Ámbito efectivo:{" "}
+                      {COACH_RULE_CHANNEL_LABELS[coachBusinessRulesChannel]} ·{" "}
+                      {coachBusinessRulesProcess}
+                    </strong>
+                    <span>{coachBusinessRulesSourceLabel}</span>
+                  </div>
+                  <h4>Alcance por dominio y operaciones</h4>
+                  <p>
+                    Estos controles pueden reducir lo que consulta o propone el
+                    chat. Los permisos efectivos y los límites obligatorios del
+                    canal siguen siendo validados por el servidor.
+                  </p>
+                </div>
+                <div className="mi-agent-domain-policy-groups">
+                  <fieldset className="mi-agent-domain-stage-group">
+                    <legend>Dominios disponibles para consulta</legend>
+                    {[
+                      ["accountSearchAllowed", "Cuentas"],
+                      ["contactSearchAllowed", "Contactos"],
+                      ["leadSearchAllowed", "Leads"],
+                      ["opportunitySearchAllowed", "Oportunidades y pipeline"],
+                      ["quotationSearchAllowed", "Cotizaciones"],
+                    ].map(([field, label]) => {
+                      const channelForbidsDomain =
+                        coachBusinessRulesChannel === "prospect" &&
+                        [
+                          "contactSearchAllowed",
+                          "leadSearchAllowed",
+                          "opportunitySearchAllowed",
+                          "quotationSearchAllowed",
+                        ].includes(field);
+                      return (
+                        <label key={field}>
+                          <input
+                            type="checkbox"
+                            checked={
+                              selectedCoachBusinessRules.scope?.[field] !==
+                              false
+                            }
+                            disabled={channelForbidsDomain}
+                            onChange={(event) =>
+                              updateCoachBusinessRuleField(
+                                "scope",
+                                field,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          {label}
+                          {channelForbidsDomain
+                            ? " · no disponible en este canal"
+                            : ""}
+                        </label>
+                      );
+                    })}
+                  </fieldset>
+                  <fieldset className="mi-agent-domain-stage-group">
+                    <legend>Operaciones que este canal puede proponer</legend>
+                    {(
+                      COACH_OPERATION_OPTIONS[coachBusinessRulesChannel] || []
+                    ).map(([kind, label]) => (
+                      <label key={kind}>
+                        <input
+                          type="checkbox"
+                          checked={(
+                            selectedCoachBusinessRules.operationPolicy
+                              ?.allowedKinds || []
+                          ).includes(kind)}
+                          onChange={(event) =>
+                            updateCoachOperationKind(kind, event.target.checked)
+                          }
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </fieldset>
+                </div>
+                <div className="mi-agent-workspace-actions">
+                  <button
+                    type="button"
+                    className="mi-agent-primary-button"
+                    onClick={saveCoachBusinessRules}
+                    disabled={coachGovernanceSaving}
+                  >
+                    Guardar políticas del canal
+                  </button>
+                </div>
+              </section>
+              <section
+                className="mi-agent-admin-rules"
+                aria-labelledby="mi-agent-admin-rules-title"
+              >
+                <div className="mi-agent-admin-rules-heading">
+                  <div>
+                    <h4 id="mi-agent-admin-rules-title">
+                      Reglas conversacionales
+                    </h4>
+                    <p>
+                      Las reglas comunes aplican a todos los chats; las
+                      específicas se aplican al canal y proceso seleccionados.
+                    </p>
+                  </div>
+                  <div className="mi-agent-admin-rules-actions">
+                    <button
+                      type="button"
+                      className="mi-agent-secondary-button"
+                      onClick={() => startCoachAdminRuleCreate("common")}
+                      disabled={coachGovernanceSaving}
+                    >
+                      Añadir regla común
+                    </button>
+                    <button
+                      type="button"
+                      className="mi-agent-primary-button"
+                      onClick={() => startCoachAdminRuleCreate("channel")}
+                      disabled={coachGovernanceSaving}
+                    >
+                      Añadir regla específica
+                    </button>
+                  </div>
+                </div>
+                <div className="mi-agent-admin-rule-groups">
+                  {[
+                    {
+                      key: "common",
+                      title: "Comunes a todos los chats",
+                      rules: coachAdminRules.filter(
+                        (rule) => rule.scope === "common",
+                      ),
+                    },
+                    {
+                      key: "coach",
+                      title: `Específicas para Coach · ${coachBusinessRulesChannel === "coach" ? coachBusinessRulesProcess : "todos los procesos"}`,
+                      rules: getVisibleChannelRules("coach"),
+                    },
+                    {
+                      key: "customer_account",
+                      title: `Específicas para Cliente existente · ${coachBusinessRulesChannel === "customer_account" ? coachBusinessRulesProcess : "todos los procesos"}`,
+                      rules: getVisibleChannelRules("customer_account"),
+                    },
+                    {
+                      key: "prospect",
+                      title: `Específicas para Cuenta nueva · ${coachBusinessRulesChannel === "prospect" ? coachBusinessRulesProcess : "todos los procesos"}`,
+                      rules: getVisibleChannelRules("prospect"),
+                    },
+                  ].map((group) => (
+                    <section
+                      className="mi-agent-admin-rule-group"
+                      key={group.key}
+                    >
+                      <h5>{group.title}</h5>
+                      {group.rules.length ? (
+                        <div className="mi-agent-admin-rule-list">
+                          {group.rules.map((rule) => (
+                            <article
+                              className={`mi-agent-admin-rule${rule.enabled ? "" : " is-disabled"}`}
+                              key={rule.id}
+                            >
+                              <div className="mi-agent-admin-rule-copy">
+                                <strong>{rule.title}</strong>
+                                {rule.scope === "channel" ? (
+                                  <span>
+                                    {COACH_RULE_CHANNEL_LABELS[rule.channel]} ·{" "}
+                                    {rule.process}
+                                  </span>
+                                ) : null}
+                                <p>{rule.instruction}</p>
+                              </div>
+                              <div className="mi-agent-admin-rule-controls">
+                                <label className="mi-agent-admin-rule-toggle">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(rule.enabled)}
+                                    onChange={() => toggleCoachAdminRule(rule)}
+                                    disabled={coachGovernanceSaving}
+                                  />
+                                  Activa
+                                </label>
+                                <button
+                                  type="button"
+                                  className="mi-agent-icon-button"
+                                  aria-label={`Editar regla ${rule.title}`}
+                                  title="Editar regla"
+                                  onClick={() => startCoachAdminRuleEdit(rule)}
+                                  disabled={coachGovernanceSaving}
+                                >
+                                  <Pencil size={15} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="mi-agent-icon-button is-danger"
+                                  aria-label={`Eliminar regla ${rule.title}`}
+                                  title="Eliminar regla"
+                                  onClick={() => deleteCoachAdminRule(rule)}
+                                  disabled={coachGovernanceSaving}
+                                >
+                                  <Trash2 size={15} aria-hidden="true" />
+                                </button>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mi-agent-admin-rule-empty">
+                          {group.key === coachBusinessRulesChannel &&
+                          coachBusinessRulesProcess !== "default"
+                            ? `No hay reglas específicas para ${coachBusinessRulesProcess}; se heredan las de Predeterminado.`
+                            : "No hay reglas en este ámbito."}
+                        </p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+                {coachAdminRuleDraft ? (
+                  <div className="mi-agent-admin-rule-editor">
+                    <div className="mi-agent-admin-rule-editor-heading">
+                      <h5>
+                        {coachAdminRuleEditingId
+                          ? "Editar regla"
+                          : "Nueva regla"}
+                      </h5>
+                      <span>
+                        {coachAdminRuleDraft.scope === "common"
+                          ? "Común a todos los chats"
+                          : `${COACH_RULE_CHANNEL_LABELS[coachAdminRuleDraft.channel]} · ${coachAdminRuleDraft.process}`}
+                      </span>
+                    </div>
+                    <label>
+                      Nombre
+                      <input
+                        value={coachAdminRuleDraft.title}
+                        maxLength={180}
+                        onChange={(event) =>
+                          setCoachAdminRuleDraft((current) => ({
+                            ...current,
+                            title: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Instrucción
+                      <textarea
+                        rows={4}
+                        value={coachAdminRuleDraft.instruction}
+                        maxLength={5000}
+                        onChange={(event) =>
+                          setCoachAdminRuleDraft((current) => ({
+                            ...current,
+                            instruction: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="mi-agent-admin-rule-order">
+                      Orden
+                      <input
+                        type="number"
+                        min={-1000}
+                        max={1000}
+                        value={coachAdminRuleDraft.sortOrder}
+                        onChange={(event) =>
+                          setCoachAdminRuleDraft((current) => ({
+                            ...current,
+                            sortOrder: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <div className="mi-agent-workspace-actions">
+                      <button
+                        type="button"
+                        className="mi-agent-primary-button"
+                        onClick={saveCoachAdminRule}
+                        disabled={
+                          coachGovernanceSaving ||
+                          !coachAdminRuleDraft.title.trim() ||
+                          !coachAdminRuleDraft.instruction.trim()
+                        }
+                      >
+                        {coachGovernanceSaving
+                          ? "Guardando..."
+                          : "Guardar regla"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mi-agent-secondary-button"
+                        onClick={() => {
+                          setCoachAdminRuleDraft(null);
+                          setCoachAdminRuleEditingId(null);
+                        }}
+                        disabled={coachGovernanceSaving}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+              <details className="mi-agent-admin-rules-advanced">
+                <summary>Configuración técnica avanzada del ámbito</summary>
+                <label className="mi-agent-governance-wide">
+                  Contrato JSON de reglas deterministas
+                  <textarea
+                    rows={18}
+                    spellCheck={false}
+                    value={coachBusinessRulesDraft}
+                    onChange={(event) =>
+                      setCoachBusinessRulesDraft(event.target.value)
+                    }
+                  />
+                </label>
+                <div className="mi-agent-workspace-actions">
+                  <button
+                    type="button"
+                    className="mi-agent-primary-button"
+                    onClick={saveCoachBusinessRules}
+                    disabled={coachGovernanceSaving}
+                  >
+                    Guardar contrato técnico
+                  </button>
+                  <button
+                    type="button"
+                    className="mi-agent-secondary-button"
+                    onClick={resetCoachBusinessRules}
+                    disabled={coachGovernanceSaving}
+                  >
+                    Restablecer contrato técnico
+                  </button>
+                </div>
+              </details>
               <div className="mi-agent-workspace-actions">
                 <button
                   type="button"
@@ -7178,89 +7987,10 @@ export default function MiAgentPage({
                 </button>
               </div>
               <section className="mi-agent-governance-metrics">
-                <h4>Rollout por canal</h4>
-                <div className="mi-agent-governance-grid">
-                  {coachChannelRollouts.map((rollout, index) => (
-                    <article
-                      className="mi-agent-governance-rollout"
-                      key={rollout.channel}
-                    >
-                      <strong>
-                        {rollout.channel === "coach"
-                          ? "Coach"
-                          : rollout.channel === "customer_account"
-                            ? "Cliente existente"
-                            : "Cuenta nueva"}
-                      </strong>
-                      <label>
-                        Canal habilitado
-                        <input
-                          type="checkbox"
-                          checked={Boolean(rollout.enabled)}
-                          onChange={(event) =>
-                            setCoachChannelRollouts((current) =>
-                              current.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? { ...item, enabled: event.target.checked }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </label>
-                      <label>
-                        Usuarios en rollout
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={rollout.rolloutPercentage}
-                          onChange={(event) =>
-                            setCoachChannelRollouts((current) =>
-                              current.map((item, itemIndex) =>
-                                itemIndex === index
-                                  ? {
-                                      ...item,
-                                      rolloutPercentage: Number(event.target.value),
-                                    }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                        <output>{rollout.rolloutPercentage}%</output>
-                      </label>
-                      <label>
-                        Usuarios piloto (IDs separados por coma)
-                        <input
-                          value={
-                            coachChannelAllowlistDrafts[rollout.channel] ??
-                            (rollout.allowlist || []).join(", ")
-                          }
-                          onChange={(event) =>
-                            setCoachChannelAllowlistDrafts((current) => ({
-                              ...current,
-                              [rollout.channel]: event.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-                    </article>
-                  ))}
-                </div>
-                <div className="mi-agent-workspace-actions">
-                  <button
-                    type="button"
-                    className="mi-agent-primary-button"
-                    onClick={saveCoachChannelRollouts}
-                    disabled={coachGovernanceSaving}
-                  >
-                    Guardar rollout
-                  </button>
-                </div>
-              </section>
-              <section className="mi-agent-governance-metrics">
-                <h4>Calidad del motor · {coachQualityDashboard?.periodDays || 30} días</h4>
+                <h4>
+                  Calidad del motor · {coachQualityDashboard?.periodDays || 30}{" "}
+                  días
+                </h4>
                 <p>{coachQualityDashboard?.totalTurns || 0} turnos trazados</p>
                 <div className="mi-agent-governance-grid">
                   {(coachQualityDashboard?.channels || []).map((metrics) => (
@@ -7270,22 +8000,28 @@ export default function MiAgentPage({
                     >
                       <strong>{metrics.channel}</strong>
                       <span>
-                        Aclaraciones {Math.round(metrics.clarificationRate * 100)}%
-                        · Respuestas inválidas {Math.round(metrics.invalidResponseRate * 100)}%
+                        Aclaraciones{" "}
+                        {Math.round(metrics.clarificationRate * 100)}% ·
+                        Respuestas inválidas{" "}
+                        {Math.round(metrics.invalidResponseRate * 100)}%
                       </span>
                       <span>
-                        Intención {metrics.intentFeedbackCount
+                        Intención{" "}
+                        {metrics.intentFeedbackCount
                           ? `${Math.round(metrics.intentClassificationAccuracy * 100)}%`
                           : "Sin feedback"}
-                        · Entidad {metrics.entityFeedbackCount
+                        · Entidad{" "}
+                        {metrics.entityFeedbackCount
                           ? `${Math.round(metrics.entityResolutionQuality * 100)}%`
                           : "Sin feedback"}
                       </span>
                       <span>
-                        Operaciones rechazadas {metrics.proposedOperations
+                        Operaciones rechazadas{" "}
+                        {metrics.proposedOperations
                           ? `${Math.round(metrics.rejectedOperationRate * 100)}%`
                           : "Sin operaciones"}
-                        · Correcciones {metrics.feedbackCount
+                        · Correcciones{" "}
+                        {metrics.feedbackCount
                           ? `${Math.round(metrics.correctionByFeedbackRate * 100)}%`
                           : "Sin feedback"}
                       </span>
@@ -7295,12 +8031,17 @@ export default function MiAgentPage({
                 {coachQualityDashboard?.regressions?.length ? (
                   <div className="mi-agent-governance-regressions">
                     <strong>Procesos con señales de regresión</strong>
-                    {coachQualityDashboard.regressions.slice(0, 8).map((item) => (
-                      <p key={`${item.channel}-${item.process}`}>
-                        {item.channel} · {item.process}
-                        {item.caseId ? ` · ${item.caseId}` : ""}: inválidas {Math.round(item.invalidResponseRate * 100)}%, feedback negativo {item.negativeFeedback}, operaciones rechazadas {item.rejectedOperations}
-                      </p>
-                    ))}
+                    {coachQualityDashboard.regressions
+                      .slice(0, 8)
+                      .map((item) => (
+                        <p key={`${item.channel}-${item.process}`}>
+                          {item.channel} · {item.process}
+                          {item.caseId ? ` · ${item.caseId}` : ""}: inválidas{" "}
+                          {Math.round(item.invalidResponseRate * 100)}%,
+                          feedback negativo {item.negativeFeedback}, operaciones
+                          rechazadas {item.rejectedOperations}
+                        </p>
+                      ))}
                   </div>
                 ) : null}
               </section>

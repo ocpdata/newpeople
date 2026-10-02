@@ -28,7 +28,9 @@ describe("Coach conversation engine", () => {
       { role: "assistant", text: "Respuesta de Coach" },
     ]);
     expect(getConversationChannelJobType("coach")).toBe("mi_coach_chat");
-    expect(getConversationChannelJobType("customer_account")).toBe("account_chat");
+    expect(getConversationChannelJobType("customer_account")).toBe(
+      "account_chat",
+    );
     expect(getConversationChannelJobType("prospect")).toBe("prospect_chat");
   });
 
@@ -56,15 +58,18 @@ describe("Coach conversation engine", () => {
       resolveAvailableCoachTools(
         [
           { name: "searchAccounts", requiredPermission: "cuentas.read" },
-          { name: "searchOpportunities", requiredPermission: "oportunidades.read" },
+          {
+            name: "searchOpportunities",
+            requiredPermission: "oportunidades.read",
+          },
           { name: "searchContacts" },
         ],
         { codes: ["cuentas.read"] },
       ).map((tool) => tool.name),
     ).toEqual(["searchAccounts", "searchContacts"]);
-    expect(resolveAvailableCoachTools(getCoachReadToolCatalog(), new Set())).toEqual(
-      [],
-    );
+    expect(
+      resolveAvailableCoachTools(getCoachReadToolCatalog(), new Set()),
+    ).toEqual([]);
     expect(
       resolveAvailableCoachTools(
         [
@@ -99,7 +104,10 @@ describe("Coach conversation engine", () => {
           {
             name: "getOpportunityQuotation",
             requiredPermission: "oportunidades.read",
-            requiredAnyPermissions: ["cotizaciones.revision", "cotizaciones.operacion"],
+            requiredAnyPermissions: [
+              "cotizaciones.revision",
+              "cotizaciones.operacion",
+            ],
           },
         ],
         new Set(["oportunidades.read", "cotizaciones.revision"]),
@@ -111,7 +119,10 @@ describe("Coach conversation engine", () => {
           {
             name: "getOpportunityQuotation",
             requiredPermission: "oportunidades.read",
-            requiredAnyPermissions: ["cotizaciones.revision", "cotizaciones.operacion"],
+            requiredAnyPermissions: [
+              "cotizaciones.revision",
+              "cotizaciones.operacion",
+            ],
           },
         ],
         new Set(["oportunidades.read"]),
@@ -165,7 +176,10 @@ describe("Coach conversation engine", () => {
         operations: [{ kind: "activity", title: "Agendar llamada" }],
       },
       "Como va la oportunidad?",
-      { validation: { requireEvidence: true }, scope: { requireBusinessEvidence: true } },
+      {
+        validation: { requireEvidence: true },
+        scope: { requireBusinessEvidence: true },
+      },
     );
 
     expect(result).toMatchObject({
@@ -268,9 +282,9 @@ describe("Coach conversation engine", () => {
       result: null,
       error: "Read tool no autorizada o no disponible.",
     });
-    expect(requestResponse.mock.calls[0][0].payload.readToolResults[0].error).toBe(
-      "Read tool no autorizada o no disponible.",
-    );
+    expect(
+      requestResponse.mock.calls[0][0].payload.readToolResults[0].error,
+    ).toBe("Read tool no autorizada o no disponible.");
   });
 
   it("registra la segunda pasada de IA con el canal y job type de prospeccion", async () => {
@@ -336,6 +350,16 @@ describe("Coach conversation engine", () => {
       action: null,
       stageReadiness: null,
     };
+    const activeAdminRules = [
+      {
+        id: "common-test-rule",
+        title: "Common test rule",
+        instruction: "Use a shared policy.",
+        enabled: true,
+      },
+    ];
+    const loadAdministrativeRules = vi.fn().mockResolvedValue(activeAdminRules);
+    let promptSnapshot = null;
     const result = await runConversationEngine({
       question: "Resume la cuenta",
       context: { accountId: 7 },
@@ -343,14 +367,22 @@ describe("Coach conversation engine", () => {
       user: { id: 31 },
       jobId: 18,
       dependencies: {
-        getMiAgentContext: async () => ({ accounts: [], coachOpportunities: [] }),
+        getMiAgentContext: async () => ({
+          accounts: [],
+          coachOpportunities: [],
+        }),
         resolveCoachContextEntities: () => ({
           explicitEntities: {
             account: null,
             opportunity: null,
             contact: null,
             lead: null,
-            candidates: { accounts: [], opportunities: [], contacts: [], leads: [] },
+            candidates: {
+              accounts: [],
+              opportunities: [],
+              contacts: [],
+              leads: [],
+            },
           },
         }),
         applyCoachEntityResolution: () => ({
@@ -370,7 +402,11 @@ describe("Coach conversation engine", () => {
         buildStageReadiness: () => null,
         loadProcessGuide: async () => "",
         requestMiAgentJson: async () => response,
-        buildCoachPrompt: () => ({}),
+        loadAdministrativeRules,
+        buildCoachPrompt: (snapshot) => {
+          promptSnapshot = snapshot;
+          return {};
+        },
         resolveCoachResponseContext: () => ({
           context: { accountId: 7 },
           changed: false,
@@ -398,6 +434,11 @@ describe("Coach conversation engine", () => {
       primaryEntity: "account",
       evidenceCount: 1,
     });
+    expect(loadAdministrativeRules).toHaveBeenCalledWith({
+      channel: "coach",
+      process: "default",
+    });
+    expect(promptSnapshot.administrativeRules).toEqual(activeAdminRules);
   });
 
   it("pide una oportunidad antes de responder una consulta global de actividades", async () => {
@@ -455,16 +496,26 @@ describe("Coach conversation engine", () => {
     const quotation = {
       quotationId: 51,
       opportunityId: 11,
-      sections: [{ title: "Licencias", items: [{ description: "Licencia anual" }] }],
+      sections: [
+        { title: "Licencias", items: [{ description: "Licencia anual" }] },
+      ],
     };
     const readModel = await prepareCoachReadModel({
       user: { id: 31 },
       question: "¿Qué contiene la cotización?",
       availableTools: [{ name: "getOpportunityQuotation" }],
       dependencies: {
-        getMiAgentContext: async () => ({ accounts: [], coachOpportunities: [] }),
+        getMiAgentContext: async () => ({
+          accounts: [],
+          coachOpportunities: [],
+        }),
         resolveCoachContextEntities: () => ({
-          explicitEntities: { account: null, opportunity: null, contact: null, lead: null },
+          explicitEntities: {
+            account: null,
+            opportunity: null,
+            contact: null,
+            lead: null,
+          },
         }),
         applyCoachEntityResolution: (_snapshot, context) => ({
           context,
@@ -480,11 +531,15 @@ describe("Coach conversation engine", () => {
         buildCoachScopedSnapshot: (snapshot) => snapshot,
         isStagePreparationQuestion: () => false,
         buildStageReadiness: () => null,
-        getAuthorizedCoachQuotationContent: vi.fn().mockResolvedValue(quotation),
+        getAuthorizedCoachQuotationContent: vi
+          .fn()
+          .mockResolvedValue(quotation),
       },
     });
 
-    expect(readModel.modelSnapshot.selectedOpportunityQuotation).toEqual(quotation);
+    expect(readModel.modelSnapshot.selectedOpportunityQuotation).toEqual(
+      quotation,
+    );
     expect(readModel.readToolResults).toEqual([
       expect.objectContaining({
         toolName: "getOpportunityQuotation",
@@ -493,25 +548,25 @@ describe("Coach conversation engine", () => {
     ]);
   });
 });
-  it("cuenta determinísticamente solo oportunidades abiertas en rankings globales", () => {
-    const result = buildDeterministicAccountOpportunityRanking(
-      "Que cuentas tienen la mayor cantidad de oportunidades abiertas?",
-      [
-        ...Array.from({ length: 8 }, (_, index) => ({
-          id: index + 1,
-          accountId: 22,
-          accountName: "Totalplay",
-          lifecycle: "open",
-        })),
-        ...Array.from({ length: 6 }, (_, index) => ({
-          id: index + 9,
-          accountId: 22,
-          accountName: "Totalplay",
-          lifecycle: "historical",
-        })),
-      ],
-    );
+it("cuenta determinísticamente solo oportunidades abiertas en rankings globales", () => {
+  const result = buildDeterministicAccountOpportunityRanking(
+    "Que cuentas tienen la mayor cantidad de oportunidades abiertas?",
+    [
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: index + 1,
+        accountId: 22,
+        accountName: "Totalplay",
+        lifecycle: "open",
+      })),
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: index + 9,
+        accountId: 22,
+        accountName: "Totalplay",
+        lifecycle: "historical",
+      })),
+    ],
+  );
 
-    expect(result.answer).toContain("Totalplay con 8 oportunidad(es) abiertas");
-    expect(result.facts[0]).toMatchObject({ sourceId: 22 });
-  });
+  expect(result.answer).toContain("Totalplay con 8 oportunidad(es) abiertas");
+  expect(result.facts[0]).toMatchObject({ sourceId: 22 });
+});

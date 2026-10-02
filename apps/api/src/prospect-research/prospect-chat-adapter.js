@@ -2,6 +2,7 @@ import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
 import { normalizeProspectConversionOperation } from "../coach/operation-contract.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
+import { listCoachAdminRules } from "../coach/admin-rules.js";
 
 function normalize(value) {
   return String(value || "")
@@ -28,9 +29,9 @@ function prospectTools(snapshot) {
       return (snapshot.contacts || []).filter(
         (contact) =>
           !normalizedText ||
-          normalize(`${contact.roleTitle} ${contact.area} ${contact.name}`).includes(
-            normalizedText,
-          ),
+          normalize(
+            `${contact.roleTitle} ${contact.area} ${contact.name}`,
+          ).includes(normalizedText),
       );
     },
     searchProspectHypotheses: ({ text = "" } = {}) => {
@@ -56,7 +57,8 @@ export function buildProspectFallback(snapshot, question) {
   const normalizedQuestion = normalize(question);
   if (/\b(correo|email|mail|mensaje|outreach)\b/.test(normalizedQuestion)) {
     return {
-      answer: snapshot.outreach?.body || "No hay un borrador de correo disponible.",
+      answer:
+        snapshot.outreach?.body || "No hay un borrador de correo disponible.",
       evidence: ["Borrador generado desde la sesión de prospección."],
       inferences: [],
       confidence: "medium",
@@ -93,9 +95,13 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     { name: "getProspectProfile", requiredPermission: "prospeccion.read" },
     { name: "searchProspectFindings", requiredPermission: "prospeccion.read" },
     { name: "searchProspectContacts", requiredPermission: "prospeccion.read" },
-    { name: "searchProspectHypotheses", requiredPermission: "prospeccion.read" },
+    {
+      name: "searchProspectHypotheses",
+      requiredPermission: "prospeccion.read",
+    },
   ];
   const dependencies = {
+    loadAdministrativeRules: listCoachAdminRules,
     prepareReadModel: async ({
       question,
       availableTools: resolvedTools,
@@ -106,14 +112,28 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       const names = new Set(resolvedTools.map((tool) => tool.name));
       const pushTool = (toolName, args = {}) => {
         if (names.has(toolName))
-          readToolResults.push(executeProspectReadTool({ toolName, snapshot, args }));
+          readToolResults.push(
+            executeProspectReadTool({ toolName, snapshot, args }),
+          );
       };
       pushTool("getProspectProfile");
-      if (/\b(hallazgo|hallazgos|riesgo|reto|evidencia|fuente)\b/.test(normalizedQuestion))
+      if (
+        /\b(hallazgo|hallazgos|riesgo|reto|evidencia|fuente)\b/.test(
+          normalizedQuestion,
+        )
+      )
         pushTool("searchProspectFindings");
-      if (/\b(contacto|contactos|persona|responsable|eduardo)\b/.test(normalizedQuestion))
+      if (
+        /\b(contacto|contactos|persona|responsable|eduardo)\b/.test(
+          normalizedQuestion,
+        )
+      )
         pushTool("searchProspectContacts");
-      if (/\b(oportunidad|oportunidades|hipotesis|hipótesis|tecnologia|reto)\b/.test(normalizedQuestion))
+      if (
+        /\b(oportunidad|oportunidades|hipotesis|hipótesis|tecnologia|reto)\b/.test(
+          normalizedQuestion,
+        )
+      )
         pushTool("searchProspectHypotheses");
       const selectedContext = { prospectSessionId: session.id };
       const modelSnapshot = {
@@ -142,14 +162,30 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     buildStageReadiness: () => null,
     isStagePreparationQuestion: () => false,
     loadProcessGuide: async () => "",
-    buildPrompt: (model, question, _guide, context, conversationHistory = []) => ({
+    buildPrompt: (
+      model,
       question,
-      context: model,
-      selectedContext: context,
-      conversationHistory,
-      instruction:
-        "Usa solo datos de prospección. Distingue datos proporcionados por el vendedor, evidencia pública e inferencias. Nunca presentes un prospecto, contacto o hipótesis como registro CRM confirmado. Las conversiones requieren confirmación explícita.",
-    }),
+      _guide,
+      context,
+      conversationHistory = [],
+    ) => {
+      const administrativeRules = Array.isArray(model?.administrativeRules)
+        ? model.administrativeRules
+            .filter((rule) => rule?.enabled && rule?.instruction)
+            .map((rule) => `- ${rule.title}: ${rule.instruction}`)
+        : [];
+      return {
+        question,
+        context: model,
+        selectedContext: context,
+        conversationHistory,
+        instruction:
+          "Usa solo datos de prospección. Distingue datos proporcionados por el vendedor, evidencia pública e inferencias. Nunca presentes un prospecto, contacto o hipótesis como registro CRM confirmado. Las conversiones requieren confirmación explícita." +
+          (administrativeRules.length
+            ? `\n\nReglas administrativas activas para este canal; aplícalas sin presentar datos prospectivos como registros CRM ni omitir confirmaciones:\n${administrativeRules.join("\n")}`
+            : ""),
+      };
+    },
     requestResponse: async ({ payload }) => {
       const fallback = buildProspectFallback(snapshot, payload.question);
       const result = await runStructuredTextResearch({
@@ -161,16 +197,51 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         currentValues: {},
         fields: [
           { key: "answer", type: "string", example: fallback.answer },
-          { key: "evidence", type: "array", example: [], items: { type: "string", example: "Evidencia" } },
-          { key: "inferences", type: "array", example: [], items: { type: "string", example: "Inferencia" } },
-          { key: "confidence", type: "enum", enum: ["high", "medium", "low"], example: "medium" },
-          { key: "recommendedActions", type: "array", example: [], items: { type: "object", fields: [
-            { key: "title", type: "string", example: "Validar hipótesis" },
-            { key: "actionType", type: "string", example: "call" },
-            { key: "notes", type: "string", example: "Confirmar con el prospecto" },
-            { key: "successCriteria", type: "string", example: "Dato validado" },
-            { key: "requiresConfirmation", type: "string", example: "true" },
-          ] } },
+          {
+            key: "evidence",
+            type: "array",
+            example: [],
+            items: { type: "string", example: "Evidencia" },
+          },
+          {
+            key: "inferences",
+            type: "array",
+            example: [],
+            items: { type: "string", example: "Inferencia" },
+          },
+          {
+            key: "confidence",
+            type: "enum",
+            enum: ["high", "medium", "low"],
+            example: "medium",
+          },
+          {
+            key: "recommendedActions",
+            type: "array",
+            example: [],
+            items: {
+              type: "object",
+              fields: [
+                { key: "title", type: "string", example: "Validar hipótesis" },
+                { key: "actionType", type: "string", example: "call" },
+                {
+                  key: "notes",
+                  type: "string",
+                  example: "Confirmar con el prospecto",
+                },
+                {
+                  key: "successCriteria",
+                  type: "string",
+                  example: "Dato validado",
+                },
+                {
+                  key: "requiresConfirmation",
+                  type: "string",
+                  example: "true",
+                },
+              ],
+            },
+          },
           { key: "source", type: "string", example: "prospect_research" },
         ],
         aiUsageContext: {
@@ -201,7 +272,13 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         confidence: result?.confidence || "low",
         recommendedActions,
         source: "prospect_research",
-        entities: { accountId: null, opportunityId: null, contactId: null, leadId: null, names: [] },
+        entities: {
+          accountId: null,
+          opportunityId: null,
+          contactId: null,
+          leadId: null,
+          names: [],
+        },
         operations: recommendedActions.map((action) =>
           normalizeProspectConversionOperation(action, {
             prospectSessionId: context.prospectSessionId,

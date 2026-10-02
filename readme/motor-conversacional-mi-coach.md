@@ -478,17 +478,17 @@ Cada caso debe tener una expectativa estructurada, no solo una comparación text
 
 ## 13. Diferencia frente a la implementación actual
 
-| Responsabilidad | Implementación actual | Arquitectura objetivo |
-| --- | --- | --- |
-| Contexto | Snapshot amplio del CRM | Herramientas específicas bajo demanda |
-| Resolución | Coincidencias textuales entre varios dominios | Intención y entidad separadas, con reglas de dominio |
-| Oportunidades | Principalmente búsqueda por nombre | Búsqueda por nombre, cuenta, etapa y estado |
-| Leads | Pueden competir con oportunidades | Solo se consultan cuando la intención lo indica |
-| Frontend | Puede construir aclaraciones propias | Renderiza contratos del backend |
-| Acciones | Mezcladas con conversación | Servicio de comandos separado |
-| Sesión | Backend más referencia en navegador | Backend como fuente de verdad |
-| Permisos | Distribuidos entre rutas y consultas | Aplicados dentro de cada herramienta y comando |
-| Calidad | Pruebas por funcionalidad | Evaluación continua con preguntas reales |
+| Responsabilidad | Implementación actual                         | Arquitectura objetivo                                |
+| --------------- | --------------------------------------------- | ---------------------------------------------------- |
+| Contexto        | Snapshot amplio del CRM                       | Herramientas específicas bajo demanda                |
+| Resolución      | Coincidencias textuales entre varios dominios | Intención y entidad separadas, con reglas de dominio |
+| Oportunidades   | Principalmente búsqueda por nombre            | Búsqueda por nombre, cuenta, etapa y estado          |
+| Leads           | Pueden competir con oportunidades             | Solo se consultan cuando la intención lo indica      |
+| Frontend        | Puede construir aclaraciones propias          | Renderiza contratos del backend                      |
+| Acciones        | Mezcladas con conversación                    | Servicio de comandos separado                        |
+| Sesión          | Backend más referencia en navegador           | Backend como fuente de verdad                        |
+| Permisos        | Distribuidos entre rutas y consultas          | Aplicados dentro de cada herramienta y comando       |
+| Calidad         | Pruebas por funcionalidad                     | Evaluación continua con preguntas reales             |
 
 ## 14. Estado del motor
 
@@ -508,49 +508,49 @@ Esta clasificación corresponde al paso 2 de la separación del motor. Es un map
 
 ### 16.1 Núcleo común
 
-| Responsabilidad | Módulo actual | Funciones o elementos | Tratamiento en el paso 3 |
-| --- | --- | --- | --- |
-| Normalización de entrada | `apps/api/src/coach/agent-gateway.js` | `normalizeCoachGatewayRequest`, `normalizeConversationHistory`, `normalizeRequestContext` | Extraer como contrato común, conservando exactamente las salidas actuales |
-| Resolución de entidades | `apps/api/src/coach/entity-resolver.js` | `resolveCoachEntities`, `applyCoachEntityResolution`, `buildCoachEntityClarification` | Extraer reglas comunes; mantener políticas de canal fuera del resolver |
-| Filtros semánticos | `apps/api/src/coach/read-tools.js` | `inferCoachOpportunityFilters`, `searchCoachOpportunities`, `dedupeCoachRecords` | Extraer con pruebas de activa, abierta, histórica e inactiva |
-| Herramientas de lectura | `apps/api/src/coach/crm-read-tools.js` | `executeCoachReadTool`, catálogo de herramientas | Convertir en registro de herramientas con alcance y permisos explícitos |
-| Contrato de respuesta | `apps/api/src/coach/contract.js` | `coachResponseSchema`, `safeParseCoachResponse`, operaciones y aclaraciones | Convertir en contrato común con extensiones por canal |
-| Evidencia y confianza | `apps/api/src/coach/contract.js` y `agent-gateway.js` | `coachEvidenceSchema`, normalización de resultados y observabilidad | Mantener como respuesta común, con fuentes específicas por canal |
-| Validación de contexto | `apps/api/src/routes.mi-agent.js` | `resolveCoachResponseContext`, `buildCoachScopedSnapshot` | Separar construcción de snapshot de la resolución común |
+| Responsabilidad          | Módulo actual                                         | Funciones o elementos                                                                     | Tratamiento en el paso 3                                                  |
+| ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Normalización de entrada | `apps/api/src/coach/agent-gateway.js`                 | `normalizeCoachGatewayRequest`, `normalizeConversationHistory`, `normalizeRequestContext` | Extraer como contrato común, conservando exactamente las salidas actuales |
+| Resolución de entidades  | `apps/api/src/coach/entity-resolver.js`               | `resolveCoachEntities`, `applyCoachEntityResolution`, `buildCoachEntityClarification`     | Extraer reglas comunes; mantener políticas de canal fuera del resolver    |
+| Filtros semánticos       | `apps/api/src/coach/read-tools.js`                    | `inferCoachOpportunityFilters`, `searchCoachOpportunities`, `dedupeCoachRecords`          | Extraer con pruebas de activa, abierta, histórica e inactiva              |
+| Herramientas de lectura  | `apps/api/src/coach/crm-read-tools.js`                | `executeCoachReadTool`, catálogo de herramientas                                          | Convertir en registro de herramientas con alcance y permisos explícitos   |
+| Contrato de respuesta    | `apps/api/src/coach/contract.js`                      | `coachResponseSchema`, `safeParseCoachResponse`, operaciones y aclaraciones               | Convertir en contrato común con extensiones por canal                     |
+| Evidencia y confianza    | `apps/api/src/coach/contract.js` y `agent-gateway.js` | `coachEvidenceSchema`, normalización de resultados y observabilidad                       | Mantener como respuesta común, con fuentes específicas por canal          |
+| Validación de contexto   | `apps/api/src/routes.mi-agent.js`                     | `resolveCoachResponseContext`, `buildCoachScopedSnapshot`                                 | Separar construcción de snapshot de la resolución común                   |
 
 ### 16.2 Responsabilidades específicas del Coach
 
-| Responsabilidad | Módulo actual | Regla de conservación |
-| --- | --- | --- |
-| Sesión e historial | `apps/api/src/coach/service.js`, `agent-gateway.js` | No extraer al núcleo; el Coach conserva sesiones y turnos |
-| Continuidad de contexto | `agent-gateway.js`, `routes.mi-agent.js` | No cambiar la semántica de referencias como “esa oportunidad” |
-| Operaciones pendientes | `coach/service.js` y `controlled-operation-service.js` | Mantener el flujo actual de propuesta, confirmación, ejecución y reversión |
-| Políticas del Coach | `coach/operation-policy.js` | Permanecen como política específica, aunque el motor consuma una interfaz de políticas |
-| Preparación de etapa | `coach/stage-readiness.js` | No convertirla en regla general de Cliente existente o Cuenta nueva |
-| Handoff y auditoría | `coach/controlled-operation-service.js` y `coach/service.js` | Mantener el mismo contrato y los mismos permisos |
-| Prompt específico | `routes.mi-agent.js` | No modificarlo durante la extracción inicial |
+| Responsabilidad         | Módulo actual                                                | Regla de conservación                                                                  |
+| ----------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| Sesión e historial      | `apps/api/src/coach/service.js`, `agent-gateway.js`          | No extraer al núcleo; el Coach conserva sesiones y turnos                              |
+| Continuidad de contexto | `agent-gateway.js`, `routes.mi-agent.js`                     | No cambiar la semántica de referencias como “esa oportunidad”                          |
+| Operaciones pendientes  | `coach/service.js` y `controlled-operation-service.js`       | Mantener el flujo actual de propuesta, confirmación, ejecución y reversión             |
+| Políticas del Coach     | `coach/operation-policy.js`                                  | Permanecen como política específica, aunque el motor consuma una interfaz de políticas |
+| Preparación de etapa    | `coach/stage-readiness.js`                                   | No convertirla en regla general de Cliente existente o Cuenta nueva                    |
+| Handoff y auditoría     | `coach/controlled-operation-service.js` y `coach/service.js` | Mantener el mismo contrato y los mismos permisos                                       |
+| Prompt específico       | `routes.mi-agent.js`                                         | No modificarlo durante la extracción inicial                                           |
 
 ### 16.3 Chat de Cliente existente
 
-| Responsabilidad | Módulo actual | Clasificación |
-| --- | --- | --- |
-| Entrada y polling | `apps/web/src/MiAgentPage.jsx` | Adaptador de interfaz y job; no pertenece al núcleo |
-| Snapshot de cuenta | `commercial-intelligence/service.js` | Contexto específico de cuenta existente |
-| Agentes CRM, salud y expansión | `commercial-intelligence/service.js` | Herramientas o proveedores específicos del canal |
-| Investigación pública | `commercial-intelligence/service.js` | Capacidad opcional, sujeta a gobierno y permisos |
-| Fallback de cuenta | `commercial-intelligence/service.js` | Debe sustituirse gradualmente por el contrato común, sin cambiar Coach |
-| Operaciones de cuenta | Pendiente de integrar con comandos controlados | Política específica de Cliente existente, con confirmación |
-| Persistencia | `customer_intelligence_jobs` | Job separado; no reutiliza la sesión del Coach |
+| Responsabilidad                | Módulo actual                                  | Clasificación                                                          |
+| ------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------- |
+| Entrada y polling              | `apps/web/src/MiAgentPage.jsx`                 | Adaptador de interfaz y job; no pertenece al núcleo                    |
+| Snapshot de cuenta             | `commercial-intelligence/service.js`           | Contexto específico de cuenta existente                                |
+| Agentes CRM, salud y expansión | `commercial-intelligence/service.js`           | Herramientas o proveedores específicos del canal                       |
+| Investigación pública          | `commercial-intelligence/service.js`           | Capacidad opcional, sujeta a gobierno y permisos                       |
+| Fallback de cuenta             | `commercial-intelligence/service.js`           | Debe sustituirse gradualmente por el contrato común, sin cambiar Coach |
+| Operaciones de cuenta          | Pendiente de integrar con comandos controlados | Política específica de Cliente existente, con confirmación             |
+| Persistencia                   | `customer_intelligence_jobs`                   | Job separado; no reutiliza la sesión del Coach                         |
 
 ### 16.4 Cuenta nueva
 
-| Responsabilidad | Módulo actual | Clasificación |
-| --- | --- | --- |
-| Sesión de prospección | `prospect-research/service.js` | Sesión específica de prospecto, separada del Coach |
-| Investigación pública | `prospect-research/service.js` | Herramienta específica de Cuenta nueva |
-| Hallazgos, contactos e hipótesis | `prospect-research/service.js` | Datos de prospecto, no registros CRM confirmados |
-| Conversión a CRM | `prospect-research/service.js` | Operaciones específicas, siempre confirmables y auditadas |
-| Interfaz | `apps/web/src/MiAgentPage.jsx` | Adaptador de Cuenta nueva; no debe duplicar interpretación |
+| Responsabilidad                  | Módulo actual                  | Clasificación                                              |
+| -------------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| Sesión de prospección            | `prospect-research/service.js` | Sesión específica de prospecto, separada del Coach         |
+| Investigación pública            | `prospect-research/service.js` | Herramienta específica de Cuenta nueva                     |
+| Hallazgos, contactos e hipótesis | `prospect-research/service.js` | Datos de prospecto, no registros CRM confirmados           |
+| Conversión a CRM                 | `prospect-research/service.js` | Operaciones específicas, siempre confirmables y auditadas  |
+| Interfaz                         | `apps/web/src/MiAgentPage.jsx` | Adaptador de Cuenta nueva; no debe duplicar interpretación |
 
 ### 16.5 Límites de extracción
 
@@ -595,16 +595,16 @@ Este mapa es la frontera de diseño para el paso 3. El primer adaptador debe seg
 
 El frontend actual concentra los tres espacios en `apps/web/src/MiAgentPage.jsx`. Esta clasificación evita extraer por error lógica específica junto con el motor común.
 
-| Área | Estado y handlers principales | Responsabilidad actual | Clasificación |
-| --- | --- | --- | --- |
-| Coach | `coachQuestion`, `coachMessages`, `coachSessionId`, `coachContext`, `askCoach`, `clearCoachConversation` | Captura preguntas, restaura sesión, envía contexto, muestra respuestas y operaciones | Adaptador Coach |
-| Fundamentos del Coach | `showCoachFoundation`, `updateCoachFoundationVisibility` | Controla la visibilidad local de evidencia y fundamentos del Coach | Presentación específica del Coach |
-| Cliente existente | `customerChatQuestion`, `customerChatMessages`, `customerChatLoading`, `askCustomerChat` | Envía jobs de cuenta, hace polling y renderiza respuestas CRM | Adaptador Cliente existente |
-| Fundamentos de Cliente existente | `showCustomerChatFoundation`, `updateCustomerChatFoundationVisibility` | Controla evidencia, hipótesis, fuentes y agentes del chat de cuenta | Presentación específica del canal |
-| Contexto de cuenta | `customerAccountId`, `customerSnapshot`, `loadCustomerSnapshot` | Selecciona una cuenta autorizada y carga su snapshot | Contexto Cliente existente |
-| Cuenta nueva | `prospectForm`, `prospectSession`, `prepareProspectAccount`, `runProspectExternalResearch` | Crea sesión de prospección, ejecuta investigación y muestra resultados | Adaptador Cuenta nueva |
-| Conversión de prospecto | `convertProspectAccount`, `convertProspectContact`, `convertProspectOpportunity` | Solicita conversiones confirmadas a registros CRM | Operaciones Cuenta nueva |
-| Presentación común | `CoachEvidenceList`, `CoachSemanticSections`, mensajes y formularios compartidos | Renderiza contratos recibidos del backend | Capa de presentación |
+| Área                             | Estado y handlers principales                                                                            | Responsabilidad actual                                                               | Clasificación                     |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------- |
+| Coach                            | `coachQuestion`, `coachMessages`, `coachSessionId`, `coachContext`, `askCoach`, `clearCoachConversation` | Captura preguntas, restaura sesión, envía contexto, muestra respuestas y operaciones | Adaptador Coach                   |
+| Fundamentos del Coach            | `showCoachFoundation`, `updateCoachFoundationVisibility`                                                 | Controla la visibilidad local de evidencia y fundamentos del Coach                   | Presentación específica del Coach |
+| Cliente existente                | `customerChatQuestion`, `customerChatMessages`, `customerChatLoading`, `askCustomerChat`                 | Envía jobs de cuenta, hace polling y renderiza respuestas CRM                        | Adaptador Cliente existente       |
+| Fundamentos de Cliente existente | `showCustomerChatFoundation`, `updateCustomerChatFoundationVisibility`                                   | Controla evidencia, hipótesis, fuentes y agentes del chat de cuenta                  | Presentación específica del canal |
+| Contexto de cuenta               | `customerAccountId`, `customerSnapshot`, `loadCustomerSnapshot`                                          | Selecciona una cuenta autorizada y carga su snapshot                                 | Contexto Cliente existente        |
+| Cuenta nueva                     | `prospectForm`, `prospectSession`, `prepareProspectAccount`, `runProspectExternalResearch`               | Crea sesión de prospección, ejecuta investigación y muestra resultados               | Adaptador Cuenta nueva            |
+| Conversión de prospecto          | `convertProspectAccount`, `convertProspectContact`, `convertProspectOpportunity`                         | Solicita conversiones confirmadas a registros CRM                                    | Operaciones Cuenta nueva          |
+| Presentación común               | `CoachEvidenceList`, `CoachSemanticSections`, mensajes y formularios compartidos                         | Renderiza contratos recibidos del backend                                            | Capa de presentación              |
 
 El frontend no debe decidir la intención, resolver entidades, clasificar estados CRM ni generar candidatos. Cuando alguna de esas responsabilidades aparezca en un handler o componente, debe trasladarse al backend durante la extracción correspondiente.
 
@@ -612,20 +612,20 @@ El frontend no debe decidir la intención, resolver entidades, clasificar estado
 
 Esta matriz conecta cada responsabilidad con la prueba que protege su comportamiento. Una extracción no puede avanzar si la prueba de la fila correspondiente falla.
 
-| Responsabilidad | Módulo principal | Prueba o grupo de pruebas | Comportamiento protegido |
-| --- | --- | --- | --- |
-| Normalización de entrada y sesiones | `coach/agent-gateway.js` | `coach-agent-gateway.test.js` | Pregunta, contexto, historial y sesión cerrada |
-| Resolución de entidades | `coach/entity-resolver.js` | `coach-entity-resolver.test.js`, `coach-regression-baseline.test.js` | Coincidencias, relaciones y ambigüedad |
-| Filtros de oportunidades | `coach/read-tools.js` | `coach-read-tools.test.js`, `coach-evaluation-battery.test.js` | Activa, abierta, histórica, etapa y deduplicación |
-| Contrato de respuesta | `coach/contract.js` | `coach-contract.test.js`, `coach-regression-baseline.test.js` | Forma, confianza, evidencia y aclaraciones |
-| Contexto e historial | `coach/service.js`, `agent-gateway.js` | `coach-session-continuity.test.js`, `mi-agent-coach-context.test.js` | Aislamiento y continuidad de sesión |
-| Operaciones propuestas | `coach/operation-policy.js`, `coach/service.js` | `mi-agent-coach-operations.test.js`, `coach-operation-policy.test.js`, `coach-operation-persistence.test.js` | Normalización, permisos y persistencia |
-| Ejecución controlada | `coach/controlled-operation-service.js` | `coach-controlled-operation.test.js`, `api.integration.test.js` | Confirmación, ejecución, auditoría y reversión |
-| Handoff | `coach/handoff*.js`, `coach/service.js` | `coach-handoff.test.js`, `coach-handoff-boundary.test.js` | Transferencia segura y límites de acceso |
-| Preparación de etapa | `coach/stage-readiness.js` | `coach-stage-readiness.test.js` | Diagnóstico determinista de avance |
-| Integración completa del Coach | `routes.mi-agent.js` | `api.integration.test.js` con `test:coach:baseline` | Sesión, job, contexto, respuesta y permisos |
-| Cliente existente | `commercial-intelligence/service.js` | pruebas de inteligencia comercial en `api.integration.test.js` | Job, snapshot, fallback y resultado de cuenta |
-| Cuenta nueva | `prospect-research/service.js` | `prospect-research.test.js` y pruebas de integración de prospección | Evidencia pública, sesión y conversión confirmada |
+| Responsabilidad                     | Módulo principal                                | Prueba o grupo de pruebas                                                                                    | Comportamiento protegido                          |
+| ----------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| Normalización de entrada y sesiones | `coach/agent-gateway.js`                        | `coach-agent-gateway.test.js`                                                                                | Pregunta, contexto, historial y sesión cerrada    |
+| Resolución de entidades             | `coach/entity-resolver.js`                      | `coach-entity-resolver.test.js`, `coach-regression-baseline.test.js`                                         | Coincidencias, relaciones y ambigüedad            |
+| Filtros de oportunidades            | `coach/read-tools.js`                           | `coach-read-tools.test.js`, `coach-evaluation-battery.test.js`                                               | Activa, abierta, histórica, etapa y deduplicación |
+| Contrato de respuesta               | `coach/contract.js`                             | `coach-contract.test.js`, `coach-regression-baseline.test.js`                                                | Forma, confianza, evidencia y aclaraciones        |
+| Contexto e historial                | `coach/service.js`, `agent-gateway.js`          | `coach-session-continuity.test.js`, `mi-agent-coach-context.test.js`                                         | Aislamiento y continuidad de sesión               |
+| Operaciones propuestas              | `coach/operation-policy.js`, `coach/service.js` | `mi-agent-coach-operations.test.js`, `coach-operation-policy.test.js`, `coach-operation-persistence.test.js` | Normalización, permisos y persistencia            |
+| Ejecución controlada                | `coach/controlled-operation-service.js`         | `coach-controlled-operation.test.js`, `api.integration.test.js`                                              | Confirmación, ejecución, auditoría y reversión    |
+| Handoff                             | `coach/handoff*.js`, `coach/service.js`         | `coach-handoff.test.js`, `coach-handoff-boundary.test.js`                                                    | Transferencia segura y límites de acceso          |
+| Preparación de etapa                | `coach/stage-readiness.js`                      | `coach-stage-readiness.test.js`                                                                              | Diagnóstico determinista de avance                |
+| Integración completa del Coach      | `routes.mi-agent.js`                            | `api.integration.test.js` con `test:coach:baseline`                                                          | Sesión, job, contexto, respuesta y permisos       |
+| Cliente existente                   | `commercial-intelligence/service.js`            | pruebas de inteligencia comercial en `api.integration.test.js`                                               | Job, snapshot, fallback y resultado de cuenta     |
+| Cuenta nueva                        | `prospect-research/service.js`                  | `prospect-research.test.js` y pruebas de integración de prospección                                          | Evidencia pública, sesión y conversión confirmada |
 
 La línea base ejecutable del Coach sigue siendo `npm run test:coach:baseline`. Las pruebas de Cliente existente y Cuenta nueva deben permanecer separadas mientras se extrae el motor, pero deben incorporarse a una matriz común cuando empiecen a consumir las reglas compartidas.
 
@@ -708,11 +708,11 @@ El `agent-gateway.js` conserva el endpoint interno del Coach y usa este adaptado
 - Persistencia, confirmación y ejecución de operaciones.
 - Observabilidad.
 
-La implementación anterior permanece disponible en el modo `legacy`. El modo `shadow` ejecuta la implementación nueva y la anterior en paralelo y compara una salida estable mediante `compareCoachExecutions`. La comparación identifica diferencias por campo y verifica intención, tipo de respuesta, entidades, fundamentos, herramientas, errores y operaciones.
+El gateway del motor conversacional nuevo es la ruta activa y se usa en todos los turnos de Coach. Los valores históricos de modo `legacy`, `shadow` o piloto ya no seleccionan otra implementación ni se administran desde la interfaz; la observabilidad conserva trazas de calidad del motor activo.
 
-### 16.12 Equivalencia entre implementación nueva y legacy
+### 16.12 Validación de calidad del motor activo
 
-El modo `shadow` usa `compareCoachExecutions` para comparar cada ejecución nueva con la ejecución anterior. La comparación cubre:
+La calidad se monitorea mediante trazas por canal/proceso y feedback vinculado al turno. Se revisan:
 
 - Intención.
 - Tipo de respuesta.
@@ -725,9 +725,7 @@ El modo `shadow` usa `compareCoachExecutions` para comparar cada ejecución nuev
 - Herramientas utilizadas e IDs consultados.
 - Errores.
 
-El resultado se guarda en `observability_json.rollout` con `matched`, `regression`, `differences`, `approvedDifferences`, `unexplainedDifferences`, `primary` y `shadow`. Cualquier diferencia no aprobada queda identificada por campo y se considera una regresión. La diferencia `tools` está aprobada temporalmente porque la implementación legacy no persistía las herramientas usadas en su observabilidad; no se aprueban diferencias de respuesta, fundamentos, entidades, operaciones, contexto o errores.
-
-La matriz ejecutable está cubierta por `coach-adapter.test.js`, mientras que la ejecución paralela real se activa mediante `COACH_AGENT_GATEWAY_MODE=shadow`. La batería `npm run test:coach:baseline` protege además el contrato funcional del Coach después de cada cambio.
+La batería `npm run test:coach:baseline` protege el contrato funcional del Coach después de cada cambio.
 
 ### 16.13 Adaptador de Cliente existente
 
@@ -799,11 +797,11 @@ Esta sección resume el estado real después de completar la separación del mot
 
 ### 17.2 Integración de canales
 
-| Canal | Adaptador | Persistencia | Contexto | Política |
-| --- | --- | --- | --- | --- |
-| Coach | `coach-adapter.js` | Sesiones y operaciones Coach | CRM general autorizado | Operaciones comerciales completas |
-| Cliente existente | `customer-chat-adapter.js` | Jobs `account_chat` | Cuenta CRM fija | Actividades sobre la cuenta |
-| Cuenta nueva | `prospect-chat-adapter.js` | Sesiones de prospección | Prospecto y evidencia pública | Conversiones CRM confirmadas |
+| Canal             | Adaptador                  | Persistencia                 | Contexto                      | Política                          |
+| ----------------- | -------------------------- | ---------------------------- | ----------------------------- | --------------------------------- |
+| Coach             | `coach-adapter.js`         | Sesiones y operaciones Coach | CRM general autorizado        | Operaciones comerciales completas |
+| Cliente existente | `customer-chat-adapter.js` | Jobs `account_chat`          | Cuenta CRM fija               | Actividades sobre la cuenta       |
+| Cuenta nueva      | `prospect-chat-adapter.js` | Sesiones de prospección      | Prospecto y evidencia pública | Conversiones CRM confirmadas      |
 
 Ningún canal comparte historial o sesión con otro. Las operaciones incluyen `sourceChannel` para evitar ejecución cruzada.
 
