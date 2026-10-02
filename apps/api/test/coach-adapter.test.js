@@ -17,8 +17,14 @@ describe("Coach adapter", () => {
     expect(adapter.channel).toBe("coach");
     expect(adapter.availableTools.length).toBeGreaterThan(0);
     expect(adapter.permissions).toBe(permissions);
-    expect(adapter.channelRules).toEqual({});
-    expect(adapter.operationPolicy).toEqual({});
+    expect(adapter.channelRules).toMatchObject({
+      scope: "coach",
+      crmRecordsConfirmedOnly: true,
+    });
+    expect(adapter.operationPolicy).toMatchObject({
+      sourceChannel: "coach",
+      allowedKinds: expect.arrayContaining(["activity", "account_field"]),
+    });
     expect(typeof adapter.runTurn).toBe("function");
   });
 

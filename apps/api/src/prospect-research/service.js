@@ -8,7 +8,14 @@ import {
   getMiCoachGovernanceSettings,
 } from "../commercial-intelligence/service.js";
 import { ensureProspectResearchSchema } from "./schema.js";
-import { createProspectChatAdapter } from "./prospect-chat-adapter.js";
+import {
+  buildProspectFallback,
+  createProspectChatAdapter,
+} from "./prospect-chat-adapter.js";
+import {
+  isCoachChannelInRollout,
+  recordCoachTurnQualityTrace,
+} from "../coach/observability.js";
 
 function clip(value, max = 1200) {
   const text = String(value || "")
@@ -214,6 +221,7 @@ function splitContactName(value) {
 
 function mapSessionRow(row) {
   if (!row) return null;
+  const chatHistory = parseJson(row.chat_history_json, []);
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -225,6 +233,7 @@ function mapSessionRow(row) {
     status: row.status,
     request: parseJson(row.request_json, null),
     result: parseJson(row.result_json, null),
+    chatHistory: Array.isArray(chatHistory) ? chatHistory.slice(-16) : [],
     errorMessage: row.error_message || null,
     convertedAccountId:
       row.converted_account_id === null
@@ -817,10 +826,78 @@ export async function runProspectChat({ user, sessionId, question }) {
   await ensureProspectResearchSchema();
   const session = await getProspectResearchSession({ user, sessionId });
   if (!session) return null;
-  const adapter = createProspectChatAdapter({ user, session, jobId: null });
-  const result = await adapter.runTurn({ question });
+  const channelInRollout = await isCoachChannelInRollout({
+    channel: "prospect",
+    userId: user.id,
+  });
+  let result;
+  if (!channelInRollout) {
+    result = {
+        response: buildProspectFallback(session, question),
+        qualityTrace: {
+          process: "prospect_chat",
+          validationStatus: "valid",
+          validationReasons: [],
+          errorCode: null,
+        },
+      };
+  } else {
+    try {
+      result = await createProspectChatAdapter({
+        user,
+        session,
+        jobId: null,
+      }).runTurn({ question, history: session.chatHistory });
+    } catch (error) {
+      result = {
+        response: buildProspectFallback(session, question),
+        qualityTrace: {
+          process: "prospect_chat",
+          validationStatus: "error",
+          validationReasons: ["adapter_execution_failed"],
+          errorCode: String(
+            error?.code || error?.name || "adapter_execution_failed",
+          ),
+        },
+      };
+    }
+  }
+  const qualityTraceId = await recordCoachTurnQualityTrace({
+    channel: "prospect",
+    process: result.qualityTrace?.process || "prospect_chat",
+    userId: user.id,
+    sessionId: session.id,
+    trace: result.qualityTrace,
+  }).catch((error) => {
+    console.warn("[mi-agent] No fue posible registrar traza de Cuenta nueva:", error?.message || error);
+    return null;
+  });
+  await withTransaction(async (conn) => {
+    const [rows] = await conn.query(
+      `SELECT chat_history_json FROM prospect_research_sessions
+       WHERE id = ? AND requested_by_user_id = ? FOR UPDATE`,
+      [Number(session.id), Number(user.id)],
+    );
+    if (!rows.length) return;
+    const currentHistory = parseJson(rows[0].chat_history_json, []);
+    const nextHistory = [
+      ...(Array.isArray(currentHistory) ? currentHistory : []),
+      { role: "user", text: String(question || "").trim().slice(0, 2000) },
+      {
+        role: "assistant",
+        text: String(result.response?.answer || "").trim().slice(0, 2000),
+      },
+    ].filter((message) => message.text).slice(-16);
+    await conn.query(
+      `UPDATE prospect_research_sessions
+       SET chat_history_json = ?, updated_at = NOW(3)
+       WHERE id = ? AND requested_by_user_id = ?`,
+      [JSON.stringify(nextHistory), Number(session.id), Number(user.id)],
+    );
+  });
   return {
     ...result.response,
+    qualityTraceId,
     channel: "prospect",
     sessionId: Number(sessionId),
     source: "prospect_research",

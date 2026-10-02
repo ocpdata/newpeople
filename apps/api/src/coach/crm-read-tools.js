@@ -232,18 +232,67 @@ export function executeCoachReadTool({
   snapshot,
   args = {},
   buildReadiness,
+  businessRules = {},
 }) {
+  const scope = businessRules.scope || {};
+  const opportunityTools = new Set([
+    "searchOpportunities",
+    "getOpportunity",
+    "getOpportunityActivities",
+    "getOpportunityQuotation",
+    "getOpportunityReadiness",
+    "getSellerPipeline",
+  ]);
+  const deniedTools = new Set(
+    [
+      scope.accountSearchAllowed === false && "searchAccounts",
+      ...([...opportunityTools].map((name) =>
+        scope.opportunitySearchAllowed === false && name,
+      )),
+      scope.contactSearchAllowed === false && "searchContacts",
+      scope.leadSearchAllowed === false && "searchLeads",
+    ].filter(Boolean),
+  );
+  if (deniedTools.has(toolName)) {
+    return {
+      toolName,
+      readOnly: true,
+      result: null,
+      error: "Herramienta no permitida por la politica del canal.",
+    };
+  }
+  const effectiveArgs =
+    toolName === "searchOpportunities"
+      ? {
+          ...args,
+          activeOnly: args.inactiveOnly
+            ? false
+            : args.activeOnly || businessRules.filters?.defaultActiveOnly,
+          inactiveOnly: args.activeOnly
+            ? false
+            : args.inactiveOnly || businessRules.filters?.defaultInactiveOnly,
+          openOnly: args.openOnly || businessRules.filters?.defaultOpenOnly,
+        }
+      : args;
   const tools = {
-    searchAccounts: () => searchAccounts(snapshot, args),
-    searchOpportunities: () => searchOpportunities(snapshot, args),
-    getOpportunity: () => getOpportunity(snapshot, args.opportunityId),
+    searchAccounts: () => searchAccounts(snapshot, effectiveArgs),
+    searchOpportunities: () => searchOpportunities(snapshot, effectiveArgs),
+    getOpportunity: () => getOpportunity(snapshot, effectiveArgs.opportunityId),
     getOpportunityActivities: () =>
-      getOpportunityActivities(snapshot, args.opportunityId),
-    searchContacts: () => searchContacts(snapshot, args),
-    searchLeads: () => searchLeads(snapshot, args),
+      getOpportunityActivities(snapshot, effectiveArgs.opportunityId),
+    getOpportunityQuotation: () => {
+      const quotation = snapshot.selectedOpportunityQuotation;
+      return quotation &&
+        (!effectiveArgs.opportunityId ||
+          Number(quotation.opportunityId) === Number(effectiveArgs.opportunityId))
+        ? quotation
+        : null;
+    },
+    searchContacts: () => searchContacts(snapshot, effectiveArgs),
+    searchLeads: () => searchLeads(snapshot, effectiveArgs),
     getSellerPipeline: () => getSellerPipeline(snapshot),
     getOpportunityReadiness: () =>
-      getOpportunityReadiness(snapshot, args.opportunityId, buildReadiness),
+      getOpportunityReadiness(snapshot, effectiveArgs.opportunityId, buildReadiness),
   };
   const execute = tools[toolName];
   if (!execute) throw new Error(`Read tool no soportada: ${toolName}`);

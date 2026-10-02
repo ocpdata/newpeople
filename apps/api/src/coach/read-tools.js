@@ -69,12 +69,27 @@ export function getCoachOpportunityRecords(snapshot) {
   ]);
 }
 
-export function inferCoachOpportunityFilters(text) {
+export function inferCoachOpportunityFilters(text, businessRules = {}) {
   const normalizedText = normalize(text);
-  const stageCodes = [...STAGE_ALIASES.entries()]
+  const stageAliases = new Map(
+    Object.entries(businessRules.aliases?.stage || Object.fromEntries(STAGE_ALIASES)).map(
+      ([label, code]) => [normalize(label), code],
+    ),
+  );
+  const statusAliases = new Map(
+    Object.entries(
+      businessRules.aliases?.opportunityStatus ||
+        Object.fromEntries(OPPORTUNITY_STATUS_ALIASES),
+    ).map(([label, code]) => [normalize(label), code]),
+  );
+  const inactivityTerms = Array.isArray(businessRules.aliases?.inactivity)
+    ? businessRules.aliases.inactivity.map(normalize)
+    : INACTIVE_TERMS;
+  const filters = businessRules.filters || {};
+  const stageCodes = [...stageAliases.entries()]
     .filter(([label]) => normalizedText.includes(label))
     .map(([, code]) => code);
-  const commercialStatusCodes = [...OPPORTUNITY_STATUS_ALIASES.entries()]
+  const commercialStatusCodes = [...statusAliases.entries()]
     .filter(([label]) => normalizedText.includes(label))
     .map(([, code]) => code);
   const asksForOpen = /\b(abierta|abierto|abiertas|abiertos|en proceso|pipeline)\b/.test(
@@ -83,15 +98,23 @@ export function inferCoachOpportunityFilters(text) {
   const asksForActive = /\b(activa|activo|activas|activos)\b/.test(
     normalizedText,
   );
-  const asksForInactive = INACTIVE_TERMS.some((term) =>
+  const asksForInactive = inactivityTerms.some((term) =>
     normalizedText.includes(term),
+  );
+  const inactiveOnly = asksForInactive || Boolean(filters.defaultInactiveOnly);
+  const closeYearMatch = normalizedText.match(/\b(20\d{2})\b/);
+  const asksForCloseDate = /\b(fecha de cierre|cierre|cierran|cerrar)\b/.test(
+    normalizedText,
   );
   return {
     stageCodes: [...new Set(stageCodes)],
     commercialStatusCodes: [...new Set(commercialStatusCodes)],
-    activeOnly: asksForActive && !asksForInactive,
-    inactiveOnly: asksForInactive,
-    openOnly: asksForOpen,
+    activeOnly:
+      (asksForActive || (!inactiveOnly && filters.defaultActiveOnly)) &&
+      !inactiveOnly,
+    inactiveOnly,
+    openOnly: asksForOpen || Boolean(filters.defaultOpenOnly),
+    closeYear: asksForCloseDate && closeYearMatch ? Number(closeYearMatch[1]) : null,
   };
 }
 
@@ -113,6 +136,9 @@ export function searchCoachOpportunities(snapshot, filters = {}) {
       opportunity?.activationStatusCode || "activada",
     ).trim();
     const lifecycle = String(opportunity?.lifecycle || "").trim();
+    const closeYear = opportunity?.closeDate
+      ? new Date(opportunity.closeDate).getFullYear()
+      : null;
     const accountName = normalize(
       opportunity?.accountName || opportunity?.account?.name,
     );
@@ -135,6 +161,7 @@ export function searchCoachOpportunities(snapshot, filters = {}) {
     if (filters.activeOnly && activationStatusCode !== "activada") return false;
     if (filters.inactiveOnly && activationStatusCode === "activada") return false;
     if (filters.openOnly && lifecycle && lifecycle !== "open") return false;
+    if (filters.closeYear && closeYear !== Number(filters.closeYear)) return false;
     return true;
   });
   return dedupeCoachRecords(result);
@@ -145,37 +172,66 @@ export function getCoachReadToolCatalog() {
     {
       name: "searchAccounts",
       description: "Busca cuentas autorizadas por nombre o identificador.",
+      requiredPermission: "cuentas.read",
       readOnly: true,
     },
     {
       name: "searchOpportunities",
       description:
         "Busca oportunidades autorizadas por nombre, cuenta, etapa, estado y activacion.",
+      requiredPermission: "oportunidades.read",
       readOnly: true,
     },
     {
       name: "getOpportunity",
       description: "Obtiene el detalle de una oportunidad autorizada.",
+      requiredPermission: "oportunidades.read",
       readOnly: true,
     },
     {
       name: "getOpportunityActivities",
       description: "Obtiene actividades y siguientes pasos de una oportunidad.",
+      requiredPermissions: ["oportunidades.read", "desarrollo_comercial.read"],
+      readOnly: true,
+    },
+    {
+      name: "getOpportunityQuotation",
+      description:
+        "Consulta la última cotizacion autorizada de una oportunidad y sus partidas comerciales.",
+      requiredPermission: "oportunidades.read",
+      requiredAnyPermissions: [
+        "cotizaciones.operacion",
+        "cotizaciones.revision",
+        "cotizaciones.ingreso",
+        "cotizaciones.aprobacion_humana",
+        "cotizaciones.aprobacion_ia",
+        "cotizaciones.administracion",
+        "cotizaciones.externo",
+      ],
       readOnly: true,
     },
     {
       name: "searchContacts",
       description: "Busca contactos autorizados relacionados con una cuenta.",
+      requiredPermission: "contactos.read",
       readOnly: true,
     },
     {
       name: "searchLeads",
       description: "Busca leads autorizados solo cuando la intencion es lead.",
+      requiredPermission: "interacciones.read",
       readOnly: true,
     },
     {
       name: "getSellerPipeline",
       description: "Consulta pipeline, riesgos y cobertura del vendedor.",
+      requiredPermissions: ["oportunidades.read", "desarrollo_comercial.read"],
+      readOnly: true,
+    },
+    {
+      name: "getOpportunityReadiness",
+      description: "Evalua la preparacion de una oportunidad para su etapa actual.",
+      requiredPermissions: ["oportunidades.read", "desarrollo_comercial.read"],
       readOnly: true,
     },
   ];

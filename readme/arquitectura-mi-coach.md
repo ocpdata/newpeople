@@ -95,9 +95,14 @@ Aporta:
 - Una cuenta CRM fija.
 - Snapshot CRM autorizado.
 - Cuentas, oportunidades, contactos e interacciones.
+- El mismo catalogo de herramientas de lectura que Coach, ejecutado solo sobre datos de la cuenta autorizada.
+- Pipeline, leads relacionados, actividades y readiness de oportunidades de esa cuenta.
+- Lectura de contenido de cotizaciones, sujeta a permisos de oportunidades/cotizaciones y ownership.
 - Investigacion publica opcional.
 - Operaciones de actividad limitadas a la cuenta.
 - Confirmacion antes de preparar o ejecutar actividades.
+
+Cliente existente conserva `searchInteractions` como herramienta adicional. Ninguna herramienta de lectura puede ampliar el snapshot a otras cuentas.
 
 Entrada principal:
 
@@ -159,6 +164,8 @@ Estas reglas aplican a los tres chats:
 | Cuenta nueva | Una sesion de prospecto | Crear o convertir cuenta, contacto, lead u oportunidad |
 
 Las operaciones incluyen `sourceChannel` para impedir que una propuesta sea ejecutada desde otro canal.
+
+La paridad de herramientas de lectura no implica paridad de escritura: Cliente existente solo propone actividades confirmables; Coach conserva su politica comercial de operaciones.
 
 ## 8. Contrato de operaciones
 

@@ -195,6 +195,7 @@ Endpoints relevantes:
 - Cotizaciones con versiones, workflow propio, bundles por seccion y vista previa PDF backend.
 - Cotizaciones con separacion entre precio original del proveedor y precio convertido en moneda de cotizacion.
 - Configuracion de IA con wallets por usuario y tarifas por modelo con vigencias para costeo de consumo.
+- Mi Coach con chats independientes para Coach, Cliente existente y Cuenta nueva; Cliente existente comparte las herramientas de lectura CRM de Coach dentro del alcance de la cuenta.
 - Oportunidades con linea de negocio, 7 etapas operativas, 4 estados comerciales, vendedor y preventa opcional.
 - Flujo comercial de oportunidades con preguntas por etapa, avance, retroceso, cierre comercial y administración de preguntas desde la web.
 - Contactos con jerarquia (jefe/subordinado) e influencias.
@@ -223,6 +224,7 @@ Cobertura automatizada:
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
 - Calculos operativos del CRM: [readme/calculos.md](./readme/calculos.md)
 - Uso actual de IA en el proyecto: [readme/ia.md](./readme/ia.md)
+- Arquitectura e integraciones de Mi Coach: [readme/arquitectura-mi-coach.md](./readme/arquitectura-mi-coach.md) y [readme/integraciones-mi-coach.md](./readme/integraciones-mi-coach.md)
 - Administracion de credito y tarifas IA operada desde Configuracion > Credito IA.
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)
 - Modulo de cotizaciones: [readme/cotizaciones.md](./readme/cotizaciones.md)

@@ -1,6 +1,7 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
 import { normalizeProspectConversionOperation } from "../coach/operation-contract.js";
+import { loadCoachBusinessRules } from "../coach/business-rules.js";
 
 function normalize(value) {
   return String(value || "")
@@ -51,7 +52,7 @@ function executeProspectReadTool({ toolName, snapshot, args = {} }) {
   return { toolName, readOnly: true, result: execute(args) };
 }
 
-function buildProspectFallback(snapshot, question) {
+export function buildProspectFallback(snapshot, question) {
   const normalizedQuestion = normalize(question);
   if (/\b(correo|email|mail|mensaje|outreach)\b/.test(normalizedQuestion)) {
     return {
@@ -95,7 +96,11 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     { name: "searchProspectHypotheses", requiredPermission: "prospeccion.read" },
   ];
   const dependencies = {
-    prepareReadModel: async ({ question, availableTools: resolvedTools }) => {
+    prepareReadModel: async ({
+      question,
+      availableTools: resolvedTools,
+      conversationHistory = [],
+    }) => {
       const normalizedQuestion = normalize(question);
       const readToolResults = [];
       const names = new Set(resolvedTools.map((tool) => tool.name));
@@ -111,7 +116,12 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       if (/\b(oportunidad|oportunidades|hipotesis|hipótesis|tecnologia|reto)\b/.test(normalizedQuestion))
         pushTool("searchProspectHypotheses");
       const selectedContext = { prospectSessionId: session.id };
-      const modelSnapshot = { ...snapshot, selectedContext, readToolResults };
+      const modelSnapshot = {
+        ...snapshot,
+        selectedContext,
+        readToolResults,
+        conversationHistory,
+      };
       return {
         baseSnapshot: snapshot,
         effectiveContext: selectedContext,
@@ -124,7 +134,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         readToolResults,
         modelSnapshot,
         clarification: null,
-        conversationHistory: [],
+        conversationHistory,
       };
     },
     executeReadTool: ({ toolName, snapshot: scopedSnapshot, args }) =>
@@ -132,10 +142,11 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     buildStageReadiness: () => null,
     isStagePreparationQuestion: () => false,
     loadProcessGuide: async () => "",
-    buildPrompt: (model, question, _guide, context) => ({
+    buildPrompt: (model, question, _guide, context, conversationHistory = []) => ({
       question,
       context: model,
       selectedContext: context,
+      conversationHistory,
       instruction:
         "Usa solo datos de prospección. Distingue datos proporcionados por el vendedor, evidencia pública e inferencias. Nunca presentes un prospecto, contacto o hipótesis como registro CRM confirmado. Las conversiones requieren confirmación explícita.",
     }),
@@ -211,7 +222,11 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       allowedKinds: ["create_account", "create_contact", "create_opportunity"],
       sourceChannel: "prospect",
     },
-    runTurn({ question, history = [] }) {
+    async runTurn({ question, history = [] }) {
+      const businessRules = await loadCoachBusinessRules({
+        channel: "prospect",
+        process: "prospect_chat",
+      });
       return runConversationEngine({
         question,
         context: { prospectSessionId: session.id },
@@ -222,6 +237,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         channelRules: this.channelRules,
         permissions,
         operationPolicy: this.operationPolicy,
+        businessRules,
         dependencies,
       });
     },

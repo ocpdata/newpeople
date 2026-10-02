@@ -1,0 +1,333 @@
+import { query } from "../db.js";
+
+const COACH_BASE_RULES = Object.freeze({
+  channel: "coach",
+  process: "default",
+  scope: Object.freeze({
+    accountScoped: false,
+    accountSearchAllowed: true,
+    leadSearchAllowed: true,
+    opportunitySearchAllowed: true,
+    contactSearchAllowed: true,
+    requireContextForOperation: true,
+    requireBusinessEvidence: true,
+    requirePermissionValidation: true,
+  }),
+  filters: Object.freeze({
+    defaultOpenOnly: false,
+    defaultActiveOnly: true,
+    defaultInactiveOnly: false,
+    defaultRequireEvidence: true,
+  }),
+  aliases: Object.freeze({
+    stage: Object.freeze({
+      "contacto inicial": "contacto_inicial",
+      "contacto_inicial": "contacto_inicial",
+      "identificacion de oportunidad": "identificacion_oportunidad",
+      "identificacion_oportunidad": "identificacion_oportunidad",
+      desarrollo: "desarrollo",
+      cotizacion: "cotizacion",
+      demostracion: "demostracion",
+      negociacion: "negociacion",
+      waiting: "waiting",
+      espera: "waiting",
+    }),
+    opportunityStatus: Object.freeze({
+      abierta: "en_proceso",
+      abierto: "en_proceso",
+      "en proceso": "en_proceso",
+      ganada: "ganada",
+      ganado: "ganada",
+      perdida: "perdida",
+      perdido: "perdida",
+      anulada: "anulada",
+      anulado: "anulada",
+    }),
+    inactivity: Object.freeze([
+      "desactivada",
+      "desactivado",
+      "pendiente de activacion",
+    ]),
+  }),
+  operationPolicy: Object.freeze({
+    sourceChannel: "coach",
+    allowedKinds: Object.freeze([
+      "activity",
+      "stage_answer",
+      "lead_call_outcome",
+      "account_field",
+      "contact_field",
+      "opportunity_field",
+    ]),
+  }),
+  channelRules: Object.freeze({
+    scope: "coach",
+    crmRecordsConfirmedOnly: true,
+    noSharedCoachSession: true,
+  }),
+  validation: Object.freeze({
+    requireEvidence: true,
+    requireEntityResolution: true,
+    requirePermissionValidation: true,
+    allowAmbiguousEntitySelection: false,
+  }),
+});
+
+const ALLOWED_OPERATION_KINDS = new Set(
+  [
+    ...COACH_BASE_RULES.operationPolicy.allowedKinds,
+    "create_account",
+    "create_contact",
+    "create_opportunity",
+  ],
+);
+const RULE_CHANNELS = new Set(["coach", "customer_account", "prospect"]);
+let ensureCoachBusinessRulesSchemaPromise;
+
+function normalizeAliasMap(base, overrides) {
+  const aliases = { ...base };
+  for (const [label, code] of Object.entries(overrides || {})) {
+    const normalizedLabel = String(label || "").trim().toLowerCase();
+    const normalizedCode = String(code || "").trim().toLowerCase();
+    if (normalizedLabel && normalizedCode && normalizedLabel.length <= 80) {
+      aliases[normalizedLabel] = normalizedCode;
+    }
+  }
+  return aliases;
+}
+
+function normalizeStringList(value, fallback) {
+  if (!Array.isArray(value)) return [...fallback];
+  return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function getChannelBaseRules(channel) {
+  if (channel === "customer_account") {
+    return {
+      ...COACH_BASE_RULES,
+      scope: {
+        ...COACH_BASE_RULES.scope,
+        accountScoped: true,
+      },
+      operationPolicy: {
+        sourceChannel: channel,
+        allowedKinds: ["activity"],
+      },
+      channelRules: {
+        scope: channel,
+        accountScoped: true,
+        noSharedCoachSession: true,
+      },
+    };
+  }
+  if (channel === "prospect") {
+    return {
+      ...COACH_BASE_RULES,
+      scope: {
+        ...COACH_BASE_RULES.scope,
+        accountScoped: true,
+        leadSearchAllowed: false,
+        opportunitySearchAllowed: false,
+        contactSearchAllowed: false,
+      },
+      operationPolicy: {
+        sourceChannel: channel,
+        allowedKinds: ["create_account", "create_contact", "create_opportunity"],
+      },
+      channelRules: {
+        scope: channel,
+        prospectScoped: true,
+        crmRecordsConfirmedOnly: true,
+      },
+    };
+  }
+  return COACH_BASE_RULES;
+}
+
+function ensureRulesSchema() {
+  if (!ensureCoachBusinessRulesSchemaPromise) {
+    ensureCoachBusinessRulesSchemaPromise = query(
+      `CREATE TABLE IF NOT EXISTS mi_coach_business_rules (
+        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        channel VARCHAR(40) NOT NULL,
+        process_key VARCHAR(80) NOT NULL,
+        rules_json JSON NOT NULL,
+        updated_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+        CONSTRAINT uq_mi_coach_business_rules_scope UNIQUE (channel, process_key),
+        CONSTRAINT fk_mi_coach_business_rules_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+      )`,
+    ).catch((error) => {
+      ensureCoachBusinessRulesSchemaPromise = undefined;
+      throw error;
+    });
+  }
+  return ensureCoachBusinessRulesSchemaPromise;
+}
+
+export function normalizeCoachBusinessRules({
+  channel = "coach",
+  process = "default",
+  overrides = {},
+} = {}) {
+  if (!RULE_CHANNELS.has(channel)) throw new Error("Canal de reglas no soportado");
+  const normalizedProcess = String(process || "default").trim().toLowerCase();
+  if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
+    throw new Error("Proceso de reglas invalido");
+  }
+  const baseRules = getChannelBaseRules(channel);
+  const channelOperationKinds = new Set(baseRules.operationPolicy.allowedKinds);
+  const requestedOperationKinds = normalizeStringList(
+    overrides.operationPolicy?.allowedKinds,
+    baseRules.operationPolicy.allowedKinds,
+  );
+  const allowedKinds = requestedOperationKinds.filter((kind) =>
+    ALLOWED_OPERATION_KINDS.has(kind) && channelOperationKinds.has(kind),
+  );
+  const filters = {
+    ...COACH_BASE_RULES.filters,
+    ...(overrides.filters || {}),
+    defaultRequireEvidence: true,
+  };
+  if (filters.defaultActiveOnly && filters.defaultInactiveOnly) {
+    filters.defaultInactiveOnly = false;
+  }
+  return {
+    channel,
+    process: normalizedProcess,
+    operationPolicy: {
+      ...baseRules.operationPolicy,
+      ...(overrides.operationPolicy || {}),
+      sourceChannel: channel,
+      allowedKinds,
+    },
+    channelRules: {
+      ...baseRules.channelRules,
+      ...(overrides.channelRules || {}),
+      scope: channel,
+    },
+    filters,
+    scope: {
+      ...baseRules.scope,
+      ...(overrides.scope || {}),
+      requireContextForOperation: true,
+      requireBusinessEvidence: true,
+      requirePermissionValidation: true,
+    },
+    aliases: {
+      stage: {
+        ...normalizeAliasMap(
+          COACH_BASE_RULES.aliases.stage,
+          overrides.aliases?.stage,
+        ),
+      },
+      opportunityStatus: {
+        ...normalizeAliasMap(
+          COACH_BASE_RULES.aliases.opportunityStatus,
+          overrides.aliases?.opportunityStatus,
+        ),
+      },
+      inactivity: normalizeStringList(
+        overrides.aliases?.inactivity,
+        COACH_BASE_RULES.aliases.inactivity,
+      ),
+    },
+    validation: {
+      ...baseRules.validation,
+      ...(overrides.validation || {}),
+      requireEvidence: true,
+      requireEntityResolution: true,
+      requirePermissionValidation: true,
+      allowAmbiguousEntitySelection: false,
+    },
+  };
+}
+
+export function getCoachBusinessRules({
+  channel = "coach",
+  process = "default",
+  overrides = {},
+} = {}) {
+  return normalizeCoachBusinessRules({ channel, process, overrides });
+}
+
+export async function loadCoachBusinessRules({ channel = "coach", process = "default" } = {}) {
+  await ensureRulesSchema();
+  let rows = await query(
+    `SELECT rules_json FROM mi_coach_business_rules
+     WHERE channel = ? AND process_key = ? LIMIT 1`,
+    [channel, process],
+  );
+  if (!rows.length && process !== "default") {
+    rows = await query(
+      `SELECT rules_json FROM mi_coach_business_rules
+       WHERE channel = ? AND process_key = 'default' LIMIT 1`,
+      [channel],
+    );
+  }
+  let overrides = {};
+  try {
+    overrides = rows[0]?.rules_json
+      ? typeof rows[0].rules_json === "string"
+        ? JSON.parse(rows[0].rules_json)
+        : rows[0].rules_json
+      : {};
+  } catch {
+    overrides = {};
+  }
+  return getCoachBusinessRules({ channel, process, overrides });
+}
+
+export async function saveCoachBusinessRules({
+  user,
+  channel = "coach",
+  process = "default",
+  rules = {},
+} = {}) {
+  const normalized = normalizeCoachBusinessRules({ channel, process, overrides: rules });
+  await ensureRulesSchema();
+  await query(
+    `INSERT INTO mi_coach_business_rules
+      (channel, process_key, rules_json, updated_by_user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, NOW(3), NOW(3))
+     ON DUPLICATE KEY UPDATE
+       rules_json = VALUES(rules_json),
+       updated_by_user_id = VALUES(updated_by_user_id),
+       updated_at = NOW(3)`,
+    [channel, process, JSON.stringify(normalized), Number(user?.id) || null],
+  );
+  return normalized;
+}
+
+export async function resetCoachBusinessRules({ channel = "coach", process = "default" } = {}) {
+  if (!RULE_CHANNELS.has(channel)) throw new Error("Canal de reglas no soportado");
+  const normalizedProcess = String(process || "default").trim().toLowerCase();
+  if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
+    throw new Error("Proceso de reglas invalido");
+  }
+  await ensureRulesSchema();
+  await query(
+    `DELETE FROM mi_coach_business_rules WHERE channel = ? AND process_key = ?`,
+    [channel, normalizedProcess],
+  );
+  return loadCoachBusinessRules({ channel, process: normalizedProcess });
+}
+
+export function getCoachBusinessRuleSummary({
+  channel = "coach",
+  process = "default",
+  overrides = {},
+} = {}) {
+  const rules = getCoachBusinessRules({ channel, process, overrides });
+  return {
+    channel: rules.channel,
+    process: rules.process,
+    scope: rules.scope,
+    filters: rules.filters,
+    operationPolicy: rules.operationPolicy,
+    channelRules: rules.channelRules,
+    validation: rules.validation,
+    aliases: rules.aliases,
+  };
+}

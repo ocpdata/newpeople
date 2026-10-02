@@ -77,6 +77,11 @@ describe("API integration baseline", () => {
     await ensureCommercialEnablementPermissions();
     await ensureCommercialIntelligencePermissions();
     await ensureCommercialIntelligenceSchema();
+    const governanceSettingsRows = await query(
+      `SELECT settings_json FROM mi_coach_governance_settings
+       WHERE singleton_key = 'default' LIMIT 1`,
+    );
+    ctx.originalMiCoachGovernanceSettings = governanceSettingsRows[0]?.settings_json;
     await ensureProspectResearchPermissions();
     await ensureProspectResearchSchema();
     await ensureCommercialTrackingPermissions();
@@ -1076,8 +1081,25 @@ describe("API integration baseline", () => {
   }
 
   afterAll(async () => {
-    await cleanupArtifacts(cleanup);
-    await pool.end();
+    try {
+      await cleanupArtifacts(cleanup);
+    } finally {
+      try {
+        if (ctx.originalMiCoachGovernanceSettings !== undefined) {
+          await query(
+            `UPDATE mi_coach_governance_settings
+             SET settings_json = ? WHERE singleton_key = 'default'`,
+            [
+              typeof ctx.originalMiCoachGovernanceSettings === "string"
+                ? ctx.originalMiCoachGovernanceSettings
+                : JSON.stringify(ctx.originalMiCoachGovernanceSettings),
+            ],
+          );
+        }
+      } finally {
+        await pool.end();
+      }
+    }
   });
 
   test("login y /me reflejan permisos efectivos del usuario", async () => {
@@ -1273,9 +1295,16 @@ describe("API integration baseline", () => {
       const jobResponse = await waitForJob(queuedResponse.body.job.id);
 
       expect(jobResponse.status).toBe(200);
-      expect(jobResponse.body.job.status).toBe("completed");
       expect(jobResponse.body.job.errorMessage).toBeNull();
+      expect(jobResponse.body.job.status).toBe("completed");
       expect(jobResponse.body.result.answer).toBe(expectedAnswer);
+      expect(jobResponse.body.result.qualityTraceId).toEqual(expect.any(Number));
+      const coachTraceRows = await query(
+        `SELECT channel, process_key FROM coach_turn_quality_traces
+         WHERE id = ? AND user_id = ? LIMIT 1`,
+        [jobResponse.body.result.qualityTraceId, baselineUserId],
+      );
+      expect(coachTraceRows[0]).toMatchObject({ channel: "coach" });
       expect(jobResponse.body.result.entities).toMatchObject({
         accountId: fixture.accountId,
         opportunityId: fixture.opportunityId,
@@ -1300,6 +1329,9 @@ describe("API integration baseline", () => {
       expect(receivedPrompts[0].snapshot.selectedContext.opportunityId).toBe(
         fixture.opportunityId,
       );
+      expect(
+        receivedPrompts[0].snapshot.readToolCatalog.map((tool) => tool.name),
+      ).toContain("searchOpportunities");
       expect(
         receivedPrompts[0].snapshot.coachOpportunities.map((item) => item.id),
       ).toContain(fixture.opportunityId);
@@ -1647,6 +1679,126 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("Coach quality feedback y rollout por canal quedan gobernados y medibles", async () => {
+    const ownerLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.use@example.com`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.admin@example.com`,
+    );
+    const processKey = `phase5_${TEST_PREFIX}`.replace(/[^a-z0-9_-]/gi, "_").slice(0, 80);
+    const traceSessionId = 900000 + Date.now() % 100000;
+    const traceInsert = await query(
+      `INSERT INTO coach_turn_quality_traces
+        (channel, process_key, user_id, session_id, primary_entity, entity_resolution_json,
+         applied_rules_json, validation_status, validation_reasons_json,
+         response_type, confidence, evidence_count, tools_used_json,
+         operations_proposed, operations_rejected, latency_ms)
+       VALUES ('coach', ?, ?, ?, 'opportunity', JSON_OBJECT('resolvedEntityTypes', JSON_ARRAY('opportunity')),
+         JSON_OBJECT('channel', 'coach'), 'valid', JSON_ARRAY(), 'informational',
+         'high', 1, JSON_ARRAY('searchOpportunities'), 0, 0, 25)`,
+      [processKey, ctx.miCoachUseUserId, traceSessionId],
+    );
+    const traceId = Number(traceInsert.insertId);
+    const rolloutRows = await query(
+      `SELECT enabled, rollout_percentage, allowlist_json
+       FROM coach_channel_rollouts WHERE channel = 'prospect' LIMIT 1`,
+    );
+    const originalRollout = rolloutRows[0];
+    try {
+      const unauthorizedFeedback = await request(app)
+        .post(`/api/mi-agent/coach/quality/${traceId}/feedback`)
+        .set("Authorization", `Bearer ${adminLogin.body.token}`)
+        .send({ rating: "negative", category: "intent", corrected: true });
+      expect(unauthorizedFeedback.status).toBe(404);
+
+      const feedbackResponse = await request(app)
+        .post(`/api/mi-agent/coach/quality/${traceId}/feedback`)
+        .set("Authorization", `Bearer ${ownerLogin.body.token}`)
+        .send({ rating: "negative", category: "intent", corrected: true });
+      expect(feedbackResponse.status).toBe(200);
+
+      const ownerTraces = await request(app)
+        .get(`/api/mi-agent/coach/quality/traces?channel=coach&sessionId=${traceSessionId}`)
+        .set("Authorization", `Bearer ${ownerLogin.body.token}`);
+      expect(ownerTraces.status).toBe(200);
+      expect(ownerTraces.body.traces).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: traceId,
+            process: processKey,
+            validation: { status: "valid", reasons: [] },
+            feedback: expect.objectContaining({
+              rating: "negative",
+              category: "intent",
+              corrected: true,
+            }),
+          }),
+        ]),
+      );
+      const foreignTraces = await request(app)
+        .get(`/api/mi-agent/coach/quality/traces?channel=coach&sessionId=${traceSessionId}`)
+        .set("Authorization", `Bearer ${adminLogin.body.token}`);
+      expect(foreignTraces.status).toBe(200);
+      expect(foreignTraces.body.traces).toEqual([]);
+
+      const qualityResponse = await request(app)
+        .get("/api/mi-agent/coach/quality?periodDays=30")
+        .set("Authorization", `Bearer ${adminLogin.body.token}`);
+      expect(qualityResponse.status).toBe(200);
+      expect(qualityResponse.body.quality.processes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            channel: "coach",
+            process: processKey,
+            intentClassificationAccuracy: 0,
+            correctionByFeedbackRate: 1,
+          }),
+        ]),
+      );
+
+      const rolloutResponse = await request(app)
+        .put("/api/mi-agent/coach/rollouts")
+        .set("Authorization", `Bearer ${adminLogin.body.token}`)
+        .send({
+          rollouts: [
+            {
+              channel: "prospect",
+              enabled: false,
+              rolloutPercentage: 0,
+              allowlist: [],
+            },
+          ],
+        });
+      expect(rolloutResponse.status).toBe(200);
+      expect(rolloutResponse.body.rollouts[0]).toMatchObject({
+        channel: "prospect",
+        enabled: false,
+        rolloutPercentage: 0,
+      });
+    } finally {
+      await query(`DELETE FROM coach_turn_quality_traces WHERE id = ?`, [traceId]);
+      if (originalRollout) {
+        await query(
+          `UPDATE coach_channel_rollouts
+           SET enabled = ?, rollout_percentage = ?, allowlist_json = ?
+           WHERE channel = 'prospect'`,
+          [
+            originalRollout.enabled,
+            originalRollout.rollout_percentage,
+            JSON.stringify(
+              typeof originalRollout.allowlist_json === "string"
+                ? JSON.parse(originalRollout.allowlist_json)
+                : originalRollout.allowlist_json,
+            ),
+          ],
+        );
+      }
+    }
+  });
+
   test("mi coach protege y completa sesiones, jobs, handoffs y reversiones", async () => {
     const operatorLogin = await login(
       request(app),
@@ -1722,6 +1874,27 @@ describe("API integration baseline", () => {
         });
       expect(forbiddenProposal.status).toBe(403);
 
+        const foreignChannelProposal = await request(app)
+          .post("/api/mi-agent/coach/operations")
+          .set("Authorization", authorization)
+          .send({
+            sessionId: session.id,
+            operation: {
+              kind: "activity",
+              sourceChannel: "customer_account",
+              title: "Operacion ajena al Coach",
+              opportunityId: null,
+              activityId: null,
+              actionType: "follow_up",
+              status: "pending",
+              priority: "medium",
+              evidence: [],
+              missingFields: [],
+              requiresConfirmation: true,
+            },
+          });
+        expect(foreignChannelProposal.status).toBe(409);
+
       const proposedActivity = await request(app)
         .post("/api/mi-agent/coach/operations")
         .set("Authorization", authorization)
@@ -1746,6 +1919,7 @@ describe("API integration baseline", () => {
       expect(proposedActivity.status).toBe(201);
       expect(proposedActivity.body.operation).toMatchObject({
         kind: "activity",
+        sourceChannel: "coach",
         status: "ready",
         targetModule: "commercial_development",
       });
@@ -1947,7 +2121,7 @@ describe("API integration baseline", () => {
       const pendingAtClose = await persistCoachOperations({
         userId: ctx.miCoachOperatorUserId,
         sessionId: session.id,
-        sourceJobId: jobId,
+        sourceJobId: null,
         originalIntent: "Cerrar la conversación",
         entities: { accountId },
         operations: [
@@ -2198,10 +2372,73 @@ describe("API integration baseline", () => {
     );
     expect(internalJobResponse.body.job.findings.length).toBeGreaterThan(0);
 
+    const forbiddenChatSessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${noAccountLogin.body.token}`)
+      .send({ accountId });
+    expect(forbiddenChatSessionResponse.status).toBe(403);
+    expect(forbiddenChatSessionResponse.body.requiredPermission).toBe(
+      "cuentas.read",
+    );
+
+    const accountChatSessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId });
+    expect(accountChatSessionResponse.status).toBe(201);
+    const accountChatSessionId = Number(
+      accountChatSessionResponse.body.session.id,
+    );
+    const otherAccountId = await createDirectAccount({
+      ownerUserId: ctx.commercialIntelligenceUpdateUserId,
+      actorUserId: ctx.commercialIntelligenceUpdateUserId,
+      suffix: `${TEST_PREFIX}_chat_other_context`,
+    });
+    cleanup.accountIds.push(otherAccountId);
+    const mismatchedChatSessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({
+        accountId: otherAccountId,
+        chatSessionId: accountChatSessionId,
+        question: "No debe cruzar cuentas",
+      });
+    expect(mismatchedChatSessionResponse.status).toBe(409);
+
+    const otherChatOwnerId = await createUser({
+      fullName: "API Account Chat Other Owner",
+      email: `${TEST_PREFIX}.account.chat.other.owner@example.com`,
+      roleIds: [ctx.commercialIntelligenceUpdateRoleId],
+    });
+    cleanup.userIds.push(otherChatOwnerId);
+    const otherChatOwnerLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.account.chat.other.owner@example.com`,
+    );
+    const forbiddenSessionReadResponse = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-chat/sessions/${accountChatSessionId}`,
+      )
+      .set("Authorization", `Bearer ${otherChatOwnerLogin.body.token}`);
+    expect(forbiddenSessionReadResponse.status).toBe(404);
+
+    const separateAccountChatSessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId });
+    expect(separateAccountChatSessionResponse.status).toBe(201);
+    const separateAccountChatSessionId = Number(
+      separateAccountChatSessionResponse.body.session.id,
+    );
+
     const accountChatResponse = await request(app)
       .post("/api/commercial-intelligence/account-chat/jobs")
       .set("Authorization", `Bearer ${updateLogin.body.token}`)
-      .send({ accountId, question: "Resume esta cuenta para mi reunión" });
+      .send({
+        accountId,
+        chatSessionId: accountChatSessionId,
+        question: "Resume esta cuenta para mi reunión",
+      });
     expect(accountChatResponse.status).toBe(202);
     const accountChatJobId = Number(accountChatResponse.body.job.id);
     let accountChatJob;
@@ -2220,14 +2457,41 @@ describe("API integration baseline", () => {
       expect.objectContaining({
         source: "account_intelligence",
         answer: expect.any(String),
+        qualityTraceId: expect.any(Number),
       }),
     );
+    const accountTraceRows = await query(
+      `SELECT channel, session_id FROM coach_turn_quality_traces
+       WHERE id = ? LIMIT 1`,
+      [accountChatJob.body.job.result.qualityTraceId],
+    );
+    expect(accountTraceRows[0]).toMatchObject({
+      channel: "customer_account",
+      session_id: accountChatSessionId,
+    });
+    const historyAfterFirstChatRows = await query(
+      `SELECT history_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
+      [accountChatSessionId],
+    );
+    const historyAfterFirstChat =
+      typeof historyAfterFirstChatRows[0]?.history_json === "string"
+        ? JSON.parse(historyAfterFirstChatRows[0].history_json)
+        : historyAfterFirstChatRows[0]?.history_json;
+    expect(historyAfterFirstChat).toHaveLength(2);
+    const reloadedChatSessionResponse = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-chat/sessions/${accountChatSessionId}`,
+      )
+      .set("Authorization", `Bearer ${updateLogin.body.token}`);
+    expect(reloadedChatSessionResponse.status).toBe(200);
+    expect(reloadedChatSessionResponse.body.session.history).toHaveLength(2);
 
     const emailChatResponse = await request(app)
       .post("/api/commercial-intelligence/account-chat/jobs")
       .set("Authorization", `Bearer ${updateLogin.body.token}`)
       .send({
         accountId,
+        chatSessionId: accountChatSessionId,
         question:
           "Dame un modelo de correo para enviarlo a Eduardo para buscar mas oportunidades",
       });
@@ -2249,6 +2513,66 @@ describe("API integration baseline", () => {
     expect(emailChatJob.body.job.result.answer).not.toMatch(
       /\b\d+ oportunidad\(es\)/i,
     );
+    const historyAfterSecondChatRows = await query(
+      `SELECT history_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
+      [accountChatSessionId],
+    );
+    const historyAfterSecondChat =
+      typeof historyAfterSecondChatRows[0]?.history_json === "string"
+        ? JSON.parse(historyAfterSecondChatRows[0].history_json)
+        : historyAfterSecondChatRows[0]?.history_json;
+    const untouchedSeparateHistoryRows = await query(
+      `SELECT history_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
+      [separateAccountChatSessionId],
+    );
+    const untouchedSeparateHistory =
+      typeof untouchedSeparateHistoryRows[0]?.history_json === "string"
+        ? JSON.parse(untouchedSeparateHistoryRows[0].history_json)
+        : untouchedSeparateHistoryRows[0]?.history_json;
+    expect(historyAfterSecondChat).toHaveLength(4);
+    const reloadedSecondChatSessionResponse = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-chat/sessions/${accountChatSessionId}`,
+      )
+      .set("Authorization", `Bearer ${updateLogin.body.token}`);
+    expect(reloadedSecondChatSessionResponse.status).toBe(200);
+    expect(reloadedSecondChatSessionResponse.body.session.history).toHaveLength(
+      4,
+    );
+    expect(untouchedSeparateHistory).toEqual([]);
+
+    const separateSessionJobResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/jobs")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({
+        accountId,
+        chatSessionId: separateAccountChatSessionId,
+        question: "Inicia una conversacion separada",
+      });
+    expect(separateSessionJobResponse.status).toBe(202);
+    const separateSessionJobId = Number(separateSessionJobResponse.body.job.id);
+    let separateSessionJob;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      separateSessionJob = await request(app)
+        .get(
+          `/api/commercial-intelligence/account-chat/jobs/${separateSessionJobId}`,
+        )
+        .set("Authorization", `Bearer ${updateLogin.body.token}`);
+      if (["completed", "failed"].includes(separateSessionJob.body.job?.status))
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(separateSessionJob.body.job.status).toBe("completed");
+    const isolatedHistoryRows = await query(
+      `SELECT history_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
+      [separateAccountChatSessionId],
+    );
+    const isolatedHistory =
+      typeof isolatedHistoryRows[0]?.history_json === "string"
+        ? JSON.parse(isolatedHistoryRows[0].history_json)
+        : isolatedHistoryRows[0]?.history_json;
+    expect(isolatedHistory).toHaveLength(2);
+    expect(historyAfterSecondChat).toHaveLength(4);
 
     const agentsResponse = await request(app)
       .post("/api/commercial-intelligence/agents/jobs")
@@ -2400,7 +2724,7 @@ describe("API integration baseline", () => {
     expect(externalResearchResponse.body.requiredPermission).toBe(
       "mi_coach.admin",
     );
-  });
+  }, 15000);
 
   test("prospeccion crea sesion, genera ficha y confirma hallazgos", async () => {
     const noCoachLogin = await login(
@@ -2479,6 +2803,7 @@ describe("API integration baseline", () => {
       expect.objectContaining({
         source: "prospect_research",
         answer: expect.any(String),
+        qualityTraceId: expect.any(Number),
         entities: expect.objectContaining({
           accountId: null,
           opportunityId: null,
@@ -2486,6 +2811,15 @@ describe("API integration baseline", () => {
         operations: expect.any(Array),
       }),
     );
+    const prospectTraceRows = await query(
+      `SELECT channel, session_id FROM coach_turn_quality_traces
+       WHERE id = ? LIMIT 1`,
+      [prospectChatResponse.body.result.qualityTraceId],
+    );
+    expect(prospectTraceRows[0]).toMatchObject({
+      channel: "prospect",
+      session_id: Number(sessionId),
+    });
     expect(prospectChatResponse.body.result.operations).toEqual(
       expect.arrayContaining(
         prospectChatResponse.body.result.operations.map((operation) =>
@@ -2493,6 +2827,25 @@ describe("API integration baseline", () => {
         ),
       ),
     );
+    const prospectSessionAfterChatResponse = await request(app)
+      .get(`/api/prospect-research/sessions/${sessionId}`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+    expect(prospectSessionAfterChatResponse.body.session.chatHistory).toEqual([
+      expect.objectContaining({ role: "user" }),
+      expect.objectContaining({ role: "assistant" }),
+    ]);
+
+    const secondProspectChatResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/chat`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ question: "Continua la respuesta anterior con mas detalle." });
+    expect(secondProspectChatResponse.status).toBe(200);
+    const prospectSessionAfterSecondChatResponse = await request(app)
+      .get(`/api/prospect-research/sessions/${sessionId}`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+    expect(
+      prospectSessionAfterSecondChatResponse.body.session.chatHistory,
+    ).toHaveLength(4);
 
     const findingId = Number(runResponse.body.session.findings[0].id);
     const confirmResponse = await request(app)
@@ -2753,6 +3106,43 @@ describe("API integration baseline", () => {
         findingRetentionDays: expect.any(Number),
       }),
     );
+    expect(initialResponse.body.businessRules).toMatchObject({
+      channel: "coach",
+      process: "default",
+      scope: expect.objectContaining({
+        requirePermissionValidation: true,
+      }),
+    });
+    const rulesByIntentResponse = await request(app)
+      .put("/api/commercial-intelligence/governance/business-rules")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        channel: "coach",
+        process: "opportunity_query",
+        rules: {
+          filters: { defaultActiveOnly: false },
+          aliases: { stage: { "fase empresarial": "negociacion" } },
+        },
+      });
+    expect(rulesByIntentResponse.status).toBe(200);
+    expect(rulesByIntentResponse.body.businessRules).toMatchObject({
+      channel: "coach",
+      process: "opportunity_query",
+      filters: { defaultActiveOnly: false },
+      aliases: { stage: { "fase empresarial": "negociacion" } },
+    });
+    const reloadedRulesResponse = await request(app)
+      .get("/api/commercial-intelligence/governance/business-rules?channel=coach&process=opportunity_query")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(reloadedRulesResponse.status).toBe(200);
+    expect(reloadedRulesResponse.body.businessRules.filters.defaultActiveOnly).toBe(
+      false,
+    );
+    const resetRulesResponse = await request(app)
+      .delete("/api/commercial-intelligence/governance/business-rules?channel=coach&process=opportunity_query")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(resetRulesResponse.status).toBe(200);
+    expect(resetRulesResponse.body.businessRules.process).toBe("opportunity_query");
 
     const enableWonHistoryResponse = await request(app)
       .put("/api/commercial-intelligence/governance/settings")

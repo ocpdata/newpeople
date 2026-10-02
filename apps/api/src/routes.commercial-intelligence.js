@@ -1,3 +1,8 @@
+import {
+  loadCoachBusinessRules,
+  resetCoachBusinessRules,
+  saveCoachBusinessRules,
+} from "./coach/business-rules.js";
 import express from "express";
 import { z } from "zod";
 import { requirePermission } from "./auth.js";
@@ -24,7 +29,9 @@ import {
   createAccountIntelligenceAgentsJob,
   processAccountIntelligenceAgentsJob,
   getAccountIntelligenceMetrics,
+  createCustomerAccountChatSession,
   createCustomerAccountChatJob,
+  getCustomerAccountChatSession,
   processCustomerAccountChatJob,
   updateCustomerIntelligenceFindingStatus,
   updateMiCoachGovernanceSettings,
@@ -53,6 +60,12 @@ const snapshotQuerySchema = z.object({
   contactId: z.coerce.number().int().positive().optional().nullable(),
 });
 
+const customerChatSessionSchema = jobCreateSchema.pick({
+  accountId: true,
+  opportunityId: true,
+  contactId: true,
+});
+
 const governanceSettingsSchema = z.object({
   externalSourcesEnabled: z.boolean().optional(),
   includeWonOpportunities: z.boolean().optional(),
@@ -63,6 +76,63 @@ const governanceSettingsSchema = z.object({
   requireEvidenceForExternalFindings: z.boolean().optional(),
   allowProspectConversion: z.boolean().optional(),
   notes: z.string().trim().max(1000).optional(),
+});
+
+const coachBusinessRulesSchema = z.object({
+  channel: z.enum(["coach", "customer_account", "prospect"]).default("coach"),
+  process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).default("default"),
+  rules: z.object({
+    channel: z.enum(["coach", "customer_account", "prospect"]).optional(),
+    process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
+    scope: z.object({
+      accountScoped: z.boolean().optional(),
+      accountSearchAllowed: z.boolean().optional(),
+      leadSearchAllowed: z.boolean().optional(),
+      opportunitySearchAllowed: z.boolean().optional(),
+      contactSearchAllowed: z.boolean().optional(),
+      requireContextForOperation: z.boolean().optional(),
+      requireBusinessEvidence: z.boolean().optional(),
+      requirePermissionValidation: z.boolean().optional(),
+    }).partial().optional(),
+    filters: z.object({
+      defaultOpenOnly: z.boolean().optional(),
+      defaultActiveOnly: z.boolean().optional(),
+      defaultInactiveOnly: z.boolean().optional(),
+      defaultRequireEvidence: z.boolean().optional(),
+    }).partial().optional(),
+    aliases: z.object({
+      stage: z.record(z.string(), z.string()).optional(),
+      opportunityStatus: z.record(z.string(), z.string()).optional(),
+      inactivity: z.array(z.string().trim().min(1).max(80)).optional(),
+    }).partial().optional(),
+    operationPolicy: z.object({
+      allowedKinds: z.array(z.enum([
+        "activity",
+        "stage_answer",
+        "lead_call_outcome",
+        "account_field",
+        "contact_field",
+        "opportunity_field",
+        "create_account",
+        "create_contact",
+        "create_opportunity",
+      ])).optional(),
+      sourceChannel: z.enum(["coach", "customer_account", "prospect"]).optional(),
+    }).partial().optional(),
+    channelRules: z.object({
+      scope: z.enum(["coach", "customer_account", "prospect"]).optional(),
+      accountScoped: z.boolean().optional(),
+      prospectScoped: z.boolean().optional(),
+      crmRecordsConfirmedOnly: z.boolean().optional(),
+      noSharedCoachSession: z.boolean().optional(),
+    }).partial().optional(),
+    validation: z.object({
+      requireEvidence: z.boolean().optional(),
+      requireEntityResolution: z.boolean().optional(),
+      requirePermissionValidation: z.boolean().optional(),
+      allowAmbiguousEntitySelection: z.boolean().optional(),
+    }).partial().optional(),
+  }).strict(),
 });
 
 function sendRouteError(res, error, fallbackMessage) {
@@ -393,6 +463,47 @@ router.get(
 );
 
 router.post(
+  "/account-chat/sessions",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    try {
+      const payload = customerChatSessionSchema.parse(req.body || {});
+      const { session } = await createCustomerAccountChatSession({
+        user: req.user,
+        payload,
+      });
+      return res.status(201).json({ session });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Payload invalido", issues: error.issues });
+      }
+      return sendRouteError(res, error, "No fue posible crear la sesion de chat");
+    }
+  },
+);
+
+router.get(
+  "/account-chat/sessions/:sessionId",
+  requirePermission("mi_coach.use"),
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ message: "Sesion invalida" });
+    }
+    const session = await getCustomerAccountChatSession({
+      user: req.user,
+      sessionId,
+    });
+    if (!session) {
+      return res.status(404).json({ message: "Chat de cuenta no encontrado" });
+    }
+    return res.json({ session });
+  },
+);
+
+router.post(
   "/account-chat/jobs",
   requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
@@ -402,6 +513,7 @@ router.post(
         .extend({
           question: z.string().trim().min(1).max(2000),
           includePublicResearch: z.boolean().optional().default(false),
+          chatSessionId: z.number().int().positive().optional(),
         })
         .parse(req.body || {});
       const { job } = await createCustomerAccountChatJob({
@@ -534,6 +646,86 @@ router.get(
   requirePermission("mi_coach.admin"),
   async (_req, res) => {
     res.json(await getMiCoachGovernanceOverview());
+  },
+);
+
+router.get(
+  "/governance/business-rules",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = z.object({
+      channel: z.enum(["coach", "customer_account", "prospect"]).default("coach"),
+      process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).default("default"),
+    }).safeParse(req.query || {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Ambito de reglas invalido", issues: parsed.error.issues });
+    }
+    const businessRules = await loadCoachBusinessRules(parsed.data);
+    return res.json({ businessRules });
+  },
+);
+
+router.put(
+  "/governance/business-rules",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = coachBusinessRulesSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Reglas de negocio invalidas", issues: parsed.error.issues });
+    }
+    try {
+      const businessRules = await saveCoachBusinessRules({
+        user: req.user,
+        ...parsed.data,
+      });
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "mi_coach_business_rules_updated",
+        entityType: "mi_coach_business_rules",
+        entityId: null,
+        detail: `Reglas de ${parsed.data.channel}/${parsed.data.process} actualizadas`,
+        after: businessRules,
+      });
+      return res.json({ businessRules });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible guardar las reglas de negocio");
+    }
+  },
+);
+
+router.delete(
+  "/governance/business-rules",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = z.object({
+      channel: z.enum(["coach", "customer_account", "prospect"]).default("coach"),
+      process: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/).default("default"),
+    }).safeParse(req.query || {});
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: "Ambito de reglas invalido", issues: parsed.error.issues });
+    }
+    try {
+      const businessRules = await resetCoachBusinessRules(parsed.data);
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "mi_coach_business_rules_reset",
+        entityType: "mi_coach_business_rules",
+        entityId: null,
+        detail: `Reglas de ${parsed.data.channel}/${parsed.data.process} restablecidas`,
+        after: businessRules,
+      });
+      return res.json({ businessRules });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible restablecer las reglas");
+    }
   },
 );
 

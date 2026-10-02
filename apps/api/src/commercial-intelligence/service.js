@@ -8,7 +8,13 @@ import { searchTavily } from "../tavily.js";
 import { ensureManufacturerRegistrationsSchema } from "../manufacturer-registrations/schema.js";
 import { ensureProspectResearchSchema } from "../prospect-research/schema.js";
 import { ensureCommercialIntelligenceSchema } from "./schema.js";
+import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import {
+  isCoachChannelInRollout,
+  recordCoachTurnQualityTrace,
+} from "../coach/observability.js";
+import {
+  appendCustomerAccountChatHistory,
   buildCustomerFallback,
   createCustomerAccountAdapter,
 } from "./customer-chat-adapter.js";
@@ -339,7 +345,8 @@ async function getAccessibleOpportunity({ user, opportunityId }) {
   }
 
   const rows = await query(
-    `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+        `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+          o.sales_stage_id,
             o.updated_at, oss.code AS stage_code, oss.name AS stage_name,
             ocs.code AS commercial_status_code,
             a.name AS account_name
@@ -788,7 +795,8 @@ export async function buildAuthorizedCustomerSnapshot({
   const relatedOpportunities =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
       ? await query(
-          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date, o.updated_at,
+            `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date, o.updated_at,
+              o.sales_stage_id,
                   oss.code AS stage_code, oss.name AS stage_name,
                   ocs.code AS commercial_status_code
            FROM opportunities o
@@ -821,8 +829,8 @@ export async function buildAuthorizedCustomerSnapshot({
   const relatedInactiveOpportunities =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
       ? await query(
-          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
-                  o.close_date, o.updated_at, oss.code AS stage_code,
+            `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
+              o.close_date, o.updated_at, o.sales_stage_id, oss.code AS stage_code,
                   oss.name AS stage_name, ocs.code AS commercial_status_code,
                   oas.code AS activation_status_code
            FROM opportunities o
@@ -847,7 +855,7 @@ export async function buildAuthorizedCustomerSnapshot({
   const relatedInteractions =
     resolvedAccountId && hasReadPermission(user, "interacciones")
       ? await query(
-          `SELECT i.id, i.title, i.analysis_status, i.summary, i.source_notes,
+          `SELECT i.id, i.primary_opportunity_id, i.title, i.analysis_status, i.summary, i.source_notes,
                   i.lead_substatus_code, i.lead_reason_code, i.lead_required_action_code,
                   i.lead_next_action_due_at, i.updated_at, i.created_at
            FROM interactions i
@@ -940,6 +948,170 @@ export async function buildAuthorizedCustomerSnapshot({
     relatedProducts,
     visibleOpportunityIds,
   );
+  const coachOpportunityIds = [...new Set([
+    ...visibleRelatedOpportunities,
+    ...relatedInactiveOpportunities,
+    ...(opportunity ? [opportunity] : []),
+  ].map((item) => Number(item.id)).filter(Boolean))];
+  const coachContextByOpportunity = new Map();
+  if (coachOpportunityIds.length) {
+    const placeholders = coachOpportunityIds.map(() => "?").join(",");
+    const [stageQuestions, workspaceActions, workspaceWeaknesses, assessments, playbookRows] =
+      await Promise.all([
+        query(
+          `SELECT o.id AS opportunity_id, q.id AS question_id,
+                  q.sales_stage_id, q.code, q.prompt, q.is_required,
+                  a.answer_value
+           FROM opportunities o
+           INNER JOIN opportunity_stage_questions q
+             ON q.sales_stage_id = o.sales_stage_id AND q.is_active = 1
+           LEFT JOIN opportunity_stage_question_answers a
+             ON a.id = (SELECT a2.id FROM opportunity_stage_question_answers a2
+                        WHERE a2.opportunity_id = o.id
+                          AND a2.question_id = q.id
+                        ORDER BY a2.id DESC LIMIT 1)
+           WHERE o.id IN (${placeholders})
+           ORDER BY o.id, q.display_order`,
+          coachOpportunityIds,
+        ).catch(() => []),
+        query(
+          `SELECT opportunity_id, id, title, action_type, status, priority,
+                  owner_user_id, due_date, scheduled_at, success_criteria,
+                  notes, is_primary_next_step
+           FROM opportunity_workspace_actions
+           WHERE opportunity_id IN (${placeholders})
+           ORDER BY opportunity_id, due_date IS NULL, due_date, updated_at DESC`,
+          coachOpportunityIds,
+        ).catch(() => []),
+        query(
+          `SELECT opportunity_id, title, category, severity, status, detail,
+                  mitigation_plan
+           FROM opportunity_workspace_weaknesses
+           WHERE opportunity_id IN (${placeholders})
+           ORDER BY opportunity_id, FIELD(severity, 'high', 'medium', 'low'), updated_at DESC`,
+          coachOpportunityIds,
+        ).catch(() => []),
+        query(
+          `SELECT opportunity_id, criterion_code, status, summary, evidence_count
+           FROM opportunity_workspace_criterion_assessments
+           WHERE opportunity_id IN (${placeholders})`,
+          coachOpportunityIds,
+        ).catch(() => []),
+        query(
+          `SELECT st.sales_stage_id, sales.code AS stage_code,
+                  sales.name AS stage_name, st.objective,
+                  st.exit_criteria_summary, c.code AS criterion_code,
+                  c.title AS criterion_title, c.description AS criterion_description,
+                  c.is_required
+           FROM opportunity_playbooks p
+           INNER JOIN opportunity_playbook_versions v
+             ON v.playbook_id = p.id AND v.is_active = 1
+           INNER JOIN opportunity_playbook_stage_templates st
+             ON st.playbook_version_id = v.id
+           INNER JOIN opportunity_sales_stages sales ON sales.id = st.sales_stage_id
+           LEFT JOIN opportunity_playbook_stage_criteria c
+             ON c.stage_template_id = st.id
+           WHERE p.is_active = 1
+             AND st.sales_stage_id IN (
+               SELECT DISTINCT sales_stage_id FROM opportunities
+               WHERE id IN (${placeholders})
+             )
+           ORDER BY st.display_order, c.display_order, c.id`,
+          coachOpportunityIds,
+        ).catch(() => []),
+      ]);
+    const groupRows = (rows) => rows.reduce((groups, row) => {
+      const id = Number(row.opportunity_id);
+      const group = groups.get(id) || [];
+      group.push(row);
+      groups.set(id, group);
+      return groups;
+    }, new Map());
+    const questionsByOpportunity = groupRows(stageQuestions);
+    const actionsByOpportunity = groupRows(workspaceActions);
+    const weaknessesByOpportunity = groupRows(workspaceWeaknesses);
+    const assessmentsByOpportunity = groupRows(assessments);
+    const stagesById = new Map();
+    for (const row of playbookRows) {
+      const stageId = Number(row.sales_stage_id);
+      const stage = stagesById.get(stageId) || {
+        id: stageId,
+        code: row.stage_code || "",
+        name: row.stage_name || "",
+        objective: row.objective || "",
+        expectedOutcome: row.exit_criteria_summary || "",
+        criteria: [],
+      };
+      if (row.criterion_code) {
+        stage.criteria.push({
+          code: row.criterion_code,
+          title: row.criterion_title || "",
+          description: row.criterion_description || "",
+          required: Boolean(row.is_required),
+        });
+      }
+      stagesById.set(stageId, stage);
+    }
+    for (const item of [
+      ...visibleRelatedOpportunities,
+      ...relatedInactiveOpportunities,
+      ...(opportunity ? [opportunity] : []),
+    ]) {
+      const id = Number(item.id);
+      const stageId = Number(item.sales_stage_id || 0) || null;
+      coachContextByOpportunity.set(id, {
+        salesStageId: stageId,
+        currentStage: stageId
+          ? stagesById.get(stageId) || {
+              id: stageId,
+              code: item.stage_code || "",
+              name: item.stage_name || "",
+              objective: "",
+              expectedOutcome: "",
+              criteria: [],
+            }
+          : null,
+        stageQuestions: (questionsByOpportunity.get(id) || []).map((row) => ({
+          questionId: Number(row.question_id),
+          code: row.code || "",
+          prompt: row.prompt || "",
+          required: Boolean(row.is_required),
+          answer: row.answer_value || null,
+        })),
+        workspace: {
+          actions: (actionsByOpportunity.get(id) || []).map((row) => ({
+            id: Number(row.id),
+            title: row.title || "",
+            actionType: row.action_type || "other",
+            status: row.status || "pending",
+            priority: row.priority || "medium",
+            ownerUserId: Number(row.owner_user_id || 0) || null,
+            dueDate: row.due_date || null,
+            scheduledAt: row.scheduled_at || null,
+            successCriteria: row.success_criteria || "",
+            notes: row.notes || "",
+            primary: Boolean(row.is_primary_next_step),
+          })),
+          weaknesses: (weaknessesByOpportunity.get(id) || []).map((row) => ({
+            title: row.title || "",
+            category: row.category || "",
+            severity: row.severity || "medium",
+            status: row.status || "open",
+            detail: row.detail || "",
+            mitigation: row.mitigation_plan || "",
+          })),
+          criteria: (assessmentsByOpportunity.get(id) || []).map((row) => ({
+            code: row.criterion_code || "",
+            status: row.status || "missing",
+            summary: row.summary || "",
+            evidenceCount: Number(row.evidence_count || 0),
+          })),
+        },
+      });
+    }
+  }
+  const coachContextFor = (item) =>
+    coachContextByOpportunity.get(Number(item?.id)) || {};
 
   const normalizedData = {
     snapshotVersion: "account-intelligence.v1",
@@ -958,6 +1130,7 @@ export async function buildAuthorizedCustomerSnapshot({
       : null,
     selectedOpportunity: opportunity
       ? {
+          ...coachContextFor(opportunity),
           id: Number(opportunity.id),
           name: opportunity.name || "",
           accountId: Number(opportunity.account_id),
@@ -1010,6 +1183,7 @@ export async function buildAuthorizedCustomerSnapshot({
       influencesName: item.influences_name || "",
     })),
     opportunities: visibleRelatedOpportunities.map((item) => ({
+      ...coachContextFor(item),
       id: Number(item.id),
       name: item.name || "",
       accountId: Number(item.account_id),
@@ -1028,6 +1202,7 @@ export async function buildAuthorizedCustomerSnapshot({
         : "historical",
     })),
     inactiveOpportunities: relatedInactiveOpportunities.map((item) => ({
+      ...coachContextFor(item),
       id: Number(item.id),
       name: item.name || "",
       accountId: Number(item.account_id),
@@ -1043,6 +1218,8 @@ export async function buildAuthorizedCustomerSnapshot({
     })),
     interactions: relatedInteractions.map((item) => ({
       id: Number(item.id),
+      accountId: Number(resolvedAccountId),
+      opportunityId: Number(item.primary_opportunity_id || 0) || null,
       title: item.title || "",
       analysisStatus: item.analysis_status || "",
       summary: clip(item.summary, 1200),
@@ -1055,6 +1232,8 @@ export async function buildAuthorizedCustomerSnapshot({
     })),
     activities: relatedInteractions.map((item) => ({
       id: Number(item.id),
+      accountId: Number(resolvedAccountId),
+      opportunityId: Number(item.primary_opportunity_id || 0) || null,
       title: item.title || "",
       analysisStatus: item.analysis_status || "",
       summary: clip(item.summary, 1200),
@@ -2169,6 +2348,64 @@ export async function getAccountIntelligenceMetrics({ user }) {
   };
 }
 
+async function insertCustomerAccountChatSession({ user, snapshot }) {
+  const publicId = `cacs_${randomUUID()}`;
+  const result = await query(
+    `INSERT INTO customer_intelligence_chat_sessions
+      (public_id, requested_by_user_id, account_id, opportunity_id, contact_id,
+       history_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
+    [
+      publicId,
+      Number(user.id),
+      snapshot.account?.id || null,
+      snapshot.selectedOpportunity?.id || null,
+      snapshot.selectedContact?.id || null,
+      JSON.stringify([]),
+    ],
+  );
+  return {
+    id: Number(result.insertId),
+    publicId,
+    accountId: snapshot.account?.id || null,
+    opportunityId: snapshot.selectedOpportunity?.id || null,
+    contactId: snapshot.selectedContact?.id || null,
+  };
+}
+
+export async function createCustomerAccountChatSession({ user, payload }) {
+  await ensureCommercialIntelligenceSchema();
+  const snapshot = await buildAuthorizedCustomerSnapshot({ user, ...payload });
+  return {
+    session: await insertCustomerAccountChatSession({ user, snapshot }),
+  };
+}
+
+export async function getCustomerAccountChatSession({ user, sessionId }) {
+  await ensureCommercialIntelligenceSchema();
+  const rows = await query(
+    `SELECT id, public_id, account_id, opportunity_id, contact_id, history_json,
+            created_at, updated_at
+     FROM customer_intelligence_chat_sessions
+     WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
+    [Number(sessionId), Number(user.id)],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const history = parseJson(row.history_json, []);
+  return {
+    id: Number(row.id),
+    publicId: row.public_id,
+    accountId: row.account_id === null ? null : Number(row.account_id),
+    opportunityId:
+      row.opportunity_id === null ? null : Number(row.opportunity_id),
+    contactId: row.contact_id === null ? null : Number(row.contact_id),
+    history: Array.isArray(history) ? history.slice(-8) : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export async function createCustomerAccountChatJob({ user, payload }) {
   await ensureCommercialIntelligenceSchema();
   if (payload.includePublicResearch) {
@@ -2179,6 +2416,35 @@ export async function createCustomerAccountChatJob({ user, payload }) {
     await assertExternalResearchGovernance(user);
   }
   const snapshot = await buildAuthorizedCustomerSnapshot({ user, ...payload });
+  let chatSession;
+  const requestedChatSessionId = Number(payload.chatSessionId || 0);
+  if (requestedChatSessionId > 0) {
+    const sessionRows = await query(
+      `SELECT id, account_id, opportunity_id, contact_id
+       FROM customer_intelligence_chat_sessions
+       WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
+      [requestedChatSessionId, Number(user.id)],
+    );
+    const session = sessionRows[0];
+    if (!session) {
+      throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
+    }
+    const sameContext =
+      Number(session.account_id || 0) === Number(snapshot.account?.id || 0) &&
+      Number(session.opportunity_id || 0) ===
+        Number(snapshot.selectedOpportunity?.id || 0) &&
+      Number(session.contact_id || 0) ===
+        Number(snapshot.selectedContact?.id || 0);
+    if (!sameContext) {
+      throw createHttpError(
+        409,
+        "La sesion de chat pertenece a otro contexto de cliente",
+      );
+    }
+    chatSession = { id: Number(session.id) };
+  } else {
+    chatSession = await insertCustomerAccountChatSession({ user, snapshot });
+  }
   const result = await query(
     `INSERT INTO customer_intelligence_jobs (public_id, account_id, opportunity_id, contact_id, requested_by_user_id, job_type, status, request_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'account_chat', 'pending', ?, NOW(3), NOW(3))`,
     [
@@ -2187,11 +2453,20 @@ export async function createCustomerAccountChatJob({ user, payload }) {
       snapshot.selectedOpportunity?.id || null,
       snapshot.selectedContact?.id || null,
       Number(user.id),
-      JSON.stringify({ ...payload, question: payload.question }),
+      JSON.stringify({
+        ...payload,
+        chatSessionId: chatSession.id,
+        question: payload.question,
+      }),
     ],
   );
   return {
-    job: { id: Number(result.insertId), status: "pending", pollAfterMs: 700 },
+    job: {
+      id: Number(result.insertId),
+      chatSessionId: chatSession.id,
+      status: "pending",
+      pollAfterMs: 700,
+    },
     snapshot,
   };
 }
@@ -2206,19 +2481,44 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   let request;
   let snapshot;
   let agents;
+  let conversationHistory;
+  let channelInRollout = false;
   try {
     request = parseJson(job.request_json, {});
+    channelInRollout = await isCoachChannelInRollout({
+      channel: "customer_account",
+      userId: user.id,
+    });
     snapshot = await buildAuthorizedCustomerSnapshot({
       user,
       accountId: job.account_id,
       opportunityId: job.opportunity_id,
       contactId: job.contact_id,
     });
-    agents = await runAccountIntelligenceAgents(snapshot, {
-      includePublicResearch: Boolean(request.includePublicResearch),
-      user,
-      jobId,
-    });
+    const sessionRows = await query(
+      `SELECT history_json FROM customer_intelligence_chat_sessions
+       WHERE id = ? AND requested_by_user_id = ?
+         AND account_id <=> ? AND opportunity_id <=> ? AND contact_id <=> ?
+       LIMIT 1`,
+      [
+        Number(request.chatSessionId || 0),
+        Number(user.id),
+        job.account_id,
+        job.opportunity_id,
+        job.contact_id,
+      ],
+    );
+    if (!sessionRows.length) {
+      throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
+    }
+    conversationHistory = parseJson(sessionRows[0].history_json, []);
+    agents = channelInRollout
+      ? await runAccountIntelligenceAgents(snapshot, {
+          includePublicResearch: Boolean(request.includePublicResearch),
+          user,
+          jobId,
+        })
+      : [];
   } catch (error) {
     await query(
       `UPDATE customer_intelligence_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ?`,
@@ -2236,9 +2536,19 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     jobId,
   });
   let response;
-  try {
+  let qualityTrace;
+  if (!channelInRollout) {
+    response = buildCustomerFallback(snapshot, request.question);
+    qualityTrace = {
+      process: "account_chat",
+      validationStatus: "valid",
+      validationReasons: [],
+      errorCode: null,
+    };
+  } else try {
     const engineResult = await adapter.runTurn({
       question: request.question,
+      history: conversationHistory,
       context: {
         accountId: snapshot.account?.id || null,
         opportunityId: snapshot.selectedOpportunity?.id || null,
@@ -2247,8 +2557,15 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       },
     });
     response = engineResult.response;
+    qualityTrace = engineResult.qualityTrace;
   } catch {
     response = buildCustomerFallback(snapshot, request.question);
+    qualityTrace = {
+      process: "account_chat",
+      validationStatus: "error",
+      validationReasons: ["adapter_execution_failed"],
+      errorCode: "adapter_execution_failed",
+    };
   }
   const publicSources =
     agents.find((agent) => agent.agentId === "public_research")?.evidence || [];
@@ -2271,10 +2588,54 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     })),
     publicSources,
   };
-  await query(
-    `UPDATE customer_intelligence_jobs SET status = 'completed', result_json = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ?`,
-    [JSON.stringify(response), Number(jobId)],
-  );
+  const qualityTraceId = await recordCoachTurnQualityTrace({
+    channel: "customer_account",
+    process: qualityTrace?.process || "account_chat",
+    userId: user.id,
+    sessionId: request.chatSessionId,
+    jobId,
+    trace: qualityTrace,
+  }).catch((error) => {
+    console.warn("[mi-agent] No fue posible registrar traza de Cliente existente:", error?.message || error);
+    return null;
+  });
+  if (qualityTraceId) response.qualityTraceId = qualityTraceId;
+  await withTransaction(async (conn) => {
+    const [sessionRows] = await conn.query(
+      `SELECT history_json FROM customer_intelligence_chat_sessions
+       WHERE id = ? AND requested_by_user_id = ?
+         AND account_id <=> ? AND opportunity_id <=> ? AND contact_id <=> ?
+       LIMIT 1 FOR UPDATE`,
+      [
+        Number(request.chatSessionId || 0),
+        Number(user.id),
+        job.account_id,
+        job.opportunity_id,
+        job.contact_id,
+      ],
+    );
+    if (!sessionRows.length) {
+      throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
+    }
+    const nextHistory = appendCustomerAccountChatHistory(
+      parseJson(sessionRows[0].history_json, []),
+      request.question,
+      response.answer,
+    );
+    await conn.query(
+      `UPDATE customer_intelligence_chat_sessions
+       SET history_json = ?, updated_at = NOW(3)
+       WHERE id = ? AND requested_by_user_id = ?`,
+      [JSON.stringify(nextHistory), Number(request.chatSessionId), Number(user.id)],
+    );
+    await conn.query(
+      `UPDATE customer_intelligence_jobs
+       SET status = 'completed', result_json = ?, updated_at = NOW(3),
+           finished_at = NOW(3)
+       WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'`,
+      [JSON.stringify(response), Number(jobId), Number(user.id)],
+    );
+  });
   return {
     ...mapJobRow({
       ...job,
@@ -3570,6 +3931,7 @@ export async function getMiCoachGovernanceOverview() {
     updatedByUserId: settingsRow.updated_by_user_id
       ? Number(settingsRow.updated_by_user_id)
       : null,
+    businessRules: await loadCoachBusinessRules({ channel: "coach", process: "default" }),
     metrics: {
       jobsLast30Days: jobRows.map((row) => ({
         status: row.status,

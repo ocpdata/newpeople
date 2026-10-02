@@ -71,7 +71,21 @@ const NON_IDENTIFYING_TOKENS = new Set([
   "vendimos",
   "comprado",
   "compramos",
+  "fecha",
+  "cierre",
+  "cerrada",
+  "cerrado",
+  "cerrar",
+  "ano",
 ]);
+
+function isIdentifyingToken(token) {
+  return (
+    token.length >= 3 &&
+    !NON_IDENTIFYING_TOKENS.has(token) &&
+    !/^20\d{2}$/.test(token)
+  );
+}
 
 function normalize(value) {
   return String(value || "")
@@ -105,7 +119,7 @@ function candidates(
             .split(" ")
             .filter(
               (token) =>
-                token.length >= 3 && !NON_IDENTIFYING_TOKENS.has(token),
+                isIdentifyingToken(token),
             );
           const matchedTokens = tokens.filter((token) =>
             normalizedTextTokens.has(token),
@@ -138,7 +152,7 @@ function candidates(
               .split(" ")
               .filter(
                 (token) =>
-                  token.length >= 3 && !NON_IDENTIFYING_TOKENS.has(token),
+                  isIdentifyingToken(token),
               ).length === 1
               ? 1
               : 2) &&
@@ -150,7 +164,7 @@ function candidates(
                     .split(" ")
                     .filter(
                       (token) =>
-                        token.length >= 3 && !NON_IDENTIFYING_TOKENS.has(token),
+                        isIdentifyingToken(token),
                     ).length,
                   1,
                 ) >=
@@ -171,9 +185,13 @@ function candidates(
   );
 }
 
-export function resolveCoachEntities(snapshot, text) {
-  const opportunities = getCoachOpportunityRecords(snapshot);
-  const accounts = Array.isArray(snapshot?.accounts)
+export function resolveCoachEntities(snapshot, text, businessRules = {}) {
+  const opportunities = businessRules.scope?.opportunitySearchAllowed === false
+    ? []
+    : getCoachOpportunityRecords(snapshot);
+  const accounts = businessRules.scope?.accountSearchAllowed === false
+    ? []
+    : Array.isArray(snapshot?.accounts)
     ? snapshot.accounts
     : Array.from(
         new Map(
@@ -183,17 +201,21 @@ export function resolveCoachEntities(snapshot, text) {
             .map((account) => [Number(account.id), account]),
         ).values(),
       );
-  const contacts = Array.isArray(snapshot?.contactMappings)
+  const contacts = businessRules.scope?.contactSearchAllowed === false
+    ? []
+    : Array.isArray(snapshot?.contactMappings)
     ? snapshot.contactMappings
     : [];
-  const leads = Array.isArray(snapshot?.leads) ? snapshot.leads : [];
+  const leads = businessRules.scope?.leadSearchAllowed === false
+    ? []
+    : Array.isArray(snapshot?.leads) ? snapshot.leads : [];
   const accountMatches = candidates(accounts, text, [
     "name",
     "registrationCode",
     "website",
     "phone",
   ]);
-  const opportunityFilters = inferCoachOpportunityFilters(text);
+  const opportunityFilters = inferCoachOpportunityFilters(text, businessRules);
   const opportunityNameMatches = candidates(opportunities, text, ["name"]);
   const opportunityMatches = (
     opportunityNameMatches.length

@@ -23,6 +23,9 @@ describe("Coach read tools", () => {
     expect(
       inferCoachOpportunityFilters("oportunidades desactivadas de Totalplay"),
     ).toMatchObject({ inactiveOnly: true, activeOnly: false });
+    expect(inferCoachOpportunityFilters("oportunidades con fecha de cierre en 2026")).toMatchObject({
+      closeYear: 2026,
+    });
   });
 
   it("busca por cuenta y etapa y deduplica por ID", () => {

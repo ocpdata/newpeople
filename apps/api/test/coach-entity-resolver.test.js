@@ -216,6 +216,16 @@ describe("Coach entity resolver", () => {
     expect(result.candidates.opportunities).toHaveLength(3);
   });
 
+  test("no interpreta un año de cierre como nombre de oportunidad", () => {
+    const result = resolveCoachEntities(
+      snapshot,
+      "¿Tienen fecha de cierre el 2026?",
+    );
+
+    expect(result.candidates.opportunities).toEqual([]);
+    expect(buildCoachEntityClarification(result, "¿Tienen fecha de cierre el 2026?")).toBeNull();
+  });
+
   test("prioriza el nombre de oportunidad sobre la cuenta", () => {
     const totalplaySnapshot = {
       accounts: [{ id: 40, name: "Totalplay" }],

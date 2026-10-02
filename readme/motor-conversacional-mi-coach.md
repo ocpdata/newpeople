@@ -238,11 +238,11 @@ Las herramientas deben ser pequeñas, explícitas y comprobables. Ejemplos:
 - `searchOpportunities`.
 - `getOpportunity`.
 - `getOpportunityActivities`.
+- `getOpportunityQuotation`.
+- `getOpportunityReadiness`.
 - `getSellerPipeline`.
 - `searchContacts`.
 - `searchLeads`.
-- `prepareActivity`.
-- `createActivity`.
 
 Cada herramienta debe:
 
@@ -252,6 +252,10 @@ Cada herramienta debe:
 - Devolver IDs y relaciones completas.
 - No devolver duplicados.
 - Indicar si el resultado está vacío, es único o es ambiguo.
+
+El catalogo implementado incluye esas herramientas de solo lectura. `getOpportunityQuotation` requiere `oportunidades.read`, al menos un permiso `cotizaciones.*` y ownership de la cuenta (salvo administracion de cotizaciones); devuelve contenido comercial sin costos, margenes ni notas internas.
+
+Cliente existente reutiliza el mismo catalogo mediante su adaptador, pero ejecuta las herramientas contra un snapshot limitado a la cuenta CRM seleccionada. Sus listas de oportunidades, leads, contactos, pipeline, actividades, readiness y cotizaciones no pueden incluir registros de otra cuenta. `searchInteractions` se conserva como herramienta adicional del canal. Los permisos por herramienta se documentan en [Integraciones Mi Coach](./integraciones-mi-coach.md).
 
 ### 5.5 Servicio de comandos
 

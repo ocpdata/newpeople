@@ -186,6 +186,10 @@ const customerIntelligenceOpportunitySchema = z.object({
   id: z.number().int().positive(),
   name: z.string(),
   accountId: z.number().int().positive(),
+  salesStageId: z.number().int().positive().nullable().default(null),
+  currentStage: z.record(z.string(), z.any()).nullable().default(null),
+  stageQuestions: z.array(z.record(z.string(), z.any())).default([]),
+  workspace: z.record(z.string(), z.any()).default({}),
   contactId: z.number().int().positive().nullable(),
   amountUsd: z.number(),
   closeDate: z.any().nullable(),
@@ -205,6 +209,8 @@ const customerIntelligenceInactiveOpportunitySchema =
 
 const customerIntelligenceInteractionSchema = z.object({
   id: z.number().int().positive(),
+  accountId: z.number().int().positive().nullable().default(null),
+  opportunityId: z.number().int().positive().nullable().default(null),
   title: z.string(),
   analysisStatus: z.string(),
   summary: z.string(),

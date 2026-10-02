@@ -12,6 +12,8 @@ import {
   Pencil,
   Search,
   Settings2,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   X,
 } from "lucide-react";
@@ -43,6 +45,8 @@ const COACH_POLL_TIMEOUT_MS = 180000;
 const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
 const CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY =
   "mi-agent-customer-chat-show-foundation";
+const customerChatSessionKey = (accountId) =>
+  `mi-agent-customer-chat-session:${Number(accountId || 0)}`;
 
 const COACH_HANDOFF_OPERATION_KINDS = new Set([
   "activity",
@@ -494,6 +498,73 @@ function isUsablePublicContactValue(value) {
   return Boolean(text) && !/[*xX]{2,}/.test(text);
 }
 
+function CoachQualityFeedback({ traceId }) {
+  const [category, setCategory] = useState("response");
+  const [submittedRating, setSubmittedRating] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
+
+  async function submit(rating) {
+    if (!traceId || submitting) return;
+    setSubmitting(true);
+    setFeedbackError("");
+    try {
+      await api.post(`/api/mi-agent/coach/quality/${traceId}/feedback`, {
+        rating,
+        category,
+        corrected: rating === "negative",
+      });
+      setSubmittedRating(rating);
+    } catch (requestError) {
+      setFeedbackError(
+        getApiErrorMessage(requestError, "No se pudo registrar el feedback"),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!traceId) return null;
+  return (
+    <div className="mi-agent-quality-feedback" aria-label="Calidad de respuesta">
+      <label>
+        <span>Aspecto a evaluar</span>
+        <select
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+          disabled={submitting || submittedRating === "positive"}
+        >
+          <option value="intent">Intención</option>
+          <option value="entity">Entidad</option>
+          <option value="response">Respuesta</option>
+          <option value="evidence">Evidencia</option>
+          <option value="other">Otro</option>
+        </select>
+      </label>
+      <button
+        type="button"
+        title="Respuesta útil"
+        aria-label="Respuesta útil"
+        disabled={submitting || Boolean(submittedRating)}
+        onClick={() => submit("positive")}
+      >
+        <ThumbsUp size={15} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        title="Reportar una corrección"
+        aria-label="Reportar una corrección"
+        disabled={submitting || Boolean(submittedRating)}
+        onClick={() => submit("negative")}
+      >
+        <ThumbsDown size={15} aria-hidden="true" />
+      </button>
+      {submittedRating ? <small>Feedback registrado</small> : null}
+      {feedbackError ? <small role="alert">{feedbackError}</small> : null}
+    </div>
+  );
+}
+
 function buildSnapshot(dashboard) {
   const development = dashboard?.development || dashboard || {};
   const quota = development.quota || {};
@@ -756,6 +827,15 @@ export default function MiAgentPage({
   const [coachGovernance, setCoachGovernance] = useState(null);
   const [coachGovernanceLoading, setCoachGovernanceLoading] = useState(false);
   const [coachGovernanceSaving, setCoachGovernanceSaving] = useState(false);
+  const [coachQualityDashboard, setCoachQualityDashboard] = useState(null);
+  const [coachChannelRollouts, setCoachChannelRollouts] = useState([]);
+  const [coachChannelAllowlistDrafts, setCoachChannelAllowlistDrafts] =
+    useState({});
+  const [coachBusinessRulesDraft, setCoachBusinessRulesDraft] = useState("");
+  const [coachBusinessRulesChannel, setCoachBusinessRulesChannel] =
+    useState("coach");
+  const [coachBusinessRulesProcess, setCoachBusinessRulesProcess] =
+    useState("default");
   const [customerIntelligenceJob, setCustomerIntelligenceJob] = useState(null);
   const [customerAccounts, setCustomerAccounts] = useState([]);
   const [customerAccountSearch, setCustomerAccountSearch] = useState("");
@@ -788,6 +868,9 @@ export default function MiAgentPage({
   const [customerChatQuestion, setCustomerChatQuestion] = useState("");
   const [customerChatMessages, setCustomerChatMessages] = useState([]);
   const [customerChatLoading, setCustomerChatLoading] = useState(false);
+  const [customerChatSessionId, setCustomerChatSessionId] = useState(null);
+  const [customerChatSessionLoading, setCustomerChatSessionLoading] =
+    useState(false);
   const [showCustomerChatFoundation, setShowCustomerChatFoundation] =
     useState(
       () =>
@@ -1404,6 +1487,62 @@ export default function MiAgentPage({
     };
   }, [activeWorkspace, customerAccountId, hasCustomerContext]);
 
+  useEffect(() => {
+    const accountId = Number(customerAccountId || 0);
+    if (!accountId || !hasCustomerContext) {
+      setCustomerChatSessionId(null);
+      setCustomerChatMessages([]);
+      setCustomerChatSessionLoading(false);
+      return undefined;
+    }
+    const storageKey = customerChatSessionKey(accountId);
+    const storedSessionId = Number(
+      window.sessionStorage.getItem(storageKey) || 0,
+    );
+    if (!storedSessionId) {
+      setCustomerChatSessionId(null);
+      setCustomerChatMessages([]);
+      setCustomerChatSessionLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setCustomerChatSessionId(storedSessionId);
+    setCustomerChatSessionLoading(true);
+    api
+      .get(`/api/commercial-intelligence/account-chat/sessions/${storedSessionId}`)
+      .then((response) => {
+        if (cancelled) return;
+        const session = response.data?.session;
+        if (Number(session?.accountId || 0) !== accountId) {
+          throw new Error("La sesion no corresponde a la cuenta actual");
+        }
+        setCustomerChatMessages(
+          (Array.isArray(session.history) ? session.history : []).map(
+            (message) =>
+              message.role === "user"
+                ? { role: "seller", text: message.text }
+                : {
+                    role: "assistant",
+                    answer: message.text,
+                    sourceDomain: "crm_internal",
+                  },
+          ),
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        window.sessionStorage.removeItem(storageKey);
+        setCustomerChatSessionId(null);
+        setCustomerChatMessages([]);
+      })
+      .finally(() => {
+        if (!cancelled) setCustomerChatSessionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [customerAccountId, hasCustomerContext]);
+
   function resetCustomerIntelligence() {
     setCustomerSnapshot(null);
     setCustomerSnapshotLoading(false);
@@ -1424,6 +1563,8 @@ export default function MiAgentPage({
     setCustomerChatQuestion("");
     setCustomerChatMessages([]);
     setCustomerChatLoading(false);
+    setCustomerChatSessionId(null);
+    setCustomerChatSessionLoading(false);
     setCustomerChatPublicResearch(false);
   }
 
@@ -1815,10 +1956,26 @@ export default function MiAgentPage({
     ]);
     setCustomerChatQuestion("");
     try {
+      let activeChatSessionId = customerChatSessionId;
+      if (!activeChatSessionId) {
+        const sessionResponse = await api.post(
+          "/api/commercial-intelligence/account-chat/sessions",
+          buildCustomerIntelligencePayload(),
+        );
+        activeChatSessionId = Number(sessionResponse.data?.session?.id || 0);
+        if (!activeChatSessionId)
+          throw new Error("No se pudo iniciar una conversación de cuenta");
+        window.sessionStorage.setItem(
+          customerChatSessionKey(customerAccountId),
+          String(activeChatSessionId),
+        );
+        setCustomerChatSessionId(activeChatSessionId);
+      }
       const response = await api.post(
         "/api/commercial-intelligence/account-chat/jobs",
         {
           ...buildCustomerIntelligencePayload(),
+          chatSessionId: activeChatSessionId,
           question: normalizedQuestion,
           includePublicResearch: customerChatPublicResearch,
         },
@@ -1857,18 +2014,83 @@ export default function MiAgentPage({
     }
   }
 
-  function openDiscoveryActivity(nextStep) {
-    if (!nextStep?.opportunityId) return;
-    openCoachOperationConfirmation({
-      kind: "activity",
-      opportunityId: nextStep.opportunityId,
-      actionType: nextStep.actionType || "call",
-      title: nextStep.title || "Seguimiento comercial",
-      priority: nextStep.priority || "medium",
-      notes: nextStep.notes || "Preparada desde Cliente existente en Mi Coach.",
-      successCriteria:
-        nextStep.successCriteria || "Obtener siguiente paso confirmado.",
-    });
+  function startNewCustomerChat() {
+    if (customerChatLoading || customerChatSessionLoading) return;
+    window.sessionStorage.removeItem(
+      customerChatSessionKey(customerAccountId),
+    );
+    setCustomerChatSessionId(null);
+    setCustomerChatMessages([]);
+    setCustomerChatQuestion("");
+    setCustomerIntelligenceError("");
+  }
+
+  async function openDiscoveryActivity(nextStep) {
+    const opportunityId = Number(nextStep?.opportunityId || 0);
+    if (!opportunityId || !canExecuteCoach || !canUpdateCommercialDevelopment)
+      return;
+    setSavingCoachOperation(true);
+    setError("");
+    try {
+      const response = await api.post("/api/mi-agent/coach/operations", {
+        sessionId: null,
+        originalIntent: "Preparar actividad desde Cliente existente",
+        context: {
+          accountId: Number(customerAccountId || 0) || null,
+          opportunityId,
+        },
+        operation: {
+          kind: "activity",
+          sourceChannel: "coach",
+          title: nextStep.title || "Seguimiento comercial",
+          evidence: Array.isArray(nextStep.evidence) ? nextStep.evidence : [],
+          missingFields: [],
+          requiresConfirmation: true,
+          opportunityId,
+          activityId: null,
+          actionType: nextStep.actionType || "call",
+          status: "pending",
+          priority: nextStep.priority || "medium",
+          scheduledAt: nextStep.scheduledAt || null,
+          dueDate: nextStep.dueDate || null,
+          notes:
+            nextStep.notes || "Preparada desde Cliente existente en Mi Coach.",
+          successCriteria:
+            nextStep.successCriteria || "Obtener siguiente paso confirmado.",
+        },
+      });
+      const persistedOperation = response.data?.operation;
+      const destinationSessionId = Number(response.data?.sessionId || 0);
+      if (!persistedOperation?.id || !destinationSessionId) {
+        throw new Error("No se pudo persistir la actividad en una sesión nueva del Coach");
+      }
+      const coachContextForHandoff = {
+        accountId: String(customerAccountId || ""),
+        opportunityId: String(opportunityId),
+        contactId: "",
+        leadId: "",
+      };
+      setCoachContext(coachContextForHandoff);
+      coachContextRef.current = coachContextForHandoff;
+      setCoachMessages([]);
+      setCoachSessionId(destinationSessionId);
+      setCoachPendingOperations((current) => [
+        persistedOperation,
+        ...current.filter((item) => item.id !== persistedOperation.id),
+      ]);
+      await openCoachOperationConfirmation({
+        ...persistedOperation.pendingOperation,
+        persistentId: persistedOperation.id,
+        persistenceVersion: persistedOperation.version,
+        persistenceStatus: persistedOperation.status,
+      });
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible preparar la actividad"),
+      );
+    } finally {
+      setSavingCoachOperation(false);
+    }
   }
 
   function updateProspectForm(field, value) {
@@ -2378,8 +2600,24 @@ export default function MiAgentPage({
     setCoachGovernanceLoading(true);
     setError("");
     try {
-      const response = await api.get("/api/commercial-intelligence/governance");
+      const [response, qualityResponse] = await Promise.all([
+        api.get("/api/commercial-intelligence/governance"),
+        api.get("/api/mi-agent/coach/quality"),
+      ]);
       setCoachGovernance(response.data || null);
+      setCoachQualityDashboard(qualityResponse.data?.quality || null);
+      setCoachChannelRollouts(qualityResponse.data?.rollouts || []);
+      setCoachChannelAllowlistDrafts(
+        Object.fromEntries(
+          (qualityResponse.data?.rollouts || []).map((rollout) => [
+            rollout.channel,
+            (rollout.allowlist || []).join(", "),
+          ]),
+        ),
+      );
+      setCoachBusinessRulesDraft(
+        JSON.stringify(response.data?.businessRules || {}, null, 2),
+      );
     } catch (requestError) {
       setError(
         getApiErrorMessage(
@@ -2423,6 +2661,122 @@ export default function MiAgentPage({
           requestError,
           "No fue posible guardar gobierno de Mi Coach",
         ),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function saveCoachChannelRollouts() {
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      const response = await api.put("/api/mi-agent/coach/rollouts", {
+        rollouts: coachChannelRollouts.map((rollout) => ({
+          ...rollout,
+          allowlist: String(
+            coachChannelAllowlistDrafts[rollout.channel] ??
+              (rollout.allowlist || []).join(","),
+          )
+            .split(",")
+            .map((value) => Number(value.trim()))
+            .filter((value) => Number.isInteger(value) && value > 0),
+        })),
+      });
+      setCoachChannelRollouts(response.data?.rollouts || coachChannelRollouts);
+      setCoachChannelAllowlistDrafts(
+        Object.fromEntries(
+          (response.data?.rollouts || []).map((rollout) => [
+            rollout.channel,
+            (rollout.allowlist || []).join(", "),
+          ]),
+        ),
+      );
+      const qualityResponse = await api.get("/api/mi-agent/coach/quality");
+      setCoachQualityDashboard(qualityResponse.data?.quality || null);
+      setCoachNotice("Rollout por canal guardado.");
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible guardar el rollout"),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function saveCoachBusinessRules() {
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      const rules = JSON.parse(coachBusinessRulesDraft || "{}");
+      const response = await api.put(
+        "/api/commercial-intelligence/governance/business-rules",
+        {
+          channel: coachBusinessRulesChannel,
+          process: coachBusinessRulesProcess,
+          rules,
+        },
+      );
+      setCoachBusinessRulesDraft(
+        JSON.stringify(response.data?.businessRules || rules, null, 2),
+      );
+      setCoachGovernance((current) => ({
+        ...current,
+        businessRules: response.data?.businessRules || rules,
+      }));
+      setCoachNotice("Reglas del motor guardadas.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof SyntaxError
+          ? "El JSON de reglas no es valido."
+          : getApiErrorMessage(requestError, "No fue posible guardar las reglas del motor"),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function loadCoachBusinessRulesForScope() {
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({
+        channel: coachBusinessRulesChannel,
+        process: coachBusinessRulesProcess,
+      });
+      const response = await api.get(
+        `/api/commercial-intelligence/governance/business-rules?${params}`,
+      );
+      setCoachBusinessRulesDraft(
+        JSON.stringify(response.data?.businessRules || {}, null, 2),
+      );
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible cargar las reglas del motor"),
+      );
+    } finally {
+      setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function resetCoachBusinessRules() {
+    setCoachGovernanceSaving(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({
+        channel: coachBusinessRulesChannel,
+        process: coachBusinessRulesProcess,
+      });
+      const response = await api.delete(
+        `/api/commercial-intelligence/governance/business-rules?${params}`,
+      );
+      setCoachBusinessRulesDraft(
+        JSON.stringify(response.data?.businessRules || {}, null, 2),
+      );
+      setCoachNotice("Reglas restablecidas al valor predeterminado.");
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible restablecer las reglas"),
       );
     } finally {
       setCoachGovernanceSaving(false);
@@ -3860,6 +4214,9 @@ export default function MiAgentPage({
                               <p className="mi-agent-coach-answer-text">
                                 {message.result?.answer || "Lectura comercial"}
                               </p>
+                              <CoachQualityFeedback
+                                traceId={message.result?.qualityTraceId}
+                              />
                               <CoachStageReadiness
                                 readiness={message.result?.stageReadiness}
                               />
@@ -4624,6 +4981,18 @@ export default function MiAgentPage({
                 <h3>Pregúntale sobre esta cuenta</h3>
               </div>
               <div>
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={startNewCustomerChat}
+                  disabled={
+                    customerChatLoading ||
+                    customerChatSessionLoading ||
+                    !hasCustomerContext
+                  }
+                >
+                  Nueva conversación
+                </button>
                 <label className="mi-agent-coach-foundation-toggle">
                   <span>Mostrar fundamento</span>
                   <input
@@ -4650,14 +5019,22 @@ export default function MiAgentPage({
                 onClick={() =>
                   askCustomerChat("Resume esta cuenta para mi reunión.")
                 }
-                disabled={customerChatLoading || !hasCustomerContext}
+                disabled={
+                  customerChatLoading ||
+                  customerChatSessionLoading ||
+                  !hasCustomerContext
+                }
               >
                 Resumen para reunión
               </button>
               <button
                 type="button"
                 onClick={() => askCustomerChat("¿Qué riesgos debo atender?")}
-                disabled={customerChatLoading || !hasCustomerContext}
+                disabled={
+                  customerChatLoading ||
+                  customerChatSessionLoading ||
+                  !hasCustomerContext
+                }
               >
                 Riesgos
               </button>
@@ -4702,6 +5079,7 @@ export default function MiAgentPage({
                 className="mi-agent-primary-button"
                 disabled={
                   customerChatLoading ||
+                  customerChatSessionLoading ||
                   !customerChatQuestion.trim() ||
                   !hasCustomerContext
                 }
@@ -4737,6 +5115,7 @@ export default function MiAgentPage({
                           : ""}
                       </small>
                       <h4>{message.answer}</h4>
+                      <CoachQualityFeedback traceId={message.qualityTraceId} />
                       {showCustomerChatFoundation && message.evidence?.length ? (
                         <div className="mi-agent-customer-chat-evidence">
                           <strong>Evidencia</strong>
@@ -6077,6 +6456,7 @@ export default function MiAgentPage({
                       >
                         <span>{message.role === "seller" ? "Vendedor" : "Prospecto"}</span>
                         <p>{message.text || message.answer}</p>
+                        <CoachQualityFeedback traceId={message.qualityTraceId} />
                         {message.evidence?.length ? (
                           <small>{message.evidence.join(" ")}</small>
                         ) : null}
@@ -6695,6 +7075,96 @@ export default function MiAgentPage({
                   />
                 </label>
               </div>
+              <div className="mi-agent-governance-grid">
+                <label>
+                  Canal
+                  <select
+                    value={coachBusinessRulesChannel}
+                    onChange={(event) => {
+                      setCoachBusinessRulesChannel(event.target.value)
+                      setCoachBusinessRulesProcess("default")
+                    }}
+                  >
+                    <option value="coach">Coach</option>
+                    <option value="customer_account">Cuenta existente</option>
+                    <option value="prospect">Prospección</option>
+                  </select>
+                </label>
+                <label>
+                  Proceso
+                  <select
+                    value={coachBusinessRulesProcess}
+                    onChange={(event) =>
+                      setCoachBusinessRulesProcess(event.target.value)
+                    }
+                  >
+                    <option value="default">Predeterminado</option>
+                    {coachBusinessRulesChannel === "coach"
+                      ? [
+                          "unknown",
+                          "operation",
+                          "stage_readiness",
+                          "account_ranking",
+                          "temporal_filter",
+                          "opportunity_query",
+                          "lead_query",
+                          "general_query",
+                        ].map((process) => (
+                          <option key={process} value={process}>
+                            {process}
+                          </option>
+                        ))
+                      : [
+                          coachBusinessRulesChannel === "prospect"
+                            ? "prospect_chat"
+                            : "account_chat",
+                        ].map((process) => (
+                          <option key={process} value={process}>
+                            {process}
+                          </option>
+                        ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={loadCoachBusinessRulesForScope}
+                  disabled={coachGovernanceSaving}
+                >
+                  Cargar ámbito
+                </button>
+              </div>
+              <label className="mi-agent-governance-wide">
+                Reglas deterministas del Coach
+                <textarea
+                  rows={20}
+                  spellCheck={false}
+                  value={coachBusinessRulesDraft}
+                  onChange={(event) =>
+                    setCoachBusinessRulesDraft(event.target.value)
+                  }
+                />
+              </label>
+              <div className="mi-agent-workspace-actions">
+                <button
+                  type="button"
+                  className="mi-agent-primary-button"
+                  onClick={saveCoachBusinessRules}
+                  disabled={coachGovernanceSaving}
+                >
+                  {coachGovernanceSaving
+                    ? "Guardando..."
+                    : "Guardar reglas del ámbito"}
+                </button>
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={resetCoachBusinessRules}
+                  disabled={coachGovernanceSaving}
+                >
+                  Restablecer ámbito
+                </button>
+              </div>
               <div className="mi-agent-workspace-actions">
                 <button
                   type="button"
@@ -6707,6 +7177,133 @@ export default function MiAgentPage({
                     : "Guardar configuración"}
                 </button>
               </div>
+              <section className="mi-agent-governance-metrics">
+                <h4>Rollout por canal</h4>
+                <div className="mi-agent-governance-grid">
+                  {coachChannelRollouts.map((rollout, index) => (
+                    <article
+                      className="mi-agent-governance-rollout"
+                      key={rollout.channel}
+                    >
+                      <strong>
+                        {rollout.channel === "coach"
+                          ? "Coach"
+                          : rollout.channel === "customer_account"
+                            ? "Cliente existente"
+                            : "Cuenta nueva"}
+                      </strong>
+                      <label>
+                        Canal habilitado
+                        <input
+                          type="checkbox"
+                          checked={Boolean(rollout.enabled)}
+                          onChange={(event) =>
+                            setCoachChannelRollouts((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...item, enabled: event.target.checked }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Usuarios en rollout
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={rollout.rolloutPercentage}
+                          onChange={(event) =>
+                            setCoachChannelRollouts((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? {
+                                      ...item,
+                                      rolloutPercentage: Number(event.target.value),
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                        <output>{rollout.rolloutPercentage}%</output>
+                      </label>
+                      <label>
+                        Usuarios piloto (IDs separados por coma)
+                        <input
+                          value={
+                            coachChannelAllowlistDrafts[rollout.channel] ??
+                            (rollout.allowlist || []).join(", ")
+                          }
+                          onChange={(event) =>
+                            setCoachChannelAllowlistDrafts((current) => ({
+                              ...current,
+                              [rollout.channel]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    </article>
+                  ))}
+                </div>
+                <div className="mi-agent-workspace-actions">
+                  <button
+                    type="button"
+                    className="mi-agent-primary-button"
+                    onClick={saveCoachChannelRollouts}
+                    disabled={coachGovernanceSaving}
+                  >
+                    Guardar rollout
+                  </button>
+                </div>
+              </section>
+              <section className="mi-agent-governance-metrics">
+                <h4>Calidad del motor · {coachQualityDashboard?.periodDays || 30} días</h4>
+                <p>{coachQualityDashboard?.totalTurns || 0} turnos trazados</p>
+                <div className="mi-agent-governance-grid">
+                  {(coachQualityDashboard?.channels || []).map((metrics) => (
+                    <article
+                      className="mi-agent-governance-rollout"
+                      key={`quality-${metrics.channel}`}
+                    >
+                      <strong>{metrics.channel}</strong>
+                      <span>
+                        Aclaraciones {Math.round(metrics.clarificationRate * 100)}%
+                        · Respuestas inválidas {Math.round(metrics.invalidResponseRate * 100)}%
+                      </span>
+                      <span>
+                        Intención {metrics.intentFeedbackCount
+                          ? `${Math.round(metrics.intentClassificationAccuracy * 100)}%`
+                          : "Sin feedback"}
+                        · Entidad {metrics.entityFeedbackCount
+                          ? `${Math.round(metrics.entityResolutionQuality * 100)}%`
+                          : "Sin feedback"}
+                      </span>
+                      <span>
+                        Operaciones rechazadas {metrics.proposedOperations
+                          ? `${Math.round(metrics.rejectedOperationRate * 100)}%`
+                          : "Sin operaciones"}
+                        · Correcciones {metrics.feedbackCount
+                          ? `${Math.round(metrics.correctionByFeedbackRate * 100)}%`
+                          : "Sin feedback"}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+                {coachQualityDashboard?.regressions?.length ? (
+                  <div className="mi-agent-governance-regressions">
+                    <strong>Procesos con señales de regresión</strong>
+                    {coachQualityDashboard.regressions.slice(0, 8).map((item) => (
+                      <p key={`${item.channel}-${item.process}`}>
+                        {item.channel} · {item.process}
+                        {item.caseId ? ` · ${item.caseId}` : ""}: inválidas {Math.round(item.invalidResponseRate * 100)}%, feedback negativo {item.negativeFeedback}, operaciones rechazadas {item.rejectedOperations}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
               <div className="mi-agent-governance-metrics">
                 <h4>Actividad de los últimos 30 días</h4>
                 <p>

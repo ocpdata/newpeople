@@ -14,6 +14,7 @@ const PROSPECT_RESEARCH_SCHEMA_STATEMENTS = [
     status VARCHAR(20) NOT NULL DEFAULT 'draft',
     request_json JSON NULL,
     result_json JSON NULL,
+    chat_history_json JSON NULL,
     error_message VARCHAR(1000) NULL,
     converted_account_id BIGINT UNSIGNED NULL,
     external_researched_at DATETIME(3) NULL,
@@ -96,6 +97,25 @@ export async function ensureProspectResearchSchema() {
       for (const statement of PROSPECT_RESEARCH_SCHEMA_STATEMENTS) {
         await query(statement);
       }
+      const columns = await query(
+        `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'prospect_research_sessions'
+           AND COLUMN_NAME IN ('external_researched_at', 'chat_history_json')`,
+      );
+      const existingColumns = new Set(
+        columns.map((column) => column.COLUMN_NAME),
+      );
+      if (!existingColumns.has("external_researched_at")) {
+        await query(
+          "ALTER TABLE prospect_research_sessions ADD COLUMN external_researched_at DATETIME(3) NULL AFTER converted_account_id",
+        );
+      }
+      if (!existingColumns.has("chat_history_json")) {
+        await query(
+          "ALTER TABLE prospect_research_sessions ADD COLUMN chat_history_json JSON NULL AFTER result_json",
+        );
+      }
     })().catch((error) => {
       ensureProspectResearchSchemaPromise = undefined;
       throw error;
@@ -103,16 +123,4 @@ export async function ensureProspectResearchSchema() {
   }
 
   await ensureProspectResearchSchemaPromise;
-  const columns = await query(
-    `SELECT 1 FROM information_schema.COLUMNS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'prospect_research_sessions'
-       AND COLUMN_NAME = 'external_researched_at'
-     LIMIT 1`,
-  );
-  if (!columns.length) {
-    await query(
-      "ALTER TABLE prospect_research_sessions ADD COLUMN external_researched_at DATETIME(3) NULL AFTER converted_account_id",
-    );
-  }
 }

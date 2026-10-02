@@ -194,6 +194,14 @@ El contexto del chat puede incluir:
 
 Cuando existe una oportunidad seleccionada, sus datos son la fuente principal para preguntas sobre nombre, importe, fecha o etapa. Los totales del pipeline no deben sustituir los datos de esa oportunidad.
 
+### Herramientas de lectura
+
+Coach consulta el CRM mediante herramientas de solo lectura filtradas por los permisos efectivos del usuario: cuentas, oportunidades, detalle de oportunidad, actividades, contactos, leads, pipeline y readiness de etapa. `getOpportunityQuotation` permite consultar la ultima version accesible de una cotizacion seleccionada cuando el usuario tiene `oportunidades.read` y al menos un permiso `cotizaciones.*`.
+
+La respuesta puede describir secciones, productos o servicios, cantidades, precios y descuentos comerciales. No debe exponer costos internos, margenes ni notas internas. Si no puede resolver una oportunidad unica y accesible o no encuentra una cotizacion accesible, Coach debe pedir seleccion o aclararlo; no debe inferir su contenido.
+
+Cliente existente utiliza el mismo catalogo de lectura dentro de la cuenta fija autorizada, mas busqueda de interacciones propia del canal. Sus consultas nunca amplian el snapshot a otras cuentas. La matriz completa por canal esta en [Integraciones Mi Coach](./integraciones-mi-coach.md).
+
 Una entidad inequívoca en la pregunta actual prevalece sobre el contexto activo; una referencia deíctica conserva la entidad activa. Si hay varias coincidencias explícitas, la selección anterior no las desambigua automáticamente y el Coach debe pedir aclaración. Las entidades que el Coach identifica en una respuesta solo se convierten en el contexto del siguiente turno después de validar sus IDs y relaciones contra el snapshot autorizado. Si una respuesta enumera varias entidades del mismo tipo, no se selecciona una de ellas arbitrariamente.
 
 ## Tipos de interacción

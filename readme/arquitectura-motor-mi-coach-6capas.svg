@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1750" height="520" viewBox="0 0 1750 520" role="img" aria-labelledby="title desc">
+  <title id="title">Arquitectura del motor de Mi Coach en 6 capas</title>
+  <desc id="desc">El usuario entra al Chat Coach, la intención se clasifica, se resuelve la entidad, se aplican reglas de negocio, se consulta CRM, se valida la respuesta y luego la capa de aprendizaje registra feedback y mejora la clasificación.</desc>
+  <defs>
+    <style>
+      .box { fill: #f7fafc; stroke: #256b80; stroke-width: 2; rx: 14; }
+      .core { fill: #eaf6f4; stroke: #1e7f72; stroke-width: 2; rx: 14; }
+      .action { fill: #fff1cc; stroke: #c98d13; stroke-width: 2; rx: 14; }
+      .learn { fill: #f4ebff; stroke: #6d4fc8; stroke-width: 2; rx: 14; }
+      .label { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172b3a; text-anchor: middle; }
+      .small { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #41596d; text-anchor: middle; }
+      .arrow { stroke: #587887; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .learnArrow { stroke: #6d4fc8; stroke-width: 2.5; fill: none; marker-end: url(#learnArrow); }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#587887" /></marker>
+    <marker id="learnArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#6d4fc8" /></marker>
+  </defs>
+
+  <rect class="box" x="40" y="40" width="150" height="68" />
+  <text class="label" x="115" y="72">Usuario</text>
+  <text class="small" x="115" y="92">vendedor</text>
+
+  <rect class="box" x="230" y="40" width="180" height="68" />
+  <text class="label" x="320" y="72">Chat Coach</text>
+  <text class="small" x="320" y="92">entrada conversacional</text>
+
+  <rect class="core" x="460" y="40" width="180" height="70" />
+  <text class="label" x="550" y="72">IntentClassifier</text>
+  <text class="small" x="550" y="92">intención general</text>
+
+  <rect class="core" x="675" y="40" width="180" height="70" />
+  <text class="label" x="765" y="72">EntityResolver</text>
+  <text class="small" x="765" y="92">entidad candidata</text>
+
+  <rect class="core" x="900" y="40" width="220" height="70" />
+  <text class="label" x="1010" y="72">BusinessRuleEngine</text>
+  <text class="small" x="1010" y="92">reglas + permisos + scope</text>
+
+  <rect class="box" x="1170" y="40" width="180" height="70" />
+  <text class="label" x="1260" y="72">DataAccessLayer</text>
+  <text class="small" x="1260" y="92">consultas CRM</text>
+
+  <rect class="box" x="1385" y="40" width="180" height="70" />
+  <text class="label" x="1475" y="72">ResponseValidator</text>
+  <text class="small" x="1475" y="92">valida respuesta</text>
+
+  <rect class="learn" x="1385" y="205" width="180" height="74" />
+  <text class="label" x="1475" y="237">LearningLayer</text>
+  <text class="small" x="1475" y="257">feedback + patrones</text>
+
+  <rect class="action" x="690" y="205" width="300" height="74" />
+  <text class="label" x="840" y="236">Proceso comercial</text>
+  <text class="small" x="840" y="256">etapas, preguntas, criterios</text>
+
+  <rect class="action" x="1035" y="205" width="260" height="74" />
+  <text class="label" x="1165" y="236">CRM</text>
+  <text class="small" x="1165" y="256">hechos, estados, permisos</text>
+
+  <rect class="action" x="770" y="360" width="310" height="76" />
+  <text class="label" x="925" y="392">Respuesta final</text>
+  <text class="small" x="925" y="412">evidencia + contexto + recomendación</text>
+
+  <rect class="action" x="1125" y="360" width="340" height="76" />
+  <text class="label" x="1295" y="392">Operación propuesta</text>
+  <text class="small" x="1295" y="412">confirmación + ejecución controlada</text>
+
+  <path class="arrow" d="M190 74 H230" />
+  <path class="arrow" d="M410 74 H460" />
+  <path class="arrow" d="M640 74 H675" />
+  <path class="arrow" d="M855 74 H900" />
+  <path class="arrow" d="M1120 74 H1170" />
+  <path class="arrow" d="M1350 74 H1385" />
+
+  <path class="arrow" d="M1010 110 V160 H840 V205" />
+  <path class="arrow" d="M1010 110 V160 H1165 V205" />
+  <path class="arrow" d="M1475 110 V160 H1475 V205" />
+  <path class="arrow" d="M1475 279 V330 H925 V360" />
+  <path class="arrow" d="M1475 279 V330 H1295 V360" />
+  <path class="arrow" d="M925 436 H1125" />
+
+  <path class="learnArrow" d="M1290 280 C1360 280, 1390 260, 1475 205" />
+  <path class="learnArrow" d="M1475 205 C1490 170, 1495 130, 1475 110" />
+</svg>

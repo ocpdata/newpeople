@@ -1,16 +1,19 @@
 import { getCoachReadToolCatalog } from "./read-tools.js";
 import { runConversationEngine } from "./conversation-engine.js";
+import { getCoachBusinessRules } from "./business-rules.js";
 
-export function createCoachAdapter({ user, dependencies }) {
+export function createCoachAdapter({ user, dependencies, businessRules = null }) {
   const availableTools = getCoachReadToolCatalog();
   const permissions = user?.permissionSet || new Set();
+  const effectiveBusinessRules =
+    businessRules || getCoachBusinessRules({ channel: "coach" });
 
   return {
     channel: "coach",
     availableTools,
-    channelRules: {},
+    channelRules: effectiveBusinessRules.channelRules,
     permissions,
-    operationPolicy: {},
+    operationPolicy: effectiveBusinessRules.operationPolicy,
     runTurn({ question, context = {}, history = [], jobId }) {
       return runConversationEngine({
         question,
@@ -19,9 +22,10 @@ export function createCoachAdapter({ user, dependencies }) {
         user,
         jobId,
         availableTools,
-        channelRules: {},
+        channelRules: effectiveBusinessRules.channelRules,
         permissions,
-        operationPolicy: {},
+        operationPolicy: effectiveBusinessRules.operationPolicy,
+        businessRules: effectiveBusinessRules,
         dependencies,
       });
     },

@@ -63,6 +63,17 @@ import {
 } from "./coach/coach-adapter.js";
 import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
 import { getCoachMetrics } from "./coach/metrics.js";
+import { classifyCoachIntent } from "./coach/phase-one-engine.js";
+import { getAuthorizedCoachQuotationContent } from "./coach/quotation-read-service.js";
+import {
+  getCoachQualityDashboard,
+  listCoachQualityTraces,
+  listCoachChannelRollouts,
+  saveCoachChannelRollouts,
+  isCoachChannelInRollout,
+  submitCoachTurnFeedback,
+} from "./coach/observability.js";
+import { recordCoachTurnQualityTrace } from "./coach/observability.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
 
 const router = express.Router();
@@ -108,8 +119,9 @@ export function resolveCoachContextEntities(
   question,
   _conversationHistory = [],
   _selectedContext = {},
+  businessRules = {},
 ) {
-  const explicitEntities = resolveCoachEntities(snapshot, question);
+  const explicitEntities = resolveCoachEntities(snapshot, question, businessRules);
   return {
     explicitEntities,
     resolvedEntities: explicitEntities,
@@ -3595,6 +3607,65 @@ async function executeCoachJob({
     };
     normalizedResult.activeContext = activeContext;
     normalizedResult.activeContextSource = activeContextSource;
+    const intentClassification = classifyCoachIntent(question);
+    const hasEvidence =
+      Boolean(normalizedResult.evidence?.length) ||
+      Boolean(normalizedResult.facts?.length);
+    const qualityTraceId = await recordCoachTurnQualityTrace({
+      channel: "coach",
+      process: intentClassification.type,
+      userId: user.id,
+      sessionId,
+      jobId,
+      trace: {
+        intentType: intentClassification.type,
+        intentSubtype: intentClassification.subtype,
+        primaryEntity: activeContext.opportunityId
+          ? "opportunity"
+          : activeContext.leadId
+            ? "lead"
+            : activeContext.contactId
+              ? "contact"
+              : activeContext.accountId
+                ? "account"
+                : "none",
+        entityResolution: {
+          resolvedEntityTypes: [
+            explicitEntities.account && "account",
+            explicitEntities.opportunity && "opportunity",
+            explicitEntities.contact && "contact",
+            explicitEntities.lead && "lead",
+          ].filter(Boolean),
+          ambiguousTypes: Object.entries(explicitEntities.candidates || {})
+            .filter(([, candidates]) => Array.isArray(candidates) && candidates.length > 1)
+            .map(([type]) => type),
+          clarificationRequired: Boolean(clarification),
+        },
+        appliedRules: { engineMode: "legacy", channel: "coach" },
+        validationStatus:
+          normalizedResult.responseType === "error"
+            ? "error"
+            : normalizedResult.responseType === "clarification"
+              ? "clarification"
+              : hasEvidence
+                ? "valid"
+                : "invalid",
+        validationReasons: hasEvidence ? [] : ["missing_business_evidence"],
+        responseType: normalizedResult.responseType,
+        confidence: normalizedResult.confidence,
+        evidenceCount:
+          (normalizedResult.evidence?.length || 0) +
+          (normalizedResult.facts?.length || 0),
+        toolsUsed: [],
+        operationsProposed: normalizedResult.operations?.length || 0,
+        operationsRejected: 0,
+        latencyMs: 0,
+      },
+    }).catch((error) => {
+      console.warn("[mi-agent] No fue posible registrar traza legacy:", error?.message || error);
+      return null;
+    });
+    if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
     const persistedOperations = sessionId
       ? await persistCoachOperations({
           userId: user.id,
@@ -3641,6 +3712,31 @@ async function executeCoachJob({
       );
     }
   } catch (error) {
+    const failedIntent = classifyCoachIntent(question);
+    await recordCoachTurnQualityTrace({
+      channel: "coach",
+      process: failedIntent.type,
+      userId: user.id,
+      sessionId,
+      jobId,
+      trace: {
+        intentType: failedIntent.type,
+        intentSubtype: failedIntent.subtype,
+        primaryEntity: selectedContext.opportunityId
+          ? "opportunity"
+          : selectedContext.leadId
+            ? "lead"
+            : selectedContext.contactId
+              ? "contact"
+              : selectedContext.accountId
+                ? "account"
+                : "none",
+        appliedRules: { channel: "coach", engineMode: "legacy" },
+        validationStatus: "error",
+        validationReasons: ["turn_execution_failed"],
+        errorCode: String(error?.code || error?.name || "turn_execution_failed"),
+      },
+    }).catch(() => undefined);
     await query(
       `UPDATE mi_agent_analysis_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3) WHERE id = ?`,
       [
@@ -4085,7 +4181,13 @@ router.post(
       [Number(req.user.id), question, JSON.stringify(selectedContext)],
     );
     const jobId = Number(result.insertId);
-    const rolloutMode = resolveCoachRolloutMode(req.user);
+    const channelRolloutEnabled = await isCoachChannelInRollout({
+      channel: "coach",
+      userId: req.user.id,
+    });
+    const rolloutMode = channelRolloutEnabled
+      ? resolveCoachRolloutMode(req.user)
+      : "legacy";
     let shadowJobId = null;
     if (rolloutMode === "shadow") {
       const shadowResult = await query(
@@ -4114,6 +4216,7 @@ router.post(
       persistCoachOperations,
       appendCoachSessionTurn,
       featureCode: MI_COACH_FEATURE_CODE,
+      getAuthorizedCoachQuotationContent,
     };
     setImmediate(() => {
       if (rolloutMode === "legacy") {
@@ -4253,8 +4356,15 @@ router.post(
         issues: parsed.error.issues,
       });
     }
+    if (parsed.data.sourceChannel && parsed.data.sourceChannel !== "coach") {
+      return res.status(409).json({
+        message: "La operación debe crearse desde una sesión de su canal de origen",
+        requiredChannel: parsed.data.sourceChannel,
+      });
+    }
+    const coachOperation = { ...parsed.data, sourceChannel: "coach" };
     const delegatedPermissions = getDelegatedCoachOperationPermissions(
-      parsed.data.kind,
+      coachOperation.kind,
     );
     if (
       !delegatedPermissions ||
@@ -4283,10 +4393,10 @@ router.post(
       sessionId: session.id,
       sourceJobId: null,
       originalIntent:
-        String(req.body?.originalIntent || parsed.data.title).trim() ||
-        parsed.data.title,
+        String(req.body?.originalIntent || coachOperation.title).trim() ||
+        coachOperation.title,
       entities: req.body?.context || session.context,
-      operations: [parsed.data],
+      operations: [coachOperation],
     });
     return res.status(201).json({ sessionId: session.id, operation });
   },
@@ -4590,6 +4700,110 @@ router.get(
   requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
     return res.json(await getCoachMetrics(req.user.id));
+  },
+);
+
+router.get(
+  "/coach/quality/traces",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    const channel = String(req.query?.channel || "coach");
+    const sessionId = Number(req.query?.sessionId || 0);
+    if (
+      !["coach", "customer_account", "prospect"].includes(channel) ||
+      !Number.isInteger(sessionId) ||
+      sessionId <= 0
+    ) {
+      return res.status(400).json({ message: "Canal o sesion invalida" });
+    }
+    const traces = await listCoachQualityTraces({
+      userId: req.user.id,
+      channel,
+      sessionId,
+      limit: req.query?.limit,
+    });
+    return res.json({ traces });
+  },
+);
+
+router.get(
+  "/coach/quality",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const periodDays = Math.max(
+      1,
+      Math.min(Number(req.query?.periodDays) || 30, 365),
+    );
+    const [quality, rollouts] = await Promise.all([
+      getCoachQualityDashboard(periodDays),
+      listCoachChannelRollouts(),
+    ]);
+    return res.json({ quality, rollouts });
+  },
+);
+
+router.put(
+  "/coach/rollouts",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const rollouts = req.body?.rollouts;
+    if (
+      !Array.isArray(rollouts) ||
+      rollouts.some(
+        (rollout) =>
+          !["coach", "customer_account", "prospect"].includes(rollout?.channel) ||
+          typeof rollout.enabled !== "boolean" ||
+          !Number.isFinite(Number(rollout.rolloutPercentage)) ||
+          (rollout.allowlist !== undefined && !Array.isArray(rollout.allowlist)),
+      )
+    ) {
+      return res.status(400).json({ message: "Configuracion de rollout invalida" });
+    }
+    try {
+      const saved = await saveCoachChannelRollouts({
+        user: req.user,
+        rollouts,
+      });
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "mi_coach_channel_rollout_updated",
+        entityType: "coach_channel_rollouts",
+        entityId: null,
+        detail: "Rollout por canal actualizado",
+        after: saved,
+      });
+      return res.json({ rollouts: saved });
+    } catch (error) {
+      return res.status(Number(error?.status || 400)).json({
+        message: error?.message || "Configuracion de rollout invalida",
+        ...(error?.code ? { code: error.code } : {}),
+        ...(error?.quality ? { quality: error.quality } : {}),
+      });
+    }
+  },
+);
+
+router.post(
+  "/coach/quality/:traceId/feedback",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    const traceId = Number(req.params.traceId || 0);
+    const { rating, category, corrected } = req.body || {};
+    const result = await submitCoachTurnFeedback({
+      traceId,
+      userId: req.user.id,
+      rating,
+      category,
+      corrected,
+    });
+    if (result.outcome === "not_found") {
+      return res.status(404).json({ message: "Traza de respuesta no encontrada" });
+    }
+    if (result.outcome !== "saved") {
+      return res.status(400).json({ message: "Feedback invalido" });
+    }
+    return res.json({ saved: true });
   },
 );
 

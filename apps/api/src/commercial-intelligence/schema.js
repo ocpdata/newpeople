@@ -3,6 +3,23 @@ import { query } from "../db.js";
 let ensureCommercialIntelligenceSchemaPromise;
 
 const COMMERCIAL_INTELLIGENCE_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS customer_intelligence_chat_sessions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    public_id VARCHAR(64) NOT NULL,
+    requested_by_user_id BIGINT UNSIGNED NOT NULL,
+    account_id BIGINT UNSIGNED NULL,
+    opportunity_id BIGINT UNSIGNED NULL,
+    contact_id BIGINT UNSIGNED NULL,
+    history_json JSON NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT uq_customer_intelligence_chat_sessions_public UNIQUE (public_id),
+    CONSTRAINT fk_customer_intelligence_chat_sessions_user FOREIGN KEY (requested_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_customer_intelligence_chat_sessions_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL,
+    CONSTRAINT fk_customer_intelligence_chat_sessions_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE SET NULL,
+    CONSTRAINT fk_customer_intelligence_chat_sessions_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL,
+    INDEX idx_customer_intelligence_chat_sessions_scope (requested_by_user_id, account_id, opportunity_id, contact_id, updated_at)
+  )`,
   `CREATE TABLE IF NOT EXISTS customer_intelligence_jobs (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     public_id VARCHAR(64) NOT NULL,

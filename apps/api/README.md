@@ -42,6 +42,7 @@ Si ese archivo no existe, primero debes generarlo con `npm run seed:demo:capture
 - Usuarios, roles y permisos RBAC
 - Cuentas, contactos y oportunidades
 - Flujo comercial de oportunidades con preguntas por etapa
+- Mi Coach con herramientas CRM de lectura por canal; Cliente existente comparte el catalogo de Coach con alcance fijo por cuenta
 - Proveedores y listas de precios con bundles
 - Cotizaciones versionadas con guardado completo y workflow propio
 - Auditoria transversal
@@ -76,6 +77,18 @@ Puntos relevantes del backend:
 - Cada item de cotizacion persiste `original_currency_code` y `original_list_price_unit` como base del proveedor.
 - `list_price_unit` se guarda como valor convertido a la moneda de la cotizacion usando el tipo de cambio vigente al guardar.
 - Al leer o clonar versiones, el backend devuelve ambos valores para que la UI pueda editar la base original sin perder el precio convertido.
+
+## Mi Coach y chats por canal
+
+Coach y Cliente existente comparten el catalogo de herramientas CRM de solo lectura: cuentas, oportunidades, actividades, cotizaciones, contactos, leads, pipeline y readiness de etapa. Cliente existente ejecuta esas herramientas unicamente sobre el snapshot autorizado de su cuenta e incorpora `searchInteractions` como herramienta adicional. Cada herramienta mantiene sus permisos; la consulta de cotizaciones requiere permiso de oportunidad, permiso de cotizaciones y ownership aplicable. El adaptador de Cuenta nueva conserva herramientas de prospeccion separadas.
+
+La lectura conversacional de cotizaciones excluye costos internos, margenes y notas internas. La paridad de lectura no amplia las operaciones de escritura: Cliente existente solo puede proponer actividades confirmables.
+
+Documentacion tecnica relacionada:
+
+- `../../readme/arquitectura-mi-coach.md`
+- `../../readme/integraciones-mi-coach.md`
+- `../../readme/motor-conversacional-mi-coach.md`
 
 ## Pruebas
 

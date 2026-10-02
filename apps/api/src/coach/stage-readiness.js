@@ -1,4 +1,5 @@
 import { stageReadinessSchema } from "./contract.js";
+import { matchCoachQueryCase } from "./case-catalog.js";
 
 const COMPLETED_ACTION_STATUSES = new Set(["done", "completed"]);
 const CLOSED_RISK_STATUSES = new Set(["resolved", "closed", "dismissed"]);
@@ -85,6 +86,7 @@ function buildNextStep(opportunity, pendingItems, risks, currentUserId, now) {
 }
 
 export function isStagePreparationQuestion(question) {
+  if (matchCoachQueryCase(question)?.type === "stage_readiness") return true;
   const text = clean(question)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -94,6 +96,7 @@ export function isStagePreparationQuestion(question) {
     /(?:lista|listo|preparad[ao]).*(?:avanz|pasar|cotiz|demo|negoci)/,
     /(?:avanzar|pasar).*(?:etapa|desarrollo|cotizacion|demostracion|negociacion|waiting)/,
     /preguntas?.*(?:sin respuesta|pendiente)/,
+    /preguntas?.*(?:debo|deberia|conviene).*(?:hacer|preguntar|plantear|cotiz|demostracion|negociacion|waiting)/,
     /(?:antes de|para).*(?:cotizar|demostracion|demo|negociacion)/,
     /(?:riesgo|bloqueo).*(?:impide|frena|avanz)/,
     /(?:preparacion|readiness).*(?:etapa|oportunidad)/,

@@ -18,13 +18,30 @@ Entrada:
 
 El adaptador recibe un snapshot CRM autorizado y ofrece herramientas para:
 
-- Consultar la cuenta.
-- Buscar oportunidades.
-- Consultar contactos.
-- Consultar interacciones.
+- Consultar la cuenta y buscar oportunidades; obtener el detalle de una oportunidad.
+- Consultar actividades, pipeline y readiness de etapa de oportunidades de esa cuenta.
+- Buscar contactos y leads relacionados con la cuenta.
+- Consultar el contenido de la ultima cotizacion accesible de una oportunidad seleccionada.
+- Consultar interacciones de la cuenta mediante `searchInteractions`.
 - Incorporar investigacion publica cuando el gobierno y los permisos lo permiten.
 
-Las operaciones se limitan a actividades de la cuenta y siempre requieren confirmacion. Una solicitud de correo produce un borrador; no envia mensajes automaticamente.
+Las herramientas comunes de lectura son las del catalogo de Coach: `searchAccounts`, `searchOpportunities`, `getOpportunity`, `getOpportunityActivities`, `getOpportunityQuotation`, `searchContacts`, `searchLeads`, `getSellerPipeline` y `getOpportunityReadiness`. Cliente existente ejecuta ese catalogo sobre un snapshot filtrado a la cuenta fija; `searchInteractions` es adicional del canal.
+
+Cada herramienta sigue requiriendo sus permisos de lectura:
+
+| Herramienta | Permisos requeridos |
+| --- | --- |
+| `searchAccounts` | `cuentas.read` |
+| `searchOpportunities`, `getOpportunity` | `oportunidades.read` |
+| `getOpportunityActivities`, `getSellerPipeline`, `getOpportunityReadiness` | `oportunidades.read` y `desarrollo_comercial.read` |
+| `getOpportunityQuotation` | `oportunidades.read` y al menos un permiso `cotizaciones.*` |
+| `searchContacts` | `contactos.read` |
+| `searchLeads` | `interacciones.read` |
+| `searchInteractions` (solo Cliente existente) | `interacciones.read` |
+
+La lectura de la cotizacion conserva ownership de cuenta (excepto para administracion de cotizaciones) y expone solo contenido comercial, no costo interno, margen ni notas internas.
+
+Las operaciones se limitan a actividades de la cuenta y siempre requieren confirmacion. Una solicitud de correo produce un borrador; no envia mensajes automaticamente. Esta paridad de lectura no habilita a Cliente existente para proponer las operaciones de campos o etapa disponibles en Coach.
 
 ## Cuenta nueva
 

@@ -259,6 +259,8 @@ function operationFields(operation = {}) {
 }
 
 export function mapCoachOperationRow(row) {
+  const originalOperation = parseJson(row.original_operation, {});
+  const pendingOperation = parseJson(row.pending_operation, {});
   return {
     id: Number(row.id),
     sessionId: Number(row.session_id),
@@ -266,6 +268,8 @@ export function mapCoachOperationRow(row) {
     sourceJobId: Number(row.source_job_id || 0) || null,
     operationIndex: Number(row.operation_index),
     kind: row.operation_kind,
+    sourceChannel:
+      pendingOperation.sourceChannel || originalOperation.sourceChannel || "coach",
     status: row.status,
     originalIntent: row.original_intent,
     identifiedEntities: parseJson(row.identified_entities, {}),
@@ -277,8 +281,8 @@ export function mapCoachOperationRow(row) {
     handoffToken: row.handoff_token || null,
     handoffExpiresAt: row.handoff_expires_at,
     handoffConsumedAt: row.handoff_consumed_at,
-    originalOperation: parseJson(row.original_operation, {}),
-    pendingOperation: parseJson(row.pending_operation, {}),
+    originalOperation,
+    pendingOperation,
     result: parseJson(row.result_payload, null),
     errorDetail: row.error_detail || null,
     cancellationReason: row.cancellation_reason || null,

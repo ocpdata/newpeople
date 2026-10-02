@@ -1,7 +1,18 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { resolveCoachEntities } from "../coach/entity-resolver.js";
+import { executeCoachReadTool } from "../coach/crm-read-tools.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
 import { normalizeActivityOperation } from "../coach/operation-contract.js";
+import { buildStageReadiness, isStagePreparationQuestion } from "../coach/stage-readiness.js";
+import { getCoachReadToolCatalog, inferCoachOpportunityFilters } from "../coach/read-tools.js";
+import { loadCoachBusinessRules } from "../coach/business-rules.js";
+import { matchCoachQueryCase } from "../coach/case-catalog.js";
+import { getAuthorizedCoachQuotationContent } from "../coach/quotation-read-service.js";
+
+const COACH_READ_TOOL_CATALOG = getCoachReadToolCatalog();
+const COACH_READ_TOOL_NAMES = new Set(
+  COACH_READ_TOOL_CATALOG.map((tool) => tool.name),
+);
 
 function normalize(value) {
   return String(value || "")
@@ -21,36 +32,105 @@ function accountRecord(snapshot) {
 }
 
 function opportunityRecords(snapshot) {
-  return [
+  const accountId = Number(snapshot.account?.id || 0);
+  const opportunities = new Map();
+  for (const opportunity of [
     ...(snapshot.opportunities || []),
     ...(snapshot.inactiveOpportunities || []),
-  ];
+    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ]) {
+    if (Number(opportunity.accountId || 0) === accountId) {
+      opportunities.set(Number(opportunity.id), opportunity);
+    }
+  }
+  return [...opportunities.values()];
+}
+
+function scopeCustomerSnapshot(snapshot) {
+  const accountId = Number(snapshot.account?.id || 0);
+  if (!accountId) {
+    return {
+      ...snapshot,
+      selectedOpportunity: null,
+      opportunities: [],
+      inactiveOpportunities: [],
+      contacts: [],
+      interactions: [],
+      activities: [],
+    };
+  }
+  const isInScope = (record) => Number(record.accountId || 0) === accountId;
+  const opportunities = (snapshot.opportunities || []).filter(isInScope);
+  const inactiveOpportunities = (snapshot.inactiveOpportunities || []).filter(isInScope);
+  const selectedOpportunity = isInScope(snapshot.selectedOpportunity || {})
+    ? snapshot.selectedOpportunity
+    : null;
+  const opportunityIds = new Set([
+    ...opportunities,
+    ...inactiveOpportunities,
+    ...(selectedOpportunity ? [selectedOpportunity] : []),
+  ].map((opportunity) => Number(opportunity.id)));
+  const contacts = (snapshot.contacts || []).filter(isInScope);
+  const interactions = (snapshot.interactions || []).filter(isInScope);
+  const activities = (snapshot.activities || []).filter(
+    (activity) =>
+      isInScope(activity) &&
+      (!activity.opportunityId || opportunityIds.has(Number(activity.opportunityId))),
+  );
+  return {
+    ...snapshot,
+    selectedOpportunity,
+    opportunities,
+    inactiveOpportunities,
+    contacts,
+    interactions,
+    activities,
+  };
+}
+
+function buildCustomerCoachSnapshot(snapshot, quotation) {
+  const account = snapshot.account;
+  const accountId = Number(account?.id || 0) || null;
+  const accountName = account?.name || "";
+  const activities = snapshot.activities || snapshot.interactions || [];
+  const opportunities = opportunityRecords(snapshot).map((opportunity) => ({
+    ...opportunity,
+    account: { id: accountId, name: accountName },
+    activities: activities.filter(
+      (activity) => Number(activity.opportunityId || 0) === Number(opportunity.id),
+    ),
+  }));
+  const leads = (snapshot.interactions || [])
+    .filter(
+      (interaction) =>
+        interaction.leadSubstatusCode ||
+        interaction.leadReasonCode ||
+        interaction.leadRequiredActionCode,
+    )
+    .map((interaction) => ({
+      ...interaction,
+      title: interaction.title,
+      accountId,
+      accountName,
+      opportunityId: Number(interaction.opportunityId || 0) || null,
+      status: interaction.leadSubstatusCode || "",
+    }));
+  return {
+    accounts: accountRecord(snapshot),
+    coachOpportunities: opportunities,
+    wonOpportunities: [],
+    lostOpportunities: [],
+    cancelledOpportunities: [],
+    inactivePipelineOpportunities: [],
+    contactMappings: snapshot.contacts || [],
+    leads,
+    selectedOpportunityQuotation: quotation,
+  };
 }
 
 function customerTools(snapshot) {
-  const opportunities = opportunityRecords(snapshot);
-  const contacts = snapshot.contacts || [];
   const interactions = snapshot.interactions || [];
   return {
-    searchAccounts: () => accountRecord(snapshot),
-    searchOpportunities: ({ text = "", openOnly = false } = {}) => {
-      const normalizedText = normalize(text);
-      return opportunities.filter((opportunity) => {
-        if (openOnly && !isOpen(opportunity)) return false;
-        if (!normalizedText) return true;
-        return normalize(opportunity.name).includes(normalizedText);
-      });
-    },
-    getOpportunity: ({ opportunityId } = {}) =>
-      opportunities.find((item) => Number(item.id) === Number(opportunityId)) ||
-      null,
-    searchContacts: ({ text = "" } = {}) => {
-      const normalizedText = normalize(text);
-      return contacts.filter(
-        (contact) =>
-          !normalizedText || normalize(contact.name).includes(normalizedText),
-      );
-    },
     searchInteractions: ({ text = "" } = {}) => {
       const normalizedText = normalize(text);
       return interactions.filter(
@@ -64,18 +144,68 @@ function customerTools(snapshot) {
   };
 }
 
-function executeCustomerReadTool({ toolName, snapshot, args = {} }) {
+function executeCustomerReadTool({
+  toolName,
+  snapshot,
+  args = {},
+  businessRules = {},
+  buildReadiness,
+}) {
+  if (COACH_READ_TOOL_NAMES.has(toolName)) {
+    return executeCoachReadTool({
+      toolName,
+      snapshot,
+      args,
+      businessRules,
+      buildReadiness,
+    });
+  }
+  const scope = businessRules.scope || {};
+  const denied =
+    (toolName === "searchAccounts" && scope.accountSearchAllowed === false) ||
+    (["searchOpportunities", "getOpportunity", "getOpportunityQuotation"].includes(toolName) &&
+      scope.opportunitySearchAllowed === false) ||
+    (toolName === "searchContacts" && scope.contactSearchAllowed === false);
+  if (denied) {
+    return {
+      toolName,
+      readOnly: true,
+      result: null,
+      error: "Herramienta no permitida por la politica del canal.",
+    };
+  }
+  const effectiveArgs =
+    toolName === "searchOpportunities"
+      ? {
+          ...args,
+          activeOnly: args.inactiveOnly
+            ? false
+            : args.activeOnly || businessRules.filters?.defaultActiveOnly,
+          inactiveOnly: args.activeOnly
+            ? false
+            : args.inactiveOnly || businessRules.filters?.defaultInactiveOnly,
+          openOnly: args.openOnly || businessRules.filters?.defaultOpenOnly,
+        }
+      : args;
   const tools = customerTools(snapshot);
   const execute = tools[toolName];
   if (!execute) throw new Error(`Read tool no soportada: ${toolName}`);
   return {
     toolName,
     readOnly: true,
-    result: execute(args),
+    result: execute(effectiveArgs),
   };
 }
 
-function buildCustomerReadModel({ user, question, snapshot, availableTools }) {
+export async function buildCustomerReadModel({
+  user,
+  question,
+  snapshot,
+  availableTools,
+  conversationHistory = [],
+  businessRules = {},
+}) {
+  snapshot = scopeCustomerSnapshot(snapshot || {});
   const crmSnapshot = {
     accounts: accountRecord(snapshot),
     coachOpportunities: opportunityRecords(snapshot),
@@ -85,15 +215,43 @@ function buildCustomerReadModel({ user, question, snapshot, availableTools }) {
     contactMappings: snapshot.contacts || [],
     leads: [],
   };
-  const resolution = resolveCoachEntities(crmSnapshot, question);
+  const resolution = resolveCoachEntities(crmSnapshot, question, businessRules);
+  const opportunityFilters = inferCoachOpportunityFilters(question, businessRules);
+  const scope = businessRules.scope || {};
   const selectedOpportunity =
     snapshot.selectedOpportunity || resolution.opportunity || null;
+  const queryCase = matchCoachQueryCase(question);
+  const toolNames = new Set(availableTools.map((tool) => tool.name));
+  const selectedOpportunityQuotation =
+    queryCase?.readTool === "getOpportunityQuotation" &&
+    selectedOpportunity &&
+    scope.opportunitySearchAllowed !== false &&
+    toolNames.has("getOpportunityQuotation")
+      ? await getAuthorizedCoachQuotationContent({
+          user,
+          opportunityId: selectedOpportunity.id,
+        })
+      : null;
+  const coachSnapshot = buildCustomerCoachSnapshot(
+    snapshot,
+    selectedOpportunityQuotation,
+  );
   const normalizedQuestion = normalize(question);
   const readToolResults = [];
   const availableNames = new Set(availableTools.map((tool) => tool.name));
   const pushTool = (toolName, args = {}) => {
     if (!availableNames.has(toolName)) return;
-    readToolResults.push(executeCustomerReadTool({ toolName, snapshot, args }));
+    const isCoachTool = COACH_READ_TOOL_NAMES.has(toolName);
+    readToolResults.push(
+      executeCustomerReadTool({
+        toolName,
+        snapshot: isCoachTool ? coachSnapshot : snapshot,
+        args,
+        businessRules,
+        buildReadiness: (opportunity) =>
+          buildStageReadiness(opportunity, { currentUserId: Number(user?.id) }),
+      }),
+    );
   };
   pushTool("searchAccounts");
   if (/\b(oportunidad|oportunidades|pipeline|etapa|waiting|negociacion)\b/.test(normalizedQuestion)) {
@@ -101,6 +259,10 @@ function buildCustomerReadModel({ user, question, snapshot, availableTools }) {
       openOnly: /\b(abierta|abiertas|pipeline|en proceso)\b/.test(
         normalizedQuestion,
       ),
+      stageCodes: opportunityFilters.stageCodes,
+      commercialStatusCodes: opportunityFilters.commercialStatusCodes,
+      activeOnly: opportunityFilters.activeOnly,
+      inactiveOnly: opportunityFilters.inactiveOnly,
     });
   }
   if (/\b(contacto|contactos|decisor|eduardo|persona)\b/.test(normalizedQuestion)) {
@@ -112,15 +274,48 @@ function buildCustomerReadModel({ user, question, snapshot, availableTools }) {
   if (selectedOpportunity && /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(normalizedQuestion)) {
     pushTool("getOpportunity", { opportunityId: selectedOpportunity.id });
   }
+  if (selectedOpportunity && /\b(actividad|actividades|siguiente paso|proximo paso)\b/.test(normalizedQuestion)) {
+    pushTool("getOpportunityActivities", { opportunityId: selectedOpportunity.id });
+  }
+  if (selectedOpportunity && isStagePreparationQuestion(question)) {
+    pushTool("getOpportunityReadiness", { opportunityId: selectedOpportunity.id });
+  }
+  if (/\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(normalizedQuestion)) {
+    pushTool("getSellerPipeline");
+  }
+  if (/\b(lead|leads|prospecto|prospectos)\b/.test(normalizedQuestion)) {
+    pushTool("searchLeads", { accountId: snapshot.account?.id || null });
+  }
+  if (queryCase?.readTool === "getOpportunityQuotation" && selectedOpportunity) {
+    pushTool("getOpportunityQuotation", {
+      opportunityId: selectedOpportunity.id,
+    });
+  }
   const modelSnapshot = {
-    account: snapshot.account,
-    opportunities: snapshot.opportunities || [],
-    inactiveOpportunities: snapshot.inactiveOpportunities || [],
-    contacts: snapshot.contacts || [],
+    account:
+      scope.accountSearchAllowed === false
+        ? null
+        : snapshot.account,
+    opportunities:
+      scope.opportunitySearchAllowed === false
+        ? []
+        : snapshot.opportunities || [],
+    inactiveOpportunities:
+      scope.opportunitySearchAllowed === false
+        ? []
+        : snapshot.inactiveOpportunities || [],
+    contacts:
+      scope.contactSearchAllowed === false
+        ? []
+        : snapshot.contacts || [],
     interactions: snapshot.interactions || [],
     accountHealth: snapshot.accountHealth,
     expansionHypotheses: snapshot.expansionHypotheses || [],
-    selectedOpportunity,
+    selectedOpportunity:
+      scope.opportunitySearchAllowed === false
+        ? null
+        : selectedOpportunity,
+    selectedOpportunityQuotation,
     selectedContext: {
       accountId: snapshot.account?.id || null,
       opportunityId: selectedOpportunity?.id || null,
@@ -140,8 +335,56 @@ function buildCustomerReadModel({ user, question, snapshot, availableTools }) {
     deterministicStageReadiness: null,
     readToolResults,
     modelSnapshot,
-    clarification: null,
-    conversationHistory: [],
+    clarification:
+      queryCase?.type === "quotation_query" &&
+      !toolNames.has("getOpportunityQuotation")
+        ? {
+            type: "missing_fields",
+            message:
+              "No tienes permisos para consultar cotizaciones en esta cuenta.",
+            missing: ["Permiso de lectura de cotizaciones"],
+            candidates: [],
+            originalRequest: question,
+            intendedAction: "continue_request",
+          }
+        : queryCase?.requiresOpportunityContext && !selectedOpportunity
+        ? {
+            type: "select_opportunity",
+            message:
+              queryCase.type === "quotation_query"
+                ? "Selecciona una oportunidad para consultar el contenido de su cotización."
+                : "Selecciona una oportunidad para consultar sus actividades y siguientes pasos.",
+            missing: ["Oportunidad"],
+            candidates:
+              queryCase.type === "quotation_query" &&
+              scope.opportunitySearchAllowed !== false
+                ? opportunityRecords(snapshot).slice(0, 20).map((opportunity) => ({
+                    id: Number(opportunity.id),
+                    name: opportunity.name || "Oportunidad sin nombre",
+                    accountId: Number(opportunity.accountId || snapshot.account?.id || 0) || null,
+                    opportunityId: Number(opportunity.id),
+                    accountName: snapshot.account?.name || null,
+                    stageName: opportunity.stageName || null,
+                    entityType: "opportunity",
+                  }))
+                : [],
+            originalRequest: question,
+            intendedAction: "continue_request",
+          }
+          : queryCase?.type === "quotation_query" &&
+            selectedOpportunity &&
+            !selectedOpportunityQuotation
+          ? {
+              type: "missing_fields",
+              message:
+                "No encontré una cotización accesible para esta oportunidad.",
+              missing: ["Cotización vigente y accesible"],
+              candidates: [],
+              originalRequest: question,
+              intendedAction: "continue_request",
+            }
+          : null,
+    conversationHistory,
   };
 }
 
@@ -198,11 +441,42 @@ export function buildCustomerFallback(snapshot, question) {
   };
 }
 
-function buildCustomerPrompt(snapshot, question, _processGuide, context) {
+export function appendCustomerAccountChatHistory(
+  history = [],
+  question,
+  answer,
+) {
+  const normalizedHistory = (Array.isArray(history) ? history : [])
+    .filter(
+      (message) =>
+        ["user", "assistant"].includes(message?.role) &&
+        String(message?.text || "").trim(),
+    )
+    .map((message) => ({
+      role: message.role,
+      text: String(message.text).trim().slice(0, 2000),
+    }));
+  return [
+    ...normalizedHistory,
+    question ? { role: "user", text: String(question).trim().slice(0, 2000) } : null,
+    answer ? { role: "assistant", text: String(answer).trim().slice(0, 2000) } : null,
+  ]
+    .filter(Boolean)
+    .slice(-8);
+}
+
+function buildCustomerPrompt(
+  snapshot,
+  question,
+  _processGuide,
+  context,
+  conversationHistory = [],
+) {
   return {
     question,
     context: snapshot,
     selectedContext: context,
+    conversationHistory,
     instruction:
       "Responde la solicitud sobre la cuenta usando solo el CRM autorizado. Si se pide un correo, redacta un borrador y no lo envíes. Todas las acciones requieren confirmación.",
   };
@@ -245,24 +519,38 @@ function normalizeCustomerResponse(result, _snapshot, _question, context) {
 export function createCustomerAccountAdapter({ user, snapshot, agents, jobId }) {
   const permissions = user?.permissionSet || new Set();
   const availableTools = [
-    { name: "searchAccounts", requiredPermission: "cuentas.read" },
-    { name: "searchOpportunities", requiredPermission: "oportunidades.read" },
-    { name: "getOpportunity", requiredPermission: "oportunidades.read" },
-    { name: "searchContacts", requiredPermission: "contactos.read" },
-    { name: "searchInteractions", requiredPermission: "interacciones.read" },
+    ...COACH_READ_TOOL_CATALOG,
+    { name: "searchInteractions", requiredPermission: "interacciones.read", readOnly: true },
   ];
   const dependencies = {
-    prepareReadModel: async ({ question, availableTools: resolvedTools }) =>
+    prepareReadModel: async ({
+      question,
+      availableTools: resolvedTools,
+      conversationHistory,
+      businessRules,
+    }) =>
       buildCustomerReadModel({
         user,
         question,
         snapshot,
         availableTools: resolvedTools,
+        conversationHistory,
+        businessRules,
       }),
-    executeReadTool: ({ toolName, snapshot: scopedSnapshot, args }) =>
-      executeCustomerReadTool({ toolName, snapshot: scopedSnapshot, args }),
-    buildStageReadiness: () => null,
-    isStagePreparationQuestion: () => false,
+    executeReadTool: ({
+      toolName,
+      snapshot: scopedSnapshot,
+      args,
+      businessRules,
+    }) => executeCustomerReadTool({
+      toolName,
+      snapshot: scopedSnapshot,
+      args,
+      businessRules,
+    }),
+    buildStageReadiness: (opportunity) =>
+      buildStageReadiness(opportunity, { currentUserId: Number(user?.id) }),
+    isStagePreparationQuestion,
     loadProcessGuide: async () => "",
     buildPrompt: buildCustomerPrompt,
     requestResponse: async ({ payload }) => {
@@ -316,7 +604,11 @@ export function createCustomerAccountAdapter({ user, snapshot, agents, jobId }) 
       allowedKinds: ["activity"],
       sourceChannel: "customer_account",
     },
-    runTurn({ question, context = {}, history = [] }) {
+    async runTurn({ question, context = {}, history = [] }) {
+      const businessRules = await loadCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      });
       return runConversationEngine({
         question,
         context,
@@ -327,6 +619,7 @@ export function createCustomerAccountAdapter({ user, snapshot, agents, jobId }) 
         channelRules: this.channelRules,
         permissions,
         operationPolicy: this.operationPolicy,
+        businessRules,
         dependencies,
       });
     },

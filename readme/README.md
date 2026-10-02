@@ -54,6 +54,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 
 ## Cambios recientes documentados
 
+- Mi Coach: Cliente existente comparte el catalogo de lectura de Coach con alcance fijo por cuenta, incluyendo pipeline, actividades, readiness, leads y contenido de cotizaciones saneado; las operaciones siguen separadas por canal.
 - Nuevo documento transversal: logica de negocio del CRM con reglas comunes de RBAC, ownership, create/request, activacion y auditoria.
 - Cada README de modulo ahora incluye su propia seccion `Logica de negocio` para concentrar reglas operativas, restricciones y efectos esperados sin depender solo del documento transversal.
 - Usuarios/Auth: set password migrado a token temporal de un solo uso, vigencia visible en UI, redireccion automatica al dashboard y auditoria con proposito/expiracion.

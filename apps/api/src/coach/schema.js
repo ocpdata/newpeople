@@ -196,6 +196,71 @@ export async function ensureCoachSchema() {
           INDEX idx_coach_events_operation_created (operation_id, created_at_utc)
         )
       `);
+      await query(`
+        CREATE TABLE IF NOT EXISTS coach_turn_quality_traces (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          channel VARCHAR(40) NOT NULL,
+          process_key VARCHAR(80) NOT NULL,
+          case_id VARCHAR(80) NULL,
+          user_id BIGINT UNSIGNED NOT NULL,
+          session_id BIGINT UNSIGNED NULL,
+          job_id BIGINT UNSIGNED NULL,
+          intent_type VARCHAR(80) NULL,
+          intent_subtype VARCHAR(100) NULL,
+          primary_entity VARCHAR(40) NOT NULL DEFAULT 'none',
+          entity_resolution_json JSON NOT NULL,
+          applied_rules_json JSON NOT NULL,
+          validation_status ENUM('valid', 'invalid', 'clarification', 'error') NOT NULL,
+          validation_reasons_json JSON NOT NULL,
+          response_type VARCHAR(40) NULL,
+          confidence VARCHAR(20) NULL,
+          evidence_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+          tools_used_json JSON NOT NULL,
+          operations_proposed SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+          operations_rejected SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+          latency_ms INT UNSIGNED NOT NULL DEFAULT 0,
+          error_code VARCHAR(100) NULL,
+          feedback_rating ENUM('positive', 'negative') NULL,
+          feedback_category ENUM('intent', 'entity', 'response', 'evidence', 'other') NULL,
+          feedback_corrected BOOLEAN NOT NULL DEFAULT FALSE,
+          feedback_at DATETIME(3) NULL,
+          created_at_utc DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          INDEX idx_coach_quality_channel_date (channel, created_at_utc),
+          INDEX idx_coach_quality_process_date (channel, process_key, created_at_utc),
+          INDEX idx_coach_quality_user_date (user_id, created_at_utc),
+          INDEX idx_coach_quality_session (channel, session_id, created_at_utc),
+          INDEX idx_coach_quality_validation (validation_status, created_at_utc)
+        )
+      `);
+      const qualityTraceColumns = await query(
+        `SHOW COLUMNS FROM coach_turn_quality_traces`,
+      );
+      if (!qualityTraceColumns.some((column) => column.Field === "case_id")) {
+        await query(
+          `ALTER TABLE coach_turn_quality_traces ADD COLUMN case_id VARCHAR(80) NULL AFTER process_key`,
+        );
+      }
+      await query(`
+        CREATE TABLE IF NOT EXISTS coach_channel_rollouts (
+          channel VARCHAR(40) PRIMARY KEY,
+          enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          rollout_percentage TINYINT UNSIGNED NOT NULL DEFAULT 100,
+          allowlist_json JSON NOT NULL,
+          updated_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT fk_coach_channel_rollout_user FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+      `);
+      for (const channel of ["coach", "customer_account", "prospect"]) {
+        await query(
+          `INSERT INTO coach_channel_rollouts
+            (channel, enabled, rollout_percentage, allowlist_json, created_at, updated_at)
+           SELECT ?, TRUE, 100, JSON_ARRAY(), NOW(3), NOW(3)
+           WHERE NOT EXISTS (SELECT 1 FROM coach_channel_rollouts WHERE channel = ?)`,
+          [channel, channel],
+        );
+      }
       const eventColumns = await query(
         `SHOW COLUMNS FROM coach_operation_events`,
       );

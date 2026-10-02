@@ -4,7 +4,10 @@ import {
   normalizeCoachGatewayRequest,
   resolveCoachTurnContext,
 } from "./conversation-engine.js";
+import { classifyCoachIntent } from "./phase-one-engine.js";
 import { createCoachAdapter } from "./coach-adapter.js";
+import { loadCoachBusinessRules } from "./business-rules.js";
+import { recordCoachTurnQualityTrace } from "./observability.js";
 
 export function resolveCoachRolloutMode(user = {}) {
   const configuredMode = ["legacy", "gateway", "shadow", "pilot"].includes(
@@ -55,7 +58,6 @@ export function getCoachConversationHistory(
 function collectIds(value, ids = new Set()) {
   if (!value || typeof value !== "object") return ids;
   if (Array.isArray(value)) {
-    value.forEach((item) => collectIds(item, ids));
     return ids;
   }
   for (const [key, item] of Object.entries(value)) {
@@ -167,15 +169,36 @@ export async function runCoachJob({
       `UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ?`,
       [jobId],
     );
-    const coachAdapter = createCoachAdapter({ user, dependencies });
+    const businessRules = dependencies.loadCoachBusinessRules
+      ? await dependencies.loadCoachBusinessRules({
+          channel: "coach",
+          process: classifyCoachIntent(question).type,
+        })
+      : await loadCoachBusinessRules({
+          channel: "coach",
+          process: classifyCoachIntent(question).type,
+        });
+    const coachAdapter = createCoachAdapter({ user, dependencies, businessRules });
     const engineResult = await coachAdapter.runTurn({
       question,
       context: selectedContext,
       history: conversationHistory,
       jobId,
     });
+    const qualityTraceId = await recordCoachTurnQualityTrace({
+      channel: "coach",
+      process: engineResult.qualityTrace?.process,
+      userId: user.id,
+      sessionId,
+      jobId,
+      trace: engineResult.qualityTrace,
+    }).catch((error) => {
+      console.warn("[mi-agent] No fue posible registrar traza de calidad:", error?.message || error);
+      return null;
+    });
     const { response: normalizedResult, activeContext, readToolResults } =
       engineResult;
+    if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
     conversationHistory = engineResult.conversationHistory;
     const persistedOperations = sessionId
       ? await persistCoachOperations({
@@ -238,6 +261,31 @@ export async function runCoachJob({
       );
     }
   } catch (error) {
+    await recordCoachTurnQualityTrace({
+      channel: "coach",
+      process: classifyCoachIntent(question).type,
+      userId: user.id,
+      sessionId,
+      jobId,
+      trace: {
+        intentType: classifyCoachIntent(question).type,
+        intentSubtype: classifyCoachIntent(question).subtype,
+        primaryEntity: selectedContext.opportunityId
+          ? "opportunity"
+          : selectedContext.leadId
+            ? "lead"
+            : selectedContext.contactId
+              ? "contact"
+              : selectedContext.accountId
+                ? "account"
+                : "none",
+        appliedRules: { channel: "coach", engineMode: "gateway" },
+        validationStatus: "error",
+        validationReasons: ["turn_execution_failed"],
+        errorCode: String(error?.code || error?.name || "turn_execution_failed"),
+        latencyMs: Math.max(0, Date.now() - startedAt),
+      },
+    }).catch(() => undefined);
     if (sessionId) {
       await setCoachPendingQuestion(user.id, sessionId, null).catch(
         () => undefined,

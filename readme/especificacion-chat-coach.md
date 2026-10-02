@@ -92,6 +92,8 @@ El vendedor debe poder preguntar, por ejemplo:
 
 Las respuestas deben basarse en la información real de la oportunidad, sus preguntas de etapa, contactos, actividades, cotizaciones, propuestas y demás registros accesibles. Cuando falte información, el Coach debe indicarlo claramente y proponer cómo obtenerla.
 
+Cuando el vendedor pregunte qué contiene una cotización, Coach puede consultar la ultima version accesible de una oportunidad resuelta si tiene `oportunidades.read`, al menos un permiso `cotizaciones.*` y acceso por ownership. La respuesta puede resumir secciones, productos o servicios, cantidades, precios y descuentos; excluye costos internos, margenes y notas internas. Si no puede resolver una oportunidad unica o no encuentra una cotizacion accesible, Coach pide seleccion o lo aclara.
+
 ## Creación y actualización desde el chat
 
 El chat es el punto de entrada para iniciar acciones, pero los módulos existentes siguen siendo responsables de sus formularios, validaciones, reglas de negocio y guardado final.
