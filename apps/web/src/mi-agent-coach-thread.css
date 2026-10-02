@@ -15,6 +15,20 @@
   justify-content: space-between;
   gap: 16px;
 }
+.mi-agent-coach-handoff {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #087c74;
+  background: #f2f8f7;
+}
+.mi-agent-coach-handoff small {
+  color: #536977;
+  font-size: 11px;
+  line-height: 1.45;
+}
 .mi-agent-coach-context-heading {
   margin-top: 18px;
 }

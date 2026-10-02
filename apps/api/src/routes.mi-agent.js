@@ -1,6 +1,7 @@
 import express from "express";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { requirePermission } from "./auth.js";
 import {
   assertAiBudgetAvailable,
@@ -59,6 +60,14 @@ import { compareCoachExecutions } from "./coach/coach-adapter.js";
 import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
 import { getCoachMetrics } from "./coach/metrics.js";
 import { classifyCoachIntent } from "./coach/phase-one-engine.js";
+import {
+  buildCoachIntentPreviewPrompt,
+  buildCoachIntentCatalogForPrompt,
+  getMissingCoachIntentContext,
+  listCoachIntentCatalog,
+  normalizeIntentExamples,
+  validateCoachIntentClassification,
+} from "./coach/intent-governance.js";
 import { getAuthorizedCoachQuotationContent } from "./coach/quotation-read-service.js";
 import {
   getCoachQualityDashboard,
@@ -71,6 +80,16 @@ import { recordCoachTurnQualityTrace } from "./coach/observability.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
 
 const router = express.Router();
+
+const coachIntentPreviewSchema = z.object({
+  question: z.string().trim().min(1).max(1200),
+  intentCode: z.string().trim().max(80).optional(),
+  examples: z
+    .array(z.string().trim().min(1).max(240))
+    .min(1)
+    .max(30)
+    .optional(),
+});
 const MI_AGENT_FEATURE_CODE = "mi_agent.analysis";
 const MI_COACH_FEATURE_CODE = "mi_coach.chat";
 const MI_COACH_USE_PERMISSION = "mi_coach.use";
@@ -2269,6 +2288,7 @@ export function normalizeCoachResult(
       "change_request",
       "error",
       "clarification",
+      "handoff",
     ].includes(String(source.responseType || "").trim())
       ? inferredStageAnswer
         ? "action_proposal"
@@ -2336,6 +2356,10 @@ export function normalizeCoachResult(
     )
       ? String(source.confidence).trim()
       : "medium",
+    ...(source.intentRouting && typeof source.intentRouting === "object"
+      ? { intentRouting: source.intentRouting }
+      : {}),
+    detailHandoff: null,
     entities: {
       opportunityId: opportunityIds.has(selectedOpportunityId)
         ? selectedOpportunityId
@@ -3299,6 +3323,19 @@ function buildCoachPrompt(
         content:
           "Actúa como agente coordinador. Solo interpreta la pregunta, selecciona conceptualmente read tools, interpreta sus resultados y redacta la respuesta. No consultes MySQL, no inventes IDs, no resuelvas permisos, no ejecutes escrituras y no cambies de entidad sin evidencia. Usa responseType informational, clarification, recommendation, action_proposal o error. Toda operation es solo una propuesta que requiere confirmación externa.",
       },
+      {
+        role: "system",
+        content:
+          "El intentRouting incluido en el contexto ya fue clasificado y validado por el servidor: consérvalo sin reclasificar. Basa la respuesta en esa intención, respeta sus requiredContext y solicita únicamente herramientas de allowedTools. El catálogo es metadato del servidor. Una consulta process_information es conceptual y no requiere cuenta ni oportunidad.",
+      },
+      ...(snapshot?.interactionModePolicy
+        ? [
+            {
+              role: "system",
+              content: `Modo de interacción validado por el servidor (${snapshot.intentRouting?.mode || "coaching"}): ${snapshot.interactionModePolicy.instruction} No cambies de modo ni inventes navegación. En coaching, centra la respuesta en una mejora concreta del vendedor, evidencia resumida y siguiente paso. En contexto breve, contesta solo lo necesario y evita reconstruir fichas, historiales completos, listas exhaustivas de contactos o partidas de cotización.`,
+            },
+          ]
+        : []),
       ...(administrativeRules.length
         ? [
             {
@@ -3314,7 +3351,7 @@ function buildCoachPrompt(
         content: JSON.stringify({
           question,
           stageReadinessPolicy:
-            "Si snapshot.deterministicStageReadiness existe, úsalo como diagnóstico autoritativo. No cambies qué criterios están cumplidos, pendientes o bloqueados. Redacta answer explicando sus seis bloques: etapa actual, avances confirmados, pendientes, riesgos, siguiente paso y recomendación de avance.",
+            "Solo si intentRouting.intent es stage_readiness y snapshot.deterministicStageReadiness existe, úsalo como diagnóstico autoritativo. No cambies qué criterios están cumplidos, pendientes o bloqueados. Para cualquier otra intención, no presentes el diagnóstico como respuesta. En preparación, explica etapa actual, avances confirmados, pendientes, riesgos, siguiente paso y recomendación.",
           toolCalls: [
             {
               toolName:
@@ -3348,6 +3385,15 @@ function buildCoachPrompt(
               targetDate: "YYYY-MM-DD|null",
             },
             confidence: "high|medium|low",
+            intentRouting: {
+              intent:
+                "process_information|seller_coaching|stage_readiness|activity_query|quotation_query|contact_query|account_query|opportunity_query|lead_query|account_ranking|temporal_filter|operation|general_query|clarification",
+              mode: "coaching|brief_context|deep_exploration|operation",
+              confidence: 0.0,
+              contextNeeded: ["account|opportunity|contact|lead"],
+              detailTarget: "account|opportunity|quotation|contact|lead|null",
+              reason: "",
+            },
             entities: {
               opportunityId: 0,
               accountId: 0,
@@ -3432,6 +3478,12 @@ function buildCoachPrompt(
           selectedContext,
           conversationHistory,
           readToolResults: snapshot.readToolResults || [],
+          intentCatalog: buildCoachIntentCatalogForPrompt(
+            Array.isArray(snapshot.intentCatalog) &&
+              snapshot.intentCatalog.length
+              ? snapshot.intentCatalog
+              : undefined,
+          ),
           snapshot,
         }),
       },
@@ -4032,6 +4084,59 @@ router.get(
 );
 
 router.post(
+  "/coach/admin/intents/preview",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = coachIntentPreviewSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Pregunta de prueba inválida",
+        issues: parsed.error.issues,
+      });
+    }
+    if (!config.openai.apiKey) {
+      return res
+        .status(503)
+        .json({ message: "La configuración IA no está habilitada" });
+    }
+    const catalog = await listCoachIntentCatalog();
+    if (parsed.data.examples) {
+      const target = catalog.find(
+        (item) => item.code === parsed.data.intentCode,
+      );
+      if (!target) {
+        return res.status(404).json({ message: "Intención no encontrada" });
+      }
+      target.examples = normalizeIntentExamples(parsed.data.examples);
+    }
+    const modelResult = await requestMiAgentJson({
+      payload: {
+        ...buildCoachIntentPreviewPrompt(parsed.data.question, catalog),
+        model: config.openai.model,
+      },
+      user: req.user,
+      jobId: null,
+      startedAt: new Date(),
+      phase: "coach_intent_preview",
+      featureCode: MI_COACH_FEATURE_CODE,
+      jobType: "mi_coach_chat",
+    });
+    const classification = validateCoachIntentClassification(modelResult);
+    const missingContext = getMissingCoachIntentContext(classification, {});
+    return res.json({
+      classification,
+      missingContext,
+      availableTools: classification.allowedTools,
+      plannedTools:
+        classification.requiresClarification || missingContext.length
+          ? []
+          : classification.allowedTools,
+      toolsExecuted: [],
+    });
+  },
+);
+
+router.post(
   "/analyze",
   requirePermission(MI_COACH_USE_PERMISSION),
   async (req, res) => {
@@ -4215,6 +4320,24 @@ router.post(
       isStagePreparationQuestion,
       buildStageReadiness,
       loadProcessGuide,
+      classifyCoachIntentWithModel: async ({
+        question: routingQuestion,
+        user: routingUser,
+        jobId: routingJobId,
+        catalog,
+      }) =>
+        requestMiAgentJson({
+          payload: {
+            ...buildCoachIntentPreviewPrompt(routingQuestion, catalog),
+            model: config.openai.model,
+          },
+          user: routingUser,
+          jobId: routingJobId,
+          startedAt: new Date(),
+          phase: "coach_intent_route",
+          featureCode: MI_COACH_FEATURE_CODE,
+          jobType: "mi_coach_chat",
+        }),
       requestMiAgentJson,
       buildCoachPrompt,
       resolveCoachResponseContext,

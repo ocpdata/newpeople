@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
 import {
   addDaysToIsoDate,
@@ -5382,6 +5383,8 @@ function LeadCallOutcomeModal({
 }
 
 function InteractionsPage({ can, currentUser }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openedLeadHandoffRef = useRef("");
   const coachHandoff = useCoachHandoff({ module: "interactions" });
   const appliedCoachHandoffRef = useRef("");
   const helpRef = useRef(null);
@@ -6798,6 +6801,17 @@ function InteractionsPage({ can, currentUser }) {
       setLoadingDetail(false);
     }
   }
+
+  useEffect(() => {
+    const leadId = Number(searchParams.get("leadId") || 0);
+    if (!leadId || openedLeadHandoffRef.current === String(leadId)) return;
+    openedLeadHandoffRef.current = String(leadId);
+    void openDetail(leadId).finally(() => {
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete("leadId");
+      setSearchParams(nextSearchParams, { replace: true });
+    });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     const operation = coachHandoff.handoff?.payload;

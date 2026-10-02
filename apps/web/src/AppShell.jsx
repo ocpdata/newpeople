@@ -452,6 +452,9 @@ export default function AppShell({
                 canExecuteCoach={can("mi_coach.execute")}
                 canCreateActions={can("oportunidades.update")}
                 canUpdateLeads={can("interacciones.update")}
+                canReadLeads={
+                  can("interacciones.read") || can("interacciones.read_all")
+                }
                 canCreateLeads={can("interacciones.update")}
                 canUpdateAccounts={can("cuentas.update")}
                 canUpdateContacts={can("contactos.update")}

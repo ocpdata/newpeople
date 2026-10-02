@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyCoachInteractionModeLimits,
   applyCoachOperationPolicy,
   buildDeterministicAccountOpportunityRanking,
   completeCoachModelTurn,
@@ -193,6 +194,58 @@ describe("Coach conversation engine", () => {
     });
   });
 
+  it("limita respuestas de contexto breve sin truncar el modo coaching", () => {
+    const response = {
+      answer: "A".repeat(2000),
+      facts: Array.from({ length: 8 }, (_, index) => ({ id: index })),
+      evidence: Array.from({ length: 8 }, (_, index) => `Evidencia ${index}`),
+      inferences: Array.from(
+        { length: 5 },
+        (_, index) => `Inferencia ${index}`,
+      ),
+      pendingItems: Array.from(
+        { length: 5 },
+        (_, index) => `Pendiente ${index}`,
+      ),
+    };
+
+    expect(
+      applyCoachInteractionModeLimits(response, "brief_context"),
+    ).toMatchObject({
+      answer: response.answer.slice(0, 1400),
+      facts: response.facts.slice(0, 6),
+      evidence: response.evidence.slice(0, 6),
+      inferences: response.inferences.slice(0, 3),
+      pendingItems: response.pendingItems.slice(0, 3),
+    });
+    expect(applyCoachInteractionModeLimits(response, "coaching")).toBe(
+      response,
+    );
+  });
+
+  it("permite coaching basado en la guía del proceso sin exigir evidencia CRM", () => {
+    const response = {
+      intent: "context_query",
+      responseType: "informational",
+      answer: "El proceso comercial se organiza en etapas verificables.",
+      evidence: [],
+      facts: [],
+      operations: [],
+    };
+
+    expect(
+      enforceCoachBusinessEvidence(
+        response,
+        "¿Qué etapas tiene el proceso de venta?",
+        {
+          validation: { requireEvidence: true },
+          scope: { requireBusinessEvidence: true },
+        },
+        true,
+      ),
+    ).toEqual(response);
+  });
+
   it("ejecuta resultados de lectura y solicita una segunda respuesta", async () => {
     const requestMiAgentJson = vi.fn().mockResolvedValue({
       intent: "context_query",
@@ -359,9 +412,14 @@ describe("Coach conversation engine", () => {
       },
     ];
     const loadAdministrativeRules = vi.fn().mockResolvedValue(activeAdminRules);
+    const classifyCoachIntentWithModel = vi.fn().mockResolvedValue({
+      intent: "process_information",
+      confidence: 0.97,
+      contextNeeded: [],
+    });
     let promptSnapshot = null;
     const result = await runConversationEngine({
-      question: "Resume la cuenta",
+      question: "¿Qué etapas tiene el proceso de venta?",
       context: { accountId: 7 },
       history: [],
       user: { id: 31 },
@@ -403,6 +461,8 @@ describe("Coach conversation engine", () => {
         loadProcessGuide: async () => "",
         requestMiAgentJson: async () => response,
         loadAdministrativeRules,
+        loadCoachIntentCatalog: async () => [],
+        classifyCoachIntentWithModel,
         buildCoachPrompt: (snapshot) => {
           promptSnapshot = snapshot;
           return {};
@@ -429,7 +489,7 @@ describe("Coach conversation engine", () => {
     });
     expect(result.qualityTrace).toMatchObject({
       channel: "coach",
-      process: "general_query",
+      process: "process_information",
       validationStatus: "valid",
       primaryEntity: "account",
       evidenceCount: 1,
@@ -438,7 +498,93 @@ describe("Coach conversation engine", () => {
       channel: "coach",
       process: "default",
     });
+    expect(classifyCoachIntentWithModel).toHaveBeenCalledTimes(1);
+    expect(result.response.intentRouting).toMatchObject({
+      intent: "process_information",
+      mode: "coaching",
+      confidence: 0.97,
+      requiredContext: [],
+      allowedTools: [],
+    });
     expect(promptSnapshot.administrativeRules).toEqual(activeAdminRules);
+  });
+
+  it("derives detailed record exploration to Cliente existente without querying details in Coach", async () => {
+    const prepareReadModel = vi.fn().mockResolvedValue({
+      effectiveContext: { accountId: 12, opportunityId: 41 },
+      questionContextTransition: { changed: false },
+      scopedSnapshot: {},
+      preparationRequested: false,
+      selectedOpportunity: {
+        id: 41,
+        accountId: 12,
+        lifecycle: "open",
+      },
+      deterministicStageReadiness: null,
+      readToolResults: [],
+      modelSnapshot: { readToolResults: [] },
+      clarification: null,
+      conversationHistory: [],
+      explicitEntities: {
+        candidates: {
+          accounts: [],
+          opportunities: [],
+          contacts: [],
+          leads: [],
+        },
+      },
+    });
+    const requestMiAgentJson = vi.fn();
+    const classifyCoachIntentWithModel = vi.fn().mockResolvedValue({
+      intent: "quotation_query",
+      mode: "deep_exploration",
+      detailTarget: "quotation",
+      confidence: 0.96,
+      contextNeeded: ["opportunity"],
+    });
+    const result = await runConversationEngine({
+      question: "Muéstrame todo el detalle y las partidas de la cotización.",
+      context: { accountId: 12, opportunityId: 41 },
+      user: {
+        id: 31,
+        permissionSet: new Set(["cuentas.read", "inteligencia_comercial.read"]),
+      },
+      dependencies: {
+        prepareReadModel,
+        loadCoachIntentCatalog: async () => [],
+        classifyCoachIntentWithModel,
+        loadAdministrativeRules: async () => [],
+        loadProcessGuide: async () => "",
+        requestMiAgentJson,
+        buildCoachPrompt: () => ({}),
+        resolveCoachResponseContext: (_snapshot, context) => ({
+          context,
+          changed: false,
+          conflict: null,
+        }),
+        normalizeCoachResult: (value) => value,
+        buildStageReadiness: () => null,
+      },
+    });
+
+    expect(prepareReadModel).toHaveBeenCalledWith(
+      expect.objectContaining({ availableTools: [] }),
+    );
+    expect(requestMiAgentJson).not.toHaveBeenCalled();
+    expect(result.response).toMatchObject({
+      intent: "continue_work",
+      responseType: "handoff",
+      intentRouting: {
+        mode: "deep_exploration",
+        allowedTools: [],
+      },
+      detailHandoff: {
+        destination: "customer_account",
+        detailTarget: "quotation",
+        accountId: 12,
+        opportunityId: 41,
+      },
+    });
   });
 
   it("pide una oportunidad antes de responder una consulta global de actividades", async () => {
@@ -490,6 +636,190 @@ describe("Coach conversation engine", () => {
       type: "select_opportunity",
       missing: ["Oportunidad"],
     });
+  });
+
+  it("no exige oportunidad ni ejecuta herramientas para una consulta conceptual del proceso", async () => {
+    const readModel = await prepareCoachReadModel({
+      user: { id: 31 },
+      question: "¿Qué etapas tiene el proceso de venta?",
+      availableTools: [
+        { name: "searchOpportunities" },
+        { name: "getOpportunityReadiness" },
+      ],
+      businessRules: {},
+      intentRouting: {
+        intent: "process_information",
+        requiredContext: [],
+        allowedTools: [],
+      },
+      dependencies: {
+        getMiAgentContext: async () => ({
+          accounts: [],
+          coachOpportunities: [],
+        }),
+        resolveCoachContextEntities: () => ({
+          explicitEntities: {
+            account: null,
+            opportunity: null,
+            contact: null,
+            lead: null,
+            candidates: {
+              accounts: [],
+              opportunities: [],
+              contacts: [],
+              leads: [],
+            },
+          },
+        }),
+        applyCoachEntityResolution: (_snapshot, context) => ({
+          context,
+          changed: false,
+          conflict: null,
+        }),
+        normalizeCoachMatchText: (value) => String(value).toLowerCase(),
+        buildCoachEntityClarification: () => null,
+        getMiAgentEnrichedContext: async (_user, snapshot) => snapshot,
+        buildCoachScopedSnapshot: (snapshot) => snapshot,
+        isStagePreparationQuestion: () => true,
+        buildStageReadiness: () => null,
+      },
+    });
+
+    expect(readModel.clarification).toBeNull();
+    expect(readModel.readToolResults).toEqual([]);
+    expect(readModel.preparationRequested).toBe(false);
+  });
+
+  it("carga el agregado de pipeline para una pregunta general de desempeño del vendedor", async () => {
+    const snapshot = {
+      accounts: [],
+      coachOpportunities: [
+        {
+          id: 41,
+          name: "Proyecto de expansión",
+          accountId: 12,
+          amountUsd: 50000,
+          activationStatusCode: "activada",
+          lifecycle: "open",
+          riskLevel: "high",
+        },
+      ],
+      wonOpportunities: [],
+      lostOpportunities: [],
+      cancelledOpportunities: [],
+      leads: [],
+      contactMappings: [],
+    };
+    const readModel = await prepareCoachReadModel({
+      user: { id: 31 },
+      question: "¿Cómo puedo mejorar mi desempeño comercial?",
+      availableTools: [{ name: "getSellerPipeline" }],
+      businessRules: {},
+      intentRouting: {
+        intent: "seller_coaching",
+        mode: "coaching",
+        requiredContext: [],
+        allowedTools: ["getSellerPipeline"],
+      },
+      dependencies: {
+        getMiAgentContext: async () => snapshot,
+        resolveCoachContextEntities: () => ({
+          explicitEntities: {
+            account: null,
+            opportunity: null,
+            contact: null,
+            lead: null,
+            candidates: {
+              accounts: [],
+              opportunities: [],
+              contacts: [],
+              leads: [],
+            },
+          },
+        }),
+        applyCoachEntityResolution: (_snapshot, context) => ({
+          context,
+          changed: false,
+          conflict: null,
+        }),
+        normalizeCoachMatchText: (value) => String(value).toLowerCase(),
+        buildCoachEntityClarification: () => null,
+        getMiAgentEnrichedContext: async (_user, scopedSnapshot) =>
+          scopedSnapshot,
+        buildCoachScopedSnapshot: (value) => value,
+        isStagePreparationQuestion: () => false,
+        buildStageReadiness: () => null,
+      },
+    });
+
+    expect(readModel.readToolResults.map((item) => item.toolName)).toEqual([
+      "getSellerPipeline",
+    ]);
+    expect(readModel.modelSnapshot.pipeline).toMatchObject({
+      openCount: 1,
+      riskCount: 1,
+    });
+  });
+
+  it("no carga detalles enriquecidos ni ejecuta herramientas para exploración detallada", async () => {
+    const getMiAgentEnrichedContext = vi.fn();
+    const readModel = await prepareCoachReadModel({
+      user: { id: 31 },
+      question: "Muéstrame el detalle completo de la cotización.",
+      selectedContext: { accountId: 12, opportunityId: 41 },
+      availableTools: [],
+      businessRules: {},
+      intentRouting: {
+        intent: "quotation_query",
+        mode: "deep_exploration",
+        detailTarget: "quotation",
+        requiredContext: ["opportunity"],
+        allowedTools: [],
+      },
+      dependencies: {
+        getMiAgentContext: async () => ({
+          accounts: [],
+          coachOpportunities: [],
+          selectedRecord: {
+            type: "opportunity",
+            id: 41,
+            accountId: 12,
+            account: { id: 12, name: "Cuenta Demo" },
+            lifecycle: "open",
+          },
+        }),
+        resolveCoachContextEntities: () => ({
+          explicitEntities: {
+            account: null,
+            opportunity: null,
+            contact: null,
+            lead: null,
+            candidates: {
+              accounts: [],
+              opportunities: [],
+              contacts: [],
+              leads: [],
+            },
+          },
+        }),
+        applyCoachEntityResolution: (_snapshot, context) => ({
+          context,
+          changed: false,
+          conflict: null,
+        }),
+        normalizeCoachMatchText: (value) => String(value).toLowerCase(),
+        buildCoachEntityClarification: () => null,
+        getMiAgentEnrichedContext,
+        buildCoachScopedSnapshot: (snapshot) => snapshot,
+        isStagePreparationQuestion: () => false,
+        buildStageReadiness: () => null,
+      },
+    });
+
+    expect(getMiAgentEnrichedContext).not.toHaveBeenCalled();
+    expect(readModel.readToolResults).toEqual([]);
+    expect(readModel.modelSnapshot.selectedOpportunityDetail).toBeNull();
+    expect(readModel.modelSnapshot.selectedOpportunityQuotation).toBeNull();
   });
 
   it("incluye contenido de cotizacion autorizado en el contexto de Coach", async () => {

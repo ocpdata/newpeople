@@ -1,23 +1,34 @@
 # Mi Coach
 
-Mi Coach es el asistente comercial del vendedor dentro del CRM. Usa el contexto real del CRM para responder preguntas sobre cuentas, contactos, leads y oportunidades, y guía al vendedor para avanzar de manera ordenada y sólida a través de las etapas del proceso comercial.
+Mi Coach es el asistente de desarrollo comercial del vendedor dentro del CRM. Su objetivo principal es ayudarle a mejorar su desempeño, priorizar el trabajo y avanzar con disciplina por las etapas del proceso comercial. Puede usar señales autorizadas de cuentas, contactos, leads, oportunidades y cotizaciones como contexto breve para sustentar una recomendación, pero no sustituye las vistas de detalle de esos registros.
 
-Mi Coach debe funcionar como un director comercial: ayuda a entender la situación de cada oportunidad, identifica riesgos e información faltante, recomienda próximos pasos y orienta al vendedor hacia la acción más conveniente. No sustituye el criterio del vendedor ni reemplaza los módulos existentes del CRM; los coordina desde una experiencia conversacional más sencilla.
+Mi Coach actúa como entrenador comercial: ayuda a entender cómo está trabajando el vendedor, identifica prioridades, riesgos de avance y hábitos de seguimiento que puede mejorar, y propone próximos pasos verificables. No debe convertirse en una interfaz para explorar historiales completos, listas exhaustivas de contactos, actividades o partidas de cotización. Para ese nivel de análisis dirige al vendedor a **Cliente existente** o al módulo especializado correspondiente.
 
 ## Objetivo
 
 Mi Coach ayuda al vendedor a:
 
-- Entender la situación de una cuenta, contacto, lead u oportunidad.
+- Evaluar su avance, prioridades y desempeño comercial.
 - Avanzar una oportunidad con disciplina a través de las etapas del proceso comercial.
-- Identificar riesgos, bloqueos, necesidades, información faltante y próximos pasos.
-- Consultar información de cuentas, contactos, leads y oportunidades.
+- Identificar riesgos, bloqueos, información faltante y próximos pasos, con evidencia resumida de sus registros autorizados.
+- Obtener contexto puntual de cuentas, contactos, leads, oportunidades y cotizaciones cuando ayude a una recomendación.
 - Preparar reuniones, llamadas, demostraciones, negociaciones y seguimientos.
 - Iniciar la creación de cuentas, contactos, oportunidades, leads, mapeos de contactos, cotizaciones, propuestas y actividades.
 - Proponer actualizaciones de campos de los registros permitidos.
 - Proponer respuestas para preguntas de etapa cuando una afirmación del vendedor coincide claramente con una pregunta existente.
 
 Mi Coach no guarda cambios automáticamente. Toda creación o actualización debe revisarse y aprobarse explícitamente por el vendedor en el módulo correspondiente o en el flujo de confirmación definido para la operación.
+
+## Límite entre coaching y detalle
+
+Cada turno se clasifica por tema y por objetivo de interacción:
+
+- **Coaching:** recomienda cómo mejorar el desempeño o qué priorizar; puede usar métricas y señales resumidas de la cartera.
+- **Contexto breve:** contesta una pregunta puntual sobre un registro con la información mínima necesaria, sin reconstruir su ficha o historial.
+- **Exploración detallada:** Coach no consulta el registro ni sus relaciones. Ofrece continuar en Cliente existente o en el módulo autorizado correspondiente, llevando los identificadores resueltos por el servidor.
+- **Propuesta de operación:** conserva la revisión, permisos y confirmación del flujo de operaciones existente.
+
+La IA propone tema y objetivo, pero el servidor decide requisitos de contexto y herramientas permitidas. Las herramientas de lectura mantienen sus validaciones de permisos y ownership. El handoff solo contiene IDs determinados por el contexto autorizado y ofrece destinos fijos; la página de destino vuelve a validar acceso. Si no hay contexto inequívoco o permiso para abrir el espacio, Coach solicita aclaración o informa la limitación y no lee el detalle.
 
 Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis de situación comercial, Cliente existente, Cuenta nueva, investigación pública, biblioteca, reportes ni administración de gobierno, excepto cuando una dependencia del chat exige mencionarlos.
 
@@ -35,10 +46,10 @@ Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis 
 
 1. Abre el módulo **Mi Coach**.
 2. Entra a la pestaña **Coach** para usar la experiencia actual.
-3. Selecciona una cuenta, oportunidad o contacto cuando quieras limitar el contexto. También puedes mencionar la entidad directamente en la conversación.
+3. Selecciona una cuenta, oportunidad o contacto cuando ayude a recibir coaching más específico. También puedes mencionar la entidad directamente en la conversación.
 4. Revisa las estadísticas y preguntas rápidas.
 5. Escribe una pregunta, una necesidad o una instrucción en el campo del Coach.
-6. Revisa la respuesta, las recomendaciones y cualquier dato faltante.
+6. Revisa la recomendación, la evidencia resumida y cualquier dato faltante. Si necesitas investigar a fondo una cuenta o registro, continúa en el espacio que Coach propone.
 7. Si solicitas crear un registro, confirma la información que el Coach preparó y continúa en el módulo correspondiente.
 8. Revisa, completa y aprueba el formulario antes de guardarlo.
 9. Regresa al chat para continuar la conversación desde el mismo contexto.

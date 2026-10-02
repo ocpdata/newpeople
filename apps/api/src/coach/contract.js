@@ -87,9 +87,7 @@ const operationCommon = {
   evidence: z.array(coachEvidenceSchema).max(12).default([]),
   missingFields: z.array(text(120)).max(30).default([]),
   requiresConfirmation: z.literal(true).default(true),
-  sourceChannel: z
-    .enum(["coach", "customer_account", "prospect"])
-    .optional(),
+  sourceChannel: z.enum(["coach", "customer_account", "prospect"]).optional(),
   persistentId: positiveId.optional(),
   persistenceVersion: positiveId.optional(),
   persistenceStatus: z
@@ -401,6 +399,7 @@ export const coachResponseSchema = z
       "change_request",
       "clarification",
       "error",
+      "handoff",
     ]),
     answer: text(6000),
     facts: z.array(coachEvidenceSchema).max(30),
@@ -413,6 +412,64 @@ export const coachResponseSchema = z
       z.null(),
     ]),
     confidence: z.enum(["high", "medium", "low"]),
+    intentRouting: z
+      .object({
+        intent: z.enum([
+          "process_information",
+          "seller_coaching",
+          "stage_readiness",
+          "activity_query",
+          "quotation_query",
+          "contact_query",
+          "account_query",
+          "opportunity_query",
+          "lead_query",
+          "account_ranking",
+          "temporal_filter",
+          "operation",
+          "general_query",
+          "clarification",
+        ]),
+        mode: z.enum([
+          "coaching",
+          "brief_context",
+          "deep_exploration",
+          "operation",
+        ]),
+        confidence: z.number().min(0).max(1),
+        detailTarget: z
+          .enum(["account", "opportunity", "quotation", "contact", "lead"])
+          .nullable()
+          .optional(),
+        contextNeeded: z
+          .array(z.enum(["account", "opportunity", "contact", "lead"]))
+          .max(4),
+        requiredContext: z
+          .array(z.enum(["account", "opportunity", "contact", "lead"]))
+          .max(4)
+          .optional(),
+        allowedTools: z.array(text(100)).max(12).optional(),
+        reason: optionalText(240),
+      })
+      .optional(),
+    detailHandoff: z
+      .object({
+        destination: z.enum(["customer_account", "lead_management"]),
+        detailTarget: z.enum([
+          "account",
+          "opportunity",
+          "quotation",
+          "contact",
+          "lead",
+        ]),
+        accountId: positiveId.nullable(),
+        opportunityId: positiveId.nullable(),
+        contactId: positiveId.nullable(),
+        leadId: positiveId.nullable(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     entities: coachEntitiesSchema,
     operations: z.array(coachOperationSchema).max(6),
     clarification: coachClarificationSchema.nullable(),

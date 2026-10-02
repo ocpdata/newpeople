@@ -230,6 +230,10 @@ Para una pregunta como "¿Cuál es la oportunidad de Totalplay que está en wait
 5. Estado de activación: activada, salvo que se solicite lo contrario.
 6. Resultado: una oportunidad o una lista diferenciada de oportunidades.
 
+El enrutamiento de Coach usa un catálogo cerrado administrable desde Gobierno de Mi Coach. La IA propone tema, modo de interacción, confianza y contexto que considera necesario antes de preparar lecturas; el servidor valida esos valores y decide los requisitos y herramientas permitidas. Los modos separan coaching de vendedor, contexto breve, exploración detallada y propuesta de operación. Admin solo edita ejemplos; modos, contexto, permisos y herramientas son políticas del servidor. Las consultas conceptuales pueden responderse desde la guía comercial sin registros CRM. La exploración detallada no ejecuta lecturas enriquecidas ni llamadas de respuesta desde Coach: entrega un handoff con destino fijo, IDs resueltos por el servidor y permiso comprobado. La página de destino vuelve a aplicar permisos y ownership. La prueba de Admin clasifica una pregunta sin ejecutar herramientas y permite evaluar ejemplos aún no guardados. Cada cambio conserva una revisión previa, registra al usuario en auditoría y puede restaurarse.
+
+El modo de coaching puede consultar agregados del pipeline y señales puntuales para justificar una recomendación sobre prioridades, preparación o seguimiento. El modo de contexto breve limita el texto, evidencia y listas devueltas para no convertir una consulta puntual en una ficha completa. Las solicitudes de historial completo, detalle de contactos o partidas de cotización se derivan a Cliente existente o al espacio especializado. Las herramientas de escritura siguen siendo propuestas sujetas a revisión y confirmación.
+
 ### 5.4 Herramientas CRM
 
 Las herramientas deben ser pequeñas, explícitas y comprobables. Ejemplos:

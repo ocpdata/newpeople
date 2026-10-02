@@ -30,6 +30,21 @@
   align-items: center;
   gap: 8px;
 }
+.mi-agent-admin-rule-feedback {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid #a7d5bd;
+  border-radius: 5px;
+  background: #f1faf5;
+  color: #236a49;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.mi-agent-admin-rule-feedback.is-error {
+  border-color: #e1b4ad;
+  background: #fff6f4;
+  color: #993d34;
+}
 .mi-agent-admin-rule-groups {
   display: grid;
   gap: 16px;
@@ -211,6 +226,235 @@
   border-top: 1px solid #dbe5ea;
   border-bottom: 1px solid #dbe5ea;
 }
+.mi-agent-domain-policy-subsection {
+  display: grid;
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid #e6edef;
+}
+.mi-agent-governance-settings {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+  padding: 18px 0;
+  border-top: 1px solid #dbe5ea;
+  border-bottom: 1px solid #dbe5ea;
+}
+.mi-agent-governance-settings h4,
+.mi-agent-governance-metrics-section > h4 {
+  margin: 0;
+  color: #173b52;
+  font-size: 15px;
+}
+.mi-agent-governance-settings p,
+.mi-agent-governance-metrics-section > p {
+  max-width: 900px;
+  margin: 5px 0 0;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mi-agent-governance-metrics-section {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+  padding-top: 18px;
+  border-top: 1px solid #dbe5ea;
+}
+.mi-agent-intent-governance {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+  padding: 18px 0;
+  border-top: 1px solid #dbe5ea;
+}
+.mi-agent-intent-layout {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.8fr);
+  gap: 16px;
+}
+.mi-agent-intent-modes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.mi-agent-intent-modes article {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid #dbe5ea;
+  border-radius: 5px;
+  background: #f8fbfc;
+}
+.mi-agent-intent-modes strong {
+  color: #173b52;
+  font-size: 11px;
+}
+.mi-agent-intent-modes span {
+  color: #536977;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.mi-agent-intent-catalog {
+  display: grid;
+  align-content: start;
+  border: 1px solid #dbe5ea;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.mi-agent-intent-catalog button {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid #e6edef;
+  background: #fff;
+  color: #173b52;
+  text-align: left;
+  cursor: pointer;
+}
+.mi-agent-intent-catalog button:last-child {
+  border-bottom: 0;
+}
+.mi-agent-intent-catalog button.is-active {
+  box-shadow: inset 3px 0 #087c74;
+  background: #f0f8f6;
+}
+.mi-agent-intent-catalog button strong {
+  font-size: 12px;
+}
+.mi-agent-intent-catalog button span {
+  color: #627780;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.mi-agent-intent-detail {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+.mi-agent-intent-detail h5,
+.mi-agent-intent-revisions h5 {
+  margin: 0;
+  color: #173b52;
+  font-size: 14px;
+}
+.mi-agent-intent-detail > div > p,
+.mi-agent-intent-revisions > p {
+  margin: 5px 0 0;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mi-agent-intent-metadata {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid #e1e9ec;
+  border-bottom: 1px solid #e1e9ec;
+}
+.mi-agent-intent-metadata div {
+  min-width: 0;
+}
+.mi-agent-intent-metadata dt {
+  color: #60747d;
+  font-size: 11px;
+  font-weight: 700;
+}
+.mi-agent-intent-metadata dd {
+  margin: 4px 0 0;
+  color: #173b52;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mi-agent-intent-examples,
+.mi-agent-intent-preview-form label {
+  display: grid;
+  gap: 5px;
+  color: #173b52;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-agent-intent-examples textarea,
+.mi-agent-intent-preview-form input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border: 1px solid #cbd9df;
+  border-radius: 5px;
+  background: #fff;
+  color: #173b52;
+  font: inherit;
+  font-size: 13px;
+}
+.mi-agent-intent-preview-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+.mi-agent-intent-preview {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border-left: 3px solid #087c74;
+  background: #f2f8f7;
+  color: #365769;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mi-agent-intent-preview strong {
+  color: #173b52;
+  font-size: 13px;
+}
+.mi-agent-intent-preview small {
+  color: #60747d;
+}
+.mi-agent-intent-revisions {
+  display: grid;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid #dbe5ea;
+}
+.mi-agent-intent-revision {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #e6edef;
+  color: #536977;
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .mi-agent-intent-modes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mi-agent-intent-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mi-agent-intent-catalog {
+    max-height: 250px;
+    overflow-y: auto;
+  }
+  .mi-agent-intent-metadata,
+  .mi-agent-intent-preview-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mi-agent-intent-revision {
+    align-items: flex-start;
+  }
+}
+@media (max-width: 480px) {
+  .mi-agent-intent-modes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .mi-agent-domain-policy h4 {
   margin: 2px 0 5px;
   color: #173b52;
@@ -235,6 +479,48 @@
 .mi-agent-admin-scope-status strong {
   color: #176b72;
   font-size: 12px;
+}
+.mi-agent-scope-help {
+  display: block;
+  margin-top: 5px;
+  color: #536977;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.mi-agent-scope-explainer {
+  margin: 0;
+  padding: 9px 11px;
+  border-left: 3px solid #8abbb6;
+  background: #f4f8f8;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mi-agent-pipeline-governance {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+  background: #f8fbfc;
+}
+.mi-agent-pipeline-governance h4 {
+  margin: 2px 0 5px;
+  color: #173b52;
+  font-size: 14px;
+}
+.mi-agent-pipeline-governance p {
+  max-width: 900px;
+  margin: 0;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mi-agent-pipeline-governance .mi-agent-scope-help {
+  padding-top: 8px;
+  border-top: 1px solid #e1e9ec;
 }
 .mi-agent-admin-rule-group h5 {
   line-height: 1.4;

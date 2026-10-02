@@ -114,6 +114,40 @@ describe("Coach strict contracts", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("accepts only a fixed destination for a deep-detail handoff", () => {
+    const parsed = coachResponseSchema.safeParse(
+      validResponse({
+        intent: "continue_work",
+        responseType: "handoff",
+        detailHandoff: {
+          destination: "customer_account",
+          detailTarget: "quotation",
+          accountId: 2,
+          opportunityId: 4,
+          contactId: null,
+          leadId: null,
+        },
+      }),
+    );
+    expect(parsed.success).toBe(true);
+
+    const invalidDestination = coachResponseSchema.safeParse(
+      validResponse({
+        intent: "continue_work",
+        responseType: "handoff",
+        detailHandoff: {
+          destination: "/arbitrary-route",
+          detailTarget: "quotation",
+          accountId: 2,
+          opportunityId: 4,
+          contactId: null,
+          leadId: null,
+        },
+      }),
+    );
+    expect(invalidDestination.success).toBe(false);
+  });
+
   it("requires all stage readiness blocks and valid dates", () => {
     const parsed = stageReadinessSchema.safeParse({
       currentStage: {

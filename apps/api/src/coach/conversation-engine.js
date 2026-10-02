@@ -9,6 +9,13 @@ import {
 } from "./read-tools.js";
 import { getCoachBusinessRules } from "./business-rules.js";
 import { matchCoachQueryCase } from "./case-catalog.js";
+import {
+  buildCoachDetailHandoff,
+  getMissingCoachIntentContext,
+  getCoachInteractionModePolicy,
+  listCoachIntentCatalog,
+  validateCoachIntentClassification,
+} from "./intent-governance.js";
 
 export const CONTEXT_KEYS = [
   "accountId",
@@ -169,6 +176,7 @@ export function enforceCoachBusinessEvidence(
   response = {},
   question = "",
   rules = {},
+  allowNoBusinessEvidence = false,
 ) {
   const hasEvidence =
     (Array.isArray(response.evidence) && response.evidence.length > 0) ||
@@ -182,8 +190,9 @@ export function enforceCoachBusinessEvidence(
     !(
       rules.validation?.requireEvidence || rules.scope?.requireBusinessEvidence
     ) ||
+    allowNoBusinessEvidence ||
     hasEvidence ||
-    ["clarification", "error"].includes(response.responseType)
+    ["clarification", "error", "handoff"].includes(response.responseType)
   ) {
     return response;
   }
@@ -203,6 +212,32 @@ export function enforceCoachBusinessEvidence(
       intendedAction: "continue_request",
     },
     operations: [],
+  };
+}
+
+export function applyCoachInteractionModeLimits(
+  response = {},
+  mode = "coaching",
+) {
+  if (mode !== "brief_context") return response;
+  return {
+    ...response,
+    answer: String(response.answer || "")
+      .trim()
+      .slice(0, 1400),
+    facts: (Array.isArray(response.facts) ? response.facts : []).slice(0, 6),
+    evidence: (Array.isArray(response.evidence) ? response.evidence : []).slice(
+      0,
+      6,
+    ),
+    inferences: (Array.isArray(response.inferences)
+      ? response.inferences
+      : []
+    ).slice(0, 3),
+    pendingItems: (Array.isArray(response.pendingItems)
+      ? response.pendingItems
+      : []
+    ).slice(0, 3),
   };
 }
 
@@ -519,14 +554,83 @@ export async function runConversationEngine({
       return businessRules.scope.accountSearchAllowed !== false;
     return true;
   });
+  const intentCatalog =
+    channel === "coach"
+      ? await (dependencies.loadCoachIntentCatalog || listCoachIntentCatalog)()
+      : [];
+  const legacyIntent = classifyCoachIntent(question);
+  const legacyIntentCode = [
+    "stage_readiness",
+    "activity_query",
+    "quotation_query",
+    "contact_query",
+    "account_query",
+    "opportunity_query",
+    "lead_query",
+    "account_ranking",
+    "temporal_filter",
+    "operation",
+    "general_query",
+  ].includes(legacyIntent.type)
+    ? legacyIntent.type
+    : "clarification";
+  let rawIntentClassification = {
+    intent: legacyIntentCode,
+    confidence: legacyIntentCode === "clarification" ? 0 : 0.75,
+  };
+  if (
+    channel === "coach" &&
+    typeof dependencies.classifyCoachIntentWithModel === "function"
+  ) {
+    try {
+      rawIntentClassification = await dependencies.classifyCoachIntentWithModel(
+        {
+          question,
+          user,
+          jobId,
+          catalog: intentCatalog,
+        },
+      );
+    } catch (error) {
+      rawIntentClassification = {
+        intent: "clarification",
+        confidence: 0,
+        reason: "classifier_unavailable",
+      };
+      console.warn(
+        "[mi-agent] No fue posible clasificar la intención:",
+        error?.message || error,
+      );
+    }
+  }
+  const intentRouting =
+    channel === "coach"
+      ? validateCoachIntentClassification(rawIntentClassification)
+      : null;
+  const coachingPermissionSet = user?.permissionSet || permissions;
+  const canOpenCustomerWorkspace =
+    permissionGranted(coachingPermissionSet, "inteligencia_comercial.read") &&
+    (permissionGranted(coachingPermissionSet, "cuentas.read") ||
+      permissionGranted(coachingPermissionSet, "cuentas.read_all"));
+  const canOpenLeadManagement =
+    permissionGranted(coachingPermissionSet, "interacciones.read") ||
+    permissionGranted(coachingPermissionSet, "interacciones.read_all");
+  const routedTools = intentRouting
+    ? resolvedTools.filter((tool) =>
+        intentRouting.allowedTools.includes(
+          typeof tool === "string" ? tool : tool?.name,
+        ),
+      )
+    : resolvedTools;
   const readModel = await prepareReadModel({
     user,
     question,
     selectedContext: context,
     conversationHistory: channelHistory,
     dependencies,
-    availableTools: resolvedTools,
+    availableTools: routedTools,
     businessRules,
+    intentRouting,
   });
   const {
     effectiveContext,
@@ -551,6 +655,12 @@ export async function runConversationEngine({
   const promptModelSnapshot = {
     ...modelSnapshot,
     administrativeRules: administrativeRules.filter((rule) => rule.enabled),
+    intentCatalog,
+    intentRouting,
+    interactionModePolicy:
+      channel === "coach"
+        ? getCoachInteractionModePolicy(intentRouting?.mode)
+        : null,
   };
   const processGuide = await loadProcessGuide();
   const promptArguments = [
@@ -571,35 +681,119 @@ export async function runConversationEngine({
       effectiveOperationPolicy,
     );
   }
+  const handoffContext = {
+    ...effectiveContext,
+    accountId:
+      effectiveContext.accountId ||
+      selectedOpportunity?.account?.id ||
+      selectedOpportunity?.accountId ||
+      explicitEntities?.account?.id ||
+      explicitEntities?.opportunity?.account?.id ||
+      explicitEntities?.opportunity?.accountId ||
+      explicitEntities?.contact?.account?.id ||
+      explicitEntities?.contact?.accountId ||
+      null,
+  };
+  const missingIntentContext = getMissingCoachIntentContext(
+    intentRouting,
+    handoffContext,
+  );
+  const detailHandoff = buildCoachDetailHandoff({
+    classification: intentRouting,
+    context: handoffContext,
+    selectedOpportunity,
+    explicitEntities,
+    canOpenCustomerWorkspace,
+    canOpenLeadManagement,
+  });
+  const deepExplorationNeedsDestination =
+    intentRouting?.mode === "deep_exploration" &&
+    !missingIntentContext.length &&
+    !detailHandoff;
+  const routingClarification =
+    intentRouting?.requiresClarification ||
+    missingIntentContext.length ||
+    deepExplorationNeedsDestination
+      ? {
+          type: "missing_fields",
+          message: intentRouting?.requiresClarification
+            ? "No identifiqué con suficiente certeza qué necesitas. ¿Puedes precisar si preguntas por el proceso general o por un registro concreto?"
+            : missingIntentContext.length
+              ? `Para revisar ese detalle, selecciona ${missingIntentContext.join(" y ")} en el contexto del Coach.`
+              : intentRouting.detailTarget === "lead"
+                ? "No tienes acceso a la gestión de leads desde esta cuenta. Abre el módulo de leads con un perfil autorizado."
+                : "No tienes acceso al espacio de Cliente existente para revisar este detalle.",
+          missing: missingIntentContext,
+          candidates: [],
+          originalRequest: question,
+          intendedAction: "continue_request",
+        }
+      : null;
+  const effectiveClarification = clarification || routingClarification;
   const deterministicResult =
-    clarification || channel !== "coach"
+    effectiveClarification ||
+    channel !== "coach" ||
+    intentRouting?.mode === "deep_exploration"
       ? null
       : buildDeterministicAccountOpportunityRanking(
           question,
           modelSnapshot.coachOpportunities || [],
         );
-  let result = clarification
-    ? {
-        intent: "clarification",
-        responseType: "clarification",
-        answer: clarification.message,
-        confidence: "high",
-        clarification,
-        operations: [],
-      }
-    : deterministicResult ||
-      (await requestResponse({
-        payload: buildPrompt(...promptArguments),
-        user,
-        jobId,
-        startedAt: new Date(),
-        phase: channel,
-        featureCode,
-        jobType,
-      }));
+  const handoffResult =
+    intentRouting?.mode === "deep_exploration" &&
+    !effectiveClarification &&
+    detailHandoff
+      ? {
+          intent: "continue_work",
+          responseType: "handoff",
+          answer:
+            detailHandoff.destination === "customer_account"
+              ? "Este nivel de detalle se trabaja en Cliente existente. Abre ese espacio para revisar la cuenta y sus registros relacionados; no exploraré el historial completo desde Coach."
+              : "Este nivel de detalle se trabaja en la gestión de leads. Ábrela para continuar revisando el registro; Coach se mantiene enfocado en tu desempeño comercial.",
+          confidence: "high",
+          facts: [],
+          evidence: [],
+          inferences: [],
+          pendingItems: [],
+          recommendation: null,
+          entities: {
+            accountId: detailHandoff.accountId,
+            opportunityId: detailHandoff.opportunityId,
+            contactId: detailHandoff.contactId,
+            leadId: detailHandoff.leadId,
+            names: [],
+          },
+          operations: [],
+          clarification: null,
+          action: null,
+          stageReadiness: null,
+        }
+      : null;
+  let result = handoffResult;
+  if (!result) {
+    result = effectiveClarification
+      ? {
+          intent: "clarification",
+          responseType: "clarification",
+          answer: effectiveClarification.message,
+          confidence: "high",
+          clarification: effectiveClarification,
+          operations: [],
+        }
+      : deterministicResult ||
+        (await requestResponse({
+          payload: buildPrompt(...promptArguments),
+          user,
+          jobId,
+          startedAt: new Date(),
+          phase: channel,
+          featureCode,
+          jobType,
+        }));
+  }
   const completedModelTurn = await completeCoachModelTurn({
     result,
-    clarification,
+    clarification: effectiveClarification,
     snapshot: scopedSnapshot,
     modelSnapshot: promptModelSnapshot,
     question,
@@ -616,7 +810,7 @@ export async function runConversationEngine({
     permissions,
     operationPolicy: effectiveOperationPolicy,
     businessRules,
-    availableTools: resolvedTools,
+    availableTools: routedTools,
     dependencies: {
       buildStageReadiness,
       buildCoachPrompt,
@@ -628,10 +822,14 @@ export async function runConversationEngine({
   });
   result = completedModelTurn.result;
   const requiresStageReadiness =
+    intentRouting?.mode !== "deep_exploration" &&
     !clarification &&
     selectedOpportunity &&
     selectedOpportunity.lifecycle !== "historical" &&
-    (preparationRequested || result?.intent === "opportunity_preparation");
+    (intentRouting?.intent === "stage_readiness" ||
+      (intentRouting?.intent !== "process_information" &&
+        (preparationRequested ||
+          result?.intent === "opportunity_preparation")));
   const authoritativeStageReadiness = requiresStageReadiness
     ? deterministicStageReadiness ||
       buildStageReadiness(selectedOpportunity, {
@@ -665,7 +863,15 @@ export async function runConversationEngine({
           snapshot: scopedSnapshot,
           context: effectiveContext,
           channel,
-          intent: classifyCoachIntent(question),
+          intent: intentRouting
+            ? {
+                ...legacyIntent,
+                type: intentRouting.intent,
+                subtype: intentRouting.intent,
+                requiresClarification: intentRouting.requiresClarification,
+                operationRequested: intentRouting.intent === "operation",
+              }
+            : legacyIntent,
           businessRules,
         })
       : {
@@ -690,40 +896,64 @@ export async function runConversationEngine({
     effectiveContext,
     authoritativeStageReadiness,
   );
+  const isProcessGuideCoaching =
+    intentRouting?.intent === "process_information" &&
+    intentRouting?.mode === "coaching";
+  const modeLimitedResponse = applyCoachInteractionModeLimits(
+    normalizedResponse,
+    intentRouting?.mode,
+  );
   const proposedOperationCount = Array.isArray(normalizedResponse.operations)
     ? normalizedResponse.operations.length
     : 0;
   const validationReasons = [];
-  if (!String(normalizedResponse?.answer || "").trim()) {
+  if (!String(modeLimitedResponse?.answer || "").trim()) {
     validationReasons.push("missing_answer");
   }
   const evidenceCount =
-    (Array.isArray(normalizedResponse?.evidence)
-      ? normalizedResponse.evidence.length
+    (Array.isArray(modeLimitedResponse?.evidence)
+      ? modeLimitedResponse.evidence.length
       : 0) +
-    (Array.isArray(normalizedResponse?.facts)
-      ? normalizedResponse.facts.length
+    (Array.isArray(modeLimitedResponse?.facts)
+      ? modeLimitedResponse.facts.length
       : 0);
   if (
     (businessRules.validation.requireEvidence ||
       businessRules.scope.requireBusinessEvidence) &&
+    !isProcessGuideCoaching &&
     !evidenceCount &&
-    !["clarification", "error"].includes(normalizedResponse?.responseType)
+    !["clarification", "error", "handoff"].includes(
+      modeLimitedResponse?.responseType,
+    )
   ) {
     validationReasons.push("missing_business_evidence");
   }
-  const validationStatus = ["error"].includes(normalizedResponse?.responseType)
+  const validationStatus = ["error"].includes(modeLimitedResponse?.responseType)
     ? "error"
     : validationReasons.length
       ? "invalid"
-      : normalizedResponse?.responseType === "clarification"
+      : modeLimitedResponse?.responseType === "clarification"
         ? "clarification"
         : "valid";
   const response = enforceCoachBusinessEvidence(
-    normalizedResponse,
+    modeLimitedResponse,
     question,
     businessRules,
+    isProcessGuideCoaching,
   );
+  if (intentRouting) {
+    response.intentRouting = {
+      intent: intentRouting.intent,
+      mode: intentRouting.mode,
+      detailTarget: intentRouting.detailTarget,
+      confidence: intentRouting.confidence,
+      contextNeeded: intentRouting.requiredContext,
+      requiredContext: intentRouting.requiredContext,
+      allowedTools: intentRouting.allowedTools,
+      reason: intentRouting.reason || "",
+    };
+  }
+  response.detailHandoff = handoffResult ? detailHandoff : null;
   response.intentClassification = phaseOneDecision.intent;
   response.phaseOne = {
     type: phaseOneDecision.intent.type,
@@ -844,6 +1074,7 @@ export async function prepareCoachReadModel({
   conversationHistory = [],
   availableTools = [],
   businessRules = {},
+  intentRouting = null,
   dependencies,
 }) {
   const {
@@ -911,15 +1142,22 @@ export async function prepareCoachReadModel({
           lostOpportunities: [],
           cancelledOpportunities: [],
         };
-  const loadedScopedSnapshot = await getMiAgentEnrichedContext(
-    user,
-    buildCoachScopedSnapshot(analysisBaseSnapshot, effectiveContext),
+  const authorizedBaseSnapshot = buildCoachScopedSnapshot(
+    analysisBaseSnapshot,
+    effectiveContext,
   );
+  const loadedScopedSnapshot =
+    intentRouting?.mode === "deep_exploration"
+      ? authorizedBaseSnapshot
+      : await getMiAgentEnrichedContext(user, authorizedBaseSnapshot);
   const scopedSnapshot = applyCoachBusinessRuleScope(
     loadedScopedSnapshot,
     businessRules,
   );
-  const preparationRequested = isStagePreparationQuestion(question);
+  const preparationRequested = intentRouting
+    ? intentRouting.mode !== "deep_exploration" &&
+      intentRouting.intent === "stage_readiness"
+    : isStagePreparationQuestion(question);
   const selectedOpportunity =
     scopedSnapshot.selectedRecord?.type === "opportunity"
       ? scopedSnapshot.selectedRecord
@@ -948,8 +1186,12 @@ export async function prepareCoachReadModel({
         })
       : null;
   const readToolResults = [];
+  const allowedIntentTools = intentRouting
+    ? new Set(intentRouting.allowedTools)
+    : null;
   const pushReadTool = (toolName, args = {}) => {
     if (!availableToolNames.has(toolName)) return;
+    if (allowedIntentTools && !allowedIntentTools.has(toolName)) return;
     readToolResults.push(
       executeCoachReadTool({
         toolName,
@@ -1011,6 +1253,12 @@ export async function prepareCoachReadModel({
     /\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(
       normalizedQuestion,
     )
+  ) {
+    pushReadTool("getSellerPipeline");
+  }
+  if (
+    intentRouting?.intent === "seller_coaching" &&
+    intentRouting.mode === "coaching"
   ) {
     pushReadTool("getSellerPipeline");
   }
@@ -1089,12 +1337,17 @@ export async function prepareCoachReadModel({
           intendedAction: "continue_request",
         }
       : null;
+  const requiresOpportunityContext = intentRouting
+    ? intentRouting.requiredContext.includes("opportunity")
+    : Boolean(queryCase?.requiresOpportunityContext);
   const activityClarification =
-    queryCase?.requiresOpportunityContext && !selectedOpportunity
+    requiresOpportunityContext &&
+    !selectedOpportunity &&
+    !preparationClarification
       ? {
           type: "select_opportunity",
           message:
-            queryCase.type === "quotation_query"
+            (intentRouting?.intent || queryCase?.type) === "quotation_query"
               ? "Selecciona una oportunidad para consultar el contenido de su cotización."
               : "Selecciona una oportunidad para consultar sus actividades y siguientes pasos.",
           missing: ["Oportunidad"],

@@ -1208,9 +1208,31 @@ describe("API integration baseline", () => {
     global.fetch = vi.fn(async (url, init) => {
       expect(String(url)).toContain("/responses");
       const payload = JSON.parse(init.body);
-      expect(payload.temperature).toBe(0.2);
       const userMessage = payload.input.find((item) => item.role === "user");
       const receivedPrompt = JSON.parse(userMessage.content);
+      if (Array.isArray(receivedPrompt.catalog)) {
+        expect(payload.temperature).toBe(0);
+        return {
+          ok: true,
+          json: async () => ({
+            id: `resp_coach_classification_${receivedPrompts.length + 1}`,
+            output_text: JSON.stringify({
+              intent: "opportunity_query",
+              mode: "brief_context",
+              detailTarget: "opportunity",
+              confidence: 0.98,
+              contextNeeded: ["opportunity"],
+              reason: "Consulta puntual sobre la oportunidad seleccionada.",
+            }),
+            usage: {
+              input_tokens: 20,
+              output_tokens: 12,
+              total_tokens: 32,
+            },
+          }),
+        };
+      }
+      expect(payload.temperature).toBe(0.2);
       receivedPrompts.push(receivedPrompt);
       const answer =
         receivedPrompt.question === followUpQuestion
@@ -1499,13 +1521,27 @@ describe("API integration baseline", () => {
        SET enabled = 0, rollout_percentage = 0, allowlist_json = '[]'
        WHERE channel = 'coach'`,
     );
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        output_text: JSON.stringify(response),
-        usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
-      }),
-    }));
+    global.fetch = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      const userMessage = payload.input.find((item) => item.role === "user");
+      const prompt = JSON.parse(userMessage.content);
+      const result = Array.isArray(prompt.catalog)
+        ? {
+            intent: "opportunity_query",
+            mode: "brief_context",
+            detailTarget: "opportunity",
+            confidence: 0.98,
+            contextNeeded: ["opportunity"],
+          }
+        : response;
+      return {
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify(result),
+          usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+        }),
+      };
+    });
 
     try {
       const loginResponse = await login(request(app), gatewayUserEmail);
@@ -1536,7 +1572,7 @@ describe("API integration baseline", () => {
       expect(jobResponse.body.job.status).toBe("completed");
       expect(jobResponse.body.result.answer).toBe(response.answer);
       expect(jobResponse.body.job.observability).not.toHaveProperty("rollout");
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     } finally {
       config.openai.apiKey = originalApiKey;
       config.features.coachAgentGatewayMode = originalGatewayMode;
@@ -3179,11 +3215,125 @@ describe("API integration baseline", () => {
       )
       .set("Authorization", `Bearer ${regularLogin.body.token}`);
     expect(forbiddenRuleListResponse.status).toBe(403);
+    const forbiddenIntentCatalogResponse = await request(app)
+      .get("/api/commercial-intelligence/governance/intents")
+      .set("Authorization", `Bearer ${regularLogin.body.token}`);
+    expect(forbiddenIntentCatalogResponse.status).toBe(403);
+    const forbiddenIntentPreviewResponse = await request(app)
+      .post("/api/mi-agent/coach/admin/intents/preview")
+      .set("Authorization", `Bearer ${regularLogin.body.token}`)
+      .send({ question: "¿Qué etapas tiene el proceso de venta?" });
+    expect(forbiddenIntentPreviewResponse.status).toBe(403);
 
     const adminLogin = await login(
       request(app),
       `${TEST_PREFIX}.mi.coach.admin@example.com`,
     );
+    const adminAuthorization = `Bearer ${adminLogin.body.token}`;
+    const initialIntentCatalogResponse = await request(app)
+      .get("/api/commercial-intelligence/governance/intents")
+      .set("Authorization", adminAuthorization);
+    expect(initialIntentCatalogResponse.status).toBe(200);
+    const processInformationIntent =
+      initialIntentCatalogResponse.body.catalog.find(
+        (item) => item.code === "process_information",
+      );
+    expect(processInformationIntent).toMatchObject({
+      requiredContext: [],
+      tools: [],
+    });
+    expect(processInformationIntent.examples).toContain(
+      "¿Qué etapas tiene el proceso de venta?",
+    );
+    const updatedIntentExamplesResponse = await request(app)
+      .put(
+        "/api/commercial-intelligence/governance/intents/process_information/examples",
+      )
+      .set("Authorization", adminAuthorization)
+      .send({
+        examples: [
+          "¿Qué etapas tiene el proceso de venta?",
+          "¿Cuáles son las fases del proceso comercial?",
+        ],
+      });
+    expect(updatedIntentExamplesResponse.status).toBe(200);
+    expect(
+      updatedIntentExamplesResponse.body.catalog.find(
+        (item) => item.code === "process_information",
+      ).examples,
+    ).toEqual([
+      "¿Qué etapas tiene el proceso de venta?",
+      "¿Cuáles son las fases del proceso comercial?",
+    ]);
+    const intentRevisionsResponse = await request(app)
+      .get("/api/commercial-intelligence/governance/intents/revisions")
+      .set("Authorization", adminAuthorization);
+    expect(intentRevisionsResponse.status).toBe(200);
+    const intentRevision = intentRevisionsResponse.body.revisions[0];
+    expect(intentRevision.changedByUserId).toBe(ctx.miCoachAdminUserId);
+
+    const originalApiKey = config.openai.apiKey;
+    const originalFetch = globalThis.fetch;
+    config.openai.apiKey = "test-intent-key";
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: "resp_intent_preview_test",
+        output_text: JSON.stringify({
+          intent: "process_information",
+          confidence: 0.97,
+          contextNeeded: [],
+          reason: "Pregunta sobre el proceso general.",
+        }),
+        usage: { input_tokens: 5, output_tokens: 5 },
+      }),
+    });
+    try {
+      const intentPreviewResponse = await request(app)
+        .post("/api/mi-agent/coach/admin/intents/preview")
+        .set("Authorization", adminAuthorization)
+        .send({
+          question: "¿Qué etapas tiene el proceso de venta?",
+          intentCode: "process_information",
+          examples: [
+            "¿Qué etapas tiene el proceso de venta?",
+            "¿Cuáles son las fases del proceso comercial?",
+          ],
+        });
+      expect(intentPreviewResponse.status).toBe(200);
+      expect(intentPreviewResponse.body).toMatchObject({
+        classification: {
+          intent: "process_information",
+          mode: "coaching",
+          requiredContext: [],
+          allowedTools: [],
+          requiresClarification: false,
+        },
+        missingContext: [],
+        plannedTools: [],
+        toolsExecuted: [],
+      });
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      config.openai.apiKey = originalApiKey;
+    }
+
+    const restoredIntentResponse = await request(app)
+      .post(
+        `/api/commercial-intelligence/governance/intents/revisions/${intentRevision.id}/restore`,
+      )
+      .set("Authorization", adminAuthorization);
+    expect(restoredIntentResponse.status).toBe(200);
+    expect(
+      restoredIntentResponse.body.catalog.find(
+        (item) => item.code === "process_information",
+      ).examples,
+    ).toContain("¿Qué ocurre durante la etapa de demostración?");
+    expect(
+      restoredIntentResponse.body.revisions[0].restoredFromRevisionId,
+    ).toBe(intentRevision.id);
+
     const initialResponse = await request(app)
       .get("/api/commercial-intelligence/governance")
       .set("Authorization", `Bearer ${adminLogin.body.token}`);
@@ -3307,6 +3457,39 @@ describe("API integration baseline", () => {
         (rule) => rule.scope === "common",
       ),
     ).toHaveLength(8);
+    const createCommonRuleResponse = await request(app)
+      .post("/api/commercial-intelligence/governance/rules")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        scope: "common",
+        process: "default",
+        title: "Regla común temporal",
+        instruction: "Usar evidencia accesible y explícita.",
+      });
+    expect(createCommonRuleResponse.status).toBe(201);
+    expect(createCommonRuleResponse.body.rule).toMatchObject({
+      scope: "common",
+      channel: null,
+      title: "Regla común temporal",
+    });
+    const commonRuleId = createCommonRuleResponse.body.rule.id;
+    const allRulesAfterCommonCreate = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=all&process=default",
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(allRulesAfterCommonCreate.body.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: commonRuleId,
+          scope: "common",
+          title: "Regla común temporal",
+        }),
+      ]),
+    );
+    await request(app)
+      .delete(`/api/commercial-intelligence/governance/rules/${commonRuleId}`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
     const createAdminRuleResponse = await request(app)
       .post("/api/commercial-intelligence/governance/rules")
       .set("Authorization", `Bearer ${adminLogin.body.token}`)

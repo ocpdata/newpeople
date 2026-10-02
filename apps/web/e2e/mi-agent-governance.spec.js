@@ -5,6 +5,7 @@ async function mockMiCoachApi(
   {
     canAdmin = false,
     withCustomerHealth = false,
+    withLeadRead = false,
     withCoachInterface = false,
     withCoachPendingOperations = true,
     withHistoricalOpportunityContext = false,
@@ -102,6 +103,53 @@ async function mockMiCoachApi(
       });
 
     if (
+      withCustomerHealth &&
+      pathname === "/api/commercial-intelligence/account-chat/sessions" &&
+      method === "POST"
+    ) {
+      return json({ session: { id: 920 } }, 201);
+    }
+    if (
+      withCustomerHealth &&
+      pathname === "/api/commercial-intelligence/account-chat/jobs" &&
+      method === "POST"
+    ) {
+      return json(
+        { job: { id: 921, status: "pending", pollAfterMs: 500 } },
+        202,
+      );
+    }
+    if (
+      withCustomerHealth &&
+      pathname === "/api/commercial-intelligence/account-chat/jobs/921" &&
+      method === "GET"
+    ) {
+      return json({
+        job: {
+          id: 921,
+          status: "completed",
+          result: {
+            source: "account_intelligence",
+            sourceDomain: "mixed",
+            answer: "La cuenta requiere seguimiento comercial.",
+            evidence: ["Snapshot autorizado"],
+            inferences: ["Validar continuidad operativa con el cliente."],
+            confidence: "high",
+            publicSources: ["https://public.example/evidence"],
+            recommendedActions: [
+              {
+                title: "Preparar siguiente llamada",
+                opportunityId: 300,
+                actionType: "call",
+                requiresConfirmation: true,
+              },
+            ],
+          },
+        },
+      });
+    }
+
+    if (
       withProspect &&
       pathname === "/api/prospect-research/sessions" &&
       method === "POST"
@@ -114,13 +162,15 @@ async function mockMiCoachApi(
       return json({ session: prospectSession });
     if (
       withProspect &&
-      pathname === `/api/prospect-research/sessions/${prospectSession.id}/chat` &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/chat` &&
       method === "POST"
     )
       return json({
         result: {
           source: "prospect_research",
-          answer: "La hipótesis principal requiere validar continuidad operativa.",
+          answer:
+            "La hipótesis principal requiere validar continuidad operativa.",
           evidence: ["Hallazgo de la sesión de prospección."],
           inferences: ["Podría existir una iniciativa de modernización."],
           confidence: "medium",
@@ -206,6 +256,7 @@ async function mockMiCoachApi(
           ...(withCustomerHealth
             ? ["inteligencia_comercial.read", "contactos.read"]
             : []),
+          ...(withLeadRead ? ["interacciones.read"] : []),
           ...(canAdmin ? ["mi_coach.admin"] : []),
         ],
       });
@@ -342,6 +393,28 @@ async function mockMiCoachApi(
         leads: [],
         contactMappings: [],
         summary: { openOpportunities: 0, riskyOpportunities: 0 },
+      });
+    }
+    if (pathname === "/api/interactions/701" && method === "GET") {
+      return json({
+        id: 701,
+        title: "Lead seleccionado por Coach",
+        leadSource: "empresa_marketing",
+        sourceNotes: "Solicitud de seguimiento detallado.",
+        summary: "Lead autorizado para revisión.",
+        topics: [],
+        actionsTaken: [],
+        nextSteps: [],
+        suggestedContacts: [],
+        suggestedOpportunities: [],
+      });
+    }
+    if (pathname === "/api/interactions/resolution-options") {
+      return json({
+        businessLines: [],
+        sellerUsers: [],
+        presalesUsers: [],
+        currentUserIsSellerEligible: false,
       });
     }
     if (pathname === "/api/mi-agent/coach/metrics")
@@ -569,55 +642,55 @@ async function mockMiCoachApi(
         },
         operations: withCoachPendingOperations
           ? [
-          {
-            id: 81,
-            kind: "activity",
-            status: "collecting",
-            version: 2,
-            targetModule: "commercial_development",
-            missingFields: ["scheduledAt"],
-            pendingOperation: {
-              kind: "activity",
-              title: "Seguimiento de decisión",
-              opportunityId: 22,
-              actionType: "call",
-              priority: "medium",
-              scheduledAt: "",
-              missingFields: ["scheduledAt"],
-            },
-          },
-          {
-            id: 82,
-            kind: "account_field",
-            status: "ready",
-            version: 1,
-            targetModule: "accounts",
-            missingFields: [],
-            pendingOperation: {
-              kind: "account_field",
-              title: "Actualizar ciudad",
-              accountId: 160,
-              field: "city",
-              value: "Monterrey",
-            },
-          },
-            {
-              id: 83,
-              kind: "create_account",
-              status: "handed_off",
-              version: 3,
-              targetModule: "accounts",
-              targetRoute: "/accounts",
-              handedOffAt: "2026-09-26T12:00:00.000Z",
-              handoffExpiresAt: "2027-09-27T12:00:00.000Z",
-              missingFields: [],
-              pendingOperation: {
-                kind: "create_account",
-                title: "unknown",
-                payload: { name: "Acme" },
+              {
+                id: 81,
+                kind: "activity",
+                status: "collecting",
+                version: 2,
+                targetModule: "commercial_development",
+                missingFields: ["scheduledAt"],
+                pendingOperation: {
+                  kind: "activity",
+                  title: "Seguimiento de decisión",
+                  opportunityId: 22,
+                  actionType: "call",
+                  priority: "medium",
+                  scheduledAt: "",
+                  missingFields: ["scheduledAt"],
+                },
               },
-            },
-          ]
+              {
+                id: 82,
+                kind: "account_field",
+                status: "ready",
+                version: 1,
+                targetModule: "accounts",
+                missingFields: [],
+                pendingOperation: {
+                  kind: "account_field",
+                  title: "Actualizar ciudad",
+                  accountId: 160,
+                  field: "city",
+                  value: "Monterrey",
+                },
+              },
+              {
+                id: 83,
+                kind: "create_account",
+                status: "handed_off",
+                version: 3,
+                targetModule: "accounts",
+                targetRoute: "/accounts",
+                handedOffAt: "2026-09-26T12:00:00.000Z",
+                handoffExpiresAt: "2027-09-27T12:00:00.000Z",
+                missingFields: [],
+                pendingOperation: {
+                  kind: "create_account",
+                  title: "unknown",
+                  payload: { name: "Acme" },
+                },
+              },
+            ]
           : [],
         recentOperations: [
           {
@@ -1422,9 +1495,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toHaveCount(0);
   });
 
-  test("oculta oportunidades no activadas del Resumen", async ({
-    page,
-  }) => {
+  test("oculta oportunidades no activadas del Resumen", async ({ page }) => {
     await mockMiCoachApi(page, { withOpportunityStatusMatrix: true });
     await openMiCoach(page, { workspace: "summary" });
 
@@ -1497,11 +1568,16 @@ test.describe("Mi Coach governance and workspaces", () => {
   test("los chats de cuenta nueva y cliente existente muestran fundamentos y confirmacion", async ({
     page,
   }) => {
-    await mockMiCoachApi(page, { withCustomerHealth: true, withProspect: true });
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withProspect: true,
+    });
     await openMiCoach(page, { workspace: "customer" });
     await page.getByLabel("Cuenta existente").selectOption("160");
     const customerChat = page.getByRole("region", { name: "Chat de cuenta" });
-    await customerChat.getByRole("button", { name: "Resumen para reunión" }).click();
+    await customerChat
+      .getByRole("button", { name: "Resumen para reunión" })
+      .click();
     await expect(
       customerChat.getByText("La cuenta requiere seguimiento comercial."),
     ).toBeVisible();
@@ -1519,7 +1595,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       .fill("¿Qué hipótesis debo validar?");
     await page.getByRole("button", { name: "Preguntar" }).last().click();
     await expect(
-      page.getByText("La hipótesis principal requiere validar continuidad operativa."),
+      page.getByText(
+        "La hipótesis principal requiere validar continuidad operativa.",
+      ),
     ).toBeVisible();
     await expect(
       page.getByText("Acciones sugeridas · requieren confirmación"),
@@ -1562,8 +1640,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.getByRole("button", { name: "Preguntar" }).click();
     await expect(
       page.getByText(
-        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo."
-      )
+        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+      ),
     ).toBeVisible({ timeout: 10000 });
 
     await page.getByRole("button", { name: "Cliente existente" }).click();
@@ -1589,6 +1667,158 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
   });
 
+  test("deriva la exploración detallada de Coach a Cliente existente con la cuenta seleccionada", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCoachInterface: true,
+      withCustomerHealth: true,
+    });
+    await page.route("**/api/mi-agent/coach/sessions/active", async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            id: 70,
+            context: { accountId: 160, opportunityId: 22 },
+            messages: [
+              {
+                id: "deep-exploration-handoff",
+                role: "coach",
+                result: {
+                  intent: "continue_work",
+                  responseType: "handoff",
+                  confidence: "high",
+                  answer:
+                    "Este nivel de detalle se trabaja en Cliente existente.",
+                  evidence: [],
+                  facts: [],
+                  inferences: [],
+                  pendingItems: [],
+                  recommendation: null,
+                  operations: [],
+                  clarification: null,
+                  action: null,
+                  stageReadiness: null,
+                  intentRouting: {
+                    intent: "quotation_query",
+                    mode: "deep_exploration",
+                    detailTarget: "quotation",
+                    confidence: 0.96,
+                    contextNeeded: ["opportunity"],
+                    requiredContext: ["opportunity"],
+                    allowedTools: [],
+                  },
+                  detailHandoff: {
+                    destination: "customer_account",
+                    detailTarget: "quotation",
+                    accountId: 160,
+                    opportunityId: 22,
+                    contactId: null,
+                    leadId: null,
+                  },
+                },
+              },
+            ],
+          },
+          operations: [],
+          recentOperations: [],
+        }),
+      }),
+    );
+    await openMiCoach(page);
+
+    await expect(
+      page.getByText("Este nivel de detalle se trabaja en Cliente existente."),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Abrir Cliente existente" }).click();
+
+    await expect(page.getByLabel("Cuenta existente")).toHaveValue("160");
+    await expect(
+      page.getByRole("heading", { name: "Cuenta Demo" }),
+    ).toBeVisible();
+  });
+
+  test("deriva la exploración detallada de un lead a su registro en Interacciones", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCoachInterface: true,
+      withLeadRead: true,
+    });
+    await page.route("**/api/mi-agent/coach/sessions/active", async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            id: 72,
+            context: { leadId: 701 },
+            messages: [
+              {
+                id: "deep-lead-handoff",
+                role: "coach",
+                result: {
+                  intent: "continue_work",
+                  responseType: "handoff",
+                  confidence: "high",
+                  answer:
+                    "El detalle de este lead se revisa en gestión de leads.",
+                  evidence: [],
+                  facts: [],
+                  inferences: [],
+                  pendingItems: [],
+                  recommendation: null,
+                  operations: [],
+                  clarification: null,
+                  action: null,
+                  stageReadiness: null,
+                  intentRouting: {
+                    intent: "lead_query",
+                    mode: "deep_exploration",
+                    detailTarget: "lead",
+                    confidence: 0.96,
+                    contextNeeded: ["lead"],
+                    requiredContext: ["lead"],
+                    allowedTools: [],
+                  },
+                  detailHandoff: {
+                    destination: "lead_management",
+                    detailTarget: "lead",
+                    accountId: null,
+                    opportunityId: null,
+                    contactId: null,
+                    leadId: 701,
+                  },
+                },
+              },
+            ],
+          },
+          operations: [],
+          recentOperations: [],
+        }),
+      }),
+    );
+    await openMiCoach(page);
+    await expect(
+      page.getByText("El detalle de este lead se revisa en gestión de leads."),
+    ).toBeVisible();
+    const leadDetailRequest = page.waitForRequest((request) =>
+      request.url().endsWith("/api/interactions/701"),
+    );
+    await page.getByRole("button", { name: "Abrir gestión de leads" }).click();
+    await expect(page).toHaveURL(/\/interactions(?:\?.*)?$/);
+    await leadDetailRequest;
+    await expect(
+      page.getByRole("heading", { name: "Editar lead" }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox").first()).toBeVisible();
+    await expect(page.getByRole("textbox").first()).toHaveValue(
+      "Lead seleccionado por Coach",
+    );
+  });
+
   test("confirma el cambio de cuenta y no restaura una conversación cerrada", async ({
     page,
   }) => {
@@ -1601,39 +1831,36 @@ test.describe("Mi Coach governance and workspaces", () => {
       releaseRestoration = resolve;
     });
     let sessionClosed = false;
-    await page.route(
-      "**/api/mi-agent/coach/sessions/active",
-      async (route) => {
-        if (!sessionClosed) await restorationGate;
-        const session = sessionClosed
-          ? null
-          : {
-              id: 70,
-              context: { accountId: 170 },
-              messages: [
-                {
-                  id: "old-seller-message",
-                  role: "seller",
-                  text: "Pregunta de la cuenta anterior",
+    await page.route("**/api/mi-agent/coach/sessions/active", async (route) => {
+      if (!sessionClosed) await restorationGate;
+      const session = sessionClosed
+        ? null
+        : {
+            id: 70,
+            context: { accountId: 170 },
+            messages: [
+              {
+                id: "old-seller-message",
+                role: "seller",
+                text: "Pregunta de la cuenta anterior",
+              },
+              {
+                id: "old-coach-message",
+                role: "coach",
+                result: {
+                  responseType: "informational",
+                  confidence: "high",
+                  answer: "Respuesta de la cuenta anterior",
                 },
-                {
-                  id: "old-coach-message",
-                  role: "coach",
-                  result: {
-                    responseType: "informational",
-                    confidence: "high",
-                    answer: "Respuesta de la cuenta anterior",
-                  },
-                },
-              ],
-            };
-        await route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ session, operations: [], recentOperations: [] }),
-        });
-      },
-    );
+              },
+            ],
+          };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ session, operations: [], recentOperations: [] }),
+      });
+    });
     await page.route(
       "**/api/mi-agent/coach/sessions/70/close",
       async (route) => {
@@ -1670,19 +1897,19 @@ test.describe("Mi Coach governance and workspaces", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await accountSelect.selectOption("160");
     await expect(accountSelect).toHaveValue("160");
-    await expect(
-      page.getByText("Pregunta de la cuenta anterior"),
-    ).toHaveCount(0);
-    await expect(
-      page.getByText("Respuesta de la cuenta anterior"),
-    ).toHaveCount(0);
+    await expect(page.getByText("Pregunta de la cuenta anterior")).toHaveCount(
+      0,
+    );
+    await expect(page.getByText("Respuesta de la cuenta anterior")).toHaveCount(
+      0,
+    );
 
     await page.reload();
     await page.getByRole("button", { name: "Coach", exact: true }).click();
     await expect(page.getByLabel("Cuenta activa")).toHaveValue("");
-    await expect(
-      page.getByText("Respuesta de la cuenta anterior"),
-    ).toHaveCount(0);
+    await expect(page.getByText("Respuesta de la cuenta anterior")).toHaveCount(
+      0,
+    );
   });
 
   test("limpia la conversación del Coach y no la restaura al recargar", async ({

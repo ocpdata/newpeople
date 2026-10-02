@@ -10,6 +10,12 @@ import {
   listCoachAdminRules,
   updateCoachAdminRule,
 } from "./coach/admin-rules.js";
+import {
+  listCoachIntentCatalog,
+  listCoachIntentRevisions,
+  restoreCoachIntentRevision,
+  updateCoachIntentExamples,
+} from "./coach/intent-governance.js";
 import express from "express";
 import { z } from "zod";
 import { requirePermission } from "./auth.js";
@@ -979,6 +985,92 @@ router.delete(
       before: rule,
     });
     return res.json({ rule });
+  },
+);
+
+router.get(
+  "/governance/intents",
+  requirePermission("mi_coach.admin"),
+  async (_req, res) => {
+    return res.json({
+      catalog: await listCoachIntentCatalog(),
+      revisions: await listCoachIntentRevisions(),
+    });
+  },
+);
+
+router.put(
+  "/governance/intents/:intentCode/examples",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = z
+      .object({
+        examples: z.array(z.string().trim().min(1).max(240)).min(1).max(30),
+      })
+      .safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Ejemplos de intención inválidos",
+        issues: parsed.error.issues,
+      });
+    }
+    const result = await updateCoachIntentExamples({
+      user: req.user,
+      intentCode: req.params.intentCode,
+      examples: parsed.data.examples,
+    });
+    if (!result)
+      return res.status(404).json({ message: "Intención no encontrada" });
+    await logAuditEvent({
+      req,
+      module: "mi_coach",
+      action: "mi_coach_intent_examples_updated",
+      entityType: "mi_coach_intent",
+      entityId: req.params.intentCode,
+      detail: `Ejemplos de intención ${req.params.intentCode} actualizados`,
+      before: result.before,
+      after: result.after,
+    });
+    return res.json({ catalog: result.catalog });
+  },
+);
+
+router.get(
+  "/governance/intents/revisions",
+  requirePermission("mi_coach.admin"),
+  async (_req, res) => {
+    return res.json({ revisions: await listCoachIntentRevisions(50) });
+  },
+);
+
+router.post(
+  "/governance/intents/revisions/:revisionId/restore",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const revisionId = Number(req.params.revisionId);
+    if (!Number.isSafeInteger(revisionId) || revisionId < 1) {
+      return res.status(400).json({ message: "Revisión inválida" });
+    }
+    const result = await restoreCoachIntentRevision({
+      user: req.user,
+      revisionId,
+    });
+    if (!result)
+      return res.status(404).json({ message: "Revisión no encontrada" });
+    await logAuditEvent({
+      req,
+      module: "mi_coach",
+      action: "mi_coach_intent_revision_restored",
+      entityType: "mi_coach_intent_revision",
+      entityId: revisionId,
+      detail: `Configuración de intenciones restaurada desde revisión ${revisionId}`,
+      before: result.before,
+      after: result.after,
+    });
+    return res.json({
+      catalog: result.catalog,
+      revisions: await listCoachIntentRevisions(50),
+    });
   },
 );
 
