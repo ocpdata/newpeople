@@ -172,6 +172,7 @@ const customerIntelligenceContactSchema = z.object({
   mobile: z.string(),
   positionTitle: z.string(),
   department: z.string(),
+  activationStatusCode: z.string().default("activado"),
   purchaseParticipation: z.string().default(""),
   hierarchyLevel: z.string().default(""),
   relationshipType: z.string().default(""),
@@ -210,6 +211,7 @@ const customerIntelligenceInactiveOpportunitySchema =
 const customerIntelligenceInteractionSchema = z.object({
   id: z.number().int().positive(),
   accountId: z.number().int().positive().nullable().default(null),
+  contactIds: z.array(z.number().int().positive()).default([]),
   opportunityId: z.number().int().positive().nullable().default(null),
   title: z.string(),
   analysisStatus: z.string(),
@@ -219,7 +221,39 @@ const customerIntelligenceInteractionSchema = z.object({
   leadReasonCode: z.string(),
   leadRequiredActionCode: z.string(),
   leadNextActionDueAt: z.any().nullable(),
+  createdAt: z.any().nullable().default(null),
   updatedAt: z.any().nullable(),
+});
+
+const customerIntelligenceOpportunityActivitySchema = z.object({
+  id: z.number().int().positive(),
+  accountId: z.number().int().positive(),
+  opportunityId: z.number().int().positive(),
+  opportunityName: z.string(),
+  title: z.string(),
+  actionType: z.string(),
+  status: z.string(),
+  priority: z.string(),
+  dueDate: z.any().nullable(),
+  notes: z.string(),
+  successCriteria: z.string(),
+  createdAt: z.any().nullable(),
+});
+
+const customerIntelligenceCalendarActivitySchema = z.object({
+  id: z.number().int().positive(),
+  accountId: z.number().int().positive(),
+  opportunityId: z.number().int().positive().nullable(),
+  opportunityName: z.string(),
+  interactionId: z.number().int().positive().nullable(),
+  activityType: z.string(),
+  status: z.string(),
+  scheduledAt: z.any().nullable(),
+  dueDate: z.any().nullable(),
+  title: z.string(),
+  notes: z.string(),
+  successCriteria: z.string(),
+  createdAt: z.any().nullable(),
 });
 
 const customerIntelligenceRenewalSchema = z.object({
@@ -305,6 +339,12 @@ export const customerIntelligenceSnapshotSchema = z.object({
     .default([]),
   interactions: z.array(customerIntelligenceInteractionSchema),
   activities: z.array(customerIntelligenceInteractionSchema),
+  opportunityActivities: z
+    .array(customerIntelligenceOpportunityActivitySchema)
+    .default([]),
+  calendarActivities: z
+    .array(customerIntelligenceCalendarActivitySchema)
+    .default([]),
   renewals: z.array(customerIntelligenceRenewalSchema),
   products: z.array(customerIntelligenceProductSchema),
   expansionHypotheses: z.array(customerIntelligenceExpansionSchema),
@@ -319,6 +359,9 @@ export const customerIntelligenceSnapshotSchema = z.object({
     canReadContacts: z.boolean(),
     canReadOpportunities: z.boolean(),
     canReadInteractions: z.boolean(),
+    canReadOpportunityActivities: z.boolean().default(false),
+    canReadCalendarActivities: z.boolean().default(false),
+    canReadAllCalendarActivities: z.boolean().default(false),
   }),
 });
 
@@ -334,6 +377,8 @@ export function normalizeCustomerIntelligenceSnapshot(input = {}) {
     inactiveOpportunities: input.inactiveOpportunities || [],
     interactions: input.interactions || [],
     activities: input.activities || input.interactions || [],
+    opportunityActivities: input.opportunityActivities || [],
+    calendarActivities: input.calendarActivities || [],
     renewals: input.renewals || [],
     products: input.products || [],
     expansionHypotheses: input.expansionHypotheses || [],
@@ -361,6 +406,9 @@ export function normalizeCustomerIntelligenceSnapshot(input = {}) {
       canReadContacts: false,
       canReadOpportunities: false,
       canReadInteractions: false,
+      canReadOpportunityActivities: false,
+      canReadCalendarActivities: false,
+      canReadAllCalendarActivities: false,
     },
   });
 }

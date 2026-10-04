@@ -12,6 +12,8 @@ Este documento describe como los tres canales consumen el motor conversacional c
 
 ## Cliente existente
 
+El alcance, la matriz funcional, los permisos y el comportamiento esperado del canal se definen en [Alcance funcional: Chat de Cliente existente](./chat-cliente-existente-alcance.md). Ese contrato prevalece sobre descripciones resumidas de capacidades en documentos de arquitectura.
+
 Entrada:
 
 - `POST /api/commercial-intelligence/account-chat/jobs`

@@ -3,6 +3,7 @@ import { runConversationEngine } from "../coach/conversation-engine.js";
 import { normalizeProspectConversionOperation } from "../coach/operation-contract.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
+import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
 
 function normalize(value) {
   return String(value || "")
@@ -53,13 +54,98 @@ function executeProspectReadTool({ toolName, snapshot, args = {} }) {
   return { toolName, readOnly: true, result: execute(args) };
 }
 
-export function buildProspectFallback(snapshot, question) {
+export function buildProspectFallback(
+  snapshot,
+  question,
+  channelIntentRouting = null,
+) {
   const normalizedQuestion = normalize(question);
+  const intent = channelIntentRouting?.intent || "prospect_profile";
   if (/\b(correo|email|mail|mensaje|outreach)\b/.test(normalizedQuestion)) {
     return {
       answer:
         snapshot.outreach?.body || "No hay un borrador de correo disponible.",
       evidence: ["Borrador generado desde la sesión de prospección."],
+      inferences: [],
+      confidence: "medium",
+      recommendedActions: [],
+      source: "prospect_research",
+    };
+  }
+  if (intent === "prospect_contacts") {
+    const contacts = snapshot.contacts || [];
+    return {
+      answer: contacts.length
+        ? `Contactos potenciales en la sesión (${contacts.length}): ${contacts.map((contact) => [contact.name, contact.roleTitle, contact.area].filter(Boolean).join(" · ")).join("; ")}.`
+        : "La sesión no contiene contactos potenciales registrados.",
+      evidence: contacts
+        .map((contact) => contact.evidence || contact.source || "")
+        .filter(Boolean),
+      inferences: [],
+      confidence: "medium",
+      recommendedActions: [],
+      source: "prospect_research",
+    };
+  }
+  if (intent === "prospect_findings") {
+    const findings = snapshot.findings || [];
+    return {
+      answer: findings.length
+        ? `Hallazgos de la sesión (${findings.length}): ${findings.map((finding) => `${finding.title}${finding.summary ? `: ${finding.summary}` : ""}`).join("; ")}.`
+        : "La sesión no contiene hallazgos disponibles.",
+      evidence: findings
+        .map((finding) => finding.evidence || finding.source || "")
+        .filter(Boolean),
+      inferences: [],
+      confidence: findings.length ? "medium" : "low",
+      recommendedActions: [],
+      source: "prospect_research",
+    };
+  }
+  if (intent === "public_research_review") {
+    const findings = snapshot.findings || [];
+    const externalEvidence = Array.isArray(snapshot.externalResearch?.evidence)
+      ? snapshot.externalResearch.evidence
+      : [];
+    const evidence = [
+      ...findings
+        .map((finding) => finding.evidence || finding.source || "")
+        .filter(Boolean),
+      ...externalEvidence
+        .map((item) => item.title || item.url || item.snippet || "")
+        .filter(Boolean),
+    ];
+    return {
+      answer: evidence.length
+        ? `Evidencia pública disponible en esta sesión (${evidence.length} elementos): ${evidence.join("; ")}.`
+        : "Esta sesión aún no contiene evidencia pública. Ejecuta la investigación externa para consultar fuentes; no se realizó una búsqueda nueva desde el chat.",
+      evidence,
+      inferences: [],
+      confidence: evidence.length ? "medium" : "low",
+      recommendedActions: [],
+      source: "prospect_research",
+    };
+  }
+  if (intent === "opportunity_hypotheses") {
+    const hypotheses = snapshot.hypotheses || [];
+    return {
+      answer: hypotheses.length
+        ? `Hipótesis por validar (${hypotheses.length}): ${hypotheses.map((item) => `${item.title}${item.businessChallenge ? `: ${item.businessChallenge}` : ""}`).join("; ")}. No son oportunidades CRM confirmadas.`
+        : "La sesión no contiene hipótesis de oportunidad disponibles.",
+      evidence: hypotheses
+        .map((item) => item.evidence || item.source || "")
+        .filter(Boolean),
+      inferences: hypotheses.map((item) => item.summary).filter(Boolean),
+      confidence: hypotheses.length ? "medium" : "low",
+      recommendedActions: [],
+      source: "prospect_research",
+    };
+  }
+  if (intent === "conversion_request") {
+    return {
+      answer:
+        "La conversión desde Cuenta nueva requiere revisión, validación de duplicados y confirmación explícita. No se creó ningún registro CRM.",
+      evidence: ["La solicitud pertenece a una sesión de prospección."],
       inferences: [],
       confidence: "medium",
       recommendedActions: [],
@@ -101,13 +187,15 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     },
   ];
   const dependencies = {
+    loadChannelIntentConfigurations: ({ channel }) =>
+      loadChannelIntentConfigurations({ channel }),
     loadAdministrativeRules: listCoachAdminRules,
     prepareReadModel: async ({
-      question,
       availableTools: resolvedTools,
       conversationHistory = [],
+      channelIntentRouting = null,
+      channelIntentCatalog = [],
     }) => {
-      const normalizedQuestion = normalize(question);
       const readToolResults = [];
       const names = new Set(resolvedTools.map((tool) => tool.name));
       const pushTool = (toolName, args = {}) => {
@@ -117,30 +205,17 @@ export function createProspectChatAdapter({ user, session, jobId }) {
           );
       };
       pushTool("getProspectProfile");
-      if (
-        /\b(hallazgo|hallazgos|riesgo|reto|evidencia|fuente)\b/.test(
-          normalizedQuestion,
-        )
-      )
-        pushTool("searchProspectFindings");
-      if (
-        /\b(contacto|contactos|persona|responsable|eduardo)\b/.test(
-          normalizedQuestion,
-        )
-      )
-        pushTool("searchProspectContacts");
-      if (
-        /\b(oportunidad|oportunidades|hipotesis|hipótesis|tecnologia|reto)\b/.test(
-          normalizedQuestion,
-        )
-      )
-        pushTool("searchProspectHypotheses");
+      for (const toolName of channelIntentRouting?.allowedTools || []) {
+        if (toolName !== "getProspectProfile") pushTool(toolName);
+      }
       const selectedContext = { prospectSessionId: session.id };
       const modelSnapshot = {
         ...snapshot,
         selectedContext,
         readToolResults,
         conversationHistory,
+        channelIntentCatalog,
+        channelIntentRouting,
       };
       return {
         baseSnapshot: snapshot,
@@ -181,13 +256,20 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         conversationHistory,
         instruction:
           "Usa solo datos de prospección. Distingue datos proporcionados por el vendedor, evidencia pública e inferencias. Nunca presentes un prospecto, contacto o hipótesis como registro CRM confirmado. Las conversiones requieren confirmación explícita." +
+          (model?.channelIntentRouting
+            ? `\n\nEnrutamiento validado por el servidor: ${JSON.stringify(model.channelIntentRouting)}. Responde a esa intención usando únicamente las herramientas permitidas y esta sesión de prospecto.`
+            : "") +
           (administrativeRules.length
             ? `\n\nReglas administrativas activas para este canal; aplícalas sin presentar datos prospectivos como registros CRM ni omitir confirmaciones:\n${administrativeRules.join("\n")}`
             : ""),
       };
     },
     requestResponse: async ({ payload }) => {
-      const fallback = buildProspectFallback(snapshot, payload.question);
+      const fallback = buildProspectFallback(
+        snapshot,
+        payload.question,
+        payload.context?.channelIntentRouting,
+      );
       const result = await runStructuredTextResearch({
         schemaName: "prospect_contextual_chat",
         systemPrompt:

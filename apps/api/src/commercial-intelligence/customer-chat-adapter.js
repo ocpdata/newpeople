@@ -14,8 +14,26 @@ import {
 } from "../coach/read-tools.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
+import { summarizeCoachToolResults } from "../coach/observability.js";
 import { matchCoachQueryCase } from "../coach/case-catalog.js";
+import {
+  getChannelIntentPlanFields,
+  getCustomerEvidenceAssessmentFields,
+  normalizeChannelIntentPlan,
+} from "../coach/channel-intents.js";
 import { getAuthorizedCoachQuotationContent } from "../coach/quotation-read-service.js";
+import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
+import {
+  buildCustomerContactHistoryResponse,
+  buildCustomerActivityHistoryResponse,
+  getCustomerActivityHistoryRange,
+  getCustomerActivityHistoryRangeFromFilters,
+  isCustomerConversationFollowUp,
+} from "./activity-history.js";
+import {
+  CUSTOMER_CHAT_EVIDENCE_LIMITS,
+  runCustomerEvidenceLoop,
+} from "./customer-chat-evidence.js";
 
 const COACH_READ_TOOL_CATALOG = getCoachReadToolCatalog();
 const COACH_READ_TOOL_NAMES = new Set(
@@ -31,6 +49,123 @@ function normalize(value) {
 
 function isOpen(opportunity) {
   return opportunity?.lifecycle === "open";
+}
+
+export function buildCustomerQuotationResponse(snapshot, question) {
+  if (matchCoachQueryCase(question)?.type !== "quotation_query") return null;
+  const quotation = snapshot?.selectedOpportunityQuotation;
+  if (!quotation) return null;
+  const sections = (quotation.sections || []).map((section, sectionIndex) => ({
+    key: `quotation-section-${sectionIndex}`,
+    title: section.title || "Sección sin título",
+    subtitle: section.inclusion || "",
+    available: true,
+    items: (section.items || []).map((item, itemIndex) => {
+      const details = [
+        item.quantity != null ? `Cantidad: ${item.quantity}` : "",
+        item.listPriceUnit != null
+          ? `Precio unitario: ${item.currencyCode || quotation.currencyCode || ""} ${item.listPriceUnit}`.trim()
+          : "",
+        item.discountPct != null && Number(item.discountPct) > 0
+          ? `Descuento: ${item.discountPct}%`
+          : "",
+        item.isRenewal ? "Renovación" : "",
+      ].filter(Boolean);
+      return {
+        id: `${sectionIndex}-${itemIndex}`,
+        date: quotation.quotationDate || "",
+        title:
+          item.description || item.productCode || "Partida sin descripción",
+        activityType: item.itemType || "producto",
+        status: "",
+        details: details.join(" · "),
+      };
+    }),
+  }));
+  const itemCount = sections.reduce(
+    (total, section) => total + section.items.length,
+    0,
+  );
+  const proposalName = quotation.proposalName || "Cotización vigente";
+  const opportunityName =
+    quotation.opportunityName || snapshot?.selectedOpportunity?.name || "";
+  const answer = `${proposalName}${opportunityName ? ` · ${opportunityName}` : ""} · versión ${quotation.versionNumber || "sin número"} · ${sections.length} secciones · ${itemCount} partidas.`;
+  return {
+    answer,
+    evidence: [
+      `Cotización CRM autorizada: ${proposalName}; versión ${quotation.versionNumber || "sin número"}; ${sections.length} secciones y ${itemCount} partidas.`,
+    ],
+    inferences: [],
+    confidence: "high",
+    recommendedActions: [],
+    source: "account_intelligence",
+    activityHistory: {
+      mode: "quotation",
+      metadata: {
+        opportunityName,
+        quotationDate: quotation.quotationDate || null,
+        statusName: quotation.statusName || quotation.statusCode || "",
+        currencyCode: quotation.currencyCode || "",
+      },
+      sections,
+    },
+  };
+}
+
+function buildCustomerOpportunityStatusResponse(snapshot, question) {
+  const normalizedQuestion = normalize(question)
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const asksSingularOpportunityStatus =
+    /\boportunidad\b/.test(normalizedQuestion) &&
+    !/\boportunidades\b/.test(normalizedQuestion) &&
+    /\b(estado|estatus|situacion|etapa)\b/.test(normalizedQuestion);
+  if (!asksSingularOpportunityStatus) return null;
+  const opportunity =
+    snapshot?.selectedOpportunity ||
+    resolveCoachEntities(
+      {
+        accounts: accountRecord(snapshot),
+        coachOpportunities: opportunityRecords(snapshot),
+      },
+      question,
+      {},
+      { ignoreStageFilters: true },
+    ).opportunity;
+  if (!opportunity) {
+    return {
+      answer:
+        "No hay una oportunidad seleccionada para esta cuenta. Indica su nombre o selecciónala para consultar su estado.",
+      evidence: [],
+      inferences: [],
+      confidence: "medium",
+      recommendedActions: [],
+      source: "account_intelligence",
+    };
+  }
+  const statusLabels = {
+    en_proceso: "En proceso",
+    ganada: "Ganada",
+    perdida: "Perdida",
+    anulada: "Anulada",
+  };
+  const status =
+    statusLabels[opportunity.commercialStatusCode] ||
+    opportunity.commercialStatusCode ||
+    "Sin estado comercial registrado";
+  const activationStatus =
+    opportunity.activationStatusCode || "Sin estado de activación registrado";
+  const stage = opportunity.stageName || "Sin etapa registrada";
+  return {
+    answer: `${opportunity.name || "Oportunidad seleccionada"}: ${status}; etapa ${stage}; activación ${activationStatus}.`,
+    evidence: [
+      `Estado CRM de la oportunidad ${opportunity.name || opportunity.id}: comercial ${status}; etapa ${stage}; activación ${activationStatus}.`,
+    ],
+    inferences: [],
+    confidence: "high",
+    recommendedActions: [],
+    source: "account_intelligence",
+  };
 }
 
 function accountRecord(snapshot) {
@@ -65,6 +200,8 @@ function scopeCustomerSnapshot(snapshot) {
       contacts: [],
       interactions: [],
       activities: [],
+      opportunityActivities: [],
+      calendarActivities: [],
     };
   }
   const isInScope = (record) => Number(record.accountId || 0) === accountId;
@@ -90,6 +227,12 @@ function scopeCustomerSnapshot(snapshot) {
       (!activity.opportunityId ||
         opportunityIds.has(Number(activity.opportunityId))),
   );
+  const opportunityActivities = (snapshot.opportunityActivities || []).filter(
+    (activity) => Number(activity.accountId || 0) === accountId,
+  );
+  const calendarActivities = (snapshot.calendarActivities || []).filter(
+    (activity) => Number(activity.accountId || 0) === accountId,
+  );
   return {
     ...snapshot,
     selectedOpportunity,
@@ -98,6 +241,8 @@ function scopeCustomerSnapshot(snapshot) {
     contacts,
     interactions,
     activities,
+    opportunityActivities,
+    calendarActivities,
   };
 }
 
@@ -142,17 +287,162 @@ function buildCustomerCoachSnapshot(snapshot, quotation) {
   };
 }
 
+function buildCustomerPlanEntityCandidates(snapshot, question, businessRules) {
+  const resolution = resolveCoachEntities(
+    {
+      accounts: accountRecord(snapshot),
+      coachOpportunities: opportunityRecords(snapshot),
+      contactMappings: snapshot.contacts || [],
+      leads: buildCustomerCoachSnapshot(snapshot, null).leads,
+    },
+    question,
+    businessRules,
+    { ignoreStageFilters: true },
+  );
+  return {
+    opportunities: resolution.candidates.opportunities
+      .slice(0, 8)
+      .map((item) => ({
+        name: item.name,
+        stageName: item.stageName,
+        commercialStatusCode: item.commercialStatusCode,
+      })),
+    contacts: resolution.candidates.contacts.slice(0, 8).map((item) => ({
+      name: item.name,
+      positionTitle: item.positionTitle,
+    })),
+    leads: resolution.candidates.leads.slice(0, 8).map((item) => ({
+      name: item.name,
+    })),
+  };
+}
+
+function getValidatedContinuationReferences(snapshot, context) {
+  if (!context || Number(context.accountId) !== Number(snapshot?.account?.id)) {
+    return [];
+  }
+  const opportunities = [
+    ...(snapshot.opportunities || []),
+    ...(snapshot.inactiveOpportunities || []),
+    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ];
+  const references = [
+    opportunities.find(
+      (item) => Number(item.id) === Number(context.opportunityId),
+    )?.name,
+    (snapshot.contacts || []).find(
+      (item) => Number(item.id) === Number(context.contactId),
+    )?.name,
+    (snapshot.interactions || []).find(
+      (item) => Number(item.id) === Number(context.leadId),
+    )?.title,
+  ];
+  return references.filter(Boolean);
+}
+
+export function buildCustomerQueryPlannerContext({
+  question,
+  context,
+  conversationHistory,
+  conversationContext,
+  availableTools,
+  catalog,
+  snapshot,
+  businessRules,
+} = {}) {
+  const validatedContinuationReferences = getValidatedContinuationReferences(
+    snapshot,
+    conversationContext,
+  );
+  return {
+    question: String(question || "")
+      .trim()
+      .slice(0, 2000),
+    recentConversation: (Array.isArray(conversationHistory)
+      ? conversationHistory
+      : []
+    )
+      .slice(-6)
+      .map((message) => ({
+        role: message.role,
+        text: String(message.text || "").slice(0, 1200),
+      })),
+    selectedContext: {
+      accountSelected: Boolean(context?.accountId),
+      opportunitySelected: Boolean(context?.opportunityId),
+      contactSelected: Boolean(context?.contactId),
+    },
+    selectedAccountName: snapshot?.account?.name || "",
+    validatedContinuation: conversationContext
+      ? {
+          opportunityName:
+            [
+              ...(snapshot?.opportunities || []),
+              ...(snapshot?.inactiveOpportunities || []),
+              ...(snapshot?.selectedOpportunity
+                ? [snapshot.selectedOpportunity]
+                : []),
+            ].find(
+              (item) =>
+                Number(item.id) === Number(conversationContext.opportunityId),
+            )?.name || "",
+          contactName:
+            (snapshot?.contacts || []).find(
+              (item) =>
+                Number(item.id) === Number(conversationContext.contactId),
+            )?.name || "",
+          leadTitle:
+            (snapshot?.interactions || []).find(
+              (item) => Number(item.id) === Number(conversationContext.leadId),
+            )?.title || "",
+          intents: conversationContext.intents || [],
+          filters: conversationContext.filters || {},
+        }
+      : null,
+    trustedContinuationReferences: validatedContinuationReferences,
+    authorizedEntityCandidates: buildCustomerPlanEntityCandidates(
+      snapshot || {},
+      question,
+      businessRules || {},
+    ),
+    permittedIntentCatalog: (Array.isArray(catalog) ? catalog : []).map(
+      (intent) => ({
+        code: intent.code,
+        label: intent.label,
+        description: intent.description,
+      }),
+    ),
+    permittedToolNames: (Array.isArray(availableTools) ? availableTools : [])
+      .map((tool) => tool?.name)
+      .filter(Boolean),
+  };
+}
+
 function customerTools(snapshot) {
   const interactions = snapshot.interactions || [];
   return {
-    searchInteractions: ({ text = "" } = {}) => {
+    searchInteractions: ({
+      text = "",
+      sinceDate = "",
+      untilDate = "",
+    } = {}) => {
       const normalizedText = normalize(text);
       return interactions.filter(
         (interaction) =>
-          !normalizedText ||
-          normalize(`${interaction.title} ${interaction.summary}`).includes(
-            normalizedText,
-          ),
+          (!normalizedText ||
+            normalize(`${interaction.title} ${interaction.summary}`).includes(
+              normalizedText,
+            )) &&
+          (!sinceDate ||
+            String(interaction.createdAt || interaction.updatedAt || "").slice(
+              0,
+              10,
+            ) >= sinceDate) &&
+          (!untilDate ||
+            String(interaction.createdAt || interaction.updatedAt || "").slice(
+              0,
+              10,
+            ) <= untilDate),
       );
     },
   };
@@ -198,11 +488,18 @@ function executeCustomerReadTool({
           ...args,
           activeOnly: args.inactiveOnly
             ? false
-            : args.activeOnly || businessRules.filters?.defaultActiveOnly,
+            : args.activeOnly ||
+              (args.applyDefaultFilters !== false &&
+                businessRules.filters?.defaultActiveOnly),
           inactiveOnly: args.activeOnly
             ? false
-            : args.inactiveOnly || businessRules.filters?.defaultInactiveOnly,
-          openOnly: args.openOnly || businessRules.filters?.defaultOpenOnly,
+            : args.inactiveOnly ||
+              (args.applyDefaultFilters !== false &&
+                businessRules.filters?.defaultInactiveOnly),
+          openOnly:
+            args.openOnly ||
+            (args.applyDefaultFilters !== false &&
+              businessRules.filters?.defaultOpenOnly),
         }
       : args;
   const tools = customerTools(snapshot);
@@ -220,10 +517,14 @@ export async function buildCustomerReadModel({
   question,
   snapshot,
   availableTools,
+  authorizedTools = availableTools,
   conversationHistory = [],
   businessRules = {},
+  channelIntentRouting = null,
+  channelIntentCatalog = [],
+  conversationContext = null,
 }) {
-  snapshot = scopeCustomerSnapshot(snapshot || {});
+  snapshot = scopeCustomerSnapshot(snapshot || {}); // Ensure snapshot is scoped correctly
   const crmSnapshot = {
     accounts: accountRecord(snapshot),
     coachOpportunities: opportunityRecords(snapshot),
@@ -233,18 +534,68 @@ export async function buildCustomerReadModel({
     contactMappings: snapshot.contacts || [],
     leads: [],
   };
-  const resolution = resolveCoachEntities(crmSnapshot, question, businessRules);
-  const opportunityFilters = inferCoachOpportunityFilters(
+  const queryCase = matchCoachQueryCase(question);
+  const planEntityReferences = Object.values(
+    channelIntentRouting?.entities || {},
+  ).filter(Boolean);
+  const entityResolutionQuestion = [question, ...planEntityReferences].join(
+    " ",
+  );
+  const resolution = resolveCoachEntities(
+    crmSnapshot,
+    entityResolutionQuestion,
+    businessRules,
+    { ignoreStageFilters: queryCase?.type === "quotation_query" },
+  );
+  const inferredOpportunityFilters = inferCoachOpportunityFilters(
     question,
     businessRules,
   );
+  const currentPlannedFilters = channelIntentRouting?.filters || {};
+  const plannedFilters = {
+    ...(isCustomerConversationFollowUp(question)
+      ? conversationContext?.filters || {}
+      : {}),
+    ...currentPlannedFilters,
+  };
+  const plannedStatus = plannedFilters.opportunityStatus || "unspecified";
+  const explicitPlannedStatus = ["open", "historical", "all"].includes(
+    plannedStatus,
+  );
+  const plannedStatusCodes = {
+    open: ["en_proceso"],
+    historical: ["ganada", "perdida", "anulada"],
+  };
+  const opportunityFilters = {
+    ...inferredOpportunityFilters,
+    stageCodes: plannedFilters.stageCode
+      ? [plannedFilters.stageCode]
+      : inferredOpportunityFilters.stageCodes,
+    commercialStatusCodes: explicitPlannedStatus
+      ? plannedStatusCodes[plannedStatus] || []
+      : inferredOpportunityFilters.commercialStatusCodes,
+    activeOnly: explicitPlannedStatus
+      ? plannedStatus === "open"
+      : inferredOpportunityFilters.activeOnly,
+    inactiveOnly: explicitPlannedStatus
+      ? false
+      : inferredOpportunityFilters.inactiveOnly,
+    openOnly: explicitPlannedStatus
+      ? plannedStatus === "open"
+      : inferredOpportunityFilters.openOnly,
+    closeYear: plannedFilters.closeYear || inferredOpportunityFilters.closeYear,
+    applyDefaultFilters: !explicitPlannedStatus,
+  };
   const scope = businessRules.scope || {};
   const selectedOpportunity =
-    snapshot.selectedOpportunity || resolution.opportunity || null;
-  const queryCase = matchCoachQueryCase(question);
+    resolution.opportunity || snapshot.selectedOpportunity || null;
   const toolNames = new Set(availableTools.map((tool) => tool.name));
+  const quotationRequested =
+    queryCase?.readTool === "getOpportunityQuotation" ||
+    channelIntentRouting?.intent === "quotation_query" ||
+    channelIntentRouting?.intents?.includes("quotation_query");
   const selectedOpportunityQuotation =
-    queryCase?.readTool === "getOpportunityQuotation" &&
+    quotationRequested &&
     selectedOpportunity &&
     scope.opportunitySearchAllowed !== false &&
     scope.quotationSearchAllowed !== false &&
@@ -259,10 +610,34 @@ export async function buildCustomerReadModel({
     selectedOpportunityQuotation,
   );
   const normalizedQuestion = normalize(question);
+  const activityHistoryRange =
+    getCustomerActivityHistoryRange(question) ||
+    getCustomerActivityHistoryRangeFromFilters(currentPlannedFilters) ||
+    (isCustomerConversationFollowUp(question)
+      ? getCustomerActivityHistoryRangeFromFilters(conversationContext?.filters)
+      : null);
+  const routedToolNames = channelIntentRouting
+    ? new Set(channelIntentRouting.allowedTools)
+    : null;
+  const routeAllows = (toolName, legacyCondition = true) =>
+    routedToolNames ? routedToolNames.has(toolName) : legacyCondition;
   const readToolResults = [];
+  let initialReadQueryCount = selectedOpportunityQuotation ? 1 : 0;
+  const skippedAuthorizedTools = [];
   const availableNames = new Set(availableTools.map((tool) => tool.name));
   const pushTool = (toolName, args = {}) => {
     if (!availableNames.has(toolName)) return;
+    const quotationAlreadyFetched =
+      toolName === "getOpportunityQuotation" &&
+      Boolean(selectedOpportunityQuotation);
+    if (
+      !quotationAlreadyFetched &&
+      initialReadQueryCount >= CUSTOMER_CHAT_EVIDENCE_LIMITS.maxReadQueries
+    ) {
+      skippedAuthorizedTools.push(toolName);
+      return;
+    }
+    if (!quotationAlreadyFetched) initialReadQueryCount += 1;
     const isCoachTool = COACH_READ_TOOL_NAMES.has(toolName);
     readToolResults.push(
       executeCustomerReadTool({
@@ -275,16 +650,17 @@ export async function buildCustomerReadModel({
       }),
     );
   };
-  pushTool("searchAccounts");
+  if (routeAllows("searchAccounts")) pushTool("searchAccounts");
   if (
-    /\b(oportunidad|oportunidades|pipeline|etapa|waiting|negociacion)\b/.test(
-      normalizedQuestion,
+    routeAllows(
+      "searchOpportunities",
+      /\b(oportunidad|oportunidades|pipeline|etapa|waiting|negociacion)\b/.test(
+        normalizedQuestion,
+      ),
     )
   ) {
     pushTool("searchOpportunities", {
-      openOnly: /\b(abierta|abiertas|pipeline|en proceso)\b/.test(
-        normalizedQuestion,
-      ),
+      ...opportunityFilters,
       stageCodes: opportunityFilters.stageCodes,
       commercialStatusCodes: opportunityFilters.commercialStatusCodes,
       activeOnly: opportunityFilters.activeOnly,
@@ -292,52 +668,81 @@ export async function buildCustomerReadModel({
     });
   }
   if (
-    /\b(contacto|contactos|decisor|eduardo|persona)\b/.test(normalizedQuestion)
+    routeAllows(
+      "searchContacts",
+      /\b(contacto|contactos|decisor|eduardo|persona)\b/.test(
+        normalizedQuestion,
+      ),
+    )
   ) {
     pushTool("searchContacts");
   }
   if (
-    /\b(interaccion|interacciones|actividad|actividades|correo|email|llamada|riesgo)\b/.test(
-      normalizedQuestion,
+    routeAllows(
+      "searchInteractions",
+      /\b(interaccion|interacciones|actividad|actividades|correo|email|llamada|riesgo)\b/.test(
+        normalizedQuestion,
+      ),
     )
   ) {
-    pushTool("searchInteractions");
+    pushTool("searchInteractions", {
+      sinceDate: activityHistoryRange?.startDate || "",
+      untilDate: activityHistoryRange?.endDate || "",
+    });
   }
   if (
     selectedOpportunity &&
-    /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(normalizedQuestion)
+    routeAllows(
+      "getOpportunity",
+      /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(normalizedQuestion),
+    )
   ) {
     pushTool("getOpportunity", { opportunityId: selectedOpportunity.id });
   }
   if (
     selectedOpportunity &&
-    /\b(actividad|actividades|siguiente paso|proximo paso)\b/.test(
-      normalizedQuestion,
+    routeAllows(
+      "getOpportunityActivities",
+      /\b(actividad|actividades|siguiente paso|proximo paso)\b/.test(
+        normalizedQuestion,
+      ),
     )
   ) {
     pushTool("getOpportunityActivities", {
       opportunityId: selectedOpportunity.id,
     });
   }
-  if (selectedOpportunity && isStagePreparationQuestion(question)) {
+  if (
+    selectedOpportunity &&
+    routeAllows(
+      "getOpportunityReadiness",
+      isStagePreparationQuestion(question),
+    ) &&
+    isStagePreparationQuestion(question)
+  ) {
     pushTool("getOpportunityReadiness", {
       opportunityId: selectedOpportunity.id,
     });
   }
   if (
-    /\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(
-      normalizedQuestion,
+    routeAllows(
+      "getSellerPipeline",
+      /\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(
+        normalizedQuestion,
+      ),
     )
   ) {
     pushTool("getSellerPipeline");
   }
-  if (/\b(lead|leads|prospecto|prospectos)\b/.test(normalizedQuestion)) {
+  if (
+    routeAllows(
+      "searchLeads",
+      /\b(lead|leads|prospecto|prospectos)\b/.test(normalizedQuestion),
+    )
+  ) {
     pushTool("searchLeads", { accountId: snapshot.account?.id || null });
   }
-  if (
-    queryCase?.readTool === "getOpportunityQuotation" &&
-    selectedOpportunity
-  ) {
+  if (quotationRequested && selectedOpportunity) {
     pushTool("getOpportunityQuotation", {
       opportunityId: selectedOpportunity.id,
     });
@@ -355,6 +760,8 @@ export async function buildCustomerReadModel({
     contacts:
       scope.contactSearchAllowed === false ? [] : snapshot.contacts || [],
     interactions: snapshot.interactions || [],
+    opportunityActivities: snapshot.opportunityActivities || [],
+    calendarActivities: snapshot.calendarActivities || [],
     accountHealth: snapshot.accountHealth,
     expansionHypotheses: snapshot.expansionHypotheses || [],
     selectedOpportunity:
@@ -362,11 +769,24 @@ export async function buildCustomerReadModel({
     selectedOpportunityQuotation,
     selectedContext: {
       accountId: snapshot.account?.id || null,
-      opportunityId: selectedOpportunity?.id || null,
-      contactId: snapshot.selectedContact?.id || null,
+      opportunityId:
+        scope.opportunitySearchAllowed === false
+          ? null
+          : selectedOpportunity?.id || null,
+      contactId:
+        scope.contactSearchAllowed === false
+          ? null
+          : snapshot.selectedContact?.id || null,
       leadId: null,
     },
     readToolResults,
+    readQueryCount: initialReadQueryCount,
+    readQueryLimitReached: skippedAuthorizedTools.length > 0,
+    skippedAuthorizedTools,
+    channelIntentCatalog,
+    channelIntentRouting,
+    availableReadTools: availableTools.map((tool) => tool.name),
+    authorizedReadTools: authorizedTools.map((tool) => tool.name),
   };
   return {
     baseSnapshot: crmSnapshot,
@@ -441,6 +861,23 @@ export async function buildCustomerReadModel({
 }
 
 export function buildCustomerFallback(snapshot, question) {
+  const quotationResponse = buildCustomerQuotationResponse(snapshot, question);
+  if (quotationResponse) return quotationResponse;
+  const opportunityStatusResponse = buildCustomerOpportunityStatusResponse(
+    snapshot,
+    question,
+  );
+  if (opportunityStatusResponse) return opportunityStatusResponse;
+  const contactHistoryResponse = buildCustomerContactHistoryResponse(
+    snapshot,
+    question,
+  );
+  if (contactHistoryResponse) return contactHistoryResponse;
+  const activityHistoryResponse = buildCustomerActivityHistoryResponse(
+    snapshot,
+    question,
+  );
+  if (activityHistoryResponse) return activityHistoryResponse;
   const normalizedQuestion = normalize(question);
   const openOpportunities = (snapshot.opportunities || []).filter(isOpen);
   const accountName = snapshot.account?.name || "la cuenta seleccionada";
@@ -495,10 +932,351 @@ export function buildCustomerFallback(snapshot, question) {
   };
 }
 
+function buildCustomerDeterministicResponse({
+  snapshot,
+  question,
+  routing,
+  permissions,
+  allowedOperationKinds,
+}) {
+  const intentResponse = buildCustomerIntentResponse({
+    snapshot,
+    question,
+    routing,
+    permissions,
+    allowedOperationKinds,
+  });
+  if (intentResponse) return intentResponse;
+  const quotationResponse = buildCustomerQuotationResponse(snapshot, question);
+  if (quotationResponse) return quotationResponse;
+  const opportunityStatusResponse = buildCustomerOpportunityStatusResponse(
+    snapshot,
+    question,
+  );
+  if (opportunityStatusResponse) return opportunityStatusResponse;
+  const contactHistoryResponse = buildCustomerContactHistoryResponse(
+    snapshot,
+    question,
+  );
+  if (contactHistoryResponse) return contactHistoryResponse;
+  return buildCustomerActivityHistoryResponse(snapshot, question);
+}
+
+export function buildCustomerEvidenceFailureResponse({
+  status,
+  errorCode,
+  readToolResults = [],
+  failedSources = [],
+  missingQueries = [],
+  missingFacts = [],
+  clarificationQuestion = "",
+} = {}) {
+  const queryLabels = {
+    account_overview: "resumen de cuenta",
+    opportunity_query: "oportunidades",
+    opportunity_status: "estado o etapa de oportunidad",
+    contact_query: "contactos",
+    contact_history: "historial de contactos",
+    account_activity_history: "interacciones y actividades",
+    quotation_query: "contenido de cotización",
+    email_draft: "destinatario del borrador de correo",
+  };
+  const pendingItems = [
+    ...missingFacts,
+    ...missingQueries.map((code) => queryLabels[code] || "consulta adicional"),
+  ].slice(0, 8);
+  const failedSourceLabels = [
+    ...new Set([
+      ...readToolResults
+        .filter((item) => item?.error)
+        .map((item) => String(item.toolName || "consulta CRM")),
+      ...(Array.isArray(failedSources) ? failedSources : []),
+    ]),
+  ];
+  let answer;
+  let responseType = "clarification";
+  let clarification = null;
+  if (status === "clarification") {
+    answer =
+      clarificationQuestion ||
+      "Necesito que precises a qué registro o periodo te refieres antes de consultar.";
+    clarification = {
+      type: "missing_fields",
+      message: answer,
+      missing: missingFacts,
+    };
+  } else if (status === "no_results") {
+    responseType = "informational";
+    clarification = null;
+    answer =
+      "Las consultas autorizadas no devolvieron registros que coincidan con los filtros solicitados. Esto no confirma que nunca hayan existido registros fuera del alcance consultado.";
+  } else if (status === "query_error" || failedSourceLabels.length) {
+    responseType = "error";
+    answer = `No pude verificar toda la solicitud porque falló la consulta de ${failedSourceLabels.join(", ") || "una fuente CRM"}. No interpretaré ese error como ausencia de registros.`;
+  } else if (status === "timeout" || errorCode === "turn_timeout") {
+    responseType = "error";
+    answer =
+      "La verificación excedió el tiempo disponible. No puedo confirmar esta respuesta con la evidencia recuperada.";
+  } else if (
+    status === "verification_unavailable" ||
+    status === "verification_error"
+  ) {
+    responseType = "error";
+    answer =
+      "No fue posible verificar si la evidencia disponible responde la solicitud. No presentaré una conclusión como confirmada.";
+  } else if (status === "answer_generation_error") {
+    responseType = "error";
+    answer =
+      "La evidencia se verificó, pero no pude redactar una respuesta confiable. No presentaré una conclusión sin esa revisión.";
+  } else {
+    const missing = pendingItems.length
+      ? ` Falta verificar: ${pendingItems.join(", ")}.`
+      : "";
+    answer = `No pude verificar con suficiente evidencia todas las partes de la solicitud.${missing} Puedes precisar la oportunidad, el contacto o el periodo para continuar.`;
+  }
+  return {
+    answer,
+    responseType,
+    clarification,
+    evidence: [],
+    inferences: [],
+    pendingItems,
+    confidence: "low",
+    recommendedActions: [],
+    operations: [],
+    source: "account_intelligence",
+  };
+}
+
+function getDeadlineSignal(deadlineAt) {
+  if (!Number.isFinite(Number(deadlineAt))) return null;
+  const remainingMs = Math.max(0, Math.floor(Number(deadlineAt) - Date.now()));
+  return remainingMs > 0
+    ? AbortSignal.timeout(remainingMs)
+    : AbortSignal.abort();
+}
+
+function permissionGranted(permissions, permissionCode) {
+  if (typeof permissions?.has === "function") {
+    return permissions.has(permissionCode);
+  }
+  if (Array.isArray(permissions)) return permissions.includes(permissionCode);
+  if (Array.isArray(permissions?.codes)) {
+    return permissions.codes.includes(permissionCode);
+  }
+  return permissions?.[permissionCode] === true;
+}
+
+function formatUsd(value) {
+  return `USD ${Number(value || 0).toLocaleString("es-MX")}`;
+}
+
+function resolveCustomerOpportunity(snapshot, question) {
+  const resolution = resolveCoachEntities(
+    {
+      accounts: accountRecord(snapshot),
+      coachOpportunities: opportunityRecords(snapshot),
+    },
+    question,
+    {},
+    { ignoreStageFilters: true },
+  );
+  return resolution.opportunity || snapshot.selectedOpportunity || null;
+}
+
+function buildCustomerEmailDraft(snapshot, question, contactReadAllowed) {
+  const contacts =
+    contactReadAllowed && Array.isArray(snapshot.contacts)
+      ? snapshot.contacts
+      : [];
+  const normalizedQuestion = normalize(question)
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const questionWords = new Set(normalizedQuestion.split(/\s+/));
+  const matchingContacts = contacts.filter((contact) => {
+    const name = normalize(contact.name).trim();
+    const nameWords = name.split(/\s+/).filter(Boolean);
+    return (
+      (name && normalizedQuestion.includes(name)) ||
+      (nameWords.length && questionWords.has(nameWords[0]))
+    );
+  });
+  const selectedContact = snapshot.selectedContext?.contactId
+    ? contacts.find(
+        (contact) =>
+          Number(contact.id) === Number(snapshot.selectedContext.contactId),
+      )
+    : null;
+  const recipient =
+    matchingContacts.length === 1 ? matchingContacts[0] : selectedContact;
+  const accountName = snapshot.account?.name || "la cuenta";
+  const greetingName = recipient?.name?.trim().split(/\s+/)[0] || "";
+  const greeting = greetingName ? `Hola ${greetingName},` : "Hola,";
+  const subject = `Conversación sobre nuevas oportunidades para ${accountName}`;
+  const body = [
+    greeting,
+    "",
+    `Me gustaría coordinar una breve conversación para conocer tus prioridades y explorar nuevas oportunidades en las que podamos apoyar a ${accountName}.`,
+    "",
+    "¿Tendrías disponibilidad para reunirnos en los próximos días?",
+    "",
+    "Saludos,",
+    "[Tu nombre]",
+  ].join("\n");
+  return {
+    answer: `Borrador de correo${recipient ? ` para ${recipient.name}` : ""}\nAsunto: ${subject}\n\n${body}\n\nNo se envió el correo.`,
+    evidence: [
+      `Borrador preparado con el nombre de cuenta autorizado: ${accountName}.`,
+      ...(recipient
+        ? [`Contacto autorizado seleccionado: ${recipient.name}.`]
+        : []),
+    ],
+    inferences: [],
+    confidence: recipient ? "high" : "medium",
+    recommendedActions: [],
+    operations: [],
+    source: "account_intelligence",
+  };
+}
+
+export function buildCustomerIntentResponse({
+  snapshot,
+  question,
+  routing,
+  permissions,
+  allowedOperationKinds,
+} = {}) {
+  if (routing?.intent === "email_draft") {
+    return buildCustomerEmailDraft(
+      snapshot || {},
+      question || "",
+      routing.allowedTools?.includes("searchContacts") === true,
+    );
+  }
+  if (routing?.intent !== "crm_operation") return null;
+
+  const normalizedQuestion = normalize(question);
+  if (!/\b(monto|importe)\b/.test(normalizedQuestion)) return null;
+  const amountMatch = String(question || "").match(
+    /\b(?:a|en|por)\s+\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(?:usd|dolares?)?\b/i,
+  );
+  const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, "")) : NaN;
+  if (!Number.isFinite(amount) || amount < 0) {
+    return {
+      answer:
+        "Indica el nuevo monto como una cantidad numérica para preparar la propuesta. No se modificó el CRM.",
+      responseType: "clarification",
+      clarification: {
+        type: "missing_fields",
+        message:
+          "Indica el nuevo monto como una cantidad numérica para preparar la propuesta.",
+        missing: ["Nuevo monto"],
+      },
+      evidence: [],
+      inferences: [],
+      confidence: "medium",
+      recommendedActions: [],
+      operations: [],
+      source: "account_intelligence",
+    };
+  }
+  if (!permissionGranted(permissions, "oportunidades.update")) {
+    return {
+      answer:
+        "No tienes permiso para preparar cambios en oportunidades. No se modificó el CRM.",
+      responseType: "clarification",
+      evidence: [],
+      inferences: [],
+      confidence: "high",
+      recommendedActions: [],
+      operations: [],
+      source: "account_intelligence",
+    };
+  }
+  if (
+    Array.isArray(allowedOperationKinds) &&
+    !allowedOperationKinds.includes("opportunity_field")
+  ) {
+    return {
+      answer:
+        'La política de Cliente existente no permite cambios en campos de oportunidad. Un administrador debe habilitar "Campo de oportunidad" en Gobierno de Mi Coach > Reglas del motor para el proceso account_chat. No se creó una propuesta ni se modificó el CRM.',
+      responseType: "clarification",
+      clarification: {
+        type: "missing_fields",
+        message:
+          'Un administrador debe habilitar "Campo de oportunidad" en las reglas de Cliente existente para el proceso account_chat.',
+        missing: ["Permiso de política para opportunity_field"],
+      },
+      evidence: [],
+      inferences: [],
+      confidence: "high",
+      recommendedActions: [],
+      operations: [],
+      source: "account_intelligence",
+    };
+  }
+  const opportunity = resolveCustomerOpportunity(
+    snapshot || {},
+    question || "",
+  );
+  if (!opportunity) {
+    return {
+      answer:
+        "No pude identificar una única oportunidad de esta cuenta. Selecciónala o indica su nombre para preparar el cambio. No se modificó el CRM.",
+      responseType: "clarification",
+      clarification: {
+        type: "select_opportunity",
+        message:
+          "No pude identificar una única oportunidad de esta cuenta. Selecciónala o indica su nombre para preparar el cambio.",
+        missing: ["Oportunidad única"],
+      },
+      evidence: [],
+      inferences: [],
+      confidence: "medium",
+      recommendedActions: [],
+      operations: [],
+      source: "account_intelligence",
+    };
+  }
+
+  const currentValue = Number(opportunity.amountUsd || 0);
+  const operation = {
+    kind: "opportunity_field",
+    title: `Actualizar monto de ${opportunity.name || "la oportunidad"}`,
+    opportunityId: Number(opportunity.id),
+    field: "amountUsd",
+    currentValue,
+    value: amount,
+    sourceChannel: "customer_account",
+    requiresConfirmation: true,
+    evidence: [
+      {
+        sourceType: "opportunity",
+        sourceId: Number(opportunity.id),
+        label: `Oportunidad CRM: ${opportunity.name || opportunity.id}`,
+        excerpt: `Monto actual: ${formatUsd(currentValue)}.`,
+      },
+    ],
+    source: { type: "opportunity", id: Number(opportunity.id) },
+  };
+  return {
+    answer: `Preparé una propuesta para cambiar el monto de ${opportunity.name || "la oportunidad"} de ${formatUsd(currentValue)} a ${formatUsd(amount)}. Requiere tu confirmación; todavía no se modificó el CRM.`,
+    evidence: [
+      `Oportunidad CRM ${opportunity.name || opportunity.id}; monto actual ${formatUsd(currentValue)}.`,
+    ],
+    inferences: [],
+    confidence: "high",
+    recommendedActions: [],
+    operations: [operation],
+    source: "account_intelligence",
+  };
+}
+
 export function appendCustomerAccountChatHistory(
   history = [],
   question,
   answer,
+  assistantMetadata = {},
 ) {
   const normalizedHistory = (Array.isArray(history) ? history : [])
     .filter(
@@ -509,6 +1287,9 @@ export function appendCustomerAccountChatHistory(
     .map((message) => ({
       role: message.role,
       text: String(message.text).trim().slice(0, 2000),
+      ...(message.role === "assistant" && message.activityHistory
+        ? { activityHistory: message.activityHistory }
+        : {}),
     }));
   return [
     ...normalizedHistory,
@@ -516,7 +1297,13 @@ export function appendCustomerAccountChatHistory(
       ? { role: "user", text: String(question).trim().slice(0, 2000) }
       : null,
     answer
-      ? { role: "assistant", text: String(answer).trim().slice(0, 2000) }
+      ? {
+          role: "assistant",
+          text: String(answer).trim().slice(0, 2000),
+          ...(assistantMetadata.activityHistory
+            ? { activityHistory: assistantMetadata.activityHistory }
+            : {}),
+        }
       : null,
   ]
     .filter(Boolean)
@@ -529,6 +1316,9 @@ function buildCustomerPrompt(
   _processGuide,
   context,
   conversationHistory = [],
+  _channelRules = {},
+  _permissions = {},
+  operationPolicy = {},
 ) {
   const administrativeRules = Array.isArray(snapshot?.administrativeRules)
     ? snapshot.administrativeRules
@@ -540,8 +1330,12 @@ function buildCustomerPrompt(
     context: snapshot,
     selectedContext: context,
     conversationHistory,
+    operationPolicy,
     instruction:
       "Responde la solicitud sobre la cuenta usando solo el CRM autorizado. Si se pide un correo, redacta un borrador y no lo envíes. Si solicitan un cambio, devuelve operations con el tipo de operación y los IDs exactos del contexto de esta cuenta; nunca propongas una entidad de otra cuenta. Toda operación es una propuesta editable que requiere revisión y confirmación; no afirmes que ya fue ejecutada." +
+      (snapshot?.channelIntentRouting
+        ? `\n\nEnrutamiento validado por el servidor: ${JSON.stringify(snapshot.channelIntentRouting)}. Responde a esa intención con evidencia del contexto autorizado y no la conviertas en otra clase de consulta.`
+        : "") +
       (administrativeRules.length
         ? `\n\nReglas administrativas activas para este canal; aplícalas sin ampliar el alcance autorizado ni omitir permisos o confirmaciones:\n${administrativeRules.join("\n")}`
         : ""),
@@ -608,7 +1402,12 @@ export function normalizeCustomerOperations(operations, snapshot, context) {
   });
 }
 
-function normalizeCustomerResponse(result, snapshot, _question, context) {
+export function normalizeCustomerResponse(
+  result,
+  snapshot,
+  _question,
+  context,
+) {
   const normalized = result || {};
   const recommendedActions = Array.isArray(normalized.recommendedActions)
     ? normalized.recommendedActions
@@ -664,14 +1463,28 @@ function normalizeCustomerResponse(result, snapshot, _question, context) {
     answer: String(
       normalized.answer || "No fue posible responder la pregunta.",
     ),
+    ...(normalized.responseType
+      ? { responseType: normalized.responseType }
+      : {}),
     evidence: Array.isArray(normalized.evidence) ? normalized.evidence : [],
     inferences: Array.isArray(normalized.inferences)
       ? normalized.inferences
+      : [],
+    pendingItems: Array.isArray(normalized.pendingItems)
+      ? normalized.pendingItems
+          .map((item) =>
+            String(item || "")
+              .trim()
+              .slice(0, 500),
+          )
+          .filter(Boolean)
+          .slice(0, 8)
       : [],
     confidence: ["high", "medium", "low"].includes(normalized.confidence)
       ? normalized.confidence
       : "low",
     recommendedActions,
+    activityHistory: normalized.activityHistory || null,
     source: "account_intelligence",
     entities: {
       accountId: context.accountId || null,
@@ -681,17 +1494,24 @@ function normalizeCustomerResponse(result, snapshot, _question, context) {
       names: [],
     },
     operations,
-    clarification: null,
+    clarification: normalized.clarification || null,
   };
 }
 
 export function createCustomerAccountAdapter({
   user,
   snapshot,
+  conversationContext = null,
+  snapshotQueryMetrics = [],
   agents,
   jobId,
 }) {
   const permissions = user?.permissionSet || new Set();
+  const turnDiagnostics = {
+    fallback: { used: false, reasonCode: null },
+    evidence: null,
+  };
+  let activeBusinessRules = null;
   const availableTools = [
     ...COACH_READ_TOOL_CATALOG,
     {
@@ -701,11 +1521,57 @@ export function createCustomerAccountAdapter({
     },
   ];
   const dependencies = {
+    planChannelIntent: async ({
+      question,
+      context,
+      conversationHistory,
+      conversationContext,
+      availableTools: permittedTools,
+      catalog,
+      deadlineAt,
+    }) => {
+      const enabledIntentCodes = (Array.isArray(catalog) ? catalog : [])
+        .filter((intent) => intent.enabled !== false)
+        .map((intent) => intent.code);
+      if (!enabledIntentCodes.length) return null;
+      return runStructuredTextResearch({
+        schemaName: "customer_account_query_plan",
+        systemPrompt:
+          "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Incluye varios códigos cuando la pregunta tenga partes independientes; usa el historial reciente para resolver referencias. Si se proporcionan candidatos autorizados y hay más de uno compatible sin que la pregunta distinga entre ellos, pide aclaración. Devuelve menciones literales en entities, filtros solo cuando estén expresados o sean necesarios, y pide aclaración ante entidades, periodo o intención ambiguos. Solo usa crm_operation y mode=operation ante una petición explícita de escritura; toda escritura seguirá requiriendo permisos y confirmación del servidor.",
+        subject: "Plan de consulta del CRM autorizado",
+        context: buildCustomerQueryPlannerContext({
+          question,
+          context,
+          conversationHistory,
+          conversationContext,
+          availableTools: permittedTools,
+          catalog,
+          snapshot,
+          businessRules: activeBusinessRules || {},
+        }),
+        currentValues: {},
+        fields: getChannelIntentPlanFields(
+          "customer_account",
+          enabledIntentCodes,
+        ),
+        aiUsageContext: {
+          userId: Number(user.id),
+          featureCode: "commercial_intelligence.account_chat",
+          jobType: "account_chat",
+          jobId,
+        },
+        signal: getDeadlineSignal(deadlineAt),
+      });
+    },
+    loadChannelIntentConfigurations: ({ channel }) =>
+      loadChannelIntentConfigurations({ channel }),
     loadAdministrativeRules: listCoachAdminRules,
     prepareReadModel: async ({
       question,
       availableTools: resolvedTools,
+      authorizedTools: permittedTools,
       conversationHistory,
+      conversationContext: readConversationContext,
       businessRules,
     }) =>
       buildCustomerReadModel({
@@ -713,8 +1579,10 @@ export function createCustomerAccountAdapter({
         question,
         snapshot,
         availableTools: resolvedTools,
+        authorizedTools: permittedTools,
         conversationHistory,
         businessRules,
+        conversationContext: readConversationContext || conversationContext,
       }),
     executeReadTool: ({
       toolName,
@@ -733,12 +1601,211 @@ export function createCustomerAccountAdapter({
     isStagePreparationQuestion,
     loadProcessGuide: async () => "",
     buildPrompt: buildCustomerPrompt,
-    requestResponse: async ({ payload }) => {
-      const fallback = buildCustomerFallback(snapshot, payload.question);
+    requestResponse: async ({ payload, deadlineAt }) => {
+      const routing = payload.context?.channelIntentRouting;
+      const intentCodes =
+        routing?.intents || (routing?.intent ? [routing.intent] : []);
+      const initialReadToolResults = Array.isArray(
+        payload.context?.readToolResults,
+      )
+        ? payload.context.readToolResults
+        : [];
+      const unqueriedAuthorizedTools = Array.isArray(
+        payload.context?.skippedAuthorizedTools,
+      )
+        ? payload.context.skippedAuthorizedTools
+        : [];
+      const snapshotQueryErrors = snapshotQueryMetrics
+        .filter((metric) => metric.errorCode)
+        .map((metric) => ({ source: metric.source }));
+      const deterministicResponse = buildCustomerDeterministicResponse({
+        snapshot: payload.context,
+        question: payload.question,
+        routing,
+        permissions,
+        allowedOperationKinds: payload.operationPolicy?.allowedKinds,
+      });
+      const channelCatalog = Array.isArray(
+        payload.context?.channelIntentCatalog,
+      )
+        ? payload.context.channelIntentCatalog
+        : [];
+      const enabledIntentCodes = channelCatalog
+        .filter((intent) => intent.enabled !== false)
+        .map((intent) => intent.code);
+      const authorizedToolNames = new Set(
+        Array.isArray(payload.context?.authorizedReadTools)
+          ? payload.context.authorizedReadTools
+          : [],
+      );
+      const authorizedTools = availableTools.filter((tool) =>
+        authorizedToolNames.has(tool.name),
+      );
+      const conversationHistory = Array.isArray(payload.conversationHistory)
+        ? payload.conversationHistory
+        : [];
+      const turnDeadline =
+        Number(deadlineAt) ||
+        Date.now() + CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs;
+      const followUpIntents = new Set();
+      const evidenceLoop = await runCustomerEvidenceLoop({
+        initialReadToolResults,
+        initialQueryErrors: snapshotQueryErrors,
+        unqueriedAuthorizedTools,
+        deadlineAt: turnDeadline,
+        assessEvidence: async ({
+          readToolResults,
+          round,
+          remainingMs,
+          hasQueryErrors,
+        }) =>
+          runStructuredTextResearch({
+            schemaName: "customer_account_evidence_assessment",
+            systemPrompt:
+              "Evalúa si la evidencia CRM autorizada responde todas las partes de la pregunta. No redactes la respuesta ni inventes datos. Marca sufficient solo si cada parte está respaldada por resultados concretos. Marca no_results solo cuando las consultas necesarias se ejecutaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Si falta otra fuente disponible, devuelve su código en missingQueries; solicita aclaración para entidades ambiguas, referencias insuficientes o periodos necesarios. Devuelve missingFacts como etiquetas breves, no como afirmaciones inventadas.",
+            subject: "Verificación de evidencia CRM",
+            context: {
+              question: payload.question,
+              intentPlan: routing
+                ? {
+                    objective: routing.objective || "",
+                    intents: intentCodes,
+                    entities: routing.entities || {},
+                    filters: routing.filters || {},
+                  }
+                : null,
+              evidence: readToolResults.map((item) => ({
+                toolName: item.toolName,
+                result: item.result,
+                queryFailed: Boolean(item.error),
+              })),
+              round,
+              hasQueryErrors,
+              snapshotQueryMetrics,
+              unqueriedAuthorizedTools,
+            },
+            currentValues: {},
+            fields: getCustomerEvidenceAssessmentFields(enabledIntentCodes),
+            aiUsageContext: {
+              userId: Number(user.id),
+              featureCode: "commercial_intelligence.account_chat",
+              jobType: "account_chat",
+              jobId,
+            },
+            signal: getDeadlineSignal(Date.now() + remainingMs),
+          }),
+        fetchAdditionalEvidence: async ({
+          missingQueries,
+          readToolResults,
+          remainingReadQueries,
+        }) => {
+          const safeMissingQueries = missingQueries.filter((code) =>
+            enabledIntentCodes.includes(code),
+          );
+          if (!safeMissingQueries.length || remainingReadQueries <= 0) {
+            return { readToolResults: [] };
+          }
+          const followUpRouting = normalizeChannelIntentPlan({
+            channel: "customer_account",
+            plan: {
+              objective: routing?.objective || "Recuperar evidencia faltante",
+              queries: safeMissingQueries,
+              entities: routing?.entities || {},
+              filters: routing?.filters || {},
+              ambiguity: {
+                reason: "none",
+                requiresClarification: "no",
+                missingContext: [],
+                question: "",
+              },
+              mode: "read_only",
+              confidence: "high",
+            },
+            availableTools: authorizedTools,
+            context: payload.context?.selectedContext || {},
+            configuration: channelCatalog,
+            question: payload.question,
+            conversationHistory,
+          });
+          if (!followUpRouting || followUpRouting.requiresClarification) {
+            return { readToolResults: [] };
+          }
+          const previouslyQueried = new Set(
+            readToolResults.map((item) => item.toolName),
+          );
+          const followUpTools = authorizedTools
+            .filter(
+              (tool) =>
+                followUpRouting.allowedTools.includes(tool.name) &&
+                !previouslyQueried.has(tool.name),
+            )
+            .slice(0, remainingReadQueries);
+          if (!followUpTools.length) return { readToolResults: [] };
+          for (const code of followUpRouting.intents) followUpIntents.add(code);
+          const followUpReadModel = await buildCustomerReadModel({
+            user,
+            question: payload.question,
+            snapshot,
+            availableTools: followUpTools,
+            conversationHistory,
+            conversationContext,
+            businessRules: activeBusinessRules || {},
+            channelIntentRouting: {
+              ...followUpRouting,
+              allowedTools: followUpTools.map((tool) => tool.name),
+            },
+            channelIntentCatalog: channelCatalog,
+          });
+          return {
+            readToolResults: followUpReadModel.readToolResults.slice(
+              0,
+              remainingReadQueries,
+            ),
+          };
+        },
+      });
+      turnDiagnostics.evidence = {
+        status: evidenceLoop.status,
+        rounds: evidenceLoop.rounds,
+        additionalReadQueries: evidenceLoop.additionalReadQueries,
+        missingFactsCount: evidenceLoop.missingFacts.length,
+        errorCode: evidenceLoop.errorCode,
+        unqueriedAuthorizedTools: evidenceLoop.unqueriedAuthorizedTools,
+        additionalToolMetrics: summarizeCoachToolResults(
+          evidenceLoop.readToolResults.slice(initialReadToolResults.length),
+        ),
+      };
+      if (evidenceLoop.status !== "sufficient") {
+        return buildCustomerEvidenceFailureResponse({
+          ...evidenceLoop,
+          failedSources: evidenceLoop.failedSources,
+        });
+      }
+      payload = {
+        ...payload,
+        context: {
+          ...payload.context,
+          readToolResults: evidenceLoop.readToolResults,
+          evidenceVerification: {
+            status: evidenceLoop.status,
+            rounds: evidenceLoop.rounds,
+            sourceMetrics: snapshotQueryMetrics,
+          },
+          channelIntentRouting: routing
+            ? {
+                ...routing,
+                intents: [...new Set([...intentCodes, ...followUpIntents])],
+              }
+            : routing,
+        },
+      };
+      const fallback =
+        deterministicResponse ||
+        buildCustomerFallback(snapshot, payload.question);
       const aiResult = await runStructuredTextResearch({
         schemaName: "account_contextual_chat",
         systemPrompt:
-          "Responde preguntas comerciales sobre una cuenta usando exclusivamente el contexto autorizado. No inventes datos. Puedes proponer activity, stage_answer, lead_call_outcome, account_field, contact_field u opportunity_field si la petición es explícita y los datos están respaldados por el contexto de esta cuenta. Las operaciones son borradores para revisión y confirmación; nunca las ejecutes. Si solicitan un correo, devuelve un borrador; no lo envíes.",
+          "Responde todas las partes de la pregunta usando exclusivamente la evidencia CRM autorizada incluida en el contexto. Distingue hechos de inferencias. No afirmes una ausencia si una consulta falló; evidenceVerification indica si la verificación se completó. Si alguna parte no está respaldada, dilo explícitamente y colócala en pendingItems. Puedes proponer operaciones solo si la petición es explícita y la evidencia las respalda; son borradores que requieren revisión y confirmación. Nunca ejecutes operaciones ni envíes correos.",
         subject: snapshot.account?.name || "cuenta",
         context: { ...payload, agents },
         currentValues: {},
@@ -763,6 +1830,12 @@ export function createCustomerAccountAdapter({
             example: "medium",
           },
           {
+            key: "pendingItems",
+            type: "array",
+            example: [],
+            items: { type: "string", example: "Dato no verificado" },
+          },
+          {
             key: "recommendedActions",
             type: "array",
             example: [],
@@ -772,8 +1845,8 @@ export function createCustomerAccountAdapter({
                 { key: "title", type: "string", example: "Actividad" },
                 { key: "opportunityId", type: "string", example: "" },
                 { key: "actionType", type: "string", example: "call" },
-                { key: "notes", type: "string", example: "Notas" },
-                { key: "successCriteria", type: "string", example: "Criterio" },
+                { key: "notes", type: "string", example: "" },
+                { key: "successCriteria", type: "string", example: "" },
                 {
                   key: "requiresConfirmation",
                   type: "string",
@@ -887,8 +1960,91 @@ export function createCustomerAccountAdapter({
           jobType: "account_chat",
           jobId,
         },
+        signal: getDeadlineSignal(deadlineAt),
       });
-      return aiResult || fallback;
+      if (aiResult) {
+        const answerAudit = await runStructuredTextResearch({
+          schemaName: "customer_account_answer_audit",
+          systemPrompt:
+            "Audita cada afirmación factual importante de la respuesta propuesta, incluidos answer, evidence, inferences, acciones y operaciones, contra los resultados CRM autorizados y la evidencia de cada fuente. No uses conocimiento externo ni la pregunta como prueba. Marca supported solo si todas las afirmaciones están respaldadas. Si una afirmación inventa, contradice o excede la evidencia, marca unsupported y descríbela brevemente en unsupportedClaims. Si no puedes decidir por falta de evidencia, marca inconclusive. No redactes una respuesta nueva ni autorices operaciones.",
+          subject: snapshot.account?.name || "cuenta",
+          context: {
+            question: payload.question,
+            proposedAnswer: {
+              answer: aiResult.answer,
+              evidence: Array.isArray(aiResult.evidence)
+                ? aiResult.evidence
+                : [],
+              inferences: Array.isArray(aiResult.inferences)
+                ? aiResult.inferences
+                : [],
+              recommendedActions: Array.isArray(aiResult.recommendedActions)
+                ? aiResult.recommendedActions
+                : [],
+              operations: Array.isArray(aiResult.operations)
+                ? aiResult.operations
+                : [],
+            },
+            authorizedEvidence: evidenceLoop.readToolResults.map((item) => ({
+              toolName: item.toolName,
+              result: item.result,
+              queryFailed: Boolean(item.error),
+            })),
+            evidenceVerification: evidenceLoop.status,
+          },
+          currentValues: {},
+          fields: [
+            {
+              key: "status",
+              type: "enum",
+              enum: ["supported", "unsupported", "inconclusive"],
+              example: "supported",
+            },
+            {
+              key: "unsupportedClaims",
+              type: "array",
+              example: [],
+              items: { type: "string", example: "Dato no respaldado" },
+            },
+          ],
+          aiUsageContext: {
+            userId: Number(user.id),
+            featureCode: "commercial_intelligence.account_chat",
+            jobType: "account_chat",
+            jobId,
+          },
+          signal: getDeadlineSignal(deadlineAt),
+        });
+        if (answerAudit?.status === "supported") return aiResult;
+        const answerAuditFailureCode =
+          answerAudit?.status === "unsupported"
+            ? "answer_not_grounded"
+            : answerAudit?.status === "inconclusive"
+              ? "answer_audit_inconclusive"
+              : "answer_audit_unavailable";
+        turnDiagnostics.fallback = {
+          used: true,
+          reasonCode: answerAuditFailureCode,
+        };
+        return buildCustomerEvidenceFailureResponse({
+          status: "answer_generation_error",
+          errorCode: answerAuditFailureCode,
+          missingFacts: Array.isArray(answerAudit?.unsupportedClaims)
+            ? answerAudit.unsupportedClaims
+            : [],
+          readToolResults: evidenceLoop.readToolResults,
+        });
+      }
+      turnDiagnostics.fallback = {
+        used: true,
+        reasonCode: "structured_response_unavailable",
+      };
+      return buildCustomerEvidenceFailureResponse({
+        status: "answer_generation_error",
+        errorCode: "answer_generation_unavailable",
+        readToolResults: evidenceLoop.readToolResults,
+        failedSources: evidenceLoop.failedSources,
+      });
     },
     resolveResponseContext: (_snapshot, context) => ({
       context,
@@ -898,6 +2054,10 @@ export function createCustomerAccountAdapter({
     normalizeResponse: (result, scopedSnapshot, question, context) =>
       normalizeCustomerResponse(result, scopedSnapshot, question, context),
     featureCode: "commercial_intelligence.account_chat",
+    getTurnDiagnostics: () => ({
+      ...turnDiagnostics,
+      snapshotMetrics: snapshotQueryMetrics,
+    }),
   };
   return {
     channel: "customer_account",
@@ -915,14 +2075,55 @@ export function createCustomerAccountAdapter({
       ],
       sourceChannel: "customer_account",
     },
-    async runTurn({ question, context = {}, history = [] }) {
+    async runTurn({
+      question,
+      context = {},
+      history = [],
+      conversationContext: turnConversationContext = null,
+    }) {
       const businessRules = await loadCoachBusinessRules({
         channel: "customer_account",
         process: "account_chat",
       });
+      activeBusinessRules = businessRules;
+      const currentScope = businessRules.scope || {};
+      const storedContinuationContext =
+        turnConversationContext || conversationContext;
+      const effectiveConversationContext = storedContinuationContext
+        ? {
+            ...storedContinuationContext,
+            opportunityId:
+              currentScope.opportunitySearchAllowed === false
+                ? null
+                : storedContinuationContext.opportunityId,
+            contactId:
+              currentScope.contactSearchAllowed === false
+                ? null
+                : storedContinuationContext.contactId,
+          }
+        : null;
+      const effectiveContext = {
+        ...context,
+        opportunityId:
+          currentScope.opportunitySearchAllowed === false
+            ? null
+            : context.opportunityId,
+        contactId:
+          currentScope.contactSearchAllowed === false
+            ? null
+            : context.contactId,
+      };
+      const trustedEntityReferences = getValidatedContinuationReferences(
+        snapshot,
+        effectiveConversationContext,
+      );
       return runConversationEngine({
         question,
-        context,
+        context: {
+          ...effectiveContext,
+          conversationContext: effectiveConversationContext,
+          trustedEntityReferences,
+        },
         history,
         user,
         jobId,

@@ -16,6 +16,13 @@ import {
   restoreCoachIntentRevision,
   updateCoachIntentExamples,
 } from "./coach/intent-governance.js";
+import {
+  listChannelIntentRevisions,
+  loadChannelIntentConfigurations,
+  previewChannelIntent,
+  restoreChannelIntentRevision,
+  updateChannelIntentConfiguration,
+} from "./coach/channel-intent-governance.js";
 import express from "express";
 import { z } from "zod";
 import { requirePermission } from "./auth.js";
@@ -71,6 +78,23 @@ const snapshotQuerySchema = z.object({
   accountId: z.coerce.number().int().positive().optional().nullable(),
   opportunityId: z.coerce.number().int().positive().optional().nullable(),
   contactId: z.coerce.number().int().positive().optional().nullable(),
+});
+
+const channelIntentChannelSchema = z.enum(["customer_account", "prospect"]);
+const channelIntentConfigurationSchema = z.object({
+  enabled: z.boolean(),
+  examples: z.array(z.string().trim().min(1).max(240)).min(1).max(30),
+  priority: z.number().int().min(0).max(200),
+  allowedTools: z.array(z.string().trim().min(1)).max(20),
+  requiredContext: z
+    .array(z.enum(["account", "opportunity", "contact", "prospectSession"]))
+    .max(4),
+});
+const channelIntentPreviewSchema = z.object({
+  channel: channelIntentChannelSchema,
+  question: z.string().trim().min(1).max(1200),
+  intentCode: z.string().trim().min(1).max(80).optional(),
+  configuration: channelIntentConfigurationSchema.optional(),
 });
 
 const customerChatSessionSchema = jobCreateSchema.pick({
@@ -996,6 +1020,160 @@ router.get(
       catalog: await listCoachIntentCatalog(),
       revisions: await listCoachIntentRevisions(),
     });
+  },
+);
+
+router.get(
+  "/governance/channel-intents/:channel",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const channelResult = channelIntentChannelSchema.safeParse(
+      req.params.channel,
+    );
+    if (!channelResult.success) {
+      return res.status(400).json({ message: "Canal no configurable" });
+    }
+    const channel = channelResult.data;
+    return res.json({
+      channel,
+      catalog: await loadChannelIntentConfigurations({ channel }),
+      revisions: await listChannelIntentRevisions({ channel }),
+    });
+  },
+);
+
+router.put(
+  "/governance/channel-intents/:channel/:intentCode",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const channelResult = channelIntentChannelSchema.safeParse(
+      req.params.channel,
+    );
+    const configResult = channelIntentConfigurationSchema.safeParse(
+      req.body || {},
+    );
+    if (!channelResult.success || !configResult.success) {
+      return res.status(400).json({
+        message: "Configuración de enrutamiento inválida",
+        issues: configResult.success ? [] : configResult.error.issues,
+      });
+    }
+    const channel = channelResult.data;
+    const beforeCatalog = await loadChannelIntentConfigurations({ channel });
+    const before = beforeCatalog.find(
+      (intent) => intent.code === req.params.intentCode,
+    );
+    if (!before) {
+      return res.status(404).json({ message: "Intención no encontrada" });
+    }
+    try {
+      const result = await updateChannelIntentConfiguration({
+        user: req.user,
+        channel,
+        intentCode: req.params.intentCode,
+        configuration: configResult.data,
+      });
+      if (!result) {
+        return res.status(404).json({ message: "Intención no encontrada" });
+      }
+      const after = result.catalog.find(
+        (intent) => intent.code === req.params.intentCode,
+      );
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "mi_coach_channel_intent_updated",
+        entityType: "channel_intent",
+        entityId: `${channel}:${req.params.intentCode}`,
+        detail: `Intención ${req.params.intentCode} actualizada para ${channel}`,
+        before,
+        after,
+      });
+      return res.json({ channel, ...result });
+    } catch (error) {
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible guardar la intención del canal",
+      );
+    }
+  },
+);
+
+router.post(
+  "/governance/channel-intents/preview",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = channelIntentPreviewSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Pregunta de prueba inválida",
+        issues: parsed.error.issues,
+      });
+    }
+    return res.json(await previewChannelIntent(parsed.data));
+  },
+);
+
+router.get(
+  "/governance/channel-intents/:channel/revisions",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const channelResult = channelIntentChannelSchema.safeParse(
+      req.params.channel,
+    );
+    if (!channelResult.success) {
+      return res.status(400).json({ message: "Canal no configurable" });
+    }
+    return res.json({
+      revisions: await listChannelIntentRevisions({
+        channel: channelResult.data,
+      }),
+    });
+  },
+);
+
+router.post(
+  "/governance/channel-intents/:channel/revisions/:revisionId/restore",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const channelResult = channelIntentChannelSchema.safeParse(
+      req.params.channel,
+    );
+    const revisionId = Number(req.params.revisionId);
+    if (
+      !channelResult.success ||
+      !Number.isSafeInteger(revisionId) ||
+      revisionId < 1
+    ) {
+      return res.status(400).json({ message: "Canal o revisión inválidos" });
+    }
+    try {
+      const result = await restoreChannelIntentRevision({
+        user: req.user,
+        channel: channelResult.data,
+        revisionId,
+      });
+      if (!result) {
+        return res.status(404).json({ message: "Revisión no encontrada" });
+      }
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "mi_coach_channel_intent_revision_restored",
+        entityType: "channel_intent_revision",
+        entityId: revisionId,
+        detail: `Configuración de intenciones de ${channelResult.data} restaurada`,
+        after: result.catalog,
+      });
+      return res.json({ channel: channelResult.data, ...result });
+    } catch (error) {
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible restaurar la configuración de intenciones",
+      );
+    }
   },
 );
 

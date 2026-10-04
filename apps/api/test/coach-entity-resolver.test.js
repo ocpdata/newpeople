@@ -66,6 +66,53 @@ describe("Coach entity resolver", () => {
     expect(result.contact?.id).toBe(32);
   });
 
+  test("coaching general ignora coincidencias parciales en nombres de registros", () => {
+    const generalCoachingSnapshot = {
+      accounts: [
+        { id: 201, name: "Comercial de Carnes Frías del Norte, S.A. de C.V." },
+      ],
+      coachOpportunities: [
+        {
+          id: 202,
+          name: "Equipos Cisco para Mejorar Su Infraestructura",
+          accountId: 201,
+        },
+      ],
+      contactMappings: [],
+      leads: [],
+    };
+    const result = resolveCoachEntities(
+      generalCoachingSnapshot,
+      "¿Cómo puedo mejorar mi desempeño comercial este mes?",
+      {},
+      { exactMatchOnly: true },
+    );
+
+    expect(result.account).toBeNull();
+    expect(result.opportunity).toBeNull();
+    expect(result.candidates.accounts).toEqual([]);
+    expect(result.candidates.opportunities).toEqual([]);
+
+    const transition = applyCoachEntityResolution(
+      generalCoachingSnapshot,
+      { accountId: 201, opportunityId: 202 },
+      result,
+    );
+    expect(transition).toMatchObject({
+      changed: false,
+      conflict: null,
+      context: { accountId: 201, opportunityId: 202 },
+    });
+
+    const explicitlyNamed = resolveCoachEntities(
+      generalCoachingSnapshot,
+      "Analiza Equipos Cisco para Mejorar Su Infraestructura",
+      {},
+      { exactMatchOnly: true },
+    );
+    expect(explicitlyNamed.opportunity?.id).toBe(202);
+  });
+
   test("la oportunidad nombrada en la pregunta reemplaza la seleccionada", () => {
     const result = resolveCoachEntities(snapshot, "Revisa Seguridad de Redes");
     const transition = applyCoachEntityResolution(
@@ -223,7 +270,9 @@ describe("Coach entity resolver", () => {
     );
 
     expect(result.candidates.opportunities).toEqual([]);
-    expect(buildCoachEntityClarification(result, "¿Tienen fecha de cierre el 2026?")).toBeNull();
+    expect(
+      buildCoachEntityClarification(result, "¿Tienen fecha de cierre el 2026?"),
+    ).toBeNull();
   });
 
   test("prioriza el nombre de oportunidad sobre la cuenta", () => {
@@ -288,8 +337,7 @@ describe("Coach entity resolver", () => {
     );
 
     expect(result.candidates.opportunities.map((item) => item.id)).toEqual([
-      401,
-      402,
+      401, 402,
     ]);
     expect(result.candidates.leads).toEqual([]);
     expect(clarification).toMatchObject({

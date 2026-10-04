@@ -8,6 +8,7 @@ import { ensureCommercialIntelligenceSchema } from "../src/commercial-intelligen
 import { ensureCommercialTrackingPermissions } from "../src/commercial-tracking/permissions.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
+import { ensureCoachSchema } from "../src/coach/schema.js";
 import { ensureLandingPermissions } from "../src/landing/permissions.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-registrations/permissions.js";
@@ -1462,8 +1463,8 @@ describe("API integration baseline", () => {
   });
 
   test("Coach siempre usa el motor nuevo aunque la configuracion legacy y rollout esten apagados", async () => {
-    const shadowRoleId = await createRole({
-      name: `${TEST_PREFIX}_coach_shadow_equivalence`,
+    const gatewayRoleId = await createRole({
+      name: `${TEST_PREFIX}_coach_gateway`,
       permissionCodes: [
         "mi_coach.use",
         "oportunidades.read",
@@ -1471,13 +1472,13 @@ describe("API integration baseline", () => {
         "contactos.read",
       ],
     });
-    cleanup.roleIds.push(shadowRoleId);
+    cleanup.roleIds.push(gatewayRoleId);
     const gatewayUserEmail = `${TEST_PREFIX}.coach.always.gateway@example.com`;
     const gatewayUserId = await createUser({
       fullName: "API Mi Coach Gateway",
       email: gatewayUserEmail,
       roleIds: [
-        shadowRoleId,
+        gatewayRoleId,
         ctx.opportunityFlowRoleId,
         ctx.accountReadRoleId,
         ctx.contactReadRoleId,
@@ -1746,6 +1747,17 @@ describe("API integration baseline", () => {
   });
 
   test("Coach quality feedback y rollout por canal quedan gobernados y medibles", async () => {
+    await ensureCoachSchema();
+    const rolloutColumns = await query(
+      `SHOW COLUMNS FROM coach_channel_rollouts`,
+    );
+    expect(rolloutColumns.map((column) => column.Field)).not.toContain(
+      "planner_mode",
+    );
+    const customerPlannerRolloutRows = await query(
+      `SELECT channel FROM coach_channel_rollouts WHERE channel = 'customer_account'`,
+    );
+    expect(customerPlannerRolloutRows).toEqual([]);
     const ownerLogin = await login(
       request(app),
       `${TEST_PREFIX}.mi.coach.use@example.com`,
@@ -1830,6 +1842,27 @@ describe("API integration baseline", () => {
           }),
         ]),
       );
+      expect(qualityResponse.body.rollouts.map((item) => item.channel)).toEqual(
+        expect.arrayContaining(["coach", "prospect"]),
+      );
+      expect(qualityResponse.body.rollouts).not.toContainEqual(
+        expect.objectContaining({ channel: "customer_account" }),
+      );
+
+      const customerPlannerRolloutResponse = await request(app)
+        .put("/api/mi-agent/coach/rollouts")
+        .set("Authorization", `Bearer ${adminLogin.body.token}`)
+        .send({
+          rollouts: [
+            {
+              channel: "customer_account",
+              enabled: true,
+              rolloutPercentage: 100,
+              allowlist: [],
+            },
+          ],
+        });
+      expect(customerPlannerRolloutResponse.status).toBe(400);
 
       const rolloutResponse = await request(app)
         .put("/api/mi-agent/coach/rollouts")
@@ -2355,6 +2388,61 @@ describe("API integration baseline", () => {
       suffix: `${TEST_PREFIX}_commercial_intelligence`,
     });
     cleanup.contactIds.push(contactId);
+    const volumeContactCatalogIds = await Promise.all([
+      getCatalogId("countries", "MX", "iso2"),
+      getCatalogId("contact_purchase_participations", "ninguno"),
+      getCatalogId("contact_relationship_types", "ninguno"),
+      getCatalogId("contact_hierarchy_levels", "usuario"),
+      getCatalogId("contact_influence_levels", "media"),
+      getFirstId("contact_employment_statuses"),
+      getCatalogId("contact_activation_statuses", "activado"),
+    ]);
+    const volumeContactCreatedAt = new Date();
+    const volumeContactValues = Array.from({ length: 50 }, (_, index) => [
+      "Contacto",
+      `Volumen ${index + 1}`,
+      accountId,
+      "Compras",
+      null,
+      null,
+      `551${String(index + 1).padStart(6, "0")}`,
+      `volume.${TEST_PREFIX}.${index + 1}@example.test`,
+      "Compras",
+      volumeContactCatalogIds[0],
+      "CDMX",
+      "Ciudad de Mexico",
+      "Direccion fixture",
+      "01000",
+      volumeContactCatalogIds[1],
+      volumeContactCatalogIds[2],
+      volumeContactCatalogIds[3],
+      volumeContactCatalogIds[4],
+      volumeContactCatalogIds[5],
+      volumeContactCatalogIds[6],
+      null,
+      null,
+      ctx.commercialIntelligenceUpdateUserId,
+      volumeContactCreatedAt,
+      ctx.commercialIntelligenceUpdateUserId,
+      volumeContactCreatedAt,
+    ]);
+    await query(
+      `INSERT INTO contacts
+        (first_name, last_name, account_id, position_title, phone, phone_extension,
+         mobile, email, department, country_id, state_region, city, address_line,
+         postal_code, purchase_participation_id, relationship_type_id,
+         hierarchy_level_id, influence_level_id, employment_status_id,
+         activation_status_id, manager_contact_id, influences_contact_id,
+         created_by, created_at, updated_by, updated_at)
+       VALUES ${volumeContactValues.map(() => `(${Array(26).fill("?").join(",")})`).join(",")}`,
+      volumeContactValues.flat(),
+    );
+    const volumeContactRows = await query(
+      `SELECT id FROM contacts
+       WHERE account_id = ? AND last_name LIKE ?`,
+      [accountId, `Volumen %`],
+    );
+    cleanup.contactIds.push(...volumeContactRows.map((row) => Number(row.id)));
 
     const noCoachLogin = await login(
       request(app),
@@ -2558,37 +2646,171 @@ describe("API integration baseline", () => {
       separateAccountChatSessionResponse.body.session.id,
     );
 
-    const accountChatResponse = await request(app)
-      .post("/api/commercial-intelligence/account-chat/jobs")
-      .set("Authorization", `Bearer ${updateLogin.body.token}`)
-      .send({
-        accountId,
-        chatSessionId: accountChatSessionId,
-        question: "Resume esta cuenta para mi reunión",
+    const runChatTurnWithMockedStructuredProvider = async (
+      question,
+      {
+        turnAccountId = accountId,
+        turnSessionId = accountChatSessionId,
+        authorizationToken = updateLogin.body.token,
+        synthesizedResponse = null,
+        answerAudit = { status: "supported", unsupportedClaims: [] },
+      } = {},
+    ) => {
+      const originalFetch = global.fetch;
+      const originalApiKey = config.openai.apiKey;
+      const plannerContexts = [];
+      const schemaNames = [];
+      let callNumber = 0;
+      config.openai.apiKey = "test-account-chat-key";
+      global.fetch = vi.fn(async (url, init) => {
+        expect(String(url)).toContain("/responses");
+        const payload = JSON.parse(init.body);
+        schemaNames.push(payload.text?.format?.name);
+        const userInput = payload.input.find((item) => item.role === "user");
+        const requestContext = JSON.parse(userInput.content);
+        let output = requestContext.expectedJsonShape || {};
+        if (payload.text?.format?.name === "customer_account_query_plan") {
+          plannerContexts.push(requestContext.context);
+          output = {
+            objective: "Consultar el resumen de la cuenta",
+            queries: ["account_overview"],
+            entities: {
+              accountReference: "",
+              opportunityReference: "",
+              contactReference: "",
+              leadReference: "",
+            },
+            filters: {
+              opportunityStatus: "unspecified",
+              stageCode: "",
+              closeYear: 0,
+              periodMonths: 0,
+              startDate: "",
+              endDate: "",
+            },
+            ambiguity: {
+              reason: "none",
+              requiresClarification: "no",
+              missingContext: [],
+              question: "",
+            },
+            mode: "read_only",
+            confidence: "high",
+          };
+        } else if (
+          payload.text?.format?.name === "customer_account_evidence_assessment"
+        ) {
+          output = {
+            status: "sufficient",
+            missingQueries: [],
+            missingFacts: [],
+            clarificationQuestion: "",
+          };
+        } else if (payload.text?.format?.name === "account_contextual_chat") {
+          output = synthesizedResponse || {
+            answer: "La cuenta tiene evidencia CRM verificada.",
+            evidence: ["Resumen obtenido del CRM autorizado."],
+            inferences: [],
+            confidence: "high",
+            pendingItems: [],
+            recommendedActions: [],
+            operations: [],
+          };
+        } else if (
+          payload.text?.format?.name === "customer_account_answer_audit"
+        ) {
+          output = answerAudit;
+        }
+        callNumber += 1;
+        return {
+          ok: true,
+          json: async () => ({
+            id: `resp_account_chat_test_${callNumber}`,
+            output_text: JSON.stringify(output),
+            usage: {
+              input_tokens: 20,
+              output_tokens: 12,
+              total_tokens: 32,
+            },
+          }),
+        };
       });
-    expect(accountChatResponse.status).toBe(202);
-    const accountChatJobId = Number(accountChatResponse.body.job.id);
-    let accountChatJob;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      accountChatJob = await request(app)
-        .get(
-          `/api/commercial-intelligence/account-chat/jobs/${accountChatJobId}`,
-        )
-        .set("Authorization", `Bearer ${updateLogin.body.token}`);
-      if (["completed", "failed"].includes(accountChatJob.body.job?.status))
-        break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+      try {
+        const createResponse = await request(app)
+          .post("/api/commercial-intelligence/account-chat/jobs")
+          .set("Authorization", `Bearer ${authorizationToken}`)
+          .send({
+            accountId: turnAccountId,
+            chatSessionId: turnSessionId,
+            question,
+          });
+        expect(createResponse.status).toBe(202);
+        const jobId = Number(createResponse.body.job.id);
+        let jobResponse;
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          jobResponse = await request(app)
+            .get(`/api/commercial-intelligence/account-chat/jobs/${jobId}`)
+            .set("Authorization", `Bearer ${authorizationToken}`);
+          if (["completed", "failed"].includes(jobResponse.body.job?.status))
+            break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return { job: jobResponse.body.job, plannerContexts, schemaNames };
+      } finally {
+        global.fetch = originalFetch;
+        config.openai.apiKey = originalApiKey;
+      }
+    };
+
+    const firstChatTurn = await runChatTurnWithMockedStructuredProvider(
+      "Resume esta cuenta para mi reunión",
+    );
+    const accountChatJob = { status: 200, body: { job: firstChatTurn.job } };
     expect(accountChatJob.status).toBe(200);
     expect(accountChatJob.body.job.result).toEqual(
       expect.objectContaining({
         source: "account_intelligence",
         answer: expect.any(String),
         qualityTraceId: expect.any(Number),
+        entities: expect.objectContaining({ accountId }),
+        partialResults: expect.objectContaining({
+          isPartial: expect.any(Boolean),
+          sources: expect.any(Array),
+        }),
       }),
     );
+    expect(firstChatTurn.schemaNames).toContain(
+      "customer_account_answer_audit",
+    );
+    expect(accountChatJob.body.job.result.partialResults).toEqual(
+      expect.objectContaining({
+        isPartial: true,
+        sources: expect.arrayContaining(["contacts"]),
+      }),
+    );
+    expect(accountChatJob.body.job.result.answer).toContain(
+      "resultados pueden estar incompletos",
+    );
+    expect(accountChatJob.body.job.result.publicSources).toEqual([]);
+    expect(
+      accountChatJob.body.job.result.agents.find(
+        (agent) => agent.agentId === "public_research",
+      )?.summary,
+    ).toContain("no solicitada");
+    const storedChatRequestRows = await query(
+      `SELECT request_json FROM customer_intelligence_jobs WHERE id = ? LIMIT 1`,
+      [accountChatJob.body.job.id],
+    );
+    const storedChatRequest =
+      typeof storedChatRequestRows[0]?.request_json === "string"
+        ? JSON.parse(storedChatRequestRows[0].request_json)
+        : storedChatRequestRows[0]?.request_json;
+    expect(storedChatRequest.includePublicResearch).toBe(false);
     const accountTraceRows = await query(
-      `SELECT channel, session_id FROM coach_turn_quality_traces
+      `SELECT channel, session_id, intent_type, entity_resolution_json,
+              tools_used_json, tool_metrics_json, diagnostics_json,
+              error_code
+       FROM coach_turn_quality_traces
        WHERE id = ? LIMIT 1`,
       [accountChatJob.body.job.result.qualityTraceId],
     );
@@ -2596,6 +2818,64 @@ describe("API integration baseline", () => {
       channel: "customer_account",
       session_id: accountChatSessionId,
     });
+    const parseTraceJson = (value) =>
+      typeof value === "string" ? JSON.parse(value) : value;
+    const persistedTools = parseTraceJson(accountTraceRows[0].tools_used_json);
+    const persistedToolMetrics = parseTraceJson(
+      accountTraceRows[0].tool_metrics_json,
+    );
+    const persistedDiagnostics = parseTraceJson(
+      accountTraceRows[0].diagnostics_json,
+    );
+    expect(persistedTools).toEqual(expect.arrayContaining(["searchAccounts"]));
+    expect(persistedToolMetrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "searchAccounts",
+          resultCount: expect.any(Number),
+          errorCode: null,
+          truncated: null,
+        }),
+      ]),
+    );
+    expect(persistedDiagnostics.channelIntentRouting).toEqual(
+      expect.objectContaining({
+        intent: expect.any(String),
+        allowedTools: expect.any(Array),
+      }),
+    );
+    expect(persistedDiagnostics.planner).toMatchObject({
+      source: expect.stringMatching(/^(structured_plan|not_applicable)$/),
+      fallbackUsed: expect.any(Boolean),
+      queryCount: expect.any(Number),
+      evaluation: expect.objectContaining({
+        mode: "active",
+        assigned: true,
+        planAvailable: expect.any(Boolean),
+        plannerIntents: expect.any(Array),
+        plannerTools: expect.any(Array),
+      }),
+    });
+    expect(persistedDiagnostics.planner.evaluation).not.toHaveProperty(
+      "intentAgreement",
+    );
+    expect(persistedDiagnostics.fallback.used).toEqual(expect.any(Boolean));
+    expect(persistedDiagnostics.agentMetrics).toEqual(expect.any(Array));
+    expect(persistedDiagnostics.snapshotMetrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "contacts",
+          resultCount: 50,
+          resultLimit: 50,
+          truncated: true,
+          errorCode: null,
+        }),
+      ]),
+    );
+    expect(JSON.stringify(accountTraceRows[0])).not.toContain(
+      "Resume esta cuenta para mi reunión",
+    );
+    expect(JSON.stringify(accountTraceRows[0])).not.toContain("email");
     const historyAfterFirstChatRows = await query(
       `SELECT history_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
       [accountChatSessionId],
@@ -2605,6 +2885,23 @@ describe("API integration baseline", () => {
         ? JSON.parse(historyAfterFirstChatRows[0].history_json)
         : historyAfterFirstChatRows[0]?.history_json;
     expect(historyAfterFirstChat).toHaveLength(2);
+    const contextAfterFirstChatRows = await query(
+      `SELECT context_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
+      [accountChatSessionId],
+    );
+    const contextAfterFirstChat =
+      typeof contextAfterFirstChatRows[0]?.context_json === "string"
+        ? JSON.parse(contextAfterFirstChatRows[0].context_json)
+        : contextAfterFirstChatRows[0]?.context_json;
+    expect(contextAfterFirstChat).toEqual(
+      expect.objectContaining({
+        version: 1,
+        accountId,
+        intents: expect.any(Array),
+        filters: expect.any(Object),
+      }),
+    );
+    expect(contextAfterFirstChat.intents).toContain("account_overview");
     const reloadedChatSessionResponse = await request(app)
       .get(
         `/api/commercial-intelligence/account-chat/sessions/${accountChatSessionId}`,
@@ -2612,6 +2909,68 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${updateLogin.body.token}`);
     expect(reloadedChatSessionResponse.status).toBe(200);
     expect(reloadedChatSessionResponse.body.session.history).toHaveLength(2);
+
+    const followUpChatTurn =
+      await runChatTurnWithMockedStructuredProvider("¿Y su resumen?");
+    expect(followUpChatTurn.job.status).toBe("completed");
+    expect(followUpChatTurn.plannerContexts[0].validatedContinuation).toEqual(
+      expect.objectContaining({
+        intents: ["account_overview"],
+        filters: expect.objectContaining({
+          opportunityStatus: "unspecified",
+        }),
+      }),
+    );
+    expect(JSON.stringify(followUpChatTurn.plannerContexts[0])).not.toContain(
+      '"accountId"',
+    );
+
+    const currentAccountCityRows = await query(
+      `SELECT city FROM accounts WHERE id = ? LIMIT 1`,
+      [accountId],
+    );
+    const originalAccountCity = currentAccountCityRows[0]?.city;
+    const unconfirmedWriteTurn = await runChatTurnWithMockedStructuredProvider(
+      "Prepara una propuesta de actualización de la cuenta",
+      {
+        synthesizedResponse: {
+          answer:
+            "Puedo preparar la propuesta; el CRM todavía no fue modificado.",
+          evidence: ["La cuenta autorizada fue consultada."],
+          inferences: [],
+          confidence: "high",
+          pendingItems: [],
+          recommendedActions: [],
+          operations: [
+            {
+              kind: "account_field",
+              title: "Actualizar ciudad",
+              accountId,
+              field: "city",
+              currentValue: originalAccountCity || "",
+              value: "Ciudad propuesta sin confirmar",
+              evidence: [],
+              missingFields: [],
+            },
+          ],
+        },
+      },
+    );
+    expect(unconfirmedWriteTurn.job.status).toBe("completed");
+    expect(unconfirmedWriteTurn.job.result.operations).toEqual([
+      expect.objectContaining({
+        kind: "account_field",
+        field: "city",
+        value: "Ciudad propuesta sin confirmar",
+        sourceChannel: "customer_account",
+        requiresConfirmation: true,
+      }),
+    ]);
+    const cityAfterProposalRows = await query(
+      `SELECT city FROM accounts WHERE id = ? LIMIT 1`,
+      [accountId],
+    );
+    expect(cityAfterProposalRows[0]?.city).toBe(originalAccountCity);
 
     const emailChatResponse = await request(app)
       .post("/api/commercial-intelligence/account-chat/jobs")
@@ -2654,7 +3013,7 @@ describe("API integration baseline", () => {
       typeof untouchedSeparateHistoryRows[0]?.history_json === "string"
         ? JSON.parse(untouchedSeparateHistoryRows[0].history_json)
         : untouchedSeparateHistoryRows[0]?.history_json;
-    expect(historyAfterSecondChat).toHaveLength(4);
+    expect(historyAfterSecondChat).toHaveLength(8);
     const reloadedSecondChatSessionResponse = await request(app)
       .get(
         `/api/commercial-intelligence/account-chat/sessions/${accountChatSessionId}`,
@@ -2662,7 +3021,7 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${updateLogin.body.token}`);
     expect(reloadedSecondChatSessionResponse.status).toBe(200);
     expect(reloadedSecondChatSessionResponse.body.session.history).toHaveLength(
-      4,
+      8,
     );
     expect(untouchedSeparateHistory).toEqual([]);
 
@@ -2697,7 +3056,88 @@ describe("API integration baseline", () => {
         ? JSON.parse(isolatedHistoryRows[0].history_json)
         : isolatedHistoryRows[0]?.history_json;
     expect(isolatedHistory).toHaveLength(2);
-    expect(historyAfterSecondChat).toHaveLength(4);
+    expect(historyAfterSecondChat).toHaveLength(8);
+
+    const accountOnlyRoleId = await createRole({
+      name: `${TEST_PREFIX}_account_chat_without_contact_read`,
+      permissionCodes: [
+        "mi_coach.use",
+        "inteligencia_comercial.read",
+        "cuentas.read",
+        "interacciones.read",
+      ],
+    });
+    cleanup.roleIds.push(accountOnlyRoleId);
+    const accountOnlyUserEmail = `${TEST_PREFIX}.account.chat.no.contact.read@example.com`;
+    const accountOnlyUserId = await createUser({
+      fullName: "API Account Chat Without Contact Read",
+      email: accountOnlyUserEmail,
+      roleIds: [accountOnlyRoleId],
+    });
+    cleanup.userIds.push(accountOnlyUserId);
+    const accountOnlyLogin = await login(request(app), accountOnlyUserEmail);
+    const accountOnlyAccountId = await createDirectAccount({
+      ownerUserId: accountOnlyUserId,
+      actorUserId: accountOnlyUserId,
+      suffix: `${TEST_PREFIX}_account_chat_no_contact_read`,
+    });
+    cleanup.accountIds.push(accountOnlyAccountId);
+    const hiddenContactId = await createDirectContact({
+      accountId: accountOnlyAccountId,
+      actorUserId: accountOnlyUserId,
+      suffix: `${TEST_PREFIX}_account_chat_hidden_contact`,
+    });
+    cleanup.contactIds.push(hiddenContactId);
+    const restrictedSessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${accountOnlyLogin.body.token}`)
+      .send({ accountId: accountOnlyAccountId });
+    expect(restrictedSessionResponse.status).toBe(201);
+    const restrictedSessionId = Number(
+      restrictedSessionResponse.body.session.id,
+    );
+    await query(
+      `UPDATE customer_intelligence_chat_sessions SET context_json = ? WHERE id = ?`,
+      [
+        JSON.stringify({
+          version: 1,
+          accountId: accountOnlyAccountId,
+          opportunityId: null,
+          contactId: hiddenContactId,
+          leadId: null,
+          intents: ["contact_query"],
+          filters: {},
+        }),
+        restrictedSessionId,
+      ],
+    );
+    const restrictedFollowUp = await runChatTurnWithMockedStructuredProvider(
+      "¿Y su resumen?",
+      {
+        turnAccountId: accountOnlyAccountId,
+        turnSessionId: restrictedSessionId,
+        authorizationToken: accountOnlyLogin.body.token,
+      },
+    );
+    expect(restrictedFollowUp.job.status).toBe("completed");
+    expect(restrictedFollowUp.plannerContexts[0].validatedContinuation).toEqual(
+      expect.objectContaining({
+        contactName: "",
+        intents: ["contact_query"],
+      }),
+    );
+    expect(
+      restrictedFollowUp.plannerContexts[0].trustedContinuationReferences,
+    ).not.toContain(expect.any(String));
+    const prunedRestrictedContextRows = await query(
+      `SELECT context_json FROM customer_intelligence_chat_sessions WHERE id = ?`,
+      [restrictedSessionId],
+    );
+    const prunedRestrictedContext =
+      typeof prunedRestrictedContextRows[0]?.context_json === "string"
+        ? JSON.parse(prunedRestrictedContextRows[0].context_json)
+        : prunedRestrictedContextRows[0]?.context_json;
+    expect(prunedRestrictedContext.contactId).toBeNull();
 
     const agentsResponse = await request(app)
       .post("/api/commercial-intelligence/agents/jobs")
@@ -3233,6 +3673,12 @@ describe("API integration baseline", () => {
       .get("/api/commercial-intelligence/governance/intents")
       .set("Authorization", `Bearer ${regularLogin.body.token}`);
     expect(forbiddenIntentCatalogResponse.status).toBe(403);
+    const forbiddenChannelIntentCatalogResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/channel-intents/customer_account",
+      )
+      .set("Authorization", `Bearer ${regularLogin.body.token}`);
+    expect(forbiddenChannelIntentCatalogResponse.status).toBe(403);
     const forbiddenIntentPreviewResponse = await request(app)
       .post("/api/mi-agent/coach/admin/intents/preview")
       .set("Authorization", `Bearer ${regularLogin.body.token}`)
@@ -3244,6 +3690,93 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}.mi.coach.admin@example.com`,
     );
     const adminAuthorization = `Bearer ${adminLogin.body.token}`;
+    const initialChannelIntentResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/channel-intents/customer_account",
+      )
+      .set("Authorization", adminAuthorization);
+    expect(initialChannelIntentResponse.status).toBe(200);
+    const initialChannelIntent = initialChannelIntentResponse.body.catalog.find(
+      (item) => item.code === "quotation_query",
+    );
+    expect(initialChannelIntent).toMatchObject({
+      requiredContext: ["account"],
+      possibleTools: expect.arrayContaining(["getOpportunityQuotation"]),
+    });
+    const coachChannelIntentResponse = await request(app)
+      .get("/api/commercial-intelligence/governance/channel-intents/coach")
+      .set("Authorization", adminAuthorization);
+    expect(coachChannelIntentResponse.status).toBe(400);
+    const channelIntentPreviewResponse = await request(app)
+      .post("/api/commercial-intelligence/governance/channel-intents/preview")
+      .set("Authorization", adminAuthorization)
+      .send({
+        channel: "customer_account",
+        question: "¿Qué contiene la cotización para esta oportunidad?",
+        intentCode: "quotation_query",
+        configuration: {
+          enabled: true,
+          examples: initialChannelIntent.examples,
+          priority: 145,
+          allowedTools: ["searchAccounts"],
+          requiredContext: ["account"],
+        },
+      });
+    expect(channelIntentPreviewResponse.status).toBe(200);
+    expect(channelIntentPreviewResponse.body).toMatchObject({
+      classification: {
+        intent: "quotation_query",
+        missingContext: ["account"],
+        allowedTools: ["searchAccounts"],
+      },
+      toolsExecuted: [],
+    });
+    const updatedChannelIntentResponse = await request(app)
+      .put(
+        "/api/commercial-intelligence/governance/channel-intents/customer_account/quotation_query",
+      )
+      .set("Authorization", adminAuthorization)
+      .send({
+        enabled: true,
+        examples: initialChannelIntent.examples,
+        priority: Math.min(200, initialChannelIntent.priority + 1),
+        allowedTools: ["searchAccounts"],
+        requiredContext: initialChannelIntent.requiredContext,
+      });
+    expect(updatedChannelIntentResponse.status).toBe(200);
+    expect(
+      updatedChannelIntentResponse.body.catalog.find(
+        (item) => item.code === "quotation_query",
+      ).allowedTools,
+    ).toEqual(["searchAccounts"]);
+    const channelIntentRevision =
+      updatedChannelIntentResponse.body.revisions[0];
+    expect(channelIntentRevision.changedByUserId).toBe(ctx.miCoachAdminUserId);
+    const invalidChannelIntentResponse = await request(app)
+      .put(
+        "/api/commercial-intelligence/governance/channel-intents/customer_account/quotation_query",
+      )
+      .set("Authorization", adminAuthorization)
+      .send({
+        enabled: true,
+        examples: initialChannelIntent.examples,
+        priority: initialChannelIntent.priority,
+        allowedTools: [...initialChannelIntent.allowedTools, "deleteAccount"],
+        requiredContext: initialChannelIntent.requiredContext,
+      });
+    expect(invalidChannelIntentResponse.status).toBe(400);
+    const restoredChannelIntentResponse = await request(app)
+      .post(
+        `/api/commercial-intelligence/governance/channel-intents/customer_account/revisions/${channelIntentRevision.id}/restore`,
+      )
+      .set("Authorization", adminAuthorization);
+    expect(restoredChannelIntentResponse.status).toBe(200);
+    expect(
+      restoredChannelIntentResponse.body.catalog.find(
+        (item) => item.code === "quotation_query",
+      ).allowedTools,
+    ).toEqual(initialChannelIntent.allowedTools);
+
     const initialIntentCatalogResponse = await request(app)
       .get("/api/commercial-intelligence/governance/intents")
       .set("Authorization", adminAuthorization);

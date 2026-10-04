@@ -203,6 +203,141 @@
   font-size: 11px;
   font-weight: 800;
 }
+.mi-agent-customer-history-summary {
+  margin-bottom: 12px;
+  font-size: 17px;
+  line-height: 1.4;
+}
+.mi-agent-customer-history-results {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+}
+.mi-agent-customer-history-period {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 14px;
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-customer-history-section {
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid #dbe5ea;
+}
+.mi-agent-customer-history-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #173b52;
+  font-size: 14px;
+}
+.mi-agent-customer-history-section-heading > span {
+  flex: 0 0 auto;
+  color: #536977;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-agent-customer-history-list {
+  display: grid;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.mi-agent-customer-history-list > li {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid #edf1f3;
+}
+.mi-agent-customer-history-list time,
+.mi-agent-customer-history-item-type {
+  align-self: start;
+  color: #536977;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.mi-agent-customer-history-item-content {
+  min-width: 0;
+}
+.mi-agent-customer-contact-history-data {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 5px;
+  color: #536977;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mi-agent-customer-contact-history-data a {
+  color: #176b87;
+  text-decoration: none;
+}
+.mi-agent-customer-contact-history-data a:hover {
+  text-decoration: underline;
+}
+.mi-agent-customer-contact-history-extra {
+  margin-top: 5px;
+  color: #647986;
+  font-size: 12px;
+}
+.mi-agent-customer-contact-history-extra summary {
+  width: fit-content;
+  color: #176b87;
+  cursor: pointer;
+  font-weight: 700;
+}
+.mi-agent-customer-contact-history-extra p {
+  margin: 5px 0 0;
+  line-height: 1.4;
+}
+.mi-agent-customer-history-item-content > strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #173b52;
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.mi-agent-customer-history-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+  color: #647986;
+  font-size: 11px;
+}
+.mi-agent-customer-history-status {
+  color: #286b70;
+  font-weight: 700;
+}
+.mi-agent-customer-history-item-content details {
+  margin-top: 5px;
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-customer-history-item-content summary {
+  width: fit-content;
+  color: #176b87;
+  cursor: pointer;
+  font-weight: 700;
+}
+.mi-agent-customer-history-item-content details p {
+  margin: 6px 0 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.mi-agent-customer-history-empty {
+  margin: 8px 0 0;
+  color: #647986;
+  font-size: 12px;
+}
 .mi-agent-customer-chat-evidence,
 .mi-agent-customer-chat-inferences,
 .mi-agent-customer-public-sources,
@@ -350,5 +485,12 @@
   .mi-agent-customer-history-grid,
   .mi-agent-customer-contact-grid {
     grid-template-columns: 1fr;
+  }
+  .mi-agent-customer-history-list > li {
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 8px;
+  }
+  .mi-agent-customer-history-period {
+    justify-content: flex-start;
   }
 }

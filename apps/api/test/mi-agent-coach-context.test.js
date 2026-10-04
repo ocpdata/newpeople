@@ -4,6 +4,7 @@ import {
   coachSessionContextMatchesRequest,
   getCoachConversationHistory,
   getEnabledCoachTerminalStatusCodes,
+  mergeCoachSelectedRecord,
   resolveCoachTurnContext,
   resolveCoachContextEntities,
   resolveCoachResponseContext,
@@ -360,6 +361,54 @@ describe("Coach context optimization", () => {
 
   it("preserves the complete snapshot without an explicit context", () => {
     expect(buildCoachScopedSnapshot(snapshot)).toBe(snapshot);
+  });
+
+  it("uses exact entity matching for general coaching without losing active context", () => {
+    const coachingSnapshot = {
+      accounts: [
+        { id: 201, name: "Comercial de Carnes Frías del Norte, S.A. de C.V." },
+      ],
+      coachOpportunities: [
+        {
+          id: 202,
+          name: "Equipos Cisco para Mejorar Su Infraestructura",
+          accountId: 201,
+        },
+      ],
+      contactMappings: [],
+      leads: [],
+    };
+    const resolution = resolveCoachContextEntities(
+      coachingSnapshot,
+      "¿Cómo puedo mejorar mi desempeño comercial este mes?",
+      [],
+      { accountId: 201, opportunityId: 202 },
+      {},
+      { exactMatchOnly: true },
+    );
+
+    expect(resolution.explicitEntities.account).toBeNull();
+    expect(resolution.explicitEntities.opportunity).toBeNull();
+    expect(resolution.explicitEntities.candidates.accounts).toEqual([]);
+    expect(resolution.explicitEntities.candidates.opportunities).toEqual([]);
+  });
+
+  it("preserves the selected entity type when enriching an opportunity", () => {
+    const selectedRecord = {
+      id: 94,
+      type: "opportunity",
+      name: "Vrf 2027",
+    };
+    const enrichedRecord = {
+      id: 94,
+      name: "Vrf 2027",
+      currentStage: { code: "contacto_inicial" },
+    };
+
+    expect(mergeCoachSelectedRecord(selectedRecord, enrichedRecord)).toEqual({
+      ...enrichedRecord,
+      type: "opportunity",
+    });
   });
 
   it("scopes opportunities, leads and contacts to the selected account", () => {

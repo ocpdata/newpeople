@@ -33,7 +33,7 @@ Flujo comun:
 El motor esta en:
 
 - `apps/api/src/coach/conversation-engine.js`
-![Sesiones separadas de Mi Coach](./arquitectura-mi-coach-sesiones.svg)
+  ![Sesiones separadas de Mi Coach](./arquitectura-mi-coach-sesiones.svg)
 - `apps/api/src/coach/entity-resolver.js`
 - `apps/api/src/coach/read-tools.js`
 - `apps/api/src/coach/crm-read-tools.js`
@@ -47,7 +47,7 @@ Recibe:
 - Herramientas disponibles.
 - Reglas del canal.
 - Permisos efectivos.
-![Flujo de operaciones controladas](./arquitectura-mi-coach-operaciones.svg)
+  ![Flujo de operaciones controladas](./arquitectura-mi-coach-operaciones.svg)
 - Politica de operaciones.
 
 Devuelve:
@@ -62,6 +62,21 @@ Devuelve:
 - Contexto actualizado.
 
 El motor no administra sesiones ni conoce rutas HTTP.
+
+### 3.1 Responsabilidades y fronteras
+
+| Componente             | Responsabilidad                                                                                                                                       | No puede hacer                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Planificador           | Interpretar pregunta e historial; proponer intenciones, referencias, filtros, consultas y aclaraciones usando nombres de herramientas ya autorizadas. | Recibir objetos de permisos o reglas del servidor, ampliar herramientas, autorizar escrituras o ejecutar cambios. |
+| Herramientas CRM       | Recuperar datos del snapshot o ejecutar lecturas permitidas dentro del alcance fijo del canal.                                                        | Cambiar registros ni ampliar la cuenta, sesión o conjunto de permisos.                                            |
+| Reglas comerciales     | Aplicar filtros predeterminados, exigir evidencia y limitar respuestas u operaciones a los tipos configurados.                                        | Conceder permisos de usuario o sustituir la autorización final.                                                   |
+| Reglas administrativas | Aportar guía editorial y criterios de calidad a la generación de respuesta dentro de su canal/proceso.                                                | Sustituir validadores estructurados o ampliar herramientas, permisos, alcance o tipos de operación del servidor.  |
+| Políticas del servidor | Resolver permisos efectivos, aislamiento, acceso a entidades y autorización final de cada lectura/escritura.                                          | Delegar esas decisiones al prompt o a una respuesta del modelo.                                                   |
+| Interfaz               | Mostrar respuestas y aclaraciones; presentar operaciones como propuestas revisables.                                                                  | Interpretar una propuesta como un cambio ya ejecutado.                                                            |
+
+El motor entrega al planificador solo el contrato de interpretación, el catálogo de intenciones, herramientas que ya pasaron los filtros del servidor y candidatos autorizados sin IDs sensibles. La salida del planificador se normaliza y vuelve a intersectarse con ese catálogo y esas herramientas antes de consultar CRM.
+
+Las instrucciones administrativas de texto libre orientan la respuesta, pero no son una fuente de autorización ni un validador determinista. Todo criterio que deba ser obligatorio se implementa en reglas comerciales estructuradas o en un validador del servidor. Las escrituras se filtran por la política efectiva, se validan en servicios controlados contra permisos de dominio, entidad y canal, y después se guardan como propuestas que requieren revisión/confirmación explícita antes de ejecutar y auditar.
 
 ## 4. Adaptadores
 
@@ -103,8 +118,9 @@ Aporta:
 - Pipeline, leads relacionados, actividades y readiness de oportunidades de esa cuenta.
 - Lectura de contenido de cotizaciones, sujeta a permisos de oportunidades/cotizaciones y ownership.
 - Investigacion publica opcional.
-- Operaciones de actividad limitadas a la cuenta.
-- Confirmacion antes de preparar o ejecutar actividades.
+- Operaciones controladas permitidas por canal y dominio, siempre limitadas a la cuenta autorizada y sujetas a permisos y confirmacion.
+
+El alcance funcional, la matriz de permisos y el comportamiento esperado se definen en [Chat de Cliente existente](./chat-cliente-existente-alcance.md).
 
 Cliente existente conserva `searchInteractions` como herramienta adicional. Ninguna herramienta de lectura puede ampliar el snapshot a otras cuentas.
 
@@ -161,15 +177,15 @@ Estas reglas aplican a los tres chats:
 
 ## 7. Politicas por canal
 
-| Canal | Alcance | Operaciones permitidas |
-| --- | --- | --- |
-| Coach | CRM general autorizado | Actividades, campos, etapas, creaciones y handoffs |
-| Cliente existente | Una cuenta CRM autorizada | Actividades y acciones relacionadas con esa cuenta |
-| Cuenta nueva | Una sesion de prospecto | Crear o convertir cuenta, contacto, lead u oportunidad |
+| Canal             | Alcance                   | Operaciones permitidas                                                                                         |
+| ----------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Coach             | CRM general autorizado    | Actividades, campos, etapas, creaciones y handoffs                                                             |
+| Cliente existente | Una cuenta CRM autorizada | Actividades, respuestas de etapa, resultados de lead y cambios de campos permitidos, segun politica y permisos |
+| Cuenta nueva      | Una sesion de prospecto   | Crear o convertir cuenta, contacto, lead u oportunidad                                                         |
 
 Las operaciones incluyen `sourceChannel` para impedir que una propuesta sea ejecutada desde otro canal.
 
-La paridad de herramientas de lectura no implica paridad de escritura: Cliente existente solo propone actividades confirmables; Coach conserva su politica comercial de operaciones.
+La paridad de herramientas de lectura no implica paridad de escritura: cada canal conserva una lista de operaciones permitidas, sus permisos de dominio y su flujo de confirmacion. Cliente existente no ejecuta escrituras directamente desde el chat.
 
 ## 8. Contrato de operaciones
 

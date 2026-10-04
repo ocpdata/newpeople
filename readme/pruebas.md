@@ -114,6 +114,18 @@ La cantidad de casos puede cambiar al agregar escenarios o al ampliar las suites
 
 Desde la raíz del repositorio, los comandos principales son:
 
+La línea base conductual de Mi Coach se ejecuta con:
+
+```bash
+npm run test:coach:baseline
+```
+
+La política de interacción Coach se valida además con `npm --prefix apps/api test -- --run test/coach-intent-governance.test.js test/coach-conversation-engine.test.js test/coach-contract.test.js` y `npm --prefix apps/web run test:e2e -- mi-agent-governance.spec.js`. Estos casos cubren coaching con datos agregados, respuestas de contexto acotadas, exploración detallada sin lecturas enriquecidas y handoff a Cliente existente solo con IDs y permisos autorizados.
+
+Este comando corre las pruebas focalizadas de API, una integración del Chat de dos turnos (pregunta con cuenta/oportunidad/contacto seleccionados y seguimiento con IDs de selector obsoletos), y la suite E2E de Mi Coach. Verifica el snapshot autorizado enviado al modelo, el resultado asíncrono, la persistencia de ambos turnos, la precedencia del contexto activo de la sesión y el historial compatible. CI lo ejecuta como una comprobación explícita de que cambios en otros espacios no alteren el Chat del Coach. Si una fase futura cambia deliberadamente su contrato o comportamiento, debe actualizar esta línea base solo con aprobación explícita; en caso contrario, sus expectativas no se relajan.
+
+La suite focalizada de Mi Coach valida la normalización y seguridad de las operaciones propuestas:
+
 ```bash
 npm run test:coach
 npm run test:coach:baseline
@@ -472,22 +484,27 @@ Preparar como minimo:
 Roles sugeridos:
 
 1. `calendar_manager_full`:
-  - `calendario_comercial.read`
-  - `calendario_comercial.update`
-  - `desarrollo_comercial.update`
-  - `oportunidades.read`
-  - `oportunidades.update`
-  - `interacciones.read`
-  - `interacciones.create`
-  - `cuentas.create` (o `cuentas.request`)
-  - `contactos.create` (o `contactos.request`)
+
+- `calendario_comercial.read`
+- `calendario_comercial.update`
+- `desarrollo_comercial.update`
+- `oportunidades.read`
+- `oportunidades.update`
+- `interacciones.read`
+- `interacciones.create`
+- `cuentas.create` (o `cuentas.request`)
+- `contactos.create` (o `contactos.request`)
+
 2. `calendar_readonly`:
-  - `calendario_comercial.read`
-  - sin permisos `*.update`/`*.create`
+
+- `calendario_comercial.read`
+- sin permisos `*.update`/`*.create`
+
 3. `calendar_partial`:
-  - `calendario_comercial.update`
-  - sin `interacciones.create`
-  - sin `oportunidades.update`
+
+- `calendario_comercial.update`
+- sin `interacciones.create`
+- sin `oportunidades.update`
 
 ### Casos funcionales (happy path)
 
@@ -681,17 +698,24 @@ Endpoints del contrato objetivo:
 Pruebas minimas por endpoint:
 
 1. create
-  - 3 felices: opportunity, lead, standalone
-  - 4 negativas: permiso, validacion, relaciones invalidas, fecha invalida
+
+- 3 felices: opportunity, lead, standalone
+- 4 negativas: permiso, validacion, relaciones invalidas, fecha invalida
+
 2. update
-  - feliz: cambio de fecha/objetivo/status
-  - negativa: actualizar con permisos insuficientes
+
+- feliz: cambio de fecha/objetivo/status
+- negativa: actualizar con permisos insuficientes
+
 3. list
-  - feliz: filtros por `kinds`, `traffic`, `sellerUserId`
-  - negativa: query invalida
+
+- feliz: filtros por `kinds`, `traffic`, `sellerUserId`
+- negativa: query invalida
+
 4. convert
-  - feliz: standalone->lead y standalone->opportunity
-  - negativa: sin permisos, target invalido, origen no standalone
+
+- feliz: standalone->lead y standalone->opportunity
+- negativa: sin permisos, target invalido, origen no standalone
 
 ### Checklist de regresion obligatoria
 

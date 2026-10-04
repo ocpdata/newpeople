@@ -104,7 +104,7 @@ function candidates(
   records,
   text,
   fields,
-  { allowSingleTokenMatch = true } = {},
+  { allowSingleTokenMatch = true, exactMatchOnly = false } = {},
 ) {
   const normalizedText = normalize(text);
   const normalizedTextTokens = new Set(normalizedText.split(" "));
@@ -117,10 +117,7 @@ function candidates(
         .map((label) => {
           const tokens = label
             .split(" ")
-            .filter(
-              (token) =>
-                isIdentifyingToken(token),
-            );
+            .filter((token) => isIdentifyingToken(token));
           const matchedTokens = tokens.filter((token) =>
             normalizedTextTokens.has(token),
           );
@@ -146,26 +143,19 @@ function candidates(
       ({ exact, label, matchedTokens }) =>
         label &&
         (exact ||
-          (matchedTokens.length >=
-            (allowSingleTokenMatch ||
-            label
-              .split(" ")
-              .filter(
-                (token) =>
-                  isIdentifyingToken(token),
-              ).length === 1
-              ? 1
-              : 2) &&
+          (!exactMatchOnly &&
+            matchedTokens.length >=
+              (allowSingleTokenMatch ||
+              label.split(" ").filter((token) => isIdentifyingToken(token))
+                .length === 1
+                ? 1
+                : 2) &&
             matchedTokens.some((token) => token.length >= 4) &&
             (matchedTokens.length === 1 ||
               matchedTokens.length /
                 Math.max(
-                  label
-                    .split(" ")
-                    .filter(
-                      (token) =>
-                        isIdentifyingToken(token),
-                    ).length,
+                  label.split(" ").filter((token) => isIdentifyingToken(token))
+                    .length,
                   1,
                 ) >=
                 0.3))),
@@ -185,42 +175,58 @@ function candidates(
   );
 }
 
-export function resolveCoachEntities(snapshot, text, businessRules = {}) {
-  const opportunities = businessRules.scope?.opportunitySearchAllowed === false
-    ? []
-    : getCoachOpportunityRecords(snapshot);
-  const accounts = businessRules.scope?.accountSearchAllowed === false
-    ? []
-    : Array.isArray(snapshot?.accounts)
-    ? snapshot.accounts
-    : Array.from(
-        new Map(
-          opportunities
-            .map((item) => item?.account)
-            .filter(Boolean)
-            .map((account) => [Number(account.id), account]),
-        ).values(),
-      );
-  const contacts = businessRules.scope?.contactSearchAllowed === false
-    ? []
-    : Array.isArray(snapshot?.contactMappings)
-    ? snapshot.contactMappings
-    : [];
-  const leads = businessRules.scope?.leadSearchAllowed === false
-    ? []
-    : Array.isArray(snapshot?.leads) ? snapshot.leads : [];
-  const accountMatches = candidates(accounts, text, [
-    "name",
-    "registrationCode",
-    "website",
-    "phone",
-  ]);
+export function resolveCoachEntities(
+  snapshot,
+  text,
+  businessRules = {},
+  { exactMatchOnly = false, ignoreStageFilters = false } = {},
+) {
+  const opportunities =
+    businessRules.scope?.opportunitySearchAllowed === false
+      ? []
+      : getCoachOpportunityRecords(snapshot);
+  const accounts =
+    businessRules.scope?.accountSearchAllowed === false
+      ? []
+      : Array.isArray(snapshot?.accounts)
+        ? snapshot.accounts
+        : Array.from(
+            new Map(
+              opportunities
+                .map((item) => item?.account)
+                .filter(Boolean)
+                .map((account) => [Number(account.id), account]),
+            ).values(),
+          );
+  const contacts =
+    businessRules.scope?.contactSearchAllowed === false
+      ? []
+      : Array.isArray(snapshot?.contactMappings)
+        ? snapshot.contactMappings
+        : [];
+  const leads =
+    businessRules.scope?.leadSearchAllowed === false
+      ? []
+      : Array.isArray(snapshot?.leads)
+        ? snapshot.leads
+        : [];
+  const accountMatches = candidates(
+    accounts,
+    text,
+    ["name", "registrationCode", "website", "phone"],
+    { exactMatchOnly },
+  );
   const opportunityFilters = inferCoachOpportunityFilters(text, businessRules);
-  const opportunityNameMatches = candidates(opportunities, text, ["name"]);
+  if (ignoreStageFilters) opportunityFilters.stageCodes = [];
+  const opportunityNameMatches = candidates(opportunities, text, ["name"], {
+    exactMatchOnly,
+  });
   const opportunityMatches = (
     opportunityNameMatches.length
       ? opportunityNameMatches
-      : candidates(opportunities, text, ["accountName", "account.name"])
+      : candidates(opportunities, text, ["accountName", "account.name"], {
+          exactMatchOnly,
+        })
   ).filter((opportunity) => {
     if (
       opportunityFilters.stageCodes.length &&
@@ -240,15 +246,9 @@ export function resolveCoachEntities(snapshot, text, businessRules = {}) {
     const activationStatusCode = String(
       opportunity?.activationStatusCode || "activada",
     ).trim();
-    if (
-      opportunityFilters.activeOnly &&
-      activationStatusCode !== "activada"
-    )
+    if (opportunityFilters.activeOnly && activationStatusCode !== "activada")
       return false;
-    if (
-      opportunityFilters.inactiveOnly &&
-      activationStatusCode === "activada"
-    )
+    if (opportunityFilters.inactiveOnly && activationStatusCode === "activada")
       return false;
     if (
       opportunityFilters.openOnly &&
@@ -262,9 +262,9 @@ export function resolveCoachEntities(snapshot, text, businessRules = {}) {
     contacts,
     text,
     ["name", "email", "phone", "mobile"],
-    { allowSingleTokenMatch: false },
+    { allowSingleTokenMatch: false, exactMatchOnly },
   );
-  let leadMatches = candidates(leads, text, ["title"]);
+  let leadMatches = candidates(leads, text, ["title"], { exactMatchOnly });
   const normalizedText = normalize(text);
   const asksForOpportunity = /\boportunidad(?:es)?\b/.test(normalizedText);
   const asksForLead = /\b(?:lead|leads|prospecto|prospectos)\b/.test(

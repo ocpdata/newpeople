@@ -14,6 +14,7 @@ import {
   shouldPreserveCoachContextForQuestion,
 } from "../src/coach/conversation-engine.js";
 import { getCoachReadToolCatalog } from "../src/coach/read-tools.js";
+import { getChannelIntentDefaults } from "../src/coach/channel-intents.js";
 
 describe("Coach conversation engine", () => {
   it("normaliza historial y tipo de job según el adaptador", () => {
@@ -50,7 +51,10 @@ describe("Coach conversation engine", () => {
       ),
     ).toBe(false);
     expect(
-      shouldPreserveCoachContextForQuestion("¿Qué hago con esta oportunidad?", {}),
+      shouldPreserveCoachContextForQuestion(
+        "¿Qué hago con esta oportunidad?",
+        {},
+      ),
     ).toBe(false);
   });
 
@@ -148,6 +152,103 @@ describe("Coach conversation engine", () => {
         new Set(["oportunidades.read"]),
       ),
     ).toEqual([]);
+  });
+
+  it("mantiene las reglas y permisos del servidor fuera del contrato del planificador", async () => {
+    const planChannelIntent = vi.fn().mockResolvedValue({
+      objective: "Aclarar el alcance",
+      queries: [],
+      entities: {
+        accountReference: "",
+        opportunityReference: "",
+        contactReference: "",
+        leadReference: "",
+      },
+      filters: {},
+      ambiguity: {
+        reason: "missing_context",
+        requiresClarification: "yes",
+        missingContext: ["account"],
+        question: "Selecciona una cuenta autorizada.",
+      },
+      mode: "clarification",
+      confidence: "high",
+    });
+    const businessRules = {
+      channel: "customer_account",
+      process: "account_chat",
+      scope: {
+        accountSearchAllowed: true,
+        opportunitySearchAllowed: true,
+        contactSearchAllowed: true,
+        leadSearchAllowed: true,
+        quotationSearchAllowed: true,
+        requireBusinessEvidence: true,
+      },
+      filters: {},
+      operationPolicy: { allowedKinds: [] },
+      channelRules: {},
+      validation: { requireEvidence: true },
+    };
+    const result = await runConversationEngine({
+      question: "¿Qué ocurrió?",
+      context: {},
+      history: [],
+      user: { id: 31, permissionSet: new Set() },
+      permissions: new Set(),
+      availableTools: [
+        { name: "searchAccounts", requiredPermission: "cuentas.read" },
+      ],
+      businessRules,
+      dependencies: {
+        planChannelIntent,
+        loadChannelIntentConfigurations: async () =>
+          getChannelIntentDefaults("customer_account"),
+        prepareReadModel: async () => ({
+          effectiveContext: {},
+          questionContextTransition: { changed: false },
+          scopedSnapshot: {},
+          preparationRequested: false,
+          selectedOpportunity: null,
+          deterministicStageReadiness: null,
+          readToolResults: [],
+          modelSnapshot: { readToolResults: [] },
+          clarification: null,
+          conversationHistory: [],
+          explicitEntities: {
+            candidates: {
+              accounts: [],
+              opportunities: [],
+              contacts: [],
+              leads: [],
+            },
+          },
+        }),
+        loadAdministrativeRules: async () => [],
+        loadProcessGuide: async () => "",
+        buildCoachPrompt: () => ({}),
+        requestResponse: vi.fn(),
+        normalizeResponse: (value) => value,
+        resolveResponseContext: (_snapshot, context) => ({
+          context,
+          changed: false,
+          conflict: null,
+        }),
+        buildStageReadiness: () => null,
+      },
+    });
+
+    const plannerRequest = planChannelIntent.mock.calls[0][0];
+    expect(plannerRequest).toMatchObject({
+      channel: "customer_account",
+      question: "¿Qué ocurrió?",
+      availableTools: [],
+    });
+    expect(plannerRequest).not.toHaveProperty("businessRules");
+    expect(plannerRequest).not.toHaveProperty("permissions");
+    expect(plannerRequest).not.toHaveProperty("user");
+    expect(plannerRequest).not.toHaveProperty("jobId");
+    expect(result.response.responseType).toBe("clarification");
   });
 
   it("aplica la politica de operaciones antes de devolver resultados", () => {
@@ -526,6 +627,8 @@ describe("Coach conversation engine", () => {
       allowedTools: [],
     });
     expect(promptSnapshot.administrativeRules).toEqual(activeAdminRules);
+    expect(promptSnapshot).not.toHaveProperty("channelIntentRouting");
+    expect(promptSnapshot).not.toHaveProperty("channelIntentCatalog");
   });
 
   it("derives detailed record exploration to Cliente existente without querying details in Coach", async () => {
@@ -739,9 +842,24 @@ describe("Coach conversation engine", () => {
       contactMappings: [],
     };
     const scopedContexts = [];
+    const resolveCoachContextEntities = vi.fn(() => ({
+      explicitEntities: {
+        account: null,
+        opportunity: null,
+        contact: null,
+        lead: null,
+        candidates: {
+          accounts: [],
+          opportunities: [],
+          contacts: [],
+          leads: [],
+        },
+      },
+    }));
     const readModel = await prepareCoachReadModel({
       user: { id: 31 },
-      question: "Ayúdame a identificar las oportunidades más críticas para priorizar.",
+      question:
+        "Ayúdame a identificar las oportunidades más críticas para priorizar.",
       selectedContext: { accountId: 12, opportunityId: 41 },
       availableTools: [
         { name: "getSellerPipeline" },
@@ -756,20 +874,7 @@ describe("Coach conversation engine", () => {
       },
       dependencies: {
         getMiAgentContext: async () => snapshot,
-        resolveCoachContextEntities: () => ({
-          explicitEntities: {
-            account: null,
-            opportunity: null,
-            contact: null,
-            lead: null,
-            candidates: {
-              accounts: [],
-              opportunities: [],
-              contacts: [],
-              leads: [],
-            },
-          },
-        }),
+        resolveCoachContextEntities,
         applyCoachEntityResolution: (_snapshot, context) => ({
           context,
           changed: false,
@@ -800,6 +905,14 @@ describe("Coach conversation engine", () => {
       "getSellerPipeline",
       "searchOpportunities",
     ]);
+    expect(resolveCoachContextEntities).toHaveBeenCalledWith(
+      snapshot,
+      "Ayúdame a identificar las oportunidades más críticas para priorizar.",
+      [],
+      { accountId: 12, opportunityId: 41 },
+      {},
+      { exactMatchOnly: true },
+    );
     expect(readModel.effectiveContext).toMatchObject({
       accountId: null,
       opportunityId: null,

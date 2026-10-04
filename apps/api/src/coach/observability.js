@@ -3,6 +3,7 @@ import { query } from "../db.js";
 import { ensureCoachSchema } from "./schema.js";
 
 export const COACH_CHANNELS = ["coach", "customer_account", "prospect"];
+const COACH_ROLLOUT_CHANNELS = ["coach", "prospect"];
 export const COACH_FEEDBACK_CATEGORIES = [
   "intent",
   "entity",
@@ -23,6 +24,300 @@ function observedRate(numerator, denominator) {
   return denominator ? Number(numerator || 0) / Number(denominator) : null;
 }
 
+function parseJsonValue(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === "object") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+const TRACE_ERROR_CODES = new Set([
+  "permission_denied",
+  "timeout",
+  "tool_error",
+  "query_error",
+  "adapter_execution_failed",
+  "structured_response_unavailable",
+  "chat_preparation_failed",
+]);
+
+function normalizeTraceErrorCode(code, errorText = "") {
+  const normalizedCode = String(code || "").trim();
+  if (TRACE_ERROR_CODES.has(normalizedCode)) return normalizedCode;
+  const normalizedError = String(errorText || "").toLowerCase();
+  if (
+    /permiso|permission|forbidden|no autorizado|politica del canal/.test(
+      normalizedError,
+    )
+  ) {
+    return "permission_denied";
+  }
+  if (/timeout|timed out|tiempo de espera/.test(normalizedError)) {
+    return "timeout";
+  }
+  return normalizedCode || errorText ? "tool_error" : null;
+}
+
+function getToolResultCount(result) {
+  if (result === null || result === undefined) return 0;
+  if (Array.isArray(result)) return result.length;
+  if (typeof result !== "object") return 1;
+  for (const key of [
+    "records",
+    "results",
+    "opportunities",
+    "contacts",
+    "interactions",
+    "activities",
+    "leads",
+    "items",
+    "sections",
+  ]) {
+    if (Array.isArray(result[key])) return result[key].length;
+  }
+  return 1;
+}
+
+function getToolTruncation(result, resultCount) {
+  if (!result || typeof result !== "object") return null;
+  for (const key of ["truncated", "isTruncated", "limitReached"]) {
+    if (typeof result[key] === "boolean") return result[key];
+  }
+  if (typeof result.hasMore === "boolean") return result.hasMore;
+  if (typeof result.pagination?.hasMore === "boolean") {
+    return result.pagination.hasMore;
+  }
+  const totalCount = Number(result.totalCount ?? result.pagination?.totalCount);
+  if (Number.isFinite(totalCount) && totalCount >= 0) {
+    return totalCount > resultCount;
+  }
+  return null;
+}
+
+export function summarizeCoachToolResults(toolResults = []) {
+  return (Array.isArray(toolResults) ? toolResults : [])
+    .slice(0, 40)
+    .map((tool) => {
+      const result = tool?.result;
+      const resultCount = getToolResultCount(result);
+      const errorText = tool?.error || result?.error || "";
+      return {
+        toolName: String(tool?.toolName || "unknown").slice(0, 80),
+        resultCount,
+        errorCode: normalizeTraceErrorCode(
+          tool?.errorCode || result?.errorCode,
+          errorText,
+        ),
+        truncated: getToolTruncation(result, resultCount),
+      };
+    });
+}
+
+function sanitizeTraceDiagnostics(diagnostics = {}) {
+  const routing = diagnostics.channelIntentRouting;
+  const planner = diagnostics.planner || {};
+  const evidence = diagnostics.evidence || {};
+  const fallback = diagnostics.fallback || {};
+  const agentMetrics = Array.isArray(diagnostics.agentMetrics)
+    ? diagnostics.agentMetrics.slice(0, 20).map((agent) => ({
+        agentId: String(agent?.agentId || "unknown").slice(0, 60),
+        status: String(agent?.status || "unknown").slice(0, 30),
+        evidenceCount: Math.max(0, Number(agent?.evidenceCount || 0)),
+        errorCode: normalizeTraceErrorCode(agent?.errorCode),
+      }))
+    : [];
+  const snapshotMetrics = Array.isArray(diagnostics.snapshotMetrics)
+    ? diagnostics.snapshotMetrics.slice(0, 40).map((metric) => ({
+        source: String(metric?.source || "unknown").slice(0, 60),
+        resultCount: Math.max(0, Number(metric?.resultCount || 0)),
+        resultLimit:
+          Number.isInteger(metric?.resultLimit) && metric.resultLimit >= 0
+            ? metric.resultLimit
+            : null,
+        truncated:
+          typeof metric?.truncated === "boolean" ? metric.truncated : null,
+        errorCode: normalizeTraceErrorCode(metric?.errorCode),
+      }))
+    : [];
+  const allowedFailureStages = new Set([
+    "request",
+    "snapshot",
+    "history",
+    "agents",
+    "adapter",
+  ]);
+  const allowedPlannerSources = new Set(["structured_plan", "not_applicable"]);
+  const allowedPlannerReasons = new Set([
+    "planner_unavailable",
+    "invalid_plan",
+    "planner_error",
+  ]);
+  const plannerEvaluation = planner.evaluation || {};
+  const allowedPlannerModes = new Set(["active"]);
+  const allowedEvidenceStatuses = new Set([
+    "sufficient",
+    "insufficient_evidence",
+    "no_results",
+    "clarification",
+    "query_error",
+    "query_limit_reached",
+    "timeout",
+    "verification_unavailable",
+    "verification_error",
+    "answer_generation_error",
+  ]);
+  const allowedEvidenceErrors = new Set([
+    "turn_timeout",
+    "evidence_verification_failed",
+    "evidence_verifier_unavailable",
+    "read_query_failed",
+    "additional_read_failed",
+    "read_query_limit_reached",
+    "no_new_authorized_queries",
+    "no_authorized_queries_executed",
+    "answer_generation_unavailable",
+  ]);
+  const result = {
+    planner: {
+      source: allowedPlannerSources.has(planner.source)
+        ? planner.source
+        : "not_applicable",
+      fallbackUsed: false,
+      reasonCode: allowedPlannerReasons.has(planner.reasonCode)
+        ? planner.reasonCode
+        : null,
+      queryCount: Math.max(0, Math.min(20, Number(planner.queryCount || 0))),
+      evaluation: allowedPlannerModes.has(plannerEvaluation.mode)
+        ? {
+            mode: plannerEvaluation.mode,
+            assigned: Boolean(plannerEvaluation.assigned),
+            planAvailable: Boolean(plannerEvaluation.planAvailable),
+            plannerIntents: Array.isArray(plannerEvaluation.plannerIntents)
+              ? plannerEvaluation.plannerIntents
+                  .slice(0, 8)
+                  .map((item) => String(item).slice(0, 80))
+              : [],
+            plannerTools: Array.isArray(plannerEvaluation.plannerTools)
+              ? plannerEvaluation.plannerTools
+                  .slice(0, 40)
+                  .map((item) => String(item).slice(0, 80))
+              : [],
+            plannerRequiresClarification: Boolean(
+              plannerEvaluation.plannerRequiresClarification,
+            ),
+            plannerFilterCount: Math.max(
+              0,
+              Math.min(20, Number(plannerEvaluation.plannerFilterCount || 0)),
+            ),
+            plannerEntityReferenceCount: Math.max(
+              0,
+              Math.min(
+                8,
+                Number(plannerEvaluation.plannerEntityReferenceCount || 0),
+              ),
+            ),
+            plannedToolCount: Math.max(
+              0,
+              Math.min(40, Number(plannerEvaluation.plannedToolCount || 0)),
+            ),
+            plannedToolsObserved: Math.max(
+              0,
+              Math.min(40, Number(plannerEvaluation.plannedToolsObserved || 0)),
+            ),
+            plannedToolsWithEvidence: Math.max(
+              0,
+              Math.min(
+                40,
+                Number(plannerEvaluation.plannedToolsWithEvidence || 0),
+              ),
+            ),
+            genericFallback: Boolean(plannerEvaluation.genericFallback),
+            retrievalError: Boolean(plannerEvaluation.retrievalError),
+            truncatedSourceCount: Math.max(
+              0,
+              Math.min(40, Number(plannerEvaluation.truncatedSourceCount || 0)),
+            ),
+          }
+        : null,
+    },
+    evidence: evidence.status
+      ? {
+          status: allowedEvidenceStatuses.has(evidence.status)
+            ? evidence.status
+            : "verification_error",
+          rounds: Math.max(0, Math.min(2, Number(evidence.rounds || 0))),
+          additionalReadQueries: Math.max(
+            0,
+            Math.min(8, Number(evidence.additionalReadQueries || 0)),
+          ),
+          unqueriedAuthorizedTools: Array.isArray(
+            evidence.unqueriedAuthorizedTools,
+          )
+            ? evidence.unqueriedAuthorizedTools
+                .slice(0, 20)
+                .map((tool) => String(tool).slice(0, 80))
+            : [],
+          missingFactsCount: Math.max(
+            0,
+            Number(evidence.missingFactsCount || 0),
+          ),
+          errorCode: allowedEvidenceErrors.has(evidence.errorCode)
+            ? evidence.errorCode
+            : null,
+          additionalToolMetrics: Array.isArray(evidence.additionalToolMetrics)
+            ? evidence.additionalToolMetrics.slice(0, 8).map((metric) => ({
+                toolName: String(metric?.toolName || "unknown").slice(0, 80),
+                resultCount: Math.max(0, Number(metric?.resultCount || 0)),
+                errorCode: normalizeTraceErrorCode(metric?.errorCode),
+                truncated:
+                  typeof metric?.truncated === "boolean"
+                    ? metric.truncated
+                    : null,
+              }))
+            : [],
+        }
+      : null,
+    channelIntentRouting: routing
+      ? {
+          intent: String(routing.intent || "").slice(0, 80) || null,
+          mode: String(routing.mode || "").slice(0, 30) || null,
+          confidence: Number.isFinite(Number(routing.confidence))
+            ? Math.max(0, Math.min(1, Number(routing.confidence)))
+            : null,
+          allowedTools: Array.isArray(routing.allowedTools)
+            ? routing.allowedTools
+                .slice(0, 40)
+                .map((tool) => String(tool).slice(0, 80))
+            : [],
+          requiredContext: Array.isArray(routing.requiredContext)
+            ? routing.requiredContext
+                .slice(0, 20)
+                .map((item) => String(item).slice(0, 40))
+            : [],
+          missingContext: Array.isArray(routing.missingContext)
+            ? routing.missingContext
+                .slice(0, 20)
+                .map((item) => String(item).slice(0, 40))
+            : [],
+          requiresClarification: Boolean(routing.requiresClarification),
+        }
+      : null,
+    fallback: {
+      used: Boolean(fallback.used),
+      reasonCode: normalizeTraceErrorCode(fallback.reasonCode),
+    },
+    failureStage: allowedFailureStages.has(diagnostics.failureStage)
+      ? diagnostics.failureStage
+      : null,
+    agentMetrics,
+    snapshotMetrics,
+  };
+  return result;
+}
+
 function mapQualityRow(row = {}) {
   const total = Number(row.total_turns || 0);
   const intentRated =
@@ -41,7 +336,10 @@ function mapQualityRow(row = {}) {
       Number(row.invalid_responses || 0) + Number(row.error_responses || 0),
       total,
     ),
-    intentClassificationAccuracy: observedRate(row.intent_positive, intentRated),
+    intentClassificationAccuracy: observedRate(
+      row.intent_positive,
+      intentRated,
+    ),
     intentFeedbackCount: intentRated,
     intentPositive: Number(row.intent_positive || 0),
     intentNegative: Number(row.intent_negative || 0),
@@ -52,7 +350,10 @@ function mapQualityRow(row = {}) {
     rejectedOperationRate: observedRate(row.rejected_operations, proposed),
     proposedOperations: proposed,
     rejectedOperations: Number(row.rejected_operations || 0),
-    correctionByFeedbackRate: observedRate(row.corrected_feedback, feedbackTotal),
+    correctionByFeedbackRate: observedRate(
+      row.corrected_feedback,
+      feedbackTotal,
+    ),
     feedbackCount: feedbackTotal,
     correctedFeedback: Number(row.corrected_feedback || 0),
     negativeFeedback: Number(row.negative_feedback || 0),
@@ -76,9 +377,10 @@ export async function recordCoachTurnQualityTrace({
        intent_subtype, primary_entity, entity_resolution_json,
        applied_rules_json, validation_status, validation_reasons_json,
        response_type, confidence, evidence_count, tools_used_json,
-       operations_proposed, operations_rejected, latency_ms, error_code,
+       tool_metrics_json, diagnostics_json, operations_proposed,
+       operations_rejected, latency_ms, error_code,
        created_at_utc)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3))`,
     [
       channel,
       String(process || "default").slice(0, 80),
@@ -96,11 +398,15 @@ export async function recordCoachTurnQualityTrace({
       )
         ? trace.validationStatus
         : "error",
-      JSON.stringify(Array.isArray(trace.validationReasons) ? trace.validationReasons : []),
+      JSON.stringify(
+        Array.isArray(trace.validationReasons) ? trace.validationReasons : [],
+      ),
       String(trace.responseType || "").slice(0, 40) || null,
       String(trace.confidence || "").slice(0, 20) || null,
       Math.max(0, Number(trace.evidenceCount || 0)),
       JSON.stringify(Array.isArray(trace.toolsUsed) ? trace.toolsUsed : []),
+      JSON.stringify(summarizeCoachToolResults(trace.toolMetrics)),
+      JSON.stringify(sanitizeTraceDiagnostics(trace.diagnostics)),
       Math.max(0, Number(trace.operationsProposed || 0)),
       Math.max(0, Number(trace.operationsRejected || 0)),
       Math.max(0, Number(trace.latencyMs || 0)),
@@ -153,7 +459,8 @@ export async function listCoachQualityTraces({
     `SELECT id, channel, process_key, case_id, session_id, job_id, intent_type,
             intent_subtype, primary_entity, entity_resolution_json,
             applied_rules_json, validation_status, validation_reasons_json,
-            response_type, confidence, evidence_count, tools_used_json,
+           response_type, confidence, evidence_count, tools_used_json,
+           tool_metrics_json, diagnostics_json,
             operations_proposed, operations_rejected, latency_ms, error_code,
             feedback_rating, feedback_category, feedback_corrected,
             feedback_at, created_at_utc
@@ -182,6 +489,8 @@ export async function listCoachQualityTraces({
     primaryEntity: row.primary_entity,
     entityResolution: parse(row.entity_resolution_json, {}),
     appliedRules: parse(row.applied_rules_json, {}),
+    toolMetrics: parse(row.tool_metrics_json, []),
+    diagnostics: parse(row.diagnostics_json, {}),
     validation: {
       status: row.validation_status,
       reasons: parse(row.validation_reasons_json, []),
@@ -209,9 +518,10 @@ export async function listCoachQualityTraces({
 export async function getCoachQualityDashboard(periodDays = 30) {
   await ensureCoachSchema();
   const safePeriodDays = clampDays(periodDays);
-  const [qualityRows, operationRows] = await Promise.all([
-    query(
-      `SELECT channel, process_key, case_id,
+  const [qualityRows, operationRows, plannerRows, aiCostRows] =
+    await Promise.all([
+      query(
+        `SELECT channel, process_key, case_id,
               COUNT(*) AS total_turns,
               SUM(validation_status = 'clarification') AS clarifications,
               SUM(validation_status = 'invalid') AS invalid_responses,
@@ -230,19 +540,181 @@ export async function getCoachQualityDashboard(periodDays = 30) {
        WHERE created_at_utc >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)
       GROUP BY channel, process_key, case_id
       ORDER BY channel, process_key, case_id`,
-      [safePeriodDays],
-    ),
-    query(
-      `SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.original_operation, '$.sourceChannel')), 'coach') AS channel,
+        [safePeriodDays],
+      ),
+      query(
+        `SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.original_operation, '$.sourceChannel')), 'coach') AS channel,
               COUNT(DISTINCT CASE WHEN e.event_type = 'proposed' THEN e.operation_id END) AS proposed,
               COUNT(DISTINCT CASE WHEN e.event_type = 'rejected' THEN e.operation_id END) AS rejected
        FROM coach_operation_events e
        INNER JOIN coach_session_operations o ON o.id = e.operation_id
        WHERE e.created_at_utc >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)
        GROUP BY COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.original_operation, '$.sourceChannel')), 'coach')`,
-      [safePeriodDays],
+        [safePeriodDays],
+      ),
+      Promise.resolve(
+        query(
+          `SELECT diagnostics_json, tool_metrics_json, response_type, latency_ms,
+              feedback_rating, feedback_category, feedback_corrected, job_id
+       FROM coach_turn_quality_traces
+       WHERE channel = 'customer_account'
+         AND created_at_utc >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)`,
+          [safePeriodDays],
+        ),
+      )
+        .then((rows) => rows || [])
+        .catch(() => []),
+      Promise.resolve(
+        query(
+          `SELECT job_id, SUM(cost_micros) AS total_cost_micros
+       FROM ai_usage_ledger
+       WHERE feature_code = 'commercial_intelligence.account_chat'
+         AND job_type = 'account_chat'
+         AND job_id IS NOT NULL
+         AND created_at_utc >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)
+       GROUP BY job_id`,
+          [safePeriodDays],
+        ),
+      )
+        .then((rows) => rows || [])
+        .catch(() => []),
+    ]);
+  const costByJob = new Map(
+    aiCostRows.map((row) => [
+      Number(row.job_id),
+      Number(row.total_cost_micros || 0),
+    ]),
+  );
+  const plannerMetricsByMode = new Map();
+  for (const row of plannerRows) {
+    const diagnostics = parseJsonValue(row.diagnostics_json);
+    const planner = diagnostics.planner || {};
+    const evaluation = planner.evaluation;
+    if (
+      !evaluation ||
+      evaluation.mode !== "active" ||
+      evaluation.assigned === false
+    ) {
+      continue;
+    }
+    const cohort = "assigned";
+    const metricKey = "active:assigned";
+    const current = plannerMetricsByMode.get(metricKey) || {
+      mode: evaluation.mode,
+      cohort,
+      turns: 0,
+      assignedTurns: 0,
+      planAvailableTurns: 0,
+      plannerFilterTotal: 0,
+      plannerEntityReferenceTotal: 0,
+      clarificationRequests: 0,
+      visibleClarifications: 0,
+      incorrectClarificationFeedback: 0,
+      clarificationFeedback: 0,
+      plannedTools: 0,
+      observedPlannedTools: 0,
+      plannedToolsWithEvidence: 0,
+      genericFallbacks: 0,
+      retrievalErrors: 0,
+      truncatedTurns: 0,
+      latencyTotalMs: 0,
+      aiCostTotalMicros: 0,
+      aiCostTurns: 0,
+      feedbackCount: 0,
+      correctedFeedback: 0,
+    };
+    current.turns += 1;
+    current.assignedTurns += evaluation.assigned ? 1 : 0;
+    current.planAvailableTurns += evaluation.planAvailable ? 1 : 0;
+    current.plannerFilterTotal += Number(evaluation.plannerFilterCount || 0);
+    current.plannerEntityReferenceTotal += Number(
+      evaluation.plannerEntityReferenceCount || 0,
+    );
+    current.clarificationRequests += evaluation.plannerRequiresClarification
+      ? 1
+      : 0;
+    current.visibleClarifications +=
+      row.response_type === "clarification" ? 1 : 0;
+    current.plannedTools += Number(evaluation.plannedToolCount || 0);
+    current.observedPlannedTools += Number(
+      evaluation.plannedToolsObserved || 0,
+    );
+    current.plannedToolsWithEvidence += Number(
+      evaluation.plannedToolsWithEvidence || 0,
+    );
+    current.genericFallbacks += evaluation.genericFallback ? 1 : 0;
+    current.retrievalErrors += evaluation.retrievalError ? 1 : 0;
+    current.truncatedTurns +=
+      Number(evaluation.truncatedSourceCount || 0) > 0 ? 1 : 0;
+    current.latencyTotalMs += Number(row.latency_ms || 0);
+    if (row.feedback_rating) {
+      current.feedbackCount += 1;
+      current.correctedFeedback += Number(row.feedback_corrected || 0);
+      if (
+        row.response_type === "clarification" &&
+        row.feedback_category === "intent"
+      ) {
+        current.clarificationFeedback += 1;
+        current.incorrectClarificationFeedback +=
+          row.feedback_rating === "negative" ? 1 : 0;
+      }
+    }
+    const jobCost = costByJob.get(Number(row.job_id));
+    if (jobCost !== undefined) {
+      current.aiCostTotalMicros += jobCost;
+      current.aiCostTurns += 1;
+    }
+    plannerMetricsByMode.set(metricKey, current);
+  }
+  const plannerMetrics = [...plannerMetricsByMode.values()].map((item) => ({
+    mode: item.mode,
+    cohort: item.cohort,
+    turns: item.turns,
+    assignedTurns: item.assignedTurns,
+    planAvailableTurns: item.planAvailableTurns,
+    averagePlannerFilterCount: item.planAvailableTurns
+      ? Number((item.plannerFilterTotal / item.planAvailableTurns).toFixed(2))
+      : null,
+    averagePlannerEntityReferenceCount: item.planAvailableTurns
+      ? Number(
+          (item.plannerEntityReferenceTotal / item.planAvailableTurns).toFixed(
+            2,
+          ),
+        )
+      : null,
+    plannerClarificationRate: ratio(
+      item.clarificationRequests,
+      item.planAvailableTurns,
     ),
-  ]);
+    visibleClarificationRate: ratio(item.visibleClarifications, item.turns),
+    incorrectClarificationRate: observedRate(
+      item.incorrectClarificationFeedback,
+      item.clarificationFeedback,
+    ),
+    incorrectClarificationFeedbackCount: item.incorrectClarificationFeedback,
+    clarificationFeedbackCount: item.clarificationFeedback,
+    plannedToolObservationRate: observedRate(
+      item.observedPlannedTools,
+      item.plannedTools,
+    ),
+    plannedToolEvidenceRate: observedRate(
+      item.plannedToolsWithEvidence,
+      item.plannedTools,
+    ),
+    genericFallbackRate: ratio(item.genericFallbacks, item.turns),
+    retrievalErrorRate: ratio(item.retrievalErrors, item.turns),
+    truncationRate: ratio(item.truncatedTurns, item.turns),
+    averageLatencyMs: Math.round(ratio(item.latencyTotalMs, item.turns)),
+    averageCostMicros: item.aiCostTurns
+      ? Math.round(item.aiCostTotalMicros / item.aiCostTurns)
+      : null,
+    aiCostTurns: item.aiCostTurns,
+    feedbackCount: item.feedbackCount,
+    correctionByFeedbackRate: observedRate(
+      item.correctedFeedback,
+      item.feedbackCount,
+    ),
+  }));
   const byChannel = new Map();
   for (const row of qualityRows) {
     const mapped = mapQualityRow(row);
@@ -265,8 +737,12 @@ export async function getCoachQualityDashboard(periodDays = 30) {
       processes: [],
     };
     current.totalTurns += mapped.totalTurns;
-    current.clarifications += Math.round(mapped.clarificationRate * mapped.totalTurns);
-    current.invalidResponses += Math.round(mapped.invalidResponseRate * mapped.totalTurns);
+    current.clarifications += Math.round(
+      mapped.clarificationRate * mapped.totalTurns,
+    );
+    current.invalidResponses += Math.round(
+      mapped.invalidResponseRate * mapped.totalTurns,
+    );
     current.intentPositive += mapped.intentPositive;
     current.intentNegative += mapped.intentNegative;
     current.entityPositive += mapped.entityPositive;
@@ -285,8 +761,12 @@ export async function getCoachQualityDashboard(periodDays = 30) {
   );
   const channels = [...byChannel.values()].map((item) => {
     const operationCounts = channelOperationCounts.get(item.channel);
-    const proposed = Number(operationCounts?.proposed || item.proposedOperations);
-    const rejected = Number(operationCounts?.rejected || item.rejectedOperations);
+    const proposed = Number(
+      operationCounts?.proposed || item.proposedOperations,
+    );
+    const rejected = Number(
+      operationCounts?.rejected || item.rejectedOperations,
+    );
     return {
       channel: item.channel,
       totalTurns: item.totalTurns,
@@ -311,7 +791,9 @@ export async function getCoachQualityDashboard(periodDays = 30) {
       ),
       feedbackCount: item.feedbackTotal,
       negativeFeedback: item.negativeFeedback,
-      averageLatencyMs: Math.round(ratio(item.latencyWeightedTotal, item.totalTurns)),
+      averageLatencyMs: Math.round(
+        ratio(item.latencyWeightedTotal, item.totalTurns),
+      ),
       processes: item.processes,
     };
   });
@@ -320,11 +802,20 @@ export async function getCoachQualityDashboard(periodDays = 30) {
     periodDays: safePeriodDays,
     totalTurns,
     channels,
+    plannerMetrics,
     processes: channels.flatMap((channel) =>
-      channel.processes.map((process) => ({ ...process, channel: channel.channel })),
+      channel.processes.map((process) => ({
+        ...process,
+        channel: channel.channel,
+      })),
     ),
     regressions: channels
-      .flatMap((channel) => channel.processes.map((process) => ({ ...process, channel: channel.channel })))
+      .flatMap((channel) =>
+        channel.processes.map((process) => ({
+          ...process,
+          channel: channel.channel,
+        })),
+      )
       .filter(
         (process) =>
           process.invalidResponseRate > 0 ||
@@ -333,7 +824,8 @@ export async function getCoachQualityDashboard(periodDays = 30) {
       )
       .sort(
         (left, right) =>
-          right.invalidResponseRate + right.negativeFeedback -
+          right.invalidResponseRate +
+          right.negativeFeedback -
           (left.invalidResponseRate + left.negativeFeedback),
       ),
   };
@@ -344,7 +836,8 @@ export async function listCoachChannelRollouts() {
   const rows = await query(
     `SELECT channel, enabled, rollout_percentage, allowlist_json, updated_at,
             updated_by_user_id
-     FROM coach_channel_rollouts ORDER BY channel`,
+     FROM coach_channel_rollouts
+     WHERE channel IN ('coach', 'prospect') ORDER BY channel`,
   );
   return rows.map((row) => ({
     channel: row.channel,
@@ -353,7 +846,9 @@ export async function listCoachChannelRollouts() {
     allowlist: Array.isArray(row.allowlist_json)
       ? row.allowlist_json.map(Number).filter(Boolean)
       : typeof row.allowlist_json === "string"
-        ? JSON.parse(row.allowlist_json || "[]").map(Number).filter(Boolean)
+        ? JSON.parse(row.allowlist_json || "[]")
+            .map(Number)
+            .filter(Boolean)
         : [],
     updatedAt: row.updated_at,
     updatedByUserId: Number(row.updated_by_user_id || 0) || null,
@@ -361,36 +856,34 @@ export async function listCoachChannelRollouts() {
 }
 
 export async function saveCoachChannelRollouts({ user, rollouts = [] }) {
-  if (!Array.isArray(rollouts)) throw new Error("Configuracion de rollout invalida");
+  if (!Array.isArray(rollouts))
+    throw new Error("Configuracion de rollout invalida");
   await ensureCoachSchema();
   const existingRollouts = await listCoachChannelRollouts();
   const results = [];
   for (const rollout of rollouts) {
-    if (!COACH_CHANNELS.includes(rollout.channel)) {
+    if (!COACH_ROLLOUT_CHANNELS.includes(rollout.channel)) {
       throw new Error("Canal de rollout no soportado");
     }
     const percentage = Math.max(
       0,
       Math.min(100, Math.round(Number(rollout.rolloutPercentage) || 0)),
     );
-    const allowlist = [...new Set(
-      (Array.isArray(rollout.allowlist) ? rollout.allowlist : [])
-        .map(Number)
-        .filter((id) => Number.isInteger(id) && id > 0),
-    )].slice(0, 500);
     const existing = existingRollouts.find(
       (item) => item.channel === rollout.channel,
     );
+    const allowlist = [
+      ...new Set(
+        (Array.isArray(rollout.allowlist) ? rollout.allowlist : [])
+          .map(Number)
+          .filter((id) => Number.isInteger(id) && id > 0),
+      ),
+    ].slice(0, 500);
     const expanding =
       Boolean(rollout.enabled) &&
-      (!existing?.enabled || percentage > Number(existing.rolloutPercentage || 0));
-    const allowlistedPilot =
-      expanding &&
-      percentage > 0 &&
-      percentage <= 5 &&
-      allowlist.length > 0 &&
-      Number(existing?.rolloutPercentage || 0) === 0;
-    if (expanding && !allowlistedPilot) {
+      (!existing?.enabled ||
+        percentage > Number(existing.rolloutPercentage || 0));
+    if (expanding) {
       const qualityRows = await query(
         `SELECT COUNT(*) AS total_turns,
                 SUM(validation_status IN ('invalid', 'error')) AS invalid_turns,
@@ -425,7 +918,7 @@ export async function saveCoachChannelRollouts({ user, rollouts = [] }) {
         const error = new Error(
           sufficientSample
             ? "La calidad observada no permite ampliar el rollout de este canal"
-            : "Se requieren al menos 20 turnos y 5 feedbacks para ampliar el rollout; inicia primero una canaria con allowlist",
+            : "Se requieren al menos 20 turnos y 5 feedbacks para ampliar el rollout",
         );
         error.status = 409;
         error.code = sufficientSample
@@ -450,7 +943,13 @@ export async function saveCoachChannelRollouts({ user, rollouts = [] }) {
          rollout_percentage = VALUES(rollout_percentage),
          allowlist_json = VALUES(allowlist_json),
          updated_by_user_id = VALUES(updated_by_user_id), updated_at = NOW(3)`,
-      [rollout.channel, Boolean(rollout.enabled), percentage, JSON.stringify(allowlist), Number(user.id)],
+      [
+        rollout.channel,
+        Boolean(rollout.enabled),
+        percentage,
+        JSON.stringify(allowlist),
+        Number(user.id),
+      ],
     );
     results.push({
       channel: rollout.channel,
@@ -475,12 +974,13 @@ export function isCoachUserInRollout(rollout, userId) {
   if (rollout.allowlist.includes(Number(userId))) return true;
   if (rollout.rolloutPercentage >= 100) return true;
   if (rollout.rolloutPercentage <= 0) return false;
-  const bucket = Number.parseInt(
-    createHash("sha256")
-      .update(`${rollout.channel}:${Number(userId)}`)
-      .digest("hex")
-      .slice(0, 8),
-    16,
-  ) % 100;
+  const bucket =
+    Number.parseInt(
+      createHash("sha256")
+        .update(`${rollout.channel}:${Number(userId)}`)
+        .digest("hex")
+        .slice(0, 8),
+      16,
+    ) % 100;
   return bucket < rollout.rolloutPercentage;
 }

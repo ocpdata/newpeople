@@ -132,11 +132,13 @@ export function resolveCoachContextEntities(
   _conversationHistory = [],
   _selectedContext = {},
   businessRules = {},
+  { exactMatchOnly = false } = {},
 ) {
   const explicitEntities = resolveCoachEntities(
     snapshot,
     question,
     businessRules,
+    { exactMatchOnly },
   );
   return {
     explicitEntities,
@@ -1070,6 +1072,14 @@ async function getMiAgentContext(user) {
   };
 }
 
+export function mergeCoachSelectedRecord(selectedRecord, enrichedRecord) {
+  if (!selectedRecord) return null;
+  return {
+    ...(enrichedRecord || selectedRecord),
+    ...(selectedRecord.type ? { type: selectedRecord.type } : {}),
+  };
+}
+
 async function getMiAgentEnrichedContext(user, baseContext) {
   const activeOpportunities = Array.isArray(baseContext?.coachOpportunities)
     ? baseContext.coachOpportunities
@@ -1584,10 +1594,12 @@ async function getMiAgentEnrichedContext(user, baseContext) {
     ...baseContext,
     enriched: true,
     source: "mi_agent",
-    selectedRecord: baseContext.selectedRecord
-      ? enrichedById.get(Number(baseContext.selectedRecord.id)) ||
-        baseContext.selectedRecord
-      : null,
+    selectedRecord: mergeCoachSelectedRecord(
+      baseContext.selectedRecord,
+      baseContext.selectedRecord
+        ? enrichedById.get(Number(baseContext.selectedRecord.id))
+        : null,
+    ),
     coachOpportunities: activeOpportunities.map(
       (item) => enrichedById.get(Number(item.id)) || item,
     ),
@@ -2373,16 +2385,18 @@ export function normalizeCoachResult(
         return String(recommendation || "").trim() || null;
       const parsed = coachRecommendationSchema.safeParse(recommendation);
       if (parsed.success) return parsed.data;
-      return [
-        recommendation.action,
-        recommendation.rationale,
-        recommendation.expectedOutcome,
-        recommendation.successCriteria,
-      ]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean)
-        .join(" ")
-        .slice(0, 2400) || null;
+      return (
+        [
+          recommendation.action,
+          recommendation.rationale,
+          recommendation.expectedOutcome,
+          recommendation.successCriteria,
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" ")
+          .slice(0, 2400) || null
+      );
     })(),
     operations,
     clarification,
@@ -2443,7 +2457,8 @@ export function normalizeCoachResult(
       : null,
     stageReadiness:
       authoritativeStageReadiness ||
-      stageReadinessSchema.safeParse(source.stageReadiness).data || null,
+      stageReadinessSchema.safeParse(source.stageReadiness).data ||
+      null,
   };
 
   const parsedResponse = safeParseCoachResponse(normalizedResponse);
@@ -4994,11 +5009,10 @@ router.put(
       !Array.isArray(rollouts) ||
       rollouts.some(
         (rollout) =>
-          !["coach", "customer_account", "prospect"].includes(
-            rollout?.channel,
-          ) ||
+          !["coach", "prospect"].includes(rollout?.channel) ||
           typeof rollout.enabled !== "boolean" ||
           !Number.isFinite(Number(rollout.rolloutPercentage)) ||
+          rollout.plannerMode !== undefined ||
           (rollout.allowlist !== undefined &&
             !Array.isArray(rollout.allowlist)),
       )

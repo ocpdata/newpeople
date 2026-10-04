@@ -8,11 +8,28 @@ import { searchTavily } from "../tavily.js";
 import { ensureManufacturerRegistrationsSchema } from "../manufacturer-registrations/schema.js";
 import { ensureProspectResearchSchema } from "../prospect-research/schema.js";
 import { ensureCommercialIntelligenceSchema } from "./schema.js";
+import {
+  captureSnapshotQueryFailure,
+  captureSnapshotQueryRows,
+} from "./snapshot-query-metrics.js";
+import {
+  buildCustomerConversationContext,
+  getCustomerConversationFilterMemory,
+  validateCustomerConversationContext,
+} from "./conversation-context.js";
+import {
+  getCustomerActivityHistoryRange,
+  getCustomerActivityHistoryRangeFromFilters,
+  isCustomerConversationFollowUp,
+  isCustomerContactHistoryQuestion,
+} from "./activity-history.js";
+import { ensureCommercialCalendarActivitiesSchema } from "./calendar-activities-schema.js";
+import { ensureLandingSchema } from "../landing/schema.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
 import {
   appendCustomerAccountChatHistory,
-  buildCustomerFallback,
+  buildCustomerEvidenceFailureResponse,
   createCustomerAccountAdapter,
 } from "./customer-chat-adapter.js";
 import {
@@ -23,6 +40,61 @@ import {
 } from "./contract.js";
 
 const FINDING_CATEGORIES = new Set(CUSTOMER_INTELLIGENCE_CATEGORIES);
+const CUSTOMER_SNAPSHOT_QUERY_METRICS = new WeakMap();
+
+function sanitizeCustomerResponseEntities(response, snapshot, usedTools = []) {
+  const accountId = Number(snapshot?.account?.id || 0) || null;
+  const source = response?.entities || {};
+  const queriedTools = new Set(Array.isArray(usedTools) ? usedTools : []);
+  const opportunityWasQueried = [
+    "searchOpportunities",
+    "getOpportunity",
+    "getOpportunityActivities",
+    "getOpportunityReadiness",
+    "getOpportunityQuotation",
+  ].some((toolName) => queriedTools.has(toolName));
+  const opportunities = [
+    ...(snapshot?.opportunities || []),
+    ...(snapshot?.inactiveOpportunities || []),
+    ...(snapshot?.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ];
+  const opportunity = opportunityWasQueried
+    ? opportunities.find(
+        (item) => Number(item.id) === Number(source.opportunityId || 0),
+      )
+    : null;
+  const contact = queriedTools.has("searchContacts")
+    ? [
+        ...(snapshot?.contacts || []),
+        ...(snapshot?.selectedContact ? [snapshot.selectedContact] : []),
+      ].find((item) => Number(item.id) === Number(source.contactId || 0))
+    : null;
+  const lead = queriedTools.has("searchLeads")
+    ? (snapshot?.interactions || []).find(
+        (item) =>
+          Number(item.id) === Number(source.leadId || 0) &&
+          (item.leadSubstatusCode ||
+            item.leadReasonCode ||
+            item.leadRequiredActionCode),
+      )
+    : null;
+  return {
+    accountId,
+    opportunityId: opportunity ? Number(opportunity.id) : null,
+    contactId: contact ? Number(contact.id) : null,
+    leadId: lead ? Number(lead.id) : null,
+    names: [
+      snapshot?.account?.name,
+      opportunity?.name,
+      contact?.name,
+      lead?.title,
+    ].filter(Boolean),
+  };
+}
+
+export function getCustomerSnapshotQueryMetrics(snapshot) {
+  return CUSTOMER_SNAPSHOT_QUERY_METRICS.get(snapshot) || [];
+}
 
 export const PUBLIC_CONTACT_ROLE_TERMS = [
   "tecnología",
@@ -744,8 +816,39 @@ export async function buildAuthorizedCustomerSnapshot({
   accountId,
   opportunityId,
   contactId,
+  activityHistoryStartDate = null,
+  activityHistoryEndDate = null,
+  includeContactHistory = false,
 }) {
   const governanceSettings = await getMiCoachGovernanceSettings();
+  const snapshotQueryMetrics = [];
+  const loadSnapshotRows = async (
+    source,
+    executeQuery,
+    resultLimit = null,
+    rethrow = false,
+  ) => {
+    try {
+      const captured = captureSnapshotQueryRows(
+        source,
+        await executeQuery(),
+        resultLimit,
+      );
+      snapshotQueryMetrics.push(captured.metric);
+      return captured.rows;
+    } catch (error) {
+      snapshotQueryMetrics.push(
+        captureSnapshotQueryFailure(source, resultLimit),
+      );
+      if (rethrow) {
+        try {
+          error.customerSnapshotQueryMetrics = [...snapshotQueryMetrics];
+        } catch {}
+        throw error;
+      }
+      return [];
+    }
+  };
   const normalizedAccountId = Number(accountId || 0);
   const normalizedOpportunityId = Number(opportunityId || 0);
   const normalizedContactId = Number(contactId || 0);
@@ -813,14 +916,17 @@ export async function buildAuthorizedCustomerSnapshot({
 
   const relatedContacts =
     resolvedAccountId && hasReadPermission(user, "contactos")
-      ? await query(
-          `SELECT c.id, c.account_id, c.first_name, c.last_name, c.email, c.phone,
+      ? await loadSnapshotRows(
+          "contacts",
+          () =>
+            query(
+              `SELECT c.id, c.account_id, c.first_name, c.last_name, c.email, c.phone,
               c.mobile, c.position_title, c.department,
                   CASE WHEN manager.id IS NOT NULL THEN c.manager_contact_id ELSE NULL END AS manager_contact_id,
                   CASE WHEN influenced.id IS NOT NULL THEN c.influences_contact_id ELSE NULL END AS influences_contact_id,
               pp.name AS purchase_participation,
               h.name AS hierarchy_level, rt.name AS relationship_type,
-              il.name AS influence_level,
+              il.name AS influence_level, cas.code AS activation_status_code,
               CONCAT(manager.first_name, ' ', manager.last_name) AS manager_name,
               CONCAT(influenced.first_name, ' ', influenced.last_name) AS influences_name
            FROM contacts c
@@ -831,20 +937,26 @@ export async function buildAuthorizedCustomerSnapshot({
              LEFT JOIN contact_influence_levels il ON il.id = c.influence_level_id
              LEFT JOIN contacts manager ON manager.id = c.manager_contact_id AND manager.account_id = c.account_id
              LEFT JOIN contacts influenced ON influenced.id = c.influences_contact_id AND influenced.account_id = c.account_id
-           WHERE c.account_id = ? AND cas.code = 'activado'
+           WHERE c.account_id = ?
+             ${includeContactHistory ? "" : "AND cas.code = 'activado'"}
              ${hasReadAllPermission(user, "cuentas") ? "" : "AND EXISTS (SELECT 1 FROM account_owners ao_contact_scope WHERE ao_contact_scope.account_id = c.account_id AND ao_contact_scope.user_id = ?)"}
            ORDER BY c.first_name, c.last_name
-           LIMIT 50`,
-          hasReadAllPermission(user, "cuentas")
-            ? [resolvedAccountId]
-            : [resolvedAccountId, Number(user.id)],
-        ).catch(() => [])
+           ${includeContactHistory ? "" : "LIMIT 51"}`,
+              hasReadAllPermission(user, "cuentas")
+                ? [resolvedAccountId]
+                : [resolvedAccountId, Number(user.id)],
+            ),
+          includeContactHistory ? null : 50,
+        )
       : [];
 
   const relatedOpportunities =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
-      ? await query(
-          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date, o.updated_at,
+      ? await loadSnapshotRows(
+          "opportunities_active",
+          () =>
+            query(
+              `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date, o.updated_at,
               o.sales_stage_id,
                   oss.code AS stage_code, oss.name AS stage_name,
                   ocs.code AS commercial_status_code
@@ -855,16 +967,18 @@ export async function buildAuthorizedCustomerSnapshot({
            WHERE o.account_id = ? AND oas.code = 'activada'
              ${hasReadAllPermission(user, "oportunidades") ? "" : "AND (EXISTS (SELECT 1 FROM account_owners ao_opportunity_scope WHERE ao_opportunity_scope.account_id = o.account_id AND ao_opportunity_scope.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)"}
            ORDER BY o.close_date IS NULL, o.close_date ASC, o.amount_usd DESC
-           LIMIT 50`,
-          hasReadAllPermission(user, "oportunidades")
-            ? [resolvedAccountId]
-            : [
-                resolvedAccountId,
-                Number(user.id),
-                Number(user.id),
-                Number(user.id),
-              ],
-        ).catch(() => [])
+           LIMIT 51`,
+              hasReadAllPermission(user, "oportunidades")
+                ? [resolvedAccountId]
+                : [
+                    resolvedAccountId,
+                    Number(user.id),
+                    Number(user.id),
+                    Number(user.id),
+                  ],
+            ),
+          50,
+        )
       : [];
 
   const visibleRelatedOpportunities = filterCustomerOpportunityHistory(
@@ -877,8 +991,11 @@ export async function buildAuthorizedCustomerSnapshot({
 
   const relatedInactiveOpportunities =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
-      ? await query(
-          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
+      ? await loadSnapshotRows(
+          "opportunities_inactive",
+          () =>
+            query(
+              `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
               o.close_date, o.updated_at, o.sales_stage_id, oss.code AS stage_code,
                   oss.name AS stage_name, ocs.code AS commercial_status_code,
                   oas.code AS activation_status_code
@@ -889,50 +1006,107 @@ export async function buildAuthorizedCustomerSnapshot({
            WHERE o.account_id = ? AND oas.code <> 'activada'
              ${hasReadAllPermission(user, "oportunidades") ? "" : "AND (EXISTS (SELECT 1 FROM account_owners ao_opportunity_scope WHERE ao_opportunity_scope.account_id = o.account_id AND ao_opportunity_scope.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)"}
            ORDER BY o.updated_at DESC, o.close_date IS NULL, o.close_date ASC
-           LIMIT 50`,
-          hasReadAllPermission(user, "oportunidades")
-            ? [resolvedAccountId]
-            : [
-                resolvedAccountId,
-                Number(user.id),
-                Number(user.id),
-                Number(user.id),
-              ],
-        ).catch(() => [])
+           LIMIT 51`,
+              hasReadAllPermission(user, "oportunidades")
+                ? [resolvedAccountId]
+                : [
+                    resolvedAccountId,
+                    Number(user.id),
+                    Number(user.id),
+                    Number(user.id),
+                  ],
+            ),
+          50,
+        )
       : [];
 
+  if (resolvedAccountId && hasReadPermission(user, "interacciones")) {
+    await ensureLandingSchema();
+  }
+  const interactionAccessScope = hasReadAllPermission(user, "interacciones")
+    ? ""
+    : "AND (i.seller_user_id = ? OR i.created_by = ? OR EXISTS (SELECT 1 FROM account_owners ao_interaction_scope WHERE ao_interaction_scope.account_id = COALESCE(i.account_id, (SELECT related_opportunity.account_id FROM opportunities related_opportunity WHERE related_opportunity.id = i.primary_opportunity_id)) AND ao_interaction_scope.user_id = ?) OR EXISTS (SELECT 1 FROM landing_submissions ls WHERE ls.id = i.landing_submission_id AND ls.sent_to_leads_by = ?) OR EXISTS (SELECT 1 FROM landing_submission_crm_links lscl INNER JOIN landing_submissions ls ON ls.id = lscl.submission_id WHERE lscl.lead_id = i.id AND ls.sent_to_leads_by = ?))";
+  const interactionHistoryFilter = activityHistoryStartDate
+    ? "AND COALESCE(i.created_at, i.updated_at) >= ? AND COALESCE(i.created_at, i.updated_at) < DATE_ADD(?, INTERVAL 1 DAY)"
+    : "";
+  const interactionParams = hasReadAllPermission(user, "interacciones")
+    ? [resolvedAccountId, resolvedAccountId]
+    : [
+        resolvedAccountId,
+        resolvedAccountId,
+        Number(user.id),
+        Number(user.id),
+        Number(user.id),
+        Number(user.id),
+        Number(user.id),
+      ];
+  if (activityHistoryStartDate) {
+    interactionParams.push(activityHistoryStartDate, activityHistoryEndDate);
+  }
   const relatedInteractions =
     resolvedAccountId && hasReadPermission(user, "interacciones")
-      ? await query(
-          `SELECT i.id, i.primary_opportunity_id, i.title, i.analysis_status, i.summary, i.source_notes,
+      ? await loadSnapshotRows(
+          "interactions",
+          () =>
+            query(
+              `SELECT i.id, i.primary_opportunity_id, i.title, i.analysis_status, i.summary, i.source_notes,
                   i.lead_substatus_code, i.lead_reason_code, i.lead_required_action_code,
                   i.lead_next_action_due_at, i.updated_at, i.created_at
            FROM interactions i
            WHERE (i.account_id = ? OR i.primary_opportunity_id IN (
              SELECT o.id FROM opportunities o WHERE o.account_id = ?
            ))
-             ${hasReadAllPermission(user, "interacciones") ? "" : "AND (i.seller_user_id = ? OR i.created_by = ? OR EXISTS (SELECT 1 FROM account_owners ao_interaction_scope WHERE ao_interaction_scope.account_id = COALESCE(i.account_id, (SELECT related_opportunity.account_id FROM opportunities related_opportunity WHERE related_opportunity.id = i.primary_opportunity_id)) AND ao_interaction_scope.user_id = ?) OR EXISTS (SELECT 1 FROM landing_submissions ls WHERE ls.id = i.landing_submission_id AND ls.sent_to_leads_by = ?) OR EXISTS (SELECT 1 FROM landing_submission_crm_links lscl INNER JOIN landing_submissions ls ON ls.id = lscl.submission_id WHERE lscl.lead_id = i.id AND ls.sent_to_leads_by = ?))"}
+             ${interactionAccessScope}
+             ${interactionHistoryFilter}
            ORDER BY i.updated_at DESC, i.created_at DESC
-           LIMIT 30`,
-          hasReadAllPermission(user, "interacciones")
-            ? [resolvedAccountId, resolvedAccountId]
-            : [
-                resolvedAccountId,
-                resolvedAccountId,
-                Number(user.id),
-                Number(user.id),
-                Number(user.id),
-                Number(user.id),
-                Number(user.id),
-              ],
-        ).catch(() => [])
+           ${activityHistoryStartDate || includeContactHistory ? "" : "LIMIT 31"}`,
+              interactionParams,
+            ),
+          activityHistoryStartDate || includeContactHistory ? null : 30,
+          Boolean(activityHistoryStartDate || includeContactHistory),
+        )
       : [];
+
+  let contactIdsByInteraction = new Map();
+  if (
+    includeContactHistory &&
+    hasReadPermission(user, "contactos") &&
+    hasReadPermission(user, "interacciones") &&
+    relatedInteractions.length &&
+    relatedContacts.length
+  ) {
+    const interactionIds = relatedInteractions.map((item) => Number(item.id));
+    const contactIds = relatedContacts.map((item) => Number(item.id));
+    const interactionPlaceholders = interactionIds.map(() => "?").join(",");
+    const contactPlaceholders = contactIds.map(() => "?").join(",");
+    const contactLinkRows = await query(
+      `SELECT l.interaction_id, l.contact_id
+       FROM interaction_contact_links l
+       INNER JOIN contacts c ON c.id = l.contact_id
+       WHERE l.interaction_id IN (${interactionPlaceholders})
+         AND l.contact_id IN (${contactPlaceholders})
+         AND c.account_id = ?`,
+      [...interactionIds, ...contactIds, resolvedAccountId],
+    ).catch((error) => {
+      throw error;
+    });
+    contactIdsByInteraction = contactLinkRows.reduce((groups, row) => {
+      const interactionId = Number(row.interaction_id);
+      const linked = groups.get(interactionId) || [];
+      linked.push(Number(row.contact_id));
+      groups.set(interactionId, linked);
+      return groups;
+    }, new Map());
+  }
 
   let relatedRenewals = [];
   if (resolvedAccountId && hasReadPermission(user, "oportunidades")) {
     await ensureManufacturerRegistrationsSchema();
-    relatedRenewals = await query(
-      `SELECT r.id, r.opportunity_id, r.provider_id, p.name AS provider_name,
+    relatedRenewals = await loadSnapshotRows(
+      "renewals",
+      () =>
+        query(
+          `SELECT r.id, r.opportunity_id, r.provider_id, p.name AS provider_name,
               r.status_code, r.expires_at, r.renewal_count, r.last_renewed_at, r.notes
        FROM opportunity_manufacturer_registrations r
        INNER JOIN opportunities o ON o.id = r.opportunity_id
@@ -941,22 +1115,27 @@ export async function buildAuthorizedCustomerSnapshot({
       WHERE o.account_id = ?
          ${hasReadAllPermission(user, "oportunidades") ? "" : "AND (EXISTS (SELECT 1 FROM account_owners ao_renewal_scope WHERE ao_renewal_scope.account_id = o.account_id AND ao_renewal_scope.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)"}
        ORDER BY r.expires_at IS NULL, r.expires_at ASC, r.id DESC
-       LIMIT 50`,
-      hasReadAllPermission(user, "oportunidades")
-        ? [resolvedAccountId]
-        : [
-            resolvedAccountId,
-            Number(user.id),
-            Number(user.id),
-            Number(user.id),
-          ],
-    ).catch(() => []);
+       LIMIT 51`,
+          hasReadAllPermission(user, "oportunidades")
+            ? [resolvedAccountId]
+            : [
+                resolvedAccountId,
+                Number(user.id),
+                Number(user.id),
+                Number(user.id),
+              ],
+        ),
+      50,
+    );
   }
 
   const relatedProducts =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
-      ? await query(
-          `SELECT q.id AS quotation_id, qv.id AS quotation_version_id,
+      ? await loadSnapshotRows(
+          "quotation_products",
+          () =>
+            query(
+              `SELECT q.id AS quotation_id, qv.id AS quotation_version_id,
                 q.opportunity_id, qsi.provider_id, p.name AS provider_name,
                 qsi.product_code, qsi.product_description, qsi.item_type,
                 qsi.is_renewal, qsi.quantity, qsi.list_price_unit,
@@ -971,22 +1150,29 @@ export async function buildAuthorizedCustomerSnapshot({
            WHERE o.account_id = ?
              ${hasReadAllPermission(user, "oportunidades") ? "" : "AND (EXISTS (SELECT 1 FROM account_owners ao_product_scope WHERE ao_product_scope.account_id = o.account_id AND ao_product_scope.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)"}
          ORDER BY qv.quotation_date DESC, qsi.display_order ASC
-         LIMIT 200`,
-          hasReadAllPermission(user, "oportunidades")
-            ? [resolvedAccountId]
-            : [
-                resolvedAccountId,
-                Number(user.id),
-                Number(user.id),
-                Number(user.id),
-              ],
-        ).catch(() => [])
+           LIMIT 201`,
+              hasReadAllPermission(user, "oportunidades")
+                ? [resolvedAccountId]
+                : [
+                    resolvedAccountId,
+                    Number(user.id),
+                    Number(user.id),
+                    Number(user.id),
+                  ],
+            ),
+          200,
+        )
       : [];
   const catalogItems =
     resolvedAccountId && hasReadPermission(user, "oportunidades")
-      ? await query(
-          `SELECT ppli.provider_id AS providerId, ppli.code, ppli.description FROM provider_price_list_items ppli INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id INNER JOIN provider_price_list_item_statuses ps ON ps.id = ppli.activation_status_id WHERE ppl.is_active = 1 AND ps.is_active = 1 ORDER BY ppli.updated_at DESC LIMIT 100`,
-        ).catch(() => [])
+      ? await loadSnapshotRows(
+          "provider_catalog",
+          () =>
+            query(
+              `SELECT ppli.provider_id AS providerId, ppli.code, ppli.description FROM provider_price_list_items ppli INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id INNER JOIN provider_price_list_item_statuses ps ON ps.id = ppli.activation_status_id WHERE ppl.is_active = 1 AND ps.is_active = 1 ORDER BY ppli.updated_at DESC LIMIT 101`,
+            ),
+          100,
+        )
       : [];
 
   relatedRenewals = filterCustomerOpportunityArtifacts(
@@ -1009,6 +1195,8 @@ export async function buildAuthorizedCustomerSnapshot({
     ),
   ];
   const coachContextByOpportunity = new Map();
+  let relatedOpportunityActivities = [];
+  let relatedCalendarActivities = [];
   if (coachOpportunityIds.length) {
     const placeholders = coachOpportunityIds.map(() => "?").join(",");
     const [
@@ -1171,6 +1359,130 @@ export async function buildAuthorizedCustomerSnapshot({
       });
     }
   }
+  if (
+    resolvedAccountId &&
+    activityHistoryStartDate &&
+    hasReadPermission(user, "oportunidades") &&
+    hasReadPermission(user, "desarrollo_comercial")
+  ) {
+    const activityOpportunityScope = hasReadAllPermission(user, "oportunidades")
+      ? ""
+      : "AND (EXISTS (SELECT 1 FROM account_owners ao_activity_scope WHERE ao_activity_scope.account_id = o.account_id AND ao_activity_scope.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)";
+    const activityDateScope = activityHistoryStartDate
+      ? "AND COALESCE(a.due_date, a.created_at) >= ? AND COALESCE(a.due_date, a.created_at) < DATE_ADD(?, INTERVAL 1 DAY)"
+      : "";
+    const activityParams = [resolvedAccountId];
+    if (!hasReadAllPermission(user, "oportunidades")) {
+      activityParams.push(Number(user.id), Number(user.id), Number(user.id));
+    }
+    if (activityHistoryStartDate) {
+      activityParams.push(activityHistoryStartDate, activityHistoryEndDate);
+    }
+    const rows = await loadSnapshotRows(
+      "opportunity_activities",
+      () =>
+        query(
+          `SELECT a.id, a.opportunity_id, a.title, a.action_type, a.status,
+              a.priority, a.due_date, a.success_criteria, a.notes,
+              a.created_at, o.account_id, o.name AS opportunity_name
+       FROM opportunity_workspace_actions a
+       INNER JOIN opportunities o ON o.id = a.opportunity_id
+       WHERE o.account_id = ? ${activityOpportunityScope} ${activityDateScope}
+       ORDER BY COALESCE(a.due_date, a.created_at) DESC, a.id DESC`,
+          activityParams,
+        ),
+      null,
+      Boolean(activityHistoryStartDate),
+    );
+    relatedOpportunityActivities = rows.map((row) => ({
+      id: Number(row.id),
+      accountId: Number(row.account_id),
+      opportunityId: Number(row.opportunity_id),
+      opportunityName: row.opportunity_name || "",
+      title: row.title || "",
+      actionType: row.action_type || "other",
+      status: row.status || "pending",
+      priority: row.priority || "medium",
+      dueDate: row.due_date || null,
+      notes: row.notes || "",
+      successCriteria: row.success_criteria || "",
+      createdAt: row.created_at || null,
+    }));
+  }
+  if (
+    resolvedAccountId &&
+    activityHistoryStartDate &&
+    hasReadPermission(user, "calendario_comercial") &&
+    hasReadPermission(user, "oportunidades")
+  ) {
+    await ensureCommercialCalendarActivitiesSchema();
+    const calendarAccessScope = hasReadAllPermission(
+      user,
+      "calendario_comercial",
+    )
+      ? ""
+      : "AND (cca.seller_user_id = ? OR cca.created_by = ?)";
+    const calendarParams = [
+      resolvedAccountId,
+      resolvedAccountId,
+      resolvedAccountId,
+      resolvedAccountId,
+      activityHistoryStartDate,
+      activityHistoryEndDate,
+    ];
+    if (!hasReadAllPermission(user, "calendario_comercial")) {
+      calendarParams.push(Number(user.id), Number(user.id));
+    }
+    const calendarRows = await loadSnapshotRows(
+      "calendar_activities",
+      () =>
+        query(
+          `SELECT cca.id, cca.kind, cca.activity_type, cca.status,
+              cca.scheduled_at, cca.due_date, cca.objective, cca.note,
+              cca.success_criteria, cca.opportunity_id, cca.interaction_id,
+              cca.account_id, cca.created_at, o.name AS opportunity_name
+       FROM commercial_calendar_activities cca
+       LEFT JOIN opportunities o ON o.id = cca.opportunity_id
+       WHERE (
+         cca.account_id = ? OR
+         cca.opportunity_id IN (
+           SELECT account_opportunities.id FROM opportunities account_opportunities
+           WHERE account_opportunities.account_id = ?
+         ) OR
+         cca.interaction_id IN (
+           SELECT i.id FROM interactions i
+           WHERE i.account_id = ? OR i.primary_opportunity_id IN (
+             SELECT interaction_opportunities.id FROM opportunities interaction_opportunities
+             WHERE interaction_opportunities.account_id = ?
+           )
+         )
+       )
+         AND COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) >= ?
+         AND COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) < DATE_ADD(?, INTERVAL 1 DAY)
+         ${calendarAccessScope}
+       ORDER BY COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) DESC,
+                cca.id DESC`,
+          calendarParams,
+        ),
+      null,
+      true,
+    );
+    relatedCalendarActivities = calendarRows.map((row) => ({
+      id: Number(row.id),
+      accountId: Number(row.account_id || resolvedAccountId),
+      opportunityId: Number(row.opportunity_id || 0) || null,
+      opportunityName: row.opportunity_name || "",
+      interactionId: Number(row.interaction_id || 0) || null,
+      activityType: row.activity_type || "",
+      status: row.status || "pending",
+      scheduledAt: row.scheduled_at || null,
+      dueDate: row.due_date || null,
+      title: row.objective || "",
+      notes: row.note || "",
+      successCriteria: row.success_criteria || "",
+      createdAt: row.created_at || null,
+    }));
+  }
   const coachContextFor = (item) =>
     coachContextByOpportunity.get(Number(item?.id)) || {};
 
@@ -1234,6 +1546,7 @@ export async function buildAuthorizedCustomerSnapshot({
       mobile: item.mobile || "",
       positionTitle: item.position_title || "",
       department: item.department || "",
+      activationStatusCode: item.activation_status_code || "",
       purchaseParticipation: item.purchase_participation || "",
       hierarchyLevel: item.hierarchy_level || "",
       relationshipType: item.relationship_type || "",
@@ -1280,6 +1593,7 @@ export async function buildAuthorizedCustomerSnapshot({
     interactions: relatedInteractions.map((item) => ({
       id: Number(item.id),
       accountId: Number(resolvedAccountId),
+      contactIds: contactIdsByInteraction.get(Number(item.id)) || [],
       opportunityId: Number(item.primary_opportunity_id || 0) || null,
       title: item.title || "",
       analysisStatus: item.analysis_status || "",
@@ -1289,6 +1603,7 @@ export async function buildAuthorizedCustomerSnapshot({
       leadReasonCode: item.lead_reason_code || "",
       leadRequiredActionCode: item.lead_required_action_code || "",
       leadNextActionDueAt: item.lead_next_action_due_at || null,
+      createdAt: item.created_at || null,
       updatedAt: item.updated_at || item.created_at || null,
     })),
     activities: relatedInteractions.map((item) => ({
@@ -1303,8 +1618,11 @@ export async function buildAuthorizedCustomerSnapshot({
       leadReasonCode: item.lead_reason_code || "",
       leadRequiredActionCode: item.lead_required_action_code || "",
       leadNextActionDueAt: item.lead_next_action_due_at || null,
+      createdAt: item.created_at || null,
       updatedAt: item.updated_at || item.created_at || null,
     })),
+    opportunityActivities: relatedOpportunityActivities,
+    calendarActivities: relatedCalendarActivities,
     renewals: relatedRenewals.map((item) => ({
       id: Number(item.id),
       opportunityId: Number(item.opportunity_id),
@@ -1341,6 +1659,16 @@ export async function buildAuthorizedCustomerSnapshot({
       canReadContacts: hasReadPermission(user, "contactos"),
       canReadOpportunities: hasReadPermission(user, "oportunidades"),
       canReadInteractions: hasReadPermission(user, "interacciones"),
+      canReadOpportunityActivities:
+        hasReadPermission(user, "oportunidades") &&
+        hasReadPermission(user, "desarrollo_comercial"),
+      canReadCalendarActivities:
+        hasReadPermission(user, "calendario_comercial") &&
+        hasReadPermission(user, "oportunidades"),
+      canReadAllCalendarActivities: hasReadAllPermission(
+        user,
+        "calendario_comercial",
+      ),
     },
   };
   normalizedData.expansionHypotheses = buildExpansionHypotheses({
@@ -1349,10 +1677,12 @@ export async function buildAuthorizedCustomerSnapshot({
     catalogItems,
     opportunities: normalizedData.opportunities,
   });
-  return normalizeCustomerIntelligenceSnapshot({
+  const normalizedSnapshot = normalizeCustomerIntelligenceSnapshot({
     ...normalizedData,
     accountHealth: buildAccountHealth(normalizedData),
   });
+  CUSTOMER_SNAPSHOT_QUERY_METRICS.set(normalizedSnapshot, snapshotQueryMetrics);
+  return normalizedSnapshot;
 }
 
 function buildFinding({
@@ -2411,11 +2741,23 @@ export async function getAccountIntelligenceMetrics({ user }) {
 
 async function insertCustomerAccountChatSession({ user, snapshot }) {
   const publicId = `cacs_${randomUUID()}`;
+  const initialConversationContext = validateCustomerConversationContext(
+    buildCustomerConversationContext({
+      accountId: snapshot.account?.id,
+      effectiveContext: {
+        accountId: snapshot.account?.id,
+        opportunityId: snapshot.selectedOpportunity?.id,
+        contactId: snapshot.selectedContact?.id,
+      },
+    }),
+    snapshot,
+    snapshot.account?.id,
+  );
   const result = await query(
     `INSERT INTO customer_intelligence_chat_sessions
       (public_id, requested_by_user_id, account_id, opportunity_id, contact_id,
-       history_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
+       history_json, context_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
     [
       publicId,
       Number(user.id),
@@ -2423,6 +2765,7 @@ async function insertCustomerAccountChatSession({ user, snapshot }) {
       snapshot.selectedOpportunity?.id || null,
       snapshot.selectedContact?.id || null,
       JSON.stringify([]),
+      JSON.stringify(initialConversationContext),
     ],
   );
   return {
@@ -2481,7 +2824,7 @@ export async function createCustomerAccountChatJob({ user, payload }) {
   const requestedChatSessionId = Number(payload.chatSessionId || 0);
   if (requestedChatSessionId > 0) {
     const sessionRows = await query(
-      `SELECT id, account_id, opportunity_id, contact_id
+      `SELECT id, account_id, opportunity_id, contact_id, context_json
        FROM customer_intelligence_chat_sessions
        WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
       [requestedChatSessionId, Number(user.id)],
@@ -2502,7 +2845,13 @@ export async function createCustomerAccountChatJob({ user, payload }) {
         "La sesion de chat pertenece a otro contexto de cliente",
       );
     }
+    const conversationContext = validateCustomerConversationContext(
+      parseJson(session.context_json, null),
+      snapshot,
+      snapshot.account?.id,
+    );
     chatSession = { id: Number(session.id) };
+    payload = { ...payload, conversationContext };
   } else {
     chatSession = await insertCustomerAccountChatSession({ user, snapshot });
   }
@@ -2543,16 +2892,19 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   let snapshot;
   let agents;
   let conversationHistory;
+  let conversationContext;
+  let continuationContext;
+  let rememberedFilters = {};
+  let activityHistoryRange = null;
+  let isFollowUp = false;
+  let nextConversationContext = null;
+  let preparationStage = "request";
+  const turnStartedAt = Date.now();
   try {
     request = parseJson(job.request_json, {});
-    snapshot = await buildAuthorizedCustomerSnapshot({
-      user,
-      accountId: job.account_id,
-      opportunityId: job.opportunity_id,
-      contactId: job.contact_id,
-    });
+    preparationStage = "history";
     const sessionRows = await query(
-      `SELECT history_json FROM customer_intelligence_chat_sessions
+      `SELECT history_json, context_json FROM customer_intelligence_chat_sessions
        WHERE id = ? AND requested_by_user_id = ?
          AND account_id <=> ? AND opportunity_id <=> ? AND contact_id <=> ?
        LIMIT 1`,
@@ -2568,12 +2920,93 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
     }
     conversationHistory = parseJson(sessionRows[0].history_json, []);
+    const persistedConversationContext = parseJson(
+      sessionRows[0].context_json,
+      null,
+    );
+    rememberedFilters = getCustomerConversationFilterMemory(
+      persistedConversationContext,
+      job.account_id,
+    );
+    activityHistoryRange =
+      getCustomerActivityHistoryRange(request.question) ||
+      (isCustomerConversationFollowUp(request.question)
+        ? getCustomerActivityHistoryRangeFromFilters(rememberedFilters)
+        : null);
+    isFollowUp = isCustomerConversationFollowUp(request.question);
+    const includeContactHistory =
+      isCustomerContactHistoryQuestion(request.question) ||
+      Boolean(
+        isFollowUp &&
+        persistedConversationContext?.intents?.includes("contact_history"),
+      );
+    preparationStage = "snapshot";
+    snapshot = await buildAuthorizedCustomerSnapshot({
+      user,
+      accountId: job.account_id,
+      opportunityId: job.opportunity_id,
+      contactId: job.contact_id,
+      activityHistoryStartDate: activityHistoryRange?.startDate || null,
+      activityHistoryEndDate: activityHistoryRange?.endDate || null,
+      includeContactHistory,
+    });
+    conversationContext = validateCustomerConversationContext(
+      persistedConversationContext,
+      snapshot,
+      job.account_id,
+    );
+    nextConversationContext = conversationContext;
+    continuationContext = isFollowUp ? conversationContext : null;
+    preparationStage = "agents";
     agents = await runAccountIntelligenceAgents(snapshot, {
       includePublicResearch: Boolean(request.includePublicResearch),
       user,
       jobId,
     });
   } catch (error) {
+    await recordCoachTurnQualityTrace({
+      channel: "customer_account",
+      process: "account_chat",
+      userId: user.id,
+      sessionId: request?.chatSessionId,
+      jobId,
+      trace: {
+        intentType: "preparation_error",
+        intentSubtype: preparationStage,
+        primaryEntity: Number(job.account_id || 0) ? "account" : "none",
+        entityResolution: {
+          resolvedEntityIds: {
+            accountId: Number(job.account_id || 0) || null,
+            opportunityId: Number(job.opportunity_id || 0) || null,
+            contactId: Number(job.contact_id || 0) || null,
+          },
+        },
+        appliedRules: {
+          channel: "customer_account",
+          process: "account_chat",
+          accountScoped: true,
+        },
+        validationStatus: "error",
+        validationReasons: ["chat_preparation_failed"],
+        responseType: "error",
+        confidence: "low",
+        evidenceCount: 0,
+        toolsUsed: [],
+        toolMetrics: [],
+        diagnostics: {
+          fallback: { used: false, reasonCode: null },
+          failureStage: preparationStage,
+          agentMetrics: [],
+          snapshotMetrics: Array.isArray(error?.customerSnapshotQueryMetrics)
+            ? error.customerSnapshotQueryMetrics
+            : [],
+        },
+        operationsProposed: 0,
+        operationsRejected: 0,
+        latencyMs: Math.max(0, Date.now() - turnStartedAt),
+        errorCode: "chat_preparation_failed",
+      },
+    }).catch(() => undefined);
     await query(
       `UPDATE customer_intelligence_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ?`,
       [
@@ -2588,7 +3021,28 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   }
   const adapter = createCustomerAccountAdapter({
     user,
-    snapshot,
+    snapshot: {
+      ...snapshot,
+      selectedOpportunity:
+        snapshot.selectedOpportunity ||
+        (continuationContext?.opportunityId
+          ? [
+              ...(snapshot.opportunities || []),
+              ...(snapshot.inactiveOpportunities || []),
+            ].find(
+              (item) => Number(item.id) === continuationContext.opportunityId,
+            ) || null
+          : null),
+      selectedContact:
+        snapshot.selectedContact ||
+        (continuationContext?.contactId
+          ? (snapshot.contacts || []).find(
+              (item) => Number(item.id) === continuationContext.contactId,
+            ) || null
+          : null),
+    },
+    conversationContext: continuationContext,
+    snapshotQueryMetrics: getCustomerSnapshotQueryMetrics(snapshot),
     agents,
     jobId,
   });
@@ -2600,26 +3054,145 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       history: conversationHistory,
       context: {
         accountId: snapshot.account?.id || null,
-        opportunityId: snapshot.selectedOpportunity?.id || null,
-        contactId: snapshot.selectedContact?.id || null,
-        leadId: null,
+        opportunityId:
+          continuationContext?.opportunityId ||
+          snapshot.selectedOpportunity?.id ||
+          null,
+        contactId:
+          continuationContext?.contactId ||
+          snapshot.selectedContact?.id ||
+          null,
+        leadId: continuationContext?.leadId || null,
       },
+      conversationContext: continuationContext,
     });
     response = engineResult.response;
     qualityTrace = engineResult.qualityTrace;
+    response = {
+      ...response,
+      entities: sanitizeCustomerResponseEntities(
+        response,
+        snapshot,
+        qualityTrace?.toolsUsed || [],
+      ),
+    };
+    if (
+      response?.responseType !== "error" &&
+      response?.responseType !== "clarification" &&
+      !response?.clarification
+    ) {
+      const currentRange = getCustomerActivityHistoryRange(request.question);
+      const routingFilters = engineResult.channelIntentRouting?.filters || {};
+      const filters = {
+        ...(isFollowUp ? conversationContext?.filters || {} : {}),
+        ...routingFilters,
+      };
+      const resolvedRange =
+        currentRange ||
+        (isFollowUp
+          ? getCustomerActivityHistoryRangeFromFilters(filters)
+          : null);
+      if (resolvedRange) {
+        filters.startDate = resolvedRange.startDate;
+        filters.endDate = resolvedRange.endDate;
+        if (resolvedRange.months) filters.periodMonths = resolvedRange.months;
+      }
+      nextConversationContext = validateCustomerConversationContext(
+        buildCustomerConversationContext({
+          accountId: snapshot.account?.id,
+          effectiveContext: response.entities || {},
+          routing: {
+            ...engineResult.channelIntentRouting,
+            filters,
+          },
+        }),
+        snapshot,
+        snapshot.account?.id,
+      );
+    }
   } catch {
-    response = buildCustomerFallback(snapshot, request.question);
+    response = buildCustomerEvidenceFailureResponse({
+      status: "query_error",
+      errorCode: "adapter_execution_failed",
+    });
     qualityTrace = {
       process: "account_chat",
       validationStatus: "error",
       validationReasons: ["adapter_execution_failed"],
       errorCode: "adapter_execution_failed",
+      toolMetrics: [],
+      diagnostics: {
+        fallback: {
+          used: true,
+          reasonCode: "adapter_execution_failed",
+        },
+        failureStage: "adapter",
+        agentMetrics: [],
+      },
     };
   }
-  const publicSources =
-    agents.find((agent) => agent.agentId === "public_research")?.evidence || [];
   response = {
     ...response,
+    entities: sanitizeCustomerResponseEntities(
+      response,
+      snapshot,
+      qualityTrace?.toolsUsed || [],
+    ),
+  };
+  const agentMetrics = (Array.isArray(agents) ? agents : [])
+    .slice(0, 20)
+    .map((agent) => ({
+      agentId: agent.agentId,
+      status: agent.status,
+      evidenceCount: Array.isArray(agent.evidence) ? agent.evidence.length : 0,
+      errorCode: agent.status === "failed" ? "tool_error" : null,
+    }));
+  qualityTrace = {
+    ...qualityTrace,
+    diagnostics: {
+      ...qualityTrace?.diagnostics,
+      agentMetrics,
+      snapshotMetrics: getCustomerSnapshotQueryMetrics(snapshot),
+    },
+  };
+  const publicSources =
+    agents.find((agent) => agent.agentId === "public_research")?.evidence || [];
+  const truncatedSnapshotSources = getCustomerSnapshotQueryMetrics(snapshot)
+    .filter((metric) => metric.truncated === true)
+    .map((metric) => metric.source)
+    .slice(0, 20);
+  const unqueriedAuthorizedTools = Array.isArray(
+    qualityTrace?.diagnostics?.evidence?.unqueriedAuthorizedTools,
+  )
+    ? qualityTrace.diagnostics.evidence.unqueriedAuthorizedTools
+        .map((toolName) => String(toolName || "").slice(0, 80))
+        .filter(Boolean)
+        .slice(0, 20)
+    : [];
+  const partialResultSources = [
+    ...truncatedSnapshotSources,
+    ...unqueriedAuthorizedTools.map((toolName) => `consulta:${toolName}`),
+  ];
+  const partialResultsWarning = partialResultSources.length
+    ? ` La verificación alcanzó límites de consulta (${partialResultSources.join(", ")}); los resultados pueden estar incompletos.`
+    : "";
+  response = {
+    ...response,
+    entities: sanitizeCustomerResponseEntities(
+      response,
+      snapshot,
+      qualityTrace?.toolsUsed || [],
+    ),
+    partialResults: {
+      isPartial: partialResultSources.length > 0,
+      sources: partialResultSources,
+    },
+    answer:
+      partialResultsWarning &&
+      response.responseType !== "error" &&
+      response.responseType !== "clarification"
+        ? `${String(response.answer || "")}${partialResultsWarning}`
+        : response.answer,
     sourceDomain: publicSources.length ? "mixed" : "crm_internal",
     inferences: Array.isArray(response.inferences)
       ? response.inferences
@@ -2654,7 +3227,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   if (qualityTraceId) response.qualityTraceId = qualityTraceId;
   await withTransaction(async (conn) => {
     const [sessionRows] = await conn.query(
-      `SELECT history_json FROM customer_intelligence_chat_sessions
+      `SELECT history_json, context_json FROM customer_intelligence_chat_sessions
        WHERE id = ? AND requested_by_user_id = ?
          AND account_id <=> ? AND opportunity_id <=> ? AND contact_id <=> ?
        LIMIT 1 FOR UPDATE`,
@@ -2673,13 +3246,18 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       parseJson(sessionRows[0].history_json, []),
       request.question,
       response.answer,
+      { activityHistory: response.activityHistory },
     );
     await conn.query(
       `UPDATE customer_intelligence_chat_sessions
-       SET history_json = ?, updated_at = NOW(3)
+       SET history_json = ?, context_json = ?, updated_at = NOW(3)
        WHERE id = ? AND requested_by_user_id = ?`,
       [
         JSON.stringify(nextHistory),
+        JSON.stringify(
+          nextConversationContext ||
+            parseJson(sessionRows[0].context_json, null),
+        ),
         Number(request.chatSessionId),
         Number(user.id),
       ],

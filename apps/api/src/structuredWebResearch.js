@@ -9,6 +9,9 @@ function buildFieldSchema(field) {
   if (field.type === "string") {
     return { type: "string" };
   }
+  if (field.type === "number") {
+    return { type: "number" };
+  }
 
   if (field.type === "enum") {
     return {
@@ -46,6 +49,9 @@ function buildFieldSchema(field) {
 function buildExpectedValue(field) {
   if (field.type === "string") {
     return field.example ?? "";
+  }
+  if (field.type === "number") {
+    return field.example ?? 0;
   }
 
   if (field.type === "enum") {
@@ -110,8 +116,12 @@ export async function runStructuredWebResearch({
   fields,
   aiUsageContext = null,
   useWebSearchTool = true,
+  signal = null,
 }) {
-  if (!config.openai.apiKey || (useWebSearchTool && !config.openai.enableWebSearch)) {
+  if (
+    !config.openai.apiKey ||
+    (useWebSearchTool && !config.openai.enableWebSearch)
+  ) {
     return null;
   }
 
@@ -164,6 +174,7 @@ export async function runStructuredWebResearch({
         Authorization: `Bearer ${config.openai.apiKey}`,
       },
       body: JSON.stringify(payload),
+      ...(signal ? { signal } : {}),
     },
   );
 

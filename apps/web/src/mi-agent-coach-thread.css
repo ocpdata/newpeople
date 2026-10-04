@@ -300,6 +300,9 @@
   font-weight: 500;
   line-height: 1.6;
 }
+.mi-agent-coach-answer-text.is-multiline {
+  white-space: pre-line;
+}
 .mi-agent-coach-message ul {
   margin: 8px 0;
   padding-left: 18px;

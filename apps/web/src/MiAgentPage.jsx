@@ -43,6 +43,27 @@ const ACTION_STATUS_LABELS = {
   done: "Creada",
 };
 
+const CUSTOMER_ACTIVITY_STATUS_LABELS = {
+  pending: "Pendiente",
+  in_progress: "En curso",
+  done: "Completada",
+  completed: "Completada",
+  cancelled: "Cancelada",
+  blocked: "Bloqueada",
+};
+
+const CUSTOMER_ACTIVITY_TYPE_LABELS = {
+  producto: "Producto",
+  service: "Servicio",
+  servicio: "Servicio",
+  call: "Llamada",
+  meeting: "Reunión",
+  email: "Correo",
+  visit: "Visita",
+  demo: "Demostración",
+  presentation: "Presentación",
+};
+
 const COACH_POLL_TIMEOUT_MS = 180000;
 const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
 const CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY =
@@ -615,6 +636,7 @@ function buildCoachOperationDraft(operation, persistedOperation = null) {
       persistedOperation?.status ||
       pendingOperation.persistenceStatus ||
       "ready",
+    reviewedAt: persistedOperation?.reviewedAt || null,
   };
 }
 
@@ -1039,6 +1061,17 @@ export default function MiAgentPage({
   const [coachIntentTestQuestion, setCoachIntentTestQuestion] = useState("");
   const [coachIntentPreview, setCoachIntentPreview] = useState(null);
   const [coachIntentFeedback, setCoachIntentFeedback] = useState(null);
+  const [channelIntentChannel, setChannelIntentChannel] =
+    useState("customer_account");
+  const [channelIntentCatalog, setChannelIntentCatalog] = useState([]);
+  const [channelIntentRevisions, setChannelIntentRevisions] = useState([]);
+  const [channelIntentCode, setChannelIntentCode] = useState("");
+  const [channelIntentDraft, setChannelIntentDraft] = useState(null);
+  const [channelIntentTestQuestion, setChannelIntentTestQuestion] =
+    useState("");
+  const [channelIntentPreview, setChannelIntentPreview] = useState(null);
+  const [channelIntentFeedback, setChannelIntentFeedback] = useState(null);
+  const [channelIntentSaving, setChannelIntentSaving] = useState(false);
   const [coachAdminRuleDraft, setCoachAdminRuleDraft] = useState(null);
   const [coachAdminRuleEditingId, setCoachAdminRuleEditingId] = useState(null);
   const [coachAdminRuleFeedback, setCoachAdminRuleFeedback] = useState(null);
@@ -1629,6 +1662,7 @@ export default function MiAgentPage({
                 : {
                     role: "assistant",
                     answer: message.text,
+                    activityHistory: message.activityHistory || null,
                     sourceDomain: "crm_internal",
                   },
           ),
@@ -2790,6 +2824,7 @@ export default function MiAgentPage({
         rulesResponse,
         businessRulesResponse,
         intentsResponse,
+        channelIntentsResponse,
       ] = await Promise.all([
         api.get("/api/commercial-intelligence/governance"),
         api.get("/api/mi-agent/coach/quality"),
@@ -2800,6 +2835,13 @@ export default function MiAgentPage({
           "/api/commercial-intelligence/governance/business-rules?channel=coach&process=default",
         ),
         api.get("/api/commercial-intelligence/governance/intents"),
+        api
+          .get(
+            `/api/commercial-intelligence/governance/channel-intents/${channelIntentChannel}`,
+          )
+          .catch((requestError) => ({
+            data: { loadError: requestError },
+          })),
       ]);
       setCoachGovernance(response.data || null);
       setCoachQualityDashboard(qualityResponse.data?.quality || null);
@@ -2824,6 +2866,31 @@ export default function MiAgentPage({
       );
       setCoachIntentExamplesDraft(
         (current) => current || (intentCatalog[0]?.examples || []).join("\n"),
+      );
+      const channelCatalog = channelIntentsResponse.data?.catalog || [];
+      setChannelIntentCatalog(channelCatalog);
+      setChannelIntentRevisions(channelIntentsResponse.data?.revisions || []);
+      if (channelIntentsResponse.data?.loadError) {
+        setChannelIntentFeedback({
+          kind: "error",
+          message: getApiErrorMessage(
+            channelIntentsResponse.data.loadError,
+            "No fue posible cargar la configuración del canal.",
+          ),
+        });
+      }
+      const initialChannelIntent = channelCatalog[0];
+      setChannelIntentCode(initialChannelIntent?.code || "");
+      setChannelIntentDraft(
+        initialChannelIntent
+          ? {
+              enabled: initialChannelIntent.enabled,
+              examples: initialChannelIntent.examples.join("\n"),
+              priority: initialChannelIntent.priority,
+              allowedTools: [...initialChannelIntent.allowedTools],
+              requiredContext: [...initialChannelIntent.requiredContext],
+            }
+          : null,
       );
     } catch (requestError) {
       setError(
@@ -3323,6 +3390,165 @@ export default function MiAgentPage({
     }
   }
 
+  function selectChannelIntent(intent) {
+    setChannelIntentCode(intent.code);
+    setChannelIntentDraft({
+      enabled: intent.enabled,
+      examples: intent.examples.join("\n"),
+      priority: intent.priority,
+      allowedTools: [...intent.allowedTools],
+      requiredContext: [...intent.requiredContext],
+    });
+    setChannelIntentPreview(null);
+    setChannelIntentFeedback(null);
+  }
+
+  async function loadChannelIntentChannel(channel) {
+    setChannelIntentChannel(channel);
+    setChannelIntentCatalog([]);
+    setChannelIntentRevisions([]);
+    setChannelIntentCode("");
+    setChannelIntentDraft(null);
+    setChannelIntentSaving(true);
+    setChannelIntentFeedback(null);
+    setChannelIntentPreview(null);
+    try {
+      const { data } = await api.get(
+        `/api/commercial-intelligence/governance/channel-intents/${channel}`,
+      );
+      const catalog = data?.catalog || [];
+      const firstIntent = catalog[0];
+      setChannelIntentCatalog(catalog);
+      setChannelIntentRevisions(data?.revisions || []);
+      setChannelIntentCode(firstIntent?.code || "");
+      setChannelIntentDraft(
+        firstIntent
+          ? {
+              enabled: firstIntent.enabled,
+              examples: firstIntent.examples.join("\n"),
+              priority: firstIntent.priority,
+              allowedTools: [...firstIntent.allowedTools],
+              requiredContext: [...firstIntent.requiredContext],
+            }
+          : null,
+      );
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible cargar la configuración del canal.",
+      );
+      setChannelIntentFeedback({ kind: "error", message });
+    } finally {
+      setChannelIntentSaving(false);
+    }
+  }
+
+  async function saveChannelIntentConfiguration() {
+    if (!channelIntentDraft || !channelIntentCode) return;
+    const configuration = {
+      ...channelIntentDraft,
+      examples: channelIntentDraft.examples
+        .split("\n")
+        .map((example) => example.trim())
+        .filter(Boolean),
+    };
+    setChannelIntentSaving(true);
+    setChannelIntentFeedback(null);
+    try {
+      const { data } = await api.put(
+        `/api/commercial-intelligence/governance/channel-intents/${channelIntentChannel}/${channelIntentCode}`,
+        configuration,
+      );
+      const catalog = data?.catalog || [];
+      setChannelIntentCatalog(catalog);
+      setChannelIntentRevisions(data?.revisions || []);
+      const savedIntent = catalog.find(
+        (intent) => intent.code === channelIntentCode,
+      );
+      if (savedIntent) selectChannelIntent(savedIntent);
+      setChannelIntentFeedback({
+        kind: "success",
+        message: "La configuración se guardó y quedó auditada.",
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible guardar la configuración del canal.",
+      );
+      setChannelIntentFeedback({ kind: "error", message });
+    } finally {
+      setChannelIntentSaving(false);
+    }
+  }
+
+  async function previewChannelIntentConfiguration() {
+    setChannelIntentSaving(true);
+    setChannelIntentFeedback(null);
+    setChannelIntentPreview(null);
+    try {
+      const { data } = await api.post(
+        "/api/commercial-intelligence/governance/channel-intents/preview",
+        {
+          channel: channelIntentChannel,
+          question: channelIntentTestQuestion,
+          intentCode: channelIntentCode,
+          configuration: {
+            ...channelIntentDraft,
+            examples: channelIntentDraft.examples
+              .split("\n")
+              .map((example) => example.trim())
+              .filter(Boolean),
+          },
+        },
+      );
+      setChannelIntentPreview(data);
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible probar el enrutamiento.",
+      );
+      setChannelIntentFeedback({ kind: "error", message });
+    } finally {
+      setChannelIntentSaving(false);
+    }
+  }
+
+  async function restoreChannelIntentConfiguration(revision) {
+    if (
+      !window.confirm(
+        `¿Restaurar la configuración del canal a la revisión ${revision.id}?`,
+      )
+    ) {
+      return;
+    }
+    setChannelIntentSaving(true);
+    setChannelIntentFeedback(null);
+    try {
+      const { data } = await api.post(
+        `/api/commercial-intelligence/governance/channel-intents/${channelIntentChannel}/revisions/${revision.id}/restore`,
+      );
+      const catalog = data?.catalog || [];
+      setChannelIntentCatalog(catalog);
+      setChannelIntentRevisions(data?.revisions || []);
+      const selected = catalog.find(
+        (intent) => intent.code === channelIntentCode,
+      );
+      if (selected) selectChannelIntent(selected);
+      setChannelIntentFeedback({
+        kind: "success",
+        message: `Se restauró la revisión ${revision.id} y la restauración quedó registrada.`,
+      });
+    } catch (requestError) {
+      const message = getApiErrorMessage(
+        requestError,
+        "No fue posible restaurar la configuración del canal.",
+      );
+      setChannelIntentFeedback({ kind: "error", message });
+    } finally {
+      setChannelIntentSaving(false);
+    }
+  }
+
   function openCoachActionConfirmation(action) {
     if (!canExecuteCoach || !canUpdateCommercialDevelopment || !action?.title)
       return;
@@ -3580,6 +3806,7 @@ export default function MiAgentPage({
       operation: persisted.pendingOperation,
       version: persisted.version,
       persistenceStatus: persisted.status,
+      reviewedAt: persisted.reviewedAt || null,
     };
   }
 
@@ -3652,6 +3879,36 @@ export default function MiAgentPage({
         navigate(handoff.url);
         return;
       }
+      if (!draft.reviewedAt) {
+        const reviewResponse = await api.post(
+          `/api/mi-agent/coach/operations/${draft.persistentId}/review`,
+          { version: draft.version },
+        );
+        const reviewedOperation = reviewResponse.data?.operation;
+        if (!reviewedOperation)
+          throw new Error("No fue posible revisar el valor actual");
+        setCoachPendingOperations((current) =>
+          current.map((item) =>
+            item.id === reviewedOperation.id ? reviewedOperation : item,
+          ),
+        );
+        setCoachOperationDraft((current) =>
+          current?.persistentId === reviewedOperation.id
+            ? {
+                ...current,
+                operation: {
+                  ...reviewedOperation.pendingOperation,
+                  missingFields: reviewedOperation.missingFields || [],
+                },
+                version: reviewedOperation.version,
+                persistenceStatus: reviewedOperation.status,
+                reviewedAt: reviewedOperation.reviewedAt,
+                error: "",
+              }
+            : current,
+        );
+        return;
+      }
       const response = await api.post(
         `/api/mi-agent/coach/operations/${draft.persistentId}/execute`,
         {
@@ -3722,13 +3979,30 @@ export default function MiAgentPage({
       if (operation.successNotice) setCoachNotice(operation.successNotice);
     } catch (requestError) {
       const responseData = requestError?.response?.data;
+      const errorCode = responseData?.code;
       setCoachOperationDraft((current) =>
         current
           ? {
               ...current,
+              operation:
+                errorCode === "COACH_TARGET_CHANGED" &&
+                Object.prototype.hasOwnProperty.call(
+                  responseData || {},
+                  "currentValue",
+                )
+                  ? {
+                      ...current.operation,
+                      currentValue: responseData.currentValue,
+                    }
+                  : current.operation,
               version: responseData?.operation?.version || current.version,
               persistenceStatus:
                 responseData?.operation?.status || current.persistenceStatus,
+              reviewedAt:
+                errorCode === "COACH_TARGET_CHANGED" ||
+                errorCode === "COACH_REVIEW_REQUIRED"
+                  ? null
+                  : current.reviewedAt,
               error: getApiErrorMessage(
                 requestError,
                 "No fue posible aplicar el cambio propuesto",
@@ -3987,6 +4261,9 @@ export default function MiAgentPage({
   const selectedCoachIntent = coachIntentCatalog.find(
     (intent) => intent.code === coachIntentCode,
   );
+  const selectedChannelIntent = channelIntentCatalog.find(
+    (intent) => intent.code === channelIntentCode,
+  );
 
   if (loading) {
     return (
@@ -4207,7 +4484,8 @@ export default function MiAgentPage({
                     <span>
                       {coachOpportunities.find(
                         (item) =>
-                          String(item.id) === String(coachContext.opportunityId),
+                          String(item.id) ===
+                          String(coachContext.opportunityId),
                       )?.name || "Oportunidad en contexto"}
                     </span>
                   ) : null}
@@ -5651,7 +5929,263 @@ export default function MiAgentPage({
                           ? ` · confianza ${CUSTOMER_FINDING_CONFIDENCE_LABELS[message.confidence] || message.confidence}`
                           : ""}
                       </small>
-                      <h4>{message.answer}</h4>
+                      {String(message.answer || "").includes("\n") ? (
+                        <p className="mi-agent-coach-answer-text is-multiline">
+                          {message.answer}
+                        </p>
+                      ) : (
+                        <h4
+                          className={
+                            message.activityHistory
+                              ? "mi-agent-customer-history-summary"
+                              : undefined
+                          }
+                        >
+                          {message.answer}
+                        </h4>
+                      )}
+                      {message.activityHistory ? (
+                        message.activityHistory.mode === "contact_history" ? (
+                          <div className="mi-agent-customer-history-results">
+                            {!message.activityHistory.contactsAvailable ? (
+                              <p className="mi-agent-customer-history-empty">
+                                No tienes permiso para consultar contactos en
+                                esta cuenta.
+                              </p>
+                            ) : (
+                              message.activityHistory.contacts.map(
+                                (contact) => (
+                                  <section
+                                    key={contact.id}
+                                    className="mi-agent-customer-history-section"
+                                  >
+                                    <div className="mi-agent-customer-history-section-heading">
+                                      <strong>{contact.name}</strong>
+                                      <span>
+                                        {contact.interactionHistoryAvailable
+                                          ? `${contact.interactions.length} interacciones`
+                                          : "Historial sin acceso"}
+                                      </span>
+                                    </div>
+                                    <div className="mi-agent-customer-contact-history-data">
+                                      {contact.positionTitle ||
+                                      contact.department ? (
+                                        <span>
+                                          {[
+                                            contact.positionTitle,
+                                            contact.department,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </span>
+                                      ) : null}
+                                      {contact.email ? (
+                                        <a href={`mailto:${contact.email}`}>
+                                          {contact.email}
+                                        </a>
+                                      ) : null}
+                                      {contact.phone || contact.mobile ? (
+                                        <span>
+                                          {[contact.phone, contact.mobile]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </span>
+                                      ) : null}
+                                      {contact.activationStatusCode &&
+                                      contact.activationStatusCode !==
+                                        "activado" ? (
+                                        <span>
+                                          {contact.activationStatusCode}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    {contact.purchaseParticipation ||
+                                    contact.hierarchyLevel ||
+                                    contact.relationshipType ||
+                                    contact.influenceLevel ? (
+                                      <details className="mi-agent-customer-contact-history-extra">
+                                        <summary>
+                                          Más datos del contacto
+                                        </summary>
+                                        <p>
+                                          {[
+                                            contact.purchaseParticipation,
+                                            contact.hierarchyLevel,
+                                            contact.relationshipType,
+                                            contact.influenceLevel,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(" · ")}
+                                        </p>
+                                      </details>
+                                    ) : null}
+                                    {!contact.interactionHistoryAvailable ? (
+                                      <p className="mi-agent-customer-history-empty">
+                                        No tienes permiso de lectura para
+                                        consultar su historial.
+                                      </p>
+                                    ) : contact.interactions.length ? (
+                                      <ul className="mi-agent-customer-history-list">
+                                        {contact.interactions.map((item) => (
+                                          <li key={`${contact.id}-${item.id}`}>
+                                            <time dateTime={item.date}>
+                                              {formatDate(item.date)}
+                                            </time>
+                                            <div className="mi-agent-customer-history-item-content">
+                                              <strong title={item.title}>
+                                                {item.title}
+                                              </strong>
+                                              {item.details ? (
+                                                <details>
+                                                  <summary>
+                                                    Ver detalles
+                                                  </summary>
+                                                  <p>{item.details}</p>
+                                                </details>
+                                              ) : null}
+                                            </div>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="mi-agent-customer-history-empty">
+                                        Sin interacciones vinculadas.
+                                      </p>
+                                    )}
+                                  </section>
+                                ),
+                              )
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mi-agent-customer-history-results">
+                            {message.activityHistory.mode === "quotation" ? (
+                              <div className="mi-agent-customer-history-period">
+                                {message.activityHistory.metadata
+                                  .opportunityName ? (
+                                  <span>
+                                    {
+                                      message.activityHistory.metadata
+                                        .opportunityName
+                                    }
+                                  </span>
+                                ) : null}
+                                {message.activityHistory.metadata
+                                  .quotationDate ? (
+                                  <span>
+                                    {formatDate(
+                                      message.activityHistory.metadata
+                                        .quotationDate,
+                                    )}
+                                  </span>
+                                ) : null}
+                                {message.activityHistory.metadata.statusName ? (
+                                  <span>
+                                    {
+                                      message.activityHistory.metadata
+                                        .statusName
+                                    }
+                                  </span>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <div className="mi-agent-customer-history-period">
+                                <span>
+                                  {formatDate(
+                                    message.activityHistory.range.startDate,
+                                  )}
+                                  {" - "}
+                                  {formatDate(
+                                    message.activityHistory.range.endDate,
+                                  )}
+                                </span>
+                                <span>
+                                  {message.activityHistory.range.months} meses
+                                </span>
+                              </div>
+                            )}
+                            {message.activityHistory.sections.map((section) => (
+                              <section
+                                key={section.key}
+                                className="mi-agent-customer-history-section"
+                              >
+                                <div className="mi-agent-customer-history-section-heading">
+                                  <strong>{section.title}</strong>
+                                  <span>
+                                    {section.available
+                                      ? section.items.length
+                                      : "Sin acceso"}
+                                  </span>
+                                </div>
+                                {section.subtitle ? (
+                                  <p className="mi-agent-customer-history-empty">
+                                    {section.subtitle}
+                                  </p>
+                                ) : null}
+                                {!section.available ? (
+                                  <p className="mi-agent-customer-history-empty">
+                                    {section.unavailableMessage}
+                                  </p>
+                                ) : section.items.length ? (
+                                  <ul className="mi-agent-customer-history-list">
+                                    {section.items.map((item) => (
+                                      <li key={`${section.key}-${item.id}`}>
+                                        {item.date ? (
+                                          <time dateTime={item.date}>
+                                            {formatDate(item.date)}
+                                          </time>
+                                        ) : item.activityType ? (
+                                          <span className="mi-agent-customer-history-item-type">
+                                            {CUSTOMER_ACTIVITY_TYPE_LABELS[
+                                              item.activityType
+                                            ] || item.activityType}
+                                          </span>
+                                        ) : null}
+                                        <div className="mi-agent-customer-history-item-content">
+                                          <strong title={item.title}>
+                                            {item.title}
+                                          </strong>
+                                          <div className="mi-agent-customer-history-item-meta">
+                                            {item.opportunityName ? (
+                                              <span>
+                                                {item.opportunityName}
+                                              </span>
+                                            ) : null}
+                                            {item.activityType ? (
+                                              <span>
+                                                {CUSTOMER_ACTIVITY_TYPE_LABELS[
+                                                  item.activityType
+                                                ] || item.activityType}
+                                              </span>
+                                            ) : null}
+                                            {item.status ? (
+                                              <span className="mi-agent-customer-history-status">
+                                                {CUSTOMER_ACTIVITY_STATUS_LABELS[
+                                                  item.status
+                                                ] || item.status}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                          {item.details ? (
+                                            <details>
+                                              <summary>Ver detalles</summary>
+                                              <p>{item.details}</p>
+                                            </details>
+                                          ) : null}
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="mi-agent-customer-history-empty">
+                                    No hay registros en este periodo.
+                                  </p>
+                                )}
+                              </section>
+                            ))}
+                          </div>
+                        )
+                      ) : null}
                       <CoachQualityFeedback traceId={message.qualityTraceId} />
                       {showCustomerChatFoundation &&
                       message.evidence?.length ? (
@@ -7807,6 +8341,285 @@ export default function MiAgentPage({
               </section>
 
               <section
+                className="mi-agent-channel-intent-governance"
+                aria-labelledby="mi-agent-channel-intent-title"
+              >
+                <div className="mi-agent-admin-rules-heading">
+                  <div>
+                    <h4 id="mi-agent-channel-intent-title">
+                      Enrutamiento por canal
+                    </h4>
+                    <p>
+                      Ajusta las intenciones de Cliente existente y Cuenta
+                      nueva. Los límites de herramientas y contexto los aplica
+                      el servidor.
+                    </p>
+                  </div>
+                  <label className="mi-agent-channel-intent-channel">
+                    Canal
+                    <select
+                      value={channelIntentChannel}
+                      onChange={(event) =>
+                        loadChannelIntentChannel(event.target.value)
+                      }
+                      disabled={channelIntentSaving}
+                    >
+                      <option value="customer_account">
+                        Cliente existente
+                      </option>
+                      <option value="prospect">Cuenta nueva</option>
+                    </select>
+                  </label>
+                </div>
+                {channelIntentFeedback ? (
+                  <p
+                    className={`mi-agent-admin-rule-feedback is-${channelIntentFeedback.kind}`}
+                    role={
+                      channelIntentFeedback.kind === "error"
+                        ? "alert"
+                        : "status"
+                    }
+                  >
+                    {channelIntentFeedback.message}
+                  </p>
+                ) : null}
+                <div className="mi-agent-intent-layout">
+                  <nav
+                    className="mi-agent-intent-catalog"
+                    aria-label="Intenciones del canal"
+                  >
+                    {channelIntentCatalog.map((intent) => (
+                      <button
+                        type="button"
+                        key={intent.code}
+                        className={
+                          intent.code === channelIntentCode ? "is-active" : ""
+                        }
+                        onClick={() => selectChannelIntent(intent)}
+                        disabled={channelIntentSaving}
+                      >
+                        <strong>{intent.label}</strong>
+                        <span>{intent.code}</span>
+                      </button>
+                    ))}
+                  </nav>
+                  {selectedChannelIntent && channelIntentDraft ? (
+                    <div className="mi-agent-intent-detail">
+                      <div>
+                        <h5>{selectedChannelIntent.label}</h5>
+                        <p>{selectedChannelIntent.description}</p>
+                      </div>
+                      <label className="mi-agent-channel-intent-toggle">
+                        <input
+                          type="checkbox"
+                          checked={channelIntentDraft.enabled}
+                          disabled={
+                            channelIntentSaving ||
+                            ["account_overview", "prospect_profile"].includes(
+                              selectedChannelIntent.code,
+                            )
+                          }
+                          onChange={(event) =>
+                            setChannelIntentDraft((current) => ({
+                              ...current,
+                              enabled: event.target.checked,
+                            }))
+                          }
+                        />
+                        Activa
+                      </label>
+                      <label className="mi-agent-channel-intent-priority">
+                        Prioridad
+                        <input
+                          type="number"
+                          min={0}
+                          max={200}
+                          value={channelIntentDraft.priority}
+                          onChange={(event) =>
+                            setChannelIntentDraft((current) => ({
+                              ...current,
+                              priority: Number(event.target.value),
+                            }))
+                          }
+                          disabled={channelIntentSaving}
+                        />
+                      </label>
+                      <label className="mi-agent-intent-examples">
+                        Ejemplos reconocidos, uno por línea
+                        <textarea
+                          rows={5}
+                          maxLength={7200}
+                          value={channelIntentDraft.examples}
+                          onChange={(event) =>
+                            setChannelIntentDraft((current) => ({
+                              ...current,
+                              examples: event.target.value,
+                            }))
+                          }
+                          disabled={channelIntentSaving}
+                        />
+                      </label>
+                      <fieldset className="mi-agent-channel-intent-options">
+                        <legend>Herramientas permitidas</legend>
+                        {selectedChannelIntent.possibleTools.map((tool) => (
+                          <label key={tool}>
+                            <input
+                              type="checkbox"
+                              checked={channelIntentDraft.allowedTools.includes(
+                                tool,
+                              )}
+                              onChange={(event) =>
+                                setChannelIntentDraft((current) => ({
+                                  ...current,
+                                  allowedTools: event.target.checked
+                                    ? [...current.allowedTools, tool]
+                                    : current.allowedTools.filter(
+                                        (item) => item !== tool,
+                                      ),
+                                }))
+                              }
+                              disabled={channelIntentSaving}
+                            />
+                            {tool}
+                          </label>
+                        ))}
+                      </fieldset>
+                      <fieldset className="mi-agent-channel-intent-options">
+                        <legend>Contexto requerido</legend>
+                        {(channelIntentChannel === "customer_account"
+                          ? ["account", "opportunity", "contact"]
+                          : ["prospectSession"]
+                        ).map((contextKey) => {
+                          const fixed =
+                            selectedChannelIntent.fixedContext.includes(
+                              contextKey,
+                            );
+                          return (
+                            <label key={contextKey}>
+                              <input
+                                type="checkbox"
+                                checked={channelIntentDraft.requiredContext.includes(
+                                  contextKey,
+                                )}
+                                onChange={(event) =>
+                                  setChannelIntentDraft((current) => ({
+                                    ...current,
+                                    requiredContext: event.target.checked
+                                      ? [...current.requiredContext, contextKey]
+                                      : current.requiredContext.filter(
+                                          (item) => item !== contextKey,
+                                        ),
+                                  }))
+                                }
+                                disabled={channelIntentSaving || fixed}
+                              />
+                              {contextKey}
+                              {fixed ? " · obligatorio" : ""}
+                            </label>
+                          );
+                        })}
+                      </fieldset>
+                      <div className="mi-agent-intent-preview-form">
+                        <label>
+                          Pregunta de prueba
+                          <input
+                            value={channelIntentTestQuestion}
+                            maxLength={1200}
+                            onChange={(event) =>
+                              setChannelIntentTestQuestion(event.target.value)
+                            }
+                            placeholder="Escribe una pregunta para probar el enrutamiento"
+                          />
+                        </label>
+                        <div className="mi-agent-workspace-actions">
+                          <button
+                            type="button"
+                            className="mi-agent-secondary-button"
+                            onClick={previewChannelIntentConfiguration}
+                            disabled={
+                              channelIntentSaving ||
+                              !channelIntentTestQuestion.trim()
+                            }
+                          >
+                            Probar
+                          </button>
+                          <button
+                            type="button"
+                            className="mi-agent-primary-button"
+                            onClick={saveChannelIntentConfiguration}
+                            disabled={
+                              channelIntentSaving ||
+                              !channelIntentDraft.examples.trim()
+                            }
+                          >
+                            Guardar configuración
+                          </button>
+                        </div>
+                      </div>
+                      {channelIntentPreview?.classification ? (
+                        <div className="mi-agent-intent-preview">
+                          <strong>
+                            {channelIntentPreview.classification.label} ·{" "}
+                            {channelIntentPreview.classification.intent}
+                          </strong>
+                          {channelIntentPreview.classification.missingContext
+                            .length ? (
+                            <span>
+                              Contexto requerido no suministrado:{" "}
+                              {channelIntentPreview.classification.missingContext.join(
+                                ", ",
+                              )}
+                            </span>
+                          ) : null}
+                          <span>
+                            Herramientas previstas:{" "}
+                            {channelIntentPreview.classification.allowedTools.join(
+                              ", ",
+                            ) || "ninguna"}
+                          </span>
+                          <small>
+                            Simulación sin ejecución de herramientas ni cambios
+                            CRM.
+                          </small>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="mi-agent-intent-revisions">
+                  <h5>Historial de configuración del canal</h5>
+                  {channelIntentRevisions.length ? (
+                    channelIntentRevisions.map((revision) => (
+                      <div
+                        className="mi-agent-intent-revision"
+                        key={revision.id}
+                      >
+                        <span>
+                          Revisión {revision.id} ·{" "}
+                          {new Date(revision.createdAt).toLocaleString()}
+                          {revision.restoredFromRevisionId
+                            ? ` · restaurada desde ${revision.restoredFromRevisionId}`
+                            : ""}
+                        </span>
+                        <button
+                          type="button"
+                          className="mi-agent-secondary-button"
+                          onClick={() =>
+                            restoreChannelIntentConfiguration(revision)
+                          }
+                          disabled={channelIntentSaving}
+                        >
+                          Restaurar
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <p>No hay cambios previos registrados.</p>
+                  )}
+                </div>
+              </section>
+
+              <section
                 className="mi-agent-admin-rules"
                 aria-labelledby="mi-agent-admin-rules-title"
               >
@@ -8482,6 +9295,66 @@ export default function MiAgentPage({
                   Revisa desempeño, regresiones y volumen de uso para monitorear
                   la calidad operativa del asistente.
                 </p>
+                <section className="mi-agent-governance-metrics">
+                  <h4>Evaluación del planificador</h4>
+                  <div className="mi-agent-governance-grid">
+                    {(coachQualityDashboard?.plannerMetrics || []).map(
+                      (metrics) => (
+                        <article
+                          className="mi-agent-governance-rollout"
+                          key={`planner-rollout-${metrics.mode}-${metrics.cohort}`}
+                        >
+                          <strong>Planificador · Cliente existente</strong>
+                          <span>
+                            Planner disponible {metrics.planAvailableTurns}/
+                            {metrics.turns} turnos · filtros explícitos medios{" "}
+                            {metrics.averagePlannerFilterCount ?? "Sin muestra"}
+                            · referencias medias{" "}
+                            {metrics.averagePlannerEntityReferenceCount ??
+                              "Sin muestra"}
+                          </span>
+                          <span>
+                            Herramientas observadas{" "}
+                            {metrics.plannedToolObservationRate == null
+                              ? "Sin muestra"
+                              : `${Math.round(metrics.plannedToolObservationRate * 100)}%`}
+                            · con evidencia{" "}
+                            {metrics.plannedToolEvidenceRate == null
+                              ? "Sin muestra"
+                              : `${Math.round(metrics.plannedToolEvidenceRate * 100)}%`}
+                            · aclaraciones del planner{" "}
+                            {Math.round(metrics.plannerClarificationRate * 100)}
+                            % · visibles{" "}
+                            {Math.round(metrics.visibleClarificationRate * 100)}
+                            %
+                            {metrics.incorrectClarificationRate == null
+                              ? " · feedback negativo de aclaración sin muestra"
+                              : ` · feedback negativo visible ${Math.round(metrics.incorrectClarificationRate * 100)}%`}
+                          </span>
+                          <span>
+                            Fallback genérico{" "}
+                            {Math.round(metrics.genericFallbackRate * 100)}% ·
+                            errores de recuperación{" "}
+                            {Math.round(metrics.retrievalErrorRate * 100)}% ·
+                            truncamiento{" "}
+                            {Math.round(metrics.truncationRate * 100)}%
+                          </span>
+                          <span>
+                            Latencia media {metrics.averageLatencyMs} ms · costo
+                            medio por turno{" "}
+                            {metrics.averageCostMicros == null
+                              ? "Sin dato"
+                              : `USD ${(metrics.averageCostMicros / 1000000).toFixed(4)}`}
+                            · correcciones{" "}
+                            {metrics.correctionByFeedbackRate == null
+                              ? "Sin feedback"
+                              : `${Math.round(metrics.correctionByFeedbackRate * 100)}%`}
+                          </span>
+                        </article>
+                      ),
+                    )}
+                  </div>
+                </section>
                 <section className="mi-agent-governance-metrics">
                   <h4>
                     Calidad del motor ·{" "}
@@ -9433,7 +10306,9 @@ export default function MiAgentPage({
                   ? "Guardando y validando la operación..."
                   : coachDraftMissingFields.length
                     ? "La operación permanecerá pendiente hasta completar los campos indicados."
-                    : "La operación está lista para continuar."}
+                    : coachOperationDraft.reviewedAt
+                      ? "Valor actual revisado. Confirma para guardar."
+                      : "Revisa el valor actual antes de confirmar."}
               </p>
             </div>
             <div className="modal-buttons">
@@ -9483,7 +10358,9 @@ export default function MiAgentPage({
                         coachOperationDraft.operation.kind,
                       )
                     ? "Continuar en el módulo"
-                    : "Confirmar y guardar"}
+                    : coachOperationDraft.reviewedAt
+                      ? "Confirmar y guardar"
+                      : "Revisar valor actual"}
               </button>
             </div>
           </div>

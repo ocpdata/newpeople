@@ -67,7 +67,7 @@ const DEFAULT_RULES = [
     channel: "customer_account",
     title: "Limitar acciones de Cliente existente",
     instruction:
-      "En este canal solo propone actividades relacionadas con la cuenta autorizada. No propongas cambios de campos o de etapa disponibles únicamente en el Chat Coach.",
+      "Propón únicamente tipos de operación incluidos por la política efectiva del servidor para Cliente existente y ligados a la cuenta autorizada. Presenta cada escritura como una propuesta revisable; esta regla no concede permisos ni sustituye la confirmación explícita.",
     sortOrder: 20,
   },
   {
@@ -181,9 +181,9 @@ const ADDITIONAL_RULES = [
     id: "customer-activities-only",
     scope: "channel",
     channel: "customer_account",
-    title: "Proponer solo actividades para la cuenta",
+    title: "Respetar la política de operaciones de Cliente existente",
     instruction:
-      "Limita las operaciones propuestas a actividades relacionadas con la cuenta seleccionada. No propongas cambios de etapa, campos CRM u operaciones comerciales que pertenecen al Chat Coach.",
+      "Propón operaciones únicamente de los tipos que autoriza la política efectiva del servidor y siempre dentro de la cuenta seleccionada. No deduzcas permisos ni amplíes tipos permitidos a partir de esta instrucción; toda propuesta requiere revisión y confirmación.",
     sortOrder: 50,
   },
   {
@@ -230,6 +230,27 @@ const ADDITIONAL_RULES = [
     instruction:
       "El outreach generado es un borrador para revisión del vendedor. No lo presentes como enviado ni sugieras que hubo contacto hasta que exista evidencia explícita de envío o actividad registrada.",
     sortOrder: 60,
+  },
+];
+
+const ADMIN_RULE_ALIGNMENT_MIGRATION = [
+  {
+    id: "customer-limit-operations",
+    oldTitle: "Limitar acciones de Cliente existente",
+    oldInstruction:
+      "En este canal solo propone actividades relacionadas con la cuenta autorizada. No propongas cambios de campos o de etapa disponibles únicamente en el Chat Coach.",
+    title: "Limitar acciones de Cliente existente",
+    instruction:
+      "Propón únicamente tipos de operación incluidos por la política efectiva del servidor para Cliente existente y ligados a la cuenta autorizada. Presenta cada escritura como una propuesta revisable; esta regla no concede permisos ni sustituye la confirmación explícita.",
+  },
+  {
+    id: "customer-activities-only",
+    oldTitle: "Proponer solo actividades para la cuenta",
+    oldInstruction:
+      "Limita las operaciones propuestas a actividades relacionadas con la cuenta seleccionada. No propongas cambios de etapa, campos CRM u operaciones comerciales que pertenecen al Chat Coach.",
+    title: "Respetar la política de operaciones de Cliente existente",
+    instruction:
+      "Propón operaciones únicamente de los tipos que autoriza la política efectiva del servidor y siempre dentro de la cuenta seleccionada. No deduzcas permisos ni amplíes tipos permitidos a partir de esta instrucción; toda propuesta requiere revisión y confirmación.",
   },
 ];
 
@@ -313,6 +334,32 @@ async function ensureCoachAdminRulesSchema() {
           `INSERT IGNORE INTO mi_coach_admin_rule_migrations (migration_key)
            VALUES (?)`,
           ["seed_additional_admin_rules_v2"],
+        );
+      }
+      const operationAlignmentMigration = await query(
+        `SELECT migration_key FROM mi_coach_admin_rule_migrations
+         WHERE migration_key = ? LIMIT 1`,
+        ["align_customer_operations_admin_rules_v3"],
+      );
+      if (!operationAlignmentMigration.length) {
+        for (const rule of ADMIN_RULE_ALIGNMENT_MIGRATION) {
+          await query(
+            `UPDATE mi_coach_admin_rules
+             SET title = ?, instruction = ?, updated_at = NOW(3)
+             WHERE id = ? AND title = ? AND instruction = ?`,
+            [
+              rule.title,
+              rule.instruction,
+              rule.id,
+              rule.oldTitle,
+              rule.oldInstruction,
+            ],
+          );
+        }
+        await query(
+          `INSERT IGNORE INTO mi_coach_admin_rule_migrations (migration_key)
+           VALUES (?)`,
+          ["align_customer_operations_admin_rules_v3"],
         );
       }
     })().catch((error) => {

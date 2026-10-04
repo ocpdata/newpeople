@@ -12,6 +12,7 @@
     "seed:demo": "node scripts/seedDemo.js",
     "seed:demo:reset-db": "node scripts/resetDemoDb.js",
     "test:quick:calendar-create-rules": "node scripts/quickCalendarActivityCreationChecks.js",
+    "test:customer-chat:evaluation": "vitest run --maxWorkers=1 test/customer-account-chat-evaluation.test.js",
     "test:db:prepare": "node test/setupTestDb.js",
     "test:coach": "vitest run --maxWorkers=1 test/coach-*.test.js test/mi-agent-coach-*.test.js",
     "test:coach:baseline": "npm run test:coach && vitest run --maxWorkers=1 test/api.integration.test.js -t \"Coach baseline preserves the selected opportunity through question, job response, and session persistence|mi agente analysis job conserva solo recomendaciones de oportunidades autorizadas\"",

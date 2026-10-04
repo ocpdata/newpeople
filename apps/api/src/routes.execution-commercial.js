@@ -32,6 +32,7 @@ import {
   saveOpportunityAction,
 } from "./opportunity-workspace/service.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
+import { ensureCommercialCalendarActivitiesSchema } from "./commercial-intelligence/calendar-activities-schema.js";
 import { buildQuotationPdfBuffer } from "./quotationPdf.js";
 import {
   getCommercialSettings,
@@ -220,11 +221,7 @@ const CALENDAR_DEFAULT_REMINDER_LEAD_MINUTES = Math.max(
   Number(config.app?.calendarReminderLeadMinutes || 60),
 );
 const CALENDAR_ALERT_LOOKBACK_DAYS = 45;
-const CALENDAR_ACTIVITY_KINDS = new Set([
-  "opportunity",
-  "lead",
-  "standalone",
-]);
+const CALENDAR_ACTIVITY_KINDS = new Set(["opportunity", "lead", "standalone"]);
 const CALENDAR_CUSTOM_ACTIVITY_KINDS = new Set(["lead", "standalone"]);
 const CALENDAR_CUSTOM_ACTIVITY_TYPES = new Set([
   ...COMMERCIAL_ACTIVITY_ACTION_TYPES,
@@ -298,38 +295,6 @@ router.use(async (_req, _res, next) => {
     next(error);
   }
 });
-
-async function ensureCommercialCalendarActivitiesSchema() {
-  await query(`
-    CREATE TABLE IF NOT EXISTS commercial_calendar_activities (
-      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-      kind VARCHAR(20) NOT NULL,
-      activity_type VARCHAR(60) NOT NULL,
-      status VARCHAR(40) NOT NULL DEFAULT 'pending',
-      scheduled_at DATETIME NULL,
-      due_date DATE NULL,
-      objective VARCHAR(255) NOT NULL,
-      note TEXT NULL,
-      success_criteria TEXT NULL,
-      seller_user_id BIGINT UNSIGNED NULL,
-      opportunity_id BIGINT UNSIGNED NULL,
-      interaction_id BIGINT UNSIGNED NULL,
-      account_id BIGINT UNSIGNED NULL,
-      contact_id BIGINT UNSIGNED NULL,
-      is_primary_next_step TINYINT(1) NOT NULL DEFAULT 0,
-      created_by BIGINT UNSIGNED NOT NULL,
-      updated_by BIGINT UNSIGNED NOT NULL,
-      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-      KEY idx_cca_schedule_status (scheduled_at, status),
-      KEY idx_cca_kind_status (kind, status),
-      KEY idx_cca_seller (seller_user_id),
-      KEY idx_cca_opportunity (opportunity_id),
-      KEY idx_cca_interaction (interaction_id),
-      KEY idx_cca_account (account_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  `);
-}
 
 function getQuarterLabel(year, quarter) {
   return `T${quarter} ${year}`;
@@ -406,7 +371,9 @@ function getTimeZoneOffsetMinutes(dateValue, timeZone) {
 }
 
 function parseDateTimeLocalText(value) {
-  const rawValue = String(value || "").trim().replace(/Z$/i, "");
+  const rawValue = String(value || "")
+    .trim()
+    .replace(/Z$/i, "");
   const match = rawValue.match(
     /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/,
   );
@@ -3330,12 +3297,7 @@ async function loadScopedCalendarAccount(user, accountId) {
      LIMIT 1`,
     hasCalendarGlobalScope(user)
       ? [Number(user.id), Number(user.id), parsedAccountId]
-      : [
-          Number(user.id),
-          Number(user.id),
-          parsedAccountId,
-          Number(user.id),
-        ],
+      : [Number(user.id), Number(user.id), parsedAccountId, Number(user.id)],
   );
   return rows[0]
     ? {
@@ -3381,7 +3343,8 @@ async function loadScopedCalendarContact(user, contactId, accountId = null) {
     ? {
         id: Number(rows[0].id),
         accountId: rows[0].account_id ? Number(rows[0].account_id) : null,
-        fullName: `${rows[0].first_name || ""} ${rows[0].last_name || ""}`.trim(),
+        fullName:
+          `${rows[0].first_name || ""} ${rows[0].last_name || ""}`.trim(),
       }
     : null;
 }
@@ -3420,9 +3383,12 @@ async function loadScopedCalendarInteraction(user, interactionId) {
         accountId: rows[0].account_id ? Number(rows[0].account_id) : null,
         accountName: rows[0].account_name || "",
         contactId: rows[0].contact_id ? Number(rows[0].contact_id) : null,
-        contactName: `${rows[0].contact_first_name || ""} ${rows[0].contact_last_name || ""}`.trim(),
+        contactName:
+          `${rows[0].contact_first_name || ""} ${rows[0].contact_last_name || ""}`.trim(),
         sellerUserId:
-          rows[0].seller_user_id === null ? null : Number(rows[0].seller_user_id),
+          rows[0].seller_user_id === null
+            ? null
+            : Number(rows[0].seller_user_id),
         sellerUserName: rows[0].seller_user_name || "Sin vendedor",
       }
     : null;
@@ -3474,7 +3440,8 @@ async function createCalendarAccountFromDraft(user, draft = {}) {
   const countryRows = await query(
     `SELECT id FROM countries WHERE iso2 = 'MX' LIMIT 1`,
   );
-  const countryId = Number(draft?.countryId || 0) || Number(countryRows?.[0]?.id || 0) || null;
+  const countryId =
+    Number(draft?.countryId || 0) || Number(countryRows?.[0]?.id || 0) || null;
   if (!countryId) {
     throw Object.assign(new Error("No fue posible resolver el pais"), {
       status: 500,
@@ -3627,7 +3594,10 @@ async function createCalendarContactFromDraft(user, accountId, draft = {}) {
     `SELECT country_id FROM accounts WHERE id = ? LIMIT 1`,
     [Number(accountId)],
   );
-  const countryId = Number(draft?.countryId || 0) || Number(accountRows?.[0]?.country_id || 0) || null;
+  const countryId =
+    Number(draft?.countryId || 0) ||
+    Number(accountRows?.[0]?.country_id || 0) ||
+    null;
 
   const duplicateValidation = await validateContactDuplicates({
     draft: {
@@ -3705,7 +3675,11 @@ async function createCalendarContactFromDraft(user, accountId, draft = {}) {
   return Number(insertResult.insertId || 0);
 }
 
-async function resolveCalendarActivityRelations(user, payload = {}, options = {}) {
+async function resolveCalendarActivityRelations(
+  user,
+  payload = {},
+  options = {},
+) {
   const kind = normalizeCalendarActivityKind(payload.kind);
   const allowCreate = options.allowCreate !== false;
 
@@ -3722,15 +3696,21 @@ async function resolveCalendarActivityRelations(user, payload = {}, options = {}
         status: 400,
       });
     }
-    const opportunity = await loadOpportunityForExecution(user, parsedOpportunityId);
+    const opportunity = await loadOpportunityForExecution(
+      user,
+      parsedOpportunityId,
+    );
     if (!opportunity) {
       throw Object.assign(new Error("Oportunidad no encontrada"), {
         status: 404,
       });
     }
     opportunityId = Number(opportunity.id);
-    accountId = Number(opportunity.account_id || opportunity.accountId || 0) || null;
-    sellerUserId = Number(opportunity.seller_user_id || opportunity.sellerUserId || 0) || null;
+    accountId =
+      Number(opportunity.account_id || opportunity.accountId || 0) || null;
+    sellerUserId =
+      Number(opportunity.seller_user_id || opportunity.sellerUserId || 0) ||
+      null;
   }
 
   if (kind === "lead") {
@@ -3745,7 +3725,10 @@ async function resolveCalendarActivityRelations(user, payload = {}, options = {}
         status: 400,
       });
     }
-    const interaction = await loadScopedCalendarInteraction(user, parsedInteractionId);
+    const interaction = await loadScopedCalendarInteraction(
+      user,
+      parsedInteractionId,
+    );
     if (!interaction) {
       throw Object.assign(new Error("Lead no encontrado"), {
         status: 404,
@@ -3761,7 +3744,10 @@ async function resolveCalendarActivityRelations(user, payload = {}, options = {}
   const contactLinkMode = normalizeContactLinkMode(payload.contactLinkMode);
 
   if (accountLinkMode === "existing") {
-    const scopedAccount = await loadScopedCalendarAccount(user, payload.accountId);
+    const scopedAccount = await loadScopedCalendarAccount(
+      user,
+      payload.accountId,
+    );
     if (!scopedAccount) {
       throw Object.assign(new Error("Cuenta no encontrada o sin acceso"), {
         status: 404,
@@ -3770,15 +3756,25 @@ async function resolveCalendarActivityRelations(user, payload = {}, options = {}
     accountId = scopedAccount.id;
   } else if (accountLinkMode === "create_new") {
     if (!allowCreate) {
-      throw Object.assign(new Error("No se puede crear cuenta en esta operacion"), {
-        status: 400,
-      });
+      throw Object.assign(
+        new Error("No se puede crear cuenta en esta operacion"),
+        {
+          status: 400,
+        },
+      );
     }
-    accountId = await createCalendarAccountFromDraft(user, payload.accountDraft || {});
+    accountId = await createCalendarAccountFromDraft(
+      user,
+      payload.accountDraft || {},
+    );
   }
 
   if (contactLinkMode === "existing") {
-    const scopedContact = await loadScopedCalendarContact(user, payload.contactId, accountId);
+    const scopedContact = await loadScopedCalendarContact(
+      user,
+      payload.contactId,
+      accountId,
+    );
     if (!scopedContact) {
       throw Object.assign(new Error("Contacto no encontrado o sin acceso"), {
         status: 404,
@@ -3790,14 +3786,20 @@ async function resolveCalendarActivityRelations(user, payload = {}, options = {}
     }
   } else if (contactLinkMode === "create_new") {
     if (!allowCreate) {
-      throw Object.assign(new Error("No se puede crear contacto en esta operacion"), {
-        status: 400,
-      });
+      throw Object.assign(
+        new Error("No se puede crear contacto en esta operacion"),
+        {
+          status: 400,
+        },
+      );
     }
     if (!accountId) {
-      throw Object.assign(new Error("Para crear contacto, primero define una cuenta"), {
-        status: 400,
-      });
+      throw Object.assign(
+        new Error("Para crear contacto, primero define una cuenta"),
+        {
+          status: 400,
+        },
+      );
     }
     contactId = await createCalendarContactFromDraft(
       user,
@@ -3808,10 +3810,7 @@ async function resolveCalendarActivityRelations(user, payload = {}, options = {}
 
   if (!sellerUserId) {
     const requestedSellerUserId = Number(payload.sellerUserId || 0);
-    if (
-      requestedSellerUserId > 0 &&
-      hasCalendarGlobalScope(user)
-    ) {
+    if (requestedSellerUserId > 0 && hasCalendarGlobalScope(user)) {
       sellerUserId = requestedSellerUserId;
     } else {
       sellerUserId = Number(user.id);
@@ -3837,7 +3836,8 @@ function mapCustomCalendarActivityRow(row, timeZone = BUSINESS_TIMEZONE) {
     opportunityId:
       row.opportunity_id === null ? null : Number(row.opportunity_id),
     opportunityName: row.opportunity_name || "",
-    interactionId: row.interaction_id === null ? null : Number(row.interaction_id),
+    interactionId:
+      row.interaction_id === null ? null : Number(row.interaction_id),
     accountId: row.account_id === null ? null : Number(row.account_id),
     accountName: row.account_name || "",
     contactId: row.contact_id === null ? null : Number(row.contact_id),
@@ -3851,7 +3851,8 @@ function mapCustomCalendarActivityRow(row, timeZone = BUSINESS_TIMEZONE) {
     note: row.note || "",
     successCriteria: row.success_criteria || "",
     isPrimaryNextStep: Boolean(row.is_primary_next_step),
-    stageName: kind === "lead" ? "Lead" : kind === "standalone" ? "Independiente" : "",
+    stageName:
+      kind === "lead" ? "Lead" : kind === "standalone" ? "Independiente" : "",
     sellerUserId:
       row.seller_user_id === null ? null : Number(row.seller_user_id),
     sellerUserName: row.seller_user_name || "Sin vendedor",
@@ -3977,7 +3978,10 @@ async function createCustomCalendarActivity({
   }
 
   const scheduledAtRaw = String(payload.scheduledAt || "").trim();
-  const scheduledAt = parseCalendarScheduledAt(scheduledAtRaw, businessTimezone);
+  const scheduledAt = parseCalendarScheduledAt(
+    scheduledAtRaw,
+    businessTimezone,
+  );
   if (!scheduledAt) {
     throw Object.assign(new Error("scheduledAt invalido"), { status: 400 });
   }
@@ -4067,7 +4071,10 @@ async function updateCustomCalendarActivity({
     payload.scheduledAt === undefined
       ? current.scheduled_at
       : String(payload.scheduledAt || "").trim();
-  const scheduledAt = parseCalendarScheduledAt(scheduledAtRaw, businessTimezone);
+  const scheduledAt = parseCalendarScheduledAt(
+    scheduledAtRaw,
+    businessTimezone,
+  );
   if (!scheduledAt) {
     throw Object.assign(new Error("scheduledAt invalido"), { status: 400 });
   }
@@ -7687,8 +7694,8 @@ async function listCommercialCalendarActivities({
 
   const [rows, leadFollowUps, completedLeadHistory, customRows] =
     await Promise.all([
-    query(
-      `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
+      query(
+        `SELECT a.id, a.opportunity_id, a.action_type, a.status, a.title, a.notes,
               a.scheduled_at, a.is_primary_next_step,
               o.name AS opportunity_name, o.close_date, o.amount_usd,
             o.seller_user_id,
@@ -7705,19 +7712,19 @@ async function listCommercialCalendarActivities({
            LEFT JOIN users su ON su.id = o.seller_user_id
        WHERE ${where.join(" AND ")}
        ORDER BY a.scheduled_at ASC, a.is_primary_next_step DESC, o.amount_usd DESC, o.name ASC`,
-      params,
-    ),
-    listCalendarLeadFollowUps({
-      user,
-      startDateTime: range.startDateTime,
-      endExclusiveDateTime: range.endExclusiveDateTime,
-      startDate: range.startDate,
-      endDate: range.endDate,
-      sellerUserId,
-      year,
-      quarter,
-      timeZone,
-    }),
+        params,
+      ),
+      listCalendarLeadFollowUps({
+        user,
+        startDateTime: range.startDateTime,
+        endExclusiveDateTime: range.endExclusiveDateTime,
+        startDate: range.startDate,
+        endDate: range.endDate,
+        sellerUserId,
+        year,
+        quarter,
+        timeZone,
+      }),
       includeCompleted
         ? listCalendarCompletedLeadOutcomeHistory({
             user,
@@ -8752,12 +8759,18 @@ router.post(
           return res.status(403).json({ message: "No autorizado" });
         }
 
-        const relations = await resolveCalendarActivityRelations(req.user, req.body, {
-          allowCreate: false,
-        });
+        const relations = await resolveCalendarActivityRelations(
+          req.user,
+          req.body,
+          {
+            allowCreate: false,
+          },
+        );
         const opportunityId = Number(relations.opportunityId || 0);
         if (!opportunityId) {
-          return res.status(400).json({ message: "opportunityId es obligatorio" });
+          return res
+            .status(400)
+            .json({ message: "opportunityId es obligatorio" });
         }
 
         const activityType = String(req.body?.activityType || "").trim();
@@ -8766,7 +8779,9 @@ router.post(
         }
         const objective = String(req.body?.objective || "").trim();
         if (!objective) {
-          return res.status(400).json({ message: "El objetivo es obligatorio" });
+          return res
+            .status(400)
+            .json({ message: "El objetivo es obligatorio" });
         }
         const scheduledAtRaw = String(req.body?.scheduledAt || "").trim();
         const scheduledAt = parseCalendarScheduledAt(
@@ -8990,7 +9005,10 @@ router.post(
         { allowCreate: false },
       );
       const businessTimezone = await loadBusinessTimezone();
-      const dueDate = formatDateInTimeZone(current.scheduled_at, businessTimezone);
+      const dueDate = formatDateInTimeZone(
+        current.scheduled_at,
+        businessTimezone,
+      );
       const actionId = await saveOpportunityAction({
         opportunityId: Number(relations.opportunityId),
         actionId: null,
@@ -9279,8 +9297,12 @@ router.get(
     if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
       return res.status(400).json({ message: "Parametros invalidos" });
     }
-    const opportunity = await loadOpportunityForExecution(req.user, opportunityId);
-    if (!opportunity) return res.status(404).json({ message: "Oportunidad no encontrada" });
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity)
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
     const rows = await query(
       `SELECT id, action_type, status, priority, title, due_date, scheduled_at,
               success_criteria, notes, is_primary_next_step, details_json
@@ -9290,20 +9312,22 @@ router.get(
        LIMIT 100`,
       [opportunityId],
     );
-    return res.json(rows.map((row) => ({
-      id: Number(row.id),
-      activityType: row.action_type || "other",
-      status: row.status || "pending",
-      priority: row.priority || "medium",
-      objective: row.title || "",
-      dueDate: row.due_date || null,
-      scheduledAt: row.scheduled_at || null,
-      successCriteria: row.success_criteria || "",
-      notes: row.notes || "",
-      isPrimaryNextStep: Boolean(row.is_primary_next_step),
-      entryKind: getCommercialEntryKind(row.action_type),
-      details: parseCommercialActionDetails(row.details_json),
-    })));
+    return res.json(
+      rows.map((row) => ({
+        id: Number(row.id),
+        activityType: row.action_type || "other",
+        status: row.status || "pending",
+        priority: row.priority || "medium",
+        objective: row.title || "",
+        dueDate: row.due_date || null,
+        scheduledAt: row.scheduled_at || null,
+        successCriteria: row.success_criteria || "",
+        notes: row.notes || "",
+        isPrimaryNextStep: Boolean(row.is_primary_next_step),
+        entryKind: getCommercialEntryKind(row.action_type),
+        details: parseCommercialActionDetails(row.details_json),
+      })),
+    );
   },
 );
 

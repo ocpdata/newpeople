@@ -9,6 +9,13 @@ import {
 } from "./read-tools.js";
 import { getCoachBusinessRules } from "./business-rules.js";
 import { matchCoachQueryCase } from "./case-catalog.js";
+import { CUSTOMER_CHAT_EVIDENCE_LIMITS } from "../commercial-intelligence/customer-chat-evidence.js";
+import {
+  classifyChannelIntent,
+  getChannelIntentDefaults,
+  normalizeChannelIntentPlan,
+} from "./channel-intents.js";
+import { summarizeCoachToolResults } from "./observability.js";
 import {
   buildCoachDetailHandoff,
   getMissingCoachIntentContext,
@@ -90,7 +97,9 @@ export function shouldPreserveCoachContextForQuestion(
       /\b(?:este|esta|ese|esa|actual|mismo|misma) lead\b|\blead (?:actual|seleccionado|en contexto)\b/,
     ],
   ];
-  return references.some(([id, pattern]) => Number(id || 0) > 0 && pattern.test(text));
+  return references.some(
+    ([id, pattern]) => Number(id || 0) > 0 && pattern.test(text),
+  );
 }
 
 function normalizeRequestContext(context) {
@@ -418,6 +427,7 @@ export async function completeCoachModelTurn({
   user,
   jobId,
   startedAt,
+  deadlineAt = null,
   featureCode,
   channel = "coach",
   jobType = getConversationChannelJobType(channel),
@@ -499,6 +509,7 @@ export async function completeCoachModelTurn({
     user,
     jobId,
     startedAt: new Date(startedAt),
+    deadlineAt,
     phase: `${channel}_tool_results`,
     featureCode,
     jobType,
@@ -538,12 +549,12 @@ export async function runConversationEngine({
     channelRules.scope ||
     operationPolicy.sourceChannel ||
     "coach";
+  const turnDeadlineAt =
+    channel === "customer_account"
+      ? turnStartedAt + CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs
+      : null;
   const businessRules =
-    configuredBusinessRules ||
-    getCoachBusinessRules({
-      channel,
-      overrides: channelRules,
-    });
+    configuredBusinessRules || getCoachBusinessRules({ channel });
   const jobType = getConversationChannelJobType(channel);
   const channelHistory = normalizeChannelConversationHistory(history, channel);
   const effectiveOperationPolicy = {
@@ -592,7 +603,83 @@ export async function runConversationEngine({
     channel === "coach"
       ? await (dependencies.loadCoachIntentCatalog || listCoachIntentCatalog)()
       : [];
-  const legacyIntent = classifyCoachIntent(question);
+  const channelIntentCatalog =
+    channel === "coach"
+      ? []
+      : typeof dependencies.loadChannelIntentConfigurations === "function"
+        ? await dependencies.loadChannelIntentConfigurations({ channel })
+        : getChannelIntentDefaults(channel);
+  const plannerMayRun =
+    channel === "customer_account" &&
+    typeof dependencies.planChannelIntent === "function";
+  let structuredChannelIntentRouting = null;
+  let plannerDiagnostics = {
+    source: "not_applicable",
+    fallbackUsed: false,
+    reasonCode:
+      channel === "customer_account" && !plannerMayRun
+        ? "planner_unavailable"
+        : null,
+    queryCount: 0,
+  };
+  if (plannerMayRun) {
+    try {
+      const proposedPlan = await dependencies.planChannelIntent({
+        channel,
+        question,
+        context,
+        conversationHistory: channelHistory,
+        conversationContext: context.conversationContext || null,
+        availableTools: resolvedTools,
+        catalog: channelIntentCatalog,
+        deadlineAt: turnDeadlineAt,
+      });
+      structuredChannelIntentRouting = normalizeChannelIntentPlan({
+        channel,
+        plan: proposedPlan,
+        availableTools: resolvedTools,
+        context,
+        configuration: channelIntentCatalog,
+        question,
+        conversationHistory: channelHistory,
+        trustedEntityReferences: context.trustedEntityReferences || [],
+      });
+      plannerDiagnostics = structuredChannelIntentRouting
+        ? {
+            source: "structured_plan",
+            fallbackUsed: false,
+            reasonCode: null,
+            queryCount: structuredChannelIntentRouting.intents.length,
+          }
+        : {
+            source: "not_applicable",
+            fallbackUsed: false,
+            reasonCode: proposedPlan ? "invalid_plan" : "planner_unavailable",
+            queryCount: 0,
+          };
+    } catch {
+      plannerDiagnostics = {
+        source: "not_applicable",
+        fallbackUsed: false,
+        reasonCode: "planner_error",
+        queryCount: 0,
+      };
+    }
+  }
+  const channelIntentRouting =
+    channel === "customer_account"
+      ? structuredChannelIntentRouting
+      : channel === "prospect"
+        ? classifyChannelIntent({
+            channel,
+            question,
+            availableTools: resolvedTools,
+            context,
+            configuration: channelIntentCatalog,
+          })
+        : null;
+  const legacyIntent =
+    channel === "coach" ? classifyCoachIntent(question) : null;
   const legacyIntentCode = [
     "stage_readiness",
     "activity_query",
@@ -605,7 +692,7 @@ export async function runConversationEngine({
     "temporal_filter",
     "operation",
     "general_query",
-  ].includes(legacyIntent.type)
+  ].includes(legacyIntent?.type)
     ? legacyIntent.type
     : "clarification";
   let rawIntentClassification = {
@@ -638,8 +725,7 @@ export async function runConversationEngine({
     }
   }
   const processInformationQuestion =
-    channel === "coach" &&
-    isGeneralCoachProcessInformationQuestion(question);
+    channel === "coach" && isGeneralCoachProcessInformationQuestion(question);
   const emailHelpQuestion =
     channel === "coach" && isCoachEmailHelpQuestion(question);
   const questionPhrasingHelp =
@@ -685,16 +771,31 @@ export async function runConversationEngine({
           typeof tool === "string" ? tool : tool?.name,
         ),
       )
-    : resolvedTools;
+    : channelIntentRouting
+      ? channelIntentRouting.requiresClarification
+        ? []
+        : resolvedTools.filter((tool) =>
+            channelIntentRouting.allowedTools.includes(
+              typeof tool === "string" ? tool : tool?.name,
+            ),
+          )
+      : channel === "customer_account"
+        ? []
+        : resolvedTools;
   const readModel = await prepareReadModel({
     user,
     question,
     selectedContext: context,
     conversationHistory: channelHistory,
+    conversationContext: context.conversationContext || null,
     dependencies,
     availableTools: routedTools,
+    authorizedTools: resolvedTools,
     businessRules,
     intentRouting,
+    ...(channel !== "coach"
+      ? { channelIntentRouting, channelIntentCatalog }
+      : {}),
   });
   const {
     effectiveContext,
@@ -709,6 +810,47 @@ export async function runConversationEngine({
     conversationHistory,
     explicitEntities,
   } = readModel;
+  const plannerCandidateTools =
+    structuredChannelIntentRouting?.allowedTools || [];
+  const plannerCandidateIntents = structuredChannelIntentRouting?.intents || [];
+  const plannerCandidateFilters = structuredChannelIntentRouting?.filters || {};
+  const plannerCandidateEntities =
+    structuredChannelIntentRouting?.entities || {};
+  const plannerEvaluation =
+    channel === "customer_account"
+      ? {
+          mode: "active",
+          assigned: true,
+          planAvailable: Boolean(structuredChannelIntentRouting),
+          plannerIntents: plannerCandidateIntents,
+          plannerTools: plannerCandidateTools,
+          plannerRequiresClarification: Boolean(
+            structuredChannelIntentRouting?.requiresClarification,
+          ),
+          plannerFilterCount: Object.values(plannerCandidateFilters).filter(
+            (value) => value !== null && value !== undefined && value !== "",
+          ).length,
+          plannerEntityReferenceCount: Object.values(
+            plannerCandidateEntities,
+          ).filter(Boolean).length,
+          plannedToolCount: plannerCandidateTools.length,
+          plannedToolsObserved: plannerCandidateTools.filter((toolName) =>
+            (Array.isArray(readToolResults) ? readToolResults : []).some(
+              (item) => item.toolName === toolName,
+            ),
+          ).length,
+          plannedToolsWithEvidence: plannerCandidateTools.filter((toolName) =>
+            (Array.isArray(readToolResults) ? readToolResults : []).some(
+              (item) =>
+                item.toolName === toolName &&
+                !item.error &&
+                (Array.isArray(item.result)
+                  ? item.result.length > 0
+                  : item.result !== null && item.result !== undefined),
+            ),
+          ).length,
+        }
+      : null;
   const administrativeRules =
     typeof dependencies.loadAdministrativeRules === "function"
       ? await dependencies.loadAdministrativeRules({
@@ -721,6 +863,9 @@ export async function runConversationEngine({
     administrativeRules: administrativeRules.filter((rule) => rule.enabled),
     intentCatalog,
     intentRouting,
+    ...(channel !== "coach"
+      ? { channelIntentCatalog, channelIntentRouting }
+      : {}),
     interactionModePolicy:
       channel === "coach"
         ? getCoachInteractionModePolicy(intentRouting?.mode)
@@ -793,7 +938,38 @@ export async function runConversationEngine({
           intendedAction: "continue_request",
         }
       : null;
-  const effectiveClarification = clarification || routingClarification;
+  const channelPlanClarification = channelIntentRouting?.ambiguity;
+  const channelRoutingClarification =
+    channelIntentRouting?.requiresClarification ||
+    (channel === "customer_account" && !channelIntentRouting)
+      ? {
+          type: "missing_fields",
+          message: !channelIntentRouting
+            ? plannerDiagnostics.reasonCode === "planner_error" ||
+              plannerDiagnostics.reasonCode === "invalid_plan" ||
+              plannerDiagnostics.reasonCode === "planner_unavailable"
+              ? "No pude interpretar la solicitud con el planificador nuevo. No consulté el CRM; reformula la pregunta o inténtalo más tarde."
+              : "El planificador nuevo no produjo una ruta válida. No consulté el CRM; reformula la pregunta o inténtalo más tarde."
+            : channelIntentRouting.channel === "customer_account"
+              ? channelPlanClarification?.reason === "other_account"
+                ? "No puedo consultar otra cuenta desde este chat. Cambia la cuenta seleccionada en la interfaz y vuelve a preguntar."
+                : channelPlanClarification?.reason === "out_of_scope"
+                  ? "Ese dominio no está disponible en Cliente existente. Puedo consultar los datos CRM incluidos para la cuenta seleccionada."
+                  : channelPlanClarification?.clarificationQuestion ||
+                    (channelIntentRouting.missingContext.includes("period")
+                      ? "¿Qué periodo quieres consultar?"
+                      : channelIntentRouting.missingContext.includes("account")
+                        ? "Selecciona una cuenta autorizada para continuar esta consulta."
+                        : "No identifiqué con suficiente precisión qué registro o dato quieres consultar. ¿Puedes precisarlo?")
+              : "No se encontró una sesión de Cuenta nueva válida para continuar.",
+          missing: channelIntentRouting?.missingContext || [],
+          candidates: [],
+          originalRequest: question,
+          intendedAction: "continue_request",
+        }
+      : null;
+  const effectiveClarification =
+    clarification || routingClarification || channelRoutingClarification;
   const deterministicResult =
     effectiveClarification ||
     channel !== "coach" ||
@@ -843,6 +1019,17 @@ export async function runConversationEngine({
           confidence: "high",
           clarification: effectiveClarification,
           operations: [],
+          ...(channel !== "coach"
+            ? {
+                entities: {
+                  accountId: effectiveContext.accountId || null,
+                  opportunityId: effectiveContext.opportunityId || null,
+                  contactId: effectiveContext.contactId || null,
+                  leadId: effectiveContext.leadId || null,
+                  names: [],
+                },
+              }
+            : {}),
         }
       : deterministicResult ||
         (await requestResponse({
@@ -853,6 +1040,7 @@ export async function runConversationEngine({
           phase: channel,
           featureCode,
           jobType,
+          deadlineAt: turnDeadlineAt,
         }));
   }
   const completedModelTurn = await completeCoachModelTurn({
@@ -867,6 +1055,7 @@ export async function runConversationEngine({
     user,
     jobId,
     startedAt: new Date(),
+    deadlineAt: turnDeadlineAt,
     featureCode,
     channel,
     jobType,
@@ -911,9 +1100,7 @@ export async function runConversationEngine({
     questionContextTransition.changed ||
     shouldPreserveCoachContextForQuestion(question, effectiveContext);
   const responseContextTransition =
-    !preserveQuestionContext &&
-    !clarification &&
-    !result?.clarification
+    !preserveQuestionContext && !clarification && !result?.clarification
       ? resolveResponseContext(scopedSnapshot, effectiveContext, result)
       : null;
   const activeContext =
@@ -945,8 +1132,8 @@ export async function runConversationEngine({
         })
       : {
           intent: {
-            type: "channel_query",
-            subtype: channel,
+            type: channelIntentRouting?.intent || "channel_query",
+            subtype: channelIntentRouting?.intent || channel,
             requiresClarification: Boolean(result?.clarification),
             operationRequested: Boolean(result?.operations?.length),
           },
@@ -956,6 +1143,8 @@ export async function runConversationEngine({
             sourceChannel: channel,
             scope: channel,
             entityContext: effectiveContext,
+            allowedTools: channelIntentRouting?.allowedTools || [],
+            requiredContext: channelIntentRouting?.requiredContext || [],
           },
         };
   const normalizedResponse = normalizeResponse(
@@ -1024,6 +1213,9 @@ export async function runConversationEngine({
       reason: intentRouting.reason || "",
     };
   }
+  if (channelIntentRouting) {
+    response.channelIntentRouting = channelIntentRouting;
+  }
   response.detailHandoff = handoffResult ? detailHandoff : null;
   response.intentClassification = phaseOneDecision.intent;
   response.phaseOne = {
@@ -1057,13 +1249,24 @@ export async function runConversationEngine({
   const resolvedEntityTypes = ["account", "opportunity", "contact", "lead"]
     .filter((type) => explicitEntities?.[type])
     .map((type) => type);
+  const tracedToolResults = [
+    ...readToolResults,
+    ...completedModelTurn.requestedToolResults,
+  ];
+  let adapterDiagnostics = {};
+  try {
+    adapterDiagnostics = dependencies.getTurnDiagnostics?.() || {};
+  } catch {
+    adapterDiagnostics = {};
+  }
   const qualityTrace = {
     channel,
     caseId: phaseOneDecision.intent.caseId || null,
     process:
       channel === "coach"
         ? phaseOneDecision.intent.type
-        : getConversationChannelJobType(channel),
+        : channelIntentRouting?.intent ||
+          getConversationChannelJobType(channel),
     intentType: phaseOneDecision.intent.type,
     intentSubtype: phaseOneDecision.intent.subtype || null,
     primaryEntity: activeContext.opportunityId
@@ -1094,21 +1297,67 @@ export async function runConversationEngine({
       process:
         channel === "coach"
           ? phaseOneDecision.intent.type
-          : getConversationChannelJobType(channel),
+          : channelIntentRouting?.intent ||
+            getConversationChannelJobType(channel),
       filters: phaseOneDecision.filters,
       scope: businessRules.scope,
       filtersDefault: businessRules.filters,
       operationPolicy: effectiveOperationPolicy,
       channelRules: effectiveChannelRules,
     },
+    diagnostics: {
+      planner: {
+        ...plannerDiagnostics,
+        evaluation: plannerEvaluation
+          ? {
+              ...plannerEvaluation,
+              genericFallback: Boolean(
+                adapterDiagnostics.fallback?.used ||
+                plannerDiagnostics.fallbackUsed,
+              ),
+              retrievalError: Boolean(
+                tracedToolResults.some((item) => Boolean(item.error)) ||
+                (Array.isArray(adapterDiagnostics.snapshotMetrics) &&
+                  adapterDiagnostics.snapshotMetrics.some(
+                    (metric) => metric?.errorCode,
+                  )),
+              ),
+              truncatedSourceCount: Array.isArray(
+                adapterDiagnostics.snapshotMetrics,
+              )
+                ? adapterDiagnostics.snapshotMetrics.filter(
+                    (metric) => metric?.truncated === true,
+                  ).length
+                : 0,
+            }
+          : null,
+      },
+      channelIntentRouting: channelIntentRouting
+        ? {
+            intent: channelIntentRouting.intent,
+            mode: channelIntentRouting.mode,
+            confidence: channelIntentRouting.confidence,
+            allowedTools: channelIntentRouting.allowedTools,
+            requiredContext: channelIntentRouting.requiredContext,
+            missingContext: channelIntentRouting.missingContext,
+            requiresClarification: channelIntentRouting.requiresClarification,
+          }
+        : null,
+      fallback: adapterDiagnostics.fallback || {
+        used: false,
+        reasonCode: null,
+      },
+      evidence: adapterDiagnostics.evidence || null,
+      agentMetrics: adapterDiagnostics.agentMetrics || [],
+      failureStage: null,
+    },
+    toolMetrics: summarizeCoachToolResults(tracedToolResults),
     validationStatus,
     validationReasons,
     responseType: response.responseType,
     confidence: response.confidence,
     evidenceCount,
-    toolsUsed: [...readToolResults, ...completedModelTurn.requestedToolResults]
-      .map((tool) => tool.toolName)
-      .filter(Boolean),
+    toolsUsed: tracedToolResults.map((tool) => tool.toolName).filter(Boolean),
     operationsProposed: proposedOperationCount,
     operationsRejected: Math.max(
       0,
@@ -1135,6 +1384,7 @@ export async function runConversationEngine({
     authoritativeStageReadiness,
     requestedToolResults: completedModelTurn.requestedToolResults,
     qualityTrace,
+    channelIntentRouting,
   };
 }
 
@@ -1171,6 +1421,7 @@ export async function prepareCoachReadModel({
     conversationHistory,
     effectiveContext,
     businessRules,
+    { exactMatchOnly: intentRouting?.intent === "seller_coaching" },
   );
   let questionContextTransition = applyCoachEntityResolution(
     baseSnapshot,
@@ -1182,9 +1433,9 @@ export async function prepareCoachReadModel({
   const normalizedQuestion = normalizeCoachMatchText(question);
   const hasExplicitEntity = Boolean(
     explicitEntities.account ||
-      explicitEntities.opportunity ||
-      explicitEntities.contact ||
-      explicitEntities.lead,
+    explicitEntities.opportunity ||
+    explicitEntities.contact ||
+    explicitEntities.lead,
   );
   const hasExplicitRecordFocus =
     /\b(?:esta|este|esa|ese|mi|mis)\s+(?:cuenta|oportunidad|contacto|lead)\b/.test(

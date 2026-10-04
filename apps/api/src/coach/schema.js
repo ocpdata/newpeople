@@ -216,6 +216,8 @@ export async function ensureCoachSchema() {
           confidence VARCHAR(20) NULL,
           evidence_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
           tools_used_json JSON NOT NULL,
+          tool_metrics_json JSON NULL,
+          diagnostics_json JSON NULL,
           operations_proposed SMALLINT UNSIGNED NOT NULL DEFAULT 0,
           operations_rejected SMALLINT UNSIGNED NOT NULL DEFAULT 0,
           latency_ms INT UNSIGNED NOT NULL DEFAULT 0,
@@ -240,6 +242,24 @@ export async function ensureCoachSchema() {
           `ALTER TABLE coach_turn_quality_traces ADD COLUMN case_id VARCHAR(80) NULL AFTER process_key`,
         );
       }
+      if (
+        !qualityTraceColumns.some(
+          (column) => column.Field === "tool_metrics_json",
+        )
+      ) {
+        await query(
+          `ALTER TABLE coach_turn_quality_traces ADD COLUMN tool_metrics_json JSON NULL AFTER tools_used_json`,
+        );
+      }
+      if (
+        !qualityTraceColumns.some(
+          (column) => column.Field === "diagnostics_json",
+        )
+      ) {
+        await query(
+          `ALTER TABLE coach_turn_quality_traces ADD COLUMN diagnostics_json JSON NULL AFTER tool_metrics_json`,
+        );
+      }
       await query(`
         CREATE TABLE IF NOT EXISTS coach_channel_rollouts (
           channel VARCHAR(40) PRIMARY KEY,
@@ -252,7 +272,18 @@ export async function ensureCoachSchema() {
           CONSTRAINT fk_coach_channel_rollout_user FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
         )
       `);
-      for (const channel of ["coach", "customer_account", "prospect"]) {
+      const rolloutColumns = await query(
+        `SHOW COLUMNS FROM coach_channel_rollouts`,
+      );
+      if (rolloutColumns.some((column) => column.Field === "planner_mode")) {
+        await query(
+          `ALTER TABLE coach_channel_rollouts DROP COLUMN planner_mode`,
+        );
+      }
+      await query(
+        `DELETE FROM coach_channel_rollouts WHERE channel = 'customer_account'`,
+      );
+      for (const channel of ["coach", "prospect"]) {
         await query(
           `INSERT INTO coach_channel_rollouts
             (channel, enabled, rollout_percentage, allowlist_json, created_at, updated_at)

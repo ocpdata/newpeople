@@ -11,6 +11,7 @@ const COMMERCIAL_INTELLIGENCE_SCHEMA_STATEMENTS = [
     opportunity_id BIGINT UNSIGNED NULL,
     contact_id BIGINT UNSIGNED NULL,
     history_json JSON NOT NULL,
+    context_json JSON NULL,
     created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
     updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
     CONSTRAINT uq_customer_intelligence_chat_sessions_public UNIQUE (public_id),
@@ -96,6 +97,16 @@ export async function ensureCommercialIntelligenceSchema() {
     ensureCommercialIntelligenceSchemaPromise = (async () => {
       for (const statement of COMMERCIAL_INTELLIGENCE_SCHEMA_STATEMENTS) {
         await query(statement);
+      }
+      const chatSessionColumns = await query(
+        `SHOW COLUMNS FROM customer_intelligence_chat_sessions`,
+      );
+      if (
+        !chatSessionColumns.some((column) => column.Field === "context_json")
+      ) {
+        await query(
+          `ALTER TABLE customer_intelligence_chat_sessions ADD COLUMN context_json JSON NULL AFTER history_json`,
+        );
       }
       await query(
         `INSERT INTO mi_coach_governance_settings
