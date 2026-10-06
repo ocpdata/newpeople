@@ -565,7 +565,9 @@ Los límites actuales son dos rondas adicionales, ocho lecturas como máximo y 4
 
 ### 10. Síntesis y auditoría de respuesta
 
-Solo si el verificador acepta la evidencia como suficiente, el adaptador llama al modelo con el esquema `account_contextual_chat`. La respuesta incluye texto, evidencia, inferencias, confianza, elementos pendientes y entidades estructuradas cuando corresponda.
+Si el verificador acepta evidencia suficiente **o confirma `no_results` con las consultas requeridas completadas sin error, truncamiento ni fuentes omitidas**, el adaptador llama al modelo con el esquema `account_contextual_chat`. Para ese caso, el contexto incluye `verifiedEmptyResults`: herramienta, cuenta/entidad consultada, conteo cero y estado de consulta completada. La IA puede explicar que no encontró registros dentro de ese alcance; no puede generalizar que nunca existan. Errores, evidencia incompleta, permisos faltantes o límites de consulta no pasan a síntesis como ausencia confirmada.
+
+La respuesta incluye texto, evidencia, inferencias, confianza, elementos pendientes y entidades estructuradas cuando corresponda. La auditoría recibe el mismo resultado vacío verificado y comprueba que la afirmación de ausencia se limite a la consulta y entidad indicadas.
 
 La intención simple `account_overview` usa una respuesta determinista desde los resultados exitosos del read model: cuenta, oportunidades abiertas y pipeline calculados desde las filas devueltas, y contactos si su consulta se ejecutó. No solicita al modelo recalcular esas cifras. Las interacciones solo se mencionan si `searchInteractions` produjo resultados en el turno; si no se consultó esa fuente, se omite esa sección. El catálogo global `provider_catalog` no se carga para resúmenes; solo se incluye en snapshots conversacionales cuando la pregunta solicita explícitamente expansión, upsell, venta cruzada o productos complementarios. Los demás consumidores del snapshot mantienen su comportamiento por defecto.
 
@@ -576,6 +578,8 @@ Finalmente, el normalizador y el servicio validan las entidades contra la cuenta
 ### 11. Operaciones propuestas
 
 El modelo puede proponer una operación, pero no escribir directamente en el CRM. Los contratos de `apps/api/src/coach/operation-contract.js` y `apps/api/src/coach/contract.js` normalizan y filtran operaciones por canal y permisos. La revisión, confirmación, ejecución y auditoría pertenecen a los flujos controlados existentes.
+
+Las solicitudes explícitas para cambiar el monto de una oportunidad usan una respuesta determinista del servidor en `customer-chat-adapter.js`, aunque el planificador las clasifique como `read_only`. El servidor prepara la operación desde el snapshot autorizado; si no puede identificar un único destino, responde con una aclaración y cero operaciones, sin delegar la redacción al modelo. Una propuesta válida incluye el importe actual y el nuevo, y requiere revisión y confirmación antes de cualquier escritura. No se prometen propuestas por lote cuando la solicitud abarca varias oportunidades.
 
 Cuando el vendedor pulsa **Preparar actividad** en Cliente existente, la propuesta llega al diálogo compartido de confirmación con `accountId` y `opportunityId` validados. Ese origen entrega al diálogo una lista de opciones limitada a la oportunidad recomendada dentro de la cuenta seleccionada; el desplegable la muestra preseleccionada. Las aperturas normales desde Coach no pasan ese override y conservan la lista de oportunidades que ya tenían.
 

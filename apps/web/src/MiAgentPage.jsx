@@ -63,6 +63,69 @@ const CUSTOMER_ACTIVITY_TYPE_LABELS = {
   demo: "Demostración",
   presentation: "Presentación",
 };
+const CUSTOMER_CHAT_DEBUG_GUIDE = {
+  B1: {
+    purpose: "Recibe la pregunta y la muestra en el chat.",
+    check: "Que el texto de la pregunta sea el esperado.",
+  },
+  B2: {
+    purpose: "Asocia la pregunta con una sesión y crea el job del turno.",
+    check: "Los IDs de sesión y job, y que el job haya terminado.",
+  },
+  B3: {
+    purpose: "Valida cuenta, permisos, historial y contexto CRM.",
+    check: "La cuenta seleccionada y el contexto que se recuperó.",
+  },
+  B4: {
+    purpose: "Prepara las reglas y herramientas del canal Cliente existente.",
+    check: "Que solo aparezcan herramientas autorizadas para este usuario.",
+  },
+  B5: {
+    purpose: "Coordina el turno y aplica políticas antes de responder.",
+    check: "La ruta elegida y si el turno pidió aclaración.",
+  },
+  B6: {
+    purpose: "Interpreta la intención, el objetivo y los filtros.",
+    check: "Intención, cardinalidad, ambigüedad y modo de consulta.",
+  },
+  B7: {
+    purpose: "Convierte el plan en lecturas concretas.",
+    check: "Qué consultas se autorizaron y cuáles quedaron fuera.",
+  },
+  B8: {
+    purpose: "Lee datos CRM dentro de la cuenta autorizada.",
+    check: "Conteos, errores y truncamientos; no se muestran filas CRM completas.",
+  },
+  B9: {
+    purpose: "Comprueba si la evidencia alcanza para responder.",
+    check: "Estado, hechos faltantes, consultas fallidas y límites.",
+  },
+  B10: {
+    purpose: "Construye y valida la respuesta final.",
+    check: "Tipo de respuesta, fallback y resultado de la auditoría.",
+  },
+  B11: {
+    purpose: "Guarda respuesta, historial y contexto del siguiente turno.",
+    check: "Si el contexto se recalculó o se conservó.",
+  },
+};
+
+const CUSTOMER_CHAT_DEBUG_STATUS_LABELS = {
+  completed: "Completado",
+  executed: "Se ejecutaron lecturas",
+  no_reads: "No necesitó leer CRM",
+  not_reached: "No alcanzado",
+  sufficient: "Evidencia suficiente",
+  no_results: "Sin coincidencias",
+  clarification: "Necesita precisión",
+  error: "Error",
+  query_error: "Falló una consulta",
+  query_limit_reached: "Límite de consultas",
+  insufficient_evidence: "Falta evidencia",
+  timeout: "Tiempo agotado",
+  verification_unavailable: "Verificación no disponible",
+  verification_error: "Falló la verificación",
+};
 
 const COACH_POLL_TIMEOUT_MS = 180000;
 const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
@@ -1665,6 +1728,7 @@ export default function MiAgentPage({
                     role: "assistant",
                     answer: message.text,
                     activityHistory: message.activityHistory || null,
+                    debug: message.turnDebug || null,
                     sourceDomain: "crm_internal",
                   },
           ),
@@ -6216,6 +6280,70 @@ export default function MiAgentPage({
                             ))}
                           </div>
                         )
+                      ) : null}
+                      {message.debug ? (
+                        <details
+                          className={`mi-agent-customer-chat-debug is-${message.debug.issue?.severity || "info"}`}
+                        >
+                          <summary>
+                            Diagnóstico · {message.debug.issue?.title || "Turno"}
+                          </summary>
+                          <div className="mi-agent-customer-chat-debug-result">
+                            <strong>
+                              {message.debug.issue?.block
+                                ? `Bloque a revisar: ${message.debug.issue.block}`
+                                : "Resultado del turno"}
+                            </strong>
+                            <p>{message.debug.issue?.message}</p>
+                            <small>{message.debug.issue?.nextAction}</small>
+                          </div>
+                          <ol className="mi-agent-customer-chat-debug-flow">
+                            {message.debug.flow.map((item) => (
+                              <li
+                                key={item.block}
+                                className={
+                                  item.block === message.debug.issue?.block
+                                    ? "is-problem"
+                                    : ""
+                                }
+                              >
+                                <div className="mi-agent-customer-chat-debug-step-heading">
+                                  <strong>
+                                    {item.block} · {item.label}
+                                  </strong>
+                                  <small>
+                                    {CUSTOMER_CHAT_DEBUG_STATUS_LABELS[
+                                      item.status
+                                    ] || item.status}
+                                  </small>
+                                </div>
+                                <span>
+                                  {CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.purpose}
+                                </span>
+                                <small>
+                                  Revisar: {CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.check}
+                                </small>
+                              </li>
+                            ))}
+                          </ol>
+                          <p className="mi-agent-customer-chat-debug-next">
+                            Próximo turno: B11 entrega el estado a B2 y B3; el
+                            recorrido vuelve a entrar por{" "}
+                            {message.debug.nextTurn.entryBlocks.join(" → ")}.
+                          </p>
+                          <details className="mi-agent-customer-chat-debug-json">
+                            <summary>Ver JSON recibido en este turno</summary>
+                            <pre>
+                              {JSON.stringify(message.debug.currentTurn, null, 2)}
+                            </pre>
+                          </details>
+                          <details className="mi-agent-customer-chat-debug-json">
+                            <summary>Ver JSON que continúa al siguiente turno</summary>
+                            <pre>
+                              {JSON.stringify(message.debug.nextTurn, null, 2)}
+                            </pre>
+                          </details>
+                        </details>
                       ) : null}
                       <CoachQualityFeedback traceId={message.qualityTraceId} />
                       {showCustomerChatFoundation &&

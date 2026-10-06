@@ -249,10 +249,29 @@ function buildCustomerCoachSnapshot(snapshot, quotation) {
   const account = snapshot.account;
   const accountId = Number(account?.id || 0) || null;
   const accountName = account?.name || "";
+  const contactsById = new Map(
+    (snapshot.contacts || []).map((contact) => [Number(contact.id), contact]),
+  );
   const activities = snapshot.activities || snapshot.interactions || [];
   const opportunities = opportunityRecords(snapshot).map((opportunity) => ({
     ...opportunity,
     account: { id: accountId, name: accountName },
+    associatedContact:
+      snapshot.permissions?.canReadContacts === true &&
+      Number(opportunity.contactId || 0) > 0 &&
+      Number(opportunity.accountId || accountId) === accountId
+        ? (() => {
+            const contact = contactsById.get(Number(opportunity.contactId));
+            return contact &&
+              Number(contact.accountId || 0) === accountId &&
+              contact.activationStatusCode === "activado"
+              ? {
+                  name: contact.name || "",
+                  positionTitle: contact.positionTitle || "",
+                }
+              : null;
+          })()
+        : null,
     activities: activities.filter(
       (activity) =>
         Number(activity.opportunityId || 0) === Number(opportunity.id),
@@ -1298,6 +1317,15 @@ function resolveCustomerOpportunity(snapshot, question) {
   return resolution.opportunity || snapshot.selectedOpportunity || null;
 }
 
+function isExplicitCustomerAmountChange(question) {
+  const normalizedQuestion = normalize(question);
+  return (
+    /\b(?:actualiza|actualizar|cambia|cambiar|modifica|modificar|ajusta|ajustar|sube|subir|incrementa|incrementar|reduce|reducir|baja|bajar)\b/.test(
+      normalizedQuestion,
+    ) && /\b(?:monto|importe)\b/.test(normalizedQuestion)
+  );
+}
+
 function buildCustomerEmailDraft(snapshot, question, contactReadAllowed) {
   const contacts =
     contactReadAllowed && Array.isArray(snapshot.contacts)
@@ -1504,6 +1532,9 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && message.activityHistory
         ? { activityHistory: message.activityHistory }
         : {}),
+      ...(message.role === "assistant" && message.turnDebug
+        ? { turnDebug: message.turnDebug }
+        : {}),
     }));
   return [
     ...normalizedHistory,
@@ -1516,6 +1547,9 @@ export function appendCustomerAccountChatHistory(
           text: String(answer).trim().slice(0, 2000),
           ...(assistantMetadata.activityHistory
             ? { activityHistory: assistantMetadata.activityHistory }
+            : {}),
+          ...(assistantMetadata.turnDebug
+            ? { turnDebug: assistantMetadata.turnDebug }
             : {}),
         }
       : null,
@@ -1772,7 +1806,7 @@ export function createCustomerAccountAdapter({
       const plan = await runStructuredTextResearch({
         schemaName: "customer_account_query_plan",
         systemPrompt:
-          "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Distingue la intención consultada de la entidad a la que se refiere: si preguntas por las actividades, etapa, cotización o contactos que tiene una oportunidad ya identificada, targetType debe ser opportunity y debes devolver el candidateKey de esa oportunidad; no cambies targetType a account solo porque la consulta sea account_activity_history. Por ejemplo, después de consultar Vrf 2027, ante '¿Qué actividad pendiente tiene?' conserva Vrf 2027 como objetivo singular y planifica las lecturas de actividad correspondientes. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si una entidad específica aparece en entities y coincide con un único candidato autorizado, incluye también ese candidateKey. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Solo usa crm_operation y mode=operation ante una petición explícita de escritura; toda escritura seguirá requiriendo permisos y confirmación del servidor.",
+          "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Distingue la intención consultada de la entidad a la que se refiere: si preguntas por las actividades, etapa, cotización o contactos que tiene una oportunidad ya identificada, targetType debe ser opportunity y debes devolver el candidateKey de esa oportunidad; no cambies targetType a account solo porque la consulta sea account_activity_history. Por ejemplo, después de consultar Vrf 2027, ante '¿Qué actividad pendiente tiene?' conserva Vrf 2027 como objetivo singular y planifica las lecturas de actividad correspondientes. Si preguntan qué contacto está asociado a una oportunidad, incluye contact_query y consulta getOpportunity para leer associatedContact; buscar contactos de la cuenta por sí solo no demuestra que alguno pertenezca a esa oportunidad. Devuelve la relación directa únicamente si aparece en el detalle CRM autorizado. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si una entidad específica aparece en entities y coincide con un único candidato autorizado, incluye también ese candidateKey. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Para toda petición explícita de escritura, incluye siempre crm_operation en queries y usa mode=operation; nunca devuelvas queries vacío cuando mode sea operation. Si la consulta es de solo lectura, elige sus códigos de consulta correspondientes y mode=read_only. Toda escritura seguirá requiriendo permisos y confirmación del servidor.",
         subject: "Plan de consulta del CRM autorizado",
         context: plannerContext,
         currentValues: {},
@@ -1854,13 +1888,17 @@ export function createCustomerAccountAdapter({
       const deterministicResponse = buildCustomerDeterministicResponse({
         snapshot: payload.context,
         question: payload.question,
-        routing,
+        routing: isExplicitCustomerAmountChange(payload.question)
+          ? { ...routing, intent: "crm_operation" }
+          : routing,
         permissions,
         allowedOperationKinds: payload.operationPolicy?.allowedKinds,
       });
       const deterministicOperationResponse =
-        intentCodes.includes("crm_operation") &&
-        deterministicResponse?.operations?.length
+        isExplicitCustomerAmountChange(payload.question)
+          ? deterministicResponse
+          : intentCodes.includes("crm_operation") &&
+              deterministicResponse?.operations?.length
           ? deterministicResponse
           : null;
       const channelCatalog = Array.isArray(
@@ -2013,7 +2051,7 @@ export function createCustomerAccountAdapter({
           evidenceLoop.readToolResults.slice(initialReadToolResults.length),
         ),
       };
-      if (evidenceLoop.status !== "sufficient") {
+      if (!new Set(["sufficient", "no_results"]).has(evidenceLoop.status)) {
         return buildCustomerEvidenceFailureResponse({
           ...evidenceLoop,
           failedSources: evidenceLoop.failedSources,
@@ -2074,6 +2112,37 @@ export function createCustomerAccountAdapter({
         })),
         ...publicResearchEvidence,
       ];
+      const resolvedOpportunityId = Number(
+        routing?.serverResolvedEntityIds?.opportunityId || 0,
+      );
+      const resolvedOpportunity = [
+        ...(snapshot.opportunities || []),
+        ...(snapshot.inactiveOpportunities || []),
+        ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+      ].find(
+        (opportunity) =>
+          Number(opportunity.id) === resolvedOpportunityId &&
+          Number(opportunity.accountId || snapshot.account?.id) ===
+            Number(snapshot.account?.id),
+      );
+      const verifiedEmptyResults = evidenceLoop.readToolResults
+        .filter(
+          (item) =>
+            item?.toolName &&
+            !item.error &&
+            Array.isArray(item.result) &&
+            item.result.length === 0,
+        )
+        .map((item) => ({
+          toolName: item.toolName,
+          scopeName:
+            item.toolName === "getOpportunityActivities"
+              ? resolvedOpportunity?.name || snapshot.account?.name || "cuenta autorizada"
+              : snapshot.account?.name || "cuenta autorizada",
+          resultCount: 0,
+          completed: true,
+          sourceDomain: "crm_internal",
+        }));
       const answerEvidenceContext = {
         question: payload.question,
         conversationHistory,
@@ -2083,6 +2152,7 @@ export function createCustomerAccountAdapter({
         operationPolicy: payload.operationPolicy || {},
         evidenceVerification: evidenceLoop.status,
         authorizedEvidence,
+        verifiedEmptyResults,
       };
       const fallback = {
         answer: "Respuesta basada únicamente en la evidencia autorizada.",
@@ -2098,7 +2168,7 @@ export function createCustomerAccountAdapter({
         (await runStructuredTextResearch({
         schemaName: "account_contextual_chat",
         systemPrompt:
-          "Responde usando exclusivamente authorizedEvidence. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Nunca afirmes ausencia si falló una consulta. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos.",
+          "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos.",
         subject: snapshot.account?.name || "cuenta",
         context: answerEvidenceContext,
         currentValues: {},
@@ -2266,7 +2336,7 @@ export function createCustomerAccountAdapter({
         const answerAudit = await runStructuredTextResearch({
           schemaName: "customer_account_answer_audit",
           systemPrompt:
-            "Audita cada afirmación factual de la respuesta contra authorizedEvidence. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones sobre el estado CRM están respaldadas y cualquier propuesta coincide con la operación estructurada; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. No redactes una respuesta nueva ni autorices operaciones.",
+            "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones CRM están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. No redactes una respuesta nueva ni autorices operaciones.",
           subject: snapshot.account?.name || "cuenta",
           context: {
             question: payload.question,
@@ -2290,6 +2360,7 @@ export function createCustomerAccountAdapter({
                 : [],
             },
             authorizedEvidence,
+            verifiedEmptyResults,
             evidenceVerification: evidenceLoop.status,
           },
           currentValues: {},

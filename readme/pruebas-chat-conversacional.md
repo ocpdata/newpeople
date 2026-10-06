@@ -54,7 +54,7 @@ Después de consultar Vrf 2027:
 
 **Vendedor:** ¿Qué contacto está asociado a Vrf 2027?
 
-**Esperado:** Devuelve solo el contacto que el CRM relacione con Vrf 2027. Si no hay uno o hay varios, informa el resultado o pide precisar; no inventa una relación.
+**Esperado:** Rene Negrete, Gerente de Operaciones, porque `Vrf 2027.contact_id` lo vincula directamente con la oportunidad. No basta con que un contacto pertenezca a Totalplay; si no se puede verificar la relación directa, no debe inventarla.
 
 **Vendedor:** ¿Qué puesto tiene?
 

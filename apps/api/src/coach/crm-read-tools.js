@@ -137,7 +137,19 @@ export function getOpportunity(snapshot, opportunityId) {
   const opportunity = allOpportunities(snapshot).find(
     (item) => Number(item.id) === Number(opportunityId),
   );
-  return opportunity ? mapOpportunity(opportunity) : null;
+  if (!opportunity) return null;
+  const mapped = mapOpportunity(opportunity);
+  const associatedContact = opportunity.associatedContact;
+  return associatedContact
+    ? {
+        ...mapped,
+        associatedContact: {
+          name: associatedContact.name || "",
+          positionTitle:
+            associatedContact.positionTitle || associatedContact.position_title || "",
+        },
+      }
+    : mapped;
 }
 
 export function getOpportunityActivities(snapshot, opportunityId) {

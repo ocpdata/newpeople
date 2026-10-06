@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { query, withTransaction } from "../db.js";
+import { config } from "../config.js";
 import {
   runStructuredTextResearch,
   runStructuredWebResearch,
@@ -2904,10 +2905,12 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   let snapshot;
   let agents;
   let conversationHistory;
+  let persistedConversationHistory;
   let conversationContext;
   let continuationContext;
   let activityHistoryRange = null;
   let nextConversationContext = null;
+  let conversationContextUpdated = false;
   let preparationStage = "request";
   const turnStartedAt = Date.now();
   try {
@@ -2929,7 +2932,17 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     if (!sessionRows.length) {
       throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
     }
-    conversationHistory = parseJson(sessionRows[0].history_json, []);
+    persistedConversationHistory = parseJson(sessionRows[0].history_json, []);
+    conversationHistory = (Array.isArray(persistedConversationHistory)
+      ? persistedConversationHistory
+      : []
+    ).map((message) => ({
+      role: message.role,
+      text: message.text,
+      ...(message.activityHistory
+        ? { activityHistory: message.activityHistory }
+        : {}),
+    }));
     const persistedConversationContext = parseJson(
       sessionRows[0].context_json,
       null,
@@ -3049,8 +3062,9 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   });
   let response;
   let qualityTrace;
+  let engineResult;
   try {
-    const engineResult = await adapter.runTurn({
+    engineResult = await adapter.runTurn({
       question: request.question,
       history: conversationHistory,
       context: {
@@ -3117,6 +3131,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         snapshot,
         snapshot.account?.id,
       );
+      conversationContextUpdated = true;
     }
   } catch (error) {
     console.error("[account-chat] Adapter execution failed", {
@@ -3262,11 +3277,165 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
     }
     const nextHistory = appendCustomerAccountChatHistory(
-      parseJson(sessionRows[0].history_json, []),
+      persistedConversationHistory,
       request.question,
       response.answer,
       { activityHistory: response.activityHistory },
     );
+    const persistedConversationContext =
+      nextConversationContext || parseJson(sessionRows[0].context_json, null);
+    if (config.nodeEnv !== "production") {
+      const plannerDiagnostics = qualityTrace?.diagnostics?.planner || null;
+      const evidenceDiagnostics = qualityTrace?.diagnostics?.evidence || null;
+      const toolsUsed = Array.isArray(qualityTrace?.toolsUsed)
+        ? qualityTrace.toolsUsed
+        : [];
+      const evidenceStatus = evidenceDiagnostics?.status || null;
+      const fallbackUsed = Boolean(qualityTrace?.diagnostics?.fallback?.used);
+      let issue;
+      if (response.responseType === "error") {
+        issue = {
+          severity: "error",
+          title: "El turno no pudo completarse",
+          block: [
+            "query_error",
+            "query_limit_reached",
+            "insufficient_evidence",
+            "timeout",
+          ].includes(evidenceStatus)
+            ? "B9"
+            : "B10",
+          message: response.answer,
+          nextAction:
+            evidenceStatus && evidenceStatus !== "sufficient"
+              ? "Revisa el estado de evidencia, las consultas fallidas y los límites en el bloque B9."
+              : "Revisa el error de generación o auditoría de respuesta en el bloque B10.",
+        };
+      } else if (
+        evidenceStatus &&
+        !["sufficient", "no_results", "clarification"].includes(
+          evidenceStatus,
+        )
+      ) {
+        issue = {
+          severity: "error",
+          title: "La evidencia no quedó verificada",
+          block: "B9",
+          message: `El verificador terminó con estado: ${evidenceStatus}.`,
+          nextAction:
+            "Revisa consultas fallidas, hechos pendientes, truncamientos y herramientas no ejecutadas.",
+        };
+      } else if (response.responseType === "clarification") {
+        issue = {
+          severity: "warning",
+          title: "El chat necesita una precisión para continuar",
+          block: response.channelIntentRouting?.requiresClarification
+            ? "B6"
+            : "B10",
+          message:
+            response.clarification?.message ||
+            response.answer ||
+            "La solicitud necesita más contexto.",
+          nextAction:
+            "Revisa la ambigüedad o el dato faltante y responde con una referencia más específica.",
+        };
+      } else if (evidenceStatus === "no_results") {
+        issue = {
+          severity: "warning",
+          title: "La consulta se ejecutó, pero no encontró coincidencias",
+          block: "B9",
+          message:
+            "Esto no demuestra que el registro nunca haya existido; indica que no hubo resultados con los filtros consultados.",
+          nextAction:
+            "Comprueba filtros, cuenta seleccionada y alcance de las herramientas en B6–B8.",
+        };
+      } else if (fallbackUsed || qualityTrace?.diagnostics?.planner?.fallbackUsed) {
+        issue = {
+          severity: "warning",
+          title: "El turno usó una ruta alternativa",
+          block: "B6",
+          message:
+            "La interpretación principal no se utilizó o no estuvo disponible.",
+          nextAction:
+            "Revisa el plan, la intención elegida y el motivo del fallback en B6.",
+        };
+      } else {
+        issue = {
+          severity: "success",
+          title: "El turno terminó sin señales de error",
+          block: null,
+          message: "La respuesta y el contexto para continuar quedaron guardados.",
+          nextAction: "No hay un bloque que requiera revisión.",
+        };
+      }
+      response.debug = {
+        architecture: "account_chat_v1",
+        issue,
+        flow: [
+          { block: "B1", label: "Chat web", status: "completed" },
+          { block: "B2", label: "Rutas de sesión y jobs", status: "completed" },
+          { block: "B3", label: "Servicio del canal", status: "completed" },
+          { block: "B4", label: "Adaptador del canal", status: "completed" },
+          { block: "B5", label: "Motor conversacional", status: "completed" },
+          {
+            block: "B6",
+            label: "Planificador IA",
+            status: plannerDiagnostics ? "completed" : "not_reached",
+          },
+          {
+            block: "B7",
+            label: "Read model del canal",
+            status: evidenceDiagnostics ? "completed" : "not_reached",
+          },
+          {
+            block: "B8",
+            label: "Herramientas CRM autorizadas",
+            status: toolsUsed.length ? "executed" : "no_reads",
+          },
+          {
+            block: "B9",
+            label: "Verificador de evidencia",
+            status: evidenceDiagnostics?.status || "not_reached",
+          },
+          { block: "B10", label: "Respuesta final", status: "completed" },
+          { block: "B11", label: "Persistencia del servicio", status: "completed" },
+        ],
+        currentTurn: {
+          jobId: Number(jobId),
+          chatSessionId: Number(request.chatSessionId || 0),
+          question: request.question,
+          historyReceived: conversationHistory,
+          validatedContextReceived: continuationContext,
+          channelIntentRouting: response.channelIntentRouting || null,
+          diagnostics: {
+            planner: plannerDiagnostics,
+            evidence: evidenceDiagnostics,
+            toolMetrics: qualityTrace?.toolMetrics || [],
+            validationStatus: qualityTrace?.validationStatus || null,
+            responseType: response.responseType || "informational",
+            fallback: qualityTrace?.diagnostics?.fallback || null,
+          },
+        },
+        nextTurn: {
+          history: nextHistory.map((message) => ({
+            role: message.role,
+            text: message.text,
+            ...(message.activityHistory
+              ? { activityHistory: message.activityHistory }
+              : {}),
+          })),
+          context: persistedConversationContext,
+          contextDisposition: conversationContextUpdated
+            ? "recomputed"
+            : "preserved",
+          entryBlocks: ["B1", "B2", "B3", "B4", "B5", "B6"],
+        },
+      };
+      const latestAssistantMessage = nextHistory[nextHistory.length - 1];
+      if (latestAssistantMessage?.role === "assistant") {
+        latestAssistantMessage.turnDebug = response.debug;
+      }
+    }
     await conn.query(
       `UPDATE customer_intelligence_chat_sessions
        SET history_json = ?, context_json = ?, updated_at = NOW(3)
@@ -3274,8 +3443,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       [
         JSON.stringify(nextHistory),
         JSON.stringify(
-          nextConversationContext ||
-            parseJson(sessionRows[0].context_json, null),
+          persistedConversationContext,
         ),
         Number(request.chatSessionId),
         Number(user.id),

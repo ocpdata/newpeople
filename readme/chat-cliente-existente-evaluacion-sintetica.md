@@ -25,6 +25,7 @@ La versión `1.1.1` cubre:
 - Escenarios objetivo para preguntas compuestas, referencias de seguimiento, entidades ambiguas, otra cuenta, resultados vacíos o truncados, soporte fuera de alcance, investigación pública y paráfrasis.
 - Cobertura de respuesta para resultado vacío, aviso visible de truncamiento, dominio de soporte fuera de alcance y opt-in de investigación pública. Los dos últimos también se validan en la integración API.
 - Planes estructurados sintéticos para preguntas compuestas, seguimientos, referencias ambiguas, otra cuenta y paráfrasis, ejecutados por el normalizador y read model de producción.
+- Prueba de regresión del adaptador para una solicitud explícita de cambio de monto sobre varias oportunidades: una clasificación de solo lectura del planificador no puede producir una respuesta que prometa propuestas sin operaciones estructuradas.
 
 Las etiquetas `covered`, `planner_implemented` y `response_tested` clasifican la cobertura del corpus. Las notas y valores `baseline` que aún aparecen en algunos casos son referencias históricas; las aserciones de enrutamiento activas usan planes estructurados. Los casos `response_tested` cuentan con cobertura de respuesta en el adaptador o integración API, incluida la divulgación de truncamiento, el rechazo de dominios fuera de alcance y el valor opt-in de investigación pública. No hay casos `known_gap` pendientes en esta versión del corpus; una brecha futura debe conservar ese estado hasta que tenga una aserción ejecutable.
 

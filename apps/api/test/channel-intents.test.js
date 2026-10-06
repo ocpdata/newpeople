@@ -127,6 +127,55 @@ describe("shared non-Coach channel intent routing", () => {
     });
   });
 
+  it("recovers crm_operation when the AI marks operation mode but omits its query code", () => {
+    const plan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      plan: {
+        objective: "Actualizar el monto de Vrf 2027",
+        queries: [],
+        entities: { opportunityReference: "opportunity_1" },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "conversation_history",
+          candidateKeys: ["opportunity_1"],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+        confidence: "high",
+      },
+      serverEntityCandidates: [
+        {
+          candidateKey: "opportunity_1",
+          entityType: "opportunity",
+          recordId: 94,
+          accountId: 7,
+          referenceText: "Vrf 2027",
+        },
+      ],
+      context: { accountId: 7 },
+      availableTools: customerTools,
+      configuration: getChannelIntentDefaults("customer_account"),
+      question: "Actualiza el monto de Vrf 2027 a 2000000",
+      trustedEntityReferences: ["Vrf 2027"],
+    });
+
+    expect(plan).toMatchObject({
+      intent: "crm_operation",
+      intents: ["crm_operation"],
+      mode: "operation",
+      requiresClarification: false,
+      serverResolvedEntityIds: { opportunityId: 94 },
+      allowedTools: expect.arrayContaining(["getOpportunity"]),
+    });
+  });
+
   it("resolves only a server-authorized candidate alias for a conversational reference", () => {
     const configuration = getChannelIntentDefaults("customer_account");
     const plan = {

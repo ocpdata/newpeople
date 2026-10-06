@@ -2923,6 +2923,27 @@ describe("API integration baseline", () => {
       }),
     );
     expect(contextAfterFirstChat.intents).toContain("account_overview");
+    expect(accountChatJob.body.job.result.debug).toMatchObject({
+      architecture: "account_chat_v1",
+      currentTurn: {
+        jobId: accountChatJob.body.job.id,
+        chatSessionId: accountChatSessionId,
+        question: "Resume esta cuenta para mi reunión",
+      },
+      nextTurn: {
+        context: contextAfterFirstChat,
+        contextDisposition: "recomputed",
+        entryBlocks: ["B1", "B2", "B3", "B4", "B5", "B6"],
+      },
+    });
+    expect(accountChatJob.body.job.result.debug.flow).toHaveLength(11);
+    expect(accountChatJob.body.job.result.debug.nextTurn.history).toEqual(
+      historyAfterFirstChat.map(({ role, text, activityHistory }) => ({
+        role,
+        text,
+        ...(activityHistory ? { activityHistory } : {}),
+      })),
+    );
     const reloadedChatSessionResponse = await request(app)
       .get(
         `/api/commercial-intelligence/account-chat/sessions/${accountChatSessionId}`,
@@ -2930,6 +2951,13 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${updateLogin.body.token}`);
     expect(reloadedChatSessionResponse.status).toBe(200);
     expect(reloadedChatSessionResponse.body.session.history).toHaveLength(2);
+    expect(
+      reloadedChatSessionResponse.body.session.history[1].turnDebug,
+    ).toMatchObject({
+      architecture: "account_chat_v1",
+      currentTurn: { jobId: accountChatJob.body.job.id },
+      nextTurn: { context: contextAfterFirstChat },
+    });
 
     const followUpChatTurn =
       await runChatTurnWithMockedStructuredProvider("¿Y su resumen?");

@@ -128,10 +128,18 @@ const CHANNEL_INTENTS = Object.freeze({
       code: "contact_query",
       label: "Contactos de cuenta",
       description:
-        "Busca contactos y decisores relacionados con la cuenta actual.",
-      tools: ["searchAccounts", "searchContacts"],
+        "Busca contactos de la cuenta y verifica asociaciones directas con una oportunidad consultando su detalle CRM autorizado.",
+      tools: [
+        "searchAccounts",
+        "searchContacts",
+        "searchOpportunities",
+        "getOpportunity",
+      ],
       context: ["account"],
-      examples: ["¿Quiénes son los decisores de la cuenta?"],
+      examples: [
+        "¿Quiénes son los decisores de la cuenta?",
+        "¿Qué contacto está asociado a esta oportunidad?",
+      ],
       patterns: [/\b(contacto|contactos|decisor|decisores|persona|personas)\b/],
       priority: 60,
     },
@@ -553,9 +561,18 @@ export function normalizeChannelIntentPlan({
     ]),
   );
   const requestedCodes = Array.isArray(plan.queries) ? plan.queries : [];
+  const recoverMissingOperationIntent =
+    channel === "customer_account" &&
+    plan.mode === "operation" &&
+    requestedCodes.length === 0 &&
+    configurationByCode.get("crm_operation")?.enabled !== false;
   const selectedIntents = catalog.filter(({ code }) => {
     const config = configurationByCode.get(code);
-    return requestedCodes.includes(code) && config?.enabled !== false;
+    return (
+      (requestedCodes.includes(code) ||
+        (recoverMissingOperationIntent && code === "crm_operation")) &&
+      config?.enabled !== false
+    );
   });
   const rawReferenceResolution = plan.referenceResolution || {};
   const targetTypes = new Set([

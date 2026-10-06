@@ -292,7 +292,7 @@ describe("Customer account chat adapter", () => {
     );
   });
 
-  it("returns the audited proposal for an anaphoric opportunity amount change", async () => {
+  it("recovers an audited amount proposal when the planner omits crm_operation", async () => {
     const businessRules = getCoachBusinessRules({
       channel: "customer_account",
       process: "account_chat",
@@ -311,10 +311,10 @@ describe("Customer account chat adapter", () => {
     runStructuredTextResearch
       .mockResolvedValueOnce({
         objective: "Preparar una propuesta de operación CRM",
-        queries: ["crm_operation"],
+        queries: [],
         entities: {
           accountReference: "",
-          opportunityReference: "",
+          opportunityReference: "opportunity_1",
           contactReference: "",
           leadReference: "",
         },
@@ -326,12 +326,12 @@ describe("Customer account chat adapter", () => {
         },
         filters: {},
         ambiguity: {
-          reason: "missing_context",
-          requiresClarification: "yes",
-          missingContext: ["opportunity"],
-          question: "¿A qué oportunidad te refieres?",
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
         },
-        mode: "clarification",
+        mode: "operation",
         confidence: "high",
       })
       .mockResolvedValueOnce({
@@ -370,7 +370,7 @@ describe("Customer account chat adapter", () => {
     });
 
     const result = await adapter.runTurn({
-      question: "modifica el monto por 1000000",
+      question: "Actualiza el monto de la oportunidad Vrf 2027 a 1000000",
       context: { accountId: 7 },
       history: [],
       conversationContext: {
@@ -429,6 +429,211 @@ describe("Customer account chat adapter", () => {
         }),
       ]),
     );
+  });
+
+  it("does not let a read-only plan promise proposals for a plural amount change", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    vi.spyOn(
+      coachBusinessRulesModule,
+      "loadCoachBusinessRules",
+    ).mockResolvedValue(businessRules);
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+      [],
+    );
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Consultar oportunidades abiertas",
+        queries: ["opportunity_query"],
+        entities: {},
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "all",
+          source: "account_scope",
+          candidateKeys: [],
+        },
+        filters: { lifecycle: "open" },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "sufficient",
+        missingQueries: [],
+        missingFacts: [],
+      })
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "oportunidades.update",
+        ]),
+      },
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [
+          { ...snapshot.opportunities[0], id: 11, accountId: 7, amountUsd: 42000 },
+          { ...snapshot.opportunities[0], id: 12, accountId: 7, amountUsd: 15000 },
+        ],
+      },
+      agents: [],
+      jobId: 906,
+    });
+
+    const result = await adapter.runTurn({
+      question:
+        "Actualiza el monto de las oportunidades abiertas de Totalplay a 1000000",
+      context: { accountId: 7 },
+      history: [],
+    });
+
+    expect(result.response.responseType).toBe("clarification");
+    expect(result.response.answer).toContain(
+      "No pude identificar una única oportunidad",
+    );
+    expect(result.response.answer).not.toContain("presento las propuestas");
+    expect(result.response.operations).toEqual([]);
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
+    expect(runStructuredTextResearch.mock.calls[2][0].schemaName).toBe(
+      "customer_account_answer_audit",
+    );
+  });
+
+  it("answers the associated contact from authorized opportunity detail", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    vi.spyOn(
+      coachBusinessRulesModule,
+      "loadCoachBusinessRules",
+    ).mockResolvedValue(businessRules);
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+      [],
+    );
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Identificar el contacto asociado a la oportunidad",
+        queries: ["contact_query"],
+        entities: {
+          accountReference: "",
+          opportunityReference: "opportunity_1",
+          contactReference: "",
+          leadReference: "",
+        },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "current_message",
+          candidateKeys: ["opportunity_1"],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "sufficient",
+        missingQueries: [],
+        missingFacts: [],
+      })
+      .mockResolvedValueOnce({
+        answer:
+          "El contacto asociado directamente a Vrf 2027 es Rene Negrete, Gerente de Operaciones.",
+        evidence: ["getOpportunity: contacto asociado Rene Negrete."],
+        inferences: [],
+        confidence: "high",
+        pendingItems: [],
+        recommendedActions: [],
+        operations: [],
+      })
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+
+    const opportunity = {
+      ...snapshot.opportunities[0],
+      name: "Vrf 2027",
+      accountId: 7,
+      contactId: 109,
+    };
+    const contact = {
+      id: 109,
+      accountId: 7,
+      name: "Rene Negrete",
+      positionTitle: "Gerente de Operaciones",
+      activationStatusCode: "activado",
+      email: "rene@example.test",
+    };
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "contactos.read",
+        ]),
+      },
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [opportunity],
+        contacts: [contact],
+        permissions: { canReadContacts: true },
+      },
+      conversationContext: { accountId: 7, opportunityId: 11 },
+      agents: [],
+      jobId: 907,
+    });
+
+    const result = await adapter.runTurn({
+      question: "¿Qué contacto está asociado a la oportunidad Vrf 2027?",
+      context: { accountId: 7 },
+      history: [],
+      conversationContext: { accountId: 7, opportunityId: 11 },
+    });
+
+    const synthesisContext = runStructuredTextResearch.mock.calls[2][0].context;
+    const opportunityEvidence = synthesisContext.authorizedEvidence.find(
+      (item) => item.toolName === "getOpportunity",
+    );
+    expect(result.response.answer).toContain("Rene Negrete");
+    expect(result.response.answer).toContain("Gerente de Operaciones");
+    expect(result.response.channelIntentRouting.allowedTools).toContain(
+      "getOpportunity",
+    );
+    expect(runStructuredTextResearch.mock.calls[0][0].systemPrompt).toContain(
+      "buscar contactos de la cuenta por sí solo no demuestra",
+    );
+    expect(opportunityEvidence.result.associatedContact).toEqual({
+      name: "Rene Negrete",
+      positionTitle: "Gerente de Operaciones",
+    });
+    expect(JSON.stringify(opportunityEvidence)).not.toContain("rene@example.test");
+    expect(result.response.operations).toEqual([]);
   });
 
   it("builds account overview only from queried summary sections", async () => {
@@ -1369,6 +1574,89 @@ describe("Customer account chat adapter", () => {
     ).toBe(selectedOpportunity.id);
   });
 
+  it("returns the direct opportunity contact only when contact access is authorized", async () => {
+    const opportunity = {
+      ...snapshot.opportunities[0],
+      name: "Vrf 2027",
+      contactId: 109,
+    };
+    const contact = {
+      id: 109,
+      accountId: 7,
+      name: "Rene Negrete",
+      positionTitle: "Gerente de Operaciones",
+      activationStatusCode: "activado",
+      email: "rene@example.test",
+    };
+    const tools = getCoachReadToolCatalog();
+    const routing = {
+      intent: "contact_query",
+      intents: ["contact_query"],
+      allowedTools: ["getOpportunity", "searchContacts"],
+      referenceResolution: {
+        targetType: "opportunity",
+        cardinality: "single",
+        source: "current_message",
+        candidateKeys: ["opportunity_1"],
+      },
+      serverResolvedEntityIds: { opportunityId: 11 },
+      entities: { opportunityReference: "Vrf 2027" },
+      filters: {},
+    };
+    const authorized = await buildCustomerReadModel({
+      user: {
+        id: 31,
+        permissionSet: new Set(["oportunidades.read", "contactos.read"]),
+      },
+      question: "¿Qué contacto está asociado a la oportunidad Vrf 2027?",
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [opportunity],
+        contacts: [contact],
+        permissions: { canReadContacts: true },
+      },
+      availableTools: tools,
+      authorizedTools: tools,
+      businessRules: getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      }),
+      channelIntentRouting: routing,
+    });
+    const restricted = await buildCustomerReadModel({
+      user: { id: 31, permissionSet: new Set(["oportunidades.read"]) },
+      question: "¿Qué contacto está asociado a la oportunidad Vrf 2027?",
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [opportunity],
+        contacts: [contact],
+        permissions: { canReadContacts: false },
+      },
+      availableTools: tools,
+      authorizedTools: tools,
+      businessRules: getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      }),
+      channelIntentRouting: routing,
+    });
+
+    const authorizedDetail = authorized.readToolResults.find(
+      (item) => item.toolName === "getOpportunity",
+    ).result;
+    const restrictedDetail = restricted.readToolResults.find(
+      (item) => item.toolName === "getOpportunity",
+    ).result;
+    expect(authorizedDetail.associatedContact).toEqual({
+      name: "Rene Negrete",
+      positionTitle: "Gerente de Operaciones",
+    });
+    expect(authorizedDetail.associatedContact).not.toHaveProperty("email");
+    expect(restrictedDetail).not.toHaveProperty("associatedContact");
+  });
+
   it("loads pending activities for the opportunity selected from an AI follow-up reference", async () => {
     const selectedOpportunity = {
       ...snapshot.opportunities[0],
@@ -1441,6 +1729,128 @@ describe("Customer account chat adapter", () => {
         status: "pending",
       }),
     ]);
+  });
+
+  it("synthesizes a scoped no-pending-activities answer from a verified empty read", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    vi.spyOn(
+      coachBusinessRulesModule,
+      "loadCoachBusinessRules",
+    ).mockResolvedValue(businessRules);
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+      [],
+    );
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Consultar actividades de la oportunidad en contexto",
+        queries: ["account_activity_history"],
+        entities: { opportunityReference: "Vrf 2027" },
+        referenceResolution: {
+          targetType: "account",
+          cardinality: "single",
+          source: "active_context",
+          candidateKeys: [],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "no_results",
+        missingQueries: [],
+        missingFacts: ["actividades pendientes"],
+      })
+      .mockResolvedValueOnce({
+        answer:
+          "No hay actividades pendientes registradas para Vrf 2027 en Totalplay.",
+        evidence: [
+          "getOpportunityActivities consultó Vrf 2027 y no devolvió actividades pendientes.",
+        ],
+        inferences: [],
+        confidence: "medium",
+        pendingItems: [],
+        recommendedActions: [],
+        operations: [],
+      })
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+
+    const opportunity = {
+      ...snapshot.opportunities[0],
+      name: "Vrf 2027",
+      accountId: 7,
+      lifecycle: "open",
+      amountUsd: 2000000,
+    };
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "desarrollo_comercial.read",
+          "interacciones.read",
+        ]),
+      },
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [opportunity],
+        interactions: [],
+        activities: [],
+      },
+      conversationContext: {
+        version: 1,
+        accountId: 7,
+        opportunityId: 11,
+        contactId: null,
+        leadId: null,
+        intents: ["opportunity_status"],
+        filters: {},
+      },
+      agents: [],
+      jobId: 906,
+    });
+
+    const result = await adapter.runTurn({
+      question: "¿Qué actividad pendiente tiene?",
+      context: { accountId: 7 },
+      history: [],
+    });
+
+    const synthesisContext = runStructuredTextResearch.mock.calls[2][0].context;
+    const auditContext = runStructuredTextResearch.mock.calls[3][0].context;
+    expect(result.response.answer).toContain("No hay actividades pendientes");
+    expect(result.response.answer).toContain("Vrf 2027");
+    expect(result.response.responseType).toBeUndefined();
+    expect(result.response.evidence).not.toHaveLength(0);
+    expect(synthesisContext.evidenceVerification).toBe("no_results");
+    expect(synthesisContext.verifiedEmptyResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "getOpportunityActivities",
+          scopeName: "Vrf 2027",
+          resultCount: 0,
+          completed: true,
+        }),
+      ]),
+    );
+    expect(auditContext.verifiedEmptyResults).toEqual(
+      synthesisContext.verifiedEmptyResults,
+    );
+    expect(result.qualityTrace.toolsUsed).toContain("getOpportunityActivities");
   });
 
   it("prioriza el periodo explícito del seguimiento sobre el periodo recordado", async () => {
