@@ -154,8 +154,13 @@ describe("shared non-Coach channel intent routing", () => {
       entityType: "opportunity",
       recordId: 11,
       accountId: 7,
+      referenceText: "Vrf 2027",
     };
-    const normalize = (referencePlan, serverEntityCandidates) =>
+    const normalize = (
+      referencePlan,
+      serverEntityCandidates,
+      question = "modifica el monto por 1000000",
+    ) =>
       normalizeChannelIntentPlan({
         channel: "customer_account",
         plan: referencePlan,
@@ -163,7 +168,7 @@ describe("shared non-Coach channel intent routing", () => {
         context: { accountId: 7 },
         availableTools: customerTools,
         configuration,
-        question: "modifica el monto por 1000000",
+        question,
         trustedEntityReferences: ["Vrf 2027"],
       });
 
@@ -181,6 +186,29 @@ describe("shared non-Coach channel intent routing", () => {
     const crossAccount = normalize(plan, [
       { ...authorizedCandidate, accountId: 99 },
     ]);
+    const activityFollowUp = normalize(
+      {
+        ...plan,
+        objective: "Consultar actividad pendiente de la oportunidad en contexto",
+        queries: ["account_activity_history"],
+        entities: { opportunityReference: "Vrf 2027" },
+        referenceResolution: {
+          targetType: "account",
+          cardinality: "single",
+          source: "active_context",
+          candidateKeys: [],
+        },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+      },
+      [authorizedCandidate],
+      "¿Qué actividad pendiente tiene?",
+    );
 
     expect(resolved).toMatchObject({
       mode: "operation",
@@ -200,6 +228,16 @@ describe("shared non-Coach channel intent routing", () => {
     expect(crossAccount).toMatchObject({
       mode: "clarification",
       serverResolvedEntityIds: { opportunityId: null },
+    });
+    expect(activityFollowUp).toMatchObject({
+      intent: "account_activity_history",
+      referenceResolution: {
+        targetType: "opportunity",
+        cardinality: "single",
+        candidateKeys: ["opportunity_1"],
+      },
+      serverResolvedEntityIds: { opportunityId: 11 },
+      requiresClarification: false,
     });
 
     const portfolio = normalize(

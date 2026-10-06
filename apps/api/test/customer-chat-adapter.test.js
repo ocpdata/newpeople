@@ -1369,6 +1369,80 @@ describe("Customer account chat adapter", () => {
     ).toBe(selectedOpportunity.id);
   });
 
+  it("loads pending activities for the opportunity selected from an AI follow-up reference", async () => {
+    const selectedOpportunity = {
+      ...snapshot.opportunities[0],
+      name: "Vrf 2027",
+      amountUsd: 2000000,
+    };
+    const activity = {
+      id: 501,
+      accountId: 7,
+      opportunityId: 11,
+      title: "Llamada de seguimiento",
+      actionType: "call",
+      status: "pending",
+      dueDate: "2026-10-15",
+    };
+    const tools = getCoachReadToolCatalog();
+    const model = await buildCustomerReadModel({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "desarrollo_comercial.read",
+          "interacciones.read",
+        ]),
+      },
+      question: "¿Qué actividad pendiente tiene?",
+      snapshot: {
+        ...snapshot,
+        opportunities: [selectedOpportunity],
+        activities: [activity],
+      },
+      availableTools: tools,
+      authorizedTools: tools,
+      businessRules: getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      }),
+      channelIntentRouting: {
+        intent: "account_activity_history",
+        intents: ["account_activity_history"],
+        allowedTools: [
+          "searchAccounts",
+          "searchOpportunities",
+          "getOpportunityActivities",
+          "searchInteractions",
+        ],
+        entities: { opportunityReference: "Vrf 2027" },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "active_context",
+          candidateKeys: ["opportunity_1"],
+        },
+        serverResolvedEntityIds: { opportunityId: 11 },
+        filters: {},
+      },
+    });
+
+    expect(model.selectedOpportunity.name).toBe("Vrf 2027");
+    expect(
+      model.readToolResults.find(
+        (item) => item.toolName === "getOpportunityActivities",
+      ).result,
+    ).toEqual([
+      expect.objectContaining({
+        id: 501,
+        opportunityId: 11,
+        title: "Llamada de seguimiento",
+        status: "pending",
+      }),
+    ]);
+  });
+
   it("prioriza el periodo explícito del seguimiento sobre el periodo recordado", async () => {
     const model = await buildCustomerReadModel({
       user: { id: 31 },

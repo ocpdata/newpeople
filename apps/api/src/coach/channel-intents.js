@@ -580,7 +580,7 @@ export function normalizeChannelIntentPlan({
     "account_scope",
     "none",
   ]);
-  const targetType = targetTypes.has(rawReferenceResolution.targetType)
+  let targetType = targetTypes.has(rawReferenceResolution.targetType)
     ? rawReferenceResolution.targetType
     : "none";
   const cardinality = cardinalities.has(rawReferenceResolution.cardinality)
@@ -600,12 +600,60 @@ export function normalizeChannelIntentPlan({
       )
       .map((candidate) => [candidate.candidateKey, candidate]),
   );
-  const candidateKeys = Array.isArray(rawReferenceResolution.candidateKeys)
+  let candidateKeys = Array.isArray(rawReferenceResolution.candidateKeys)
     ? [...new Set(rawReferenceResolution.candidateKeys)].slice(0, 8)
     : [];
-  const selectedCandidates = candidateKeys.map((key) =>
+  let selectedCandidates = candidateKeys.map((key) =>
     candidateByKey.get(key),
   );
+  const rawEntities = plan.entities || {};
+  const sourceTexts = [
+    question,
+    ...(Array.isArray(conversationHistory)
+      ? conversationHistory.map((message) => message?.text || "")
+      : []),
+    ...(Array.isArray(trustedEntityReferences) ? trustedEntityReferences : []),
+  ];
+  const entityReferenceFields = [
+    ["opportunity", rawEntities.opportunityReference],
+    ["contact", rawEntities.contactReference],
+    ["lead", rawEntities.leadReference],
+  ]
+    .map(([entityType, value]) => ({
+      entityType,
+      value: String(value || "").trim(),
+      normalized: normalizeQuestion(value),
+    }))
+    .filter(
+      (reference) =>
+        reference.normalized &&
+        sourceTexts.some((source) =>
+          normalizeQuestion(source).includes(reference.normalized),
+        ),
+    );
+  const literalCandidateMatches = entityReferenceFields.flatMap((reference) =>
+    [...candidateByKey.values()].filter(
+      (candidate) =>
+        candidate.entityType === reference.entityType &&
+        normalizeQuestion(candidate.referenceText) === reference.normalized,
+    ),
+  );
+  const unresolvedModelReference =
+    Boolean(plan.referenceResolution) &&
+    candidateKeys.length === 0 &&
+    entityReferenceFields.length > 0 &&
+    literalCandidateMatches.length !== 1;
+  if (
+    Boolean(plan.referenceResolution) &&
+    candidateKeys.length === 0 &&
+    cardinality === "single" &&
+    literalCandidateMatches.length === 1
+  ) {
+    const [literalCandidate] = literalCandidateMatches;
+    targetType = literalCandidate.entityType;
+    candidateKeys = [literalCandidate.candidateKey];
+    selectedCandidates = [literalCandidate];
+  }
   const targetMatchesCandidate = (candidate) =>
     candidate &&
     (candidate.entityType === targetType ||
@@ -613,7 +661,8 @@ export function normalizeChannelIntentPlan({
   const invalidCandidateSelection =
     selectedCandidates.some((candidate) => !targetMatchesCandidate(candidate)) ||
     (cardinality === "single" && candidateKeys.length > 1) ||
-    (cardinality === "none" && candidateKeys.length > 0);
+    (cardinality === "none" && candidateKeys.length > 0) ||
+    unresolvedModelReference;
   const unresolvedConversationalReference =
     ["conversation_history", "active_context"].includes(referenceSource) &&
     ["opportunity", "contact", "lead", "quotation"].includes(targetType) &&
@@ -751,14 +800,6 @@ export function normalizeChannelIntentPlan({
         );
       }),
     ),
-  ];
-  const rawEntities = plan.entities || {};
-  const sourceTexts = [
-    question,
-    ...(Array.isArray(conversationHistory)
-      ? conversationHistory.map((message) => message?.text || "")
-      : []),
-    ...(Array.isArray(trustedEntityReferences) ? trustedEntityReferences : []),
   ];
   const periodMonths = Number(rawFilters.periodMonths || 0);
   const closeYear = Number(rawFilters.closeYear || 0);
