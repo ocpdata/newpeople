@@ -24,6 +24,27 @@ describe("Customer snapshot query metrics", () => {
     expect(JSON.stringify(result.metric)).not.toContain("privateValue");
   });
 
+  it("supports a 1,000-row provider catalog cap and removes its sentinel", () => {
+    const rawRows = Array.from({ length: 1001 }, (_, index) => ({
+      id: index + 1,
+    }));
+    const result = captureSnapshotQueryRows(
+      "provider_catalog",
+      rawRows,
+      1000,
+    );
+
+    expect(result.rows).toHaveLength(1000);
+    expect(result.rows.at(-1).id).toBe(1000);
+    expect(result.metric).toEqual({
+      source: "provider_catalog",
+      resultCount: 1000,
+      resultLimit: 1000,
+      truncated: true,
+      errorCode: null,
+    });
+  });
+
   it("marks a result under its limit complete", () => {
     const result = captureSnapshotQueryRows(
       "opportunities_active",

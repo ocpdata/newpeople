@@ -1,7 +1,7 @@
 export const CUSTOMER_CHAT_EVIDENCE_LIMITS = Object.freeze({
   maxRounds: 2,
   maxReadQueries: 8,
-  maxTurnMs: 18000,
+  maxTurnMs: 45000,
 });
 
 function hasReadQueryError(readToolResults) {

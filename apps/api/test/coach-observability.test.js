@@ -103,6 +103,52 @@ describe("Coach observability", () => {
     expect(JSON.stringify(metrics)).not.toContain("politica del canal");
   });
 
+  it("preserves pre-summarized tool counts when persisting a trace", async () => {
+    query.mockResolvedValueOnce({ insertId: 44 });
+
+    await recordCoachTurnQualityTrace({
+      channel: "customer_account",
+      process: "account_chat",
+      userId: 17,
+      trace: {
+        validationStatus: "valid",
+        toolMetrics: [
+          {
+            toolName: "searchOpportunities",
+            resultCount: 14,
+            errorCode: null,
+            truncated: false,
+          },
+          {
+            toolName: "searchContacts",
+            resultCount: 9,
+            errorCode: null,
+            truncated: false,
+            privateValue: "must not persist",
+          },
+        ],
+      },
+    });
+
+    expect(JSON.parse(query.mock.calls[0][1][17])).toEqual([
+      {
+        toolName: "searchOpportunities",
+        resultCount: 14,
+        errorCode: null,
+        truncated: false,
+      },
+      {
+        toolName: "searchContacts",
+        resultCount: 9,
+        errorCode: null,
+        truncated: false,
+      },
+    ]);
+    expect(JSON.stringify(query.mock.calls[0][1])).not.toContain(
+      "must not persist",
+    );
+  });
+
   it("persists route and fallback diagnostics without raw question metadata", async () => {
     query.mockResolvedValueOnce({ insertId: 43 });
     await recordCoachTurnQualityTrace({

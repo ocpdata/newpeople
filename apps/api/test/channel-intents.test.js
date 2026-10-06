@@ -15,6 +15,7 @@ const customerTools = [
   "searchContacts",
   "searchInteractions",
   "getOpportunityActivities",
+  "getOpportunityReadiness",
   "getSellerPipeline",
 ].map((name) => ({ name }));
 
@@ -26,6 +27,236 @@ const prospectTools = [
 ].map((name) => ({ name }));
 
 describe("shared non-Coach channel intent routing", () => {
+  it("routes opportunity guidance to detail, activity, readiness, and interaction tools", () => {
+    const configuration = getChannelIntentDefaults("customer_account");
+    const classified = classifyChannelIntent({
+      channel: "customer_account",
+      question: "¿Qué me sugieres hacer en esta oportunidad?",
+      context: { accountId: 7, opportunityId: 11 },
+      availableTools: customerTools,
+      configuration,
+    });
+    expect(classified.intent).toBe("opportunity_guidance");
+
+    const plan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      context: { accountId: 7, opportunityId: 11 },
+      availableTools: customerTools.map((tool) => tool.name),
+      configuration,
+      question: "¿Qué me sugieres hacer en esta oportunidad?",
+      plan: {
+        objective: "Recomendar siguientes pasos con evidencia",
+        queries: ["opportunity_guidance"],
+        entities: { opportunityReference: "Proyecto abierto" },
+        filters: { opportunityStatus: "open" },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      },
+    });
+
+    expect(plan).toMatchObject({
+      intent: "opportunity_guidance",
+      intents: ["opportunity_guidance"],
+      requiredContext: ["account", "opportunity"],
+      requiresClarification: false,
+      allowedTools: [
+        "getOpportunity",
+        "getOpportunityActivities",
+        "getOpportunityReadiness",
+        "searchInteractions",
+      ],
+    });
+    expect(
+      getChannelIntentPlanFields("customer_account")
+        .find((field) => field.key === "queries")
+        .items.enum,
+    ).toContain("opportunity_guidance");
+  });
+
+  it("uses the validated selected opportunity when the planner reports stale missing context", () => {
+    const configuration = getChannelIntentDefaults("customer_account");
+    const plan = {
+      objective: "Cambiar el monto de la oportunidad seleccionada",
+      queries: ["crm_operation"],
+      entities: { opportunityReference: "" },
+      filters: {},
+      ambiguity: {
+        reason: "missing_context",
+        requiresClarification: "yes",
+        missingContext: ["opportunity"],
+        question: "Selecciona la oportunidad a modificar.",
+      },
+      mode: "clarification",
+      confidence: "high",
+    };
+
+    const selectedOpportunityPlan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      context: { accountId: 7, opportunityId: 11 },
+      availableTools: customerTools,
+      configuration,
+      question: "cambia el monto de la oportunidad a 1000000",
+      plan,
+    });
+    const missingOpportunityPlan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      context: { accountId: 7, opportunityId: null },
+      availableTools: customerTools,
+      configuration,
+      question: "cambia el monto de la oportunidad a 1000000",
+      plan,
+    });
+
+    expect(selectedOpportunityPlan).toMatchObject({
+      intent: "crm_operation",
+      mode: "operation",
+      requiresClarification: false,
+      missingContext: [],
+    });
+    expect(missingOpportunityPlan).toMatchObject({
+      intent: "crm_operation",
+      mode: "clarification",
+      requiresClarification: true,
+      missingContext: ["opportunity"],
+    });
+  });
+
+  it("resolves only a server-authorized candidate alias for a conversational reference", () => {
+    const configuration = getChannelIntentDefaults("customer_account");
+    const plan = {
+      objective: "Cambiar el monto de la oportunidad anterior",
+      queries: ["crm_operation"],
+      entities: { opportunityReference: "" },
+      referenceResolution: {
+        targetType: "opportunity",
+        cardinality: "single",
+        source: "conversation_history",
+        candidateKeys: ["opportunity_1"],
+      },
+      filters: {},
+      ambiguity: {
+        reason: "missing_context",
+        requiresClarification: "yes",
+        missingContext: ["opportunity"],
+        question: "¿A qué oportunidad te refieres?",
+      },
+      mode: "clarification",
+      confidence: "high",
+    };
+    const authorizedCandidate = {
+      candidateKey: "opportunity_1",
+      entityType: "opportunity",
+      recordId: 11,
+      accountId: 7,
+    };
+    const normalize = (referencePlan, serverEntityCandidates) =>
+      normalizeChannelIntentPlan({
+        channel: "customer_account",
+        plan: referencePlan,
+        serverEntityCandidates,
+        context: { accountId: 7 },
+        availableTools: customerTools,
+        configuration,
+        question: "modifica el monto por 1000000",
+        trustedEntityReferences: ["Vrf 2027"],
+      });
+
+    const resolved = normalize(plan, [authorizedCandidate]);
+    const invalid = normalize(
+      {
+        ...plan,
+        referenceResolution: {
+          ...plan.referenceResolution,
+          candidateKeys: ["opportunity_99"],
+        },
+      },
+      [authorizedCandidate],
+    );
+    const crossAccount = normalize(plan, [
+      { ...authorizedCandidate, accountId: 99 },
+    ]);
+
+    expect(resolved).toMatchObject({
+      mode: "operation",
+      requiresClarification: false,
+      missingContext: [],
+      serverResolvedEntityIds: { opportunityId: 11 },
+      referenceResolution: {
+        source: "conversation_history",
+        candidateKeys: ["opportunity_1"],
+      },
+    });
+    expect(invalid).toMatchObject({
+      mode: "clarification",
+      serverResolvedEntityIds: { opportunityId: null },
+      ambiguity: { reason: "ambiguous_entity", requiresClarification: true },
+    });
+    expect(crossAccount).toMatchObject({
+      mode: "clarification",
+      serverResolvedEntityIds: { opportunityId: null },
+    });
+
+    const portfolio = normalize(
+      {
+        ...plan,
+        queries: ["opportunity_query"],
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "all",
+          source: "account_scope",
+          candidateKeys: [],
+        },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+      },
+      [authorizedCandidate],
+    );
+    expect(portfolio.serverResolvedEntityIds.opportunityId).toBeNull();
+
+    const multiTargetWrite = normalize(
+      {
+        ...plan,
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "multiple",
+          source: "conversation_history",
+          candidateKeys: ["opportunity_1", "opportunity_2"],
+        },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+      },
+      [
+        authorizedCandidate,
+        {
+          ...authorizedCandidate,
+          candidateKey: "opportunity_2",
+          recordId: 12,
+        },
+      ],
+    );
+    expect(multiTargetWrite).toMatchObject({
+      mode: "clarification",
+      requiresClarification: true,
+      serverResolvedEntityIds: { opportunityId: null },
+    });
+  });
+
   it("normalizes compound plans and intersects intent tools with authorized tools", () => {
     const configuration = getChannelIntentDefaults("customer_account").map(
       (intent) =>

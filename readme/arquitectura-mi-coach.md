@@ -14,6 +14,8 @@ Resumen presenta indicadores de cuota y pipeline y puede iniciar un análisis as
 
 Coach, Cliente existente y Cuenta nueva son los tres canales conversacionales y comparten el motor de interpretación. Cada uno conserva su propio contexto, sesión, permisos y operaciones. Resumen y Administración son espacios distintos; no comparten sesiones de chat.
 
+El flujo detallado de jobs, contexto, planificación IA, candidatos CRM y persistencia se describe en [Arquitectura del chat conversacional por canales](./arquitectura-chat-conversacional.md).
+
 ## 2. Vista simple
 
 ![Vista simple de la arquitectura de Mi Coach](./arquitectura-mi-coach-vista-simple.svg)
@@ -34,6 +36,7 @@ El motor esta en:
 
 - `apps/api/src/coach/conversation-engine.js`
   ![Sesiones separadas de Mi Coach](./arquitectura-mi-coach-sesiones.svg)
+- `apps/api/src/coach/channel-intents.js`
 - `apps/api/src/coach/entity-resolver.js`
 - `apps/api/src/coach/read-tools.js`
 - `apps/api/src/coach/crm-read-tools.js`
@@ -67,14 +70,25 @@ El motor no administra sesiones ni conoce rutas HTTP.
 
 | Componente             | Responsabilidad                                                                                                                                       | No puede hacer                                                                                                    |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Planificador           | Interpretar pregunta e historial; proponer intenciones, referencias, filtros, consultas y aclaraciones usando nombres de herramientas ya autorizadas. | Recibir objetos de permisos o reglas del servidor, ampliar herramientas, autorizar escrituras o ejecutar cambios. |
+| Planificador           | Interpretar pregunta e historial; proponer intención, entidad objetivo, cardinalidad, origen de referencia, filtros, consultas y aclaraciones usando candidatos y herramientas autorizados. | Recibir IDs CRM internos, objetos de permisos o reglas del servidor, ampliar herramientas, autorizar escrituras o ejecutar cambios. |
 | Herramientas CRM       | Recuperar datos del snapshot o ejecutar lecturas permitidas dentro del alcance fijo del canal.                                                        | Cambiar registros ni ampliar la cuenta, sesión o conjunto de permisos.                                            |
 | Reglas comerciales     | Aplicar filtros predeterminados, exigir evidencia y limitar respuestas u operaciones a los tipos configurados.                                        | Conceder permisos de usuario o sustituir la autorización final.                                                   |
 | Reglas administrativas | Aportar guía editorial y criterios de calidad a la generación de respuesta dentro de su canal/proceso.                                                | Sustituir validadores estructurados o ampliar herramientas, permisos, alcance o tipos de operación del servidor.  |
 | Políticas del servidor | Resolver permisos efectivos, aislamiento, acceso a entidades y autorización final de cada lectura/escritura.                                          | Delegar esas decisiones al prompt o a una respuesta del modelo.                                                   |
 | Interfaz               | Mostrar respuestas y aclaraciones; presentar operaciones como propuestas revisables.                                                                  | Interpretar una propuesta como un cambio ya ejecutado.                                                            |
 
-El motor entrega al planificador solo el contrato de interpretación, el catálogo de intenciones, herramientas que ya pasaron los filtros del servidor y candidatos autorizados sin IDs sensibles. La salida del planificador se normaliza y vuelve a intersectarse con ese catálogo y esas herramientas antes de consultar CRM.
+El motor entrega al planificador solo el contrato de interpretación, el catálogo de intenciones, herramientas que ya pasaron los filtros del servidor y candidatos autorizados identificados con aliases opacos, no con IDs CRM. La salida del planificador se normaliza y vuelve a intersectarse con ese catálogo, las herramientas y el mapa privado de candidatos antes de consultar CRM.
+
+### 3.2 Resolución conversacional de entidades
+
+En Cliente existente, la resolución de referencias forma parte del plan estructurado; no depende de un detector de frases para decidir si se hereda una entidad. El planificador recibe la pregunta, el historial reciente, el contexto conversacional validado y los candidatos de la cuenta. Devuelve `referenceResolution` con:
+
+- `targetType`: cuenta, oportunidad, contacto, lead, cotización o ninguno.
+- `cardinality`: uno, varios, todos, ninguno o desconocido.
+- `source`: mensaje actual, historial, contexto activo, alcance de cuenta o ninguna referencia.
+- `candidateKeys`: aliases opacos de los candidatos elegidos; nunca IDs de CRM.
+
+El servidor conserva en memoria el mapa alias → registro, valida que el candidato siga perteneciendo a la cuenta activa y que existan herramientas autorizadas para leerlo, y solo entonces entrega el ID interno al read model. Si la IA marca una colección, no se fuerza una oportunidad singular; si una escritura no tiene un único destino válido, se pide aclaración. Los permisos, el ownership y la confirmación siguen siendo decisiones del servidor. La interpretación de fechas y periodos explícitos permanece determinista, pero no selecciona entidades.
 
 Las instrucciones administrativas de texto libre orientan la respuesta, pero no son una fuente de autorización ni un validador determinista. Todo criterio que deba ser obligatorio se implementa en reglas comerciales estructuradas o en un validador del servidor. Las escrituras se filtran por la política efectiva, se validan en servicios controlados contra permisos de dominio, entidad y canal, y después se guardan como propuestas que requieren revisión/confirmación explícita antes de ejecutar y auditar.
 
@@ -113,6 +127,7 @@ Aporta:
 
 - Una cuenta CRM fija.
 - Snapshot CRM autorizado.
+- Contexto de sesión validado y candidatos con aliases opacos para el planificador IA.
 - Cuentas, oportunidades, contactos e interacciones.
 - El mismo catalogo de herramientas de lectura que Coach, ejecutado solo sobre datos de la cuenta autorizada.
 - Pipeline, leads relacionados, actividades y readiness de oportunidades de esa cuenta.

@@ -41,6 +41,10 @@ const TRACE_ERROR_CODES = new Set([
   "query_error",
   "adapter_execution_failed",
   "structured_response_unavailable",
+  "answer_not_grounded",
+  "answer_audit_inconclusive",
+  "answer_audit_unavailable",
+  "answer_generation_unavailable",
   "chat_preparation_failed",
 ]);
 
@@ -101,6 +105,19 @@ export function summarizeCoachToolResults(toolResults = []) {
   return (Array.isArray(toolResults) ? toolResults : [])
     .slice(0, 40)
     .map((tool) => {
+      if (
+        tool &&
+        !Object.hasOwn(tool, "result") &&
+        Number.isFinite(Number(tool.resultCount))
+      ) {
+        return {
+          toolName: String(tool.toolName || "unknown").slice(0, 80),
+          resultCount: Math.max(0, Math.trunc(Number(tool.resultCount))),
+          errorCode: normalizeTraceErrorCode(tool.errorCode),
+          truncated:
+            typeof tool.truncated === "boolean" ? tool.truncated : null,
+        };
+      }
       const result = tool?.result;
       const resultCount = getToolResultCount(result);
       const errorText = tool?.error || result?.error || "";

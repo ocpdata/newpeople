@@ -87,6 +87,7 @@ La lectura conversacional de cotizaciones excluye costos internos, margenes y no
 Documentacion tecnica relacionada:
 
 - `../../readme/arquitectura-mi-coach.md`
+- `../../readme/arquitectura-chat-conversacional.md`
 - `../../readme/integraciones-mi-coach.md`
 - `../../readme/motor-conversacional-mi-coach.md`
 

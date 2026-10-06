@@ -2671,14 +2671,26 @@ describe("API integration baseline", () => {
         let output = requestContext.expectedJsonShape || {};
         if (payload.text?.format?.name === "customer_account_query_plan") {
           plannerContexts.push(requestContext.context);
+          const isOperationRequest =
+            /\b(?:prepara|prop[oó]n|actualiza|modifica|cambia)\b/i.test(
+              String(requestContext.context?.question || ""),
+            );
           output = {
-            objective: "Consultar el resumen de la cuenta",
-            queries: ["account_overview"],
+            objective: isOperationRequest
+              ? "Preparar una propuesta de operación CRM"
+              : "Consultar el resumen de la cuenta",
+            queries: [isOperationRequest ? "crm_operation" : "account_overview"],
             entities: {
               accountReference: "",
               opportunityReference: "",
               contactReference: "",
               leadReference: "",
+            },
+            referenceResolution: {
+              targetType: isOperationRequest ? "account" : "account",
+              cardinality: isOperationRequest ? "single" : "all",
+              source: isOperationRequest ? "current_message" : "account_scope",
+              candidateKeys: [],
             },
             filters: {
               opportunityStatus: "unspecified",
@@ -2694,7 +2706,7 @@ describe("API integration baseline", () => {
               missingContext: [],
               question: "",
             },
-            mode: "read_only",
+            mode: isOperationRequest ? "operation" : "read_only",
             confidence: "high",
           };
         } else if (
@@ -2779,7 +2791,8 @@ describe("API integration baseline", () => {
         }),
       }),
     );
-    expect(firstChatTurn.schemaNames).toContain(
+    expect(firstChatTurn.schemaNames).not.toContain("account_contextual_chat");
+    expect(firstChatTurn.schemaNames).not.toContain(
       "customer_account_answer_audit",
     );
     expect(accountChatJob.body.job.result.partialResults).toEqual(
@@ -2871,6 +2884,14 @@ describe("API integration baseline", () => {
           errorCode: null,
         }),
       ]),
+    );
+    expect(persistedDiagnostics.snapshotMetrics).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "provider_catalog" }),
+      ]),
+    );
+    expect(accountChatJob.body.job.result.answer).not.toContain(
+      "provider_catalog",
     );
     expect(JSON.stringify(accountTraceRows[0])).not.toContain(
       "Resume esta cuenta para mi reunión",

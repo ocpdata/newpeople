@@ -5,6 +5,10 @@ import {
 } from "../src/commercial-intelligence/customer-chat-evidence.js";
 
 describe("Customer Existing evidence loop", () => {
+  it("reserves enough time for planning, evidence checks, synthesis, and audit", () => {
+    expect(CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs).toBe(45000);
+  });
+
   it("requests another authorized evidence batch and verifies again", async () => {
     const assessEvidence = vi
       .fn()

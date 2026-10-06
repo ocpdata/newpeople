@@ -67,17 +67,6 @@ export function isCustomerContactHistoryQuestion(question = "") {
   );
 }
 
-export function isCustomerConversationFollowUp(question = "") {
-  const text = normalizeText(question)
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  return (
-    /\b(?:y que paso|que paso despues|y despues|y luego|y cual|y cuales|y quien|y quienes|y que mas|y tambien|ademas de eso|y sus|y su|ese mismo|esa misma|lo anterior|eso que mencionas)\b/.test(
-      text,
-    ) || /^(?:y|tambien|ademas)\b/.test(text)
-  );
-}
-
 function getHistoryStartDate(now, months) {
   const date = new Date(now);
   const originalDay = date.getUTCDate();

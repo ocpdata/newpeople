@@ -28,7 +28,6 @@ import {
   buildCustomerActivityHistoryResponse,
   getCustomerActivityHistoryRange,
   getCustomerActivityHistoryRangeFromFilters,
-  isCustomerConversationFollowUp,
 } from "./activity-history.js";
 import {
   CUSTOMER_CHAT_EVIDENCE_LIMITS,
@@ -287,7 +286,52 @@ function buildCustomerCoachSnapshot(snapshot, quotation) {
   };
 }
 
-function buildCustomerPlanEntityCandidates(snapshot, question, businessRules) {
+function getValidatedContinuationEntities(snapshot, context) {
+  if (!context || Number(context.accountId) !== Number(snapshot?.account?.id)) {
+    return {};
+  }
+  const accountId = Number(snapshot.account.id);
+  const opportunities = [
+    ...(snapshot.opportunities || []),
+    ...(snapshot.inactiveOpportunities || []),
+    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ];
+  return {
+    opportunity: opportunities.find(
+      (item) =>
+        Number(item.id) === Number(context.opportunityId) &&
+        Number(item.accountId || accountId) === accountId,
+    ),
+    contact: (snapshot.contacts || []).find(
+      (item) =>
+        Number(item.id) === Number(context.contactId) &&
+        Number(item.accountId || accountId) === accountId,
+    ),
+    lead: (snapshot.interactions || []).find(
+      (item) =>
+        Number(item.id) === Number(context.leadId) &&
+        Number(item.accountId || accountId) === accountId,
+    ),
+  };
+}
+
+function buildCustomerPlanEntityCandidates(
+  snapshot,
+  question,
+  businessRules,
+  conversationContext = null,
+  selectedContext = {},
+  availableTools = [],
+) {
+  const toolNames = new Set(
+    (Array.isArray(availableTools) ? availableTools : []).map((tool) =>
+      typeof tool === "string" ? tool : tool?.name,
+    ),
+  );
+  const opportunityReadAllowed =
+    toolNames.has("searchOpportunities") || toolNames.has("getOpportunity");
+  const contactReadAllowed = toolNames.has("searchContacts");
+  const leadReadAllowed = toolNames.has("searchLeads");
   const resolution = resolveCoachEntities(
     {
       accounts: accountRecord(snapshot),
@@ -299,45 +343,97 @@ function buildCustomerPlanEntityCandidates(snapshot, question, businessRules) {
     businessRules,
     { ignoreStageFilters: true },
   );
+  const continuation = getValidatedContinuationEntities(
+    snapshot,
+    conversationContext,
+  );
+  const activeSelection = getValidatedContinuationEntities(snapshot, {
+    accountId: snapshot.account?.id,
+    opportunityId: selectedContext.opportunityId,
+    contactId: selectedContext.contactId,
+    leadId: selectedContext.leadId,
+  });
+  const serverEntityCandidates = [];
+  const buildCandidates = (entityType, records, project) => {
+    const uniqueRecords = [];
+    const seenIds = new Set();
+    for (const record of records) {
+      const id = Number(record?.id || 0);
+      if (
+        !id ||
+        Number(record.accountId || snapshot.account?.id) !==
+          Number(snapshot.account?.id) ||
+        seenIds.has(id)
+      ) {
+        continue;
+      }
+      seenIds.add(id);
+      uniqueRecords.push(record);
+    }
+    return uniqueRecords.slice(0, 8).map((record, index) => {
+      const candidateKey = `${entityType}_${index + 1}`;
+      serverEntityCandidates.push({
+        candidateKey,
+        entityType,
+        recordId: Number(record.id),
+        accountId: Number(record.accountId || snapshot.account?.id),
+      });
+      return { candidateKey, ...project(record) };
+    });
+  };
+  const addContinuationCandidate = (records, entity) => {
+    if (!entity || records.some((item) => Number(item.id) === Number(entity.id))) {
+      return records;
+    }
+    return [...records.slice(0, 7), entity];
+  };
+  const opportunityCandidates = addContinuationCandidate(
+    addContinuationCandidate(
+      opportunityReadAllowed ? resolution.candidates.opportunities : [],
+      opportunityReadAllowed ? continuation.opportunity : null,
+    ),
+    opportunityReadAllowed ? activeSelection.opportunity : null,
+  );
+  const contactRecords = addContinuationCandidate(
+    addContinuationCandidate(
+      contactReadAllowed ? resolution.candidates.contacts : [],
+      contactReadAllowed ? continuation.contact : null,
+    ),
+    contactReadAllowed ? activeSelection.contact : null,
+  );
+  const leadRecords = addContinuationCandidate(
+    addContinuationCandidate(
+      leadReadAllowed ? resolution.candidates.leads : [],
+      leadReadAllowed ? continuation.lead : null,
+    ),
+    leadReadAllowed ? activeSelection.lead : null,
+  );
   return {
-    opportunities: resolution.candidates.opportunities
-      .slice(0, 8)
-      .map((item) => ({
+    publicCandidates: {
+      opportunities: buildCandidates("opportunity", opportunityCandidates, (item) => ({
         name: item.name,
         stageName: item.stageName,
         commercialStatusCode: item.commercialStatusCode,
       })),
-    contacts: resolution.candidates.contacts.slice(0, 8).map((item) => ({
-      name: item.name,
-      positionTitle: item.positionTitle,
-    })),
-    leads: resolution.candidates.leads.slice(0, 8).map((item) => ({
-      name: item.name,
-    })),
+      contacts: buildCandidates("contact", contactRecords, (item) => ({
+        name: item.name,
+        positionTitle: item.positionTitle,
+      })),
+      leads: buildCandidates("lead", leadRecords, (item) => ({
+        name: item.name || item.title,
+      })),
+    },
+    serverEntityCandidates,
   };
 }
 
 function getValidatedContinuationReferences(snapshot, context) {
-  if (!context || Number(context.accountId) !== Number(snapshot?.account?.id)) {
-    return [];
-  }
-  const opportunities = [
-    ...(snapshot.opportunities || []),
-    ...(snapshot.inactiveOpportunities || []),
-    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
-  ];
-  const references = [
-    opportunities.find(
-      (item) => Number(item.id) === Number(context.opportunityId),
-    )?.name,
-    (snapshot.contacts || []).find(
-      (item) => Number(item.id) === Number(context.contactId),
-    )?.name,
-    (snapshot.interactions || []).find(
-      (item) => Number(item.id) === Number(context.leadId),
-    )?.title,
-  ];
-  return references.filter(Boolean);
+  const continuation = getValidatedContinuationEntities(snapshot, context);
+  return [
+    continuation.opportunity?.name,
+    continuation.contact?.name,
+    continuation.lead?.title,
+  ].filter(Boolean);
 }
 
 export function buildCustomerQueryPlannerContext({
@@ -349,6 +445,7 @@ export function buildCustomerQueryPlannerContext({
   catalog,
   snapshot,
   businessRules,
+  entityCandidates = null,
 } = {}) {
   const validatedContinuationReferences = getValidatedContinuationReferences(
     snapshot,
@@ -400,11 +497,16 @@ export function buildCustomerQueryPlannerContext({
         }
       : null,
     trustedContinuationReferences: validatedContinuationReferences,
-    authorizedEntityCandidates: buildCustomerPlanEntityCandidates(
-      snapshot || {},
-      question,
-      businessRules || {},
-    ),
+    authorizedEntityCandidates:
+      entityCandidates?.publicCandidates ||
+      buildCustomerPlanEntityCandidates(
+        snapshot || {},
+        question,
+        businessRules || {},
+        conversationContext,
+        context,
+        availableTools,
+      ).publicCandidates,
     permittedIntentCatalog: (Array.isArray(catalog) ? catalog : []).map(
       (intent) => ({
         code: intent.code,
@@ -552,8 +654,12 @@ export async function buildCustomerReadModel({
     businessRules,
   );
   const currentPlannedFilters = channelIntentRouting?.filters || {};
+  const inheritsConversationFilters = [
+    "conversation_history",
+    "active_context",
+  ].includes(channelIntentRouting?.referenceResolution?.source);
   const plannedFilters = {
-    ...(isCustomerConversationFollowUp(question)
+    ...(inheritsConversationFilters
       ? conversationContext?.filters || {}
       : {}),
     ...currentPlannedFilters,
@@ -587,8 +693,43 @@ export async function buildCustomerReadModel({
     applyDefaultFilters: !explicitPlannedStatus,
   };
   const scope = businessRules.scope || {};
-  const selectedOpportunity =
-    resolution.opportunity || snapshot.selectedOpportunity || null;
+  const serverResolvedEntityIds =
+    channelIntentRouting?.serverResolvedEntityIds || {};
+  const scopedOpportunities = [
+    ...(snapshot.opportunities || []),
+    ...(snapshot.inactiveOpportunities || []),
+    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ];
+  const plannedOpportunity = scopedOpportunities.find(
+    (item) =>
+      Number(item.id) === Number(serverResolvedEntityIds.opportunityId) &&
+      Number(item.accountId || snapshot.account?.id) ===
+        Number(snapshot.account?.id),
+  );
+  const hasReferenceResolution = Boolean(
+    channelIntentRouting?.referenceResolution,
+  );
+  const selectedOpportunity = hasReferenceResolution
+    ? plannedOpportunity || null
+    : resolution.opportunity || snapshot.selectedOpportunity || null;
+  const plannedContact = (snapshot.contacts || []).find(
+      (item) =>
+        Number(item.id) === Number(serverResolvedEntityIds.contactId) &&
+        Number(item.accountId || snapshot.account?.id) ===
+          Number(snapshot.account?.id),
+    );
+  const selectedContact = plannedContact ||
+    (hasReferenceResolution ? null : snapshot.selectedContact || null);
+  const plannedLead = (snapshot.interactions || []).find(
+    (item) =>
+      Number(item.id) === Number(serverResolvedEntityIds.leadId) &&
+      Number(item.accountId || snapshot.account?.id) ===
+        Number(snapshot.account?.id),
+  );
+  const selectedLeadId = plannedLead?.id || null;
+  const opportunityGuidanceRequested =
+    channelIntentRouting?.intent === "opportunity_guidance" ||
+    channelIntentRouting?.intents?.includes("opportunity_guidance");
   const toolNames = new Set(availableTools.map((tool) => tool.name));
   const quotationRequested =
     queryCase?.readTool === "getOpportunityQuotation" ||
@@ -613,7 +754,7 @@ export async function buildCustomerReadModel({
   const activityHistoryRange =
     getCustomerActivityHistoryRange(question) ||
     getCustomerActivityHistoryRangeFromFilters(currentPlannedFilters) ||
-    (isCustomerConversationFollowUp(question)
+    (inheritsConversationFilters
       ? getCustomerActivityHistoryRangeFromFilters(conversationContext?.filters)
       : null);
   const routedToolNames = channelIntentRouting
@@ -680,9 +821,10 @@ export async function buildCustomerReadModel({
   if (
     routeAllows(
       "searchInteractions",
-      /\b(interaccion|interacciones|actividad|actividades|correo|email|llamada|riesgo)\b/.test(
-        normalizedQuestion,
-      ),
+      opportunityGuidanceRequested ||
+        /\b(interaccion|interacciones|actividad|actividades|correo|email|llamada|riesgo)\b/.test(
+          normalizedQuestion,
+        ),
     )
   ) {
     pushTool("searchInteractions", {
@@ -694,7 +836,8 @@ export async function buildCustomerReadModel({
     selectedOpportunity &&
     routeAllows(
       "getOpportunity",
-      /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(normalizedQuestion),
+      opportunityGuidanceRequested ||
+        /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(normalizedQuestion),
     )
   ) {
     pushTool("getOpportunity", { opportunityId: selectedOpportunity.id });
@@ -703,9 +846,10 @@ export async function buildCustomerReadModel({
     selectedOpportunity &&
     routeAllows(
       "getOpportunityActivities",
-      /\b(actividad|actividades|siguiente paso|proximo paso)\b/.test(
-        normalizedQuestion,
-      ),
+      opportunityGuidanceRequested ||
+        /\b(actividad|actividades|siguiente paso|proximo paso)\b/.test(
+          normalizedQuestion,
+        ),
     )
   ) {
     pushTool("getOpportunityActivities", {
@@ -716,9 +860,9 @@ export async function buildCustomerReadModel({
     selectedOpportunity &&
     routeAllows(
       "getOpportunityReadiness",
-      isStagePreparationQuestion(question),
+      opportunityGuidanceRequested || isStagePreparationQuestion(question),
     ) &&
-    isStagePreparationQuestion(question)
+    (opportunityGuidanceRequested || isStagePreparationQuestion(question))
   ) {
     pushTool("getOpportunityReadiness", {
       opportunityId: selectedOpportunity.id,
@@ -776,8 +920,8 @@ export async function buildCustomerReadModel({
       contactId:
         scope.contactSearchAllowed === false
           ? null
-          : snapshot.selectedContact?.id || null,
-      leadId: null,
+          : selectedContact?.id || null,
+      leadId: selectedLeadId,
     },
     readToolResults,
     readQueryCount: initialReadQueryCount,
@@ -932,6 +1076,68 @@ export function buildCustomerFallback(snapshot, question) {
   };
 }
 
+function buildCustomerAccountOverviewResponse(snapshot, readToolResults = []) {
+  const accountName = String(snapshot?.account?.name || "").trim();
+  if (!accountName) return null;
+  const resultFor = (toolName) =>
+    readToolResults.find(
+      (item) => item?.toolName === toolName && !item.error,
+    );
+  const opportunityRead = resultFor("searchOpportunities");
+  const contactRead = resultFor("searchContacts");
+  const interactionRead = resultFor("searchInteractions");
+  const sections = [];
+  const evidence = [`Cuenta seleccionada y autorizada: ${accountName}.`];
+
+  if (Array.isArray(opportunityRead?.result)) {
+    const openOpportunities = opportunityRead.result.filter(
+      (opportunity) =>
+        String(opportunity?.lifecycle || "").toLowerCase() === "open" &&
+        String(opportunity?.commercialStatusCode || "").toLowerCase() ===
+          "en_proceso" &&
+        String(opportunity?.activationStatusCode || "").toLowerCase() ===
+          "activada",
+    );
+    const openPipelineUsd = openOpportunities.reduce(
+      (total, opportunity) => total + (Number(opportunity.amountUsd) || 0),
+      0,
+    );
+    sections.push(
+      `${openOpportunities.length} oportunidades abiertas con un pipeline de ${formatUsd(openPipelineUsd)}`,
+    );
+    evidence.push(
+      `searchOpportunities: ${openOpportunities.length} oportunidades abiertas; pipeline ${formatUsd(openPipelineUsd)}.`,
+    );
+  }
+
+  if (Array.isArray(contactRead?.result)) {
+    sections.push(`${contactRead.result.length} contactos activos visibles`);
+    evidence.push(
+      `searchContacts: ${contactRead.result.length} contactos activos visibles.`,
+    );
+  }
+
+  if (Array.isArray(interactionRead?.result)) {
+    sections.push(`${interactionRead.result.length} interacciones consultadas`);
+    evidence.push(
+      `searchInteractions: ${interactionRead.result.length} interacciones consultadas.`,
+    );
+  }
+
+  if (!sections.length) return null;
+  return {
+    answer: `Resumen de ${accountName}: ${sections.join("; ")}.`,
+    evidence,
+    inferences: [],
+    confidence:
+      opportunityRead && contactRead ? "high" : "medium",
+    pendingItems: [],
+    recommendedActions: [],
+    operations: [],
+    source: "account_intelligence",
+  };
+}
+
 function buildCustomerDeterministicResponse({
   snapshot,
   question,
@@ -975,6 +1181,7 @@ export function buildCustomerEvidenceFailureResponse({
     account_overview: "resumen de cuenta",
     opportunity_query: "oportunidades",
     opportunity_status: "estado o etapa de oportunidad",
+    opportunity_guidance: "recomendaciones para la oportunidad",
     contact_query: "contactos",
     contact_history: "historial de contactos",
     account_activity_history: "interacciones y actividades",
@@ -1013,6 +1220,10 @@ export function buildCustomerEvidenceFailureResponse({
   } else if (status === "query_error" || failedSourceLabels.length) {
     responseType = "error";
     answer = `No pude verificar toda la solicitud porque falló la consulta de ${failedSourceLabels.join(", ") || "una fuente CRM"}. No interpretaré ese error como ausencia de registros.`;
+  } else if (status === "adapter_execution_error") {
+    responseType = "error";
+    answer =
+      "Ocurrió un error interno al procesar la consulta. No pude verificar la respuesta. Inténtalo de nuevo; si el problema persiste, contacta al administrador.";
   } else if (status === "timeout" || errorCode === "turn_timeout") {
     responseType = "error";
     answer =
@@ -1488,7 +1699,9 @@ export function normalizeCustomerResponse(
     source: "account_intelligence",
     entities: {
       accountId: context.accountId || null,
-      opportunityId: context.opportunityId || null,
+      opportunityId:
+        Number(normalized.entities?.opportunityId || context.opportunityId || 0) ||
+        null,
       contactId: context.contactId || null,
       leadId: null,
       names: [],
@@ -1534,21 +1747,31 @@ export function createCustomerAccountAdapter({
         .filter((intent) => intent.enabled !== false)
         .map((intent) => intent.code);
       if (!enabledIntentCodes.length) return null;
-      return runStructuredTextResearch({
+      const entityCandidates = buildCustomerPlanEntityCandidates(
+        snapshot,
+        question,
+        activeBusinessRules || {},
+        conversationContext,
+        context,
+        permittedTools,
+      );
+      const plannerContext = buildCustomerQueryPlannerContext({
+        question,
+        context,
+        conversationHistory,
+        conversationContext,
+        availableTools: permittedTools,
+        catalog,
+        snapshot,
+        businessRules: activeBusinessRules || {},
+        entityCandidates,
+      });
+      const plan = await runStructuredTextResearch({
         schemaName: "customer_account_query_plan",
         systemPrompt:
-          "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Incluye varios códigos cuando la pregunta tenga partes independientes; usa el historial reciente para resolver referencias. Si se proporcionan candidatos autorizados y hay más de uno compatible sin que la pregunta distinga entre ellos, pide aclaración. Devuelve menciones literales en entities, filtros solo cuando estén expresados o sean necesarios, y pide aclaración ante entidades, periodo o intención ambiguos. Solo usa crm_operation y mode=operation ante una petición explícita de escritura; toda escritura seguirá requiriendo permisos y confirmación del servidor.",
+          "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve las referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Solo usa crm_operation y mode=operation ante una petición explícita de escritura; toda escritura seguirá requiriendo permisos y confirmación del servidor.",
         subject: "Plan de consulta del CRM autorizado",
-        context: buildCustomerQueryPlannerContext({
-          question,
-          context,
-          conversationHistory,
-          conversationContext,
-          availableTools: permittedTools,
-          catalog,
-          snapshot,
-          businessRules: activeBusinessRules || {},
-        }),
+        context: plannerContext,
         currentValues: {},
         fields: getChannelIntentPlanFields(
           "customer_account",
@@ -1562,6 +1785,9 @@ export function createCustomerAccountAdapter({
         },
         signal: getDeadlineSignal(deadlineAt),
       });
+      return plan
+        ? { ...plan, serverEntityCandidates: entityCandidates.serverEntityCandidates }
+        : plan;
     },
     loadChannelIntentConfigurations: ({ channel }) =>
       loadChannelIntentConfigurations({ channel }),
@@ -1573,6 +1799,8 @@ export function createCustomerAccountAdapter({
       conversationHistory,
       conversationContext: readConversationContext,
       businessRules,
+      channelIntentRouting,
+      channelIntentCatalog,
     }) =>
       buildCustomerReadModel({
         user,
@@ -1583,6 +1811,8 @@ export function createCustomerAccountAdapter({
         conversationHistory,
         businessRules,
         conversationContext: readConversationContext || conversationContext,
+        channelIntentRouting,
+        channelIntentCatalog,
       }),
     executeReadTool: ({
       toolName,
@@ -1625,6 +1855,11 @@ export function createCustomerAccountAdapter({
         permissions,
         allowedOperationKinds: payload.operationPolicy?.allowedKinds,
       });
+      const deterministicOperationResponse =
+        intentCodes.includes("crm_operation") &&
+        deterministicResponse?.operations?.length
+          ? deterministicResponse
+          : null;
       const channelCatalog = Array.isArray(
         payload.context?.channelIntentCatalog,
       )
@@ -1799,18 +2034,80 @@ export function createCustomerAccountAdapter({
             : routing,
         },
       };
-      const fallback =
-        deterministicResponse ||
-        buildCustomerFallback(snapshot, payload.question);
-      const aiResult = await runStructuredTextResearch({
+        if (intentCodes.length === 1 && intentCodes[0] === "account_overview") {
+          const accountOverview = buildCustomerAccountOverviewResponse(
+            snapshot,
+            evidenceLoop.readToolResults,
+          );
+          return (
+            accountOverview ||
+            buildCustomerEvidenceFailureResponse({
+              status: "insufficient_evidence",
+              missingFacts: [
+                "datos de oportunidades o contactos consultados para el resumen",
+              ],
+            })
+          );
+        }
+      const publicResearchEvidence = (Array.isArray(agents) ? agents : [])
+        .filter(
+          (agent) =>
+            agent.agentId === "public_research" &&
+            Array.isArray(agent.evidence),
+        )
+        .flatMap((agent) =>
+          agent.evidence.map((item) => ({
+            toolName: "public_research",
+            sourceDomain: agent.sourceDomain || "public_web",
+            result: item,
+          })),
+        );
+      const authorizedEvidence = [
+        ...evidenceLoop.readToolResults.map((item) => ({
+          toolName: item.toolName,
+          sourceDomain: "crm_internal",
+          result: item.result,
+          queryFailed: Boolean(item.error),
+        })),
+        ...publicResearchEvidence,
+      ];
+      const answerEvidenceContext = {
+        question: payload.question,
+        conversationHistory,
+        instruction: payload.instruction || "",
+        selectedContext: payload.context?.selectedContext || {},
+        channelIntentRouting: routing,
+        operationPolicy: payload.operationPolicy || {},
+        evidenceVerification: evidenceLoop.status,
+        authorizedEvidence,
+      };
+      const fallback = {
+        answer: "Respuesta basada únicamente en la evidencia autorizada.",
+        evidence: [],
+        inferences: [],
+        confidence: "medium",
+        pendingItems: [],
+        recommendedActions: [],
+        operations: [],
+      };
+      const aiResult =
+        deterministicOperationResponse ||
+        (await runStructuredTextResearch({
         schemaName: "account_contextual_chat",
         systemPrompt:
-          "Responde todas las partes de la pregunta usando exclusivamente la evidencia CRM autorizada incluida en el contexto. Distingue hechos de inferencias. No afirmes una ausencia si una consulta falló; evidenceVerification indica si la verificación se completó. Si alguna parte no está respaldada, dilo explícitamente y colócala en pendingItems. Puedes proponer operaciones solo si la petición es explícita y la evidencia las respalda; son borradores que requieren revisión y confirmación. Nunca ejecutes operaciones ni envíes correos.",
+          "Responde usando exclusivamente authorizedEvidence. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Nunca afirmes ausencia si falló una consulta. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos.",
         subject: snapshot.account?.name || "cuenta",
-        context: { ...payload, agents },
+        context: answerEvidenceContext,
         currentValues: {},
         fields: [
           { key: "answer", type: "string", example: fallback.answer },
+          {
+            key: "entities",
+            type: "object",
+            fields: [
+              { key: "opportunityId", type: "number", example: 0 },
+            ],
+          },
           {
             key: "evidence",
             type: "array",
@@ -1961,15 +2258,19 @@ export function createCustomerAccountAdapter({
           jobId,
         },
         signal: getDeadlineSignal(deadlineAt),
-      });
+        }));
       if (aiResult) {
         const answerAudit = await runStructuredTextResearch({
           schemaName: "customer_account_answer_audit",
           systemPrompt:
-            "Audita cada afirmación factual importante de la respuesta propuesta, incluidos answer, evidence, inferences, acciones y operaciones, contra los resultados CRM autorizados y la evidencia de cada fuente. No uses conocimiento externo ni la pregunta como prueba. Marca supported solo si todas las afirmaciones están respaldadas. Si una afirmación inventa, contradice o excede la evidencia, marca unsupported y descríbela brevemente en unsupportedClaims. Si no puedes decidir por falta de evidencia, marca inconclusive. No redactes una respuesta nueva ni autorices operaciones.",
+            "Audita cada afirmación factual de la respuesta contra authorizedEvidence. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones sobre el estado CRM están respaldadas y cualquier propuesta coincide con la operación estructurada; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. No redactes una respuesta nueva ni autorices operaciones.",
           subject: snapshot.account?.name || "cuenta",
           context: {
             question: payload.question,
+            channelIntentRouting: routing,
+            proposalOrigin: deterministicOperationResponse
+              ? "server_deterministic"
+              : "model_generated",
             proposedAnswer: {
               answer: aiResult.answer,
               evidence: Array.isArray(aiResult.evidence)
@@ -1985,11 +2286,7 @@ export function createCustomerAccountAdapter({
                 ? aiResult.operations
                 : [],
             },
-            authorizedEvidence: evidenceLoop.readToolResults.map((item) => ({
-              toolName: item.toolName,
-              result: item.result,
-              queryFailed: Boolean(item.error),
-            })),
+            authorizedEvidence,
             evidenceVerification: evidenceLoop.status,
           },
           currentValues: {},
@@ -2107,7 +2404,7 @@ export function createCustomerAccountAdapter({
         opportunityId:
           currentScope.opportunitySearchAllowed === false
             ? null
-            : context.opportunityId,
+            : context.opportunityId || null,
         contactId:
           currentScope.contactSearchAllowed === false
             ? null

@@ -14,13 +14,11 @@ import {
 } from "./snapshot-query-metrics.js";
 import {
   buildCustomerConversationContext,
-  getCustomerConversationFilterMemory,
   validateCustomerConversationContext,
 } from "./conversation-context.js";
 import {
   getCustomerActivityHistoryRange,
   getCustomerActivityHistoryRangeFromFilters,
-  isCustomerConversationFollowUp,
   isCustomerContactHistoryQuestion,
 } from "./activity-history.js";
 import { ensureCommercialCalendarActivitiesSchema } from "./calendar-activities-schema.js";
@@ -41,6 +39,7 @@ import {
 
 const FINDING_CATEGORIES = new Set(CUSTOMER_INTELLIGENCE_CATEGORIES);
 const CUSTOMER_SNAPSHOT_QUERY_METRICS = new WeakMap();
+const PROVIDER_CATALOG_RESULT_LIMIT = 1000;
 
 function sanitizeCustomerResponseEntities(response, snapshot, usedTools = []) {
   const accountId = Number(snapshot?.account?.id || 0) || null;
@@ -811,6 +810,16 @@ export function buildExpansionHypotheses({
     .slice(0, 10);
 }
 
+export function shouldLoadProviderCatalogForQuestion(question = "") {
+  const normalizedQuestion = String(question || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return /\b(expansion|expandir|ampliar|upsell|cross sell|venta cruzada|ventas cruzadas|productos? complementarios?|complementar|catalogo de productos|catalogo de proveedores)\b/.test(
+    normalizedQuestion,
+  );
+}
+
 export async function buildAuthorizedCustomerSnapshot({
   user,
   accountId,
@@ -819,6 +828,7 @@ export async function buildAuthorizedCustomerSnapshot({
   activityHistoryStartDate = null,
   activityHistoryEndDate = null,
   includeContactHistory = false,
+  includeProviderCatalog = true,
 }) {
   const governanceSettings = await getMiCoachGovernanceSettings();
   const snapshotQueryMetrics = [];
@@ -1164,14 +1174,16 @@ export async function buildAuthorizedCustomerSnapshot({
         )
       : [];
   const catalogItems =
-    resolvedAccountId && hasReadPermission(user, "oportunidades")
+    includeProviderCatalog &&
+    resolvedAccountId &&
+    hasReadPermission(user, "oportunidades")
       ? await loadSnapshotRows(
           "provider_catalog",
           () =>
             query(
-              `SELECT ppli.provider_id AS providerId, ppli.code, ppli.description FROM provider_price_list_items ppli INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id INNER JOIN provider_price_list_item_statuses ps ON ps.id = ppli.activation_status_id WHERE ppl.is_active = 1 AND ps.is_active = 1 ORDER BY ppli.updated_at DESC LIMIT 101`,
+              `SELECT ppli.provider_id AS providerId, ppli.code, ppli.description FROM provider_price_list_items ppli INNER JOIN provider_price_lists ppl ON ppl.id = ppli.price_list_id INNER JOIN provider_price_list_item_statuses ps ON ps.id = ppli.activation_status_id WHERE ppl.is_active = 1 AND ps.is_active = 1 ORDER BY ppli.updated_at DESC LIMIT ${PROVIDER_CATALOG_RESULT_LIMIT + 1}`,
             ),
-          100,
+          PROVIDER_CATALOG_RESULT_LIMIT,
         )
       : [];
 
@@ -2894,9 +2906,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   let conversationHistory;
   let conversationContext;
   let continuationContext;
-  let rememberedFilters = {};
   let activityHistoryRange = null;
-  let isFollowUp = false;
   let nextConversationContext = null;
   let preparationStage = "request";
   const turnStartedAt = Date.now();
@@ -2924,22 +2934,10 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       sessionRows[0].context_json,
       null,
     );
-    rememberedFilters = getCustomerConversationFilterMemory(
-      persistedConversationContext,
-      job.account_id,
-    );
-    activityHistoryRange =
-      getCustomerActivityHistoryRange(request.question) ||
-      (isCustomerConversationFollowUp(request.question)
-        ? getCustomerActivityHistoryRangeFromFilters(rememberedFilters)
-        : null);
-    isFollowUp = isCustomerConversationFollowUp(request.question);
+    activityHistoryRange = getCustomerActivityHistoryRange(request.question);
     const includeContactHistory =
       isCustomerContactHistoryQuestion(request.question) ||
-      Boolean(
-        isFollowUp &&
-        persistedConversationContext?.intents?.includes("contact_history"),
-      );
+      Boolean(persistedConversationContext?.intents?.includes("contact_history"));
     preparationStage = "snapshot";
     snapshot = await buildAuthorizedCustomerSnapshot({
       user,
@@ -2949,6 +2947,9 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       activityHistoryStartDate: activityHistoryRange?.startDate || null,
       activityHistoryEndDate: activityHistoryRange?.endDate || null,
       includeContactHistory,
+      includeProviderCatalog: shouldLoadProviderCatalogForQuestion(
+        request.question,
+      ),
     });
     conversationContext = validateCustomerConversationContext(
       persistedConversationContext,
@@ -2956,7 +2957,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       job.account_id,
     );
     nextConversationContext = conversationContext;
-    continuationContext = isFollowUp ? conversationContext : null;
+    continuationContext = conversationContext;
     preparationStage = "agents";
     agents = await runAccountIntelligenceAgents(snapshot, {
       includePublicResearch: Boolean(request.includePublicResearch),
@@ -3055,14 +3056,14 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       context: {
         accountId: snapshot.account?.id || null,
         opportunityId:
-          continuationContext?.opportunityId ||
+          Number(job.opportunity_id || 0) ||
           snapshot.selectedOpportunity?.id ||
           null,
         contactId:
-          continuationContext?.contactId ||
+          Number(job.contact_id || 0) ||
           snapshot.selectedContact?.id ||
           null,
-        leadId: continuationContext?.leadId || null,
+        leadId: null,
       },
       conversationContext: continuationContext,
     });
@@ -3082,14 +3083,21 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       !response?.clarification
     ) {
       const currentRange = getCustomerActivityHistoryRange(request.question);
-      const routingFilters = engineResult.channelIntentRouting?.filters || {};
+      const routing = engineResult.channelIntentRouting;
+      const routingFilters = routing?.filters || {};
+      const inheritsConversationFilters = [
+        "conversation_history",
+        "active_context",
+      ].includes(routing?.referenceResolution?.source);
       const filters = {
-        ...(isFollowUp ? conversationContext?.filters || {} : {}),
+        ...(inheritsConversationFilters
+          ? conversationContext?.filters || {}
+          : {}),
         ...routingFilters,
       };
       const resolvedRange =
         currentRange ||
-        (isFollowUp
+        (inheritsConversationFilters
           ? getCustomerActivityHistoryRangeFromFilters(filters)
           : null);
       if (resolvedRange) {
@@ -3102,7 +3110,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           accountId: snapshot.account?.id,
           effectiveContext: response.entities || {},
           routing: {
-            ...engineResult.channelIntentRouting,
+            ...routing,
             filters,
           },
         }),
@@ -3110,9 +3118,20 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         snapshot.account?.id,
       );
     }
-  } catch {
+  } catch (error) {
+    console.error("[account-chat] Adapter execution failed", {
+      jobId: Number(jobId),
+      errorName: String(error?.name || "Error").slice(0, 80),
+      errorCode: String(error?.code || "").slice(0, 80) || null,
+      errorMessage: String(error?.message || "").slice(0, 500),
+      stack: String(error?.stack || "")
+        .split("\n")
+        .slice(0, 8)
+        .join("\n")
+        .slice(0, 2500),
+    });
     response = buildCustomerEvidenceFailureResponse({
-      status: "query_error",
+      status: "adapter_execution_error",
       errorCode: "adapter_execution_failed",
     });
     qualityTrace = {

@@ -82,6 +82,28 @@ const CHANNEL_INTENTS = Object.freeze({
       priority: 90,
     },
     {
+      code: "opportunity_guidance",
+      label: "Recomendaciones para oportunidad",
+      description:
+        "Recomienda siguientes pasos para la oportunidad seleccionada usando su detalle, readiness, actividades e interacciones CRM autorizadas.",
+      tools: [
+        "getOpportunity",
+        "getOpportunityActivities",
+        "getOpportunityReadiness",
+        "searchInteractions",
+      ],
+      context: ["account", "opportunity"],
+      examples: [
+        "¿Qué me sugieres hacer en esta oportunidad?",
+        "¿Cuál sería el siguiente paso para esta oportunidad?",
+      ],
+      patterns: [
+        /\b(sugieres|recomiendas|recomendar|aconsejas)\b.*\boportunidad\b/,
+        /\b(que deberia hacer|que hago|siguiente paso|proximo paso)\b.*\boportunidad\b/,
+      ],
+      priority: 92,
+    },
+    {
       code: "account_activity_history",
       label: "Historial de interacciones y actividades",
       description:
@@ -128,7 +150,7 @@ const CHANNEL_INTENTS = Object.freeze({
       code: "account_overview",
       label: "Resumen de cuenta",
       description:
-        "Responde preguntas generales con el resumen CRM autorizado de la cuenta.",
+        "Resume los datos básicos de la cuenta y, cuando estén disponibles, el conteo de oportunidades abiertas, pipeline y contactos desde lecturas CRM autorizadas. No afirmes interacciones si no se consultó searchInteractions.",
       tools: ["searchAccounts", "searchOpportunities", "searchContacts"],
       context: ["account"],
       examples: ["Resume esta cuenta"],
@@ -291,6 +313,53 @@ export function getChannelIntentPlanFields(channel, enabledIntentCodes = null) {
       example: [],
       items: { type: "enum", enum: intentCodes },
     },
+    ...(channel === "customer_account"
+      ? [
+          {
+            key: "referenceResolution",
+            type: "object",
+            fields: [
+              {
+                key: "targetType",
+                type: "enum",
+                enum: [
+                  "account",
+                  "opportunity",
+                  "contact",
+                  "lead",
+                  "quotation",
+                  "none",
+                ],
+                example: "opportunity",
+              },
+              {
+                key: "cardinality",
+                type: "enum",
+                enum: ["single", "multiple", "all", "none", "unknown"],
+                example: "single",
+              },
+              {
+                key: "source",
+                type: "enum",
+                enum: [
+                  "current_message",
+                  "conversation_history",
+                  "active_context",
+                  "account_scope",
+                  "none",
+                ],
+                example: "conversation_history",
+              },
+              {
+                key: "candidateKeys",
+                type: "array",
+                example: ["opportunity_1"],
+                items: { type: "string", example: "opportunity_1" },
+              },
+            ],
+          },
+        ]
+      : []),
     {
       key: "entities",
       type: "object",
@@ -466,6 +535,7 @@ function normalizeVerifiedEntityReference(value, sourceTexts = []) {
 export function normalizeChannelIntentPlan({
   channel,
   plan,
+  serverEntityCandidates = [],
   availableTools = [],
   context = {},
   configuration = null,
@@ -487,6 +557,96 @@ export function normalizeChannelIntentPlan({
     const config = configurationByCode.get(code);
     return requestedCodes.includes(code) && config?.enabled !== false;
   });
+  const rawReferenceResolution = plan.referenceResolution || {};
+  const targetTypes = new Set([
+    "account",
+    "opportunity",
+    "contact",
+    "lead",
+    "quotation",
+    "none",
+  ]);
+  const cardinalities = new Set([
+    "single",
+    "multiple",
+    "all",
+    "none",
+    "unknown",
+  ]);
+  const referenceSources = new Set([
+    "current_message",
+    "conversation_history",
+    "active_context",
+    "account_scope",
+    "none",
+  ]);
+  const targetType = targetTypes.has(rawReferenceResolution.targetType)
+    ? rawReferenceResolution.targetType
+    : "none";
+  const cardinality = cardinalities.has(rawReferenceResolution.cardinality)
+    ? rawReferenceResolution.cardinality
+    : "none";
+  const referenceSource = referenceSources.has(rawReferenceResolution.source)
+    ? rawReferenceResolution.source
+    : "none";
+  const candidateByKey = new Map(
+    (Array.isArray(serverEntityCandidates) ? serverEntityCandidates : [])
+      .filter(
+        (candidate) =>
+          candidate?.candidateKey &&
+          Number(candidate.recordId) > 0 &&
+          Number(candidate.accountId) === Number(context.accountId) &&
+          ["opportunity", "contact", "lead"].includes(candidate.entityType),
+      )
+      .map((candidate) => [candidate.candidateKey, candidate]),
+  );
+  const candidateKeys = Array.isArray(rawReferenceResolution.candidateKeys)
+    ? [...new Set(rawReferenceResolution.candidateKeys)].slice(0, 8)
+    : [];
+  const selectedCandidates = candidateKeys.map((key) =>
+    candidateByKey.get(key),
+  );
+  const targetMatchesCandidate = (candidate) =>
+    candidate &&
+    (candidate.entityType === targetType ||
+      (targetType === "quotation" && candidate.entityType === "opportunity"));
+  const invalidCandidateSelection =
+    selectedCandidates.some((candidate) => !targetMatchesCandidate(candidate)) ||
+    (cardinality === "single" && candidateKeys.length > 1) ||
+    (cardinality === "none" && candidateKeys.length > 0);
+  const unresolvedConversationalReference =
+    ["conversation_history", "active_context"].includes(referenceSource) &&
+    ["opportunity", "contact", "lead", "quotation"].includes(targetType) &&
+    cardinality === "single" &&
+    candidateKeys.length === 0;
+  const operationNeedsSingleTarget =
+    selectedIntents.some((intent) => intent.code === "crm_operation") &&
+    (targetType === "none" || cardinality !== "single");
+  const validatedCandidateKeys = selectedCandidates
+    .filter(targetMatchesCandidate)
+    .map((candidate) => candidate.candidateKey);
+  const singleSelectedCandidate =
+    !invalidCandidateSelection &&
+    cardinality === "single" &&
+    selectedCandidates.length === 1
+      ? selectedCandidates[0]
+      : null;
+  const serverResolvedEntityIds = {
+    opportunityId:
+      singleSelectedCandidate &&
+      ["opportunity", "quotation"].includes(targetType) &&
+      singleSelectedCandidate.entityType === "opportunity"
+        ? Number(singleSelectedCandidate.recordId)
+        : null,
+    contactId:
+      singleSelectedCandidate && targetType === "contact"
+        ? Number(singleSelectedCandidate.recordId)
+        : null,
+    leadId:
+      singleSelectedCandidate && targetType === "lead"
+        ? Number(singleSelectedCandidate.recordId)
+        : null,
+  };
   const rawAmbiguity = plan.ambiguity || {};
   const ambiguityReasons = new Set([
     "none",
@@ -499,10 +659,13 @@ export function normalizeChannelIntentPlan({
   const ambiguityReason = ambiguityReasons.has(rawAmbiguity.reason)
     ? rawAmbiguity.reason
     : "none";
-  const clarificationRequested =
+  const plannerRequestedClarification =
     rawAmbiguity.requiresClarification === "yes" ||
-    plan.mode === "clarification";
-  if (!selectedIntents.length && !clarificationRequested) return null;
+    plan.mode === "clarification" ||
+    invalidCandidateSelection ||
+    unresolvedConversationalReference ||
+    operationNeedsSingleTarget;
+  if (!selectedIntents.length && !plannerRequestedClarification) return null;
 
   const availableNames = new Set(
     availableTools.map((tool) =>
@@ -530,24 +693,50 @@ export function normalizeChannelIntentPlan({
   ];
   const contextValues = {
     account: context.accountId,
-    opportunity: context.opportunityId,
-    contact: context.contactId,
-    lead: context.leadId,
+    opportunity: context.opportunityId || serverResolvedEntityIds.opportunityId,
+    contact: context.contactId || serverResolvedEntityIds.contactId,
+    lead: context.leadId || serverResolvedEntityIds.leadId,
   };
+  const rawFilters = plan.filters || {};
+  const hasRequiredContext = (key) => {
+    if (key === "period") {
+      return (
+        Number(rawFilters.periodMonths || 0) > 0 ||
+        Boolean(normalizePlanDate(rawFilters.startDate)) &&
+          Boolean(normalizePlanDate(rawFilters.endDate))
+      );
+    }
+    return Number(contextValues[key] || 0) > 0;
+  };
+  const reportedMissingContext = [
+    ...new Set(
+      (Array.isArray(rawAmbiguity.missingContext)
+        ? rawAmbiguity.missingContext
+        : []
+      ).filter((key) =>
+        ["account", "opportunity", "contact", "lead", "period"].includes(
+          key,
+        ),
+      ),
+    ),
+  ];
+  const unresolvedReportedContext = reportedMissingContext.filter(
+    (key) => !hasRequiredContext(key),
+  );
   const missingContext = [
     ...new Set([
-      ...requiredContext.filter(
-        (key) => !(Number(contextValues[key] || 0) > 0),
-      ),
-      ...(Array.isArray(rawAmbiguity.missingContext)
-        ? rawAmbiguity.missingContext.filter((key) =>
-            ["account", "opportunity", "contact", "lead", "period"].includes(
-              key,
-            ),
-          )
-        : []),
+      ...requiredContext.filter((key) => !hasRequiredContext(key)),
+      ...unresolvedReportedContext,
     ]),
   ];
+  const plannerOnlyReportedMissingContext =
+    ambiguityReason === "missing_context" &&
+    reportedMissingContext.length > 0 &&
+    unresolvedReportedContext.length === 0 &&
+    missingContext.length === 0 &&
+    plan.confidence !== "low";
+  const clarificationRequested =
+    plannerRequestedClarification && !plannerOnlyReportedMissingContext;
   const allowedTools = [
     ...new Set(
       selectedIntents.flatMap((intent) => {
@@ -563,7 +752,6 @@ export function normalizeChannelIntentPlan({
       }),
     ),
   ];
-  const rawFilters = plan.filters || {};
   const rawEntities = plan.entities || {};
   const sourceTexts = [
     question,
@@ -625,6 +813,17 @@ export function normalizeChannelIntentPlan({
         sourceTexts,
       ),
     },
+    ...(plan.referenceResolution
+      ? {
+          referenceResolution: {
+            targetType,
+            cardinality,
+            source: referenceSource,
+            candidateKeys: validatedCandidateKeys,
+          },
+        }
+      : {}),
+    serverResolvedEntityIds,
     filters: {
       opportunityStatus,
       stageCode: normalizePlanFilterText(
@@ -645,9 +844,17 @@ export function normalizeChannelIntentPlan({
       endDate,
     },
     ambiguity: {
-      reason: ambiguityReason,
+      reason:
+        invalidCandidateSelection || operationNeedsSingleTarget
+          ? "ambiguous_entity"
+          : ambiguityReason,
       requiresClarification: mode === "clarification",
-      clarificationQuestion: String(rawAmbiguity.question || "")
+      clarificationQuestion: String(
+        rawAmbiguity.question ||
+          (invalidCandidateSelection || operationNeedsSingleTarget
+            ? "No pude validar el registro seleccionado. Indica cuál registro quieres usar."
+            : ""),
+      )
         .trim()
         .slice(0, 500),
       missingContext,

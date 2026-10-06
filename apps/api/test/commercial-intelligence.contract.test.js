@@ -6,6 +6,7 @@ import {
   filterCustomerOpportunityArtifacts,
   filterCustomerOpportunityHistory,
   runAccountIntelligenceAgents,
+  shouldLoadProviderCatalogForQuestion,
   PUBLIC_CONTACT_ROLE_TERMS,
 } from "../src/commercial-intelligence/service.js";
 import {
@@ -18,6 +19,16 @@ import {
 } from "../src/commercial-intelligence/contract.js";
 
 describe("customer intelligence contract", () => {
+  it.each([
+    ["Dame un resumen de la cuenta", false],
+    ["¿Qué productos estaban incluidos en la cotización?", false],
+    ["¿Qué productos complementarios puedo ofrecerle?", true],
+    ["Prepara opciones de expansión para la cuenta", true],
+    ["Analiza una venta cruzada con otro proveedor", true],
+  ])("loads the provider catalog only for explicit expansion requests: %s", (question, expected) => {
+    expect(shouldLoadProviderCatalogForQuestion(question)).toBe(expected);
+  });
+
   it("filters active terminal history by its own switch and excludes inactive records", () => {
     const opportunities = [
       {

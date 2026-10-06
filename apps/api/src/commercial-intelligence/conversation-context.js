@@ -4,6 +4,7 @@ const INTENT_CODES = new Set([
   "quotation_query",
   "contact_history",
   "opportunity_status",
+  "opportunity_guidance",
   "account_activity_history",
   "contact_query",
   "opportunity_query",

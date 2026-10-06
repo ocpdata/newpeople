@@ -81,6 +81,12 @@ const SYNTHETIC_STRUCTURED_PLANS = {
     ...readOnlyPlan(["crm_operation"], {
       entities: { opportunityReference: "Modernización Atlas" },
     }),
+    referenceResolution: {
+      targetType: "opportunity",
+      cardinality: "single",
+      source: "current_message",
+      candidateKeys: ["opportunity_1"],
+    },
     mode: "operation",
   },
   "CAC-SAFE-001": readOnlyPlan(["opportunity_query"], {
@@ -105,6 +111,16 @@ async function evaluateScenario(scenario) {
   const selectedRouting = normalizeChannelIntentPlan({
     channel: "customer_account",
     plan,
+    serverEntityCandidates: scenario.context?.opportunityId
+      ? [
+          {
+            candidateKey: "opportunity_1",
+            entityType: "opportunity",
+            recordId: scenario.context.opportunityId,
+            accountId: scenario.context.accountId,
+          },
+        ]
+      : [],
     availableTools,
     context: scenario.context,
     configuration: getChannelIntentDefaults("customer_account"),

@@ -637,6 +637,7 @@ export async function runConversationEngine({
       structuredChannelIntentRouting = normalizeChannelIntentPlan({
         channel,
         plan: proposedPlan,
+        serverEntityCandidates: proposedPlan?.serverEntityCandidates,
         availableTools: resolvedTools,
         context,
         configuration: channelIntentCatalog,
@@ -1214,7 +1215,9 @@ export async function runConversationEngine({
     };
   }
   if (channelIntentRouting) {
-    response.channelIntentRouting = channelIntentRouting;
+    const { serverResolvedEntityIds, ...publicRouting } =
+      channelIntentRouting;
+    response.channelIntentRouting = publicRouting;
   }
   response.detailHandoff = handoffResult ? detailHandoff : null;
   response.intentClassification = phaseOneDecision.intent;

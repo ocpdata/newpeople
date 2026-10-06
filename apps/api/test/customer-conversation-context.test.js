@@ -23,7 +23,7 @@ describe("Customer conversation context memory", () => {
         opportunityId: 72,
         contactId: 999,
         leadId: 94,
-        intents: ["contact_history", "not_an_intent"],
+        intents: ["contact_history", "opportunity_guidance", "not_an_intent"],
         filters: { opportunityStatus: "open", periodMonths: 6 },
       },
       snapshot,
@@ -36,7 +36,7 @@ describe("Customer conversation context memory", () => {
       opportunityId: 72,
       contactId: null,
       leadId: 94,
-      intents: ["contact_history"],
+      intents: ["contact_history", "opportunity_guidance"],
       filters: { opportunityStatus: "open", periodMonths: 6 },
     });
     expect(

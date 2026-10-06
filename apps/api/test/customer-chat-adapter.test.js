@@ -87,6 +87,7 @@ describe("Customer account chat adapter", () => {
       .mockResolvedValueOnce({
         answer:
           "Proyecto abierto está en Desarrollo. Tiene una llamada pendiente.",
+        entities: { opportunityId: 11 },
         evidence: ["Oportunidad 11", "Actividad 31"],
         inferences: [],
         confidence: "high",
@@ -148,12 +149,18 @@ describe("Customer account chat adapter", () => {
     const result = await adapter.runTurn({
       question:
         "¿Cuál es la etapa de Proyecto abierto y qué actividades tiene pendientes?",
-      context: { accountId: 7, opportunityId: 11 },
+      context: { accountId: 7 },
       history: [],
     });
 
     expect(result.response.answer).toContain("está en Desarrollo");
     expect(result.response.evidence).toHaveLength(2);
+    expect(result.response.entities.opportunityId).toBe(11);
+    expect(runStructuredTextResearch.mock.calls[3][0].fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "entities", type: "object" }),
+      ]),
+    );
     expect(
       result.qualityTrace.diagnostics.evidence.additionalToolMetrics,
     ).toEqual(
@@ -189,6 +196,362 @@ describe("Customer account chat adapter", () => {
     vi.restoreAllMocks();
   });
 
+  it("forwards structured routing to read tools when question wording has no keyword trigger", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    vi.spyOn(
+      coachBusinessRulesModule,
+      "loadCoachBusinessRules",
+    ).mockResolvedValue(businessRules);
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+      [],
+    );
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Consultar interacciones recientes",
+        queries: ["account_activity_history"],
+        entities: {
+          accountReference: "",
+          opportunityReference: "",
+          contactReference: "",
+          leadReference: "",
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "sufficient",
+        missingQueries: [],
+        missingFacts: [],
+      })
+      .mockResolvedValueOnce({
+        answer: "Hay una interacción reciente registrada.",
+        evidence: ["Interacción CRM consultada."],
+        inferences: [],
+        confidence: "high",
+        pendingItems: [],
+        recommendedActions: [],
+        operations: [],
+      })
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set(["cuentas.read", "interacciones.read"]),
+      },
+      snapshot: {
+        ...snapshot,
+        interactions: [
+          {
+            id: 41,
+            accountId: 7,
+            title: "Revisión de propuesta",
+            summary: "Revisión comercial",
+            createdAt: "2026-09-28T12:00:00.000Z",
+          },
+        ],
+      },
+      agents: [],
+      jobId: 901,
+    });
+    const result = await adapter.runTurn({
+      question: "Continúa con lo reciente",
+      context: { accountId: 7 },
+      history: [],
+    });
+
+    const evidenceRequest = runStructuredTextResearch.mock.calls[1][0];
+    expect(evidenceRequest.schemaName).toBe(
+      "customer_account_evidence_assessment",
+    );
+    expect(evidenceRequest.context.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "searchInteractions",
+          result: [expect.objectContaining({ id: 41 })],
+        }),
+      ]),
+    );
+    expect(result.qualityTrace.toolsUsed).toContain("searchInteractions");
+    expect(result.response.answer).toBe(
+      "Hay una interacción reciente registrada.",
+    );
+  });
+
+  it("returns the audited proposal for an anaphoric opportunity amount change", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    vi.spyOn(
+      coachBusinessRulesModule,
+      "loadCoachBusinessRules",
+    ).mockResolvedValue(businessRules);
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+      [],
+    );
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Preparar una propuesta de operación CRM",
+        queries: ["crm_operation"],
+        entities: {
+          accountReference: "",
+          opportunityReference: "",
+          contactReference: "",
+          leadReference: "",
+        },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "conversation_history",
+          candidateKeys: ["opportunity_1"],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "missing_context",
+          requiresClarification: "yes",
+          missingContext: ["opportunity"],
+          question: "¿A qué oportunidad te refieres?",
+        },
+        mode: "clarification",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "sufficient",
+        missingQueries: [],
+        missingFacts: [],
+      })
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+
+    const opportunity = {
+      ...snapshot.opportunities[0],
+      name: "vrf 2027",
+      amountUsd: 42000,
+    };
+    const otherOpportunity = {
+      ...opportunity,
+      id: 12,
+      name: "Otra oportunidad",
+      amountUsd: 15000,
+    };
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "oportunidades.update",
+        ]),
+      },
+      snapshot: {
+        ...snapshot,
+        opportunities: [opportunity, otherOpportunity],
+      },
+      agents: [],
+      jobId: 905,
+    });
+
+    const result = await adapter.runTurn({
+      question: "modifica el monto por 1000000",
+      context: { accountId: 7 },
+      history: [],
+      conversationContext: {
+        accountId: 7,
+        opportunityId: 11,
+      },
+    });
+
+    expect(result.response.answer).toContain("Requiere tu confirmación");
+    expect(result.response.operations).toEqual([
+      expect.objectContaining({
+        kind: "opportunity_field",
+        opportunityId: 11,
+        field: "amountUsd",
+        currentValue: 42000,
+        value: 1000000,
+      }),
+    ]);
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
+    expect(runStructuredTextResearch.mock.calls[2][0].schemaName).toBe(
+      "customer_account_answer_audit",
+    );
+    expect(runStructuredTextResearch.mock.calls[0][0].context).toMatchObject({
+      validatedContinuation: { opportunityName: "vrf 2027" },
+      authorizedEntityCandidates: {
+        opportunities: [
+          expect.objectContaining({
+            candidateKey: "opportunity_1",
+            name: "vrf 2027",
+          }),
+        ],
+      },
+    });
+    expect(
+      JSON.stringify(runStructuredTextResearch.mock.calls[0][0].context),
+    ).not.toContain('"id":11');
+    expect(result.response.channelIntentRouting).not.toHaveProperty(
+      "serverResolvedEntityIds",
+    );
+    expect(runStructuredTextResearch.mock.calls[2][0].context).toMatchObject({
+      proposalOrigin: "server_deterministic",
+    });
+    expect(runStructuredTextResearch.mock.calls[2][0].systemPrompt).toContain(
+      "no exijas que esos estados aparezcan en el CRM",
+    );
+    expect(
+      runStructuredTextResearch.mock.calls[2][0].context.proposedAnswer
+        .operations,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "opportunity_field",
+          opportunityId: 11,
+          field: "amountUsd",
+          value: 1000000,
+        }),
+      ]),
+    );
+  });
+
+  it("builds account overview only from queried summary sections", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+    vi.spyOn(
+      coachBusinessRulesModule,
+      "loadCoachBusinessRules",
+    ).mockResolvedValue(businessRules);
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+      [],
+    );
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Resumir la cuenta",
+        queries: ["account_overview"],
+        entities: {
+          accountReference: "",
+          opportunityReference: "",
+          contactReference: "",
+          leadReference: "",
+        },
+        filters: { opportunityStatus: "unspecified" },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "sufficient",
+        missingQueries: [],
+        missingFacts: [],
+      });
+
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "contactos.read",
+          "interacciones.read",
+        ]),
+      },
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [
+          {
+            id: 11,
+            name: "Proyecto abierto 1",
+            accountId: 7,
+            amountUsd: 1000000,
+            lifecycle: "open",
+            commercialStatusCode: "en_proceso",
+            activationStatusCode: "activada",
+          },
+          {
+            id: 12,
+            name: "Proyecto abierto 2",
+            accountId: 7,
+            amountUsd: 250000,
+            lifecycle: "open",
+            commercialStatusCode: "en_proceso",
+            activationStatusCode: "activada",
+          },
+          {
+            id: 13,
+            name: "Proyecto ganado",
+            accountId: 7,
+            amountUsd: 800000,
+            lifecycle: "historical",
+            commercialStatusCode: "ganada",
+            activationStatusCode: "activada",
+          },
+        ],
+        contacts: [
+          { id: 21, accountId: 7, name: "Ana López" },
+          { id: 22, accountId: 7, name: "Luis Pérez" },
+        ],
+        interactions: [
+          {
+            id: 41,
+            accountId: 7,
+            title: "Seguimiento reciente",
+            createdAt: "2026-10-04T12:00:00.000Z",
+          },
+        ],
+      },
+      agents: [],
+      jobId: 902,
+    });
+    const result = await adapter.runTurn({
+      question: "Dame un resumen de la cuenta",
+      context: { accountId: 7 },
+      history: [],
+    });
+
+    expect(result.response.answer).toContain("2 oportunidades abiertas");
+    expect(result.response.answer).toMatch(/USD 1,250,000|USD 1\.250\.000/);
+    expect(result.response.answer).toContain("2 contactos activos visibles");
+    expect(result.response.answer).not.toMatch(/interacci[oó]n|61 días|riesgo/i);
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(2);
+    expect(result.qualityTrace.toolsUsed).toEqual(
+      expect.arrayContaining([
+        "searchAccounts",
+        "searchOpportunities",
+        "searchContacts",
+      ]),
+    );
+    expect(result.qualityTrace.toolsUsed).not.toContain("searchInteractions");
+  });
+
   it("withholds invented final claims and operations rejected by the evidence audit", async () => {
     const businessRules = getCoachBusinessRules({
       channel: "customer_account",
@@ -207,15 +570,15 @@ describe("Customer account chat adapter", () => {
     ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
     runStructuredTextResearch
       .mockResolvedValueOnce({
-        objective: "Resumir la cuenta seleccionada",
-        queries: ["account_overview"],
+        objective: "Consultar oportunidades abiertas",
+        queries: ["opportunity_query"],
         entities: {
           accountReference: "",
           opportunityReference: "",
           contactReference: "",
           leadReference: "",
         },
-        filters: { opportunityStatus: "unspecified" },
+        filters: { opportunityStatus: "open" },
         ambiguity: {
           reason: "none",
           requiresClarification: "no",
@@ -285,7 +648,7 @@ describe("Customer account chat adapter", () => {
       jobId: 901,
     });
     const result = await adapter.runTurn({
-      question: "Resume la cuenta Comercial Lumen",
+      question: "¿Qué oportunidades abiertas hay en la cuenta Comercial Lumen?",
       context: { accountId: 7 },
       history: [],
     });
@@ -944,6 +1307,66 @@ describe("Customer account chat adapter", () => {
       contactId: null,
       leadId: null,
     });
+  });
+
+  it("loads guidance evidence for an anaphoric opportunity question without keyword triggers", async () => {
+    const selectedOpportunity = {
+      ...snapshot.opportunities[0],
+      lifecycle: "open",
+      commercialStatusCode: "en_proceso",
+      activationStatusCode: "activada",
+    };
+    const routing = {
+      intent: "opportunity_guidance",
+      intents: ["opportunity_guidance"],
+      allowedTools: [
+        "getOpportunity",
+        "getOpportunityActivities",
+        "getOpportunityReadiness",
+        "searchInteractions",
+      ],
+      entities: { opportunityReference: selectedOpportunity.name },
+      filters: { opportunityStatus: "open" },
+      requiresClarification: false,
+    };
+    const tools = [
+      ...getCoachReadToolCatalog(),
+      { name: "searchInteractions", requiredPermission: "interacciones.read" },
+    ];
+    const model = await buildCustomerReadModel({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "desarrollo_comercial.read",
+          "interacciones.read",
+        ]),
+      },
+      question: "¿Qué me sugieres hacer en esta oportunidad?",
+      snapshot: { ...snapshot, selectedOpportunity },
+      availableTools: tools,
+      authorizedTools: tools,
+      businessRules: getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      }),
+      channelIntentRouting: routing,
+    });
+
+    expect(model.selectedOpportunity.id).toBe(selectedOpportunity.id);
+    expect(model.readToolResults.map((item) => item.toolName)).toEqual(
+      expect.arrayContaining([
+        "getOpportunity",
+        "getOpportunityActivities",
+        "getOpportunityReadiness",
+        "searchInteractions",
+      ]),
+    );
+    expect(
+      model.readToolResults.find((item) => item.toolName === "getOpportunity")
+        .result.id,
+    ).toBe(selectedOpportunity.id);
   });
 
   it("prioriza el periodo explícito del seguimiento sobre el periodo recordado", async () => {
@@ -1611,6 +2034,27 @@ describe("Customer account chat adapter", () => {
     expect(JSON.stringify(planningContext)).not.toContain("amountUsd");
   });
 
+  it("exposes the explicitly selected record as an opaque planner candidate", () => {
+    const planningContext = buildCustomerQueryPlannerContext({
+      question: "sube el monto",
+      context: { accountId: 7, opportunityId: 11 },
+      conversationHistory: [],
+      conversationContext: null,
+      availableTools: [{ name: "getOpportunity" }],
+      catalog: [],
+      snapshot,
+      businessRules: getCoachBusinessRules({ channel: "customer_account" }),
+    });
+
+    expect(planningContext.authorizedEntityCandidates.opportunities).toEqual([
+      expect.objectContaining({
+        candidateKey: "opportunity_1",
+        name: "Proyecto abierto",
+      }),
+    ]);
+    expect(JSON.stringify(planningContext)).not.toContain('"id":11');
+  });
+
   it("distinguishes empty results, query errors and unverified answer failures", () => {
     const noResults = buildCustomerEvidenceFailureResponse({
       status: "no_results",
@@ -1623,6 +2067,10 @@ describe("Customer account chat adapter", () => {
     const synthesisError = buildCustomerEvidenceFailureResponse({
       status: "answer_generation_error",
     });
+    const adapterError = buildCustomerEvidenceFailureResponse({
+      status: "adapter_execution_error",
+      errorCode: "adapter_execution_failed",
+    });
 
     expect(noResults.answer).toContain("no devolvieron registros");
     expect(noResults.answer).toContain("no confirma que nunca");
@@ -1631,6 +2079,9 @@ describe("Customer account chat adapter", () => {
     expect(queryError.answer).not.toContain("no devolvieron registros");
     expect(synthesisError.answer).toContain("La evidencia se verificó");
     expect(synthesisError.answer).not.toContain("No fue posible verificar");
+    expect(adapterError.responseType).toBe("error");
+    expect(adapterError.answer).toContain("error interno");
+    expect(adapterError.answer).not.toContain("falló la consulta");
   });
 
   it("uses a safe alternative when the final answer contains unsupported CRM claims", async () => {
@@ -1651,10 +2102,10 @@ describe("Customer account chat adapter", () => {
     ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
     runStructuredTextResearch
       .mockResolvedValueOnce({
-        objective: "Resumen de cuenta",
-        queries: ["account_overview"],
+        objective: "Consultar oportunidades abiertas",
+        queries: ["opportunity_query"],
         entities: {},
-        filters: { opportunityStatus: "unspecified" },
+        filters: { opportunityStatus: "open" },
         ambiguity: {
           reason: "none",
           requiresClarification: "no",
@@ -1714,13 +2165,21 @@ describe("Customer account chat adapter", () => {
       jobId: 902,
     });
     const result = await adapter.runTurn({
-      question: "Resume la cuenta Comercial Lumen",
+      question: "¿Qué oportunidades abiertas hay en la cuenta Comercial Lumen?",
       context: { accountId: 7 },
       history: [],
     });
 
+    const synthesisContext = runStructuredTextResearch.mock.calls[2][0].context;
+    const auditContext = runStructuredTextResearch.mock.calls[3][0].context;
+    expect(synthesisContext.authorizedEvidence).toEqual(
+      auditContext.authorizedEvidence,
+    );
+    expect(synthesisContext).not.toHaveProperty("agents");
+    expect(synthesisContext).not.toHaveProperty("snapshot");
+
     expect(
-      runStructuredTextResearch.mock.calls[3][0].context.authorizedEvidence,
+      auditContext.authorizedEvidence,
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ toolName: "searchAccounts" }),
@@ -1728,7 +2187,7 @@ describe("Customer account chat adapter", () => {
     );
     expect(
       JSON.stringify(
-        runStructuredTextResearch.mock.calls[3][0].context.authorizedEvidence,
+        auditContext.authorizedEvidence,
       ),
     ).toContain("Comercial Lumen");
     expect(result.response.responseType).toBe("error");
@@ -1839,10 +2298,10 @@ describe("Customer account chat adapter", () => {
       ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
       runStructuredTextResearch
         .mockResolvedValueOnce({
-          objective: "Consultar el resumen de la cuenta",
-          queries: ["account_overview"],
+          objective: "Consultar oportunidades abiertas",
+          queries: ["opportunity_query"],
           entities: {},
-          filters: { opportunityStatus: "unspecified" },
+          filters: { opportunityStatus: "open" },
           ambiguity: {
             reason: "none",
             requiresClarification: "no",
@@ -1880,7 +2339,10 @@ describe("Customer account chat adapter", () => {
         .mockResolvedValueOnce(auditResult);
 
       const adapter = createCustomerAccountAdapter({
-        user: { id: 31, permissionSet: new Set(["cuentas.read"]) },
+        user: {
+          id: 31,
+          permissionSet: new Set(["cuentas.read", "oportunidades.read"]),
+        },
         snapshot: {
           ...snapshot,
           account: { id: 7, name: "Comercial Lumen" },
@@ -1889,7 +2351,7 @@ describe("Customer account chat adapter", () => {
         jobId: 904,
       });
       const result = await adapter.runTurn({
-        question: "Resume la cuenta",
+        question: "¿Qué oportunidades abiertas hay en la cuenta?",
         context: { accountId: 7 },
         history: [],
       });

@@ -1036,6 +1036,8 @@ export default function MiAgentPage({
   const [coachMetrics, setCoachMetrics] = useState(null);
   const [coachActionDraft, setCoachActionDraft] = useState(null);
   const [coachOperationDraft, setCoachOperationDraft] = useState(null);
+  const [coachOperationOpportunityOptionsOverride, setCoachOperationOpportunityOptionsOverride] =
+    useState(null);
   const [coachPendingOperations, setCoachPendingOperations] = useState([]);
   const [coachRecentOperations, setCoachRecentOperations] = useState([]);
   const [coachUndoOperationId, setCoachUndoOperationId] = useState(null);
@@ -2122,7 +2124,7 @@ export default function MiAgentPage({
       const jobId = Number(response.data?.job?.id || 0);
       if (!jobId) throw new Error("No se pudo iniciar el chat de cuenta");
       let result = null;
-      for (let attempt = 0; attempt < 60; attempt += 1) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
         const jobResponse = await api.get(
           `/api/commercial-intelligence/account-chat/jobs/${jobId}`,
         );
@@ -2166,6 +2168,22 @@ export default function MiAgentPage({
     const opportunityId = Number(nextStep?.opportunityId || 0);
     if (!opportunityId || !canExecuteCoach || !canUpdateCommercialDevelopment)
       return;
+    const snapshotAccountId = Number(customerSnapshot?.account?.id || 0);
+    const customerOpportunity = [
+      ...(customerSnapshot?.opportunities || []),
+      ...(customerSnapshot?.inactiveOpportunities || []),
+    ].find(
+      (item) =>
+        Number(item.id) === opportunityId &&
+        Number(item.accountId || snapshotAccountId) === snapshotAccountId &&
+        snapshotAccountId === Number(customerAccountId || 0),
+    );
+    if (!customerOpportunity) {
+      setError(
+        "La oportunidad ya no está disponible en la cuenta seleccionada. Actualiza la información e inténtalo de nuevo.",
+      );
+      return;
+    }
     setSavingCoachOperation(true);
     setError("");
     try {
@@ -2222,6 +2240,14 @@ export default function MiAgentPage({
         persistentId: persistedOperation.id,
         persistenceVersion: persistedOperation.version,
         persistenceStatus: persistedOperation.status,
+      }, {
+        opportunityOptions: [
+          {
+            ...customerOpportunity,
+            accountName:
+              customerSnapshot.account.name || selectedCustomerAccount?.name,
+          },
+        ],
       });
     } catch (requestError) {
       setError(
@@ -3690,7 +3716,10 @@ export default function MiAgentPage({
     }
   }
 
-  async function openCoachOperationConfirmation(operation) {
+  async function openCoachOperationConfirmation(
+    operation,
+    { opportunityOptions = null } = {},
+  ) {
     coachReturnFocusRef.current = document.activeElement;
     const canApplyOperation = !canExecuteCoach
       ? false
@@ -3740,6 +3769,7 @@ export default function MiAgentPage({
         ].includes(operation?.kind))
     )
       return;
+    setCoachOperationOpportunityOptionsOverride(opportunityOptions);
     const persistedOperation = coachPendingOperations.find(
       (candidate) => candidate.id === Number(operation.persistentId || 0),
     );
@@ -3832,6 +3862,7 @@ export default function MiAgentPage({
 
   function closeCoachOperationDraft() {
     setCoachOperationDraft(null);
+    setCoachOperationOpportunityOptionsOverride(null);
     window.requestAnimationFrame(() => coachReturnFocusRef.current?.focus());
   }
 
@@ -10089,7 +10120,10 @@ export default function MiAgentPage({
                       }
                     >
                       <option value="">Selecciona una oportunidad</option>
-                      {snapshot.pipeline.opportunities.map((item) => (
+                      {(
+                        coachOperationOpportunityOptionsOverride ||
+                        snapshot.pipeline.opportunities
+                      ).map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name} · {item.accountName || "Sin cuenta"}
                         </option>
