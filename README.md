@@ -225,6 +225,7 @@ Cobertura automatizada:
 - Calculos operativos del CRM: [readme/calculos.md](./readme/calculos.md)
 - Uso actual de IA en el proyecto: [readme/ia.md](./readme/ia.md)
 - Arquitectura del chat por canales: [readme/arquitectura-chat-conversacional.md](./readme/arquitectura-chat-conversacional.md)
+- Guía de preguntas y respuestas para probar el chat: [readme/pruebas-chat-conversacional.md](./readme/pruebas-chat-conversacional.md)
 - Arquitectura e integraciones de Mi Coach: [readme/arquitectura-mi-coach.md](./readme/arquitectura-mi-coach.md) y [readme/integraciones-mi-coach.md](./readme/integraciones-mi-coach.md)
 - Administracion de credito y tarifas IA operada desde Configuracion > Credito IA.
 - Modulo de oportunidades y flujo comercial: [readme/oportunidades.md](./readme/oportunidades.md)

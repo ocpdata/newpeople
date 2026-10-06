@@ -41,6 +41,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuenta de usuario](./cuenta-usuario.md)
 - [Chatbot](./chatbot.md)
 - [Chat del Coach](./chat-coach.md)
+- [Pruebas del chat conversacional](./pruebas-chat-conversacional.md)
 - [Arquitectura Mi Coach](./arquitectura-mi-coach.md)
 - [Arquitectura del chat conversacional por canales](./arquitectura-chat-conversacional.md)
 - [Motor Conversacional Mi Coach](./motor-conversacional-mi-coach.md)

@@ -12,6 +12,18 @@ La arquitectura separa responsabilidades: la UI administra la interacción; el s
 
 Un turno es asíncrono: la API responde con un job, el servicio lo procesa y la UI consulta su estado hasta recibir el resultado.
 
+## Conceptos: sesión, job y snapshot
+
+Estos objetos tienen ciclos de vida distintos; sus IDs no son intercambiables:
+
+| Concepto | Qué representa | Persistencia y duración |
+| --- | --- | --- |
+| **Sesión** (`chatSessionId`) | La conversación del vendedor dentro de una cuenta y un contexto seleccionado. Agrupa varios turnos. | Fila de `customer_intelligence_chat_sessions`; conserva `history_json` y `context_json` para continuar la conversación. |
+| **Job** (`jobId`) | El procesamiento asíncrono de una pregunta individual. Una sesión puede tener muchos jobs. | Fila de `customer_intelligence_jobs`; conserva la solicitud, el estado (`pending`, `running`, `completed` o `failed`), el resultado y el error cuando aplica. La UI consulta el job, no la sesión, mientras espera. |
+| **Snapshot** | Una proyección autorizada y acotada de datos CRM que se usa para validar el contexto y atender las lecturas de un turno. Incluye solo los dominios disponibles para la cuenta, permisos y consultas aplicables. | Objeto de trabajo reconstruido desde CRM; no es el historial ni el contenedor de la sesión. Se normaliza y se mide para detectar errores/truncamiento; no se guarda como copia completa del CRM en `history_json` ni en `context_json`. |
+
+Relación: `una sesión → muchos jobs`; cada job procesa su pregunta con un snapshot de trabajo. Al completarse, se guarda el resultado en el job y se actualizan el historial/contexto de la sesión. Por ejemplo, la sesión `15` contiene los turnos; los jobs `112`, `113`, `114` y `115` representan preguntas distintas de esa misma conversación. El snapshot no se identifica con ninguno de esos IDs.
+
 Los ejemplos siguientes reemplazan los escenarios ficticios con la conversación más reciente del chat de Cliente existente: sesión `15`, cuenta Totalplay (`accountId: 22`), jobs `112`–`115`. Los códigos `B1`–`B11` corresponden a los bloques del gráfico. **Solo los payloads marcados HTTP cruzan la red; los demás JSON representan objetos internos entre funciones.** Los resultados voluminosos se muestran como conteos o fragmentos.
 
 ### Ejemplo 1: resumen de cuenta
