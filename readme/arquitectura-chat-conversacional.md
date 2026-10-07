@@ -8,7 +8,7 @@ La arquitectura separa responsabilidades: la UI administra la interacción; el s
 
 ## Vista general
 
-![Diagrama del flujo de un turno de chat, desde la interfaz hasta las herramientas CRM, verificación, respuesta y persistencia](./arquitectura-chat-conversacional.svg)
+![Diagrama detallado de responsabilidades B1–B11: entrada y job, orquestación, persistencia y entrega al chat web](./arquitectura-chat-conversacional-descripciones.svg)
 
 Un turno es asíncrono: la API responde con un job, el servicio lo procesa y la UI consulta su estado hasta recibir el resultado.
 
@@ -16,11 +16,11 @@ Un turno es asíncrono: la API responde con un job, el servicio lo procesa y la 
 
 Estos objetos tienen ciclos de vida distintos; sus IDs no son intercambiables:
 
-| Concepto | Qué representa | Persistencia y duración |
-| --- | --- | --- |
-| **Sesión** (`chatSessionId`) | La conversación del vendedor dentro de una cuenta y un contexto seleccionado. Agrupa varios turnos. | Fila de `customer_intelligence_chat_sessions`; conserva `history_json` y `context_json` para continuar la conversación. |
-| **Job** (`jobId`) | El procesamiento asíncrono de una pregunta individual. Una sesión puede tener muchos jobs. | Fila de `customer_intelligence_jobs`; conserva la solicitud, el estado (`pending`, `running`, `completed` o `failed`), el resultado y el error cuando aplica. La UI consulta el job, no la sesión, mientras espera. |
-| **Snapshot** | Una proyección autorizada y acotada de datos CRM que se usa para validar el contexto y atender las lecturas de un turno. Incluye solo los dominios disponibles para la cuenta, permisos y consultas aplicables. | Objeto de trabajo reconstruido desde CRM; no es el historial ni el contenedor de la sesión. Se normaliza y se mide para detectar errores/truncamiento; no se guarda como copia completa del CRM en `history_json` ni en `context_json`. |
+| Concepto                     | Qué representa                                                                                                                                                                                                  | Persistencia y duración                                                                                                                                                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sesión** (`chatSessionId`) | La conversación del vendedor dentro de una cuenta y un contexto seleccionado. Agrupa varios turnos.                                                                                                             | Fila de `customer_intelligence_chat_sessions`; conserva `history_json` y `context_json` para continuar la conversación.                                                                                                                 |
+| **Job** (`jobId`)            | El procesamiento asíncrono de una pregunta individual. Una sesión puede tener muchos jobs.                                                                                                                      | Fila de `customer_intelligence_jobs`; conserva la solicitud, el estado (`pending`, `running`, `completed` o `failed`), el resultado y el error cuando aplica. La UI consulta el job, no la sesión, mientras espera.                     |
+| **Snapshot**                 | Una proyección autorizada y acotada de datos CRM que se usa para validar el contexto y atender las lecturas de un turno. Incluye solo los dominios disponibles para la cuenta, permisos y consultas aplicables. | Objeto de trabajo reconstruido desde CRM; no es el historial ni el contenedor de la sesión. Se normaliza y se mide para detectar errores/truncamiento; no se guarda como copia completa del CRM en `history_json` ni en `context_json`. |
 
 Relación: `una sesión → muchos jobs`; cada job procesa su pregunta con un snapshot de trabajo. Al completarse, se guarda el resultado en el job y se actualizan el historial/contexto de la sesión. Por ejemplo, la sesión `15` contiene los turnos; los jobs `112`, `113`, `114` y `115` representan preguntas distintas de esa misma conversación. El snapshot no se identifica con ninguno de esos IDs.
 
@@ -40,8 +40,8 @@ En una conversación nueva, la UI envía este body HTTP:
 
 ```json
 {
-	"accountId": 22,
-	"objective": "Investigar cliente existente desde Mi Coach"
+  "accountId": 22,
+  "objective": "Investigar cliente existente desde Mi Coach"
 }
 ```
 
@@ -49,12 +49,12 @@ B2 devuelve el ID de sesión:
 
 ```json
 {
-	"session": {
-		"id": 15,
-		"accountId": 22,
-		"opportunityId": null,
-		"contactId": null
-	}
+  "session": {
+    "id": 15,
+    "accountId": 22,
+    "opportunityId": null,
+    "contactId": null
+  }
 }
 ```
 
@@ -66,11 +66,11 @@ En los siguientes mensajes de esta conversación, la UI **no vuelve a crear sesi
 
 ```json
 {
-	"accountId": 22,
-	"objective": "Investigar cliente existente desde Mi Coach",
-	"chatSessionId": 15,
-	"question": "dame un resumen de la cuenta",
-	"includePublicResearch": false
+  "accountId": 22,
+  "objective": "Investigar cliente existente desde Mi Coach",
+  "chatSessionId": 15,
+  "question": "dame un resumen de la cuenta",
+  "includePublicResearch": false
 }
 ```
 
@@ -78,12 +78,12 @@ B2 responde con un job pendiente. Aquí `chatSessionId` identifica la conversaci
 
 ```json
 {
-	"job": {
-		"id": 112,
-		"chatSessionId": 15,
-		"status": "pending",
-		"pollAfterMs": 700
-	}
+  "job": {
+    "id": 112,
+    "chatSessionId": 15,
+    "status": "pending",
+    "pollAfterMs": 700
+  }
 }
 ```
 
@@ -95,7 +95,7 @@ La primera respuesta puede seguir pendiente:
 
 ```json
 {
-	"job": { "id": 112, "chatSessionId": 15, "status": "running" }
+  "job": { "id": 112, "chatSessionId": 15, "status": "running" }
 }
 ```
 
@@ -103,12 +103,14 @@ Cuando termina, la misma ruta devuelve el resultado:
 
 ```json
 {
-	"job": {
-		"id": 112,
-		"chatSessionId": 15,
-		"status": "completed",
-		"result": { "answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles." }
-	}
+  "job": {
+    "id": 112,
+    "chatSessionId": 15,
+    "status": "completed",
+    "result": {
+      "answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles."
+    }
+  }
 }
 ```
 
@@ -116,8 +118,8 @@ Cuando termina, la misma ruta devuelve el resultado:
 
 ```json
 {
-	"jobId": 112,
-	"userId": 1
+  "jobId": 112,
+  "userId": 1
 }
 ```
 
@@ -125,18 +127,27 @@ Cuando termina, la misma ruta devuelve el resultado:
 
 ```json
 {
-	"jobId": 112,
-	"user": { "id": 1, "permissions": ["cuentas.read", "oportunidades.read", "contactos.read"] },
-	"question": "Dame un resumen de la cuenta",
-	"conversationHistory": [],
-	"conversationContext": { "version": 1, "accountId": 22, "opportunityId": null, "intents": [], "filters": {} },
-	"snapshot": {
-		"account": { "id": 22, "name": "Totalplay" },
-		"opportunities": { "resultCount": 14, "truncated": false },
-		"contacts": { "resultCount": 9, "truncated": false },
-		"interactions": { "resultCount": 2, "consultedByChatTools": false },
-		"providerCatalogLoaded": false
-	}
+  "jobId": 112,
+  "user": {
+    "id": 1,
+    "permissions": ["cuentas.read", "oportunidades.read", "contactos.read"]
+  },
+  "question": "Dame un resumen de la cuenta",
+  "conversationHistory": [],
+  "conversationContext": {
+    "version": 1,
+    "accountId": 22,
+    "opportunityId": null,
+    "intents": [],
+    "filters": {}
+  },
+  "snapshot": {
+    "account": { "id": 22, "name": "Totalplay" },
+    "opportunities": { "resultCount": 14, "truncated": false },
+    "contacts": { "resultCount": 9, "truncated": false },
+    "interactions": { "resultCount": 2, "consultedByChatTools": false },
+    "providerCatalogLoaded": false
+  }
 }
 ```
 
@@ -144,17 +155,22 @@ Cuando termina, la misma ruta devuelve el resultado:
 
 ```json
 {
-	"question": "Dame un resumen de la cuenta",
-	"history": [],
-	"context": {
-		"accountId": 22,
-		"opportunityId": null,
-		"contactId": null,
-		"conversationContext": { "accountId": 22, "opportunityId": null },
-		"trustedEntityReferences": []
-	},
-	"jobId": 112,
-	"availableTools": ["searchAccounts", "searchOpportunities", "searchContacts", "searchInteractions"]
+  "question": "Dame un resumen de la cuenta",
+  "history": [],
+  "context": {
+    "accountId": 22,
+    "opportunityId": null,
+    "contactId": null,
+    "conversationContext": { "accountId": 22, "opportunityId": null },
+    "trustedEntityReferences": []
+  },
+  "jobId": 112,
+  "availableTools": [
+    "searchAccounts",
+    "searchOpportunities",
+    "searchContacts",
+    "searchInteractions"
+  ]
 }
 ```
 
@@ -162,16 +178,26 @@ Cuando termina, la misma ruta devuelve el resultado:
 
 ```json
 {
-	"plannerContext": {
-		"question": "Dame un resumen de la cuenta",
-		"recentConversation": [],
-		"selectedContext": { "accountSelected": true, "opportunitySelected": false, "contactSelected": false },
-		"selectedAccountName": "Totalplay",
-		"validatedContinuation": null,
-		"trustedContinuationReferences": [],
-		"permittedIntentCatalog": [{ "code": "account_overview", "label": "Resumen de cuenta" }],
-		"permittedToolNames": ["searchAccounts", "searchOpportunities", "searchContacts"]
-	}
+  "plannerContext": {
+    "question": "Dame un resumen de la cuenta",
+    "recentConversation": [],
+    "selectedContext": {
+      "accountSelected": true,
+      "opportunitySelected": false,
+      "contactSelected": false
+    },
+    "selectedAccountName": "Totalplay",
+    "validatedContinuation": null,
+    "trustedContinuationReferences": [],
+    "permittedIntentCatalog": [
+      { "code": "account_overview", "label": "Resumen de cuenta" }
+    ],
+    "permittedToolNames": [
+      "searchAccounts",
+      "searchOpportunities",
+      "searchContacts"
+    ]
+  }
 }
 ```
 
@@ -179,12 +205,29 @@ El modelo devuelve este plan; B5 lo normaliza contra permisos y configuración:
 
 ```json
 {
-	"queries": ["account_overview"],
-	"referenceResolution": { "targetType": "account", "cardinality": "single", "source": "account_scope", "candidateKeys": [] },
-	"entities": { "accountReference": "", "opportunityReference": "", "contactReference": "", "leadReference": "" },
-	"filters": { "opportunityStatus": "unspecified", "stageCode": "", "closeYear": 0, "periodMonths": 0, "startDate": "", "endDate": "" },
-	"mode": "read_only",
-	"confidence": "high"
+  "queries": ["account_overview"],
+  "referenceResolution": {
+    "targetType": "account",
+    "cardinality": "single",
+    "source": "account_scope",
+    "candidateKeys": []
+  },
+  "entities": {
+    "accountReference": "",
+    "opportunityReference": "",
+    "contactReference": "",
+    "leadReference": ""
+  },
+  "filters": {
+    "opportunityStatus": "unspecified",
+    "stageCode": "",
+    "closeYear": 0,
+    "periodMonths": 0,
+    "startDate": "",
+    "endDate": ""
+  },
+  "mode": "read_only",
+  "confidence": "high"
 }
 ```
 
@@ -192,13 +235,18 @@ El routing normalizado que pasa a B7 incluye:
 
 ```json
 {
-	"channel": "customer_account",
-	"intent": "account_overview",
-	"intents": ["account_overview"],
-	"referenceResolution": { "targetType": "account", "cardinality": "single", "source": "account_scope", "candidateKeys": [] },
-	"allowedTools": ["searchAccounts", "searchOpportunities", "searchContacts"],
-	"filters": { "opportunityStatus": "unspecified" },
-	"requiresClarification": false
+  "channel": "customer_account",
+  "intent": "account_overview",
+  "intents": ["account_overview"],
+  "referenceResolution": {
+    "targetType": "account",
+    "cardinality": "single",
+    "source": "account_scope",
+    "candidateKeys": []
+  },
+  "allowedTools": ["searchAccounts", "searchOpportunities", "searchContacts"],
+  "filters": { "opportunityStatus": "unspecified" },
+  "requiresClarification": false
 }
 ```
 
@@ -206,9 +254,12 @@ El routing normalizado que pasa a B7 incluye:
 
 ```json
 [
-	{ "toolName": "searchAccounts", "args": {} },
-	{ "toolName": "searchOpportunities", "args": { "activeOnly": true, "openOnly": false } },
-	{ "toolName": "searchContacts", "args": {} }
+  { "toolName": "searchAccounts", "args": {} },
+  {
+    "toolName": "searchOpportunities",
+    "args": { "activeOnly": true, "openOnly": false }
+  },
+  { "toolName": "searchContacts", "args": {} }
 ]
 ```
 
@@ -216,15 +267,22 @@ El routing normalizado que pasa a B7 incluye:
 
 ```json
 {
-	"question": "Dame un resumen de la cuenta",
-	"intentPlan": { "intents": ["account_overview"], "filters": { "opportunityStatus": "unspecified" } },
-	"evidence": [
-		{ "toolName": "searchAccounts", "resultCount": 1, "queryFailed": false },
-		{ "toolName": "searchOpportunities", "resultCount": 14, "queryFailed": false },
-		{ "toolName": "searchContacts", "resultCount": 9, "queryFailed": false }
-	],
-	"round": 0,
-	"hasQueryErrors": false
+  "question": "Dame un resumen de la cuenta",
+  "intentPlan": {
+    "intents": ["account_overview"],
+    "filters": { "opportunityStatus": "unspecified" }
+  },
+  "evidence": [
+    { "toolName": "searchAccounts", "resultCount": 1, "queryFailed": false },
+    {
+      "toolName": "searchOpportunities",
+      "resultCount": 14,
+      "queryFailed": false
+    },
+    { "toolName": "searchContacts", "resultCount": 9, "queryFailed": false }
+  ],
+  "round": 0,
+  "hasQueryErrors": false
 }
 ```
 
@@ -238,23 +296,60 @@ B9 devuelve cobertura suficiente:
 
 ```json
 {
-	"answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles.",
-	"evidence": ["searchOpportunities: 8 oportunidades abiertas; pipeline USD 4,510,000.", "searchContacts: 9 contactos activos visibles."],
-	"inferences": [],
-	"confidence": "high",
-	"operations": []
+  "answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles.",
+  "evidence": [
+    "searchOpportunities: 8 oportunidades abiertas; pipeline USD 4,510,000.",
+    "searchContacts: 9 contactos activos visibles."
+  ],
+  "inferences": [],
+  "confidence": "high",
+  "operations": []
 }
 ```
 
-**Paso 10 · B10 → B3 → B11 → B2 → B1: persistir y mostrar.** B3 normaliza la respuesta; B11 guarda resultado, historial y contexto. El contexto no incluye oportunidad porque el resumen no eligió una:
+**Paso 10 · B10 → B5 → B4 → B3 → B11: producir y guardar el resultado.** B10 construye la respuesta final. B5 termina su orquestación y retorna el resultado por B4 a B3. B3 normaliza la respuesta; B11 guarda `job.result`, el historial y el contexto actualizado. Esto todavía no es la actualización visual del chat. El contexto no incluye oportunidad porque el resumen no eligió una:
 
 ```json
 {
-	"jobResult": { "answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles.", "entities": { "accountId": 22, "opportunityId": null } },
-	"sessionContext": { "version": 1, "accountId": 22, "opportunityId": null, "intents": ["account_overview"], "filters": { "opportunityStatus": "unspecified" } },
-	"httpResponse": { "job": { "id": 112, "status": "completed", "result": "jobResult" } }
+  "persistedJobResult": {
+    "answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles.",
+    "entities": { "accountId": 22, "opportunityId": null }
+  },
+  "sessionContext": {
+    "version": 1,
+    "accountId": 22,
+    "opportunityId": null,
+    "intents": ["account_overview"],
+    "filters": { "opportunityStatus": "unspecified" }
+  },
+  "jobRow": {
+    "id": 112,
+    "status": "completed",
+    "result_json": "persistedJobResult"
+  }
 }
 ```
+
+**Paso 11 · B1 → B2 → B1: entregar y mostrar la respuesta.** Después, B1 consulta el job por HTTP. Mientras se procesa puede recibir `pending` o `running`; al terminar, B2 responde `200` con `job.result`. B1 extrae ese resultado y agrega `result.answer` como mensaje del asistente en la interfaz. B1 es quien actualiza la vista, pero no redacta la respuesta; si se recupera la sesión más adelante, B1 vuelve a cargar el historial que guardó B3.
+
+```http
+GET /api/commercial-intelligence/account-chat/jobs/112
+```
+
+```json
+{
+  "job": {
+    "id": 112,
+    "status": "completed",
+    "result": {
+      "answer": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles.",
+      "entities": { "accountId": 22, "opportunityId": null }
+    }
+  }
+}
+```
+
+En resumen: **B10 redacta → B3 normaliza y B11 persiste → B2 entrega `job.result` por HTTP → B1 lo agrega al chat.**
 
 ### Turnos 2–4: oportunidades y recomendación
 
@@ -268,16 +363,19 @@ Routing y lecturas resumidas de la traza real:
 
 ```json
 {
-"jobId": 113,
-"sessionId": 15,
-"question": "cuales son las 8 oportunidades abiertas?",
-"routing": { "intent": "opportunity_query", "filters": { "opportunityStatus": "open" } },
-"tools": [
-{ "toolName": "searchAccounts", "resultCount": 1 },
-{ "toolName": "searchOpportunities", "resultCount": 8 },
-{ "toolName": "getSellerPipeline", "resultCount": 8 }
-],
-"evidence": { "status": "sufficient", "additionalReadQueries": 0 }
+  "jobId": 113,
+  "sessionId": 15,
+  "question": "cuales son las 8 oportunidades abiertas?",
+  "routing": {
+    "intent": "opportunity_query",
+    "filters": { "opportunityStatus": "open" }
+  },
+  "tools": [
+    { "toolName": "searchAccounts", "resultCount": 1 },
+    { "toolName": "searchOpportunities", "resultCount": 8 },
+    { "toolName": "getSellerPipeline", "resultCount": 8 }
+  ],
+  "evidence": { "status": "sufficient", "additionalReadQueries": 0 }
 }
 ```
 
@@ -291,11 +389,11 @@ Routing y lecturas resumidas de la traza real:
 
 ```json
 {
-	"accountId": 22,
-	"objective": "Investigar cliente existente desde Mi Coach",
-	"chatSessionId": 15,
-	"question": "indica cual es la oportunidad abierta de mas valor",
-	"includePublicResearch": false
+  "accountId": 22,
+  "objective": "Investigar cliente existente desde Mi Coach",
+  "chatSessionId": 15,
+  "question": "indica cual es la oportunidad abierta de mas valor",
+  "includePublicResearch": false
 }
 ```
 
@@ -303,8 +401,15 @@ La API responde y despacha el job:
 
 ```json
 {
-	"httpResponse": { "job": { "id": 114, "chatSessionId": 15, "status": "pending", "pollAfterMs": 700 } },
-	"workerInput": { "jobId": 114, "userId": 1 }
+  "httpResponse": {
+    "job": {
+      "id": 114,
+      "chatSessionId": 15,
+      "status": "pending",
+      "pollAfterMs": 700
+    }
+  },
+  "workerInput": { "jobId": 114, "userId": 1 }
 }
 ```
 
@@ -312,16 +417,30 @@ La API responde y despacha el job:
 
 ```json
 {
-	"jobId": 114,
-	"question": "indica cual es la oportunidad abierta de mas valor",
-	"conversationHistory": [
-		{ "role": "user", "text": "dame un resumen de la cuenta" },
-		{ "role": "assistant", "text": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles." },
-		{ "role": "user", "text": "cuales son las 8 oportunidades abiertas?" },
-		{ "role": "assistant", "text": "La cuenta Totalplay tiene 8 oportunidades abiertas según el CRM autorizado. Estas son: Solución (Dns) Periodo 2 2026, Seguridad de las APIs, Vrf 2027, Hardware Refresh 3 Años, Hardware Refresh, Club WIFI Inicial, Renovación Bluecat Red Empresarial Empresarial 2027 y Club WIFI Bdds 75 Adicionales. Todas están en proceso, activadas y con lifecycle abierto." }
-	],
-	"conversationContext": { "accountId": 22, "opportunityId": null, "intents": ["opportunity_query"], "filters": { "opportunityStatus": "open" } },
-	"snapshot": { "account": { "id": 22, "name": "Totalplay" }, "opportunities": ["filas autorizadas"] }
+  "jobId": 114,
+  "question": "indica cual es la oportunidad abierta de mas valor",
+  "conversationHistory": [
+    { "role": "user", "text": "dame un resumen de la cuenta" },
+    {
+      "role": "assistant",
+      "text": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles."
+    },
+    { "role": "user", "text": "cuales son las 8 oportunidades abiertas?" },
+    {
+      "role": "assistant",
+      "text": "La cuenta Totalplay tiene 8 oportunidades abiertas según el CRM autorizado. Estas son: Solución (Dns) Periodo 2 2026, Seguridad de las APIs, Vrf 2027, Hardware Refresh 3 Años, Hardware Refresh, Club WIFI Inicial, Renovación Bluecat Red Empresarial Empresarial 2027 y Club WIFI Bdds 75 Adicionales. Todas están en proceso, activadas y con lifecycle abierto."
+    }
+  ],
+  "conversationContext": {
+    "accountId": 22,
+    "opportunityId": null,
+    "intents": ["opportunity_query"],
+    "filters": { "opportunityStatus": "open" }
+  },
+  "snapshot": {
+    "account": { "id": 22, "name": "Totalplay" },
+    "opportunities": ["filas autorizadas"]
+  }
 }
 ```
 
@@ -329,9 +448,42 @@ La API responde y despacha el job:
 
 ```json
 {
-	"plannerInput": { "question": "indica cual es la oportunidad abierta de mas valor", "selectedAccountName": "Totalplay", "validatedContinuation": null, "authorizedEntityCandidates": [{ "candidateKey": "opportunity_1", "name": "Vrf 2027" }] },
-	"plan": { "queries": ["opportunity_query"], "referenceResolution": { "targetType": "opportunity", "cardinality": "single", "source": "current_message", "candidateKeys": ["opportunity_1"] }, "entities": { "opportunityReference": "Vrf 2027" }, "filters": { "opportunityStatus": "open" }, "mode": "read_only", "confidence": "high" },
-	"routing": { "intent": "opportunity_query", "referenceResolution": { "targetType": "opportunity", "cardinality": "single", "source": "current_message", "candidateKeys": ["opportunity_1"] }, "allowedTools": ["searchAccounts", "searchOpportunities", "getSellerPipeline"], "filters": { "opportunityStatus": "open" } }
+  "plannerInput": {
+    "question": "indica cual es la oportunidad abierta de mas valor",
+    "selectedAccountName": "Totalplay",
+    "validatedContinuation": null,
+    "authorizedEntityCandidates": [
+      { "candidateKey": "opportunity_1", "name": "Vrf 2027" }
+    ]
+  },
+  "plan": {
+    "queries": ["opportunity_query"],
+    "referenceResolution": {
+      "targetType": "opportunity",
+      "cardinality": "single",
+      "source": "current_message",
+      "candidateKeys": ["opportunity_1"]
+    },
+    "entities": { "opportunityReference": "Vrf 2027" },
+    "filters": { "opportunityStatus": "open" },
+    "mode": "read_only",
+    "confidence": "high"
+  },
+  "routing": {
+    "intent": "opportunity_query",
+    "referenceResolution": {
+      "targetType": "opportunity",
+      "cardinality": "single",
+      "source": "current_message",
+      "candidateKeys": ["opportunity_1"]
+    },
+    "allowedTools": [
+      "searchAccounts",
+      "searchOpportunities",
+      "getSellerPipeline"
+    ],
+    "filters": { "opportunityStatus": "open" }
+  }
 }
 ```
 
@@ -339,12 +491,16 @@ La API responde y despacha el job:
 
 ```json
 {
-	"tools": [
-		{ "toolName": "searchAccounts", "resultCount": 1 },
-		{ "toolName": "searchOpportunities", "resultCount": 8 },
-		{ "toolName": "getSellerPipeline", "resultCount": 8 }
-	],
-	"assessment": { "status": "sufficient", "missingQueries": [], "missingFacts": [] }
+  "tools": [
+    { "toolName": "searchAccounts", "resultCount": 1 },
+    { "toolName": "searchOpportunities", "resultCount": 8 },
+    { "toolName": "getSellerPipeline", "resultCount": 8 }
+  ],
+  "assessment": {
+    "status": "sufficient",
+    "missingQueries": [],
+    "missingFacts": []
+  }
 }
 ```
 
@@ -352,8 +508,19 @@ La API responde y despacha el job:
 
 ```json
 {
-	"response": { "answer": "La oportunidad abierta de mayor valor en la cuenta Totalplay es Vrf 2027, por 2,000,000 USD. Está en Contacto Inicial, activada y en proceso.", "entities": { "opportunityId": 94 }, "evidence": ["Vrf 2027: 2,000,000 USD, Contacto Inicial, activa, en proceso"] },
-	"sessionContext": { "accountId": 22, "opportunityId": 94, "intents": ["opportunity_query"], "filters": { "opportunityStatus": "open" } }
+  "response": {
+    "answer": "La oportunidad abierta de mayor valor en la cuenta Totalplay es Vrf 2027, por 2,000,000 USD. Está en Contacto Inicial, activada y en proceso.",
+    "entities": { "opportunityId": 94 },
+    "evidence": [
+      "Vrf 2027: 2,000,000 USD, Contacto Inicial, activa, en proceso"
+    ]
+  },
+  "sessionContext": {
+    "accountId": 22,
+    "opportunityId": 94,
+    "intents": ["opportunity_query"],
+    "filters": { "opportunityStatus": "open" }
+  }
 }
 ```
 
@@ -367,11 +534,11 @@ La API responde y despacha el job:
 
 ```json
 {
-	"accountId": 22,
-	"objective": "Investigar cliente existente desde Mi Coach",
-	"chatSessionId": 15,
-	"question": "que me sugieres hacer en esta oportunidad?",
-	"includePublicResearch": false
+  "accountId": 22,
+  "objective": "Investigar cliente existente desde Mi Coach",
+  "chatSessionId": 15,
+  "question": "que me sugieres hacer en esta oportunidad?",
+  "includePublicResearch": false
 }
 ```
 
@@ -379,17 +546,34 @@ La API responde y despacha el job:
 
 ```json
 {
-	"workerInput": { "jobId": 115, "userId": 1 },
-	"conversationHistory": [
-		{ "role": "user", "text": "dame un resumen de la cuenta" },
-		{ "role": "assistant", "text": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles." },
-		{ "role": "user", "text": "cuales son las 8 oportunidades abiertas?" },
-		{ "role": "assistant", "text": "La cuenta Totalplay tiene 8 oportunidades abiertas según el CRM autorizado. Estas son: Solución (Dns) Periodo 2 2026, Seguridad de las APIs, Vrf 2027, Hardware Refresh 3 Años, Hardware Refresh, Club WIFI Inicial, Renovación Bluecat Red Empresarial Empresarial 2027 y Club WIFI Bdds 75 Adicionales. Todas están en proceso, activadas y con lifecycle abierto." },
-		{ "role": "user", "text": "indica cual es la oportunidad abierta de mas valor" },
-		{ "role": "assistant", "text": "La oportunidad abierta de mayor valor en la cuenta Totalplay es Vrf 2027 con un monto aproximado de 2,000,000 USD. Está en Contacto Inicial, activada y en proceso." }
-	],
-	"conversationContext": { "accountId": 22, "opportunityId": 94, "intents": ["opportunity_query"], "filters": { "opportunityStatus": "open" } },
-	"trustedEntityReferences": ["Vrf 2027"]
+  "workerInput": { "jobId": 115, "userId": 1 },
+  "conversationHistory": [
+    { "role": "user", "text": "dame un resumen de la cuenta" },
+    {
+      "role": "assistant",
+      "text": "Resumen de Totalplay: 8 oportunidades abiertas con un pipeline de USD 4,510,000; 9 contactos activos visibles."
+    },
+    { "role": "user", "text": "cuales son las 8 oportunidades abiertas?" },
+    {
+      "role": "assistant",
+      "text": "La cuenta Totalplay tiene 8 oportunidades abiertas según el CRM autorizado. Estas son: Solución (Dns) Periodo 2 2026, Seguridad de las APIs, Vrf 2027, Hardware Refresh 3 Años, Hardware Refresh, Club WIFI Inicial, Renovación Bluecat Red Empresarial Empresarial 2027 y Club WIFI Bdds 75 Adicionales. Todas están en proceso, activadas y con lifecycle abierto."
+    },
+    {
+      "role": "user",
+      "text": "indica cual es la oportunidad abierta de mas valor"
+    },
+    {
+      "role": "assistant",
+      "text": "La oportunidad abierta de mayor valor en la cuenta Totalplay es Vrf 2027 con un monto aproximado de 2,000,000 USD. Está en Contacto Inicial, activada y en proceso."
+    }
+  ],
+  "conversationContext": {
+    "accountId": 22,
+    "opportunityId": 94,
+    "intents": ["opportunity_query"],
+    "filters": { "opportunityStatus": "open" }
+  },
+  "trustedEntityReferences": ["Vrf 2027"]
 }
 ```
 
@@ -397,12 +581,42 @@ La API responde y despacha el job:
 
 ```json
 {
-	"question": "que me sugieres hacer en esta oportunidad?",
-	"validatedContinuation": { "opportunityName": "Vrf 2027", "intents": ["opportunity_query"], "filters": { "opportunityStatus": "open" } },
-	"trustedContinuationReferences": ["Vrf 2027"],
-	"authorizedEntityCandidates": [{ "candidateKey": "opportunity_1", "name": "Vrf 2027", "stageName": "Contacto Inicial" }],
-	"plan": { "queries": ["opportunity_guidance"], "referenceResolution": { "targetType": "opportunity", "cardinality": "single", "source": "conversation_history", "candidateKeys": ["opportunity_1"] }, "entities": { "opportunityReference": "Vrf 2027" }, "filters": { "opportunityStatus": "open" }, "mode": "read_only", "confidence": "high" },
-	"routing": { "allowedTools": ["getOpportunity", "getOpportunityActivities", "getOpportunityReadiness", "searchInteractions"], "serverResolvedEntityIds": { "opportunityId": 94 } }
+  "question": "que me sugieres hacer en esta oportunidad?",
+  "validatedContinuation": {
+    "opportunityName": "Vrf 2027",
+    "intents": ["opportunity_query"],
+    "filters": { "opportunityStatus": "open" }
+  },
+  "trustedContinuationReferences": ["Vrf 2027"],
+  "authorizedEntityCandidates": [
+    {
+      "candidateKey": "opportunity_1",
+      "name": "Vrf 2027",
+      "stageName": "Contacto Inicial"
+    }
+  ],
+  "plan": {
+    "queries": ["opportunity_guidance"],
+    "referenceResolution": {
+      "targetType": "opportunity",
+      "cardinality": "single",
+      "source": "conversation_history",
+      "candidateKeys": ["opportunity_1"]
+    },
+    "entities": { "opportunityReference": "Vrf 2027" },
+    "filters": { "opportunityStatus": "open" },
+    "mode": "read_only",
+    "confidence": "high"
+  },
+  "routing": {
+    "allowedTools": [
+      "getOpportunity",
+      "getOpportunityActivities",
+      "getOpportunityReadiness",
+      "searchInteractions"
+    ],
+    "serverResolvedEntityIds": { "opportunityId": 94 }
+  }
 }
 ```
 
@@ -412,10 +626,10 @@ El modelo ve el alias `opportunity_1`, no el ID `94`. `serverResolvedEntityIds` 
 
 ```json
 [
-	{ "toolName": "searchInteractions", "resultCount": 2 },
-	{ "toolName": "getOpportunity", "resultCount": 1 },
-	{ "toolName": "getOpportunityActivities", "resultCount": 0 },
-	{ "toolName": "getOpportunityReadiness", "resultCount": 1 }
+  { "toolName": "searchInteractions", "resultCount": 2 },
+  { "toolName": "getOpportunity", "resultCount": 1 },
+  { "toolName": "getOpportunityActivities", "resultCount": 0 },
+  { "toolName": "getOpportunityReadiness", "resultCount": 1 }
 ]
 ```
 
@@ -423,8 +637,17 @@ El modelo ve el alias `opportunity_1`, no el ID `94`. `serverResolvedEntityIds` 
 
 ```json
 {
-	"readToolResults": [{ "toolName": "searchInteractions", "resultCount": 2 }, { "toolName": "getOpportunity", "resultCount": 1 }, { "toolName": "getOpportunityActivities", "resultCount": 0 }, { "toolName": "getOpportunityReadiness", "resultCount": 1 }],
-	"assessment": { "status": "sufficient", "missingQueries": [], "missingFacts": [] }
+  "readToolResults": [
+    { "toolName": "searchInteractions", "resultCount": 2 },
+    { "toolName": "getOpportunity", "resultCount": 1 },
+    { "toolName": "getOpportunityActivities", "resultCount": 0 },
+    { "toolName": "getOpportunityReadiness", "resultCount": 1 }
+  ],
+  "assessment": {
+    "status": "sufficient",
+    "missingQueries": [],
+    "missingFacts": []
+  }
 }
 ```
 
@@ -432,18 +655,50 @@ El modelo ve el alias `opportunity_1`, no el ID `94`. `serverResolvedEntityIds` 
 
 ```json
 {
-	"answer": "La oportunidad 'Vrf 2027' en la cuenta Totalplay, valorada en 2,000,000 USD y actualmente en la etapa 'Contacto Inicial', presenta un estado de preparación incompleto. Según el CRM, aún falta responder la pregunta crítica para esta etapa: ¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad? Además, no hay acuerdos confirmados ni un siguiente paso concretado. Se recomienda priorizar resolver esta pregunta con el cliente para justificar y avanzar la oportunidad. También es importante planear un siguiente paso de seguimiento, como una reunión, demo o actividad concreta, para confirmar el interés y mantener el avance. Esta recomendación busca asegurar que la etapa 'Contacto Inicial' se cumpla adecuadamente para evitar riesgos y activar el compromiso del cliente. La oportunidad presenta señales de riesgo por falta de actualización comercial en 59 días, lo que implica la urgencia de reactivar la interacción y clarificar las necesidades del cliente para avanzar efectivamente.",
-	"pendingItems": ["Confirmar con el cliente la necesidad concreta que justifica la oportunidad.", "Definir y acordar un siguiente paso concreto de seguimiento para mantener la oportunidad activa."],
-	"confidence": "high"
+  "answer": "La oportunidad 'Vrf 2027' en la cuenta Totalplay, valorada en 2,000,000 USD y actualmente en la etapa 'Contacto Inicial', presenta un estado de preparación incompleto. Según el CRM, aún falta responder la pregunta crítica para esta etapa: ¿Qué necesidad, iniciativa, problema o interés concreto expresa el cliente que justifique abrir esta oportunidad? Además, no hay acuerdos confirmados ni un siguiente paso concretado. Se recomienda priorizar resolver esta pregunta con el cliente para justificar y avanzar la oportunidad. También es importante planear un siguiente paso de seguimiento, como una reunión, demo o actividad concreta, para confirmar el interés y mantener el avance. Esta recomendación busca asegurar que la etapa 'Contacto Inicial' se cumpla adecuadamente para evitar riesgos y activar el compromiso del cliente. La oportunidad presenta señales de riesgo por falta de actualización comercial en 59 días, lo que implica la urgencia de reactivar la interacción y clarificar las necesidades del cliente para avanzar efectivamente.",
+  "pendingItems": [
+    "Confirmar con el cliente la necesidad concreta que justifica la oportunidad.",
+    "Definir y acordar un siguiente paso concreto de seguimiento para mantener la oportunidad activa."
+  ],
+  "confidence": "high"
 }
 ```
 
-**Paso 7 · B10 → B3 → B11 → B2 → B1: persistir y mostrar.** Job completado, resultado y contexto actualizado:
+**Paso 7 · B10 → B5 → B4 → B3 → B11: producir y persistir.** Como en el ejemplo anterior, B10 compone la recomendación; B5 retorna por B4 a B3, y B11 guarda el resultado y el contexto actualizado. Esta persistencia no escribe directamente en el chat web:
 
 ```json
 {
-	"job": { "id": 115, "status": "completed", "result": { "entities": { "accountId": 22, "opportunityId": 94 }, "confidence": "high", "pendingItems": ["necesidad concreta", "siguiente paso"] } },
-	"sessionContext": { "accountId": 22, "opportunityId": 94, "intents": ["opportunity_guidance"] }
+  "persistedJob": {
+    "id": 115,
+    "status": "completed",
+    "result": {
+      "entities": { "accountId": 22, "opportunityId": 94 },
+      "confidence": "high",
+      "pendingItems": ["necesidad concreta", "siguiente paso"]
+    }
+  },
+  "sessionContext": {
+    "accountId": 22,
+    "opportunityId": 94,
+    "intents": ["opportunity_guidance"]
+  }
+}
+```
+
+**Entrega posterior · B1 → B2 → B1: recuperar y mostrar.** B1 consulta `GET /api/commercial-intelligence/account-chat/jobs/115`; B2 responde `200` con el job completado y su `result`. B1 agrega `result.answer` al chat. El resumen del cuerpo HTTP puede omitir texto extenso, pero el campo `job.result` contiene la respuesta completa:
+
+```json
+{
+  "job": {
+    "id": 115,
+    "status": "completed",
+    "result": {
+      "answer": "La oportunidad 'Vrf 2027' ...",
+      "entities": { "accountId": 22, "opportunityId": 94 },
+      "confidence": "high",
+      "pendingItems": ["necesidad concreta", "siguiente paso"]
+    }
+  }
 }
 ```
 
@@ -508,11 +763,11 @@ Código: `apps/api/src/commercial-intelligence/conversation-context.js` y `apps/
 
 El motor es compartido; el adaptador contiene las particularidades del canal: contexto, herramientas, planificación, reglas y normalización de respuestas.
 
-| Canal | Adaptador | Contexto y persistencia |
-| --- | --- | --- |
-| Coach | `apps/api/src/coach/coach-adapter.js` | CRM autorizado; sesiones e historial de Coach. |
-| Cliente existente | `apps/api/src/commercial-intelligence/customer-chat-adapter.js` | Una cuenta CRM fija; jobs y sesiones `account_chat`. |
-| Cuenta nueva | `apps/api/src/prospect-research/prospect-chat-adapter.js` | Sesión de prospecto, hallazgos y evidencia pública; sin crear entidades CRM hasta una conversión confirmada. |
+| Canal             | Adaptador                                                       | Contexto y persistencia                                                                                      |
+| ----------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Coach             | `apps/api/src/coach/coach-adapter.js`                           | CRM autorizado; sesiones e historial de Coach.                                                               |
+| Cliente existente | `apps/api/src/commercial-intelligence/customer-chat-adapter.js` | Una cuenta CRM fija; jobs y sesiones `account_chat`.                                                         |
+| Cuenta nueva      | `apps/api/src/prospect-research/prospect-chat-adapter.js`       | Sesión de prospecto, hallazgos y evidencia pública; sin crear entidades CRM hasta una conversión confirmada. |
 
 Los adaptadores comparten el motor, no el historial ni la autorización del otro canal.
 

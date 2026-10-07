@@ -2679,7 +2679,9 @@ describe("API integration baseline", () => {
             objective: isOperationRequest
               ? "Preparar una propuesta de operación CRM"
               : "Consultar el resumen de la cuenta",
-            queries: [isOperationRequest ? "crm_operation" : "account_overview"],
+            queries: [
+              isOperationRequest ? "crm_operation" : "account_overview",
+            ],
             entities: {
               accountReference: "",
               opportunityReference: "",
@@ -2936,7 +2938,155 @@ describe("API integration baseline", () => {
         entryBlocks: ["B1", "B2", "B3", "B4", "B5", "B6"],
       },
     });
-    expect(accountChatJob.body.job.result.debug.flow).toHaveLength(11);
+    const debugFlow = accountChatJob.body.job.result.debug.flow;
+    expect(debugFlow).toHaveLength(11);
+    expect(accountChatJob.body.job.result.debug.flowEdges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from: "B4",
+          to: "B5",
+          kind: "call",
+        }),
+        expect.objectContaining({
+          from: "B5",
+          to: "B6",
+          kind: "call",
+        }),
+        expect.objectContaining({
+          from: "B6",
+          to: "B5",
+          kind: "return",
+        }),
+        expect.objectContaining({
+          from: "B9",
+          to: "B7",
+          kind: "conditional_loop",
+        }),
+        expect.objectContaining({
+          from: "B5",
+          to: "B4",
+          kind: "return",
+        }),
+        expect.objectContaining({
+          from: "B1",
+          to: "B2",
+          kind: "poll",
+        }),
+      ]),
+    );
+    expect(debugFlow).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          block: "B3",
+          output: expect.objectContaining({
+            agentMetrics: expect.any(Array),
+            snapshotMetrics: expect.any(Array),
+          }),
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              field: "accountId",
+              state: "pass",
+            }),
+            expect.objectContaining({
+              field: "opportunityId",
+              state: "not_applicable",
+              actual: null,
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          block: "B4",
+          output: expect.objectContaining({
+            engineInput: expect.objectContaining({
+              channel: "customer_account",
+              toolCatalog: expect.any(Array),
+              permissionCount: expect.any(Number),
+            }),
+          }),
+          checks: expect.arrayContaining([
+            expect.objectContaining({ field: "accountId", state: "pass" }),
+          ]),
+        }),
+        expect.objectContaining({
+          block: "B5",
+          input: expect.objectContaining({
+            channel: "customer_account",
+            context: expect.objectContaining({ accountId }),
+          }),
+          output: expect.objectContaining({
+            responseType: expect.any(String),
+            responseTypeReceived: null,
+            responseTypeSource: "customer_account_default",
+            validationStatus: expect.any(String),
+            plannerRoutingReturned: true,
+          }),
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              field: "responseType",
+              state: "warning",
+              actual: expect.objectContaining({
+                received: null,
+                normalized: "informational",
+                source: "customer_account_default",
+              }),
+            }),
+          ]),
+        }),
+        expect.objectContaining({
+          block: "B6",
+          input: expect.objectContaining({
+            enabledIntentCodes: expect.any(Array),
+            availableToolNames: expect.any(Array),
+            candidateCounts: expect.any(Object),
+          }),
+          output: expect.objectContaining({
+            normalizedPlan: expect.objectContaining({
+              intent: expect.any(String),
+              referenceResolution: expect.any(Object),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          block: "B2",
+          output: expect.objectContaining({
+            jobId: accountChatJob.body.job.id,
+            initialStatus: "pending",
+            accepted: true,
+          }),
+        }),
+        expect.objectContaining({
+          block: "B8",
+          output: expect.objectContaining({
+            toolMetrics: expect.arrayContaining([
+              expect.objectContaining({
+                toolName: "searchAccounts",
+                resultCount: expect.any(Number),
+              }),
+            ]),
+          }),
+        }),
+        expect.objectContaining({
+          block: "B10",
+          output: expect.objectContaining({
+            answer: accountChatJob.body.job.result.answer,
+          }),
+        }),
+        expect.objectContaining({
+          block: "B11",
+          output: expect.objectContaining({
+            jobStatus: "completed",
+            contextDisposition: "recomputed",
+          }),
+        }),
+      ]),
+    );
+    const toolStep = debugFlow.find((item) => item.block === "B8");
+    expect(
+      toolStep.output.toolMetrics.every(
+        (metric) => !Object.hasOwn(metric, "result"),
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(debugFlow)).not.toContain("@example.test");
     expect(accountChatJob.body.job.result.debug.nextTurn.history).toEqual(
       historyAfterFirstChat.map(({ role, text, activityHistory }) => ({
         role,

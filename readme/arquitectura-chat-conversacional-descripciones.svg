@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2320" viewBox="0 0 1600 2320" role="img" aria-labelledby="title description">
+  <title id="title">Qué hace cada bloque del chat conversacional</title>
+  <desc id="description">Descripciones detalladas de B1 a B11 en el flujo del chat. B1 y B2 gestionan la interfaz y los endpoints HTTP; B3 y B4 preparan y adaptan el procesamiento del servidor; B5 orquesta B6 a B10 y retorna a B4; B3 ejecuta la persistencia B11; finalmente B1 consulta B2 y muestra job.result.</desc>
+  <defs>
+    <marker id="arrow-control" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#557184"/>
+    </marker>
+    <marker id="arrow-return" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#277b70"/>
+    </marker>
+    <marker id="arrow-loop" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#a87820"/>
+    </marker>
+    <style>
+      .canvas { fill: #f4f7f8; }
+      .title { fill: #18323f; font: 700 30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #526b78; font: 400 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .phase-title { fill: #516b78; font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 1px; }
+      .phase { fill: #fff; stroke: #d5e0e4; stroke-width: 1.5; rx: 12; }
+      .node { stroke-width: 1.5; rx: 8; }
+      .node-title { fill: #18323f; font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .node-copy { fill: #405b68; font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .node-small { fill: #526b78; font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .engine-frame { fill: #f2f8fa; stroke: #5f9bb0; stroke-width: 2; rx: 12; }
+      .engine-title { fill: #1c566e; font: 700 19px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .connector { fill: none; stroke: #557184; stroke-width: 2; marker-end: url(#arrow-control); }
+      .return { fill: none; stroke: #277b70; stroke-width: 2.5; marker-end: url(#arrow-return); }
+      .loop { fill: none; stroke: #a87820; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#arrow-loop); }
+      .label-bg { fill: #fff; stroke: #e0e8eb; stroke-width: 1; rx: 4; }
+      .edge { fill: #405b68; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .legend { fill: #526b78; font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .summary { fill: #18323f; font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1600" height="2320" rx="18"/>
+  <text class="title" x="48" y="58">Qué hace cada bloque del chat conversacional</text>
+  <text class="subtitle" x="48" y="88">Las descripciones explican las responsabilidades; las flechas muestran llamadas, retornos y ciclos.</text>
+
+  <rect class="phase" x="40" y="120" width="1520" height="400"/>
+  <text class="phase-title" x="64" y="153">1 · ENTRADA Y JOB</text>
+  <rect class="node" x="74" y="184" width="650" height="210" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="100" y="220">B1 · Chat web</text>
+  <text class="node-copy" x="100" y="258">
+    <tspan x="100" dy="0">Recibe la pregunta del vendedor. Si hace falta, solicita una</tspan>
+    <tspan x="100" dy="23">sesión; envía la pregunta para crear un job y consulta su estado.</tspan>
+    <tspan x="100" dy="23">Cuando recibe el resultado, muestra job.result.answer en el chat.</tspan>
+  </text>
+  <rect class="node" x="876" y="184" width="650" height="210" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="902" y="220">B2 · Rutas de sesión y jobs</text>
+  <text class="node-copy" x="902" y="258">
+    <tspan x="902" dy="0">Expone los endpoints HTTP que usa B1. Crea o recupera sesiones,</tspan>
+    <tspan x="902" dy="23">acepta jobs y devuelve su estado y resultado.</tspan>
+    <tspan x="902" dy="23">No redacta la respuesta.</tspan>
+  </text>
+  <path class="connector" d="M724 270 H866"/>
+  <rect class="label-bg" x="748" y="235" width="96" height="25"/>
+  <text class="edge" x="760" y="252">HTTP request</text>
+  <path class="return" d="M876 322 H734"/>
+  <rect class="label-bg" x="748" y="331" width="98" height="25"/>
+  <text class="edge" x="760" y="348">HTTP response</text>
+  <text class="node-small" x="74" y="445">Al terminar: B1 consulta el job a B2; B2 entrega el resultado persistido por HTTP.</text>
+
+  <rect class="phase" x="40" y="544" width="1520" height="1550"/>
+  <text class="phase-title" x="64" y="578">2 · ORQUESTACIÓN DEL TURNO EN EL SERVIDOR</text>
+
+  <rect class="node" x="74" y="614" width="1452" height="185" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="100" y="651">B3 · Servicio del canal</text>
+  <text class="node-copy" x="100" y="690">
+    <tspan x="100" dy="0">Procesa el job en el servidor. Comprueba permisos y pertenencia a la cuenta, carga el contexto y el snapshot</tspan>
+    <tspan x="100" dy="24">autorizados, invoca el adaptador y, cuando recibe el resultado, lo persiste.</tspan>
+  </text>
+  <path class="connector" d="M800 799 V832"/>
+  <text class="edge" x="817" y="823">pasa contexto autorizado</text>
+
+  <rect class="node" x="74" y="844" width="1452" height="170" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="100" y="881">B4 · Adaptador del canal</text>
+  <text class="node-copy" x="100" y="920">
+    <tspan x="100" dy="0">Prepara para el motor las particularidades de Cliente existente: contexto, reglas, herramientas y políticas.</tspan>
+    <tspan x="100" dy="24">Invoca B5 y, cuando B5 termina, devuelve su resultado a B3.</tspan>
+  </text>
+  <path class="connector" d="M800 1014 V1045"/>
+  <text class="edge" x="817" y="1035">invoca B5 y espera</text>
+
+  <rect class="engine-frame" x="64" y="1058" width="1472" height="886"/>
+  <text class="engine-title" x="92" y="1094">B5 · Motor conversacional</text>
+  <text class="node-copy" x="92" y="1128">
+    <tspan x="92" dy="0">Coordina el turno. Llama al planificador, valida su propuesta, coordina las lecturas y la comprobación</tspan>
+    <tspan x="92" dy="23">de evidencia y obtiene la respuesta final. No termina al recibir el plan; al acabar la orquestación,</tspan>
+    <tspan x="92" dy="23">retorna el resultado a B4.</tspan>
+  </text>
+
+  <rect class="node" x="90" y="1204" width="420" height="174" fill="#fff1d8" stroke="#d7a84e"/>
+  <text class="node-title" x="114" y="1240">B6 · Planificador IA</text>
+  <text class="node-copy" x="114" y="1278">
+    <tspan x="114" dy="0">Interpreta la pregunta y propone qué consultar,</tspan>
+    <tspan x="114" dy="23">sobre qué entidad y con qué filtros. Su plan vuelve</tspan>
+    <tspan x="114" dy="23">a B5, que lo valida antes de permitir que continúe.</tspan>
+  </text>
+
+  <rect class="node" x="590" y="1204" width="420" height="174" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="614" y="1240">B7 · Read model del canal</text>
+  <text class="node-copy" x="614" y="1278">
+    <tspan x="614" dy="0">Convierte el plan validado en consultas concretas</tspan>
+    <tspan x="614" dy="23">para el canal. Puede preparar lecturas iniciales o</tspan>
+    <tspan x="614" dy="23">adicionales si falta evidencia.</tspan>
+  </text>
+
+  <rect class="node" x="1090" y="1204" width="420" height="174" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="1114" y="1240">B8 · Herramientas CRM autorizadas</text>
+  <text class="node-copy" x="1114" y="1278">
+    <tspan x="1114" dy="0">Ejecuta las lecturas permitidas dentro del alcance</tspan>
+    <tspan x="1114" dy="23">de la cuenta y devuelve sus resultados.</tspan>
+    <tspan x="1114" dy="23">No hace escrituras CRM en este flujo.</tspan>
+  </text>
+
+  <path class="connector" d="M510 1285 H580"/>
+  <rect class="label-bg" x="517" y="1250" width="61" height="23"/>
+  <text class="edge" x="526" y="1266">plan</text>
+  <path class="connector" d="M1010 1285 H1080"/>
+  <rect class="label-bg" x="1014" y="1250" width="65" height="23"/>
+  <text class="edge" x="1023" y="1266">consulta</text>
+  <path class="return" d="M1300 1378 V1407 H800 V1388"/>
+  <rect class="label-bg" x="1007" y="1387" width="172" height="23"/>
+  <text class="edge" x="1017" y="1403">resultados de lectura</text>
+
+  <rect class="node" x="280" y="1440" width="480" height="174" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="304" y="1476">B9 · Verificador de evidencia</text>
+  <text class="node-copy" x="304" y="1514">
+    <tspan x="304" dy="0">Evalúa si las lecturas alcanzan para responder.</tspan>
+    <tspan x="304" dy="23">Si falta información y aún hay consultas</tspan>
+    <tspan x="304" dy="23">autorizadas, puede pedir otra ronda a B7/B8.</tspan>
+  </text>
+
+  <rect class="node" x="840" y="1440" width="480" height="174" fill="#e9f3e8" stroke="#9ab78d"/>
+  <text class="node-title" x="864" y="1476">B10 · Respuesta final</text>
+  <text class="node-copy" x="864" y="1514">
+    <tspan x="864" dy="0">Construye la respuesta al vendedor, de forma</tspan>
+    <tspan x="864" dy="23">determinista o mediante síntesis IA auditada.</tspan>
+    <tspan x="864" dy="23">Devuelve la respuesta a B5.</tspan>
+  </text>
+  <path class="connector" d="M800 1378 V1428 H520 V1430"/>
+  <text class="edge" x="581" y="1419">evidencia</text>
+  <path class="loop" d="M280 1527 H244 V1290 H580"/>
+  <rect class="label-bg" x="90" y="1404" width="137" height="36"/>
+  <text class="edge" x="100" y="1419">si falta evidencia,</text>
+  <text class="edge" x="100" y="1434">vuelve a B7/B8</text>
+  <path class="connector" d="M760 1527 H830"/>
+  <text class="edge" x="776" y="1511">evidencia suficiente</text>
+
+  <path class="return" d="M1080 1614 V1661 H800 V1155 H70"/>
+  <rect class="label-bg" x="893" y="1641" width="194" height="23"/>
+  <text class="edge" x="903" y="1657">B10 devuelve respuesta a B5</text>
+  <rect class="label-bg" x="106" y="1669" width="216" height="23"/>
+  <text class="edge" x="116" y="1685">B5 retorna resultado completo a B4</text>
+
+  <rect class="node" x="74" y="1740" width="1452" height="164" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="100" y="1778">B11 · Persistencia</text>
+  <text class="node-small" x="260" y="1778">No es un servicio independiente: es una tarea que realiza B3.</text>
+  <text class="node-copy" x="100" y="1820">
+    <tspan x="100" dy="0">Guarda el resultado del job, el historial y el contexto actualizado de la sesión.</tspan>
+    <tspan x="100" dy="24">Después B1 consulta B2; B2 devuelve job.result por HTTP y B1 lo muestra.</tspan>
+  </text>
+  <path class="connector" d="M800 1904 V1980"/>
+  <text class="edge" x="816" y="1945">B3 persiste antes de responder el GET</text>
+
+  <rect class="phase" x="40" y="1990" width="1520" height="230"/>
+  <text class="phase-title" x="64" y="2020">3 · ENTREGA HTTP Y ACTUALIZACIÓN DE LA INTERFAZ</text>
+  <rect class="node" x="74" y="2050" width="620" height="112" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="100" y="2087">B1 · Chat web</text>
+  <text class="node-copy" x="100" y="2123">
+    <tspan x="100" dy="0">Consulta el job a B2; al recibir el resultado, muestra</tspan>
+    <tspan x="100" dy="23">job.result.answer como mensaje del asistente.</tspan>
+  </text>
+  <rect class="node" x="906" y="2050" width="620" height="112" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="932" y="2087">B2 · Consulta del job</text>
+  <text class="node-copy" x="932" y="2123">
+    <tspan x="932" dy="0">Responde HTTP 200 con status completed y el</tspan>
+    <tspan x="932" dy="23">job.result que B3 ya guardó.</tspan>
+  </text>
+  <path class="connector" d="M694 2090 H896"/>
+  <rect class="label-bg" x="752" y="2057" width="90" height="23"/>
+  <text class="edge" x="762" y="2073">GET jobId</text>
+  <path class="return" d="M906 2142 H704"/>
+  <rect class="label-bg" x="758" y="2149" width="96" height="23"/>
+  <text class="edge" x="768" y="2165">job.result · 200</text>
+
+  <rect x="64" y="2250" width="15" height="4" rx="2" fill="#557184"/>
+  <text class="legend" x="87" y="2255">Llamada / despacho</text>
+  <rect x="245" y="2250" width="15" height="4" rx="2" fill="#277b70"/>
+  <text class="legend" x="268" y="2255">Retorno / respuesta</text>
+  <rect x="438" y="2250" width="15" height="4" rx="2" fill="#a87820"/>
+  <text class="legend" x="461" y="2255">Ciclo condicional de evidencia</text>
+  <text class="summary" x="850" y="2255">B10 redacta · B3 guarda · B2 entrega · B1 muestra</text>
+  <text class="legend" x="64" y="2284">La respuesta conversacional no ejecuta escrituras CRM; esas siguen su flujo de revisión y confirmación.</text>
+</svg>

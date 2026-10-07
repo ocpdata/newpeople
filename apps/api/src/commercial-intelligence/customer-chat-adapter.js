@@ -404,7 +404,10 @@ function buildCustomerPlanEntityCandidates(
     });
   };
   const addContinuationCandidate = (records, entity) => {
-    if (!entity || records.some((item) => Number(item.id) === Number(entity.id))) {
+    if (
+      !entity ||
+      records.some((item) => Number(item.id) === Number(entity.id))
+    ) {
       return records;
     }
     return [...records.slice(0, 7), entity];
@@ -432,11 +435,15 @@ function buildCustomerPlanEntityCandidates(
   );
   return {
     publicCandidates: {
-      opportunities: buildCandidates("opportunity", opportunityCandidates, (item) => ({
-        name: item.name,
-        stageName: item.stageName,
-        commercialStatusCode: item.commercialStatusCode,
-      })),
+      opportunities: buildCandidates(
+        "opportunity",
+        opportunityCandidates,
+        (item) => ({
+          name: item.name,
+          stageName: item.stageName,
+          commercialStatusCode: item.commercialStatusCode,
+        }),
+      ),
       contacts: buildCandidates("contact", contactRecords, (item) => ({
         name: item.name,
         positionTitle: item.positionTitle,
@@ -681,9 +688,7 @@ export async function buildCustomerReadModel({
     "active_context",
   ].includes(channelIntentRouting?.referenceResolution?.source);
   const plannedFilters = {
-    ...(inheritsConversationFilters
-      ? conversationContext?.filters || {}
-      : {}),
+    ...(inheritsConversationFilters ? conversationContext?.filters || {} : {}),
     ...currentPlannedFilters,
   };
   const plannedStatus = plannedFilters.opportunityStatus || "unspecified";
@@ -735,12 +740,13 @@ export async function buildCustomerReadModel({
     ? plannedOpportunity || null
     : resolution.opportunity || snapshot.selectedOpportunity || null;
   const plannedContact = (snapshot.contacts || []).find(
-      (item) =>
-        Number(item.id) === Number(serverResolvedEntityIds.contactId) &&
-        Number(item.accountId || snapshot.account?.id) ===
-          Number(snapshot.account?.id),
-    );
-  const selectedContact = plannedContact ||
+    (item) =>
+      Number(item.id) === Number(serverResolvedEntityIds.contactId) &&
+      Number(item.accountId || snapshot.account?.id) ===
+        Number(snapshot.account?.id),
+  );
+  const selectedContact =
+    plannedContact ||
     (hasReferenceResolution ? null : snapshot.selectedContact || null);
   const plannedLead = (snapshot.interactions || []).find(
     (item) =>
@@ -859,7 +865,9 @@ export async function buildCustomerReadModel({
     routeAllows(
       "getOpportunity",
       opportunityGuidanceRequested ||
-        /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(normalizedQuestion),
+        /\b(detalle|monto|importe|etapa|oportunidad)\b/.test(
+          normalizedQuestion,
+        ),
     )
   ) {
     pushTool("getOpportunity", { opportunityId: selectedOpportunity.id });
@@ -1102,9 +1110,7 @@ function buildCustomerAccountOverviewResponse(snapshot, readToolResults = []) {
   const accountName = String(snapshot?.account?.name || "").trim();
   if (!accountName) return null;
   const resultFor = (toolName) =>
-    readToolResults.find(
-      (item) => item?.toolName === toolName && !item.error,
-    );
+    readToolResults.find((item) => item?.toolName === toolName && !item.error);
   const opportunityRead = resultFor("searchOpportunities");
   const contactRead = resultFor("searchContacts");
   const interactionRead = resultFor("searchInteractions");
@@ -1151,8 +1157,7 @@ function buildCustomerAccountOverviewResponse(snapshot, readToolResults = []) {
     answer: `Resumen de ${accountName}: ${sections.join("; ")}.`,
     evidence,
     inferences: [],
-    confidence:
-      opportunityRead && contactRead ? "high" : "medium",
+    confidence: opportunityRead && contactRead ? "high" : "medium",
     pendingItems: [],
     recommendedActions: [],
     operations: [],
@@ -1711,9 +1716,7 @@ export function normalizeCustomerResponse(
     answer: String(
       normalized.answer || "No fue posible responder la pregunta.",
     ),
-    ...(normalized.responseType
-      ? { responseType: normalized.responseType }
-      : {}),
+    responseType: normalized.responseType || "informational",
     evidence: Array.isArray(normalized.evidence) ? normalized.evidence : [],
     inferences: Array.isArray(normalized.inferences)
       ? normalized.inferences
@@ -1737,8 +1740,9 @@ export function normalizeCustomerResponse(
     entities: {
       accountId: context.accountId || null,
       opportunityId:
-        Number(normalized.entities?.opportunityId || context.opportunityId || 0) ||
-        null,
+        Number(
+          normalized.entities?.opportunityId || context.opportunityId || 0,
+        ) || null,
       contactId: context.contactId || null,
       leadId: null,
       names: [],
@@ -1792,6 +1796,27 @@ export function createCustomerAccountAdapter({
         context,
         permittedTools,
       );
+      turnDiagnostics.plannerInput = {
+        questionLength: String(question || "").length,
+        historyMessageCount: Array.isArray(conversationHistory)
+          ? conversationHistory.length
+          : 0,
+        selectedContext: {
+          accountId: Number(context.accountId || 0) || null,
+          opportunityId: Number(context.opportunityId || 0) || null,
+          contactId: Number(context.contactId || 0) || null,
+        },
+        enabledIntentCodes,
+        availableToolNames: permittedTools.map((tool) => tool.name),
+        candidateCounts: Object.fromEntries(
+          Object.entries(entityCandidates.publicCandidates || {}).map(
+            ([entityType, candidates]) => [
+              entityType,
+              Array.isArray(candidates) ? candidates.length : 0,
+            ],
+          ),
+        ),
+      };
       const plannerContext = buildCustomerQueryPlannerContext({
         question,
         context,
@@ -1823,7 +1848,10 @@ export function createCustomerAccountAdapter({
         signal: getDeadlineSignal(deadlineAt),
       });
       return plan
-        ? { ...plan, serverEntityCandidates: entityCandidates.serverEntityCandidates }
+        ? {
+            ...plan,
+            serverEntityCandidates: entityCandidates.serverEntityCandidates,
+          }
         : plan;
     },
     loadChannelIntentConfigurations: ({ channel }) =>
@@ -1894,11 +1922,12 @@ export function createCustomerAccountAdapter({
         permissions,
         allowedOperationKinds: payload.operationPolicy?.allowedKinds,
       });
-      const deterministicOperationResponse =
-        isExplicitCustomerAmountChange(payload.question)
-          ? deterministicResponse
-          : intentCodes.includes("crm_operation") &&
-              deterministicResponse?.operations?.length
+      const deterministicOperationResponse = isExplicitCustomerAmountChange(
+        payload.question,
+      )
+        ? deterministicResponse
+        : intentCodes.includes("crm_operation") &&
+            deterministicResponse?.operations?.length
           ? deterministicResponse
           : null;
       const channelCatalog = Array.isArray(
@@ -2075,21 +2104,21 @@ export function createCustomerAccountAdapter({
             : routing,
         },
       };
-        if (intentCodes.length === 1 && intentCodes[0] === "account_overview") {
-          const accountOverview = buildCustomerAccountOverviewResponse(
-            snapshot,
-            evidenceLoop.readToolResults,
-          );
-          return (
-            accountOverview ||
-            buildCustomerEvidenceFailureResponse({
-              status: "insufficient_evidence",
-              missingFacts: [
-                "datos de oportunidades o contactos consultados para el resumen",
-              ],
-            })
-          );
-        }
+      if (intentCodes.length === 1 && intentCodes[0] === "account_overview") {
+        const accountOverview = buildCustomerAccountOverviewResponse(
+          snapshot,
+          evidenceLoop.readToolResults,
+        );
+        return (
+          accountOverview ||
+          buildCustomerEvidenceFailureResponse({
+            status: "insufficient_evidence",
+            missingFacts: [
+              "datos de oportunidades o contactos consultados para el resumen",
+            ],
+          })
+        );
+      }
       const publicResearchEvidence = (Array.isArray(agents) ? agents : [])
         .filter(
           (agent) =>
@@ -2137,7 +2166,9 @@ export function createCustomerAccountAdapter({
           toolName: item.toolName,
           scopeName:
             item.toolName === "getOpportunityActivities"
-              ? resolvedOpportunity?.name || snapshot.account?.name || "cuenta autorizada"
+              ? resolvedOpportunity?.name ||
+                snapshot.account?.name ||
+                "cuenta autorizada"
               : snapshot.account?.name || "cuenta autorizada",
           resultCount: 0,
           completed: true,
@@ -2166,171 +2197,173 @@ export function createCustomerAccountAdapter({
       const aiResult =
         deterministicOperationResponse ||
         (await runStructuredTextResearch({
-        schemaName: "account_contextual_chat",
-        systemPrompt:
-          "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos.",
-        subject: snapshot.account?.name || "cuenta",
-        context: answerEvidenceContext,
-        currentValues: {},
-        fields: [
-          { key: "answer", type: "string", example: fallback.answer },
-          {
-            key: "entities",
-            type: "object",
-            fields: [
-              { key: "opportunityId", type: "number", example: 0 },
-            ],
-          },
-          {
-            key: "evidence",
-            type: "array",
-            example: [],
-            items: { type: "string", example: "Evidencia" },
-          },
-          {
-            key: "inferences",
-            type: "array",
-            example: [],
-            items: { type: "string", example: "Hipótesis" },
-          },
-          {
-            key: "confidence",
-            type: "enum",
-            enum: ["high", "medium", "low"],
-            example: "medium",
-          },
-          {
-            key: "pendingItems",
-            type: "array",
-            example: [],
-            items: { type: "string", example: "Dato no verificado" },
-          },
-          {
-            key: "recommendedActions",
-            type: "array",
-            example: [],
-            items: {
+          schemaName: "account_contextual_chat",
+          systemPrompt:
+            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos.",
+          subject: snapshot.account?.name || "cuenta",
+          context: answerEvidenceContext,
+          currentValues: {},
+          fields: [
+            { key: "answer", type: "string", example: fallback.answer },
+            {
+              key: "entities",
               type: "object",
-              fields: [
-                { key: "title", type: "string", example: "Actividad" },
-                { key: "opportunityId", type: "string", example: "" },
-                { key: "actionType", type: "string", example: "call" },
-                { key: "notes", type: "string", example: "" },
-                { key: "successCriteria", type: "string", example: "" },
-                {
-                  key: "requiresConfirmation",
-                  type: "string",
-                  example: "true",
-                },
-              ],
+              fields: [{ key: "opportunityId", type: "number", example: 0 }],
             },
-          },
-          {
-            key: "operations",
-            type: "array",
-            example: [],
-            items: {
-              type: "object",
-              fields: [
-                {
-                  key: "kind",
-                  type: "enum",
-                  enum: [
-                    "activity",
-                    "stage_answer",
-                    "lead_call_outcome",
-                    "account_field",
-                    "contact_field",
-                    "opportunity_field",
-                  ],
-                  example: "opportunity_field",
-                },
-                { key: "title", type: "string", example: "Actualizar importe" },
-                { key: "accountId", type: "number", example: 7 },
-                { key: "contactId", type: "number", example: 12 },
-                { key: "opportunityId", type: "number", example: 18 },
-                { key: "interactionId", type: "number", example: 25 },
-                { key: "field", type: "string", example: "amountUsd" },
-                { key: "currentValue", type: "string", example: "10000" },
-                { key: "value", type: "string", example: "12000" },
-                { key: "questionId", type: "number", example: 4 },
-                { key: "answerValue", type: "string", example: "" },
-                {
-                  key: "answerMode",
-                  type: "enum",
-                  enum: ["replace", "append"],
-                  example: "replace",
-                },
-                { key: "substatusCode", type: "string", example: "" },
-                { key: "reasonCode", type: "string", example: "" },
-                { key: "requiredActionCode", type: "string", example: "" },
-                { key: "comment", type: "string", example: "" },
-                {
-                  key: "actionType",
-                  type: "enum",
-                  enum: [
-                    "next_step",
-                    "follow_up",
-                    "call",
-                    "meeting",
-                    "conference",
-                    "presentation",
-                    "visit",
-                    "send_email",
-                    "waiting_customer",
-                    "demo",
-                    "quotation",
-                    "negotiation",
-                    "other",
-                  ],
-                  example: "call",
-                },
-                {
-                  key: "status",
-                  type: "enum",
-                  enum: ["pending", "in_progress", "blocked", "done"],
-                  example: "pending",
-                },
-                {
-                  key: "priority",
-                  type: "enum",
-                  enum: ["low", "medium", "high"],
-                  example: "medium",
-                },
-                { key: "scheduledAt", type: "string", example: "" },
-                { key: "dueDate", type: "string", example: "" },
-                { key: "notes", type: "string", example: "" },
-                { key: "successCriteria", type: "string", example: "" },
-                {
-                  key: "evidence",
-                  type: "array",
-                  example: [],
-                  items: {
-                    type: "object",
-                    fields: [
-                      {
-                        key: "sourceType",
-                        type: "string",
-                        example: "opportunity",
-                      },
-                      { key: "sourceId", type: "number", example: 18 },
-                      { key: "label", type: "string", example: "Dato CRM" },
-                      { key: "excerpt", type: "string", example: "" },
-                    ],
+            {
+              key: "evidence",
+              type: "array",
+              example: [],
+              items: { type: "string", example: "Evidencia" },
+            },
+            {
+              key: "inferences",
+              type: "array",
+              example: [],
+              items: { type: "string", example: "Hipótesis" },
+            },
+            {
+              key: "confidence",
+              type: "enum",
+              enum: ["high", "medium", "low"],
+              example: "medium",
+            },
+            {
+              key: "pendingItems",
+              type: "array",
+              example: [],
+              items: { type: "string", example: "Dato no verificado" },
+            },
+            {
+              key: "recommendedActions",
+              type: "array",
+              example: [],
+              items: {
+                type: "object",
+                fields: [
+                  { key: "title", type: "string", example: "Actividad" },
+                  { key: "opportunityId", type: "string", example: "" },
+                  { key: "actionType", type: "string", example: "call" },
+                  { key: "notes", type: "string", example: "" },
+                  { key: "successCriteria", type: "string", example: "" },
+                  {
+                    key: "requiresConfirmation",
+                    type: "string",
+                    example: "true",
                   },
-                },
-              ],
+                ],
+              },
             },
+            {
+              key: "operations",
+              type: "array",
+              example: [],
+              items: {
+                type: "object",
+                fields: [
+                  {
+                    key: "kind",
+                    type: "enum",
+                    enum: [
+                      "activity",
+                      "stage_answer",
+                      "lead_call_outcome",
+                      "account_field",
+                      "contact_field",
+                      "opportunity_field",
+                    ],
+                    example: "opportunity_field",
+                  },
+                  {
+                    key: "title",
+                    type: "string",
+                    example: "Actualizar importe",
+                  },
+                  { key: "accountId", type: "number", example: 7 },
+                  { key: "contactId", type: "number", example: 12 },
+                  { key: "opportunityId", type: "number", example: 18 },
+                  { key: "interactionId", type: "number", example: 25 },
+                  { key: "field", type: "string", example: "amountUsd" },
+                  { key: "currentValue", type: "string", example: "10000" },
+                  { key: "value", type: "string", example: "12000" },
+                  { key: "questionId", type: "number", example: 4 },
+                  { key: "answerValue", type: "string", example: "" },
+                  {
+                    key: "answerMode",
+                    type: "enum",
+                    enum: ["replace", "append"],
+                    example: "replace",
+                  },
+                  { key: "substatusCode", type: "string", example: "" },
+                  { key: "reasonCode", type: "string", example: "" },
+                  { key: "requiredActionCode", type: "string", example: "" },
+                  { key: "comment", type: "string", example: "" },
+                  {
+                    key: "actionType",
+                    type: "enum",
+                    enum: [
+                      "next_step",
+                      "follow_up",
+                      "call",
+                      "meeting",
+                      "conference",
+                      "presentation",
+                      "visit",
+                      "send_email",
+                      "waiting_customer",
+                      "demo",
+                      "quotation",
+                      "negotiation",
+                      "other",
+                    ],
+                    example: "call",
+                  },
+                  {
+                    key: "status",
+                    type: "enum",
+                    enum: ["pending", "in_progress", "blocked", "done"],
+                    example: "pending",
+                  },
+                  {
+                    key: "priority",
+                    type: "enum",
+                    enum: ["low", "medium", "high"],
+                    example: "medium",
+                  },
+                  { key: "scheduledAt", type: "string", example: "" },
+                  { key: "dueDate", type: "string", example: "" },
+                  { key: "notes", type: "string", example: "" },
+                  { key: "successCriteria", type: "string", example: "" },
+                  {
+                    key: "evidence",
+                    type: "array",
+                    example: [],
+                    items: {
+                      type: "object",
+                      fields: [
+                        {
+                          key: "sourceType",
+                          type: "string",
+                          example: "opportunity",
+                        },
+                        { key: "sourceId", type: "number", example: 18 },
+                        { key: "label", type: "string", example: "Dato CRM" },
+                        { key: "excerpt", type: "string", example: "" },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+            { key: "source", type: "string", example: "account_intelligence" },
+          ],
+          aiUsageContext: {
+            userId: Number(user.id),
+            featureCode: "commercial_intelligence.account_chat",
+            jobType: "account_chat",
+            jobId,
           },
-          { key: "source", type: "string", example: "account_intelligence" },
-        ],
-        aiUsageContext: {
-          userId: Number(user.id),
-          featureCode: "commercial_intelligence.account_chat",
-          jobType: "account_chat",
-          jobId,
-        },
-        signal: getDeadlineSignal(deadlineAt),
+          signal: getDeadlineSignal(deadlineAt),
         }));
       if (aiResult) {
         const answerAudit = await runStructuredTextResearch({

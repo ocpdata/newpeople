@@ -73,20 +73,24 @@ const CUSTOMER_CHAT_DEBUG_GUIDE = {
     check: "Los IDs de sesión y job, y que el job haya terminado.",
   },
   B3: {
-    purpose: "Valida cuenta, permisos, historial y contexto CRM.",
-    check: "La cuenta seleccionada y el contexto que se recuperó.",
+    purpose: "Autoriza el contexto CRM, carga el snapshot y prepara agentes.",
+    check: "Contexto validado, métricas del snapshot y estado de agentes.",
   },
   B4: {
-    purpose: "Prepara las reglas y herramientas del canal Cliente existente.",
-    check: "Que solo aparezcan herramientas autorizadas para este usuario.",
+    purpose:
+      "Adapta contexto, reglas y catálogo de herramientas para el motor.",
+    check:
+      "Que la invocación enviada a B5 refleje el contexto y las políticas.",
   },
   B5: {
-    purpose: "Coordina el turno y aplica políticas antes de responder.",
-    check: "La ruta elegida y si el turno pidió aclaración.",
+    purpose: "Orquesta el turno y devuelve una respuesta normalizada a B4.",
+    check:
+      "Tipo, validación, aclaración y latencia; el plan detallado está en B6.",
   },
   B6: {
-    purpose: "Interpreta la intención, el objetivo y los filtros.",
-    check: "Intención, cardinalidad, ambigüedad y modo de consulta.",
+    purpose: "Propone el plan estructurado que B5 valida antes de usar.",
+    check:
+      "Intención, cardinalidad, referencias opacas, herramientas y filtros.",
   },
   B7: {
     purpose: "Convierte el plan en lecturas concretas.",
@@ -94,7 +98,8 @@ const CUSTOMER_CHAT_DEBUG_GUIDE = {
   },
   B8: {
     purpose: "Lee datos CRM dentro de la cuenta autorizada.",
-    check: "Conteos, errores y truncamientos; no se muestran filas CRM completas.",
+    check:
+      "Conteos, errores y truncamientos; no se muestran filas CRM completas.",
   },
   B9: {
     purpose: "Comprueba si la evidencia alcanza para responder.",
@@ -126,6 +131,566 @@ const CUSTOMER_CHAT_DEBUG_STATUS_LABELS = {
   verification_unavailable: "Verificación no disponible",
   verification_error: "Falló la verificación",
 };
+
+function summarizeDebugTools(toolNames = []) {
+  const names = Array.isArray(toolNames) ? toolNames.filter(Boolean) : [];
+  if (!names.length) return "ninguna";
+  const visibleNames = names.slice(0, 4).join(", ");
+  return names.length > 4
+    ? `${visibleNames} y ${names.length - 4} más`
+    : visibleNames;
+}
+
+function summarizeDebugToolMetrics(toolMetrics = []) {
+  const metrics = Array.isArray(toolMetrics) ? toolMetrics : [];
+  if (!metrics.length) return "No se registraron lecturas";
+  return metrics
+    .slice(0, 4)
+    .map((metric) => {
+      const count = Number(metric.resultCount || 0);
+      const resultText = `${count} resultado${count === 1 ? "" : "s"}`;
+      const statusText = metric.errorCode
+        ? `error: ${metric.errorCode}`
+        : metric.truncated === true
+          ? "truncado"
+          : "correcto";
+      return `${metric.toolName}: ${resultText}, ${statusText}`;
+    })
+    .join("; ");
+}
+
+function summarizeDebugSnapshotMetrics(snapshotMetrics = []) {
+  const metrics = Array.isArray(snapshotMetrics) ? snapshotMetrics : [];
+  if (!metrics.length) return "sin métricas de snapshot";
+  return metrics
+    .slice(0, 4)
+    .map((metric) => {
+      const count = Number(metric.resultCount || 0);
+      const truncated = metric.truncated === true ? ", truncado" : "";
+      return `${metric.source}: ${count}${truncated}`;
+    })
+    .join("; ");
+}
+
+function summarizeCustomerChatDebugStep(item) {
+  const input = item.input || {};
+  const output = item.output || {};
+  const reference = output.normalizedPlan?.referenceResolution || {};
+  const context = input.context || {};
+  const engineInput = output.engineInput || {};
+  const metrics = output.toolMetrics || [];
+  const snapshotMetrics = output.snapshotMetrics || [];
+  const contextSummary = (value) =>
+    [
+      value.accountId ? `cuenta ${value.accountId}` : null,
+      value.opportunityId ? `oportunidad ${value.opportunityId}` : null,
+      value.contactId ? `contacto ${value.contactId}` : null,
+      value.leadId ? `lead ${value.leadId}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ") || "sin entidad seleccionada";
+  const answerPreview = String(output.answer || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  switch (item.block) {
+    case "B1":
+      return {
+        input: `Pregunta: ${String(input.question || "").slice(0, 180)}`,
+        output: output.forwardedToApi
+          ? "La API y su respuesta observada se detallan en Intercambios HTTP."
+          : "No hay captura de transporte para este turno.",
+      };
+    case "B2":
+      return {
+        input: `${input.chatSessionId ? `Sesión ${input.chatSessionId}` : "Sesión nueva"}; pregunta de ${input.questionLength || 0} caracteres.`,
+        output: `Job ${output.jobId || "no asignado"}: ${output.accepted ? "aceptado" : "no aceptado"}; estado inicial ${output.initialStatus || "desconocido"}. La respuesta HTTP real se muestra en Intercambios HTTP.`,
+      };
+    case "B3":
+      return {
+        input: `Se solicitó contexto de la cuenta ${input.accountId || "no indicada"}.`,
+        output: `${contextSummary(output.validatedContext || {})}; snapshot: ${summarizeDebugSnapshotMetrics(snapshotMetrics)}; ${output.agentMetrics?.length || 0} agentes preparados.`,
+      };
+    case "B4":
+      return {
+        input: `${input.channel || "Canal desconocido"}; ${contextSummary(input.context || {})}; ${input.preparedAgentCount || 0} agentes preparados.`,
+        output: `Prepara B5 para ${engineInput.channel || "el canal"}: ${engineInput.questionLength || 0} caracteres, ${engineInput.historyMessageCount || 0} mensajes previos, herramientas: ${summarizeDebugTools(engineInput.toolCatalog)}; ${engineInput.permissionCount ?? 0} permisos.`,
+      };
+    case "B5":
+      const responseTypeOrigin =
+        output.responseTypeSource === "customer_account_default"
+          ? "original omitido; default de Cliente existente aplicado"
+          : output.responseTypeSource === "upstream"
+            ? "recibido del resultado previo"
+            : "origen no identificado";
+      return {
+        input: `${input.channel || "Canal desconocido"}; ${contextSummary(context)}; ${input.historyMessageCount || 0} mensajes previos; herramientas: ${summarizeDebugTools(input.toolCatalog)}.`,
+        output: `Tipo normalizado ${output.responseType || "ausente"} (${responseTypeOrigin})${output.validationStatus ? `; validación ${output.validationStatus}` : ""}${output.confidence ? `; confianza ${output.confidence}` : ""}; ${output.answerLength || 0} caracteres, ${output.operationCount || 0} operaciones propuestas y ${output.latencyMs ?? "sin dato"} ms.`,
+      };
+    case "B6":
+      return {
+        input: `Planifica con ${input.questionLength || 0} caracteres, ${input.historyMessageCount || 0} mensajes previos; herramientas: ${summarizeDebugTools(input.availableToolNames)}; ${Object.values(input.candidateCounts || {}).reduce((total, count) => total + Number(count || 0), 0)} candidatos.`,
+        output: reference.cardinality
+          ? `Intención ${output.normalizedPlan?.intent || "sin intención"}; objetivo ${reference.targetType || "no definido"} (${reference.cardinality}), referencia ${reference.source || "sin origen"}; herramientas: ${summarizeDebugTools(output.normalizedPlan?.allowedTools)}; aclaración ${output.normalizedPlan?.requiresClarification ? "requerida" : "no requerida"}.`
+          : `Plan no disponible: ${output.diagnostics?.reasonCode || output.diagnostics?.source || "sin diagnóstico"}.`,
+      };
+    case "B7":
+      return {
+        input: `Herramientas del plan: ${summarizeDebugTools(input.plannedTools)}.`,
+        output: `Fuentes de snapshot disponibles: ${summarizeDebugTools(output.availableSources)}.`,
+      };
+    case "B8":
+      return {
+        input: `Herramientas ejecutadas: ${summarizeDebugTools(input.toolNames)}.`,
+        output: summarizeDebugToolMetrics(metrics),
+      };
+    case "B9":
+      return {
+        input: `Verifica ${metrics.length} métricas de herramientas.`,
+        output: output.status
+          ? `Evidencia ${output.status}; ${output.rounds || 0} rondas, ${output.missingFactsCount || 0} hechos faltantes${output.errorCode ? `, error ${output.errorCode}` : ""}.`
+          : "La verificación no se alcanzó.",
+      };
+    case "B10":
+      return {
+        input: `Evidencia ${input.evidenceStatus || "sin estado"}; respuesta tipo ${input.responseType || "sin tipo"}.`,
+        output: answerPreview
+          ? `Respuesta: ${answerPreview.slice(0, 180)}${answerPreview.length > 180 ? "…" : ""}`
+          : "No hay texto de respuesta.",
+      };
+    case "B11":
+      return {
+        input: `Job ${input.jobId || "?"} y sesión ${input.chatSessionId || "?"}.`,
+        output: `Job ${output.jobStatus || "sin estado"}; ${output.historyMessageCount || 0} mensajes guardados; contexto ${output.contextDisposition || "sin dato"}.`,
+      };
+    default:
+      return {
+        input: "Entrada disponible en los detalles JSON.",
+        output: "Respuesta disponible en los detalles JSON.",
+      };
+  }
+}
+
+function CustomerChatTransportTrace({ trace }) {
+  const exchanges = Array.isArray(trace?.exchanges) ? trace.exchanges : [];
+  return (
+    <section
+      className="mi-agent-customer-chat-transport-trace"
+      aria-label="Intercambios HTTP observados"
+    >
+      <strong>Intercambios HTTP observados por el navegador</strong>
+      {exchanges.length ? (
+        <ol>
+          {exchanges.map((exchange, index) => (
+            <li
+              key={`${exchange.label}-${index}`}
+              className={`is-${exchange.outcome || "unknown"}`}
+            >
+              <div>
+                <strong>
+                  {exchange.kind === "local"
+                    ? `B1 · ${exchange.label}`
+                    : `B1 → B2 · ${exchange.method} ${exchange.path}`}
+                </strong>
+                {exchange.kind !== "local" ? (
+                  <small>{exchange.label}</small>
+                ) : null}
+              </div>
+              {exchange.kind === "local" ? (
+                <p>
+                  Sesión {exchange.responseSummary?.sessionId} reutilizada; no
+                  se hizo una llamada HTTP para crearla.
+                </p>
+              ) : (
+                <div>
+                  <strong>
+                    {exchange.httpStatus
+                      ? `B2 → B1 · HTTP ${exchange.httpStatus}`
+                      : "B2 → B1 · Sin respuesta HTTP"}
+                  </strong>
+                  <small>
+                    {exchange.durationMs ?? "?"} ms
+                    {exchange.pollCount
+                      ? ` · ${exchange.pollCount} consultas`
+                      : ""}
+                  </small>
+                </div>
+              )}
+              {exchange.responseSummary?.jobId ? (
+                <p>
+                  Job {exchange.responseSummary.jobId}
+                  {exchange.responseSummary.chatSessionId
+                    ? ` · sesión ${exchange.responseSummary.chatSessionId}`
+                    : ""}
+                  {exchange.responseSummary.initialStatus
+                    ? ` · estado inicial ${exchange.responseSummary.initialStatus}`
+                    : ""}
+                  {exchange.responseSummary.finalStatus
+                    ? ` · estado final ${exchange.responseSummary.finalStatus}`
+                    : ""}
+                  {exchange.responseSummary.pollAfterMs
+                    ? ` · sondeo sugerido ${exchange.responseSummary.pollAfterMs} ms`
+                    : ""}
+                  {exchange.responseSummary.resultReceived
+                    ? " · resultado recibido"
+                    : ""}
+                </p>
+              ) : exchange.responseSummary?.sessionId ? (
+                <p>Sesión {exchange.responseSummary.sessionId} creada.</p>
+              ) : null}
+              {exchange.responseSummary?.observedStatuses?.length ? (
+                <p>
+                  Estados observados:{" "}
+                  {exchange.responseSummary.observedStatuses.join(" → ")}
+                </p>
+              ) : null}
+              {exchange.responseSummary?.errorMessage ? (
+                <p>{exchange.responseSummary.errorMessage}</p>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p>No se registraron solicitudes HTTP para este turno.</p>
+      )}
+      <small>
+        Se muestran metadatos observados por el cliente; se omiten los cuerpos
+        completos.
+      </small>
+    </section>
+  );
+}
+
+const CUSTOMER_CHAT_DEBUG_CHECK_LABELS = {
+  pass: "Correcto",
+  warning: "Revisar",
+  error: "Error",
+  not_applicable: "No aplica",
+  not_checked: "No evaluado",
+};
+
+const CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS = [
+  "B1",
+  "B2",
+  "B3",
+  "B4",
+  "B5",
+  "B6",
+  "B7",
+  "B8",
+  "B9",
+  "B10",
+  "B11",
+];
+
+function CustomerChatDebugStep({ item, issueBlock }) {
+  const summaries = summarizeCustomerChatDebugStep(item);
+  return (
+    <article
+      className={`mi-agent-customer-chat-debug-step${
+        item.block === issueBlock ? " is-problem" : ""
+      }`}
+    >
+      <div className="mi-agent-customer-chat-debug-step-heading">
+        <strong>
+          {item.block} · {item.label}
+        </strong>
+        <small>
+          {CUSTOMER_CHAT_DEBUG_STATUS_LABELS[item.status] || item.status}
+        </small>
+      </div>
+      <span>{CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.purpose}</span>
+      <div className="mi-agent-customer-chat-debug-step-summary">
+        <p>
+          <strong>Entrada:</strong> {summaries.input}
+        </p>
+        <p>
+          <strong>
+            {item.block === "B5" ? "Retorno a B4:" : "Respuesta:"}
+          </strong>{" "}
+          {summaries.output}
+        </p>
+      </div>
+      {Array.isArray(item.checks) && item.checks.length ? (
+        <ul className="mi-agent-customer-chat-debug-checks">
+          {item.checks.map((check) => (
+            <li
+              key={check.field}
+              className={`is-${check.state || "not_checked"}`}
+            >
+              <span className="mi-agent-customer-chat-debug-check-state">
+                {CUSTOMER_CHAT_DEBUG_CHECK_LABELS[check.state] || "No evaluado"}
+              </span>
+              <span>
+                <strong>{check.field}:</strong> {check.message}
+              </span>
+              <small>
+                Esperado: {check.expected}; recibido:{" "}
+                {JSON.stringify(check.actual)}
+              </small>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <small className="mi-agent-customer-chat-debug-no-checks">
+          Este bloque no tiene comprobaciones estructuradas en este diagnóstico.
+        </small>
+      )}
+      <small className="mi-agent-customer-chat-debug-step-guide">
+        Revisar: {CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.check}
+      </small>
+      {item.input || item.output ? (
+        <details className="mi-agent-customer-chat-debug-step-details">
+          <summary>Ver JSON técnico de entrada y respuesta</summary>
+          <div>
+            <section>
+              <strong>Entrada</strong>
+              <pre>{JSON.stringify(item.input ?? null, null, 2)}</pre>
+            </section>
+            <section>
+              <strong>Respuesta</strong>
+              <pre>{JSON.stringify(item.output ?? null, null, 2)}</pre>
+            </section>
+          </div>
+        </details>
+      ) : null}
+    </article>
+  );
+}
+
+function CustomerChatDebugConnector({
+  label,
+  kind = "call",
+  direction = "down",
+}) {
+  return (
+    <div
+      className={`mi-agent-customer-chat-debug-connector is-${kind} is-${direction}`}
+      aria-label={label}
+    >
+      <span aria-hidden="true">{direction === "right" ? "→" : "↓"}</span>
+      <small>{label}</small>
+    </div>
+  );
+}
+
+function CustomerChatDebugFlow({ debug }) {
+  const flow = Array.isArray(debug.flow) ? debug.flow : [];
+  const blocks = new Map(flow.map((item) => [item.block, item]));
+  const edgeLabel = (from, to, kind, fallback) =>
+    debug.flowEdges?.find(
+      (edge) => edge.from === from && edge.to === to && edge.kind === kind,
+    )?.label || fallback;
+  const issueBlock = debug.issue?.block;
+  const checks = flow.flatMap((item) =>
+    Array.isArray(item.checks) ? item.checks : [],
+  );
+  const checkCounts = checks.reduce(
+    (counts, check) => ({
+      ...counts,
+      [check.state || "not_checked"]:
+        (counts[check.state || "not_checked"] || 0) + 1,
+    }),
+    {},
+  );
+  const missingBlocks = CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS.filter(
+    (block) => !blocks.has(block),
+  );
+  const renderStep = (block) => {
+    const item = blocks.get(block);
+    return item ? (
+      <CustomerChatDebugStep key={block} item={item} issueBlock={issueBlock} />
+    ) : (
+      <div
+        key={block}
+        className="mi-agent-customer-chat-debug-missing-block"
+        role="status"
+      >
+        {block} no aparece en la traza.
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <section
+        className="mi-agent-customer-chat-debug-check-summary"
+        aria-label="Resumen de comprobaciones"
+      >
+        <strong>Comprobaciones del turno</strong>
+        {checks.length ? (
+          <p>
+            {checkCounts.error || 0} errores · {checkCounts.warning || 0} por
+            revisar · {checkCounts.pass || 0} correctas ·{" "}
+            {checkCounts.not_applicable || 0} no aplican
+          </p>
+        ) : (
+          <p>Esta traza no contiene comprobaciones estructuradas.</p>
+        )}
+        {missingBlocks.length ? (
+          <p className="is-warning">
+            Faltan bloques en la traza: {missingBlocks.join(", ")}.
+          </p>
+        ) : null}
+      </section>
+
+      <div className="mi-agent-customer-chat-debug-flow-map">
+        <section className="mi-agent-customer-chat-debug-phase">
+          <h3>1. La interfaz envía la pregunta y recibe un job</h3>
+          <div className="mi-agent-customer-chat-debug-lane">
+            {renderStep("B1")}
+            <CustomerChatDebugConnector
+              kind="request"
+              direction="right"
+              label={edgeLabel("B1", "B2", "request", "POST pregunta")}
+            />
+            {renderStep("B2")}
+          </div>
+          <CustomerChatDebugConnector
+            kind="dispatch"
+            label={edgeLabel(
+              "B2",
+              "B3",
+              "dispatch",
+              "despacha el job en segundo plano",
+            )}
+          />
+        </section>
+
+        <section className="mi-agent-customer-chat-debug-scope is-service">
+          <header>
+            <h3>2. B3 mantiene el control del job</h3>
+            <p>
+              Prepara el contexto, delega el turno y persiste el resultado al
+              recuperarlo.
+            </p>
+          </header>
+          {renderStep("B3")}
+          <CustomerChatDebugConnector
+            kind="call"
+            label={edgeLabel("B3", "B4", "call", "prepara el canal")}
+          />
+          {renderStep("B4")}
+          <CustomerChatDebugConnector
+            kind="call"
+            label={edgeLabel(
+              "B4",
+              "B5",
+              "call",
+              "invoca B5 y espera su resultado",
+            )}
+          />
+
+          <section className="mi-agent-customer-chat-debug-scope is-engine">
+            <header>
+              <h3>3. B5 orquesta el turno hasta completarlo</h3>
+              <p>
+                B5 no termina al recibir el plan: coordina las llamadas internas
+                y solo entonces retorna a B4.
+              </p>
+            </header>
+            {renderStep("B5")}
+
+            <section className="mi-agent-customer-chat-debug-subflow">
+              <h4>Planificación: B5 llama a B6 y recibe el plan</h4>
+              {renderStep("B6")}
+              <CustomerChatDebugConnector
+                kind="return"
+                label={edgeLabel(
+                  "B6",
+                  "B5",
+                  "return",
+                  "el plan vuelve a B5 para validación",
+                )}
+              />
+            </section>
+
+            <section className="mi-agent-customer-chat-debug-subflow">
+              <h4>Lecturas: B7 prepara consultas y B8 lee datos autorizados</h4>
+              <div className="mi-agent-customer-chat-debug-lane">
+                {renderStep("B7")}
+                <CustomerChatDebugConnector
+                  kind="call"
+                  direction="right"
+                  label={edgeLabel("B7", "B8", "call", "ejecuta lecturas")}
+                />
+                {renderStep("B8")}
+              </div>
+              <CustomerChatDebugConnector
+                kind="return"
+                label={edgeLabel(
+                  "B8",
+                  "B7",
+                  "return",
+                  "los resultados vuelven a B7 y la evidencia a B5",
+                )}
+              />
+            </section>
+
+            <section className="mi-agent-customer-chat-debug-subflow">
+              <h4>Verificación: B9 puede solicitar otra ronda de lecturas</h4>
+              {renderStep("B9")}
+              <div className="mi-agent-customer-chat-debug-loop">
+                <strong>Relectura condicional</strong>
+                <span>
+                  {edgeLabel(
+                    "B9",
+                    "B7",
+                    "conditional_loop",
+                    "Si falta evidencia y quedan consultas autorizadas, vuelve a B7 y B8.",
+                  )}
+                </span>
+              </div>
+            </section>
+
+            <section className="mi-agent-customer-chat-debug-subflow">
+              <h4>
+                Respuesta: B10 forma el resultado que termina devolviendo B5
+              </h4>
+              {renderStep("B10")}
+            </section>
+
+            <CustomerChatDebugConnector
+              kind="return"
+              label={edgeLabel(
+                "B5",
+                "B4",
+                "return",
+                "B5 retorna el resultado completo a B4",
+              )}
+            />
+          </section>
+
+          <CustomerChatDebugConnector
+            kind="return"
+            label={edgeLabel(
+              "B4",
+              "B3",
+              "return",
+              "B4 entrega el resultado a B3",
+            )}
+          />
+          <section className="mi-agent-customer-chat-debug-persistence">
+            <h4>4. Persistencia dentro del servicio B3</h4>
+            {renderStep("B11")}
+          </section>
+        </section>
+
+        <section className="mi-agent-customer-chat-debug-polling">
+          <strong>5. Entrega asíncrona a la interfaz</strong>
+          <p>
+            B1 consulta periódicamente el job en B2; B2 devuelve el estado y, al
+            completarse, el resultado final.
+          </p>
+          <small>
+            {edgeLabel("B1", "B2", "poll", "GET estado del job")} →{" "}
+            {edgeLabel("B2", "B1", "result", "B2 devuelve el resultado")}
+          </small>
+        </section>
+      </div>
+    </>
+  );
+}
 
 const COACH_POLL_TIMEOUT_MS = 180000;
 const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
@@ -1099,8 +1664,10 @@ export default function MiAgentPage({
   const [coachMetrics, setCoachMetrics] = useState(null);
   const [coachActionDraft, setCoachActionDraft] = useState(null);
   const [coachOperationDraft, setCoachOperationDraft] = useState(null);
-  const [coachOperationOpportunityOptionsOverride, setCoachOperationOpportunityOptionsOverride] =
-    useState(null);
+  const [
+    coachOperationOpportunityOptionsOverride,
+    setCoachOperationOpportunityOptionsOverride,
+  ] = useState(null);
   const [coachPendingOperations, setCoachPendingOperations] = useState([]);
   const [coachRecentOperations, setCoachRecentOperations] = useState([]);
   const [coachUndoOperationId, setCoachUndoOperationId] = useState(null);
@@ -1150,6 +1717,8 @@ export default function MiAgentPage({
   const [customerInvestigating, setCustomerInvestigating] = useState(false);
   const [customerIntelligenceError, setCustomerIntelligenceError] =
     useState("");
+  const [customerChatTransportError, setCustomerChatTransportError] =
+    useState(null);
   const [customerFindingUpdatingId, setCustomerFindingUpdatingId] =
     useState(null);
   const [customerFindingApplyDraft, setCustomerFindingApplyDraft] =
@@ -2153,8 +2722,48 @@ export default function MiAgentPage({
   async function askCustomerChat(question = customerChatQuestion) {
     const normalizedQuestion = String(question || "").trim();
     if (!normalizedQuestion || !hasCustomerContext) return;
+    const transportExchanges = [];
+    let activeExchange = null;
+    const beginExchange = (label, method, path) => {
+      activeExchange = {
+        label,
+        method,
+        path,
+        startedAt: Date.now(),
+        pollCount: 0,
+        observedStatuses: [],
+      };
+      return activeExchange;
+    };
+    const finishExchange = (
+      exchange,
+      response,
+      outcome,
+      responseSummary = {},
+    ) => {
+      if (!exchange) return;
+      transportExchanges.push({
+        label: exchange.label,
+        method: exchange.method,
+        path: exchange.path,
+        httpStatus: Number(response?.status || 0) || null,
+        outcome,
+        durationMs: Math.max(0, Date.now() - exchange.startedAt),
+        pollCount: exchange.pollCount || 0,
+        responseSummary,
+      });
+      if (activeExchange === exchange) activeExchange = null;
+    };
+    const safeApiErrorMessage = (requestError) =>
+      String(
+        requestError?.response?.data?.message || requestError?.message || "",
+      )
+        .replace(/\s+/g, " ")
+        .slice(0, 180);
+
     setCustomerChatLoading(true);
     setCustomerIntelligenceError("");
+    setCustomerChatTransportError(null);
     setCustomerChatMessages((current) => [
       ...current,
       { role: "seller", text: normalizedQuestion },
@@ -2163,11 +2772,22 @@ export default function MiAgentPage({
     try {
       let activeChatSessionId = customerChatSessionId;
       if (!activeChatSessionId) {
+        const exchange = beginExchange(
+          "Crear sesión",
+          "POST",
+          "/api/commercial-intelligence/account-chat/sessions",
+        );
         const sessionResponse = await api.post(
           "/api/commercial-intelligence/account-chat/sessions",
           buildCustomerIntelligencePayload(),
         );
         activeChatSessionId = Number(sessionResponse.data?.session?.id || 0);
+        finishExchange(
+          exchange,
+          sessionResponse,
+          activeChatSessionId ? "completed" : "invalid_response",
+          { sessionId: activeChatSessionId || null },
+        );
         if (!activeChatSessionId)
           throw new Error("No se pudo iniciar una conversación de cuenta");
         window.sessionStorage.setItem(
@@ -2175,7 +2795,19 @@ export default function MiAgentPage({
           String(activeChatSessionId),
         );
         setCustomerChatSessionId(activeChatSessionId);
+      } else {
+        transportExchanges.push({
+          kind: "local",
+          label: "Reutilizar sesión existente",
+          outcome: "reused",
+          responseSummary: { sessionId: activeChatSessionId },
+        });
       }
+      const submitExchange = beginExchange(
+        "Iniciar pregunta",
+        "POST",
+        "/api/commercial-intelligence/account-chat/jobs",
+      );
       const response = await api.post(
         "/api/commercial-intelligence/account-chat/jobs",
         {
@@ -2186,14 +2818,58 @@ export default function MiAgentPage({
         },
       );
       const jobId = Number(response.data?.job?.id || 0);
+      finishExchange(
+        submitExchange,
+        response,
+        jobId ? "accepted" : "invalid_response",
+        {
+          jobId: jobId || null,
+          chatSessionId:
+            Number(response.data?.job?.chatSessionId || activeChatSessionId) ||
+            null,
+          initialStatus: response.data?.job?.status || null,
+          pollAfterMs: Number(response.data?.job?.pollAfterMs || 0) || null,
+        },
+      );
       if (!jobId) throw new Error("No se pudo iniciar el chat de cuenta");
       let result = null;
+      const pollExchange = beginExchange(
+        "Consultar resultado",
+        "GET",
+        `/api/commercial-intelligence/account-chat/jobs/${jobId}`,
+      );
+      let finalPollJob = null;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const jobResponse = await api.get(
           `/api/commercial-intelligence/account-chat/jobs/${jobId}`,
         );
         const job = jobResponse.data?.job;
+        pollExchange.pollCount += 1;
+        if (
+          job?.status &&
+          !pollExchange.observedStatuses.includes(String(job.status))
+        ) {
+          pollExchange.observedStatuses.push(String(job.status));
+        }
         if (["completed", "failed"].includes(String(job?.status || ""))) {
+          finalPollJob = job;
+          finishExchange(
+            pollExchange,
+            jobResponse,
+            job.status === "completed" ? "completed" : "job_failed",
+            {
+              jobId,
+              finalStatus: String(job.status),
+              observedStatuses: pollExchange.observedStatuses,
+              resultReceived: Boolean(job.result),
+              errorMessage:
+                job.status === "failed"
+                  ? String(
+                      job.errorMessage || "El job terminó con error",
+                    ).slice(0, 180)
+                  : null,
+            },
+          );
           if (job.status === "failed")
             throw new Error(job.errorMessage || "No fue posible responder");
           result = job.result;
@@ -2201,13 +2877,45 @@ export default function MiAgentPage({
         }
         await new Promise((resolve) => window.setTimeout(resolve, 600));
       }
-      if (!result)
+      if (!result) {
+        if (activeExchange === pollExchange) {
+          finishExchange(pollExchange, null, "timeout", {
+            jobId,
+            finalStatus: finalPollJob?.status || "sin estado terminal",
+            observedStatuses: pollExchange.observedStatuses,
+            resultReceived: false,
+          });
+        }
         throw new Error("La respuesta tardó demasiado; inténtalo de nuevo");
+      }
       setCustomerChatMessages((current) => [
         ...current,
-        { role: "assistant", ...result },
+        {
+          role: "assistant",
+          ...result,
+          transportTrace: {
+            source: "browser_observed",
+            exchanges: transportExchanges,
+          },
+        },
       ]);
     } catch (requestError) {
+      if (activeExchange) {
+        finishExchange(
+          activeExchange,
+          requestError?.response,
+          requestError?.response ? "http_error" : "network_error",
+          {
+            errorMessage: safeApiErrorMessage(requestError) || null,
+            pollCount: activeExchange.pollCount || 0,
+            observedStatuses: activeExchange.observedStatuses || [],
+          },
+        );
+      }
+      setCustomerChatTransportError({
+        source: "browser_observed",
+        exchanges: transportExchanges,
+      });
       setCustomerIntelligenceError(
         getApiErrorMessage(
           requestError,
@@ -2226,6 +2934,7 @@ export default function MiAgentPage({
     setCustomerChatMessages([]);
     setCustomerChatQuestion("");
     setCustomerIntelligenceError("");
+    setCustomerChatTransportError(null);
   }
 
   async function openDiscoveryActivity(nextStep) {
@@ -2299,20 +3008,23 @@ export default function MiAgentPage({
         persistedOperation,
         ...current.filter((item) => item.id !== persistedOperation.id),
       ]);
-      await openCoachOperationConfirmation({
-        ...persistedOperation.pendingOperation,
-        persistentId: persistedOperation.id,
-        persistenceVersion: persistedOperation.version,
-        persistenceStatus: persistedOperation.status,
-      }, {
-        opportunityOptions: [
-          {
-            ...customerOpportunity,
-            accountName:
-              customerSnapshot.account.name || selectedCustomerAccount?.name,
-          },
-        ],
-      });
+      await openCoachOperationConfirmation(
+        {
+          ...persistedOperation.pendingOperation,
+          persistentId: persistedOperation.id,
+          persistenceVersion: persistedOperation.version,
+          persistenceStatus: persistedOperation.status,
+        },
+        {
+          opportunityOptions: [
+            {
+              ...customerOpportunity,
+              accountName:
+                customerSnapshot.account.name || selectedCustomerAccount?.name,
+            },
+          ],
+        },
+      );
     } catch (requestError) {
       setError(
         getApiErrorMessage(
@@ -5879,7 +6591,14 @@ export default function MiAgentPage({
             </div>
           )}
           {customerIntelligenceError ? (
-            <p className="form-error">{customerIntelligenceError}</p>
+            <>
+              <p className="form-error">{customerIntelligenceError}</p>
+              {customerChatTransportError ? (
+                <CustomerChatTransportTrace
+                  trace={customerChatTransportError}
+                />
+              ) : null}
+            </>
           ) : null}
           <section
             className="mi-agent-coach-panel mi-agent-customer-chat"
@@ -6024,6 +6743,11 @@ export default function MiAgentPage({
                           ? ` · confianza ${CUSTOMER_FINDING_CONFIDENCE_LABELS[message.confidence] || message.confidence}`
                           : ""}
                       </small>
+                      {message.transportTrace ? (
+                        <CustomerChatTransportTrace
+                          trace={message.transportTrace}
+                        />
+                      ) : null}
                       {String(message.answer || "").includes("\n") ? (
                         <p className="mi-agent-coach-answer-text is-multiline">
                           {message.answer}
@@ -6286,7 +7010,8 @@ export default function MiAgentPage({
                           className={`mi-agent-customer-chat-debug is-${message.debug.issue?.severity || "info"}`}
                         >
                           <summary>
-                            Diagnóstico · {message.debug.issue?.title || "Turno"}
+                            Diagnóstico ·{" "}
+                            {message.debug.issue?.title || "Turno"}
                           </summary>
                           <div className="mi-agent-customer-chat-debug-result">
                             <strong>
@@ -6297,48 +7022,26 @@ export default function MiAgentPage({
                             <p>{message.debug.issue?.message}</p>
                             <small>{message.debug.issue?.nextAction}</small>
                           </div>
-                          <ol className="mi-agent-customer-chat-debug-flow">
-                            {message.debug.flow.map((item) => (
-                              <li
-                                key={item.block}
-                                className={
-                                  item.block === message.debug.issue?.block
-                                    ? "is-problem"
-                                    : ""
-                                }
-                              >
-                                <div className="mi-agent-customer-chat-debug-step-heading">
-                                  <strong>
-                                    {item.block} · {item.label}
-                                  </strong>
-                                  <small>
-                                    {CUSTOMER_CHAT_DEBUG_STATUS_LABELS[
-                                      item.status
-                                    ] || item.status}
-                                  </small>
-                                </div>
-                                <span>
-                                  {CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.purpose}
-                                </span>
-                                <small>
-                                  Revisar: {CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.check}
-                                </small>
-                              </li>
-                            ))}
-                          </ol>
+                          <CustomerChatDebugFlow debug={message.debug} />
                           <p className="mi-agent-customer-chat-debug-next">
-                            Próximo turno: B11 entrega el estado a B2 y B3; el
-                            recorrido vuelve a entrar por{" "}
-                            {message.debug.nextTurn.entryBlocks.join(" → ")}.
+                            En el siguiente mensaje, la interfaz reutiliza la
+                            sesión validada y crea un job nuevo para procesar el
+                            turno.
                           </p>
                           <details className="mi-agent-customer-chat-debug-json">
                             <summary>Ver JSON recibido en este turno</summary>
                             <pre>
-                              {JSON.stringify(message.debug.currentTurn, null, 2)}
+                              {JSON.stringify(
+                                message.debug.currentTurn,
+                                null,
+                                2,
+                              )}
                             </pre>
                           </details>
                           <details className="mi-agent-customer-chat-debug-json">
-                            <summary>Ver JSON que continúa al siguiente turno</summary>
+                            <summary>
+                              Ver JSON que continúa al siguiente turno
+                            </summary>
                             <pre>
                               {JSON.stringify(message.debug.nextTurn, null, 2)}
                             </pre>

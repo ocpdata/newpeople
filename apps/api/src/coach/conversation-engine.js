@@ -1215,8 +1215,7 @@ export async function runConversationEngine({
     };
   }
   if (channelIntentRouting) {
-    const { serverResolvedEntityIds, ...publicRouting } =
-      channelIntentRouting;
+    const { serverResolvedEntityIds, ...publicRouting } = channelIntentRouting;
     response.channelIntentRouting = publicRouting;
   }
   response.detailHandoff = handoffResult ? detailHandoff : null;
@@ -1335,6 +1334,19 @@ export async function runConversationEngine({
             }
           : null,
       },
+      responseTypeNormalization: {
+        received:
+          typeof authoritativeResult?.responseType === "string"
+            ? authoritativeResult.responseType
+            : null,
+        normalized: response?.responseType || null,
+        source: authoritativeResult?.responseType
+          ? "upstream"
+          : channel === "customer_account" && response?.responseType
+            ? "customer_account_default"
+            : "missing",
+      },
+      plannerInput: adapterDiagnostics.plannerInput || null,
       channelIntentRouting: channelIntentRouting
         ? {
             intent: channelIntentRouting.intent,

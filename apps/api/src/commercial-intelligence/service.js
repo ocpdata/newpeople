@@ -156,6 +156,10 @@ function clip(value, max = 1200) {
   return text.length <= max ? text : `${text.slice(0, max)}...`;
 }
 
+function diagnosticCheck({ field, state, expected, actual, message }) {
+  return { field, state, expected, actual, message };
+}
+
 function normalizeFindingKeyPart(value) {
   return String(value || "")
     .normalize("NFD")
@@ -2933,9 +2937,10 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       throw createHttpError(404, "Sesion de chat de cuenta no encontrada");
     }
     persistedConversationHistory = parseJson(sessionRows[0].history_json, []);
-    conversationHistory = (Array.isArray(persistedConversationHistory)
-      ? persistedConversationHistory
-      : []
+    conversationHistory = (
+      Array.isArray(persistedConversationHistory)
+        ? persistedConversationHistory
+        : []
     ).map((message) => ({
       role: message.role,
       text: message.text,
@@ -2950,7 +2955,9 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     activityHistoryRange = getCustomerActivityHistoryRange(request.question);
     const includeContactHistory =
       isCustomerContactHistoryQuestion(request.question) ||
-      Boolean(persistedConversationContext?.intents?.includes("contact_history"));
+      Boolean(
+        persistedConversationContext?.intents?.includes("contact_history"),
+      );
     preparationStage = "snapshot";
     snapshot = await buildAuthorizedCustomerSnapshot({
       user,
@@ -3074,9 +3081,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           snapshot.selectedOpportunity?.id ||
           null,
         contactId:
-          Number(job.contact_id || 0) ||
-          snapshot.selectedContact?.id ||
-          null,
+          Number(job.contact_id || 0) || snapshot.selectedContact?.id || null,
         leadId: null,
       },
       conversationContext: continuationContext,
@@ -3292,6 +3297,37 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         : [];
       const evidenceStatus = evidenceDiagnostics?.status || null;
       const fallbackUsed = Boolean(qualityTrace?.diagnostics?.fallback?.used);
+      const engineInputSummary = {
+        channel: adapter.channel,
+        jobId: Number(jobId),
+        questionLength: String(request.question || "").length,
+        historyMessageCount: conversationHistory.length,
+        context: {
+          accountId: snapshot.account?.id || null,
+          opportunityId:
+            Number(job.opportunity_id || 0) ||
+            snapshot.selectedOpportunity?.id ||
+            null,
+          contactId:
+            Number(job.contact_id || 0) || snapshot.selectedContact?.id || null,
+          leadId: null,
+        },
+        conversationContext: {
+          version: continuationContext?.version ?? null,
+          accountId: continuationContext?.accountId ?? null,
+          opportunityId: continuationContext?.opportunityId ?? null,
+          contactId: continuationContext?.contactId ?? null,
+          intents: continuationContext?.intents || [],
+          filters: continuationContext?.filters || {},
+        },
+        toolCatalog: adapter.availableTools.map((tool) => tool.name),
+        permissionCount: adapter.permissions.size,
+        policy: {
+          channelRules: adapter.channelRules,
+          operationPolicy: adapter.operationPolicy,
+          businessRuleScope: qualityTrace?.appliedRules?.scope || {},
+        },
+      };
       let issue;
       if (response.responseType === "error") {
         issue = {
@@ -3313,9 +3349,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         };
       } else if (
         evidenceStatus &&
-        !["sufficient", "no_results", "clarification"].includes(
-          evidenceStatus,
-        )
+        !["sufficient", "no_results", "clarification"].includes(evidenceStatus)
       ) {
         issue = {
           severity: "error",
@@ -3349,7 +3383,10 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           nextAction:
             "Comprueba filtros, cuenta seleccionada y alcance de las herramientas en B6–B8.",
         };
-      } else if (fallbackUsed || qualityTrace?.diagnostics?.planner?.fallbackUsed) {
+      } else if (
+        fallbackUsed ||
+        qualityTrace?.diagnostics?.planner?.fallbackUsed
+      ) {
         issue = {
           severity: "warning",
           title: "El turno usó una ruta alternativa",
@@ -3364,7 +3401,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           severity: "success",
           title: "El turno terminó sin señales de error",
           block: null,
-          message: "La respuesta y el contexto para continuar quedaron guardados.",
+          message:
+            "La respuesta y el contexto para continuar quedaron guardados.",
           nextAction: "No hay un bloque que requiera revisión.",
         };
       }
@@ -3372,33 +3410,469 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         architecture: "account_chat_v1",
         issue,
         flow: [
-          { block: "B1", label: "Chat web", status: "completed" },
-          { block: "B2", label: "Rutas de sesión y jobs", status: "completed" },
-          { block: "B3", label: "Servicio del canal", status: "completed" },
-          { block: "B4", label: "Adaptador del canal", status: "completed" },
-          { block: "B5", label: "Motor conversacional", status: "completed" },
+          {
+            block: "B1",
+            label: "Chat web",
+            status: "completed",
+            input: { question: request.question },
+            output: { forwardedToApi: true },
+            checks: [
+              diagnosticCheck({
+                field: "question",
+                state: String(request.question || "").trim() ? "pass" : "error",
+                expected: "pregunta no vacía",
+                actual: String(request.question || "").length,
+                message: String(request.question || "").trim()
+                  ? "La pregunta llegó al flujo."
+                  : "No llegó una pregunta para procesar.",
+              }),
+            ],
+          },
+          {
+            block: "B2",
+            label: "Rutas de sesión y jobs",
+            status: "completed",
+            input: {
+              chatSessionId: Number(request.chatSessionId || 0) || null,
+              questionLength: String(request.question || "").length,
+            },
+            output: {
+              jobId: Number(jobId),
+              initialStatus: "pending",
+              accepted: true,
+            },
+            checks: [
+              diagnosticCheck({
+                field: "jobId",
+                state: Number(jobId) > 0 ? "pass" : "error",
+                expected: "ID positivo",
+                actual: Number(jobId) || null,
+                message:
+                  Number(jobId) > 0
+                    ? "El job tiene un ID válido."
+                    : "No se creó un ID válido para el job.",
+              }),
+              diagnosticCheck({
+                field: "chatSessionId",
+                state: Number(request.chatSessionId) > 0 ? "pass" : "error",
+                expected: "ID positivo después de crear o recuperar sesión",
+                actual: Number(request.chatSessionId) || null,
+                message:
+                  Number(request.chatSessionId) > 0
+                    ? "El job está asociado a una sesión."
+                    : "El job debería estar asociado a una sesión.",
+              }),
+            ],
+          },
+          {
+            block: "B3",
+            label: "Servicio del canal",
+            status: "completed",
+            input: { accountId: Number(job.account_id || 0) || null },
+            output: {
+              validatedContext: {
+                accountId: snapshot.account?.id || null,
+                opportunityId: snapshot.selectedOpportunity?.id || null,
+                contactId: snapshot.selectedContact?.id || null,
+              },
+              historyMessageCount: conversationHistory.length,
+              snapshotMetrics: getCustomerSnapshotQueryMetrics(snapshot),
+              agentMetrics,
+            },
+            checks: [
+              diagnosticCheck({
+                field: "accountId",
+                state:
+                  Number(snapshot.account?.id || 0) > 0 &&
+                  Number(snapshot.account?.id) === Number(job.account_id)
+                    ? "pass"
+                    : "error",
+                expected: "ID positivo que coincide con la cuenta del job",
+                actual: snapshot.account?.id || null,
+                message:
+                  Number(snapshot.account?.id || 0) > 0 &&
+                  Number(snapshot.account?.id) === Number(job.account_id)
+                    ? "La cuenta del snapshot coincide con la cuenta autorizada del job."
+                    : "La cuenta del snapshot falta o no coincide con el job.",
+              }),
+              ...["opportunityId", "contactId"].map((field) => {
+                const value =
+                  field === "opportunityId"
+                    ? snapshot.selectedOpportunity?.id
+                    : snapshot.selectedContact?.id;
+                return diagnosticCheck({
+                  field,
+                  state: value ? "pass" : "not_applicable",
+                  expected: "ID si el turno seleccionó esa entidad",
+                  actual: value || null,
+                  message: value
+                    ? "Hay una entidad seleccionada para el contexto."
+                    : "No se seleccionó esta entidad; null es válido para una consulta a nivel de cuenta.",
+                });
+              }),
+            ],
+          },
+          {
+            block: "B4",
+            label: "Adaptador del canal",
+            status: "completed",
+            input: {
+              channel: adapter.channel,
+              context: {
+                accountId: snapshot.account?.id || null,
+                opportunityId:
+                  Number(job.opportunity_id || 0) ||
+                  snapshot.selectedOpportunity?.id ||
+                  null,
+                contactId:
+                  Number(job.contact_id || 0) ||
+                  snapshot.selectedContact?.id ||
+                  null,
+              },
+              snapshotMetrics: getCustomerSnapshotQueryMetrics(snapshot),
+              preparedAgentCount: agentMetrics.length,
+            },
+            output: { engineInput: engineInputSummary },
+            checks: [
+              diagnosticCheck({
+                field: "channel",
+                state:
+                  adapter.channel === "customer_account" ? "pass" : "error",
+                expected: "customer_account",
+                actual: adapter.channel,
+                message:
+                  adapter.channel === "customer_account"
+                    ? "El adaptador corresponde a Cliente existente."
+                    : "El adaptador no corresponde al canal solicitado.",
+              }),
+              diagnosticCheck({
+                field: "accountId",
+                state:
+                  Number(engineInputSummary.context.accountId || 0) > 0
+                    ? "pass"
+                    : "error",
+                expected: "ID positivo para Cliente existente",
+                actual: engineInputSummary.context.accountId,
+                message:
+                  Number(engineInputSummary.context.accountId || 0) > 0
+                    ? "El adaptador pasa una cuenta al motor."
+                    : "Falta la cuenta requerida para este canal.",
+              }),
+            ],
+          },
+          {
+            block: "B5",
+            label: "Motor conversacional",
+            status: "completed",
+            input: engineInputSummary,
+            output: {
+              responseType: response.responseType || null,
+              responseTypeReceived:
+                qualityTrace?.diagnostics?.responseTypeNormalization
+                  ?.received ?? null,
+              responseTypeSource:
+                qualityTrace?.diagnostics?.responseTypeNormalization?.source ||
+                "missing",
+              confidence: response.confidence || null,
+              answerLength: String(response.answer || "").length,
+              clarificationRequired: Boolean(response.clarification),
+              operationCount: Array.isArray(response.operations)
+                ? response.operations.length
+                : 0,
+              validationStatus: qualityTrace?.validationStatus || null,
+              plannerRoutingReturned: Boolean(
+                engineResult?.channelIntentRouting,
+              ),
+              latencyMs: qualityTrace?.latencyMs || null,
+            },
+            checks: [
+              diagnosticCheck({
+                field: "responseType",
+                state: !response.responseType
+                  ? "error"
+                  : qualityTrace?.diagnostics?.responseTypeNormalization
+                        ?.source === "customer_account_default"
+                    ? "warning"
+                    : "pass",
+                expected: "tipo de respuesta normalizado definido",
+                actual: {
+                  received:
+                    qualityTrace?.diagnostics?.responseTypeNormalization
+                      ?.received ?? null,
+                  normalized: response.responseType || null,
+                  source:
+                    qualityTrace?.diagnostics?.responseTypeNormalization
+                      ?.source || "missing",
+                },
+                message: !response.responseType
+                  ? "El resultado final sigue sin tipo de respuesta."
+                  : qualityTrace?.diagnostics?.responseTypeNormalization
+                        ?.source === "customer_account_default"
+                    ? "El resultado original omitió el tipo; Cliente existente aplicó el default informational."
+                    : "El tipo de respuesta normalizado está definido.",
+              }),
+              diagnosticCheck({
+                field: "validationStatus",
+                state: ["valid", "clarification"].includes(
+                  qualityTrace?.validationStatus,
+                )
+                  ? "pass"
+                  : qualityTrace?.validationStatus === "error" ||
+                      qualityTrace?.validationStatus === "invalid"
+                    ? "error"
+                    : "warning",
+                expected: "valid o clarification",
+                actual: qualityTrace?.validationStatus || null,
+                message:
+                  qualityTrace?.validationStatus === "clarification"
+                    ? "La respuesta solicita una aclaración de forma controlada."
+                    : qualityTrace?.validationStatus === "valid"
+                      ? "La respuesta pasó la validación."
+                      : "La respuesta requiere revisar su estado de validación.",
+              }),
+            ],
+          },
           {
             block: "B6",
             label: "Planificador IA",
             status: plannerDiagnostics ? "completed" : "not_reached",
+            input: qualityTrace?.diagnostics?.plannerInput || null,
+            output: {
+              diagnostics: plannerDiagnostics,
+              normalizedPlan: response.channelIntentRouting || null,
+            },
+            checks: [
+              diagnosticCheck({
+                field: "normalizedPlan",
+                state: response.channelIntentRouting ? "pass" : "warning",
+                expected: "plan normalizado o motivo explícito de aclaración",
+                actual: response.channelIntentRouting?.intent || null,
+                message: response.channelIntentRouting
+                  ? "B5 recibió y normalizó el routing del planificador."
+                  : `No hay routing normalizado: ${plannerDiagnostics?.reasonCode || "revisar diagnóstico del planificador"}.`,
+              }),
+              diagnosticCheck({
+                field: "allowedTools",
+                state: (() => {
+                  const plannedTools =
+                    response.channelIntentRouting?.allowedTools || [];
+                  const authorizedTools =
+                    qualityTrace?.diagnostics?.plannerInput
+                      ?.availableToolNames || [];
+                  return plannedTools.every((tool) =>
+                    authorizedTools.includes(tool),
+                  )
+                    ? "pass"
+                    : "error";
+                })(),
+                expected:
+                  "herramientas del plan incluidas en las herramientas permitidas",
+                actual: response.channelIntentRouting?.allowedTools || [],
+                message:
+                  "El plan normalizado no debe ampliar el conjunto de herramientas autorizadas.",
+              }),
+            ],
           },
           {
             block: "B7",
             label: "Read model del canal",
             status: evidenceDiagnostics ? "completed" : "not_reached",
+            input: {
+              plannedTools: plannerDiagnostics?.evaluation?.plannerTools || [],
+            },
+            output: {
+              availableSources: getCustomerSnapshotQueryMetrics(snapshot).map(
+                (metric) => metric.source,
+              ),
+            },
+            checks: [
+              diagnosticCheck({
+                field: "plannedTools",
+                state: evidenceDiagnostics ? "pass" : "not_checked",
+                expected:
+                  "el read model continúa con el plan o detiene el flujo de forma controlada",
+                actual: plannerDiagnostics?.evaluation?.plannerTools || [],
+                message: evidenceDiagnostics
+                  ? "El flujo de lectura llegó a la verificación de evidencia."
+                  : "No hay evidencia de que se ejecutara una lectura del canal.",
+              }),
+            ],
           },
           {
             block: "B8",
             label: "Herramientas CRM autorizadas",
             status: toolsUsed.length ? "executed" : "no_reads",
+            input: { toolNames: toolsUsed },
+            output: { toolMetrics: qualityTrace?.toolMetrics || [] },
+            checks: [
+              diagnosticCheck({
+                field: "toolMetrics",
+                state: (qualityTrace?.toolMetrics || []).some(
+                  (metric) => metric.errorCode,
+                )
+                  ? "warning"
+                  : toolsUsed.length
+                    ? "pass"
+                    : "not_applicable",
+                expected:
+                  "métricas para lecturas ejecutadas; cero lecturas puede ser válido",
+                actual: (qualityTrace?.toolMetrics || []).length,
+                message: (qualityTrace?.toolMetrics || []).some(
+                  (metric) => metric.errorCode,
+                )
+                  ? "Una o más herramientas reportaron error."
+                  : toolsUsed.length
+                    ? "Las lecturas ejecutadas tienen métricas."
+                    : "Este turno no ejecutó lecturas CRM.",
+              }),
+            ],
           },
           {
             block: "B9",
             label: "Verificador de evidencia",
             status: evidenceDiagnostics?.status || "not_reached",
+            input: {
+              toolMetrics: qualityTrace?.toolMetrics || [],
+            },
+            output: evidenceDiagnostics,
+            checks: [
+              diagnosticCheck({
+                field: "evidenceStatus",
+                state: !evidenceDiagnostics
+                  ? "not_checked"
+                  : ["sufficient", "no_results", "clarification"].includes(
+                        evidenceDiagnostics.status,
+                      )
+                    ? "pass"
+                    : ["query_error", "timeout", "verification_error"].includes(
+                          evidenceDiagnostics.status,
+                        )
+                      ? "error"
+                      : "warning",
+                expected:
+                  "sufficient, no_results o clarification; fallos identificados aparte",
+                actual: evidenceDiagnostics?.status || null,
+                message: !evidenceDiagnostics
+                  ? "El verificador no fue alcanzado; no se evalúa como fallo por sí solo."
+                  : ["sufficient", "no_results", "clarification"].includes(
+                        evidenceDiagnostics.status,
+                      )
+                    ? "La verificación terminó en un estado controlado."
+                    : `Revisar estado de evidencia: ${evidenceDiagnostics.status}.`,
+              }),
+            ],
           },
-          { block: "B10", label: "Respuesta final", status: "completed" },
-          { block: "B11", label: "Persistencia del servicio", status: "completed" },
+          {
+            block: "B10",
+            label: "Respuesta final",
+            status: "completed",
+            input: {
+              evidenceStatus: evidenceDiagnostics?.status || null,
+              responseType: response.responseType || "informational",
+            },
+            output: {
+              answer: response.answer || "",
+              responseType: response.responseType || "informational",
+              entities: response.entities || {},
+            },
+            checks: [
+              diagnosticCheck({
+                field: "answer",
+                state: String(response.answer || "").trim() ? "pass" : "error",
+                expected: "texto de respuesta o aclaración no vacío",
+                actual: String(response.answer || "").length,
+                message: String(response.answer || "").trim()
+                  ? "Hay contenido que mostrar al usuario."
+                  : "La respuesta final está vacía.",
+              }),
+            ],
+          },
+          {
+            block: "B11",
+            label: "Persistencia del servicio",
+            status: "completed",
+            input: {
+              jobId: Number(jobId),
+              chatSessionId: Number(request.chatSessionId || 0),
+            },
+            output: {
+              jobStatus: "completed",
+              historyMessageCount: nextHistory.length,
+              contextDisposition: conversationContextUpdated
+                ? "recomputed"
+                : "preserved",
+              context: persistedConversationContext,
+            },
+            checks: [
+              diagnosticCheck({
+                field: "persistedJobId",
+                state: Number(jobId) > 0 ? "pass" : "error",
+                expected: "ID positivo del job completado",
+                actual: Number(jobId) || null,
+                message:
+                  Number(jobId) > 0
+                    ? "El resultado quedó asociado al job."
+                    : "No se identifica el job que debía persistirse.",
+              }),
+              diagnosticCheck({
+                field: "persistedSessionId",
+                state: Number(request.chatSessionId) > 0 ? "pass" : "error",
+                expected: "ID positivo de sesión",
+                actual: Number(request.chatSessionId) || null,
+                message:
+                  Number(request.chatSessionId) > 0
+                    ? "El historial quedó asociado a una sesión."
+                    : "Falta la sesión donde debía persistirse el historial.",
+              }),
+            ],
+          },
+        ],
+        flowEdges: [
+          { from: "B1", to: "B2", kind: "request", label: "POST pregunta" },
+          { from: "B2", to: "B3", kind: "dispatch", label: "despacha job" },
+          { from: "B3", to: "B4", kind: "call", label: "prepara el canal" },
+          { from: "B4", to: "B5", kind: "call", label: "invoca y espera" },
+          { from: "B5", to: "B6", kind: "call", label: "solicita plan" },
+          { from: "B6", to: "B5", kind: "return", label: "devuelve plan" },
+          { from: "B5", to: "B7", kind: "call", label: "prepara lecturas" },
+          { from: "B7", to: "B8", kind: "call", label: "ejecuta lecturas" },
+          {
+            from: "B8",
+            to: "B7",
+            kind: "return",
+            label: "devuelve resultados",
+          },
+          { from: "B7", to: "B5", kind: "return", label: "entrega evidencia" },
+          { from: "B5", to: "B9", kind: "call", label: "verifica evidencia" },
+          {
+            from: "B9",
+            to: "B7",
+            kind: "conditional_loop",
+            label: "si falta evidencia, solicita lecturas adicionales",
+          },
+          { from: "B9", to: "B5", kind: "return", label: "devuelve dictamen" },
+          { from: "B5", to: "B10", kind: "call", label: "forma respuesta" },
+          {
+            from: "B10",
+            to: "B5",
+            kind: "return",
+            label: "devuelve respuesta",
+          },
+          { from: "B5", to: "B4", kind: "return", label: "retorna resultado" },
+          {
+            from: "B4",
+            to: "B3",
+            kind: "return",
+            label: "retorna al servicio",
+          },
+          {
+            from: "B3",
+            to: "B11",
+            kind: "persist",
+            label: "guarda job e historial",
+          },
+          { from: "B1", to: "B2", kind: "poll", label: "GET estado del job" },
+          { from: "B2", to: "B1", kind: "result", label: "entrega resultado" },
         ],
         currentTurn: {
           jobId: Number(jobId),
@@ -3442,9 +3916,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
        WHERE id = ? AND requested_by_user_id = ?`,
       [
         JSON.stringify(nextHistory),
-        JSON.stringify(
-          persistedConversationContext,
-        ),
+        JSON.stringify(persistedConversationContext),
         Number(request.chatSessionId),
         Number(user.id),
       ],

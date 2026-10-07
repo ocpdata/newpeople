@@ -368,6 +368,56 @@
 .mi-agent-customer-chat-debug.is-error {
   border-color: #d39a96;
 }
+.mi-agent-customer-chat-transport-trace {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #c7d8df;
+  border-radius: 4px;
+  background: #f5f9fa;
+  color: #294653;
+  font-size: 12px;
+}
+.mi-agent-customer-chat-transport-trace > ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mi-agent-customer-chat-transport-trace > ol > li {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border-left: 3px solid #4a9b83;
+  background: #fff;
+}
+.mi-agent-customer-chat-transport-trace > ol > li.is-http_error,
+.mi-agent-customer-chat-transport-trace > ol > li.is-network_error,
+.mi-agent-customer-chat-transport-trace > ol > li.is-timeout,
+.mi-agent-customer-chat-transport-trace > ol > li.is-job_failed,
+.mi-agent-customer-chat-transport-trace > ol > li.is-invalid_response {
+  border-left-color: #b7443c;
+  background: #fff5f4;
+}
+.mi-agent-customer-chat-transport-trace > ol > li > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 3px 10px;
+}
+.mi-agent-customer-chat-transport-trace > ol > li strong {
+  overflow-wrap: anywhere;
+}
+.mi-agent-customer-chat-transport-trace > ol > li small,
+.mi-agent-customer-chat-transport-trace > small {
+  color: #526d79;
+}
+.mi-agent-customer-chat-transport-trace > ol > li p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .mi-agent-customer-chat-debug-result {
   margin: 0 12px 12px;
   padding: 10px 12px;
@@ -388,7 +438,7 @@
   overflow-wrap: anywhere;
 }
 .mi-agent-customer-chat-debug-result small,
-.mi-agent-customer-chat-debug-flow li > small {
+.mi-agent-customer-chat-debug-step > small {
   color: #526d79;
   line-height: 1.4;
 }
@@ -426,6 +476,21 @@
   border-color: #c58c25;
   box-shadow: inset 3px 0 #c58c25;
 }
+.mi-agent-customer-chat-debug-step-summary {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #dbe5e9;
+}
+.mi-agent-customer-chat-debug-step-summary p {
+  margin: 0;
+  color: #334f5d;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.mi-agent-customer-chat-debug-step-summary strong {
+  color: #183b4a;
+}
 .mi-agent-customer-chat-debug-step-heading {
   display: flex;
   align-items: flex-start;
@@ -444,12 +509,284 @@
   color: #405c6c;
   line-height: 1.4;
 }
+.mi-agent-customer-chat-debug-check-summary,
+.mi-agent-customer-chat-debug-phase,
+.mi-agent-customer-chat-debug-polling {
+  padding: 11px 12px;
+  border-top: 1px solid #d4e0e5;
+  background: #edf4f6;
+}
+.mi-agent-customer-chat-debug-check-summary p,
+.mi-agent-customer-chat-debug-polling p {
+  margin: 5px 0 0;
+  line-height: 1.45;
+}
+.mi-agent-customer-chat-debug-check-summary .is-warning {
+  color: #815c14;
+}
+.mi-agent-customer-chat-debug-phase h3,
+.mi-agent-customer-chat-debug-scope h3,
+.mi-agent-customer-chat-debug-polling > strong {
+  margin: 0;
+  color: #183b4a;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-phase > h3,
+.mi-agent-customer-chat-debug-scope > header,
+.mi-agent-customer-chat-debug-polling > strong {
+  display: block;
+  margin-bottom: 10px;
+}
+.mi-agent-customer-chat-debug-scope > header p {
+  margin: 4px 0 0;
+  color: #526d79;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-flow-map {
+  display: grid;
+  gap: 14px;
+  padding: 0 12px 12px;
+}
+.mi-agent-customer-chat-debug-lane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(105px, auto) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+.mi-agent-customer-chat-debug-step {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d1dfe5;
+  border-radius: 4px;
+  background: #fff;
+}
+.mi-agent-customer-chat-debug-step.is-problem {
+  border-color: #c58c25;
+  box-shadow: inset 3px 0 #c58c25;
+}
+.mi-agent-customer-chat-debug-step > span {
+  color: #405c6c;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-step-guide {
+  color: #526d79;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  color: #315a6a;
+  text-align: center;
+}
+.mi-agent-customer-chat-debug-connector > span {
+  flex: 0 0 auto;
+  color: #167b78;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+}
+.mi-agent-customer-chat-debug-connector > small {
+  max-width: 210px;
+  line-height: 1.35;
+}
+.mi-agent-customer-chat-debug-connector.is-right {
+  flex-direction: column;
+  align-self: center;
+}
+.mi-agent-customer-chat-debug-connector.is-return > span {
+  color: #537d95;
+}
+.mi-agent-customer-chat-debug-connector.is-dispatch > span {
+  color: #9b7425;
+}
+.mi-agent-customer-chat-debug-scope {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin-left: 10px;
+  padding: 12px 0 12px 14px;
+  border-left: 3px solid #4b9292;
+}
+.mi-agent-customer-chat-debug-scope.is-engine {
+  margin: 2px 0 2px 10px;
+  padding: 12px 0 12px 14px;
+  border-left-color: #4284a1;
+}
+.mi-agent-customer-chat-debug-subflow {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid #d4e0e5;
+}
+.mi-agent-customer-chat-debug-subflow h4,
+.mi-agent-customer-chat-debug-persistence h4 {
+  margin: 0;
+  color: #315a6a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-loop {
+  display: grid;
+  gap: 3px;
+  margin-left: 16px;
+  padding: 8px 10px;
+  border-left: 3px dashed #9b7425;
+  background: #fff7e7;
+  color: #684f1c;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-persistence {
+  display: grid;
+  gap: 8px;
+  margin-top: 3px;
+  padding-top: 10px;
+  border-top: 2px solid #4b9292;
+}
+.mi-agent-customer-chat-debug-polling {
+  border-top-color: #c5d5dc;
+  background: #f7fafb;
+}
+.mi-agent-customer-chat-debug-polling small {
+  display: block;
+  margin-top: 7px;
+  color: #526d79;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-missing-block {
+  padding: 10px;
+  border: 1px dashed #b7443c;
+  color: #8d302b;
+}
+.mi-agent-customer-chat-debug-checks {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mi-agent-customer-chat-debug-checks li {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 7px;
+  padding: 6px 7px;
+  border-left: 2px solid #aabcc4;
+  background: #f6f9fa;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-checks li.is-pass {
+  border-left-color: #4a9b83;
+}
+.mi-agent-customer-chat-debug-checks li.is-warning,
+.mi-agent-customer-chat-debug-checks li.is-not_applicable,
+.mi-agent-customer-chat-debug-checks li.is-not_checked {
+  border-left-color: #c58c25;
+}
+.mi-agent-customer-chat-debug-checks li.is-error {
+  border-left-color: #b7443c;
+  background: #fff4f3;
+}
+.mi-agent-customer-chat-debug-check-state {
+  font-weight: 700;
+}
+.mi-agent-customer-chat-debug-checks
+  li.is-pass
+  .mi-agent-customer-chat-debug-check-state {
+  color: #286c55;
+}
+.mi-agent-customer-chat-debug-checks
+  li.is-warning
+  .mi-agent-customer-chat-debug-check-state,
+.mi-agent-customer-chat-debug-checks
+  li.is-not_applicable
+  .mi-agent-customer-chat-debug-check-state,
+.mi-agent-customer-chat-debug-checks
+  li.is-not_checked
+  .mi-agent-customer-chat-debug-check-state {
+  color: #815c14;
+}
+.mi-agent-customer-chat-debug-checks
+  li.is-error
+  .mi-agent-customer-chat-debug-check-state {
+  color: #a3322d;
+}
+.mi-agent-customer-chat-debug-checks li > small {
+  grid-column: 2;
+  color: #526d79;
+  overflow-wrap: anywhere;
+}
+.mi-agent-customer-chat-debug-no-checks {
+  color: #687f89;
+  line-height: 1.4;
+}
+.mi-agent-customer-chat-debug-step-details {
+  margin-top: 4px;
+  border-top: 1px solid #dbe5e9;
+}
+.mi-agent-customer-chat-debug-step-details > summary {
+  padding: 7px 0 2px;
+  cursor: pointer;
+  color: #176b87;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-agent-customer-chat-debug-step-details > div {
+  display: grid;
+  gap: 8px;
+  padding-top: 7px;
+}
+.mi-agent-customer-chat-debug-step-details section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.mi-agent-customer-chat-debug-step-details section > strong {
+  color: #405c6c;
+  font-size: 11px;
+}
+.mi-agent-customer-chat-debug-step-details pre {
+  max-height: 180px;
+  padding: 8px;
+}
 .mi-agent-customer-chat-debug-next {
   margin: 0 12px 12px;
   padding: 9px 10px;
   border-top: 1px solid #dbe5e9;
   color: #405c6c;
   line-height: 1.45;
+}
+@media (max-width: 700px) {
+  .mi-agent-customer-chat-debug-lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mi-agent-customer-chat-debug-connector.is-right {
+    flex-direction: row;
+  }
+  .mi-agent-customer-chat-debug-connector.is-right > span {
+    transform: rotate(90deg);
+  }
+  .mi-agent-customer-chat-debug-scope {
+    margin-left: 3px;
+    padding-left: 9px;
+  }
+  .mi-agent-customer-chat-debug-scope.is-engine {
+    margin-left: 4px;
+    padding-left: 9px;
+  }
+  .mi-agent-customer-chat-debug-checks li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mi-agent-customer-chat-debug-checks li > small {
+    grid-column: 1;
+  }
 }
 .mi-agent-customer-chat-debug-json {
   margin: 0 12px 10px;

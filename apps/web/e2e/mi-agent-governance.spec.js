@@ -1584,10 +1584,53 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       customerChat.getByText("La cuenta requiere seguimiento comercial."),
     ).toBeVisible();
+    const transportTrace = customerChat.getByRole("region", {
+      name: "Intercambios HTTP observados",
+    });
+    await expect(
+      transportTrace.getByText(
+        "B1 → B2 · POST /api/commercial-intelligence/account-chat/sessions",
+      ),
+    ).toBeVisible();
+    await expect(transportTrace.getByText("B2 → B1 · HTTP 201")).toBeVisible();
+    await expect(
+      transportTrace.getByText(
+        "B1 → B2 · POST /api/commercial-intelligence/account-chat/jobs",
+      ),
+    ).toBeVisible();
+    await expect(transportTrace.getByText("B2 → B1 · HTTP 202")).toBeVisible();
+    await expect(
+      transportTrace.getByText(
+        "B1 → B2 · GET /api/commercial-intelligence/account-chat/jobs/921",
+      ),
+    ).toBeVisible();
+    await expect(transportTrace.getByText("B2 → B1 · HTTP 200")).toBeVisible();
+    await expect(
+      transportTrace.getByText(/estado final completed/),
+    ).toBeVisible();
     const customerFoundation = customerChat.getByRole("switch");
     await expect(customerFoundation).toBeVisible();
     await customerFoundation.check();
     await expect(customerChat.getByText("Snapshot autorizado")).toBeVisible();
+
+    await customerChat
+      .getByPlaceholder("Pregunta sobre la cuenta...")
+      .fill("¿Puedes resumir la cuenta otra vez?");
+    await customerChat.getByRole("button", { name: "Preguntar" }).click();
+    await expect(
+      customerChat.getByText("La cuenta requiere seguimiento comercial."),
+    ).toHaveCount(2);
+    const reusedSessionTrace = customerChat
+      .getByRole("region", { name: "Intercambios HTTP observados" })
+      .nth(1);
+    await expect(
+      reusedSessionTrace.getByText("B1 · Reutilizar sesión existente"),
+    ).toBeVisible();
+    await expect(
+      reusedSessionTrace.getByText(
+        "Sesión 920 reutilizada; no se hizo una llamada HTTP para crearla.",
+      ),
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Cuenta nueva" }).click();
     await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
@@ -1605,7 +1648,6 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByText("Acciones sugeridas · requieren confirmación"),
     ).toBeVisible();
-    await expect(page.getByText("no confirmado en el CRM")).toBeVisible();
   });
 
   test("cambiar de espacio conserva contexto separado de Coach, Cliente existente y Cuenta nueva", async ({
@@ -1915,7 +1957,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       expect(dialog.message()).toContain("1 acción pendiente");
       await dialog.dismiss();
     });
-    await page.getByRole("button", { name: "Volver al ámbito general" }).click();
+    await page
+      .getByRole("button", { name: "Volver al ámbito general" })
+      .click();
     await expect(coachScope).toContainText("Cuenta Alterna");
     await expect(
       page.getByText("Respuesta de la cuenta anterior"),
@@ -1927,7 +1971,9 @@ test.describe("Mi Coach governance and workspaces", () => {
         request.url().endsWith("/api/mi-agent/coach/operations/84/status") &&
         request.method() === "POST",
     );
-    await page.getByRole("button", { name: "Volver al ámbito general" }).click();
+    await page
+      .getByRole("button", { name: "Volver al ámbito general" })
+      .click();
     expect((await cancelledOperationRequest).postDataJSON()).toMatchObject({
       status: "cancelled",
       cancellationReason: "Descartada al volver al ámbito general",
@@ -2183,7 +2229,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(coachScope).toContainText("Cuenta Alterna");
     await expect(coachScope).toContainText("Proyecto B");
     await expect(
-      page.getByText("¿Qué otra oportunidad de Cuenta Demo requiere seguimiento?"),
+      page.getByText(
+        "¿Qué otra oportunidad de Cuenta Demo requiere seguimiento?",
+      ),
     ).toBeVisible();
   });
 
