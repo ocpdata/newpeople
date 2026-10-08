@@ -1,5 +1,6 @@
 import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation";
 import {
   AlertCircle,
   ArrowRight,
@@ -1414,6 +1415,83 @@ const CUSTOMER_FINDING_CONFIDENCE_LABELS = {
   medium: "Media",
   low: "Baja",
 };
+const CUSTOMER_AGENT_LABELS = {
+  crm_context: "Contexto CRM",
+  commercial_health: "Salud comercial",
+  public_research: "Investigación pública",
+  contact_research: "Investigación de contactos",
+  technology_research: "Investigación tecnológica",
+  expansion: "Oportunidades de expansión",
+  synthesis: "Síntesis ejecutiva",
+  actions: "Acciones sugeridas",
+};
+
+const CUSTOMER_AGENT_STATUS_LABELS = {
+  completed: "Completado",
+  skipped: "No ejecutado",
+  failed: "Con error",
+};
+
+function CustomerActionResult({
+  label,
+  status,
+  preview,
+  className = "",
+  showStatus = true,
+  open,
+  onToggle,
+  children,
+}) {
+  return (
+    <details
+      className={`mi-agent-customer-action-result ${className}`.trim()}
+      role="region"
+      aria-label={label}
+      open={open}
+      onToggle={(event) => onToggle(event.currentTarget.open)}
+    >
+      <summary>
+        <span className="mi-agent-customer-action-result-copy">
+          <strong>{label}</strong>
+          {preview ? <small>{preview}</small> : null}
+        </span>
+        {showStatus ? (
+          <span
+            className={`mi-agent-customer-action-result-status ${getCustomerActionStatusClass(status)}`}
+          >
+            {status}
+          </span>
+        ) : null}
+      </summary>
+      <div className="mi-agent-customer-action-result-content">{children}</div>
+    </details>
+  );
+}
+
+function getCustomerActionStatus({ loading, error, job }) {
+  if (error) return "Error";
+  if (loading || job?.status === "pending" || job?.status === "running") {
+    return "En proceso";
+  }
+  if (job?.status === "completed") return "Listo";
+  if (job?.status === "failed") return "Error";
+  return "Sin ejecutar";
+}
+
+function getCustomerActionStatusClass(status) {
+  if (status === "Listo") return "is-ready";
+  if (status === "En proceso") return "is-running";
+  if (status === "Error") return "is-error";
+  return "is-idle";
+}
+
+function summarizeCustomerAgents(agents = []) {
+  const findingCount = agents.reduce(
+    (total, agent) => total + (agent.findings?.length || 0),
+    0,
+  );
+  return `${agents.length} ${agents.length === 1 ? "agente" : "agentes"} · ${findingCount} ${findingCount === 1 ? "hallazgo" : "hallazgos"}`;
+}
 
 const CUSTOMER_QUOTATION_STATUS_LABELS = {
   won: "Ganada",
@@ -1429,6 +1507,22 @@ const CUSTOMER_QUOTATION_STATUS_LABELS = {
   pending: "Pendiente",
   pendiente: "Pendiente",
 };
+
+function groupCustomerProductsByQuotation(products = []) {
+  const groups = new Map();
+  for (const product of products) {
+    const quotationId = Number(product.quotationId);
+    if (!groups.has(quotationId)) {
+      groups.set(quotationId, {
+        quotationId,
+        commercialStatus: product.commercialStatus,
+        products: [],
+      });
+    }
+    groups.get(quotationId).products.push(product);
+  }
+  return [...groups.values()];
+}
 
 const CUSTOMER_FINDING_APPLY_FIELDS = {
   account: [
@@ -1734,6 +1828,8 @@ function isUsablePublicContactValue(value) {
   return Boolean(text) && !/[*xX]{2,}/.test(text);
 }
 
+const SHOW_COACH_QUALITY_FEEDBACK = false;
+
 function CoachQualityFeedback({ traceId }) {
   const [category, setCategory] = useState("response");
   const [submittedRating, setSubmittedRating] = useState(null);
@@ -1767,7 +1863,7 @@ function CoachQualityFeedback({ traceId }) {
     }
   }
 
-  if (!traceId) return null;
+  if (!SHOW_COACH_QUALITY_FEEDBACK || !traceId) return null;
   return (
     <div
       className="mi-agent-quality-feedback"
@@ -2145,6 +2241,8 @@ export default function MiAgentPage({
   const [coachAdminRuleEditingId, setCoachAdminRuleEditingId] = useState(null);
   const [coachAdminRuleFeedback, setCoachAdminRuleFeedback] = useState(null);
   const [customerIntelligenceJob, setCustomerIntelligenceJob] = useState(null);
+  const customerIntelligenceResultRef = useRef(null);
+  const [openCustomerAction, setOpenCustomerAction] = useState(null);
   const [customerAccounts, setCustomerAccounts] = useState([]);
   const [customerAccountSearch, setCustomerAccountSearch] = useState("");
   const [customerAccountId, setCustomerAccountId] = useState("");
@@ -2154,11 +2252,15 @@ export default function MiAgentPage({
   const [customerInvestigating, setCustomerInvestigating] = useState(false);
   const [customerIntelligenceError, setCustomerIntelligenceError] =
     useState("");
+  const [customerActionErrors, setCustomerActionErrors] = useState({
+    analysis: "",
+    agents: "",
+    briefing: "",
+    call: "",
+  });
   const [customerChatTransportError, setCustomerChatTransportError] =
     useState(null);
   const [customerChatFailureIds, setCustomerChatFailureIds] = useState(null);
-  const [customerFindingUpdatingId, setCustomerFindingUpdatingId] =
-    useState(null);
   const [customerFindingApplyDraft, setCustomerFindingApplyDraft] =
     useState(null);
   const [customerFindingApplying, setCustomerFindingApplying] = useState(false);
@@ -2223,6 +2325,14 @@ export default function MiAgentPage({
   const coachActiveSessionRequestRef = useRef(null);
   const coachContextRevisionRef = useRef(0);
   const coachDraftSaveSignatureRef = useRef("");
+
+  useEffect(() => {
+    if (customerIntelligenceJob?.status !== "completed") return;
+    customerIntelligenceResultRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [customerIntelligenceJob?.status]);
 
   useEffect(() => {
     coachContextRef.current = coachContext;
@@ -2764,9 +2874,15 @@ export default function MiAgentPage({
     setCustomerSnapshot(null);
     setCustomerSnapshotLoading(false);
     setCustomerIntelligenceJob(null);
+    setOpenCustomerAction(null);
     setCustomerFindings([]);
     setCustomerIntelligenceError("");
-    setCustomerFindingUpdatingId(null);
+    setCustomerActionErrors({
+      analysis: "",
+      agents: "",
+      briefing: "",
+      call: "",
+    });
     setCustomerFindingApplyDraft(null);
     setCustomerFindingApplying(false);
     setCustomerContactApplyDraft(null);
@@ -2784,6 +2900,13 @@ export default function MiAgentPage({
     setCustomerChatSessionLoading(false);
     setCustomerChatFailureIds(null);
     setCustomerChatPublicResearch(false);
+  }
+
+  function setCustomerActionResultOpen(action, isOpen) {
+    setOpenCustomerAction((current) => {
+      if (isOpen) return action;
+      return current === action ? null : current;
+    });
   }
 
   function buildCustomerIntelligencePayload() {
@@ -2813,13 +2936,15 @@ export default function MiAgentPage({
 
   async function runCustomerInvestigation() {
     if (!hasCustomerContext) {
-      setCustomerIntelligenceError(
-        "Selecciona una cuenta existente para investigar.",
-      );
+      setCustomerActionErrors((current) => ({
+        ...current,
+        analysis: "Selecciona una cuenta existente para investigar.",
+      }));
       return;
     }
     setCustomerInvestigating(true);
-    setCustomerIntelligenceError("");
+    setCustomerActionResultOpen("analysis", true);
+    setCustomerActionErrors((current) => ({ ...current, analysis: "" }));
     setCoachNotice("");
     try {
       const response = await api.post(
@@ -2840,121 +2965,15 @@ export default function MiAgentPage({
       }
       setCoachNotice("Investigación del cliente completada.");
     } catch (requestError) {
-      setCustomerIntelligenceError(
-        getApiErrorMessage(
+      setCustomerActionErrors((current) => ({
+        ...current,
+        analysis: getApiErrorMessage(
           requestError,
           "No fue posible investigar el cliente",
         ),
-      );
+      }));
     } finally {
       setCustomerInvestigating(false);
-    }
-  }
-
-  async function updateCustomerFindingStatus(finding, status) {
-    const action = status === "confirmed" ? "confirm" : "reject";
-    setCustomerFindingUpdatingId(finding.id);
-    setCustomerIntelligenceError("");
-    try {
-      const response = await api.post(
-        `/api/commercial-intelligence/findings/${finding.id}/${action}`,
-        {},
-      );
-      const updatedFinding = response.data?.finding;
-      if (updatedFinding) {
-        setCustomerFindings((current) =>
-          current.map((item) =>
-            Number(item.id) === Number(updatedFinding.id)
-              ? updatedFinding
-              : item,
-          ),
-        );
-        setCustomerIntelligenceJob((current) =>
-          current
-            ? {
-                ...current,
-                findings: (Array.isArray(current.findings)
-                  ? current.findings
-                  : []
-                ).map((item) =>
-                  Number(item.id) === Number(updatedFinding.id)
-                    ? updatedFinding
-                    : item,
-                ),
-                result: current.result
-                  ? {
-                      ...current.result,
-                      findings: (Array.isArray(current.result.findings)
-                        ? current.result.findings
-                        : []
-                      ).map((item) =>
-                        Number(item.id) === Number(updatedFinding.id)
-                          ? updatedFinding
-                          : item,
-                      ),
-                    }
-                  : current.result,
-              }
-            : current,
-        );
-        setCoachNotice(
-          status === "confirmed"
-            ? "Hallazgo confirmado correctamente."
-            : "Hallazgo rechazado correctamente.",
-        );
-        if (status === "confirmed") {
-          const suggestedTarget =
-            updatedFinding.metadata?.targetEntity ||
-            (updatedFinding.metadata?.contactData?.firstName &&
-            updatedFinding.metadata?.contactData?.lastName
-              ? "contact"
-              : null);
-          const target =
-            ["account", "contact", "opportunity"].includes(suggestedTarget) &&
-            updatedFinding[`${suggestedTarget}Id`]
-              ? suggestedTarget
-              : updatedFinding.accountId
-                ? "account"
-                : updatedFinding.contactId
-                  ? "contact"
-                  : "opportunity";
-          const fields = CUSTOMER_FINDING_APPLY_FIELDS[target] || [];
-          const suggestedField = updatedFinding.metadata?.targetField;
-          setCustomerFindingApplyDraft({
-            finding: updatedFinding,
-            target,
-            field: fields.some(([key]) => key === suggestedField)
-              ? suggestedField
-              : fields[0]?.[0] || "",
-            value:
-              updatedFinding.metadata?.suggestedValue ||
-              updatedFinding.evidenceText ||
-              updatedFinding.summary ||
-              "",
-            mode: "append",
-          });
-          if (
-            (target === "contact" ||
-              updatedFinding.metadata?.contactData?.firstName) &&
-            updatedFinding.metadata?.contactData
-          ) {
-            setCustomerContactApplyDraft({
-              finding: updatedFinding,
-              contactId: "",
-              contactData: { ...updatedFinding.metadata.contactData },
-            });
-          }
-        }
-      }
-    } catch (requestError) {
-      setCustomerIntelligenceError(
-        getApiErrorMessage(
-          requestError,
-          "No fue posible actualizar el hallazgo",
-        ),
-      );
-    } finally {
-      setCustomerFindingUpdatingId(null);
     }
   }
 
@@ -3032,13 +3051,15 @@ export default function MiAgentPage({
 
   async function prepareCustomerCall() {
     if (!hasCustomerContext) {
-      setCustomerIntelligenceError(
-        "Selecciona una cuenta existente para preparar la llamada.",
-      );
+      setCustomerActionErrors((current) => ({
+        ...current,
+        call: "Selecciona una cuenta existente para preparar la llamada.",
+      }));
       return;
     }
     setCustomerDiscoveryPreparing(true);
-    setCustomerIntelligenceError("");
+    setCustomerActionResultOpen("call", true);
+    setCustomerActionErrors((current) => ({ ...current, call: "" }));
     setCoachNotice("");
     try {
       const response = await api.post(
@@ -3057,9 +3078,13 @@ export default function MiAgentPage({
       }
       setCoachNotice("Briefing comercial preparado.");
     } catch (requestError) {
-      setCustomerIntelligenceError(
-        getApiErrorMessage(requestError, "No fue posible preparar la llamada"),
-      );
+      setCustomerActionErrors((current) => ({
+        ...current,
+        call: getApiErrorMessage(
+          requestError,
+          "No fue posible preparar la llamada",
+        ),
+      }));
     } finally {
       setCustomerDiscoveryPreparing(false);
     }
@@ -3067,13 +3092,16 @@ export default function MiAgentPage({
 
   async function prepareCustomerExecutiveBriefing() {
     if (!hasCustomerContext) {
-      setCustomerIntelligenceError(
-        "Selecciona una cuenta existente para preparar el resumen ejecutivo.",
-      );
+      setCustomerActionErrors((current) => ({
+        ...current,
+        briefing:
+          "Selecciona una cuenta existente para preparar el resumen ejecutivo.",
+      }));
       return;
     }
     setCustomerExecutiveBriefingLoading(true);
-    setCustomerIntelligenceError("");
+    setCustomerActionResultOpen("briefing", true);
+    setCustomerActionErrors((current) => ({ ...current, briefing: "" }));
     try {
       const response = await api.post(
         "/api/commercial-intelligence/executive-briefing/jobs",
@@ -3103,12 +3131,13 @@ export default function MiAgentPage({
         "El resumen ejecutivo tardó demasiado; inténtalo de nuevo",
       );
     } catch (requestError) {
-      setCustomerIntelligenceError(
-        getApiErrorMessage(
+      setCustomerActionErrors((current) => ({
+        ...current,
+        briefing: getApiErrorMessage(
           requestError,
           "No fue posible preparar el resumen ejecutivo",
         ),
-      );
+      }));
     } finally {
       setCustomerExecutiveBriefingLoading(false);
     }
@@ -3116,13 +3145,15 @@ export default function MiAgentPage({
 
   async function runCustomerAgents() {
     if (!hasCustomerContext) {
-      setCustomerIntelligenceError(
-        "Selecciona una cuenta existente para ejecutar los agentes.",
-      );
+      setCustomerActionErrors((current) => ({
+        ...current,
+        agents: "Selecciona una cuenta existente para ejecutar los agentes.",
+      }));
       return;
     }
     setCustomerAgentsLoading(true);
-    setCustomerIntelligenceError("");
+    setCustomerActionResultOpen("agents", true);
+    setCustomerActionErrors((current) => ({ ...current, agents: "" }));
     try {
       if (!canUseExternalSources) {
         throw new Error(
@@ -3155,9 +3186,13 @@ export default function MiAgentPage({
       }
       throw new Error("La orquestación tardó demasiado; inténtalo de nuevo");
     } catch (requestError) {
-      setCustomerIntelligenceError(
-        getApiErrorMessage(requestError, "No fue posible ejecutar los agentes"),
-      );
+      setCustomerActionErrors((current) => ({
+        ...current,
+        agents: getApiErrorMessage(
+          requestError,
+          "No fue posible ejecutar los agentes",
+        ),
+      }));
     } finally {
       setCustomerAgentsLoading(false);
     }
@@ -7470,7 +7505,7 @@ export default function MiAgentPage({
                 <span className="mi-agent-section-label">Chat de cuenta</span>
                 <h3>Pregúntale sobre esta cuenta</h3>
               </div>
-              <div>
+              <div className="mi-agent-customer-chat-header-actions">
                 <button
                   type="button"
                   className="mi-agent-secondary-button"
@@ -7503,52 +7538,62 @@ export default function MiAgentPage({
                 </label>
               </div>
             </div>
-            <div className="mi-agent-coach-suggestions">
-              <button
-                type="button"
-                onClick={() =>
-                  askCustomerChat("Resume esta cuenta para mi reunión.")
-                }
-                disabled={
-                  customerChatLoading ||
-                  customerChatSessionLoading ||
-                  !hasCustomerContext
-                }
-              >
-                Resumen para reunión
-              </button>
-              <button
-                type="button"
-                onClick={() => askCustomerChat("¿Qué riesgos debo atender?")}
-                disabled={
-                  customerChatLoading ||
-                  customerChatSessionLoading ||
-                  !hasCustomerContext
-                }
-              >
-                Riesgos
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  askCustomerChat("¿Qué oportunidades de expansión existen?")
-                }
-                disabled={customerChatLoading || !hasCustomerContext}
-              >
-                Expansión
-              </button>
+            <div className="mi-agent-customer-chat-toolbox">
+              <div className="mi-agent-customer-chat-prompts">
+                <span className="mi-agent-customer-chat-toolbox-label">
+                  Preguntas sugeridas
+                </span>
+                <div className="mi-agent-coach-suggestions">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      askCustomerChat("Resume esta cuenta para mi reunión.")
+                    }
+                    disabled={
+                      customerChatLoading ||
+                      customerChatSessionLoading ||
+                      !hasCustomerContext
+                    }
+                  >
+                    Resumen para reunión
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      askCustomerChat("¿Qué riesgos debo atender?")
+                    }
+                    disabled={
+                      customerChatLoading ||
+                      customerChatSessionLoading ||
+                      !hasCustomerContext
+                    }
+                  >
+                    Riesgos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      askCustomerChat("¿Qué oportunidades de expansión existen?")
+                    }
+                    disabled={customerChatLoading || !hasCustomerContext}
+                  >
+                    Expansión
+                  </button>
+                </div>
+              </div>
+              <label className="mi-agent-customer-public-research">
+                <input
+                  type="checkbox"
+                  checked={customerChatPublicResearch}
+                  onChange={(event) =>
+                    setCustomerChatPublicResearch(event.target.checked)
+                  }
+                  disabled={customerChatLoading || !hasCustomerContext}
+                />
+                <span>Incluir fuentes públicas</span>
+                <small>Requiere gobierno y permiso</small>
+              </label>
             </div>
-            <label className="field-hint">
-              <input
-                type="checkbox"
-                checked={customerChatPublicResearch}
-                onChange={(event) =>
-                  setCustomerChatPublicResearch(event.target.checked)
-                }
-                disabled={customerChatLoading || !hasCustomerContext}
-              />{" "}
-              Incluir fuentes públicas (requiere gobierno y permiso)
-            </label>
             <form
               className="mi-agent-coach-form"
               onSubmit={(event) => {
@@ -8078,16 +8123,16 @@ export default function MiAgentPage({
             <p className="field-hint">Calculando salud de la cuenta...</p>
           ) : null}
           {customerSnapshot?.accountHealth ? (
-            <section
-              className="mi-agent-discovery-panel"
+            <details
+              key={`account-health-${customerAccountId}`}
+              className="mi-agent-discovery-panel mi-agent-customer-collapsible"
+              role="region"
               aria-label="Salud de la cuenta"
             >
-              <div className="mi-agent-section-heading">
-                <div>
-                  <span className="mi-agent-section-label">
-                    Salud de cuenta
-                  </span>
-                  <h3>
+              <summary className="mi-agent-customer-collapsible-summary">
+                <span className="mi-agent-customer-collapsible-summary-copy">
+                  <span className="mi-agent-section-label">Salud de cuenta</span>
+                  <strong>
                     {customerSnapshot.accountHealth.status === "at_risk"
                       ? "Requiere atención"
                       : customerSnapshot.accountHealth.status === "attention"
@@ -8095,10 +8140,11 @@ export default function MiAgentPage({
                         : customerSnapshot.accountHealth.status === "healthy"
                           ? "Salud estable"
                           : "Información insuficiente"}
-                  </h3>
-                </div>
+                    </strong>
+                  </span>
                 <strong>{customerSnapshot.accountHealth.score}/100</strong>
-              </div>
+                </summary>
+                <div className="mi-agent-customer-collapsible-content">
               <div className="mi-agent-intelligence-summary">
                 <article>
                   <span>Contactos</span>
@@ -8210,21 +8256,29 @@ export default function MiAgentPage({
                   No se detectaron señales determinísticas de atención.
                 </div>
               )}
-            </section>
+              </div>
+            </details>
           ) : null}
           {customerSnapshot?.accountHealth?.signals?.length ? (
-            <section
-              className="mi-agent-customer-next-step"
+            <details
+              key={`next-step-${customerAccountId}`}
+              className="mi-agent-customer-next-step mi-agent-customer-collapsible"
+              role="region"
               aria-label="Próximo paso sugerido"
             >
-              <div>
-                <span className="mi-agent-section-label">
-                  Sugerencia basada en señales CRM
-                </span>
-                <h3>Próximo paso sugerido</h3>
-                <strong>
+              <summary className="mi-agent-customer-collapsible-summary">
+                <span className="mi-agent-customer-collapsible-summary-copy">
+                  <span className="mi-agent-section-label">
+                    Sugerencia basada en señales CRM
+                  </span>
+                  <strong>Próximo paso sugerido</strong>
+                  <span className="mi-agent-customer-collapsible-summary-detail">
                   {customerSnapshot.accountHealth.signals[0].title}
-                </strong>
+                  </span>
+                </span>
+              </summary>
+              <div className="mi-agent-customer-collapsible-content">
+              <div>
                 <p>{customerSnapshot.accountHealth.signals[0].summary}</p>
                 <small>
                   Evidencia:{" "}
@@ -8302,24 +8356,28 @@ export default function MiAgentPage({
                   Consultar siguiente paso
                 </button>
               )}
-            </section>
+              </div>
+            </details>
           ) : null}
           {customerSnapshot ? (
-            <section
-              className="mi-agent-customer-history"
+            <details
+              key={`history-${customerAccountId}`}
+              className="mi-agent-customer-history mi-agent-customer-collapsible"
+              role="region"
               aria-label="Historial comercial de la cuenta"
             >
-              <div className="mi-agent-section-heading">
-                <div>
+              <summary className="mi-agent-customer-collapsible-summary">
+                <span className="mi-agent-customer-collapsible-summary-copy">
                   <span className="mi-agent-section-label">Fuente CRM</span>
-                  <h3>Historial comercial</h3>
-                </div>
+                  <strong>Historial comercial</strong>
+                </span>
                 <span>
                   {(customerSnapshot.opportunities?.length || 0) +
                     (customerSnapshot.inactiveOpportunities?.length || 0)}{" "}
                   oportunidades
                 </span>
-              </div>
+              </summary>
+              <div className="mi-agent-customer-collapsible-content">
               <div className="mi-agent-customer-history-grid">
                 {[
                   ["open", "Abiertas"],
@@ -8412,20 +8470,24 @@ export default function MiAgentPage({
                   )}
                 </div>
               </div>
-            </section>
+              </div>
+            </details>
           ) : null}
           {customerSnapshot?.permissions?.canReadContacts ? (
-            <section
-              className="mi-agent-customer-contacts"
+            <details
+              key={`contacts-${customerAccountId}`}
+              className="mi-agent-customer-contacts mi-agent-customer-collapsible"
+              role="region"
               aria-label="Mapa de relaciones de la cuenta"
             >
-              <div className="mi-agent-section-heading">
-                <div>
+              <summary className="mi-agent-customer-collapsible-summary">
+                <span className="mi-agent-customer-collapsible-summary-copy">
                   <span className="mi-agent-section-label">Fuente CRM</span>
-                  <h3>Contactos y mapa de relación</h3>
-                </div>
+                  <strong>Contactos y mapa de relación</strong>
+                </span>
                 <span>{customerSnapshot.contacts?.length || 0} contactos</span>
-              </div>
+              </summary>
+              <div className="mi-agent-customer-collapsible-content">
               {customerSnapshot.contacts?.length ? (
                 <div className="mi-agent-customer-contact-grid">
                   {customerSnapshot.contacts.map((contact) => {
@@ -8468,6 +8530,21 @@ export default function MiAgentPage({
                             Falta: {missing.join(", ")}
                           </small>
                         ) : null}
+                        {canUpdateContacts ? (
+                          <button
+                            type="button"
+                            className="mi-agent-customer-record-link"
+                            onClick={() => {
+                              const params = new URLSearchParams();
+                              params.set("accountId", String(customerAccountId));
+                              params.set("contactId", String(contact.id));
+                              params.set("edit", String(contact.id));
+                              navigate(`/contact-mapping?${params.toString()}`);
+                            }}
+                          >
+                            Editar en Mapeo de contactos
+                          </button>
+                        ) : null}
                       </article>
                     );
                   })}
@@ -8477,75 +8554,113 @@ export default function MiAgentPage({
                   No hay contactos activos accesibles para esta cuenta.
                 </div>
               )}
-            </section>
+              </div>
+            </details>
           ) : null}
           {customerSnapshot &&
           (customerSnapshot.products?.length ||
             customerSnapshot.renewals?.length) ? (
-            <section
-              className="mi-agent-discovery-panel"
+            <details
+              key={`quotations-${customerAccountId}`}
+              className="mi-agent-discovery-panel mi-agent-customer-collapsible"
+              role="region"
               aria-label="Productos y renovaciones"
             >
-              <div className="mi-agent-section-heading">
-                <div>
+              <summary className="mi-agent-customer-collapsible-summary">
+                <span className="mi-agent-customer-collapsible-summary-copy">
                   <span className="mi-agent-section-label">Fuente CRM</span>
-                  <h3>Cotizaciones, productos y renovaciones</h3>
-                </div>
-                <span>{customerSnapshot.products?.length || 0} productos</span>
-              </div>
-              {customerSnapshot.products?.length ? (
-                <div className="mi-agent-discovery-columns">
-                  <div>
-                    <strong>Partidas de cotizaciones</strong>
+                  <strong>Cotizaciones, productos y renovaciones</strong>
+                </span>
+                <span>
+                  {groupCustomerProductsByQuotation(
+                    customerSnapshot.products,
+                  ).length}{" "}
+                  {groupCustomerProductsByQuotation(
+                    customerSnapshot.products,
+                  ).length === 1
+                    ? "cotización"
+                    : "cotizaciones"} · {customerSnapshot.products?.length || 0}{" "}
+                  {(customerSnapshot.products?.length || 0) === 1
+                    ? "producto"
+                    : "productos"} · {customerSnapshot.renewals?.length || 0}{" "}
+                  {(customerSnapshot.renewals?.length || 0) === 1
+                    ? "renovación"
+                    : "renovaciones"}
+                </span>
+              </summary>
+              <div className="mi-agent-customer-collapsible-content">
+                {customerSnapshot.products?.length ? (
+                  <div className="mi-agent-customer-quotation-list">
                     <p className="mi-agent-customer-evidence-note">
                       Una cotización aceptada o ganada no confirma por sí sola
                       compra, facturación ni entrega.
                     </p>
-                    <ul>
-                      {customerSnapshot.products.slice(0, 10).map((product) => (
-                        <li
-                          key={`${product.quotationVersionId}-${product.productCode}-${product.description}`}
-                        >
-                          <strong>{product.description}</strong>
-                          <br />
-                          <span>
-                            {product.itemType || "producto"} ·{" "}
-                            {product.quantity} unidad(es)
-                            {product.isRenewal ? " · renovación cotizada" : ""}
+                    {groupCustomerProductsByQuotation(
+                      customerSnapshot.products,
+                    ).map((quotation) => (
+                      <details
+                        key={quotation.quotationId}
+                        className={`mi-agent-customer-quotation is-${getQuotationStatusTone({ uiKey: quotation.commercialStatus, code: quotation.commercialStatus })}`}
+                        role="group"
+                        aria-label={`Cotización ${quotation.quotationId}`}
+                      >
+                        <summary className="mi-agent-customer-collapsible-summary">
+                          <span className="mi-agent-customer-collapsible-summary-copy">
+                            <strong>
+                              Cotización {quotation.quotationId}
+                            </strong>
+                            <span className="mi-agent-customer-collapsible-summary-detail">
+                              {CUSTOMER_QUOTATION_STATUS_LABELS[
+                                quotation.commercialStatus
+                              ] || quotation.commercialStatus}
+                            </span>
                           </span>
-                          <br />
-                          <small>
-                            Cotización{" "}
-                            {CUSTOMER_QUOTATION_STATUS_LABELS[
-                              product.commercialStatus
-                            ] || product.commercialStatus}{" "}
-                            · Compra/entrega: no verificada
-                            {product.providerName
-                              ? ` · ${product.providerName}`
-                              : ""}
-                          </small>
-                          {product.opportunityId ? (
-                            <button
-                              type="button"
-                              className="mi-agent-customer-record-link"
-                              onClick={() =>
-                                navigate(
-                                  `/opportunities?edit=${product.opportunityId}`,
-                                )
-                              }
+                          <span>
+                            {quotation.products.length} productos
+                          </span>
+                        </summary>
+                        {quotation.products[0]?.opportunityId ? (
+                          <button
+                            type="button"
+                            className="mi-agent-customer-record-link mi-agent-customer-quotation-opportunity"
+                            onClick={() =>
+                              navigate(
+                                `/opportunities?edit=${quotation.products[0].opportunityId}`,
+                              )
+                            }
+                          >
+                            Abrir oportunidad asociada
+                          </button>
+                        ) : null}
+                        <ul className="mi-agent-customer-quotation-products">
+                          {quotation.products.map((product, productIndex) => (
+                            <li
+                              key={`${product.quotationVersionId}-${product.productCode}-${product.description}-${productIndex}`}
                             >
-                              Abrir oportunidad asociada
-                            </button>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
+                              <strong>{product.description}</strong>
+                              <span>
+                                {product.itemType || "producto"} ·{" "}
+                                {product.quantity} unidad(es)
+                                {product.isRenewal
+                                  ? " · renovación cotizada"
+                                  : ""}
+                              </span>
+                              <small>
+                                Compra/entrega: no verificada
+                                {product.providerName
+                                  ? ` · ${product.providerName}`
+                                  : ""}
+                              </small>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ))}
                   </div>
-                </div>
-              ) : null}
-              {customerSnapshot.renewals?.length ? (
-                <div className="mi-agent-discovery-columns">
-                  <div>
+                ) : null}
+                {customerSnapshot.renewals?.length ? (
+                  <div className="mi-agent-discovery-columns">
+                    <div>
                     <strong>Renovaciones</strong>
                     <ul>
                       {customerSnapshot.renewals.slice(0, 10).map((renewal) => (
@@ -8568,12 +8683,30 @@ export default function MiAgentPage({
                         </li>
                       ))}
                     </ul>
+                    </div>
                   </div>
-                </div>
-              ) : null}
-              {customerSnapshot.expansionHypotheses?.length ? (
-                <div className="mi-agent-discovery-next-steps">
+                ) : null}
+              </div>
+            </details>
+          ) : null}
+          {customerSnapshot?.expansionHypotheses?.length ? (
+            <details
+              key={`expansion-hypotheses-${customerAccountId}`}
+              className="mi-agent-discovery-panel mi-agent-customer-collapsible"
+              role="region"
+              aria-label="Hipótesis de expansión"
+            >
+              <summary className="mi-agent-customer-collapsible-summary">
+                <span className="mi-agent-customer-collapsible-summary-copy">
+                  <span className="mi-agent-section-label">Desarrollo comercial</span>
                   <strong>Hipótesis de expansión</strong>
+                </span>
+                <span>
+                  {customerSnapshot.expansionHypotheses.length} hipótesis
+                </span>
+              </summary>
+              <div className="mi-agent-customer-collapsible-content">
+                <div className="mi-agent-discovery-next-steps">
                   {customerSnapshot.expansionHypotheses.map((hypothesis) => (
                     <article key={`${hypothesis.type}-${hypothesis.title}`}>
                       <div>
@@ -8634,52 +8767,763 @@ export default function MiAgentPage({
                     </article>
                   ))}
                 </div>
-              ) : null}
-            </section>
+              </div>
+            </details>
           ) : null}
-          <div className="mi-agent-workspace-actions mi-agent-customer-actions">
-            <button
-              type="button"
-              className="mi-agent-primary-button"
-              onClick={runCustomerInvestigation}
-              disabled={customerInvestigating || !hasCustomerContext}
+          <div className="mi-agent-customer-actions mi-agent-customer-operation-list">
+            <section
+              className="mi-agent-customer-operation"
+              aria-label="Analizar cuenta"
             >
-              {customerInvestigating ? "Analizando..." : "Analizar cuenta"}
-            </button>
-            <button
-              type="button"
-              className="mi-agent-secondary-button"
-              onClick={runCustomerAgents}
-              disabled={
-                customerAgentsLoading ||
-                !hasCustomerContext ||
-                !canUseExternalSources
-              }
+              <header className="mi-agent-customer-operation-heading is-result-heading">
+                <button
+                  type="button"
+                  className="mi-agent-primary-button"
+                  onClick={runCustomerInvestigation}
+                  disabled={customerInvestigating || !hasCustomerContext}
+                >
+                  {customerInvestigating ? "Analizando..." : "Analizar cuenta"}
+                </button>
+                <div className="mi-agent-customer-analysis-intro">
+                  <div className="mi-agent-customer-analysis-title">
+                    <strong>Resultado del análisis</strong>
+                    <span
+                      className={`mi-agent-customer-action-result-status ${getCustomerActionStatusClass(getCustomerActionStatus({ loading: customerInvestigating, error: customerActionErrors.analysis, job: customerIntelligenceJob }))}`}
+                    >
+                      {getCustomerActionStatus({
+                        loading: customerInvestigating,
+                        error: customerActionErrors.analysis,
+                        job: customerIntelligenceJob,
+                      })}
+                    </span>
+                  </div>
+                  <p
+                    ref={customerIntelligenceResultRef}
+                    className="mi-agent-customer-analysis-summary"
+                  >
+                    {customerIntelligenceJob?.result?.summary ||
+                      (customerInvestigating
+                        ? "Analizando información interna..."
+                        : "El análisis interno aún no se ha ejecutado.")}
+                  </p>
+                  {customerActionErrors.analysis ? (
+                    <p className="form-error">
+                      {customerActionErrors.analysis}
+                    </p>
+                  ) : null}
+                </div>
+              </header>
+              <CustomerActionResult
+                label="Hallazgos y métricas"
+                className="is-result-wide"
+                showStatus={false}
+                status={getCustomerActionStatus({
+                  loading: customerInvestigating,
+                  error: customerActionErrors.analysis,
+                  job: customerIntelligenceJob,
+                })}
+                preview={
+                  customerFindings.length
+                    ? `${customerFindings.length} hallazgos · ${customerFindings.filter((finding) => finding.category === "missing_information").length} huecos`
+                    : customerIntelligenceJob?.status === "completed"
+                      ? "No se generaron hallazgos."
+                      : "Los hallazgos aparecerán aquí al analizar la cuenta."
+                }
+                open={openCustomerAction === "analysis"}
+                onToggle={(isOpen) =>
+                  setCustomerActionResultOpen("analysis", isOpen)
+                }
+              >
+                  {customerIntelligenceJob ? (
+                    <div className="mi-agent-intelligence-summary">
+                      <article>
+                        <span>Estado</span>
+                        <strong>
+                          {customerIntelligenceJob.status === "completed"
+                            ? "Completado"
+                            : customerIntelligenceJob.status === "failed"
+                              ? "Fallido"
+                              : "En proceso"}
+                        </strong>
+                      </article>
+                      <article>
+                        <span>Hallazgos</span>
+                        <strong>{customerFindings.length}</strong>
+                      </article>
+                      <article>
+                        <span>Huecos</span>
+                        <strong>
+                          {
+                            customerFindings.filter(
+                              (finding) =>
+                                finding.category === "missing_information",
+                            ).length
+                          }
+                        </strong>
+                      </article>
+                      <article>
+                        <span>Confirmados</span>
+                        <strong>
+                          {
+                            customerFindings.filter(
+                              (finding) => finding.status === "confirmed",
+                            ).length
+                          }
+                        </strong>
+                      </article>
+                    </div>
+                  ) : null}
+                  {customerInvestigating ? (
+                    <p className="field-hint">Analizando la información interna...</p>
+                  ) : null}
+                  {customerFindings.length ? (
+                    <div className="mi-agent-finding-list">
+                      {customerFindings.map((finding) => (
+                        <article
+                          key={finding.id}
+                          className={`mi-agent-finding-card is-${finding.status}`}
+                        >
+                          <div className="mi-agent-finding-heading">
+                            <div>
+                              <span>
+                                {CUSTOMER_FINDING_CATEGORY_LABELS[
+                                  finding.category
+                                ] || finding.category}
+                              </span>
+                              <strong>{finding.title}</strong>
+                            </div>
+                            <em>
+                              {CUSTOMER_FINDING_STATUS_LABELS[finding.status] ||
+                                finding.status}
+                            </em>
+                          </div>
+                          <p>{finding.summary}</p>
+                          {finding.evidenceText ? (
+                            <blockquote>{finding.evidenceText}</blockquote>
+                          ) : null}
+                          <div className="mi-agent-finding-meta">
+                            <span>
+                              Fuente:{" "}
+                              {finding.sourceDomain === "public_web"
+                                ? "Investigación pública"
+                                : finding.certainty === "inferred"
+                                  ? "Inferencia"
+                                  : "CRM"}
+                            </span>
+                            <span>
+                              Confianza:{" "}
+                              {CUSTOMER_FINDING_CONFIDENCE_LABELS[
+                                finding.confidence
+                              ] || finding.confidence}
+                            </span>
+                            <span>Certeza: {finding.certainty}</span>
+                            <span>
+                              Fuente: {finding.sourceReference || finding.sourceType}
+                            </span>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : customerIntelligenceJob?.status === "completed" ? (
+                    <div className="mi-agent-empty">
+                      No se generaron hallazgos para este contexto.
+                    </div>
+                  ) : !customerIntelligenceJob && !customerInvestigating ? (
+                    <p className="field-hint">
+                      Ejecuta el análisis para revisar el resumen y los hallazgos
+                      internos de la cuenta.
+                    </p>
+                  ) : null}
+              </CustomerActionResult>
+            </section>
+            <section
+              className="mi-agent-customer-operation"
+              aria-label="Enriquecer con fuentes públicas"
             >
-              {customerAgentsLoading
-                ? "Enriqueciendo..."
-                : "Enriquecer con fuentes públicas"}
-            </button>
-            <button
-              type="button"
-              className="mi-agent-secondary-button"
-              onClick={prepareCustomerExecutiveBriefing}
-              disabled={customerExecutiveBriefingLoading || !hasCustomerContext}
+              <header className="mi-agent-customer-operation-heading is-result-heading">
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={runCustomerAgents}
+                  disabled={
+                    customerAgentsLoading ||
+                    !hasCustomerContext ||
+                    !canUseExternalSources
+                  }
+                >
+                  {customerAgentsLoading
+                    ? "Enriqueciendo..."
+                    : "Enriquecer con fuentes públicas"}
+                </button>
+                <div className="mi-agent-customer-analysis-intro">
+                  <div className="mi-agent-customer-analysis-title">
+                    <strong>Resultado del enriquecimiento</strong>
+                    <span
+                      className={`mi-agent-customer-action-result-status ${getCustomerActionStatusClass(getCustomerActionStatus({ loading: customerAgentsLoading, error: customerActionErrors.agents, job: customerAgentsJob }))}`}
+                    >
+                      {getCustomerActionStatus({
+                        loading: customerAgentsLoading,
+                        error: customerActionErrors.agents,
+                        job: customerAgentsJob,
+                      })}
+                    </span>
+                  </div>
+                  <p className="mi-agent-customer-analysis-summary">
+                    {customerAgentsJob?.result?.agents?.length
+                      ? summarizeCustomerAgents(
+                          customerAgentsJob.result.agents,
+                        )
+                      : customerAgentsLoading
+                        ? "Consultando CRM y fuentes públicas..."
+                        : "Los resultados aparecerán aquí al enriquecer la cuenta."}
+                  </p>
+                </div>
+              </header>
+              <CustomerActionResult
+                label="Detalle de agentes"
+                className="is-result-wide"
+                showStatus={false}
+                status={getCustomerActionStatus({
+                  loading: customerAgentsLoading,
+                  error: customerActionErrors.agents,
+                  job: customerAgentsJob,
+                })}
+                preview={
+                  customerAgentsJob?.result?.agents?.length
+                    ? summarizeCustomerAgents(
+                        customerAgentsJob.result.agents,
+                      )
+                    : customerAgentsLoading
+                      ? "Consultando CRM y fuentes públicas..."
+                      : "Los resultados aparecerán aquí al enriquecer la cuenta."
+                }
+                open={openCustomerAction === "agents"}
+                onToggle={(isOpen) =>
+                  setCustomerActionResultOpen("agents", isOpen)
+                }
+              >
+                  {customerActionErrors.agents ? (
+                    <p className="form-error">{customerActionErrors.agents}</p>
+                  ) : customerAgentsJob?.result?.agents?.length ? (
+                    <section
+                      className="mi-agent-specialized-agents"
+                      aria-label="Agentes especializados"
+                    >
+                      <div className="mi-agent-section-heading">
+                        <div>
+                          <span className="mi-agent-section-label">
+                            {customerAgentsJob.result.sourceDomain ===
+                            "public_web"
+                              ? "Fuentes CRM y públicas"
+                              : "Análisis interno CRM"}
+                          </span>
+                          <h3>Agentes especializados</h3>
+                        </div>
+                        <span className="mi-agent-agent-safety-note">
+                          Sin escrituras automáticas
+                        </span>
+                      </div>
+                      <div className="mi-agent-specialized-agent-grid">
+                        {customerAgentsJob.result.agents.map((agent) => (
+                          <article
+                            className="mi-agent-specialized-agent"
+                            key={agent.agentId}
+                          >
+                            <header className="mi-agent-specialized-agent-heading">
+                              <strong>
+                                {CUSTOMER_AGENT_LABELS[agent.agentId] ||
+                                  agent.agentId}
+                              </strong>
+                              <span
+                                className={`mi-agent-agent-status is-${agent.status || "completed"}`}
+                              >
+                                {CUSTOMER_AGENT_STATUS_LABELS[agent.status] ||
+                                  agent.status}
+                              </span>
+                            </header>
+                            <p className="mi-agent-specialized-agent-summary">
+                              {agent.summary}
+                            </p>
+                            <div className="mi-agent-agent-meta">
+                              <span>
+                                {agent.sourceDomain === "public_web"
+                                  ? "Fuente pública"
+                                  : "Fuente CRM"}
+                              </span>
+                              <span>{agent.findings?.length || 0} hallazgos</span>
+                              <span>
+                                Confianza{" "}
+                                {CUSTOMER_FINDING_CONFIDENCE_LABELS[
+                                  agent.confidence
+                                ] || agent.confidence}
+                              </span>
+                            </div>
+                            {agent.findings?.length ? (
+                              <ul className="mi-agent-specialized-findings">
+                                {agent.findings.slice(0, 10).map((finding) => {
+                                  const contact =
+                                    agent.agentId === "contact_research"
+                                      ? finding.metadata?.contactData
+                                      : null;
+                                  return (
+                                    <li
+                                      key={`${agent.agentId}-${finding.title}`}
+                                    >
+                                      <strong className="mi-agent-specialized-finding-title">
+                                        {contact?.firstName && contact?.lastName
+                                          ? `${contact.firstName} ${contact.lastName}`
+                                          : finding.title}
+                                      </strong>
+                                      {contact?.positionTitle ? (
+                                        <span className="mi-agent-specialized-finding-role">
+                                          {contact.positionTitle}
+                                          {contact.department
+                                            ? ` · ${contact.department}`
+                                            : ""}
+                                        </span>
+                                      ) : null}
+                                      {isUsablePublicContactValue(
+                                        contact?.email,
+                                      ) ? (
+                                        <span>Correo: {contact.email}</span>
+                                      ) : null}
+                                      {isUsablePublicContactValue(
+                                        contact?.phone,
+                                      ) ? (
+                                        <span>Teléfono: {contact.phone}</span>
+                                      ) : null}
+                                      {isUsablePublicContactValue(
+                                        contact?.mobile,
+                                      ) ? (
+                                        <span>Móvil: {contact.mobile}</span>
+                                      ) : null}
+                                      {finding.summary ? (
+                                        <p className="mi-agent-specialized-finding-summary">
+                                          {finding.summary}
+                                        </p>
+                                      ) : null}
+                                      <div className="mi-agent-specialized-finding-meta">
+                                        <span>
+                                          Certeza: {finding.certainty || "evidenciada"}
+                                        </span>
+                                        <span>
+                                          Confianza{" "}
+                                          {CUSTOMER_FINDING_CONFIDENCE_LABELS[
+                                            finding.confidence
+                                          ] ||
+                                            finding.confidence ||
+                                            CUSTOMER_FINDING_CONFIDENCE_LABELS[
+                                              agent.confidence
+                                            ] ||
+                                            agent.confidence}
+                                        </span>
+                                      </div>
+                                      {finding.evidenceText ||
+                                      finding.evidence ? (
+                                        <details className="mi-agent-specialized-evidence">
+                                          <summary>Ver evidencia</summary>
+                                          <p>
+                                            {finding.evidenceText ||
+                                              finding.evidence}
+                                          </p>
+                                        </details>
+                                      ) : null}
+                                      {/^https?:\/\//i.test(
+                                        String(finding.sourceUrl || ""),
+                                      ) ? (
+                                        <a
+                                          href={finding.sourceUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          Ver fuente pública
+                                        </a>
+                                      ) : null}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  ) : (
+                    <p className="field-hint">
+                      {customerAgentsLoading
+                        ? "Consultando CRM y fuentes públicas..."
+                        : "Ejecuta el enriquecimiento para consultar agentes internos y fuentes públicas."}
+                    </p>
+                  )}
+              </CustomerActionResult>
+            </section>
+            <section
+              className="mi-agent-customer-operation"
+              aria-label="Preparar resumen ejecutivo"
             >
-              {customerExecutiveBriefingLoading
-                ? "Preparando resumen..."
-                : "Preparar resumen ejecutivo"}
-            </button>
-            <button
-              type="button"
-              className="mi-agent-secondary-button"
-              onClick={prepareCustomerCall}
-              disabled={customerDiscoveryPreparing || !hasCustomerContext}
+              <header className="mi-agent-customer-operation-heading is-result-heading">
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={prepareCustomerExecutiveBriefing}
+                  disabled={customerExecutiveBriefingLoading || !hasCustomerContext}
+                >
+                  {customerExecutiveBriefingLoading
+                    ? "Preparando resumen..."
+                    : "Preparar resumen ejecutivo"}
+                </button>
+                <div className="mi-agent-customer-analysis-intro">
+                  <div className="mi-agent-customer-analysis-title">
+                    <strong>Resumen ejecutivo</strong>
+                    <span
+                      className={`mi-agent-customer-action-result-status ${getCustomerActionStatusClass(getCustomerActionStatus({ loading: customerExecutiveBriefingLoading, error: customerActionErrors.briefing, job: customerExecutiveBriefingJob }))}`}
+                    >
+                      {getCustomerActionStatus({
+                        loading: customerExecutiveBriefingLoading,
+                        error: customerActionErrors.briefing,
+                        job: customerExecutiveBriefingJob,
+                      })}
+                    </span>
+                  </div>
+                  <p className="mi-agent-customer-analysis-summary">
+                    {customerExecutiveBriefingJob?.result?.executiveBriefing
+                      ? `Salud ${customerExecutiveBriefingJob.result.executiveBriefing.healthScore}/100 · ${customerExecutiveBriefingJob.result.executiveBriefing.prioritizedRisks?.length || 0} riesgos`
+                      : customerExecutiveBriefingLoading
+                        ? "Preparando síntesis de la cuenta..."
+                        : "Síntesis, riesgos y siguiente paso recomendado."}
+                  </p>
+                </div>
+              </header>
+              <CustomerActionResult
+                label="Ver síntesis y acciones"
+                className="is-result-wide"
+                showStatus={false}
+                status={getCustomerActionStatus({
+                  loading: customerExecutiveBriefingLoading,
+                  error: customerActionErrors.briefing,
+                  job: customerExecutiveBriefingJob,
+                })}
+                preview={
+                  customerExecutiveBriefingJob?.result?.executiveBriefing
+                    ? `Salud ${customerExecutiveBriefingJob.result.executiveBriefing.healthScore}/100 · ${customerExecutiveBriefingJob.result.executiveBriefing.prioritizedRisks?.length || 0} riesgos`
+                    : customerExecutiveBriefingLoading
+                      ? "Preparando síntesis de la cuenta..."
+                      : "Síntesis, riesgos y siguiente paso recomendado."
+                }
+                open={openCustomerAction === "briefing"}
+                onToggle={(isOpen) =>
+                  setCustomerActionResultOpen("briefing", isOpen)
+                }
+              >
+                  {customerActionErrors.briefing ? (
+                    <p className="form-error">
+                      {customerActionErrors.briefing}
+                    </p>
+                  ) : customerExecutiveBriefingJob?.result?.executiveBriefing ? (
+                    <section
+                      className="mi-agent-customer-executive-result"
+                      aria-label="Resumen ejecutivo de cuenta"
+                    >
+                      <div className="mi-agent-section-heading">
+                        <div>
+                          <span className="mi-agent-section-label">
+                            Síntesis ejecutiva
+                          </span>
+                          <h3>{customerExecutiveBriefingJob.result.headline}</h3>
+                        </div>
+                        <span>
+                          Salud{" "}
+                          {
+                            customerExecutiveBriefingJob.result.executiveBriefing
+                              .healthScore
+                          }
+                          /100
+                        </span>
+                      </div>
+                      <p className="mi-agent-customer-summary">
+                        {customerExecutiveBriefingJob.result.summary}
+                      </p>
+                      <div className="mi-agent-discovery-columns">
+                        <div>
+                          <strong>Cambios recientes</strong>
+                          <ul>
+                            {(
+                              customerExecutiveBriefingJob.result
+                                .executiveBriefing.recentChanges || []
+                            ).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong>Riesgos prioritarios</strong>
+                          <ul>
+                            {(
+                              customerExecutiveBriefingJob.result
+                                .executiveBriefing.prioritizedRisks || []
+                            ).map((item) => (
+                              <li key={`${item.title}-${item.evidence}`}>
+                                {item.title}: {item.summary}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong>Preguntas para la reunión</strong>
+                          <ul>
+                            {(
+                              customerExecutiveBriefingJob.result
+                                .executiveBriefing.meetingQuestions || []
+                            ).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                      <div className="mi-agent-customer-summary">
+                        <strong>Siguiente mejor paso:</strong>{" "}
+                        {
+                          customerExecutiveBriefingJob.result.executiveBriefing
+                            .nextBestStep
+                        }
+                      </div>
+                      {customerExecutiveBriefingJob.result.executiveBriefing
+                        .recommendedActions?.length ? (
+                        <div className="mi-agent-discovery-next-steps">
+                          <strong>Acciones recomendadas</strong>
+                          {customerExecutiveBriefingJob.result.executiveBriefing.recommendedActions.map(
+                            (action, index) => (
+                              <article
+                                key={`${action.title}-${action.opportunityId || index}`}
+                              >
+                                <div>
+                                  <span>
+                                    {action.actionType || "Actividad"}
+                                  </span>
+                                  <strong>{action.title}</strong>
+                                  <p>
+                                    {action.successCriteria ||
+                                      action.notes ||
+                                      "Revisar y confirmar el siguiente paso."}
+                                  </p>
+                                </div>
+                                {action.opportunityId &&
+                                canUpdateCommercialDevelopment ? (
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() =>
+                                      openDiscoveryActivity({
+                                        ...action,
+                                        opportunityId: Number(
+                                          action.opportunityId,
+                                        ),
+                                      })
+                                    }
+                                  >
+                                    Revisar y crear tarea
+                                  </button>
+                                ) : null}
+                              </article>
+                            ),
+                          )}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : (
+                    <p className="field-hint">
+                      {customerExecutiveBriefingLoading
+                        ? "Preparando resumen ejecutivo..."
+                        : "Prepara un resumen para consultar riesgos y acciones recomendadas."}
+                    </p>
+                  )}
+              </CustomerActionResult>
+            </section>
+            <section
+              className="mi-agent-customer-operation"
+              aria-label="Preparar llamada"
             >
-              {customerDiscoveryPreparing
-                ? "Preparando..."
-                : "Preparar llamada"}
-            </button>
+              <header className="mi-agent-customer-operation-heading is-result-heading">
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  onClick={prepareCustomerCall}
+                  disabled={customerDiscoveryPreparing || !hasCustomerContext}
+                >
+                  {customerDiscoveryPreparing
+                    ? "Preparando..."
+                    : "Preparar llamada"}
+                </button>
+                <div className="mi-agent-customer-analysis-intro">
+                  <div className="mi-agent-customer-analysis-title">
+                    <strong>Briefing de llamada</strong>
+                    <span
+                      className={`mi-agent-customer-action-result-status ${getCustomerActionStatusClass(getCustomerActionStatus({ loading: customerDiscoveryPreparing, error: customerActionErrors.call, job: customerDiscoveryJob }))}`}
+                    >
+                      {getCustomerActionStatus({
+                        loading: customerDiscoveryPreparing,
+                        error: customerActionErrors.call,
+                        job: customerDiscoveryJob,
+                      })}
+                    </span>
+                  </div>
+                  <p className="mi-agent-customer-analysis-summary">
+                    {customerDiscoveryJob?.result?.briefing
+                      ? `${customerDiscoveryJob.result.briefing.questions?.length || 0} preguntas · ${customerDiscoveryJob.result.briefing.nextSteps?.length || 0} próximos pasos`
+                      : customerDiscoveryPreparing
+                        ? "Preparando el briefing comercial..."
+                        : "Objetivo, preguntas y próximos pasos para la llamada."}
+                  </p>
+                </div>
+              </header>
+              <CustomerActionResult
+                label="Ver preguntas y próximos pasos"
+                className="is-result-wide"
+                showStatus={false}
+                status={getCustomerActionStatus({
+                  loading: customerDiscoveryPreparing,
+                  error: customerActionErrors.call,
+                  job: customerDiscoveryJob,
+                })}
+                preview={
+                  customerDiscoveryJob?.result?.briefing
+                    ? `${customerDiscoveryJob.result.briefing.questions?.length || 0} preguntas · ${customerDiscoveryJob.result.briefing.nextSteps?.length || 0} próximos pasos`
+                    : customerDiscoveryPreparing
+                      ? "Preparando el briefing comercial..."
+                      : "Objetivo, preguntas y próximos pasos para la llamada."
+                }
+                open={openCustomerAction === "call"}
+                onToggle={(isOpen) =>
+                  setCustomerActionResultOpen("call", isOpen)
+                }
+              >
+                  {customerActionErrors.call ? (
+                    <p className="form-error">{customerActionErrors.call}</p>
+                  ) : customerDiscoveryJob?.result?.briefing ? (
+                    <section
+                      className="mi-agent-customer-call-result"
+                      aria-label="Briefing de llamada"
+                    >
+                      <div className="mi-agent-section-heading">
+                        <div>
+                          <span className="mi-agent-section-label">
+                            Preparación comercial
+                          </span>
+                          <h3>
+                            {customerDiscoveryJob.result.headline ||
+                              "Briefing de llamada"}
+                          </h3>
+                        </div>
+                        <span>
+                          {customerDiscoveryJob.status === "completed"
+                            ? "Listo"
+                            : "En proceso"}
+                        </span>
+                      </div>
+                      <p className="mi-agent-customer-summary">
+                        {customerDiscoveryJob.result.summary}
+                      </p>
+                      <div className="mi-agent-discovery-grid">
+                        <article>
+                          <span>Objetivo</span>
+                          <p>
+                            {customerDiscoveryJob.result.briefing.objective}
+                          </p>
+                        </article>
+                        <article>
+                          <span>Contacto objetivo</span>
+                          <p>
+                            {customerDiscoveryJob.result.briefing.targetContact}
+                          </p>
+                        </article>
+                      </div>
+                      <div className="mi-agent-discovery-columns">
+                        <div>
+                          <strong>Preguntas para descubrir</strong>
+                          <ul>
+                            {(
+                              customerDiscoveryJob.result.briefing.questions ||
+                              []
+                            ).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong>Riesgos a cuidar</strong>
+                          <ul>
+                            {(
+                              customerDiscoveryJob.result.briefing.risks || []
+                            ).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <strong>Guion de llamada</strong>
+                          <ul>
+                            {(
+                              customerDiscoveryJob.result.briefing.callGuide ||
+                              []
+                            ).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                      <div className="mi-agent-discovery-next-steps">
+                        <strong>Próximos pasos sugeridos</strong>
+                        {(
+                          customerDiscoveryJob.result.briefing.nextSteps || []
+                        ).map((step) => (
+                          <article
+                            key={`${step.title}-${step.actionType}`}
+                          >
+                            <div>
+                              <span>{step.actionType}</span>
+                              <strong>{step.title}</strong>
+                              <p>{step.successCriteria}</p>
+                            </div>
+                            {step.opportunityId &&
+                            canUpdateCommercialDevelopment ? (
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => openDiscoveryActivity(step)}
+                              >
+                                Crear tarea
+                              </button>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                      {customerDiscoveryJob.result.briefing.emailDraft ? (
+                        <div className="mi-agent-discovery-email">
+                          <strong>Correo sugerido</strong>
+                          <span>
+                            {
+                              customerDiscoveryJob.result.briefing.emailDraft
+                                .subject
+                            }
+                          </span>
+                          <pre>
+                            {
+                              customerDiscoveryJob.result.briefing.emailDraft
+                                .body
+                            }
+                          </pre>
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : (
+                    <p className="field-hint">
+                      {customerDiscoveryPreparing
+                        ? "Preparando el briefing de llamada..."
+                        : "No se pudo preparar el briefing de llamada."}
+                    </p>
+                  )}
+              </CustomerActionResult>
+            </section>
           </div>
           {!hasCustomerContext ? (
             <p className="field-hint">
@@ -8687,445 +9531,6 @@ export default function MiAgentPage({
               inteligencia comercial; la selección del Chat del Coach es
               independiente.
             </p>
-          ) : null}
-          {customerIntelligenceJob ? (
-            <div className="mi-agent-intelligence-summary">
-              <article>
-                <span>Estado</span>
-                <strong>
-                  {customerIntelligenceJob.status === "completed"
-                    ? "Completado"
-                    : customerIntelligenceJob.status === "failed"
-                      ? "Fallido"
-                      : "En proceso"}
-                </strong>
-              </article>
-              <article>
-                <span>Hallazgos</span>
-                <strong>{customerFindings.length}</strong>
-              </article>
-              <article>
-                <span>Huecos</span>
-                <strong>
-                  {
-                    customerFindings.filter(
-                      (finding) => finding.category === "missing_information",
-                    ).length
-                  }
-                </strong>
-              </article>
-              <article>
-                <span>Confirmados</span>
-                <strong>
-                  {
-                    customerFindings.filter(
-                      (finding) => finding.status === "confirmed",
-                    ).length
-                  }
-                </strong>
-              </article>
-            </div>
-          ) : null}
-          {customerIntelligenceJob?.result?.summary ? (
-            <p className="mi-agent-customer-summary">
-              {customerIntelligenceJob.result.summary}
-            </p>
-          ) : null}
-          {customerAgentsJob?.result?.agents?.length ? (
-            <section
-              className="mi-agent-discovery-panel"
-              aria-label="Agentes especializados"
-            >
-              <div className="mi-agent-section-heading">
-                <div>
-                  <span className="mi-agent-section-label">
-                    {customerAgentsJob.result.sourceDomain === "public_web"
-                      ? "CRM interno + investigación pública"
-                      : "Análisis interno CRM"}
-                  </span>
-                  <h3>Agentes especializados</h3>
-                </div>
-                <span>Sin escrituras automáticas</span>
-              </div>
-              <div className="mi-agent-discovery-columns">
-                {customerAgentsJob.result.agents.map((agent) => (
-                  <div key={agent.agentId}>
-                    <strong>{agent.agentId}</strong>
-                    <p>{agent.summary}</p>
-                    <small>
-                      {agent.sourceDomain === "public_web"
-                        ? "Fuente pública"
-                        : "Fuente CRM"}{" "}
-                      · {agent.findings?.length || 0} hallazgos · confianza{" "}
-                      {CUSTOMER_FINDING_CONFIDENCE_LABELS[agent.confidence] ||
-                        agent.confidence}
-                    </small>
-                    {agent.findings?.length ? (
-                      <ul>
-                        {agent.findings.slice(0, 10).map((finding) => {
-                          const contact =
-                            agent.agentId === "contact_research"
-                              ? finding.metadata?.contactData
-                              : null;
-                          return (
-                            <li key={`${agent.agentId}-${finding.title}`}>
-                              <strong>
-                                {contact?.firstName && contact?.lastName
-                                  ? `${contact.firstName} ${contact.lastName}`
-                                  : finding.title}
-                              </strong>
-                              {contact?.positionTitle ? (
-                                <>
-                                  <br />
-                                  <span>
-                                    {contact.positionTitle}
-                                    {contact.department
-                                      ? ` · ${contact.department}`
-                                      : ""}
-                                  </span>
-                                </>
-                              ) : null}
-                              {isUsablePublicContactValue(contact?.email) ? (
-                                <>
-                                  <br />
-                                  <span>Correo: {contact.email}</span>
-                                </>
-                              ) : null}
-                              {isUsablePublicContactValue(contact?.phone) ? (
-                                <>
-                                  <br />
-                                  <span>Teléfono: {contact.phone}</span>
-                                </>
-                              ) : null}
-                              {isUsablePublicContactValue(contact?.mobile) ? (
-                                <>
-                                  <br />
-                                  <span>Móvil: {contact.mobile}</span>
-                                </>
-                              ) : null}
-                              <br />
-                              {finding.summary}
-                              <br />
-                              <small>
-                                {finding.evidenceText ||
-                                  finding.evidence ||
-                                  "Sin evidencia"}
-                              </small>
-                              <small>
-                                Certeza: {finding.certainty || "evidenciada"} ·
-                                Confianza:{" "}
-                                {CUSTOMER_FINDING_CONFIDENCE_LABELS[
-                                  finding.confidence
-                                ] ||
-                                  finding.confidence ||
-                                  agent.confidence}
-                              </small>
-                              {/^https?:\/\//i.test(
-                                String(finding.sourceUrl || ""),
-                              ) ? (
-                                <a
-                                  href={finding.sourceUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  Ver fuente pública
-                                </a>
-                              ) : null}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          {customerFindings.length ? (
-            <div className="mi-agent-finding-list">
-              {customerFindings.map((finding) => (
-                <article
-                  key={finding.id}
-                  className={`mi-agent-finding-card is-${finding.status}`}
-                >
-                  <div className="mi-agent-finding-heading">
-                    <div>
-                      <span>
-                        {CUSTOMER_FINDING_CATEGORY_LABELS[finding.category] ||
-                          finding.category}
-                      </span>
-                      <strong>{finding.title}</strong>
-                    </div>
-                    <em>
-                      {CUSTOMER_FINDING_STATUS_LABELS[finding.status] ||
-                        finding.status}
-                    </em>
-                  </div>
-                  <p>{finding.summary}</p>
-                  {finding.evidenceText ? (
-                    <blockquote>{finding.evidenceText}</blockquote>
-                  ) : null}
-                  <div className="mi-agent-finding-meta">
-                    <span>
-                      Fuente:{" "}
-                      {finding.sourceDomain === "public_web"
-                        ? "Investigación pública"
-                        : finding.certainty === "inferred"
-                          ? "Inferencia"
-                          : "CRM"}
-                    </span>
-                    <span>
-                      Confianza:{" "}
-                      {CUSTOMER_FINDING_CONFIDENCE_LABELS[finding.confidence] ||
-                        finding.confidence}
-                    </span>
-                    <span>Certeza: {finding.certainty}</span>
-                    <span>
-                      Fuente: {finding.sourceReference || finding.sourceType}
-                    </span>
-                  </div>
-                  <div className="mi-agent-finding-actions">
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() =>
-                        updateCustomerFindingStatus(finding, "confirmed")
-                      }
-                      disabled={
-                        finding.status === "confirmed" ||
-                        customerFindingUpdatingId === finding.id
-                      }
-                    >
-                      Confirmar
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() =>
-                        updateCustomerFindingStatus(finding, "rejected")
-                      }
-                      disabled={
-                        finding.status === "rejected" ||
-                        customerFindingUpdatingId === finding.id
-                      }
-                    >
-                      Rechazar
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : customerIntelligenceJob?.status === "completed" ? (
-            <div className="mi-agent-empty">
-              No se generaron hallazgos para este contexto.
-            </div>
-          ) : null}
-          {customerExecutiveBriefingJob?.result?.executiveBriefing ? (
-            <section
-              className="mi-agent-discovery-panel"
-              aria-label="Resumen ejecutivo de cuenta"
-            >
-              <div className="mi-agent-section-heading">
-                <div>
-                  <span className="mi-agent-section-label">
-                    Síntesis ejecutiva
-                  </span>
-                  <h3>{customerExecutiveBriefingJob.result.headline}</h3>
-                </div>
-                <span>
-                  Salud{" "}
-                  {
-                    customerExecutiveBriefingJob.result.executiveBriefing
-                      .healthScore
-                  }
-                  /100
-                </span>
-              </div>
-              <p className="mi-agent-customer-summary">
-                {customerExecutiveBriefingJob.result.summary}
-              </p>
-              <div className="mi-agent-discovery-columns">
-                <div>
-                  <strong>Cambios recientes</strong>
-                  <ul>
-                    {(
-                      customerExecutiveBriefingJob.result.executiveBriefing
-                        .recentChanges || []
-                    ).map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <strong>Riesgos prioritarios</strong>
-                  <ul>
-                    {(
-                      customerExecutiveBriefingJob.result.executiveBriefing
-                        .prioritizedRisks || []
-                    ).map((item) => (
-                      <li key={`${item.title}-${item.evidence}`}>
-                        {item.title}: {item.summary}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <strong>Preguntas para la reunión</strong>
-                  <ul>
-                    {(
-                      customerExecutiveBriefingJob.result.executiveBriefing
-                        .meetingQuestions || []
-                    ).map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-              <div className="mi-agent-customer-summary">
-                <strong>Siguiente mejor paso:</strong>{" "}
-                {
-                  customerExecutiveBriefingJob.result.executiveBriefing
-                    .nextBestStep
-                }
-              </div>
-              {customerExecutiveBriefingJob.result.executiveBriefing
-                .recommendedActions?.length ? (
-                <div className="mi-agent-discovery-next-steps">
-                  <strong>Acciones recomendadas</strong>
-                  {customerExecutiveBriefingJob.result.executiveBriefing.recommendedActions.map(
-                    (action, index) => (
-                      <article
-                        key={`${action.title}-${action.opportunityId || index}`}
-                      >
-                        <div>
-                          <span>{action.actionType || "Actividad"}</span>
-                          <strong>{action.title}</strong>
-                          <p>
-                            {action.successCriteria ||
-                              action.notes ||
-                              "Revisar y confirmar el siguiente paso."}
-                          </p>
-                        </div>
-                        {action.opportunityId &&
-                        canUpdateCommercialDevelopment ? (
-                          <button
-                            type="button"
-                            className="btn-secondary"
-                            onClick={() =>
-                              openDiscoveryActivity({
-                                ...action,
-                                opportunityId: Number(action.opportunityId),
-                              })
-                            }
-                          >
-                            Revisar y crear tarea
-                          </button>
-                        ) : null}
-                      </article>
-                    ),
-                  )}
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-          {customerDiscoveryJob?.result?.briefing ? (
-            <section className="mi-agent-discovery-panel">
-              <div className="mi-agent-section-heading">
-                <div>
-                  <span className="mi-agent-section-label">
-                    Preparación comercial
-                  </span>
-                  <h3>
-                    {customerDiscoveryJob.result.headline ||
-                      "Briefing de llamada"}
-                  </h3>
-                </div>
-                <span>
-                  {customerDiscoveryJob.status === "completed"
-                    ? "Listo"
-                    : "En proceso"}
-                </span>
-              </div>
-              <p className="mi-agent-customer-summary">
-                {customerDiscoveryJob.result.summary}
-              </p>
-              <div className="mi-agent-discovery-grid">
-                <article>
-                  <span>Objetivo</span>
-                  <p>{customerDiscoveryJob.result.briefing.objective}</p>
-                </article>
-                <article>
-                  <span>Contacto objetivo</span>
-                  <p>{customerDiscoveryJob.result.briefing.targetContact}</p>
-                </article>
-              </div>
-              <div className="mi-agent-discovery-columns">
-                <div>
-                  <strong>Preguntas para descubrir</strong>
-                  <ul>
-                    {(customerDiscoveryJob.result.briefing.questions || []).map(
-                      (item) => (
-                        <li key={item}>{item}</li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-                <div>
-                  <strong>Riesgos a cuidar</strong>
-                  <ul>
-                    {(customerDiscoveryJob.result.briefing.risks || []).map(
-                      (item) => (
-                        <li key={item}>{item}</li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-                <div>
-                  <strong>Guion de llamada</strong>
-                  <ul>
-                    {(customerDiscoveryJob.result.briefing.callGuide || []).map(
-                      (item) => (
-                        <li key={item}>{item}</li>
-                      ),
-                    )}
-                  </ul>
-                </div>
-              </div>
-              <div className="mi-agent-discovery-next-steps">
-                <strong>Próximos pasos sugeridos</strong>
-                {(customerDiscoveryJob.result.briefing.nextSteps || []).map(
-                  (step) => (
-                    <article key={`${step.title}-${step.actionType}`}>
-                      <div>
-                        <span>{step.actionType}</span>
-                        <strong>{step.title}</strong>
-                        <p>{step.successCriteria}</p>
-                      </div>
-                      {step.opportunityId && canUpdateCommercialDevelopment ? (
-                        <button
-                          type="button"
-                          className="btn-secondary"
-                          onClick={() => openDiscoveryActivity(step)}
-                        >
-                          Crear tarea
-                        </button>
-                      ) : null}
-                    </article>
-                  ),
-                )}
-              </div>
-              {customerDiscoveryJob.result.briefing.emailDraft ? (
-                <div className="mi-agent-discovery-email">
-                  <strong>Correo sugerido</strong>
-                  <span>
-                    {customerDiscoveryJob.result.briefing.emailDraft.subject}
-                  </span>
-                  <pre>
-                    {customerDiscoveryJob.result.briefing.emailDraft.body}
-                  </pre>
-                </div>
-              ) : null}
-            </section>
           ) : null}
         </section>
       ) : activeWorkspace === "prospect" ? (

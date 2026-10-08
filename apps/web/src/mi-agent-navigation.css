@@ -55,14 +55,495 @@
   flex-direction: column;
   gap: 16px;
 }
+.mi-agent-customer-workspace > .mi-agent-section-heading {
+  margin-bottom: 0;
+}
 .mi-agent-customer-workspace > .mi-agent-customer-actions {
   order: 8;
 }
 .mi-agent-customer-workspace > .mi-agent-customer-chat {
   order: 9;
 }
+.mi-agent-customer-operation-list {
+  display: grid;
+  gap: 0;
+  margin-top: 16px;
+}
+.mi-agent-customer-operation {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  align-items: start;
+  gap: 0 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e3ebef;
+  background: #f8fbfc;
+}
+.mi-agent-customer-operation:first-child {
+  border-top: 1px solid #e3ebef;
+}
+.mi-agent-customer-operation-heading {
+  display: flex;
+  align-items: center;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+.mi-agent-customer-operation-heading.is-result-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.mi-agent-customer-analysis-intro {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 3px;
+}
+.mi-agent-customer-analysis-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: #173b52;
+  font-size: 13px;
+  font-weight: 800;
+}
+.mi-agent-customer-analysis-summary {
+  margin: 0;
+  color: #536977;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.mi-agent-customer-operation-heading > button {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: min(100%, 360px);
+  min-height: 44px;
+  text-align: left;
+  white-space: normal;
+}
+.mi-agent-customer-operation > .mi-agent-customer-action-result {
+  grid-column: 2;
+  grid-row: 1;
+}
+.mi-agent-customer-operation > .mi-agent-customer-action-result.is-result-wide {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.mi-agent-customer-action-result {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mi-agent-customer-action-result > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #173b52;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+.mi-agent-customer-action-result-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+.mi-agent-customer-action-result-copy > strong {
+  color: #173b52;
+  font-size: 13px;
+}
+.mi-agent-customer-action-result-copy > small {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: #6b7f8e;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mi-agent-customer-action-result > summary::-webkit-details-marker {
+  display: none;
+}
+.mi-agent-customer-action-result > summary::after {
+  display: grid;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid #b9d6dc;
+  border-radius: 6px;
+  color: #176b87;
+  content: "+";
+  font-size: 18px;
+  line-height: 1;
+}
+.mi-agent-customer-action-result[open] > summary::after {
+  content: "-";
+}
+.mi-agent-customer-action-result-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 4px 7px;
+  border: 1px solid #dbe5ea;
+  border-radius: 999px;
+  background: #f1f5f7;
+  color: #536977;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mi-agent-customer-action-result-status.is-ready {
+  border-color: #b8e6c7;
+  background: #eaf8ef;
+  color: #0b5e2a;
+}
+.mi-agent-customer-action-result-status.is-running {
+  border-color: #f3d49a;
+  background: #fff6e5;
+  color: #7a4b00;
+}
+.mi-agent-customer-action-result-status.is-error {
+  border-color: #f5c2c2;
+  background: #fdeeee;
+  color: #7a1f1f;
+}
+.mi-agent-customer-action-result-content {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 12px;
+}
+.mi-agent-customer-action-result-content > .mi-agent-intelligence-summary {
+  margin-top: 0;
+}
+.mi-agent-customer-action-result-content > .mi-agent-customer-summary {
+  margin-top: 0;
+}
+.mi-agent-customer-operation .mi-agent-customer-executive-result,
+.mi-agent-customer-operation .mi-agent-customer-call-result,
+.mi-agent-customer-operation .mi-agent-specialized-agents {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mi-agent-customer-operation .mi-agent-specialized-agent-grid {
+  margin-top: 12px;
+}
+.mi-agent-customer-executive-result > .mi-agent-section-heading,
+.mi-agent-customer-call-result > .mi-agent-section-heading {
+  margin-bottom: 12px;
+}
+@media (max-width: 640px) {
+  .mi-agent-customer-operation {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .mi-agent-customer-operation-heading {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .mi-agent-customer-operation-heading.is-result-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mi-agent-customer-operation > .mi-agent-customer-action-result {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .mi-agent-customer-operation-heading > button {
+    width: 100%;
+  }
+  .mi-agent-customer-action-result > summary {
+    align-items: flex-start;
+  }
+}
+.mi-agent-customer-collapsible {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #dbe5ea;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+.mi-agent-customer-collapsible.mi-agent-customer-history,
+.mi-agent-customer-collapsible.mi-agent-customer-contacts {
+  padding: 18px;
+  border: 1px solid #dbe5ea;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+.mi-agent-customer-collapsible > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.mi-agent-customer-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+.mi-agent-customer-collapsible > summary::after {
+  display: grid;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid #b9d6dc;
+  border-radius: 6px;
+  color: #176b87;
+  content: "+";
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+.mi-agent-customer-collapsible[open] > summary::after {
+  content: "-";
+}
+.mi-agent-customer-collapsible-summary-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.mi-agent-customer-collapsible-summary-copy > strong {
+  color: #173b52;
+  font-size: 16px;
+}
+.mi-agent-customer-collapsible-summary-detail {
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-customer-collapsible-content {
+  margin-top: 14px;
+}
+.mi-agent-customer-quotation-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.mi-agent-customer-quotation {
+  --customer-quotation-border: #dbe5ea;
+  --customer-quotation-background: #fff;
+  --customer-quotation-color: #173b52;
+  overflow: hidden;
+  border: 1px solid var(--customer-quotation-border);
+  border-radius: 6px;
+  background: var(--customer-quotation-background);
+}
+.mi-agent-customer-quotation.is-draft,
+.mi-agent-customer-quotation.is-pending {
+  --customer-quotation-border: #f3d49a;
+  --customer-quotation-background: #fff6e5;
+  --customer-quotation-color: #7a4b00;
+}
+.mi-agent-customer-quotation.is-won,
+.mi-agent-customer-quotation.is-active {
+  --customer-quotation-border: #9fd7b4;
+  --customer-quotation-background: #e3f7ec;
+  --customer-quotation-color: #0b5e2a;
+}
+.mi-agent-customer-quotation.is-lost {
+  --customer-quotation-border: #f3c49c;
+  --customer-quotation-background: #fff0e4;
+  --customer-quotation-color: #8a3e00;
+}
+.mi-agent-customer-quotation.is-canceled {
+  --customer-quotation-border: #d7c2f4;
+  --customer-quotation-background: #f3ecff;
+  --customer-quotation-color: #5b3b83;
+}
+.mi-agent-customer-quotation.is-inactive {
+  --customer-quotation-border: #f5c2c2;
+  --customer-quotation-background: #fdeeee;
+  --customer-quotation-color: #7a1f1f;
+}
+.mi-agent-customer-quotation > summary {
+  color: var(--customer-quotation-color);
+  background: var(--customer-quotation-background);
+  padding: 12px;
+}
+.mi-agent-customer-quotation > summary .mi-agent-customer-collapsible-summary-copy > strong,
+.mi-agent-customer-quotation > summary .mi-agent-customer-collapsible-summary-detail,
+.mi-agent-customer-quotation > summary::after {
+  color: var(--customer-quotation-color);
+}
+.mi-agent-customer-quotation-opportunity {
+  margin: 0 12px 10px;
+}
+.mi-agent-customer-quotation-products {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0 12px 12px;
+  list-style: none;
+}
+.mi-agent-customer-quotation-products > li {
+  display: grid;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid #e7eef1;
+  color: #405c6c;
+  font-size: 13px;
+}
+.mi-agent-customer-quotation-products > li > strong {
+  color: #173b52;
+}
+.mi-agent-customer-quotation-products > li > small {
+  color: #6b7f8e;
+}
+.mi-agent-customer-next-step .mi-agent-customer-collapsible-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.mi-agent-customer-next-step .mi-agent-customer-collapsible-content p {
+  margin-top: 0;
+}
+.mi-agent-specialized-agents > .mi-agent-section-heading {
+  align-items: center;
+}
+.mi-agent-agent-safety-note {
+  padding: 6px 9px;
+  border: 1px solid #dbe5ea;
+  border-radius: 999px;
+  color: #536977;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mi-agent-specialized-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.mi-agent-specialized-agent {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+  background: #fff;
+}
+.mi-agent-specialized-agent-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mi-agent-specialized-agent-heading > strong {
+  color: #173b52;
+  font-size: 14px;
+}
+.mi-agent-agent-status {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #eaf8ef;
+  color: #0b5e2a;
+  font-size: 10px;
+  font-weight: 700;
+}
+.mi-agent-agent-status.is-skipped {
+  background: #fff6e5;
+  color: #7a4b00;
+}
+.mi-agent-agent-status.is-failed {
+  background: #fdeeee;
+  color: #7a1f1f;
+}
+.mi-agent-specialized-agent-summary {
+  margin: 0;
+  color: #253e50;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.mi-agent-agent-meta,
+.mi-agent-specialized-finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: #6b7f8e;
+  font-size: 11px;
+}
+.mi-agent-agent-meta > span + span::before {
+  margin-right: 12px;
+  color: #b6c5cc;
+  content: "·";
+}
+.mi-agent-specialized-findings {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 0 0;
+  border-top: 1px solid #e7eef1;
+  list-style: none;
+}
+.mi-agent-specialized-findings > li {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.mi-agent-specialized-finding-title {
+  color: #173b52;
+  font-size: 13px;
+}
+.mi-agent-specialized-finding-role {
+  color: #536977;
+}
+.mi-agent-specialized-finding-summary {
+  margin: 0;
+  color: #405c6c;
+  font-size: 13px;
+}
+.mi-agent-specialized-evidence {
+  padding-top: 2px;
+}
+.mi-agent-specialized-evidence > summary {
+  color: #176b87;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mi-agent-specialized-evidence > p {
+  margin: 7px 0 0;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .mi-agent-specialized-agents > .mi-agent-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 .mi-agent-customer-context-card {
-  align-items: end;
+  align-items: flex-start;
 }
 .mi-agent-customer-context-card label {
   display: grid;
@@ -77,12 +558,19 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  height: 38px;
   padding: 10px 12px;
   border: 1px solid #cbd9df;
   border-radius: 6px;
   background: #fff;
   color: #173b52;
   font: inherit;
+}
+@media (max-width: 900px) {
+  .mi-agent-customer-next-step .mi-agent-customer-collapsible-content {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 .mi-agent-customer-overview,
 .mi-agent-customer-history,

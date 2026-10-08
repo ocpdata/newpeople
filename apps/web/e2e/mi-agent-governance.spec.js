@@ -5,6 +5,7 @@ async function mockMiCoachApi(
   {
     canAdmin = false,
     withCustomerHealth = false,
+    withCustomerContactUpdate = false,
     withLeadRead = false,
     withCoachInterface = false,
     withCoachPendingOperations = true,
@@ -256,6 +257,7 @@ async function mockMiCoachApi(
           ...(withCustomerHealth
             ? ["inteligencia_comercial.read", "contactos.read"]
             : []),
+          ...(withCustomerContactUpdate ? ["contactos.update"] : []),
           ...(withLeadRead ? ["interacciones.read"] : []),
           ...(canAdmin ? ["mi_coach.admin"] : []),
         ],
@@ -756,7 +758,46 @@ async function mockMiCoachApi(
                 ]
               : [],
       );
-    if (pathname === "/api/contacts") return json([]);
+    if (pathname === "/api/contacts/601" && withCustomerHealth) {
+      return json({
+        id: 601,
+        account_id: 160,
+        first_name: "Ana",
+        last_name: "Compras",
+        full_name: "Ana Compras",
+        position_title: "Directora de compras",
+        purchase_participation: "decide_final",
+        hierarchy_level: "directivo",
+        relationship_type: "fuerte",
+        influence_level: "decide",
+        activation_status: "activado",
+      });
+    }
+    if (pathname === "/api/contacts") {
+      return json(
+        withCustomerHealth
+          ? [
+              {
+                id: 601,
+                account_id: 160,
+                first_name: "Ana",
+                last_name: "Compras",
+                full_name: "Ana Compras",
+                position_title: "Directora de compras",
+                purchase_participation: "decide_final",
+                hierarchy_level: "directivo",
+                relationship_type: "fuerte",
+                influence_level: "decide",
+                activation_status: "activado",
+              },
+            ]
+          : [],
+      );
+    }
+    if (pathname === "/api/catalogs/contact-accounts") {
+      return json([{ id: 160, name: "Cuenta Demo" }]);
+    }
+    if (pathname.startsWith("/api/catalogs/contact-")) return json([]);
     if (
       pathname === "/api/commercial-intelligence/account-intelligence/snapshot"
     ) {
@@ -957,7 +998,33 @@ async function mockMiCoachApi(
             summary: "Análisis interno listo.",
             writesPerformed: false,
           },
-          findings: [],
+          findings: withCustomerHealth
+            ? [
+                {
+                  id: 704,
+                  title: "Hallazgo interno redundante",
+                  summary: "Este detalle no debe mostrarse como tarjeta.",
+                  category: "need",
+                  status: "suggested",
+                  accountId: 160,
+                },
+              ]
+            : [],
+        },
+      });
+    }
+    if (
+      pathname === "/api/commercial-intelligence/findings/704/confirm" &&
+      method === "POST"
+    ) {
+      return json({
+        finding: {
+          id: 704,
+          title: "Hallazgo interno redundante",
+          summary: "Este detalle no debe mostrarse como tarjeta.",
+          category: "need",
+          status: "confirmed",
+          accountId: 160,
         },
       });
     }
@@ -2256,26 +2323,27 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(page.getByText("https://cuenta-demo.example")).toBeVisible();
     await expect(page.getByText("Revisión de renovación")).toBeVisible();
 
-    await expect(
-      page.getByRole("heading", { name: "Requiere atención" }),
-    ).toBeVisible();
+    const healthPanel = page.getByRole("region", {
+      name: "Salud de la cuenta",
+    });
+    await expect(healthPanel).toContainText("Requiere atención");
+    await healthPanel.locator(":scope > summary").click();
     await expect(page.getByText("55/100")).toBeVisible();
     await expect(
-      page
-        .getByRole("region", { name: "Salud de la cuenta" })
-        .getByText("Actividad comercial atrasada"),
+      healthPanel.getByText("Actividad comercial atrasada"),
     ).toBeVisible();
+    const nextStepPanel = page.getByRole("region", {
+      name: "Próximo paso sugerido",
+    });
+    await nextStepPanel.locator(":scope > summary").click();
+    await expect(nextStepPanel).toContainText("Evidencia:");
     await expect(
-      page.getByRole("region", { name: "Próximo paso sugerido" }),
-    ).toContainText("Evidencia:");
-    await expect(
-      page
-        .getByRole("region", { name: "Próximo paso sugerido" })
-        .getByRole("button", { name: "Preparar seguimiento" }),
+      nextStepPanel.getByRole("button", { name: "Preparar seguimiento" }),
     ).toBeVisible();
     const history = page.getByRole("region", {
       name: "Historial comercial de la cuenta",
     });
+    await history.locator(":scope > summary").click();
     await expect(history.getByText("Proyecto abierto")).toBeVisible();
     await expect(history.getByText("Renovación ganada")).toBeVisible();
     await expect(history.getByText("Proyecto perdido")).toBeVisible();
@@ -2285,38 +2353,68 @@ test.describe("Mi Coach governance and workspaces", () => {
     const relationshipMap = page.getByRole("region", {
       name: "Mapa de relaciones de la cuenta",
     });
+    await relationshipMap.locator(":scope > summary").click();
+    await expect(
+      relationshipMap.getByRole("button", {
+        name: "Editar en Mapeo de contactos",
+      }),
+    ).toHaveCount(0);
     await expect(relationshipMap.getByText("Ana Compras")).toBeVisible();
     await expect(relationshipMap.getByText("decide_final")).toBeVisible();
     await expect(
       relationshipMap.getByText(/Falta: relación con otros contactos/),
     ).toBeVisible();
-    await expect(
-      page
-        .getByRole("region", { name: "Productos y renovaciones" })
-        .locator("li")
-        .filter({ hasText: "Servicio WAAP" }),
-    ).toBeVisible();
     const productsPanel = page.getByRole("region", {
       name: "Productos y renovaciones",
     });
+    await productsPanel.locator(":scope > summary").click();
+    await expect(productsPanel.getByText("Cotización 901")).toBeVisible();
+    await expect(productsPanel.getByText("Cotización 903")).toBeVisible();
+    await expect(productsPanel).toContainText("2 cotizaciones · 2 productos · 1 renovación");
+    const firstQuotation = productsPanel.getByLabel("Cotización 901");
+    await expect(firstQuotation).toContainText("Ganada");
+    await expect(firstQuotation).toHaveClass(/is-won/);
+    await expect(productsPanel.getByText("Servicio WAAP")).not.toBeVisible();
+    await expect(productsPanel.getByText("Firewall Perimetral")).not.toBeVisible();
+    await productsPanel.getByText("Cotización 901").click();
+    await expect(
+      productsPanel
+        .locator("li")
+        .filter({ hasText: "Servicio WAAP" }),
+    ).toBeVisible();
+    await expect(
+      firstQuotation.getByRole("button", {
+        name: "Abrir oportunidad asociada",
+      }),
+    ).toHaveCount(1);
+    await expect(
+      firstQuotation
+        .locator("li")
+        .getByRole("button", { name: "Abrir oportunidad asociada" }),
+    ).toHaveCount(0);
+    await expect(productsPanel.getByText("Firewall Perimetral")).not.toBeVisible();
+    await productsPanel.getByText("Cotización 903").click();
+    await expect(productsPanel.getByText("Firewall Perimetral")).toBeVisible();
+    await expect(
+      productsPanel
+        .getByLabel("Cotización 903")
+        .getByRole("button", { name: "Abrir oportunidad asociada" }),
+    ).toHaveCount(1);
     await expect(
       productsPanel.getByText("Compra/entrega: no verificada").first(),
     ).toBeVisible();
     await expect(
-      productsPanel
-        .getByRole("button", {
-          name: "Abrir oportunidad asociada",
-        })
-        .first(),
-    ).toBeVisible();
-    await expect(
       productsPanel.getByText(/no confirma por sí sola compra/),
     ).toBeVisible();
+    const hypothesesPanel = page.getByRole("region", {
+      name: "Hipótesis de expansión",
+    });
+    await hypothesesPanel.locator(":scope > summary").click();
     await expect(
-      productsPanel.getByText("Preparar renovación de Proveedor Demo"),
+      hypothesesPanel.getByText("Explorar solución complementaria: Seguridad"),
     ).toBeVisible();
     await expect(
-      page.getByText("Explorar solución complementaria: Seguridad"),
+      hypothesesPanel.getByText("Preparar renovación de Proveedor Demo"),
     ).toBeVisible();
     await expect(page.getByText("Hipótesis · cross_sell")).toBeVisible();
     await expect(
@@ -2331,30 +2429,136 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByRole("button", { name: "Preparar llamada" }),
     ).toBeVisible();
+    const analysisResult = page.getByRole("region", {
+      name: "Hallazgos y métricas",
+    });
+    const analysisOperation = page.getByRole("region", {
+      name: "Analizar cuenta",
+    });
+    const agentsOperation = page.getByRole("region", {
+      name: "Enriquecer con fuentes públicas",
+    });
+    const executiveOperation = page.getByRole("region", {
+      name: "Preparar resumen ejecutivo",
+    });
+    const callOperation = page.getByRole("region", {
+      name: "Preparar llamada",
+    });
+    const analysisOperationBox = await analysisOperation.boundingBox();
+    const analysisIntroBox = await analysisOperation
+      .locator(".mi-agent-customer-analysis-intro")
+      .boundingBox();
+    const analysisResultBox = await analysisResult.boundingBox();
+    expect(analysisOperationBox).not.toBeNull();
+    expect(analysisIntroBox).not.toBeNull();
+    expect(analysisResultBox).not.toBeNull();
+    const analysisButtonBox = await analysisOperation
+      .getByRole("button", { name: "Analizar cuenta" })
+      .boundingBox();
+    expect(analysisButtonBox).not.toBeNull();
+    expect(analysisIntroBox.x).toBeGreaterThan(
+      analysisButtonBox.x + analysisButtonBox.width,
+    );
+    expect(analysisResultBox.width).toBeGreaterThan(
+      analysisOperationBox.width * 0.9,
+    );
+    await expect(
+      analysisOperation.getByRole("button", { name: "Analizar cuenta" }),
+    ).toBeVisible();
+    await expect(analysisOperation.getByRole("region", {
+      name: "Hallazgos y métricas",
+    })).toBeVisible();
+    expect(analysisResultBox.y).toBeGreaterThan(
+      analysisButtonBox.y + analysisButtonBox.height - 1,
+    );
+    const agentsResult = page.getByRole("region", {
+      name: "Detalle de agentes",
+      exact: true,
+    });
+    const executiveResult = page.getByRole("region", {
+      name: "Ver síntesis y acciones",
+      exact: true,
+    });
+    const callResult = page.getByRole("region", {
+      name: "Ver preguntas y próximos pasos",
+      exact: true,
+    });
+    for (const result of [
+      analysisResult,
+      agentsResult,
+      executiveResult,
+      callResult,
+    ]) {
+      await expect(result).toHaveJSProperty("open", false);
+    }
+    for (const operation of [
+      analysisOperation,
+      agentsOperation,
+      executiveOperation,
+      callOperation,
+    ]) {
+      await expect(operation).toContainText("Sin ejecutar");
+    }
     await page.getByRole("button", { name: "Analizar cuenta" }).click();
-    await expect(page.getByText("Análisis interno listo.")).toBeVisible();
+    const analysisSummary = analysisOperation.locator(
+      ".mi-agent-customer-analysis-summary",
+    );
+    await expect(analysisResult).toBeVisible();
+    await expect(analysisResult).toHaveJSProperty("open", true);
+    await expect(analysisSummary).toBeInViewport();
+    await expect(analysisOperation.getByText("Listo", { exact: true })).toHaveCount(1);
+    await expect(
+      page.getByText("Hallazgo interno redundante", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      analysisResult.getByRole("button", { name: "Confirmar" }),
+    ).toHaveCount(0);
+    await expect(
+      analysisResult.getByRole("button", { name: "Rechazar" }),
+    ).toHaveCount(0);
+    await analysisResult.locator(":scope > summary").click();
+    await expect(analysisSummary).toBeVisible();
+    await expect(
+      page.getByText("Hallazgo interno redundante", { exact: true }),
+    ).not.toBeVisible();
+    await analysisResult.locator(":scope > summary").click();
     await page
       .getByRole("button", { name: "Preparar resumen ejecutivo" })
       .click();
+    await expect(executiveResult).toBeVisible();
+    await expect(executiveResult).toHaveJSProperty("open", true);
+    await expect(analysisResult).toHaveJSProperty("open", false);
+    await expect(executiveOperation).toContainText("Salud 55/100 · 1 riesgos");
     await expect(
-      page.getByRole("heading", { name: "Resumen ejecutivo de Cuenta Demo" }),
+      executiveResult.getByRole("heading", {
+        name: "Resumen ejecutivo de Cuenta Demo",
+      }),
     ).toBeVisible();
     await expect(
       page.getByText("Contactar al cliente esta semana"),
     ).toBeVisible();
     await page.getByRole("button", { name: "Preparar llamada" }).click();
+    await expect(callResult).toBeVisible();
+    await expect(callResult).toHaveJSProperty("open", true);
+    await expect(executiveResult).toHaveJSProperty("open", false);
     await expect(
-      page.getByRole("heading", { name: "Briefing de llamada" }),
+      callResult.getByRole("heading", { name: "Briefing de llamada" }),
     ).toBeVisible();
     await page
       .getByRole("button", { name: "Enriquecer con fuentes públicas" })
       .click();
+    await expect(agentsResult).toBeVisible();
+    await expect(agentsResult).toHaveJSProperty("open", true);
+    await expect(callResult).toHaveJSProperty("open", false);
+    await expect(agentsOperation).toContainText("3 agentes · 1 hallazgo");
     await expect(
-      page.getByRole("heading", { name: "Agentes especializados" }),
+      agentsResult.getByRole("heading", { name: "Agentes especializados" }),
     ).toBeVisible();
+    await expect(page.getByText("Contexto CRM", { exact: true })).toBeVisible();
+    await expect(page.getByText("crm_context", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Contexto CRM disponible.")).toBeVisible();
     await expect(
-      page.getByText("CRM interno + investigación pública"),
+      page.getByText("Fuentes CRM y públicas"),
     ).toBeVisible();
     await expect(
       page.getByText("Proyecto de modernización anunciado"),
@@ -2384,6 +2588,39 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(page.getByLabel("Alcance actual del Coach")).toContainText(
       "Ámbito general del vendedor",
     );
+  });
+
+  test("abre el contacto seleccionado en Mapeo de contactos para editarlo", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withCustomerContactUpdate: true,
+    });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Cliente existente" }).click();
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const relationshipMap = page.getByRole("region", {
+      name: "Mapa de relaciones de la cuenta",
+    });
+    await relationshipMap.locator(":scope > summary").click();
+    const contactResponsePromise = page.waitForResponse((response) =>
+      response.url().includes("/api/contacts/601"),
+    );
+    await relationshipMap
+      .getByRole("button", { name: "Editar en Mapeo de contactos" })
+      .click();
+    const contactResponse = await contactResponsePromise;
+
+    await expect(page).toHaveURL(
+      /\/contact-mapping\?accountId=160&contactId=601$/,
+    );
+    expect(contactResponse.status()).toBe(200);
+    await expect(
+      page.getByRole("heading", { name: "Editar contacto" }),
+    ).toBeVisible();
+    await expect(page.getByTitle("ID del contacto")).toHaveText("#601");
+    await expect(page.getByLabel("Cuenta", { exact: true })).toHaveValue("160");
   });
 
   test("restaura diagnóstico estructurado y operaciones accionables", async ({

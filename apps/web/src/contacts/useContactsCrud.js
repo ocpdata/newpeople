@@ -133,6 +133,7 @@ export function useContactsCrud({
   setSearchParams,
 }) {
   const [contacts, setContacts] = useState([]);
+  const [contactsLoaded, setContactsLoaded] = useState(false);
   const [contactsPendingEnabled, setContactsPendingEnabled] = useState(false);
   const [contactStatusFilter, setContactStatusFilterState] =
     usePersistedStatusFilter("crm.contacts.statusFilter");
@@ -888,6 +889,8 @@ export function useContactsCrud({
         if (!cancelled) {
           setError(getApiErrorMessage(err, "No fue posible cargar contactos"));
         }
+      } finally {
+        if (!cancelled) setContactsLoaded(true);
       }
     }
 
@@ -915,9 +918,11 @@ export function useContactsCrud({
     let cancelled = false;
 
     async function syncEditParam() {
-      setSearchParams({}, { replace: true });
-      if (cancelled) return;
       await openEditContactModalRef.current?.(Number(editId));
+      if (cancelled) return;
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete("edit");
+      setSearchParams(nextSearchParams, { replace: true });
     }
 
     void syncEditParam();
@@ -960,6 +965,7 @@ export function useContactsCrud({
 
   return {
     contacts,
+    contactsLoaded,
     load,
     contactStatusFilter,
     setContactStatusFilter,

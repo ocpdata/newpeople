@@ -473,6 +473,7 @@ export default function ContactMappingPage({ currentUser }) {
   const appliedCoachHandoffRef = useRef("");
   const {
     contacts,
+    contactsLoaded,
     showContactModal,
     editingContactId,
     editContactAudit,
@@ -684,7 +685,7 @@ export default function ContactMappingPage({ currentUser }) {
   }, [helpRef, selectedAccountId]);
 
   useEffect(() => {
-    if (!selectedAccountId) return;
+    if (!selectedAccountId || !contactsLoaded) return;
     if (selectedContact) return;
 
     if (accountContacts.length === 0) {
@@ -703,6 +704,7 @@ export default function ContactMappingPage({ currentUser }) {
     setSearchParams(next, { replace: true });
   }, [
     selectedAccountId,
+    contactsLoaded,
     selectedContact,
     accountContacts,
     orgChartLayout.positionedNodes,
