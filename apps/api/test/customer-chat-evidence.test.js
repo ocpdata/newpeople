@@ -23,6 +23,7 @@ describe("Customer Existing evidence loop", () => {
         { toolName: "searchInteractions", result: [{ id: 25 }] },
       ],
     });
+    const traceEvents = [];
 
     const result = await runCustomerEvidenceLoop({
       initialReadToolResults: [
@@ -30,6 +31,7 @@ describe("Customer Existing evidence loop", () => {
       ],
       assessEvidence,
       fetchAdditionalEvidence,
+      onTraceEvent: (event) => traceEvents.push(event),
     });
 
     expect(result).toMatchObject({
@@ -49,6 +51,24 @@ describe("Customer Existing evidence loop", () => {
       }),
     );
     expect(assessEvidence).toHaveBeenCalledTimes(2);
+    expect(traceEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from: "B9",
+          to: "B7",
+          phase: "call",
+          status: "started",
+          round: 0,
+        }),
+        expect.objectContaining({
+          from: "B7",
+          to: "B9",
+          phase: "return",
+          status: "completed",
+          round: 0,
+        }),
+      ]),
+    );
   });
 
   it("never reports a failed read as a valid empty result", async () => {
@@ -141,12 +161,14 @@ describe("Customer Existing evidence loop", () => {
 
   it("stops immediately for a clarification and does not fetch tools", async () => {
     const fetchAdditionalEvidence = vi.fn();
+    const traceEvents = [];
     const result = await runCustomerEvidenceLoop({
       assessEvidence: async () => ({
         status: "clarification",
         clarificationQuestion: "¿Cuál de las dos oportunidades?",
       }),
       fetchAdditionalEvidence,
+      onTraceEvent: (event) => traceEvents.push(event),
     });
 
     expect(result).toMatchObject({
@@ -154,6 +176,9 @@ describe("Customer Existing evidence loop", () => {
       clarificationQuestion: "¿Cuál de las dos oportunidades?",
     });
     expect(fetchAdditionalEvidence).not.toHaveBeenCalled();
+    expect(
+      traceEvents.some((event) => event.from === "B9" && event.to === "B7"),
+    ).toBe(false);
   });
 
   it("honors the maximum evidence rounds", async () => {

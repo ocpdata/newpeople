@@ -2939,7 +2939,120 @@ describe("API integration baseline", () => {
       },
     });
     const debugFlow = accountChatJob.body.job.result.debug.flow;
+    const executionTrace = accountChatJob.body.job.result.debug.executionTrace;
+    expect(executionTrace).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from: "B3",
+          to: "B4",
+          phase: "call",
+          status: "started",
+          input: expect.objectContaining({
+            validatedConversationContext: expect.objectContaining({
+              accountId,
+              version: 1,
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          from: "B4",
+          to: "B5",
+          phase: "call",
+          status: "started",
+          input: expect.objectContaining({
+            conversationContext: expect.objectContaining({ accountId }),
+            policy: expect.objectContaining({
+              businessScope: expect.any(Object),
+              operationKinds: expect.any(Array),
+              availableTools: expect.any(Array),
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          from: "B11",
+          to: "B3",
+          phase: "return",
+          status: "completed",
+          durationMs: expect.any(Number),
+        }),
+      ]),
+    );
+    const adapterSpan = executionTrace.find(
+      (event) => event.from === "B3" && event.to === "B4" && event.phase === "call",
+    );
+    const engineSpan = executionTrace.find(
+      (event) => event.from === "B4" && event.to === "B5" && event.phase === "call",
+    );
+    expect(engineSpan.parentSpanId).toBe(adapterSpan.spanId);
+    const plannerSpan = executionTrace.find(
+      (event) => event.from === "B5" && event.to === "B6" && event.phase === "call",
+    );
+    expect(plannerSpan.input).toEqual(
+      expect.objectContaining({
+        intentCodes: expect.any(Array),
+        context: expect.objectContaining({ accountId }),
+        policy: expect.objectContaining({ availableTools: expect.any(Array) }),
+      }),
+    );
+    expect(executionTrace).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          from: "B5",
+          to: "B5",
+          label: "Validar routing y aplicar políticas",
+          phase: "return",
+          output: expect.objectContaining({
+            accepted: expect.any(Boolean),
+            rejectedIntents: expect.any(Array),
+            rejectedTools: expect.any(Array),
+          }),
+        }),
+        expect.objectContaining({
+          from: "B5",
+          to: "B7",
+          phase: "call",
+          status: "started",
+          input: expect.objectContaining({
+            validatedRouting: expect.anything(),
+            policy: expect.objectContaining({ availableTools: expect.any(Array) }),
+          }),
+        }),
+        expect.objectContaining({
+          from: "B7",
+          to: "B8",
+          phase: "call",
+          status: "started",
+        }),
+        expect.objectContaining({
+          from: "B9",
+          to: "evidence_assessment",
+          phase: "call",
+          status: "started",
+        }),
+      ]),
+    );
+    expect(JSON.stringify(executionTrace)).not.toContain(
+      "Resume esta cuenta para mi reunión",
+    );
     expect(debugFlow).toHaveLength(11);
+    expect(debugFlow).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          block: "B1",
+          input: expect.objectContaining({ accountId }),
+        }),
+        expect.objectContaining({
+          block: "B2",
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              field: "jobAccepted",
+              state: "pass",
+              actual: true,
+            }),
+          ]),
+        }),
+      ]),
+    );
     expect(accountChatJob.body.job.result.debug.flowEdges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

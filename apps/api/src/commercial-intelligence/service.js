@@ -17,6 +17,7 @@ import {
   buildCustomerConversationContext,
   validateCustomerConversationContext,
 } from "./conversation-context.js";
+import { createTurnExecutionTrace } from "./turn-execution-trace.js";
 import {
   getCustomerActivityHistoryRange,
   getCustomerActivityHistoryRangeFromFilters,
@@ -2899,6 +2900,21 @@ export async function createCustomerAccountChatJob({ user, payload }) {
 }
 
 export async function processCustomerAccountChatJob({ jobId, user }) {
+  const executionTrace = createTurnExecutionTrace({
+    enabled: config.nodeEnv !== "production",
+  });
+  const workerSpanId = `account-chat-worker-${Number(jobId)}`;
+  const workerStartedAt = Date.now();
+  executionTrace.record({
+    spanId: workerSpanId,
+    lane: "worker",
+    from: "B2",
+    to: "B3",
+    label: "Despachar job al worker",
+    phase: "call",
+    status: "started",
+    input: { jobId: Number(jobId) },
+  });
   const rows = await query(
     `SELECT * FROM customer_intelligence_jobs WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat' LIMIT 1`,
     [Number(jobId), Number(user.id)],
@@ -2959,18 +2975,36 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         persistedConversationContext?.intents?.includes("contact_history"),
       );
     preparationStage = "snapshot";
-    snapshot = await buildAuthorizedCustomerSnapshot({
-      user,
-      accountId: job.account_id,
-      opportunityId: job.opportunity_id,
-      contactId: job.contact_id,
-      activityHistoryStartDate: activityHistoryRange?.startDate || null,
-      activityHistoryEndDate: activityHistoryRange?.endDate || null,
-      includeContactHistory,
-      includeProviderCatalog: shouldLoadProviderCatalogForQuestion(
-        request.question,
-      ),
-    });
+    snapshot = await executionTrace.span(
+      {
+        from: "B3",
+        to: "snapshot",
+        label: "Autorizar contexto y construir snapshot",
+        parentSpanId: workerSpanId,
+        input: {
+          accountId: Number(job.account_id || 0) || null,
+          opportunityId: Number(job.opportunity_id || 0) || null,
+          contactId: Number(job.contact_id || 0) || null,
+        },
+      },
+      () =>
+        buildAuthorizedCustomerSnapshot({
+          user,
+          accountId: job.account_id,
+          opportunityId: job.opportunity_id,
+          contactId: job.contact_id,
+          activityHistoryStartDate: activityHistoryRange?.startDate || null,
+          activityHistoryEndDate: activityHistoryRange?.endDate || null,
+          includeContactHistory,
+          includeProviderCatalog: shouldLoadProviderCatalogForQuestion(
+            request.question,
+          ),
+        }),
+      (value) => ({
+        accountId: value.account?.id || null,
+        snapshotMetrics: getCustomerSnapshotQueryMetrics(value),
+      }),
+    );
     conversationContext = validateCustomerConversationContext(
       persistedConversationContext,
       snapshot,
@@ -2979,11 +3013,32 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     nextConversationContext = conversationContext;
     continuationContext = conversationContext;
     preparationStage = "agents";
-    agents = await runAccountIntelligenceAgents(snapshot, {
-      includePublicResearch: Boolean(request.includePublicResearch),
-      user,
-      jobId,
-    });
+    agents = await executionTrace.span(
+      {
+        from: "B3",
+        to: "agents",
+        label: "Preparar agentes de inteligencia",
+        parentSpanId: workerSpanId,
+        input: {
+          includePublicResearch: Boolean(request.includePublicResearch),
+          accountId: snapshot.account?.id || null,
+        },
+      },
+      () =>
+        runAccountIntelligenceAgents(snapshot, {
+          includePublicResearch: Boolean(request.includePublicResearch),
+          user,
+          jobId,
+        }),
+      (value) =>
+        (Array.isArray(value) ? value : []).map((agent) => ({
+          agentId: agent.agentId,
+          status: agent.status,
+          evidenceCount: Array.isArray(agent.evidence)
+            ? agent.evidence.length
+            : 0,
+        })),
+    );
   } catch (error) {
     await recordCoachTurnQualityTrace({
       channel: "customer_account",
@@ -3028,13 +3083,53 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         errorCode: "chat_preparation_failed",
       },
     }).catch(() => undefined);
+    executionTrace.record({
+      spanId: workerSpanId,
+      lane: "worker",
+      from: "B3",
+      to: "B2",
+      label: "Retornar fallo de preparación",
+      phase: "return",
+      status: "failed",
+      durationMs: Math.max(0, Date.now() - workerStartedAt),
+      errorCode: String(error?.code || error?.name || "chat_preparation_failed").slice(
+        0,
+        80,
+      ),
+    });
+    const preparationError = clip(
+      error?.message || "No fue posible preparar el chat de cuenta",
+      1000,
+    );
+    const preparationDebug = {
+      architecture: "account_chat_v1",
+      issue: {
+        severity: "error",
+        title: "Falló la preparación del turno",
+        block: "B3",
+        message: preparationError,
+        nextAction: `Revisa la etapa ${preparationStage} y el span fallido de B3.`,
+      },
+      flow: [],
+      flowEdges: [],
+      executionTrace: executionTrace.snapshot(),
+      currentTurn: {
+        jobId: Number(jobId),
+        chatSessionId: Number(request?.chatSessionId || 0) || null,
+        accountId: Number(job.account_id || 0) || null,
+        questionLength: String(request?.question || "").length,
+        diagnostics: { failureStage: preparationStage },
+      },
+      nextTurn: null,
+    };
     await query(
-      `UPDATE customer_intelligence_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ?`,
+      `UPDATE customer_intelligence_jobs
+       SET status = 'failed', error_message = ?, result_json = ?,
+           updated_at = NOW(3), finished_at = NOW(3)
+       WHERE id = ?`,
       [
-        clip(
-          error?.message || "No fue posible preparar el chat de cuenta",
-          1000,
-        ),
+        preparationError,
+        JSON.stringify({ debug: preparationDebug }),
         Number(jobId),
       ],
     ).catch(() => undefined);
@@ -3066,26 +3161,59 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     snapshotQueryMetrics: getCustomerSnapshotQueryMetrics(snapshot),
     agents,
     jobId,
+    executionTrace,
+    traceParentSpanId: workerSpanId,
   });
   let response;
   let qualityTrace;
   let engineResult;
   try {
-    engineResult = await adapter.runTurn({
-      question: request.question,
-      history: conversationHistory,
-      context: {
-        accountId: snapshot.account?.id || null,
-        opportunityId:
-          Number(job.opportunity_id || 0) ||
-          snapshot.selectedOpportunity?.id ||
-          null,
-        contactId:
-          Number(job.contact_id || 0) || snapshot.selectedContact?.id || null,
-        leadId: null,
+    engineResult = await executionTrace.span(
+      {
+        from: "B3",
+        to: "B4",
+        label: "Delegar turno al adaptador",
+        parentSpanId: workerSpanId,
+        input: {
+          channel: "customer_account",
+          accountId: snapshot.account?.id || null,
+          historyMessageCount: conversationHistory.length,
+          questionLength: String(request.question || "").length,
+          agentCount: agents.length,
+          validatedConversationContext: {
+            version: continuationContext?.version || null,
+            accountId: continuationContext?.accountId || null,
+            opportunityId: continuationContext?.opportunityId || null,
+            contactId: continuationContext?.contactId || null,
+            intents: continuationContext?.intents || [],
+            filterNames: Object.keys(continuationContext?.filters || {}),
+          },
+        },
       },
-      conversationContext: continuationContext,
-    });
+      ({ spanId }) =>
+        adapter.runTurn({
+          question: request.question,
+          history: conversationHistory,
+          context: {
+            accountId: snapshot.account?.id || null,
+            opportunityId:
+              Number(job.opportunity_id || 0) ||
+              snapshot.selectedOpportunity?.id ||
+              null,
+            contactId:
+              Number(job.contact_id || 0) || snapshot.selectedContact?.id || null,
+            leadId: null,
+          },
+          conversationContext: continuationContext,
+          traceParentSpanId: spanId,
+        }),
+      (value) => ({
+        channel: "customer_account",
+        responseType: value.response?.responseType || null,
+        answerLength: String(value.response?.answer || "").length,
+        toolCount: value.qualityTrace?.toolsUsed?.length || 0,
+      }),
+    );
     response = engineResult.response;
     qualityTrace = engineResult.qualityTrace;
     response = {
@@ -3264,7 +3392,26 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     return null;
   });
   if (qualityTraceId) response.qualityTraceId = qualityTraceId;
-  await withTransaction(async (conn) => {
+  const persistenceSpanId = `account-chat-persist-${Number(jobId)}`;
+  const persistenceStartedAt = Date.now();
+  executionTrace.record({
+    spanId: persistenceSpanId,
+    parentSpanId: workerSpanId,
+    lane: "worker",
+    from: "B3",
+    to: "B11",
+    label: "Persistir resultado e historial",
+    phase: "call",
+    status: "started",
+    input: {
+      jobId: Number(jobId),
+      chatSessionId: Number(request.chatSessionId || 0),
+      answerLength: String(response.answer || "").length,
+    },
+  });
+  let persistedHistoryForTrace = null;
+  try {
+    await withTransaction(async (conn) => {
     const [sessionRows] = await conn.query(
       `SELECT history_json, context_json FROM customer_intelligence_chat_sessions
        WHERE id = ? AND requested_by_user_id = ?
@@ -3287,6 +3434,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       response.answer,
       { activityHistory: response.activityHistory },
     );
+    persistedHistoryForTrace = nextHistory;
     const persistedConversationContext =
       nextConversationContext || parseJson(sessionRows[0].context_json, null);
     if (config.nodeEnv !== "production") {
@@ -3297,6 +3445,16 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         : [];
       const evidenceStatus = evidenceDiagnostics?.status || null;
       const fallbackUsed = Boolean(qualityTrace?.diagnostics?.fallback?.used);
+      const plannerReturnEvent = executionTrace.events.find(
+        (event) =>
+          event.label === "Solicitar plan estructurado" &&
+          event.phase === "return",
+      );
+      const routingValidationEvent = executionTrace.events.find(
+        (event) =>
+          event.label === "Validar routing y aplicar políticas" &&
+          event.phase === "return",
+      );
       const engineInputSummary = {
         channel: adapter.channel,
         jobId: Number(jobId),
@@ -3408,13 +3566,17 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       }
       response.debug = {
         architecture: "account_chat_v1",
+        executionTrace: executionTrace.snapshot(),
         issue,
         flow: [
           {
             block: "B1",
             label: "Chat web",
             status: "completed",
-            input: { question: request.question },
+            input: {
+              accountId: Number(request.accountId || 0) || null,
+              question: request.question,
+            },
             output: { forwardedToApi: true },
             checks: [
               diagnosticCheck({
@@ -3461,6 +3623,16 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                   Number(request.chatSessionId) > 0
                     ? "El job está asociado a una sesión."
                     : "El job debería estar asociado a una sesión.",
+              }),
+              diagnosticCheck({
+                field: "jobAccepted",
+                state: Number(jobId) > 0 ? "pass" : "error",
+                expected: "job aceptado para procesamiento",
+                actual: Number(jobId) > 0 ? true : null,
+                message:
+                  Number(jobId) > 0
+                    ? "B2 aceptó el job; pending es el estado inicial esperado mientras B1 consulta el resultado."
+                    : "B2 no confirmó la creación del job.",
               }),
             ],
           },
@@ -3639,6 +3811,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
             input: qualityTrace?.diagnostics?.plannerInput || null,
             output: {
               diagnostics: plannerDiagnostics,
+              proposedPlan: plannerReturnEvent?.output?.proposedRouting || null,
+              routingValidation: routingValidationEvent?.output || null,
               normalizedPlan: response.channelIntentRouting || null,
             },
             checks: [
@@ -3679,6 +3853,46 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
             status: evidenceDiagnostics ? "completed" : "not_reached",
             input: {
               plannedTools: plannerDiagnostics?.evaluation?.plannerTools || [],
+              validatedRouting: response.channelIntentRouting
+                ? {
+                    intents: response.channelIntentRouting.intents || [],
+                    intent: response.channelIntentRouting.intent || null,
+                    allowedTools:
+                      response.channelIntentRouting.allowedTools || [],
+                    referenceResolution: response.channelIntentRouting
+                      .referenceResolution
+                      ? {
+                          targetType:
+                            response.channelIntentRouting.referenceResolution
+                              .targetType || null,
+                          cardinality:
+                            response.channelIntentRouting.referenceResolution
+                              .cardinality || null,
+                          source:
+                            response.channelIntentRouting.referenceResolution
+                              .source || null,
+                        }
+                      : null,
+                    filters: Object.fromEntries(
+                      Object.entries(
+                        response.channelIntentRouting.filters || {},
+                      ).filter(([key]) =>
+                        [
+                          "opportunityStatus",
+                          "stageCode",
+                          "closeYear",
+                          "periodMonths",
+                          "startDate",
+                          "endDate",
+                        ].includes(key),
+                      ),
+                    ),
+                    requiresClarification: Boolean(
+                      response.channelIntentRouting.requiresClarification,
+                    ),
+                  }
+                : null,
+              policy: engineInputSummary.policy,
             },
             output: {
               availableSources: getCustomerSnapshotQueryMetrics(snapshot).map(
@@ -3921,6 +4135,50 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         Number(user.id),
       ],
     );
+    if (config.nodeEnv !== "production" && response.debug) {
+      executionTrace.record({
+        spanId: persistenceSpanId,
+        parentSpanId: workerSpanId,
+        lane: "worker",
+        from: "B11",
+        to: "B3",
+        label: "Retorno de persistencia",
+        phase: "return",
+        status: "completed",
+        durationMs: Math.max(0, Date.now() - persistenceStartedAt),
+        output: {
+          jobStatus: "completed",
+          historyMessageCount: persistedHistoryForTrace?.length || 0,
+        },
+      });
+      executionTrace.record({
+        spanId: workerSpanId,
+        lane: "worker",
+        from: "B3",
+        to: "B2",
+        label: "Retornar resultado del worker",
+        phase: "return",
+        status: "completed",
+        durationMs: Math.max(0, Date.now() - workerStartedAt),
+        output: { jobStatus: "completed" },
+      });
+      response.debug.executionTrace = executionTrace.snapshot();
+      const latestAssistantMessage =
+        persistedHistoryForTrace?.[persistedHistoryForTrace.length - 1];
+      if (latestAssistantMessage?.role === "assistant") {
+        latestAssistantMessage.turnDebug = response.debug;
+      }
+      await conn.query(
+        `UPDATE customer_intelligence_chat_sessions
+         SET history_json = ?, updated_at = NOW(3)
+         WHERE id = ? AND requested_by_user_id = ?`,
+        [
+          JSON.stringify(persistedHistoryForTrace),
+          Number(request.chatSessionId),
+          Number(user.id),
+        ],
+      );
+    }
     await conn.query(
       `UPDATE customer_intelligence_jobs
        SET status = 'completed', result_json = ?, updated_at = NOW(3),
@@ -3928,7 +4186,103 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
        WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'`,
       [JSON.stringify(response), Number(jobId), Number(user.id)],
     );
-  });
+    });
+  } catch (error) {
+    const persistenceError = clip(
+      error?.message || "No fue posible guardar el resultado del chat",
+      1000,
+    );
+    const persistenceReturnEvent = executionTrace.events.find(
+      (event) =>
+        event.spanId === persistenceSpanId && event.phase === "return",
+    );
+    if (persistenceReturnEvent) {
+      Object.assign(persistenceReturnEvent, {
+        at: new Date().toISOString(),
+        status: "failed",
+        durationMs: Math.max(0, Date.now() - persistenceStartedAt),
+        errorCode: String(
+          error?.code || error?.name || "persistence_failed",
+        ).slice(0, 80),
+      });
+    } else {
+      executionTrace.record({
+        spanId: persistenceSpanId,
+        parentSpanId: workerSpanId,
+        lane: "worker",
+        from: "B11",
+        to: "B3",
+        label: "Retorno de persistencia",
+        phase: "return",
+        status: "failed",
+        durationMs: Math.max(0, Date.now() - persistenceStartedAt),
+        errorCode: String(
+          error?.code || error?.name || "persistence_failed",
+        ).slice(0, 80),
+      });
+    }
+    const workerReturnEvent = executionTrace.events.find(
+      (event) => event.spanId === workerSpanId && event.phase === "return",
+    );
+    const workerErrorCode = String(
+      error?.code || error?.name || "persistence_failed",
+    ).slice(0, 80);
+    if (workerReturnEvent) {
+      Object.assign(workerReturnEvent, {
+        at: new Date().toISOString(),
+        label: "Retornar fallo del worker",
+        status: "failed",
+        durationMs: Math.max(0, Date.now() - workerStartedAt),
+        errorCode: workerErrorCode,
+      });
+    } else {
+      executionTrace.record({
+        spanId: workerSpanId,
+        lane: "worker",
+        from: "B3",
+        to: "B2",
+        label: "Retornar fallo del worker",
+        phase: "return",
+        status: "failed",
+        durationMs: Math.max(0, Date.now() - workerStartedAt),
+        errorCode: workerErrorCode,
+      });
+    }
+    const failureDebug = {
+      ...(response.debug || {}),
+      architecture: "account_chat_v1",
+      issue: {
+        severity: "error",
+        title: "Falló la persistencia del turno",
+        block: "B11",
+        message: persistenceError,
+        nextAction: "Revisa la transacción de historial y resultado del job.",
+      },
+      executionTrace: executionTrace.snapshot(),
+      currentTurn: {
+        jobId: Number(jobId),
+        chatSessionId: Number(request.chatSessionId || 0) || null,
+        accountId: Number(job.account_id || 0) || null,
+        questionLength: String(request.question || "").length,
+      },
+      nextTurn: null,
+    };
+    await query(
+      `UPDATE customer_intelligence_jobs
+       SET status = 'failed', error_message = ?, result_json = ?,
+           updated_at = NOW(3), finished_at = NOW(3)
+       WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'`,
+      [
+        persistenceError,
+        config.nodeEnv === "production"
+          ? null
+          : JSON.stringify({ debug: failureDebug }),
+        Number(jobId),
+        Number(user.id),
+      ],
+    ).catch(() => undefined);
+    return null;
+  }
   return {
     ...mapJobRow({
       ...job,

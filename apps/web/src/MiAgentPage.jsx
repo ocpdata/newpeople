@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
+import { validateCustomerChatObservedFlow } from "./customer-chat-trace-validation";
 import "./mi-agent.css";
 import "./mi-agent-navigation.css";
 import "./mi-agent-detail.css";
@@ -70,7 +71,8 @@ const CUSTOMER_CHAT_DEBUG_GUIDE = {
   },
   B2: {
     purpose: "Asocia la pregunta con una sesión y crea el job del turno.",
-    check: "Los IDs de sesión y job, y que el job haya terminado.",
+    check:
+      "IDs de sesión y job, y aceptación del job. Pending es normal; B1 consulta el resultado después.",
   },
   B3: {
     purpose: "Autoriza el contexto CRM, carga el snapshot y prepara agentes.",
@@ -172,6 +174,46 @@ function summarizeDebugSnapshotMetrics(snapshotMetrics = []) {
     .join("; ");
 }
 
+function summarizeDebugPolicy(policy = {}) {
+  if (!policy || typeof policy !== "object") return "sin política registrada";
+  const summarizeFlags = (values = {}) =>
+    Object.entries(values)
+      .map(([name, value]) => `${name} ${value ? "sí" : "no"}`)
+      .join(", ") || "ninguna";
+  const channelRules = summarizeFlags(policy.channelRules);
+  const businessScope = summarizeFlags(
+    policy.businessRuleScope || policy.businessScope,
+  );
+  const operationKinds = summarizeDebugTools(
+    policy.operationPolicy?.allowedKinds || policy.allowedOperationKinds,
+  );
+  const toolNames = summarizeDebugTools(
+    policy.availableTools || policy.toolCatalog,
+  );
+  return `reglas de canal: ${channelRules}; alcance: ${businessScope}; operaciones: ${operationKinds}; herramientas: ${toolNames}`;
+}
+
+function summarizeDebugRouting(routing = {}) {
+  if (!routing || typeof routing !== "object") return "sin ruta validada";
+  const intents = routing.intents || (routing.intent ? [routing.intent] : []);
+  const tools = routing.allowedTools || [];
+  const reference = routing.referenceResolution;
+  const filters = Object.entries(routing.filters || {})
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
+  return [
+    intents.length ? `intenciones: ${summarizeDebugTools(intents)}` : null,
+    reference
+      ? `objetivo ${reference.targetType || "sin tipo"} (${reference.cardinality || "sin cardinalidad"}, ${reference.source || "sin origen"})`
+      : null,
+    tools.length ? `herramientas autorizadas: ${summarizeDebugTools(tools)}` : null,
+    filters.length ? `filtros: ${filters.join(", ")}` : null,
+    routing.requiresClarification ? "requiere aclaración" : null,
+  ]
+    .filter(Boolean)
+    .join("; ") || "sin consultas enrutadas";
+}
+
 function summarizeCustomerChatDebugStep(item) {
   const input = item.input || {};
   const output = item.output || {};
@@ -180,6 +222,9 @@ function summarizeCustomerChatDebugStep(item) {
   const engineInput = output.engineInput || {};
   const metrics = output.toolMetrics || [];
   const snapshotMetrics = output.snapshotMetrics || [];
+  const proposedPlan = output.proposedPlan || null;
+  const routingValidation = output.routingValidation || null;
+  const normalizedRouting = output.normalizedPlan || null;
   const contextSummary = (value) =>
     [
       value.accountId ? `cuenta ${value.accountId}` : null,
@@ -196,15 +241,17 @@ function summarizeCustomerChatDebugStep(item) {
   switch (item.block) {
     case "B1":
       return {
-        input: `Pregunta: ${String(input.question || "").slice(0, 180)}`,
+        input: `Cuenta enviada: ${input.accountId || "no indicada"}; pregunta: ${String(input.question || "").slice(0, 180)}`,
         output: output.forwardedToApi
-          ? "La API y su respuesta observada se detallan en Intercambios HTTP."
-          : "No hay captura de transporte para este turno.",
+          ? "Solicitud enviada a la API. Este bloque no representa la respuesta final; consulta el acuse y el resultado en Comunicación navegador ↔ API, dentro de Flujo observado."
+          : "No se confirma el envío a la API; revisa Comunicación navegador ↔ API dentro de Flujo observado.",
       };
     case "B2":
       return {
         input: `${input.chatSessionId ? `Sesión ${input.chatSessionId}` : "Sesión nueva"}; pregunta de ${input.questionLength || 0} caracteres.`,
-        output: `Job ${output.jobId || "no asignado"}: ${output.accepted ? "aceptado" : "no aceptado"}; estado inicial ${output.initialStatus || "desconocido"}. La respuesta HTTP real se muestra en Intercambios HTTP.`,
+        output: output.accepted
+          ? `B2 aceptó el job ${output.jobId || "sin ID"}; estado inicial ${output.initialStatus || "desconocido"}. Pending es normal mientras B1 consulta el resultado; revisa esas consultas en Comunicación navegador ↔ API, dentro de Flujo observado.`
+          : `B2 no confirmó la aceptación del job ${output.jobId || "sin ID"}. Revisa Comunicación navegador ↔ API dentro de Flujo observado.`,
       };
     case "B3":
       return {
@@ -214,7 +261,7 @@ function summarizeCustomerChatDebugStep(item) {
     case "B4":
       return {
         input: `${input.channel || "Canal desconocido"}; ${contextSummary(input.context || {})}; ${input.preparedAgentCount || 0} agentes preparados.`,
-        output: `Prepara B5 para ${engineInput.channel || "el canal"}: ${engineInput.questionLength || 0} caracteres, ${engineInput.historyMessageCount || 0} mensajes previos, herramientas: ${summarizeDebugTools(engineInput.toolCatalog)}; ${engineInput.permissionCount ?? 0} permisos.`,
+        output: `Entrega a B5: ${engineInput.channel || "canal desconocido"}; contexto ${contextSummary(engineInput.context || {})}; ${engineInput.historyMessageCount || 0} mensajes de historial; ${summarizeDebugPolicy(engineInput.policy)}.`,
       };
     case "B5":
       const responseTypeOrigin =
@@ -224,20 +271,20 @@ function summarizeCustomerChatDebugStep(item) {
             ? "recibido del resultado previo"
             : "origen no identificado";
       return {
-        input: `${input.channel || "Canal desconocido"}; ${contextSummary(context)}; ${input.historyMessageCount || 0} mensajes previos; herramientas: ${summarizeDebugTools(input.toolCatalog)}.`,
-        output: `Tipo normalizado ${output.responseType || "ausente"} (${responseTypeOrigin})${output.validationStatus ? `; validación ${output.validationStatus}` : ""}${output.confidence ? `; confianza ${output.confidence}` : ""}; ${output.answerLength || 0} caracteres, ${output.operationCount || 0} operaciones propuestas y ${output.latencyMs ?? "sin dato"} ms.`,
+        input: `${input.channel || "Canal desconocido"}; ${contextSummary(context)}; ${input.conversationContext?.intents?.length ? `intenciones previas: ${summarizeDebugTools(input.conversationContext.intents)}` : "sin intención conversacional previa"}; ${input.historyMessageCount || 0} mensajes; ${summarizeDebugPolicy(input.policy)}.`,
+        output: `${output.plannerRoutingReturned ? "Recibió una ruta normalizada del planificador" : "No recibió una ruta normalizada"}; respuesta ${output.responseType || "sin tipo"} (${responseTypeOrigin})${output.validationStatus ? `; validación ${output.validationStatus}` : ""}${output.confidence ? `; confianza ${output.confidence}` : ""}; ${output.answerLength || 0} caracteres, ${output.operationCount || 0} operaciones propuestas, ${output.latencyMs ?? "sin dato"} ms.`,
       };
     case "B6":
       return {
-        input: `Planifica con ${input.questionLength || 0} caracteres, ${input.historyMessageCount || 0} mensajes previos; herramientas: ${summarizeDebugTools(input.availableToolNames)}; ${Object.values(input.candidateCounts || {}).reduce((total, count) => total + Number(count || 0), 0)} candidatos.`,
-        output: reference.cardinality
-          ? `Intención ${output.normalizedPlan?.intent || "sin intención"}; objetivo ${reference.targetType || "no definido"} (${reference.cardinality}), referencia ${reference.source || "sin origen"}; herramientas: ${summarizeDebugTools(output.normalizedPlan?.allowedTools)}; aclaración ${output.normalizedPlan?.requiresClarification ? "requerida" : "no requerida"}.`
-          : `Plan no disponible: ${output.diagnostics?.reasonCode || output.diagnostics?.source || "sin diagnóstico"}.`,
+        input: `Recibe ${input.questionLength || 0} caracteres; contexto ${contextSummary(input.selectedContext || {})}; intenciones disponibles: ${summarizeDebugTools(input.enabledIntentCodes)}; herramientas autorizadas: ${summarizeDebugTools(input.availableToolNames)}; ${Object.values(input.candidateCounts || {}).reduce((total, count) => total + Number(count || 0), 0)} candidatos opacos.`,
+        output: proposedPlan?.hasPlan
+          ? `B6 propuso ${summarizeDebugRouting(proposedPlan.proposedRouting)}. B5 ${routingValidation?.accepted ? "aceptó y normalizó" : "rechazó"} la propuesta${routingValidation?.rejectedIntents?.length ? `; intenciones rechazadas: ${summarizeDebugTools(routingValidation.rejectedIntents)}` : ""}${routingValidation?.rejectedTools?.length ? `; herramientas rechazadas: ${summarizeDebugTools(routingValidation.rejectedTools)}` : ""}. Ruta efectiva: ${summarizeDebugRouting(normalizedRouting)}.`
+          : `No hubo plan aplicable: ${routingValidation?.rejectionReason || output.diagnostics?.reasonCode || output.diagnostics?.source || "sin diagnóstico"}.`,
       };
     case "B7":
       return {
-        input: `Herramientas del plan: ${summarizeDebugTools(input.plannedTools)}.`,
-        output: `Fuentes de snapshot disponibles: ${summarizeDebugTools(output.availableSources)}.`,
+        input: `Ruta que recibió B7: ${summarizeDebugRouting(input.validatedRouting)}; política efectiva: ${summarizeDebugPolicy(input.policy)}.`,
+        output: `Fuentes de snapshot disponibles: ${summarizeDebugTools(output.availableSources)}; herramientas del plan: ${summarizeDebugTools(input.plannedTools)}.`,
       };
     case "B8":
       return {
@@ -271,96 +318,6 @@ function summarizeCustomerChatDebugStep(item) {
   }
 }
 
-function CustomerChatTransportTrace({ trace }) {
-  const exchanges = Array.isArray(trace?.exchanges) ? trace.exchanges : [];
-  return (
-    <section
-      className="mi-agent-customer-chat-transport-trace"
-      aria-label="Intercambios HTTP observados"
-    >
-      <strong>Intercambios HTTP observados por el navegador</strong>
-      {exchanges.length ? (
-        <ol>
-          {exchanges.map((exchange, index) => (
-            <li
-              key={`${exchange.label}-${index}`}
-              className={`is-${exchange.outcome || "unknown"}`}
-            >
-              <div>
-                <strong>
-                  {exchange.kind === "local"
-                    ? `B1 · ${exchange.label}`
-                    : `B1 → B2 · ${exchange.method} ${exchange.path}`}
-                </strong>
-                {exchange.kind !== "local" ? (
-                  <small>{exchange.label}</small>
-                ) : null}
-              </div>
-              {exchange.kind === "local" ? (
-                <p>
-                  Sesión {exchange.responseSummary?.sessionId} reutilizada; no
-                  se hizo una llamada HTTP para crearla.
-                </p>
-              ) : (
-                <div>
-                  <strong>
-                    {exchange.httpStatus
-                      ? `B2 → B1 · HTTP ${exchange.httpStatus}`
-                      : "B2 → B1 · Sin respuesta HTTP"}
-                  </strong>
-                  <small>
-                    {exchange.durationMs ?? "?"} ms
-                    {exchange.pollCount
-                      ? ` · ${exchange.pollCount} consultas`
-                      : ""}
-                  </small>
-                </div>
-              )}
-              {exchange.responseSummary?.jobId ? (
-                <p>
-                  Job {exchange.responseSummary.jobId}
-                  {exchange.responseSummary.chatSessionId
-                    ? ` · sesión ${exchange.responseSummary.chatSessionId}`
-                    : ""}
-                  {exchange.responseSummary.initialStatus
-                    ? ` · estado inicial ${exchange.responseSummary.initialStatus}`
-                    : ""}
-                  {exchange.responseSummary.finalStatus
-                    ? ` · estado final ${exchange.responseSummary.finalStatus}`
-                    : ""}
-                  {exchange.responseSummary.pollAfterMs
-                    ? ` · sondeo sugerido ${exchange.responseSummary.pollAfterMs} ms`
-                    : ""}
-                  {exchange.responseSummary.resultReceived
-                    ? " · resultado recibido"
-                    : ""}
-                </p>
-              ) : exchange.responseSummary?.sessionId ? (
-                <p>Sesión {exchange.responseSummary.sessionId} creada.</p>
-              ) : null}
-              {exchange.responseSummary?.observedStatuses?.length ? (
-                <p>
-                  Estados observados:{" "}
-                  {exchange.responseSummary.observedStatuses.join(" → ")}
-                </p>
-              ) : null}
-              {exchange.responseSummary?.errorMessage ? (
-                <p>{exchange.responseSummary.errorMessage}</p>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p>No se registraron solicitudes HTTP para este turno.</p>
-      )}
-      <small>
-        Se muestran metadatos observados por el cliente; se omiten los cuerpos
-        completos.
-      </small>
-    </section>
-  );
-}
-
 const CUSTOMER_CHAT_DEBUG_CHECK_LABELS = {
   pass: "Correcto",
   warning: "Revisar",
@@ -383,10 +340,11 @@ const CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS = [
   "B11",
 ];
 
-function CustomerChatDebugStep({ item, issueBlock }) {
+function CustomerChatDebugStep({ item, issueBlock, traceId }) {
   const summaries = summarizeCustomerChatDebugStep(item);
   return (
     <article
+      id={`${traceId}-block-${item.block}`}
       className={`mi-agent-customer-chat-debug-step${
         item.block === issueBlock ? " is-problem" : ""
       }`}
@@ -396,7 +354,11 @@ function CustomerChatDebugStep({ item, issueBlock }) {
           {item.block} · {item.label}
         </strong>
         <small>
-          {CUSTOMER_CHAT_DEBUG_STATUS_LABELS[item.status] || item.status}
+          {item.block === "B2"
+            ? item.output?.accepted
+              ? "Job aceptado"
+              : "Job no aceptado"
+            : CUSTOMER_CHAT_DEBUG_STATUS_LABELS[item.status] || item.status}
         </small>
       </div>
       <span>{CUSTOMER_CHAT_DEBUG_GUIDE[item.block]?.purpose}</span>
@@ -406,7 +368,13 @@ function CustomerChatDebugStep({ item, issueBlock }) {
         </p>
         <p>
           <strong>
-            {item.block === "B5" ? "Retorno a B4:" : "Respuesta:"}
+            {item.block === "B1"
+              ? "Estado del envío:"
+              : item.block === "B2"
+                ? "Acuse del job:"
+                : item.block === "B5"
+                  ? "Retorno a B4:"
+                  : "Respuesta:"}
           </strong>{" "}
           {summaries.output}
         </p>
@@ -415,6 +383,7 @@ function CustomerChatDebugStep({ item, issueBlock }) {
         <ul className="mi-agent-customer-chat-debug-checks">
           {item.checks.map((check) => (
             <li
+              id={`${traceId}-check-${item.block}-${check.field}`}
               key={check.field}
               className={`is-${check.state || "not_checked"}`}
             >
@@ -441,20 +410,402 @@ function CustomerChatDebugStep({ item, issueBlock }) {
       </small>
       {item.input || item.output ? (
         <details className="mi-agent-customer-chat-debug-step-details">
-          <summary>Ver JSON técnico de entrada y respuesta</summary>
+          <summary>
+            {item.block === "B1"
+              ? "Ver datos técnicos del envío"
+              : item.block === "B2"
+                ? "Ver datos registrados y acuse del job"
+                : "Ver JSON técnico de entrada y respuesta"}
+          </summary>
           <div>
             <section>
-              <strong>Entrada</strong>
+              <strong>
+                {item.block === "B1"
+                  ? "Solicitud enviada"
+                  : item.block === "B2"
+                    ? "Datos registrados por B2"
+                    : "Entrada"}
+              </strong>
               <pre>{JSON.stringify(item.input ?? null, null, 2)}</pre>
             </section>
             <section>
-              <strong>Respuesta</strong>
+              <strong>
+                {item.block === "B1"
+                  ? "Estado de envío"
+                  : item.block === "B2"
+                    ? "Acuse del job"
+                    : "Respuesta"}
+              </strong>
               <pre>{JSON.stringify(item.output ?? null, null, 2)}</pre>
             </section>
           </div>
         </details>
       ) : null}
     </article>
+  );
+}
+
+function buildCustomerChatExecutionSpans(events = []) {
+  const spans = new Map();
+  events.forEach((event) => {
+    if (!event?.spanId) return;
+    const span = spans.get(event.spanId) || {
+      id: event.spanId,
+      children: [],
+      sequence: Number(event.sequence || 0),
+    };
+    if (event.phase === "call") {
+      Object.assign(span, {
+        lane: event.lane || "worker",
+        parentSpanId: event.parentSpanId || null,
+        from: event.from,
+        to: event.to,
+        label: event.label,
+        startedAt: event.at || null,
+        input: event.input ?? null,
+        status: event.status || "started",
+        sequence: Number(event.sequence || span.sequence),
+      });
+    } else {
+      Object.assign(span, {
+        returnedAt: event.at || null,
+        status: event.status || "unknown",
+        durationMs: Number(event.durationMs || 0),
+        output: event.output ?? null,
+        errorCode: event.errorCode || null,
+        returnFrom: event.from,
+        returnTo: event.to,
+      });
+    }
+    spans.set(event.spanId, span);
+  });
+
+  const roots = [];
+  [...spans.values()]
+    .sort((left, right) => left.sequence - right.sequence)
+    .forEach((span) => {
+      const parent = spans.get(span.parentSpanId);
+      if (parent) parent.children.push(span);
+      else roots.push(span);
+    });
+  return roots;
+}
+
+function CustomerChatExecutionSpan({ span }) {
+  const statusLabels = {
+    completed: "Retornó",
+    failed: "Falló",
+    started: "Sin retorno registrado",
+    unavailable: "No disponible",
+    no_new_results: "Sin nuevas lecturas",
+  };
+
+  return (
+    <li
+      id={span.traceElementId}
+      className={`is-${span.status || "unknown"}`}
+    >
+      <details open={span.status === "failed"}>
+        <summary>
+          <strong>
+            {span.from} → {span.to} · {span.label || "Llamada"}
+          </strong>
+          <small>
+            {statusLabels[span.status] || span.status || "Estado desconocido"}
+            {span.durationMs != null ? ` · ${span.durationMs} ms` : ""}
+          </small>
+        </summary>
+        <div className="mi-agent-customer-chat-detailed-span-content">
+          <small>
+            {span.startedAt ? `Inicio: ${span.startedAt}` : "Inicio sin registrar"}
+            {span.returnedAt ? ` · Retorno: ${span.returnedAt}` : ""}
+          </small>
+          {span.returnFrom && span.returnTo ? (
+            <small>
+              Retorno: {span.returnFrom} → {span.returnTo}
+            </small>
+          ) : null}
+          <details>
+            <summary>Datos enviados</summary>
+            <pre>{JSON.stringify(span.input ?? null, null, 2)}</pre>
+          </details>
+          <details>
+            <summary>Datos recibidos</summary>
+            <pre>
+              {JSON.stringify(
+                span.errorCode ? { errorCode: span.errorCode } : span.output,
+                null,
+                2,
+              )}
+            </pre>
+          </details>
+          {span.children.length ? (
+            <ol>
+              {span.children.map((child) => (
+                <CustomerChatExecutionSpan key={child.id} span={child} />
+              ))}
+            </ol>
+          ) : null}
+        </div>
+      </details>
+    </li>
+  );
+}
+
+function countCustomerChatSpans(spans) {
+  return spans.reduce(
+    (count, span) => count + 1 + countCustomerChatSpans(span.children),
+    0,
+  );
+}
+
+function CustomerChatDetailedTrace({ debug, transportTrace }) {
+  const turnDebug = debug || {};
+  const executionEvents = Array.isArray(turnDebug.executionTrace)
+    ? turnDebug.executionTrace
+    : [];
+  const workerSpans = buildCustomerChatExecutionSpans(executionEvents);
+  const workerSpanCount = countCustomerChatSpans(workerSpans);
+  const exchanges = Array.isArray(transportTrace?.exchanges)
+    ? transportTrace.exchanges
+    : [];
+  const traceId = turnDebug.currentTurn?.jobId
+    ? `customer-chat-${turnDebug.currentTurn.jobId}`
+    : `customer-chat-session-${turnDebug.currentTurn?.chatSessionId || "unknown"}`;
+  const integrityChecks = validateCustomerChatObservedFlow({
+    events: executionEvents,
+    exchanges,
+  });
+  const integrityCounts = integrityChecks.reduce(
+    (counts, check) => ({
+      ...counts,
+      [check.state]: (counts[check.state] || 0) + 1,
+    }),
+    {},
+  );
+  const navigateToTraceEvent = (target) => {
+    if (!target) return;
+    const elementId =
+      target.type === "span"
+        ? `${traceId}-span-${target.id}`
+        : `${traceId}-exchange-${target.id}`;
+    const element = document.getElementById(elementId);
+    if (!element) return;
+    for (
+      let parent = element.parentElement;
+      parent;
+      parent = parent.parentElement
+    ) {
+      if (parent instanceof HTMLDetailsElement) parent.open = true;
+    }
+    window.requestAnimationFrame(() =>
+      element.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
+  };
+  const prepareSpans = (spans) =>
+    spans.map((span) => ({
+      ...span,
+      traceElementId: `${traceId}-span-${span.id}`,
+      children: prepareSpans(span.children),
+    }));
+  const renderedWorkerSpans = prepareSpans(workerSpans);
+
+  return (
+    <details className="mi-agent-customer-chat-detailed-trace">
+      <summary>
+        Flujo observado · {workerSpanCount} llamadas del worker ·{" "}
+        {exchanges.length} intercambios del navegador
+      </summary>
+      <div className="mi-agent-customer-chat-detailed-trace-content">
+        <p>
+          Son dos carriles con relojes independientes. Los retornos se enlazan
+          con su llamada; las llamadas hijas aparecen anidadas. Los datos CRM
+          se muestran como resúmenes saneados. Las intenciones y reglas se ven
+          en los datos de B4→B5, B5→B6, la validación de B5 y B5→B7/B10.
+        </p>
+        <details
+          className="mi-agent-customer-chat-flow-integrity"
+          open={Boolean(integrityCounts.error)}
+        >
+          <summary>
+            Integridad del flujo · {integrityCounts.error || 0} errores ·{" "}
+            {integrityCounts.warning || 0} advertencias ·{" "}
+            {integrityCounts.pass || 0} correctas
+            {integrityCounts.not_checked
+              ? ` · ${integrityCounts.not_checked} sin datos`
+              : ""}
+          </summary>
+          <ul>
+            {integrityChecks.map((check) => (
+              <li
+                key={check.key}
+                className={`is-${check.state}`}
+              >
+                <span>{check.message}</span>
+                {check.target ? (
+                  <button
+                    type="button"
+                    onClick={() => navigateToTraceEvent(check.target)}
+                  >
+                    Ir al {check.target.type === "span" ? "span" : "intercambio"}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+        <section>
+          <h4>Comunicación navegador ↔ API · B1 ↔ B2</h4>
+          {exchanges.length ? (
+            <ol>
+              {exchanges.map((exchange, index) => (
+                <li
+                  id={`${traceId}-exchange-${index}`}
+                  key={`${exchange.label}-${index}`}
+                  className={`is-${exchange.outcome || "unknown"}`}
+                >
+                  <strong>
+                    {exchange.kind === "local"
+                      ? `B1 · ${exchange.label}`
+                      : `B1 → B2 · ${exchange.method} ${exchange.path}`}
+                  </strong>
+                  <small>
+                    {exchange.kind === "local" ? "" : "B2 → B1 · "}
+                    {exchange.outcome || "resultado desconocido"}
+                    {exchange.httpStatus ? ` · HTTP ${exchange.httpStatus}` : ""}
+                    {exchange.durationMs != null
+                      ? ` · ${exchange.durationMs} ms`
+                      : ""}
+                    {exchange.pollCount ? ` · ${exchange.pollCount} consultas` : ""}
+                  </small>
+                  {exchange.startedAt ? (
+                    <small>Inicio: {exchange.startedAt}</small>
+                  ) : null}
+                  {exchange.finishedAt ? (
+                    <small>Fin: {exchange.finishedAt}</small>
+                  ) : null}
+                  {exchange.pollEvents?.length ? (
+                    <details>
+                      <summary>Estados observados por consulta</summary>
+                      <pre>
+                        {JSON.stringify(exchange.pollEvents, null, 2)}
+                      </pre>
+                    </details>
+                  ) : null}
+                  <details>
+                    <summary>Datos enviados</summary>
+                    <pre>
+                      {JSON.stringify(
+                        exchange.requestSummary ?? {
+                          method: exchange.method || null,
+                          path: exchange.path || null,
+                        },
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
+                  <details>
+                    <summary>Respuesta resumida</summary>
+                    <pre>
+                      {JSON.stringify(
+                        exchange.responseSummary ?? null,
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>No hay intercambios de navegador disponibles para este turno.</p>
+          )}
+        </section>
+        <section>
+          <h4>Worker · B2 → B11</h4>
+          {workerSpans.length ? (
+            <ol>
+              {renderedWorkerSpans.map((span) => (
+                <CustomerChatExecutionSpan key={span.id} span={span} />
+              ))}
+            </ol>
+          ) : (
+            <p>
+              Este resultado no contiene spans internos observados. Puede
+              corresponder a un turno anterior a la instrumentación o a un
+              fallo ocurrido antes de iniciar el worker.
+            </p>
+          )}
+        </section>
+        <section>
+          <h4>Contexto del turno</h4>
+          <details>
+            <summary>Datos recibidos y diagnóstico del turno actual</summary>
+            <pre>{JSON.stringify(turnDebug.currentTurn ?? null, null, 2)}</pre>
+          </details>
+          <details>
+            <summary>Contexto e historial para el siguiente turno</summary>
+            <pre>{JSON.stringify(turnDebug.nextTurn ?? null, null, 2)}</pre>
+          </details>
+        </section>
+      </div>
+    </details>
+  );
+}
+
+function CustomerChatDebugResult({ debug }) {
+  const issue = debug?.issue || {};
+  const currentTurn = debug?.currentTurn || {};
+  const flow = Array.isArray(debug?.flow) ? debug.flow : [];
+  const b3 = flow.find((item) => item.block === "B3");
+  const b9 = flow.find((item) => item.block === "B9");
+  const accountId =
+    debug?.nextTurn?.context?.accountId ||
+    currentTurn.validatedContextReceived?.accountId ||
+    currentTurn.accountId ||
+    b3?.output?.validatedContext?.accountId ||
+    b3?.input?.accountId;
+  const evidenceStatus =
+    currentTurn.diagnostics?.evidence?.status || b9?.output?.status;
+  const evidenceLabels = {
+    sufficient: "evidencia suficiente",
+    no_results: "sin coincidencias",
+    clarification: "requiere precisión",
+    insufficient_evidence: "evidencia incompleta",
+    query_error: "falló una consulta",
+    timeout: "tiempo agotado",
+  };
+  const isSuccess = issue.severity === "success";
+  const title = issue.block
+    ? `${issue.title || "Revisión requerida"} · ${issue.block}`
+    : isSuccess
+      ? "Turno completado"
+      : issue.title || "Resultado del turno";
+  const metadata = [
+    currentTurn.jobId ? `Job ${currentTurn.jobId}` : null,
+    currentTurn.chatSessionId ? `Sesión ${currentTurn.chatSessionId}` : null,
+    accountId ? `Cuenta ${accountId}` : null,
+    evidenceStatus
+      ? evidenceLabels[evidenceStatus] || `evidencia: ${evidenceStatus}`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <div className="mi-agent-customer-chat-debug-result">
+      <div className="mi-agent-customer-chat-debug-result-heading">
+        <strong>{title}</strong>
+        {issue.message ? <p>{issue.message}</p> : null}
+      </div>
+      {metadata.length ? (
+        <ul aria-label="Resumen del turno">
+          {metadata.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+      {!isSuccess && issue.nextAction ? <small>{issue.nextAction}</small> : null}
+    </div>
   );
 }
 
@@ -474,16 +825,17 @@ function CustomerChatDebugConnector({
   );
 }
 
-function CustomerChatDebugFlow({ debug }) {
+function CustomerChatDebugFlow({ debug, transportTrace }) {
   const flow = Array.isArray(debug.flow) ? debug.flow : [];
+  const traceId = debug.currentTurn?.jobId
+    ? `customer-chat-${debug.currentTurn.jobId}`
+    : `customer-chat-session-${debug.currentTurn?.chatSessionId || "unknown"}`;
   const blocks = new Map(flow.map((item) => [item.block, item]));
-  const edgeLabel = (from, to, kind, fallback) =>
-    debug.flowEdges?.find(
-      (edge) => edge.from === from && edge.to === to && edge.kind === kind,
-    )?.label || fallback;
-  const issueBlock = debug.issue?.block;
   const checks = flow.flatMap((item) =>
-    Array.isArray(item.checks) ? item.checks : [],
+    (Array.isArray(item.checks) ? item.checks : []).map((check) => ({
+      ...check,
+      block: item.block,
+    })),
   );
   const checkCounts = checks.reduce(
     (counts, check) => ({
@@ -493,13 +845,37 @@ function CustomerChatDebugFlow({ debug }) {
     }),
     {},
   );
+  const attentionChecks = checks.filter((check) =>
+    ["error", "warning"].includes(check.state),
+  );
   const missingBlocks = CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS.filter(
     (block) => !blocks.has(block),
   );
+  const navigateToCheck = (block, field) => {
+    const map = document.getElementById(`${traceId}-map`);
+    const target = document.getElementById(
+      `${traceId}-check-${block}-${field}`,
+    );
+    if (!map || !target) return;
+    map.open = true;
+    window.requestAnimationFrame(() =>
+      target.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
+  };
+  const edgeLabel = (from, to, kind, fallback) =>
+    debug.flowEdges?.find(
+      (edge) => edge.from === from && edge.to === to && edge.kind === kind,
+    )?.label || fallback;
+  const issueBlock = debug.issue?.block;
   const renderStep = (block) => {
     const item = blocks.get(block);
     return item ? (
-      <CustomerChatDebugStep key={block} item={item} issueBlock={issueBlock} />
+      <CustomerChatDebugStep
+        key={block}
+        item={item}
+        issueBlock={issueBlock}
+        traceId={traceId}
+      />
     ) : (
       <div
         key={block}
@@ -513,28 +889,48 @@ function CustomerChatDebugFlow({ debug }) {
 
   return (
     <>
-      <section
-        className="mi-agent-customer-chat-debug-check-summary"
-        aria-label="Resumen de comprobaciones"
-      >
-        <strong>Comprobaciones del turno</strong>
-        {checks.length ? (
-          <p>
-            {checkCounts.error || 0} errores · {checkCounts.warning || 0} por
-            revisar · {checkCounts.pass || 0} correctas ·{" "}
-            {checkCounts.not_applicable || 0} no aplican
-          </p>
-        ) : (
-          <p>Esta traza no contiene comprobaciones estructuradas.</p>
-        )}
+      <CustomerChatDetailedTrace
+        debug={debug}
+        transportTrace={transportTrace}
+      />
+      <details id={`${traceId}-map`} className="mi-agent-customer-chat-debug-map">
+        <summary>
+          Mapa de bloques · {blocks.size} de {CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS.length} presentes ·{" "}
+          {checkCounts.error || 0} errores · {checkCounts.warning || 0} por revisar ·{" "}
+          {checkCounts.pass || 0} correctas · {checkCounts.not_applicable || 0} no aplican
+        </summary>
+        <div className="mi-agent-customer-chat-debug-flow-map">
+        {attentionChecks.length ? (
+          <section className="mi-agent-customer-chat-debug-map-attention">
+            <strong>Checks que requieren atención · {attentionChecks.length}</strong>
+            <ul>
+              {attentionChecks.map((check) => (
+                <li
+                  key={`${check.block}-${check.field}`}
+                  className={`is-${check.state}`}
+                >
+                  <div>
+                    <strong>
+                      {check.block} · {check.field}
+                    </strong>
+                    <span>{check.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigateToCheck(check.block, check.field)}
+                  >
+                    Ir al check
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {missingBlocks.length ? (
-          <p className="is-warning">
+          <p className="mi-agent-customer-chat-debug-result-warning">
             Faltan bloques en la traza: {missingBlocks.join(", ")}.
           </p>
         ) : null}
-      </section>
-
-      <div className="mi-agent-customer-chat-debug-flow-map">
         <section className="mi-agent-customer-chat-debug-phase">
           <h3>1. La interfaz envía la pregunta y recibe un job</h3>
           <div className="mi-agent-customer-chat-debug-lane">
@@ -687,7 +1083,8 @@ function CustomerChatDebugFlow({ debug }) {
             {edgeLabel("B2", "B1", "result", "B2 devuelve el resultado")}
           </small>
         </section>
-      </div>
+        </div>
+      </details>
     </>
   );
 }
@@ -2724,14 +3121,17 @@ export default function MiAgentPage({
     if (!normalizedQuestion || !hasCustomerContext) return;
     const transportExchanges = [];
     let activeExchange = null;
-    const beginExchange = (label, method, path) => {
+    let failedJobDebug = null;
+    const beginExchange = (label, method, path, requestSummary = null) => {
       activeExchange = {
         label,
         method,
         path,
+        requestSummary,
         startedAt: Date.now(),
         pollCount: 0,
         observedStatuses: [],
+        pollEvents: [],
       };
       return activeExchange;
     };
@@ -2746,10 +3146,14 @@ export default function MiAgentPage({
         label: exchange.label,
         method: exchange.method,
         path: exchange.path,
+        requestSummary: exchange.requestSummary,
+        startedAt: new Date(exchange.startedAt).toISOString(),
+        finishedAt: new Date().toISOString(),
         httpStatus: Number(response?.status || 0) || null,
         outcome,
         durationMs: Math.max(0, Date.now() - exchange.startedAt),
         pollCount: exchange.pollCount || 0,
+        pollEvents: exchange.pollEvents || [],
         responseSummary,
       });
       if (activeExchange === exchange) activeExchange = null;
@@ -2772,14 +3176,16 @@ export default function MiAgentPage({
     try {
       let activeChatSessionId = customerChatSessionId;
       if (!activeChatSessionId) {
+        const sessionRequest = buildCustomerIntelligencePayload();
         const exchange = beginExchange(
           "Crear sesión",
           "POST",
           "/api/commercial-intelligence/account-chat/sessions",
+          sessionRequest,
         );
         const sessionResponse = await api.post(
           "/api/commercial-intelligence/account-chat/sessions",
-          buildCustomerIntelligencePayload(),
+          sessionRequest,
         );
         activeChatSessionId = Number(sessionResponse.data?.session?.id || 0);
         finishExchange(
@@ -2807,15 +3213,16 @@ export default function MiAgentPage({
         "Iniciar pregunta",
         "POST",
         "/api/commercial-intelligence/account-chat/jobs",
-      );
-      const response = await api.post(
-        "/api/commercial-intelligence/account-chat/jobs",
         {
           ...buildCustomerIntelligencePayload(),
           chatSessionId: activeChatSessionId,
           question: normalizedQuestion,
           includePublicResearch: customerChatPublicResearch,
         },
+      );
+      const response = await api.post(
+        "/api/commercial-intelligence/account-chat/jobs",
+        submitExchange.requestSummary,
       );
       const jobId = Number(response.data?.job?.id || 0);
       finishExchange(
@@ -2837,6 +3244,7 @@ export default function MiAgentPage({
         "Consultar resultado",
         "GET",
         `/api/commercial-intelligence/account-chat/jobs/${jobId}`,
+        { jobId },
       );
       let finalPollJob = null;
       for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -2845,6 +3253,12 @@ export default function MiAgentPage({
         );
         const job = jobResponse.data?.job;
         pollExchange.pollCount += 1;
+        pollExchange.pollEvents.push({
+          attempt: pollExchange.pollCount,
+          at: new Date().toISOString(),
+          httpStatus: Number(jobResponse.status || 0) || null,
+          status: String(job?.status || "unknown"),
+        });
         if (
           job?.status &&
           !pollExchange.observedStatuses.includes(String(job.status))
@@ -2870,8 +3284,10 @@ export default function MiAgentPage({
                   : null,
             },
           );
-          if (job.status === "failed")
+          if (job.status === "failed") {
+            failedJobDebug = job.result?.debug || null;
             throw new Error(job.errorMessage || "No fue posible responder");
+          }
           result = job.result;
           break;
         }
@@ -2915,6 +3331,7 @@ export default function MiAgentPage({
       setCustomerChatTransportError({
         source: "browser_observed",
         exchanges: transportExchanges,
+        debug: failedJobDebug,
       });
       setCustomerIntelligenceError(
         getApiErrorMessage(
@@ -6594,9 +7011,13 @@ export default function MiAgentPage({
             <>
               <p className="form-error">{customerIntelligenceError}</p>
               {customerChatTransportError ? (
-                <CustomerChatTransportTrace
-                  trace={customerChatTransportError}
-                />
+                <details open className="mi-agent-customer-chat-debug is-error">
+                  <summary>Flujo observado · solicitud fallida</summary>
+                  <CustomerChatDetailedTrace
+                    debug={customerChatTransportError.debug}
+                    transportTrace={customerChatTransportError}
+                  />
+                </details>
               ) : null}
             </>
           ) : null}
@@ -6743,11 +7164,6 @@ export default function MiAgentPage({
                           ? ` · confianza ${CUSTOMER_FINDING_CONFIDENCE_LABELS[message.confidence] || message.confidence}`
                           : ""}
                       </small>
-                      {message.transportTrace ? (
-                        <CustomerChatTransportTrace
-                          trace={message.transportTrace}
-                        />
-                      ) : null}
                       {String(message.answer || "").includes("\n") ? (
                         <p className="mi-agent-coach-answer-text is-multiline">
                           {message.answer}
@@ -7013,39 +7429,45 @@ export default function MiAgentPage({
                             Diagnóstico ·{" "}
                             {message.debug.issue?.title || "Turno"}
                           </summary>
-                          <div className="mi-agent-customer-chat-debug-result">
-                            <strong>
-                              {message.debug.issue?.block
-                                ? `Bloque a revisar: ${message.debug.issue.block}`
-                                : "Resultado del turno"}
-                            </strong>
-                            <p>{message.debug.issue?.message}</p>
-                            <small>{message.debug.issue?.nextAction}</small>
-                          </div>
-                          <CustomerChatDebugFlow debug={message.debug} />
-                          <p className="mi-agent-customer-chat-debug-next">
-                            En el siguiente mensaje, la interfaz reutiliza la
-                            sesión validada y crea un job nuevo para procesar el
-                            turno.
-                          </p>
-                          <details className="mi-agent-customer-chat-debug-json">
-                            <summary>Ver JSON recibido en este turno</summary>
-                            <pre>
-                              {JSON.stringify(
-                                message.debug.currentTurn,
-                                null,
-                                2,
-                              )}
-                            </pre>
-                          </details>
-                          <details className="mi-agent-customer-chat-debug-json">
-                            <summary>
-                              Ver JSON que continúa al siguiente turno
-                            </summary>
-                            <pre>
-                              {JSON.stringify(message.debug.nextTurn, null, 2)}
-                            </pre>
-                          </details>
+                          <CustomerChatDebugResult debug={message.debug} />
+                          <CustomerChatDebugFlow
+                            debug={message.debug}
+                            transportTrace={message.transportTrace}
+                          />
+                          <section className="mi-agent-customer-chat-debug-continuity">
+                            <div>
+                              <strong>Continuidad del chat</strong>
+                              <p>
+                                La siguiente pregunta reutiliza la sesión
+                                {message.debug.currentTurn?.chatSessionId
+                                  ? ` ${message.debug.currentTurn.chatSessionId}`
+                                  : " validada"}; cada turno crea un job nuevo.
+                              </p>
+                            </div>
+                            <details className="mi-agent-customer-chat-debug-json">
+                              <summary>Datos técnicos · 2</summary>
+                              <details>
+                                <summary>Datos del turno procesado</summary>
+                                <pre>
+                                  {JSON.stringify(
+                                    message.debug.currentTurn ?? null,
+                                    null,
+                                    2,
+                                  )}
+                                </pre>
+                              </details>
+                              <details>
+                                <summary>Contexto del siguiente turno</summary>
+                                <pre>
+                                  {JSON.stringify(
+                                    message.debug.nextTurn ?? null,
+                                    null,
+                                    2,
+                                  )}
+                                </pre>
+                              </details>
+                            </details>
+                          </section>
                         </details>
                       ) : null}
                       <CoachQualityFeedback traceId={message.qualityTraceId} />

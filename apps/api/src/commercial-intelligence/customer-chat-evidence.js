@@ -73,6 +73,8 @@ export async function runCustomerEvidenceLoop({
   unqueriedAuthorizedTools = [],
   assessEvidence,
   fetchAdditionalEvidence,
+  onTraceEvent,
+  traceParentSpanId = null,
   deadlineAt = Date.now() + CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs,
   limits = CUSTOMER_CHAT_EVIDENCE_LIMITS,
   now = Date.now,
@@ -102,6 +104,11 @@ export async function runCustomerEvidenceLoop({
         .filter(Boolean),
     ),
   ];
+  const trace = (event) => {
+    try {
+      onTraceEvent?.({ ...event, at: new Date(now()).toISOString() });
+    } catch {}
+  };
   const hasAnyQueryError = (results) =>
     failedSources.length > 0 || hasReadQueryError(results);
 
@@ -129,6 +136,23 @@ export async function runCustomerEvidenceLoop({
     }
 
     let assessment;
+    const assessmentStartedAt = now();
+    const assessmentSpanId = `evidence-check-${rounds + 1}`;
+    trace({
+      spanId: assessmentSpanId,
+      parentSpanId: traceParentSpanId,
+      from: "B9",
+      to: "evidence_assessment",
+      label: "Verificar evidencia",
+      phase: "call",
+      status: "started",
+      round: rounds,
+      input: {
+        toolNames: [...collectToolNames(readToolResults)],
+        resultCount: readToolResults.length,
+        hasQueryErrors: hasAnyQueryError(readToolResults),
+      },
+    });
     try {
       assessment = await runWithinDeadline(
         () =>
@@ -140,17 +164,41 @@ export async function runCustomerEvidenceLoop({
           }),
         remainingMs,
       );
-    } catch {
+    } catch (error) {
       finalStatus = now() >= deadlineAt ? "timeout" : "verification_error";
       errorCode =
         finalStatus === "timeout"
           ? "turn_timeout"
           : "evidence_verification_failed";
+      trace({
+        spanId: assessmentSpanId,
+        parentSpanId: traceParentSpanId,
+        from: "evidence_assessment",
+        to: "B9",
+        label: "Retorno de verificación",
+        phase: "return",
+        status: "failed",
+        round: rounds,
+        durationMs: Math.max(0, now() - assessmentStartedAt),
+        errorCode: String(error?.code || error?.name || errorCode).slice(0, 80),
+      });
       break;
     }
     if (!assessment) {
       finalStatus = "verification_unavailable";
       errorCode = "evidence_verifier_unavailable";
+      trace({
+        spanId: assessmentSpanId,
+        parentSpanId: traceParentSpanId,
+        from: "evidence_assessment",
+        to: "B9",
+        label: "Retorno de verificación",
+        phase: "return",
+        status: "unavailable",
+        round: rounds,
+        durationMs: Math.max(0, now() - assessmentStartedAt),
+        errorCode,
+      });
       break;
     }
 
@@ -176,6 +224,22 @@ export async function runCustomerEvidenceLoop({
       (!hasNonEmptyEvidence(readToolResults) || missingFacts.length > 0)
         ? "incomplete"
         : status;
+    trace({
+      spanId: assessmentSpanId,
+      parentSpanId: traceParentSpanId,
+      from: "evidence_assessment",
+      to: "B9",
+      label: "Retorno de verificación",
+      phase: "return",
+      status: "completed",
+      round: rounds,
+      durationMs: Math.max(0, now() - assessmentStartedAt),
+      output: {
+        status: evidenceStatus,
+        missingQueries,
+        missingFacts,
+      },
+    });
 
     if (evidenceStatus === "clarification") {
       finalStatus = "clarification";
@@ -232,6 +296,22 @@ export async function runCustomerEvidenceLoop({
     }
     const queryNamesBefore = collectToolNames(readToolResults);
     let additional;
+    const additionalReadStartedAt = now();
+    const additionalReadSpanId = `additional-evidence-${rounds + 1}`;
+    trace({
+      spanId: additionalReadSpanId,
+      parentSpanId: traceParentSpanId,
+      from: "B9",
+      to: "B7",
+      label: "Solicitar evidencia adicional",
+      phase: "call",
+      status: "started",
+      round: rounds,
+      input: {
+        missingQueries: normalizedMissingQueries,
+        remainingReadQueries,
+      },
+    });
     try {
       additional = await runWithinDeadline(
         () =>
@@ -240,13 +320,26 @@ export async function runCustomerEvidenceLoop({
             readToolResults,
             remainingReadQueries,
             remainingMs: Math.max(0, deadlineAt - now()),
+            traceParentSpanId: additionalReadSpanId,
           }),
         Math.max(0, deadlineAt - now()),
       );
-    } catch {
+    } catch (error) {
       finalStatus = now() >= deadlineAt ? "timeout" : "query_error";
       errorCode =
         finalStatus === "timeout" ? "turn_timeout" : "additional_read_failed";
+      trace({
+        spanId: additionalReadSpanId,
+        parentSpanId: traceParentSpanId,
+        from: "B7",
+        to: "B9",
+        label: "Retorno de lecturas adicionales",
+        phase: "return",
+        status: "failed",
+        round: rounds,
+        durationMs: Math.max(0, now() - additionalReadStartedAt),
+        errorCode: String(error?.code || error?.name || errorCode).slice(0, 80),
+      });
       break;
     }
     const newResults = Array.isArray(additional?.readToolResults)
@@ -265,9 +358,41 @@ export async function runCustomerEvidenceLoop({
       errorCode = hasAnyQueryError(readToolResults)
         ? "read_query_failed"
         : "no_new_authorized_queries";
+      trace({
+        spanId: additionalReadSpanId,
+        parentSpanId: traceParentSpanId,
+        from: "B7",
+        to: "B9",
+        label: "Retorno de lecturas adicionales",
+        phase: "return",
+        status: "no_new_results",
+        round: rounds,
+        durationMs: Math.max(0, now() - additionalReadStartedAt),
+        output: {
+          resultCount: newResults.length,
+          toolNames: newResults.map((item) => item.toolName).filter(Boolean),
+        },
+        errorCode,
+      });
       break;
     }
     const boundedResults = unseenResults.slice(0, remainingReadQueries);
+    trace({
+      spanId: additionalReadSpanId,
+      parentSpanId: traceParentSpanId,
+      from: "B7",
+      to: "B9",
+      label: "Retorno de lecturas adicionales",
+      phase: "return",
+      status: "completed",
+      round: rounds,
+      durationMs: Math.max(0, now() - additionalReadStartedAt),
+      output: {
+        resultCount: boundedResults.length,
+        toolNames: boundedResults.map((item) => item.toolName).filter(Boolean),
+        errorCount: boundedResults.filter((item) => item.error).length,
+      },
+    });
     readToolResults = [...readToolResults, ...boundedResults];
     additionalReadQueries += boundedResults.length;
     rounds += 1;

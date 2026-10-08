@@ -532,6 +532,8 @@ export async function runConversationEngine({
   permissions = {},
   operationPolicy = {},
   businessRules: configuredBusinessRules = null,
+  executionTrace = null,
+  traceParentSpanId = null,
   dependencies,
 }) {
   const turnStartedAt = Date.now();
@@ -576,6 +578,155 @@ export async function runConversationEngine({
     dependencies.prepareReadModel || prepareCoachReadModel;
   const buildPrompt = dependencies.buildPrompt || buildCoachPrompt;
   const requestResponse = dependencies.requestResponse || requestMiAgentJson;
+  const shouldTrace = channel === "customer_account" && executionTrace;
+  const safeFilterNames = new Set([
+    "opportunityStatus",
+    "stageCode",
+    "closeYear",
+    "periodMonths",
+    "startDate",
+    "endDate",
+  ]);
+  const summarizeRouting = (routing) => {
+    if (!routing) return null;
+    return {
+      intents: routing.intents || routing.queries || (routing.intent ? [routing.intent] : []),
+      allowedTools: routing.allowedTools || [],
+      referenceResolution: routing.referenceResolution
+        ? {
+            targetType: routing.referenceResolution.targetType || null,
+            cardinality: routing.referenceResolution.cardinality || null,
+            source: routing.referenceResolution.source || null,
+          }
+        : null,
+      filters: Object.fromEntries(
+        Object.entries(routing.filters || {}).filter(([key]) =>
+          safeFilterNames.has(key),
+        ),
+      ),
+      requiresClarification: Boolean(
+        routing.requiresClarification ||
+          routing.ambiguity?.requiresClarification,
+      ),
+      missingContext:
+        routing.missingContext || routing.ambiguity?.missingContext || [],
+    };
+  };
+  const summarizeConversationContext = (value = {}) => ({
+    accountId: Number(value.accountId || 0) || null,
+    opportunityId: Number(value.opportunityId || 0) || null,
+    contactId: Number(value.contactId || 0) || null,
+    intents: value.conversationContext?.intents || [],
+    filterNames: Object.keys(value.conversationContext?.filters || {}).filter(
+      (key) => safeFilterNames.has(key),
+    ),
+  });
+  const summarizePolicy = () => ({
+    channel,
+    channelRules: Object.fromEntries(
+      Object.entries(effectiveChannelRules).filter(
+        ([key, value]) =>
+          ["accountScoped", "noSharedCoachSession", "scope"].includes(key) &&
+          ["string", "boolean"].includes(typeof value),
+      ),
+    ),
+    businessScope: Object.fromEntries(
+      Object.entries(businessRules.scope || {}).filter(
+        ([, value]) => typeof value === "boolean",
+      ),
+    ),
+    businessFilters: Object.fromEntries(
+      Object.entries(businessRules.filters || {}).filter(
+        ([, value]) =>
+          typeof value === "boolean" ||
+          (typeof value === "number" && Number.isFinite(value)),
+      ),
+    ),
+    allowedOperationKinds: effectiveOperationPolicy.allowedKinds,
+    availableTools: resolvedTools?.map((tool) => tool.name) || [],
+  });
+  const tracedRequestResponse = (request) => {
+    if (!shouldTrace) return requestResponse(request);
+    return executionTrace.span(
+      {
+        from: "B5",
+        to: "B10",
+        label: "Generar respuesta",
+        parentSpanId: request.traceParentSpanId || traceParentSpanId,
+        input: {
+          phase: request.phase || channel,
+          questionLength: String(request.payload?.question || "").length,
+          toolResultCount: Array.isArray(
+            request.payload?.context?.readToolResults,
+          )
+            ? request.payload.context.readToolResults.length
+            : 0,
+          context: summarizeConversationContext(
+            request.payload?.context || {},
+          ),
+          validatedRouting: summarizeRouting(
+            request.payload?.context?.channelIntentRouting,
+          ),
+          policy: summarizePolicy(),
+        },
+      },
+      ({ spanId }) =>
+        requestResponse({ ...request, traceParentSpanId: spanId }),
+      (value) => ({
+        responseType: value?.responseType || null,
+        answerLength: String(value?.answer || "").length,
+        evidenceCount: Array.isArray(value?.evidence)
+          ? value.evidence.length
+          : 0,
+        operationCount: Array.isArray(value?.operations)
+          ? value.operations.length
+          : 0,
+      }),
+    );
+  };
+  const tracedExecuteReadTool = (request) => {
+    if (!shouldTrace || typeof dependencies.executeReadTool !== "function") {
+      return dependencies.executeReadTool?.(request);
+    }
+    const allowedArgumentNames = new Set([
+      "accountId",
+      "opportunityId",
+      "contactId",
+      "activeOnly",
+      "inactiveOnly",
+      "openOnly",
+      "stageCodes",
+      "commercialStatusCodes",
+      "sinceDate",
+      "untilDate",
+      "closeYear",
+      "limit",
+    ]);
+    const safeArgs = Object.fromEntries(
+      Object.entries(request.args || {}).filter(([key]) =>
+        allowedArgumentNames.has(key),
+      ),
+    );
+    return executionTrace.spanSync(
+      {
+        from: "B5",
+        to: "B8",
+        label: `Ejecutar ${request.toolName}`,
+        parentSpanId: traceParentSpanId,
+        input: { toolName: request.toolName, args: safeArgs },
+      },
+      () => dependencies.executeReadTool(request),
+      (value) => ({
+        toolName: value?.toolName || request.toolName,
+        resultCount: Array.isArray(value?.result)
+          ? value.result.length
+          : value?.result == null
+            ? 0
+            : 1,
+        failed: Boolean(value?.error),
+      }),
+    );
+  };
   const resolveResponseContext =
     dependencies.resolveResponseContext || resolveCoachResponseContext;
   const normalizeResponse =
@@ -622,9 +773,10 @@ export async function runConversationEngine({
         : null,
     queryCount: 0,
   };
+  let plannerSpanId = traceParentSpanId;
   if (plannerMayRun) {
     try {
-      const proposedPlan = await dependencies.planChannelIntent({
+      const plannerInput = {
         channel,
         question,
         context,
@@ -633,18 +785,91 @@ export async function runConversationEngine({
         availableTools: resolvedTools,
         catalog: channelIntentCatalog,
         deadlineAt: turnDeadlineAt,
-      });
-      structuredChannelIntentRouting = normalizeChannelIntentPlan({
-        channel,
-        plan: proposedPlan,
-        serverEntityCandidates: proposedPlan?.serverEntityCandidates,
-        availableTools: resolvedTools,
-        context,
-        configuration: channelIntentCatalog,
-        question,
-        conversationHistory: channelHistory,
-        trustedEntityReferences: context.trustedEntityReferences || [],
-      });
+      };
+      const proposedPlan = shouldTrace
+        ? await executionTrace.span(
+            {
+              from: "B5",
+              to: "B6",
+              label: "Solicitar plan estructurado",
+              parentSpanId: traceParentSpanId,
+              input: {
+                questionLength: String(question || "").length,
+                context: summarizeConversationContext(context),
+                intentCodes: channelIntentCatalog
+                  .filter((intent) => intent.enabled !== false)
+                  .map((intent) => intent.code),
+                toolNames: resolvedTools.map((tool) => tool.name),
+                policy: summarizePolicy(),
+              },
+            },
+            ({ spanId }) => {
+              plannerSpanId = spanId;
+              return dependencies.planChannelIntent(plannerInput);
+            },
+            (value) => ({
+              hasPlan: Boolean(value),
+              proposedRouting: summarizeRouting(value),
+              queryCount: Array.isArray(value?.queries)
+                ? value.queries.length
+                : 0,
+              requiresClarification: Boolean(value?.requiresClarification),
+            }),
+          )
+        : await dependencies.planChannelIntent(plannerInput);
+      const normalizePlan = () =>
+        normalizeChannelIntentPlan({
+          channel,
+          plan: proposedPlan,
+          serverEntityCandidates: proposedPlan?.serverEntityCandidates,
+          availableTools: resolvedTools,
+          context,
+          configuration: channelIntentCatalog,
+          question,
+          conversationHistory: channelHistory,
+          trustedEntityReferences: context.trustedEntityReferences || [],
+        });
+      structuredChannelIntentRouting = shouldTrace
+        ? executionTrace.spanSync(
+            {
+              from: "B5",
+              to: "B5",
+              label: "Validar routing y aplicar políticas",
+              parentSpanId: plannerSpanId,
+              input: {
+                proposedRouting: summarizeRouting(proposedPlan),
+                authorizedTools: resolvedTools.map((tool) => tool.name),
+                policy: summarizePolicy(),
+              },
+            },
+            normalizePlan,
+            (normalized) => {
+              const proposedIntents =
+                proposedPlan?.queries || proposedPlan?.intents || [];
+              const normalizedIntents = new Set(normalized?.intents || []);
+              const proposedTools =
+                proposedPlan?.allowedTools || proposedPlan?.tools || [];
+              const normalizedTools = new Set(
+                normalized?.allowedTools || [],
+              );
+              return {
+                accepted: Boolean(normalized),
+                normalizedRouting: summarizeRouting(normalized),
+                rejectedIntents: proposedIntents.filter(
+                  (intent) => !normalizedIntents.has(intent),
+                ),
+                rejectedTools: proposedTools.filter(
+                  (toolName) => !normalizedTools.has(toolName),
+                ),
+                rejectionReason: normalized
+                  ? null
+                  : proposedPlan
+                    ? "invalid_or_unauthorized_plan"
+                    : "planner_unavailable",
+              };
+            },
+          )
+        : normalizePlan();
       plannerDiagnostics = structuredChannelIntentRouting
         ? {
             source: "structured_plan",
@@ -679,8 +904,7 @@ export async function runConversationEngine({
             configuration: channelIntentCatalog,
           })
         : null;
-  const legacyIntent =
-    channel === "coach" ? classifyCoachIntent(question) : null;
+  const legacyIntent = channel === "coach" ? classifyCoachIntent(question) : null;
   const legacyIntentCode = [
     "stage_readiness",
     "activity_query",
@@ -783,7 +1007,7 @@ export async function runConversationEngine({
       : channel === "customer_account"
         ? []
         : resolvedTools;
-  const readModel = await prepareReadModel({
+  const readModelInput = {
     user,
     question,
     selectedContext: context,
@@ -797,7 +1021,38 @@ export async function runConversationEngine({
     ...(channel !== "coach"
       ? { channelIntentRouting, channelIntentCatalog }
       : {}),
-  });
+  };
+  const readModel = shouldTrace
+    ? await executionTrace.span(
+        {
+          from: "B5",
+          to: "B7",
+          label: "Preparar lecturas del canal",
+          parentSpanId: traceParentSpanId,
+          input: {
+            channel,
+            questionLength: String(question || "").length,
+            toolNames: routedTools.map((tool) =>
+              typeof tool === "string" ? tool : tool.name,
+            ),
+            validatedRouting: summarizeRouting(channelIntentRouting),
+            policy: summarizePolicy(),
+          },
+        },
+        ({ spanId }) =>
+          prepareReadModel({
+            ...readModelInput,
+            traceParentSpanId: spanId,
+          }),
+        (value) => ({
+          toolNames: (value.readToolResults || [])
+            .map((item) => item.toolName)
+            .filter(Boolean),
+          resultCount: (value.readToolResults || []).length,
+          clarificationRequired: Boolean(value.clarification),
+        }),
+      )
+    : await prepareReadModel(readModelInput);
   const {
     effectiveContext,
     questionContextTransition,
@@ -1033,7 +1288,7 @@ export async function runConversationEngine({
             : {}),
         }
       : deterministicResult ||
-        (await requestResponse({
+        (await tracedRequestResponse({
           payload: buildPrompt(...promptArguments),
           user,
           jobId,
@@ -1070,8 +1325,8 @@ export async function runConversationEngine({
       buildCoachPrompt,
       requestMiAgentJson,
       buildPrompt,
-      requestResponse,
-      executeReadTool: dependencies.executeReadTool,
+      requestResponse: tracedRequestResponse,
+      executeReadTool: tracedExecuteReadTool,
     },
   });
   result = completedModelTurn.result;

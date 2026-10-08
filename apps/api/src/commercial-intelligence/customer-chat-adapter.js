@@ -654,6 +654,8 @@ export async function buildCustomerReadModel({
   channelIntentRouting = null,
   channelIntentCatalog = [],
   conversationContext = null,
+  executionTrace = null,
+  traceParentSpanId = null,
 }) {
   snapshot = scopeCustomerSnapshot(snapshot || {}); // Ensure snapshot is scoped correctly
   const crmSnapshot = {
@@ -808,7 +810,7 @@ export async function buildCustomerReadModel({
     }
     if (!quotationAlreadyFetched) initialReadQueryCount += 1;
     const isCoachTool = COACH_READ_TOOL_NAMES.has(toolName);
-    readToolResults.push(
+    const execute = () =>
       executeCustomerReadTool({
         toolName,
         snapshot: isCoachTool ? coachSnapshot : snapshot,
@@ -816,8 +818,47 @@ export async function buildCustomerReadModel({
         businessRules,
         buildReadiness: (opportunity) =>
           buildStageReadiness(opportunity, { currentUserId: Number(user?.id) }),
-      }),
+      });
+    const safeArgs = Object.fromEntries(
+      Object.entries(args).filter(([key]) =>
+        [
+          "accountId",
+          "opportunityId",
+          "contactId",
+          "activeOnly",
+          "inactiveOnly",
+          "openOnly",
+          "stageCodes",
+          "commercialStatusCodes",
+          "sinceDate",
+          "untilDate",
+          "closeYear",
+          "limit",
+        ].includes(key),
+      ),
     );
+    const result = executionTrace
+      ? executionTrace.spanSync(
+          {
+            from: "B7",
+            to: "B8",
+            label: `Ejecutar ${toolName}`,
+            parentSpanId: traceParentSpanId,
+            input: { toolName, args: safeArgs },
+          },
+          execute,
+          (value) => ({
+            toolName: value.toolName,
+            resultCount: Array.isArray(value.result)
+              ? value.result.length
+              : value.result == null
+                ? 0
+                : 1,
+            failed: Boolean(value.error),
+          }),
+        )
+      : execute();
+    readToolResults.push(result);
   };
   if (routeAllows("searchAccounts")) pushTool("searchAccounts");
   if (
@@ -1759,6 +1800,8 @@ export function createCustomerAccountAdapter({
   snapshotQueryMetrics = [],
   agents,
   jobId,
+  executionTrace = null,
+  traceParentSpanId = null,
 }) {
   const permissions = user?.permissionSet || new Set();
   const turnDiagnostics = {
@@ -1866,6 +1909,7 @@ export function createCustomerAccountAdapter({
       businessRules,
       channelIntentRouting,
       channelIntentCatalog,
+      traceParentSpanId: readModelTraceParentId,
     }) =>
       buildCustomerReadModel({
         user,
@@ -1878,6 +1922,8 @@ export function createCustomerAccountAdapter({
         conversationContext: readConversationContext || conversationContext,
         channelIntentRouting,
         channelIntentCatalog,
+        executionTrace,
+        traceParentSpanId: readModelTraceParentId,
       }),
     executeReadTool: ({
       toolName,
@@ -1896,7 +1942,11 @@ export function createCustomerAccountAdapter({
     isStagePreparationQuestion,
     loadProcessGuide: async () => "",
     buildPrompt: buildCustomerPrompt,
-    requestResponse: async ({ payload, deadlineAt }) => {
+    requestResponse: async ({
+      payload,
+      deadlineAt,
+      traceParentSpanId: responseTraceParentSpanId,
+    }) => {
       const routing = payload.context?.channelIntentRouting;
       const intentCodes =
         routing?.intents || (routing?.intent ? [routing.intent] : []);
@@ -1958,6 +2008,8 @@ export function createCustomerAccountAdapter({
         initialQueryErrors: snapshotQueryErrors,
         unqueriedAuthorizedTools,
         deadlineAt: turnDeadline,
+        onTraceEvent: executionTrace?.record,
+        traceParentSpanId: responseTraceParentSpanId,
         assessEvidence: async ({
           readToolResults,
           round,
@@ -2003,6 +2055,7 @@ export function createCustomerAccountAdapter({
           missingQueries,
           readToolResults,
           remainingReadQueries,
+          traceParentSpanId: additionalReadSpanId,
         }) => {
           const safeMissingQueries = missingQueries.filter((code) =>
             enabledIntentCodes.includes(code),
@@ -2060,6 +2113,8 @@ export function createCustomerAccountAdapter({
               allowedTools: followUpTools.map((tool) => tool.name),
             },
             channelIntentCatalog: channelCatalog,
+            executionTrace,
+            traceParentSpanId: additionalReadSpanId,
           });
           return {
             readToolResults: followUpReadModel.readToolResults.slice(
@@ -2484,6 +2539,7 @@ export function createCustomerAccountAdapter({
       context = {},
       history = [],
       conversationContext: turnConversationContext = null,
+      traceParentSpanId: turnTraceParentSpanId = traceParentSpanId,
     }) {
       const businessRules = await loadCoachBusinessRules({
         channel: "customer_account",
@@ -2521,7 +2577,7 @@ export function createCustomerAccountAdapter({
         snapshot,
         effectiveConversationContext,
       );
-      return runConversationEngine({
+      const engineInput = {
         question,
         context: {
           ...effectiveContext,
@@ -2537,7 +2593,56 @@ export function createCustomerAccountAdapter({
         operationPolicy: this.operationPolicy,
         businessRules,
         dependencies,
-      });
+        executionTrace,
+      };
+      const runEngine = ({ spanId = turnTraceParentSpanId } = {}) =>
+        runConversationEngine({
+          ...engineInput,
+          traceParentSpanId: spanId,
+        });
+      return executionTrace
+        ? executionTrace.span(
+            {
+              from: "B4",
+              to: "B5",
+              label: "Ejecutar motor conversacional",
+              parentSpanId: turnTraceParentSpanId,
+              input: {
+                channel: "customer_account",
+                questionLength: String(question || "").length,
+                historyMessageCount: history.length,
+                accountId: effectiveContext.accountId || null,
+                toolCount: availableTools.length,
+                conversationContext: {
+                  accountId: effectiveConversationContext?.accountId || null,
+                  opportunityId:
+                    effectiveConversationContext?.opportunityId || null,
+                  contactId: effectiveConversationContext?.contactId || null,
+                  intents: effectiveConversationContext?.intents || [],
+                  filterNames: Object.keys(
+                    effectiveConversationContext?.filters || {},
+                  ),
+                },
+                policy: {
+                  channelRules: this.channelRules,
+                  businessScope: Object.fromEntries(
+                    Object.entries(currentScope).filter(
+                      ([, value]) => typeof value === "boolean",
+                    ),
+                  ),
+                  operationKinds: this.operationPolicy.allowedKinds,
+                  availableTools: availableTools.map((tool) => tool.name),
+                },
+              },
+            },
+            runEngine,
+            (value) => ({
+              responseType: value.response?.responseType || null,
+              answerLength: String(value.response?.answer || "").length,
+              toolCount: value.qualityTrace?.toolsUsed?.length || 0,
+            }),
+          )
+        : runEngine();
     },
   };
 }
