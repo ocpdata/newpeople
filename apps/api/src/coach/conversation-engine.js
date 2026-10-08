@@ -590,7 +590,10 @@ export async function runConversationEngine({
   const summarizeRouting = (routing) => {
     if (!routing) return null;
     return {
-      intents: routing.intents || routing.queries || (routing.intent ? [routing.intent] : []),
+      intents:
+        routing.intents ||
+        routing.queries ||
+        (routing.intent ? [routing.intent] : []),
       allowedTools: routing.allowedTools || [],
       referenceResolution: routing.referenceResolution
         ? {
@@ -606,7 +609,7 @@ export async function runConversationEngine({
       ),
       requiresClarification: Boolean(
         routing.requiresClarification ||
-          routing.ambiguity?.requiresClarification,
+        routing.ambiguity?.requiresClarification,
       ),
       missingContext:
         routing.missingContext || routing.ambiguity?.missingContext || [],
@@ -661,9 +664,7 @@ export async function runConversationEngine({
           )
             ? request.payload.context.readToolResults.length
             : 0,
-          context: summarizeConversationContext(
-            request.payload?.context || {},
-          ),
+          context: summarizeConversationContext(request.payload?.context || {}),
           validatedRouting: summarizeRouting(
             request.payload?.context?.channelIntentRouting,
           ),
@@ -849,9 +850,7 @@ export async function runConversationEngine({
               const normalizedIntents = new Set(normalized?.intents || []);
               const proposedTools =
                 proposedPlan?.allowedTools || proposedPlan?.tools || [];
-              const normalizedTools = new Set(
-                normalized?.allowedTools || [],
-              );
+              const normalizedTools = new Set(normalized?.allowedTools || []);
               return {
                 accepted: Boolean(normalized),
                 normalizedRouting: summarizeRouting(normalized),
@@ -904,7 +903,8 @@ export async function runConversationEngine({
             configuration: channelIntentCatalog,
           })
         : null;
-  const legacyIntent = channel === "coach" ? classifyCoachIntent(question) : null;
+  const legacyIntent =
+    channel === "coach" ? classifyCoachIntent(question) : null;
   const legacyIntentCode = [
     "stage_readiness",
     "activity_query",
@@ -1618,6 +1618,7 @@ export async function runConversationEngine({
         reasonCode: null,
       },
       evidence: adapterDiagnostics.evidence || null,
+      answerAudit: adapterDiagnostics.answerAudit || null,
       agentMetrics: adapterDiagnostics.agentMetrics || [],
       failureStage: null,
     },

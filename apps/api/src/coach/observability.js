@@ -138,6 +138,7 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
   const planner = diagnostics.planner || {};
   const evidence = diagnostics.evidence || {};
   const fallback = diagnostics.fallback || {};
+  const answerAudit = diagnostics.answerAudit || null;
   const agentMetrics = Array.isArray(diagnostics.agentMetrics)
     ? diagnostics.agentMetrics.slice(0, 20).map((agent) => ({
         agentId: String(agent?.agentId || "unknown").slice(0, 60),
@@ -173,6 +174,14 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
     "planner_error",
   ]);
   const plannerEvaluation = planner.evaluation || {};
+  const allowedAnswerAuditStatuses = new Set([
+    "request_pending",
+    "request_error",
+    "supported",
+    "unsupported",
+    "inconclusive",
+    "unavailable",
+  ]);
   const allowedPlannerModes = new Set(["active"]);
   const allowedEvidenceStatuses = new Set([
     "sufficient",
@@ -326,6 +335,118 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
       used: Boolean(fallback.used),
       reasonCode: normalizeTraceErrorCode(fallback.reasonCode),
     },
+    answerAudit: answerAudit
+      ? {
+          schemaName:
+            answerAudit.schemaName === "customer_account_answer_audit"
+              ? answerAudit.schemaName
+              : null,
+          model: String(answerAudit.model || "").slice(0, 120) || null,
+          providerResponseId:
+            String(answerAudit.providerResponseId || "").slice(0, 120) || null,
+          status: allowedAnswerAuditStatuses.has(answerAudit.status)
+            ? answerAudit.status
+            : "unavailable",
+          errorCode: normalizeTraceErrorCode(answerAudit.errorCode),
+          proposedAnswer: String(answerAudit.proposedAnswer || "").slice(
+            0,
+            1500,
+          ),
+          unsupportedClaims: Array.isArray(answerAudit.unsupportedClaims)
+            ? answerAudit.unsupportedClaims
+                .slice(0, 12)
+                .map((claim) => String(claim || "").slice(0, 500))
+            : [],
+          findings: Array.isArray(answerAudit.findings)
+            ? answerAudit.findings.slice(0, 12).map((finding) => ({
+                claim: String(finding?.claim || "").slice(0, 500),
+                verdict: ["supported", "unsupported", "inconclusive"].includes(
+                  finding?.verdict,
+                )
+                  ? finding.verdict
+                  : "inconclusive",
+                reason: String(finding?.reason || "").slice(0, 500),
+                evidenceRefs: Array.isArray(finding?.evidenceRefs)
+                  ? finding.evidenceRefs
+                      .slice(0, 12)
+                      .map((reference) => String(reference || "").slice(0, 120))
+                  : [],
+              }))
+            : [],
+          evidence: Array.isArray(answerAudit.evidence)
+            ? answerAudit.evidence.slice(0, 20).map((item) => ({
+                toolName: String(item?.toolName || "unknown").slice(0, 80),
+                sourceDomain: String(item?.sourceDomain || "unknown").slice(
+                  0,
+                  40,
+                ),
+                queryFailed: Boolean(item?.queryFailed),
+                resultCount: Math.max(0, Number(item?.resultCount || 0)),
+                records: Array.isArray(item?.records)
+                  ? item.records.slice(0, 20).map((record) => ({
+                      id: Number(record?.id || 0) || null,
+                      entityType:
+                        String(record?.entityType || "").slice(0, 40) || null,
+                      name: String(record?.name || "").slice(0, 240) || null,
+                      accountId: Number(record?.accountId || 0) || null,
+                      accountName:
+                        String(record?.accountName || "").slice(0, 240) || null,
+                      amountUsd: Number.isFinite(Number(record?.amountUsd))
+                        ? Number(record.amountUsd)
+                        : null,
+                      closeDate:
+                        String(record?.closeDate || "").slice(0, 40) || null,
+                      stageCode:
+                        String(record?.stageCode || "").slice(0, 80) || null,
+                      stageName:
+                        String(record?.stageName || "").slice(0, 160) || null,
+                      activationStatusCode:
+                        String(record?.activationStatusCode || "").slice(
+                          0,
+                          80,
+                        ) || null,
+                      activationStatusName:
+                        String(record?.activationStatusName || "").slice(
+                          0,
+                          120,
+                        ) || null,
+                      commercialStatusCode:
+                        String(record?.commercialStatusCode || "").slice(
+                          0,
+                          80,
+                        ) || null,
+                      lifecycle:
+                        String(record?.lifecycle || "").slice(0, 40) || null,
+                      opportunityId: Number(record?.opportunityId || 0) || null,
+                      opportunityName:
+                        String(record?.opportunityName || "").slice(0, 240) ||
+                        null,
+                      contactId: Number(record?.contactId || 0) || null,
+                      contactName:
+                        String(record?.contactName || "").slice(0, 240) || null,
+                      positionTitle:
+                        String(record?.positionTitle || "").slice(0, 160) ||
+                        null,
+                      title: String(record?.title || "").slice(0, 240) || null,
+                      status: String(record?.status || "").slice(0, 80) || null,
+                      dueDate:
+                        String(record?.dueDate || "").slice(0, 40) || null,
+                      associatedContact: record?.associatedContact
+                        ? {
+                            name: String(
+                              record.associatedContact.name || "",
+                            ).slice(0, 160),
+                            positionTitle: String(
+                              record.associatedContact.positionTitle || "",
+                            ).slice(0, 160),
+                          }
+                        : null,
+                    }))
+                  : [],
+              }))
+            : [],
+        }
+      : null,
     failureStage: allowedFailureStages.has(diagnostics.failureStage)
       ? diagnostics.failureStage
       : null,

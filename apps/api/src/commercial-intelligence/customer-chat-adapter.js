@@ -38,6 +38,73 @@ const COACH_READ_TOOL_CATALOG = getCoachReadToolCatalog();
 const COACH_READ_TOOL_NAMES = new Set(
   COACH_READ_TOOL_CATALOG.map((tool) => tool.name),
 );
+const ANSWER_AUDIT_EVIDENCE_FIELDS = [
+  "id",
+  "entityType",
+  "name",
+  "accountId",
+  "accountName",
+  "amountUsd",
+  "closeDate",
+  "stageCode",
+  "stageName",
+  "activationStatusCode",
+  "activationStatusName",
+  "commercialStatusCode",
+  "lifecycle",
+  "opportunityId",
+  "opportunityName",
+  "contactId",
+  "contactName",
+  "positionTitle",
+  "title",
+  "status",
+  "dueDate",
+];
+
+function summarizeAnswerAuditEvidence(authorizedEvidence) {
+  return authorizedEvidence.slice(0, 20).map((item) => {
+    const rawResult = item?.result;
+    const records = Array.isArray(rawResult)
+      ? rawResult
+      : rawResult && typeof rawResult === "object"
+        ? [rawResult]
+        : [];
+    return {
+      toolName: String(item?.toolName || "unknown").slice(0, 80),
+      sourceDomain: String(item?.sourceDomain || "unknown").slice(0, 40),
+      queryFailed: Boolean(item?.queryFailed),
+      resultCount: Array.isArray(rawResult)
+        ? rawResult.length
+        : rawResult == null
+          ? 0
+          : 1,
+      records: records.slice(0, 20).map((record) => {
+        const summary = Object.fromEntries(
+          ANSWER_AUDIT_EVIDENCE_FIELDS.filter(
+            (field) => record?.[field] !== undefined,
+          ).map((field) => [
+            field,
+            typeof record[field] === "string"
+              ? record[field].slice(0, 240)
+              : record[field],
+          ]),
+        );
+        if (record?.associatedContact) {
+          summary.associatedContact = {
+            name: String(record.associatedContact.name || "").slice(0, 160),
+            positionTitle: String(
+              record.associatedContact.positionTitle ||
+                record.associatedContact.position_title ||
+                "",
+            ).slice(0, 160),
+          };
+        }
+        return summary;
+      }),
+    };
+  });
+}
 
 function normalize(value) {
   return String(value || "")
@@ -1807,6 +1874,7 @@ export function createCustomerAccountAdapter({
   const turnDiagnostics = {
     fallback: { used: false, reasonCode: null },
     evidence: null,
+    answerAudit: null,
   };
   let activeBusinessRules = null;
   const availableTools = [
@@ -2421,59 +2489,137 @@ export function createCustomerAccountAdapter({
           signal: getDeadlineSignal(deadlineAt),
         }));
       if (aiResult) {
-        const answerAudit = await runStructuredTextResearch({
+        const auditEvidenceSnapshot =
+          summarizeAnswerAuditEvidence(authorizedEvidence);
+        const answerAuditDiagnostics = {
           schemaName: "customer_account_answer_audit",
-          systemPrompt:
-            "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones CRM están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. No redactes una respuesta nueva ni autorices operaciones.",
-          subject: snapshot.account?.name || "cuenta",
-          context: {
-            question: payload.question,
-            channelIntentRouting: routing,
-            proposalOrigin: deterministicOperationResponse
-              ? "server_deterministic"
-              : "model_generated",
-            proposedAnswer: {
-              answer: aiResult.answer,
-              evidence: Array.isArray(aiResult.evidence)
-                ? aiResult.evidence
-                : [],
-              inferences: Array.isArray(aiResult.inferences)
-                ? aiResult.inferences
-                : [],
-              recommendedActions: Array.isArray(aiResult.recommendedActions)
-                ? aiResult.recommendedActions
-                : [],
-              operations: Array.isArray(aiResult.operations)
-                ? aiResult.operations
-                : [],
+          model: null,
+          providerResponseId: null,
+          status: "request_pending",
+          proposedAnswer: String(aiResult.answer || "").slice(0, 1500),
+          unsupportedClaims: [],
+          findings: [],
+          evidence: auditEvidenceSnapshot,
+        };
+        turnDiagnostics.answerAudit = answerAuditDiagnostics;
+        let answerAudit;
+        try {
+          answerAudit = await runStructuredTextResearch({
+            schemaName: "customer_account_answer_audit",
+            onResponseMetadata: ({ responseId, model } = {}) => {
+              answerAuditDiagnostics.providerResponseId = responseId || null;
+              answerAuditDiagnostics.model = model || null;
             },
-            authorizedEvidence,
-            verifiedEmptyResults,
-            evidenceVerification: evidenceLoop.status,
-          },
-          currentValues: {},
-          fields: [
-            {
-              key: "status",
-              type: "enum",
-              enum: ["supported", "unsupported", "inconclusive"],
-              example: "supported",
+            systemPrompt:
+              "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones CRM están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. Para cada afirmación no respaldada, devuelve en findings la afirmación, el veredicto, el motivo concreto y las referencias a los toolName/registros de authorizedEvidence que revisaste; no inventes referencias. No redactes una respuesta nueva ni autorices operaciones.",
+            subject: snapshot.account?.name || "cuenta",
+            context: {
+              question: payload.question,
+              channelIntentRouting: routing,
+              proposalOrigin: deterministicOperationResponse
+                ? "server_deterministic"
+                : "model_generated",
+              proposedAnswer: {
+                answer: aiResult.answer,
+                evidence: Array.isArray(aiResult.evidence)
+                  ? aiResult.evidence
+                  : [],
+                inferences: Array.isArray(aiResult.inferences)
+                  ? aiResult.inferences
+                  : [],
+                recommendedActions: Array.isArray(aiResult.recommendedActions)
+                  ? aiResult.recommendedActions
+                  : [],
+                operations: Array.isArray(aiResult.operations)
+                  ? aiResult.operations
+                  : [],
+              },
+              authorizedEvidence,
+              verifiedEmptyResults,
+              evidenceVerification: evidenceLoop.status,
             },
-            {
-              key: "unsupportedClaims",
-              type: "array",
-              example: [],
-              items: { type: "string", example: "Dato no respaldado" },
+            currentValues: {},
+            fields: [
+              {
+                key: "status",
+                type: "enum",
+                enum: ["supported", "unsupported", "inconclusive"],
+                example: "supported",
+              },
+              {
+                key: "unsupportedClaims",
+                type: "array",
+                example: [],
+                items: { type: "string", example: "Dato no respaldado" },
+              },
+              {
+                key: "findings",
+                type: "array",
+                example: [],
+                items: {
+                  type: "object",
+                  fields: [
+                    { key: "claim", type: "string", example: "Hecho CRM" },
+                    {
+                      key: "verdict",
+                      type: "enum",
+                      enum: ["supported", "unsupported", "inconclusive"],
+                      example: "unsupported",
+                    },
+                    {
+                      key: "reason",
+                      type: "string",
+                      example: "Motivo concreto",
+                    },
+                    {
+                      key: "evidenceRefs",
+                      type: "array",
+                      example: [],
+                      items: { type: "string", example: "getOpportunity[0]" },
+                    },
+                  ],
+                },
+              },
+            ],
+            aiUsageContext: {
+              userId: Number(user.id),
+              featureCode: "commercial_intelligence.account_chat",
+              jobType: "account_chat",
+              jobId,
             },
-          ],
-          aiUsageContext: {
-            userId: Number(user.id),
-            featureCode: "commercial_intelligence.account_chat",
-            jobType: "account_chat",
-            jobId,
-          },
-          signal: getDeadlineSignal(deadlineAt),
-        });
+            signal: getDeadlineSignal(deadlineAt),
+          });
+        } catch (error) {
+          answerAuditDiagnostics.status = "request_error";
+          answerAuditDiagnostics.errorCode = String(
+            error?.code || error?.name || "audit_request_failed",
+          ).slice(0, 80);
+          throw error;
+        }
+        answerAuditDiagnostics.status = answerAudit?.status || "unavailable";
+        answerAuditDiagnostics.unsupportedClaims = Array.isArray(
+          answerAudit?.unsupportedClaims,
+        )
+          ? answerAudit.unsupportedClaims
+              .slice(0, 12)
+              .map((claim) => String(claim || "").slice(0, 500))
+          : [];
+        answerAuditDiagnostics.findings = Array.isArray(answerAudit?.findings)
+          ? answerAudit.findings.slice(0, 12).map((finding) => ({
+              claim: String(finding?.claim || "").slice(0, 500),
+              verdict: ["supported", "unsupported", "inconclusive"].includes(
+                finding?.verdict,
+              )
+                ? finding.verdict
+                : "inconclusive",
+              reason: String(finding?.reason || "").slice(0, 500),
+              evidenceRefs: Array.isArray(finding?.evidenceRefs)
+                ? finding.evidenceRefs
+                    .slice(0, 12)
+                    .map((reference) => String(reference || "").slice(0, 120))
+                : [],
+            }))
+          : [];
         if (answerAudit?.status === "supported") return aiResult;
         const answerAuditFailureCode =
           answerAudit?.status === "unsupported"

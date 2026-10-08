@@ -488,8 +488,18 @@ describe("Customer account chat adapter", () => {
         ...snapshot,
         account: { id: 7, name: "Totalplay" },
         opportunities: [
-          { ...snapshot.opportunities[0], id: 11, accountId: 7, amountUsd: 42000 },
-          { ...snapshot.opportunities[0], id: 12, accountId: 7, amountUsd: 15000 },
+          {
+            ...snapshot.opportunities[0],
+            id: 11,
+            accountId: 7,
+            amountUsd: 42000,
+          },
+          {
+            ...snapshot.opportunities[0],
+            id: 12,
+            accountId: 7,
+            amountUsd: 15000,
+          },
         ],
       },
       agents: [],
@@ -572,7 +582,13 @@ describe("Customer account chat adapter", () => {
         recommendedActions: [],
         operations: [],
       })
-      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+      .mockImplementationOnce(async ({ onResponseMetadata }) => {
+        onResponseMetadata?.({
+          responseId: "resp_audit_test",
+          model: "test-audit-model",
+        });
+        return { status: "supported", unsupportedClaims: [] };
+      });
 
     const opportunity = {
       ...snapshot.opportunities[0],
@@ -632,7 +648,24 @@ describe("Customer account chat adapter", () => {
       name: "Rene Negrete",
       positionTitle: "Gerente de Operaciones",
     });
-    expect(JSON.stringify(opportunityEvidence)).not.toContain("rene@example.test");
+    const auditDiagnostics = result.qualityTrace.diagnostics.answerAudit;
+    const auditedOpportunity = auditDiagnostics.evidence.find(
+      (item) => item.toolName === "getOpportunity",
+    )?.records?.[0];
+    expect(auditDiagnostics).toMatchObject({
+      schemaName: "customer_account_answer_audit",
+      model: "test-audit-model",
+      providerResponseId: "resp_audit_test",
+      status: "supported",
+    });
+    expect(auditedOpportunity.associatedContact).toEqual({
+      name: "Rene Negrete",
+      positionTitle: "Gerente de Operaciones",
+    });
+    expect(JSON.stringify(auditDiagnostics)).not.toContain("rene@example.test");
+    expect(JSON.stringify(opportunityEvidence)).not.toContain(
+      "rene@example.test",
+    );
     expect(result.response.operations).toEqual([]);
   });
 
@@ -745,7 +778,9 @@ describe("Customer account chat adapter", () => {
     expect(result.response.answer).toContain("2 oportunidades abiertas");
     expect(result.response.answer).toMatch(/USD 1,250,000|USD 1\.250\.000/);
     expect(result.response.answer).toContain("2 contactos activos visibles");
-    expect(result.response.answer).not.toMatch(/interacci[oó]n|61 días|riesgo/i);
+    expect(result.response.answer).not.toMatch(
+      /interacci[oó]n|61 días|riesgo/i,
+    );
     expect(runStructuredTextResearch).toHaveBeenCalledTimes(2);
     expect(result.qualityTrace.toolsUsed).toEqual(
       expect.arrayContaining([
@@ -2630,6 +2665,15 @@ describe("Customer account chat adapter", () => {
         unsupportedClaims: [
           "El monto y la firma no aparecen en los resultados CRM autorizados.",
         ],
+        findings: [
+          {
+            claim:
+              "El monto y la firma no aparecen en los resultados CRM autorizados.",
+            verdict: "unsupported",
+            reason: "La evidencia consultada no incluye monto ni firma.",
+            evidenceRefs: ["searchAccounts[0]"],
+          },
+        ],
       });
 
     const adapter = createCustomerAccountAdapter({
@@ -2662,18 +2706,14 @@ describe("Customer account chat adapter", () => {
     expect(synthesisContext).not.toHaveProperty("agents");
     expect(synthesisContext).not.toHaveProperty("snapshot");
 
-    expect(
-      auditContext.authorizedEvidence,
-    ).toEqual(
+    expect(auditContext.authorizedEvidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ toolName: "searchAccounts" }),
       ]),
     );
-    expect(
-      JSON.stringify(
-        auditContext.authorizedEvidence,
-      ),
-    ).toContain("Comercial Lumen");
+    expect(JSON.stringify(auditContext.authorizedEvidence)).toContain(
+      "Comercial Lumen",
+    );
     expect(result.response.responseType).toBe("error");
     expect(result.response.answer).toContain(
       "no pude redactar una respuesta confiable",
@@ -2684,6 +2724,16 @@ describe("Customer account chat adapter", () => {
     expect(result.qualityTrace.diagnostics.fallback.reasonCode).toBe(
       "answer_not_grounded",
     );
+    expect(result.qualityTrace.diagnostics.answerAudit).toMatchObject({
+      status: "unsupported",
+      findings: [
+        {
+          verdict: "unsupported",
+          reason: "La evidencia consultada no incluye monto ni firma.",
+          evidenceRefs: ["searchAccounts[0]"],
+        },
+      ],
+    });
   });
 
   it("does not turn a CRM snapshot error into an empty-result answer", async () => {

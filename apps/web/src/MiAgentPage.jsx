@@ -199,19 +199,28 @@ function summarizeDebugRouting(routing = {}) {
   const tools = routing.allowedTools || [];
   const reference = routing.referenceResolution;
   const filters = Object.entries(routing.filters || {})
-    .filter(([, value]) => value !== null && value !== undefined && value !== "")
-    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
-  return [
-    intents.length ? `intenciones: ${summarizeDebugTools(intents)}` : null,
-    reference
-      ? `objetivo ${reference.targetType || "sin tipo"} (${reference.cardinality || "sin cardinalidad"}, ${reference.source || "sin origen"})`
-      : null,
-    tools.length ? `herramientas autorizadas: ${summarizeDebugTools(tools)}` : null,
-    filters.length ? `filtros: ${filters.join(", ")}` : null,
-    routing.requiresClarification ? "requiere aclaración" : null,
-  ]
-    .filter(Boolean)
-    .join("; ") || "sin consultas enrutadas";
+    .filter(
+      ([, value]) => value !== null && value !== undefined && value !== "",
+    )
+    .map(
+      ([key, value]) =>
+        `${key}: ${Array.isArray(value) ? value.join(", ") : value}`,
+    );
+  return (
+    [
+      intents.length ? `intenciones: ${summarizeDebugTools(intents)}` : null,
+      reference
+        ? `objetivo ${reference.targetType || "sin tipo"} (${reference.cardinality || "sin cardinalidad"}, ${reference.source || "sin origen"})`
+        : null,
+      tools.length
+        ? `herramientas autorizadas: ${summarizeDebugTools(tools)}`
+        : null,
+      filters.length ? `filtros: ${filters.join(", ")}` : null,
+      routing.requiresClarification ? "requiere aclaración" : null,
+    ]
+      .filter(Boolean)
+      .join("; ") || "sin consultas enrutadas"
+  );
 }
 
 function summarizeCustomerChatDebugStep(item) {
@@ -225,6 +234,7 @@ function summarizeCustomerChatDebugStep(item) {
   const proposedPlan = output.proposedPlan || null;
   const routingValidation = output.routingValidation || null;
   const normalizedRouting = output.normalizedPlan || null;
+  const answerAudit = output.auditDiagnostics || null;
   const contextSummary = (value) =>
     [
       value.accountId ? `cuenta ${value.accountId}` : null,
@@ -302,7 +312,7 @@ function summarizeCustomerChatDebugStep(item) {
       return {
         input: `Evidencia ${input.evidenceStatus || "sin estado"}; respuesta tipo ${input.responseType || "sin tipo"}.`,
         output: answerPreview
-          ? `Respuesta: ${answerPreview.slice(0, 180)}${answerPreview.length > 180 ? "…" : ""}`
+          ? `Respuesta: ${answerPreview.slice(0, 180)}${answerPreview.length > 180 ? "…" : ""}${answerAudit ? `; auditoría IA ${answerAudit.status || "sin dictamen"}${answerAudit.unsupportedClaims?.length ? `, ${answerAudit.unsupportedClaims.length} afirmaciones no respaldadas` : ""}` : ""}`
           : "No hay texto de respuesta.",
       };
     case "B11":
@@ -379,6 +389,12 @@ function CustomerChatDebugStep({ item, issueBlock, traceId }) {
           {summaries.output}
         </p>
       </div>
+      {item.block === "B10" && item.output?.auditDiagnostics ? (
+        <details className="mi-agent-customer-chat-debug-step-details">
+          <summary>Ver diagnóstico de auditoría IA</summary>
+          <pre>{JSON.stringify(item.output.auditDiagnostics, null, 2)}</pre>
+        </details>
+      ) : null}
       {Array.isArray(item.checks) && item.checks.length ? (
         <ul className="mi-agent-customer-chat-debug-checks">
           {item.checks.map((check) => (
@@ -501,10 +517,7 @@ function CustomerChatExecutionSpan({ span }) {
   };
 
   return (
-    <li
-      id={span.traceElementId}
-      className={`is-${span.status || "unknown"}`}
-    >
+    <li id={span.traceElementId} className={`is-${span.status || "unknown"}`}>
       <details open={span.status === "failed"}>
         <summary>
           <strong>
@@ -517,7 +530,9 @@ function CustomerChatExecutionSpan({ span }) {
         </summary>
         <div className="mi-agent-customer-chat-detailed-span-content">
           <small>
-            {span.startedAt ? `Inicio: ${span.startedAt}` : "Inicio sin registrar"}
+            {span.startedAt
+              ? `Inicio: ${span.startedAt}`
+              : "Inicio sin registrar"}
             {span.returnedAt ? ` · Retorno: ${span.returnedAt}` : ""}
           </small>
           {span.returnFrom && span.returnTo ? (
@@ -619,9 +634,9 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
       <div className="mi-agent-customer-chat-detailed-trace-content">
         <p>
           Son dos carriles con relojes independientes. Los retornos se enlazan
-          con su llamada; las llamadas hijas aparecen anidadas. Los datos CRM
-          se muestran como resúmenes saneados. Las intenciones y reglas se ven
-          en los datos de B4→B5, B5→B6, la validación de B5 y B5→B7/B10.
+          con su llamada; las llamadas hijas aparecen anidadas. Los datos CRM se
+          muestran como resúmenes saneados. Las intenciones y reglas se ven en
+          los datos de B4→B5, B5→B6, la validación de B5 y B5→B7/B10.
         </p>
         <details
           className="mi-agent-customer-chat-flow-integrity"
@@ -637,17 +652,15 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
           </summary>
           <ul>
             {integrityChecks.map((check) => (
-              <li
-                key={check.key}
-                className={`is-${check.state}`}
-              >
+              <li key={check.key} className={`is-${check.state}`}>
                 <span>{check.message}</span>
                 {check.target ? (
                   <button
                     type="button"
                     onClick={() => navigateToTraceEvent(check.target)}
                   >
-                    Ir al {check.target.type === "span" ? "span" : "intercambio"}
+                    Ir al{" "}
+                    {check.target.type === "span" ? "span" : "intercambio"}
                   </button>
                 ) : null}
               </li>
@@ -672,11 +685,15 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
                   <small>
                     {exchange.kind === "local" ? "" : "B2 → B1 · "}
                     {exchange.outcome || "resultado desconocido"}
-                    {exchange.httpStatus ? ` · HTTP ${exchange.httpStatus}` : ""}
+                    {exchange.httpStatus
+                      ? ` · HTTP ${exchange.httpStatus}`
+                      : ""}
                     {exchange.durationMs != null
                       ? ` · ${exchange.durationMs} ms`
                       : ""}
-                    {exchange.pollCount ? ` · ${exchange.pollCount} consultas` : ""}
+                    {exchange.pollCount
+                      ? ` · ${exchange.pollCount} consultas`
+                      : ""}
                   </small>
                   {exchange.startedAt ? (
                     <small>Inicio: {exchange.startedAt}</small>
@@ -687,9 +704,7 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
                   {exchange.pollEvents?.length ? (
                     <details>
                       <summary>Estados observados por consulta</summary>
-                      <pre>
-                        {JSON.stringify(exchange.pollEvents, null, 2)}
-                      </pre>
+                      <pre>{JSON.stringify(exchange.pollEvents, null, 2)}</pre>
                     </details>
                   ) : null}
                   <details>
@@ -733,8 +748,8 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
           ) : (
             <p>
               Este resultado no contiene spans internos observados. Puede
-              corresponder a un turno anterior a la instrumentación o a un
-              fallo ocurrido antes de iniciar el worker.
+              corresponder a un turno anterior a la instrumentación o a un fallo
+              ocurrido antes de iniciar el worker.
             </p>
           )}
         </section>
@@ -804,7 +819,9 @@ function CustomerChatDebugResult({ debug }) {
           ))}
         </ul>
       ) : null}
-      {!isSuccess && issue.nextAction ? <small>{issue.nextAction}</small> : null}
+      {!isSuccess && issue.nextAction ? (
+        <small>{issue.nextAction}</small>
+      ) : null}
     </div>
   );
 }
@@ -893,196 +910,205 @@ function CustomerChatDebugFlow({ debug, transportTrace }) {
         debug={debug}
         transportTrace={transportTrace}
       />
-      <details id={`${traceId}-map`} className="mi-agent-customer-chat-debug-map">
+      <details
+        id={`${traceId}-map`}
+        className="mi-agent-customer-chat-debug-map"
+      >
         <summary>
-          Mapa de bloques · {blocks.size} de {CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS.length} presentes ·{" "}
-          {checkCounts.error || 0} errores · {checkCounts.warning || 0} por revisar ·{" "}
-          {checkCounts.pass || 0} correctas · {checkCounts.not_applicable || 0} no aplican
+          Mapa de bloques · {blocks.size} de{" "}
+          {CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS.length} presentes ·{" "}
+          {checkCounts.error || 0} errores · {checkCounts.warning || 0} por
+          revisar · {checkCounts.pass || 0} correctas ·{" "}
+          {checkCounts.not_applicable || 0} no aplican
         </summary>
         <div className="mi-agent-customer-chat-debug-flow-map">
-        {attentionChecks.length ? (
-          <section className="mi-agent-customer-chat-debug-map-attention">
-            <strong>Checks que requieren atención · {attentionChecks.length}</strong>
-            <ul>
-              {attentionChecks.map((check) => (
-                <li
-                  key={`${check.block}-${check.field}`}
-                  className={`is-${check.state}`}
-                >
-                  <div>
-                    <strong>
-                      {check.block} · {check.field}
-                    </strong>
-                    <span>{check.message}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => navigateToCheck(check.block, check.field)}
+          {attentionChecks.length ? (
+            <section className="mi-agent-customer-chat-debug-map-attention">
+              <strong>
+                Checks que requieren atención · {attentionChecks.length}
+              </strong>
+              <ul>
+                {attentionChecks.map((check) => (
+                  <li
+                    key={`${check.block}-${check.field}`}
+                    className={`is-${check.state}`}
                   >
-                    Ir al check
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-        {missingBlocks.length ? (
-          <p className="mi-agent-customer-chat-debug-result-warning">
-            Faltan bloques en la traza: {missingBlocks.join(", ")}.
-          </p>
-        ) : null}
-        <section className="mi-agent-customer-chat-debug-phase">
-          <h3>1. La interfaz envía la pregunta y recibe un job</h3>
-          <div className="mi-agent-customer-chat-debug-lane">
-            {renderStep("B1")}
-            <CustomerChatDebugConnector
-              kind="request"
-              direction="right"
-              label={edgeLabel("B1", "B2", "request", "POST pregunta")}
-            />
-            {renderStep("B2")}
-          </div>
-          <CustomerChatDebugConnector
-            kind="dispatch"
-            label={edgeLabel(
-              "B2",
-              "B3",
-              "dispatch",
-              "despacha el job en segundo plano",
-            )}
-          />
-        </section>
-
-        <section className="mi-agent-customer-chat-debug-scope is-service">
-          <header>
-            <h3>2. B3 mantiene el control del job</h3>
-            <p>
-              Prepara el contexto, delega el turno y persiste el resultado al
-              recuperarlo.
+                    <div>
+                      <strong>
+                        {check.block} · {check.field}
+                      </strong>
+                      <span>{check.message}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigateToCheck(check.block, check.field)}
+                    >
+                      Ir al check
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {missingBlocks.length ? (
+            <p className="mi-agent-customer-chat-debug-result-warning">
+              Faltan bloques en la traza: {missingBlocks.join(", ")}.
             </p>
-          </header>
-          {renderStep("B3")}
-          <CustomerChatDebugConnector
-            kind="call"
-            label={edgeLabel("B3", "B4", "call", "prepara el canal")}
-          />
-          {renderStep("B4")}
-          <CustomerChatDebugConnector
-            kind="call"
-            label={edgeLabel(
-              "B4",
-              "B5",
-              "call",
-              "invoca B5 y espera su resultado",
-            )}
-          />
+          ) : null}
+          <section className="mi-agent-customer-chat-debug-phase">
+            <h3>1. La interfaz envía la pregunta y recibe un job</h3>
+            <div className="mi-agent-customer-chat-debug-lane">
+              {renderStep("B1")}
+              <CustomerChatDebugConnector
+                kind="request"
+                direction="right"
+                label={edgeLabel("B1", "B2", "request", "POST pregunta")}
+              />
+              {renderStep("B2")}
+            </div>
+            <CustomerChatDebugConnector
+              kind="dispatch"
+              label={edgeLabel(
+                "B2",
+                "B3",
+                "dispatch",
+                "despacha el job en segundo plano",
+              )}
+            />
+          </section>
 
-          <section className="mi-agent-customer-chat-debug-scope is-engine">
+          <section className="mi-agent-customer-chat-debug-scope is-service">
             <header>
-              <h3>3. B5 orquesta el turno hasta completarlo</h3>
+              <h3>2. B3 mantiene el control del job</h3>
               <p>
-                B5 no termina al recibir el plan: coordina las llamadas internas
-                y solo entonces retorna a B4.
+                Prepara el contexto, delega el turno y persiste el resultado al
+                recuperarlo.
               </p>
             </header>
-            {renderStep("B5")}
+            {renderStep("B3")}
+            <CustomerChatDebugConnector
+              kind="call"
+              label={edgeLabel("B3", "B4", "call", "prepara el canal")}
+            />
+            {renderStep("B4")}
+            <CustomerChatDebugConnector
+              kind="call"
+              label={edgeLabel(
+                "B4",
+                "B5",
+                "call",
+                "invoca B5 y espera su resultado",
+              )}
+            />
 
-            <section className="mi-agent-customer-chat-debug-subflow">
-              <h4>Planificación: B5 llama a B6 y recibe el plan</h4>
-              {renderStep("B6")}
-              <CustomerChatDebugConnector
-                kind="return"
-                label={edgeLabel(
-                  "B6",
-                  "B5",
-                  "return",
-                  "el plan vuelve a B5 para validación",
-                )}
-              />
-            </section>
+            <section className="mi-agent-customer-chat-debug-scope is-engine">
+              <header>
+                <h3>3. B5 orquesta el turno hasta completarlo</h3>
+                <p>
+                  B5 no termina al recibir el plan: coordina las llamadas
+                  internas y solo entonces retorna a B4.
+                </p>
+              </header>
+              {renderStep("B5")}
 
-            <section className="mi-agent-customer-chat-debug-subflow">
-              <h4>Lecturas: B7 prepara consultas y B8 lee datos autorizados</h4>
-              <div className="mi-agent-customer-chat-debug-lane">
-                {renderStep("B7")}
+              <section className="mi-agent-customer-chat-debug-subflow">
+                <h4>Planificación: B5 llama a B6 y recibe el plan</h4>
+                {renderStep("B6")}
                 <CustomerChatDebugConnector
-                  kind="call"
-                  direction="right"
-                  label={edgeLabel("B7", "B8", "call", "ejecuta lecturas")}
+                  kind="return"
+                  label={edgeLabel(
+                    "B6",
+                    "B5",
+                    "return",
+                    "el plan vuelve a B5 para validación",
+                  )}
                 />
-                {renderStep("B8")}
-              </div>
+              </section>
+
+              <section className="mi-agent-customer-chat-debug-subflow">
+                <h4>
+                  Lecturas: B7 prepara consultas y B8 lee datos autorizados
+                </h4>
+                <div className="mi-agent-customer-chat-debug-lane">
+                  {renderStep("B7")}
+                  <CustomerChatDebugConnector
+                    kind="call"
+                    direction="right"
+                    label={edgeLabel("B7", "B8", "call", "ejecuta lecturas")}
+                  />
+                  {renderStep("B8")}
+                </div>
+                <CustomerChatDebugConnector
+                  kind="return"
+                  label={edgeLabel(
+                    "B8",
+                    "B7",
+                    "return",
+                    "los resultados vuelven a B7 y la evidencia a B5",
+                  )}
+                />
+              </section>
+
+              <section className="mi-agent-customer-chat-debug-subflow">
+                <h4>Verificación: B9 puede solicitar otra ronda de lecturas</h4>
+                {renderStep("B9")}
+                <div className="mi-agent-customer-chat-debug-loop">
+                  <strong>Relectura condicional</strong>
+                  <span>
+                    {edgeLabel(
+                      "B9",
+                      "B7",
+                      "conditional_loop",
+                      "Si falta evidencia y quedan consultas autorizadas, vuelve a B7 y B8.",
+                    )}
+                  </span>
+                </div>
+              </section>
+
+              <section className="mi-agent-customer-chat-debug-subflow">
+                <h4>
+                  Respuesta: B10 forma el resultado que termina devolviendo B5
+                </h4>
+                {renderStep("B10")}
+              </section>
+
               <CustomerChatDebugConnector
                 kind="return"
                 label={edgeLabel(
-                  "B8",
-                  "B7",
+                  "B5",
+                  "B4",
                   "return",
-                  "los resultados vuelven a B7 y la evidencia a B5",
+                  "B5 retorna el resultado completo a B4",
                 )}
               />
-            </section>
-
-            <section className="mi-agent-customer-chat-debug-subflow">
-              <h4>Verificación: B9 puede solicitar otra ronda de lecturas</h4>
-              {renderStep("B9")}
-              <div className="mi-agent-customer-chat-debug-loop">
-                <strong>Relectura condicional</strong>
-                <span>
-                  {edgeLabel(
-                    "B9",
-                    "B7",
-                    "conditional_loop",
-                    "Si falta evidencia y quedan consultas autorizadas, vuelve a B7 y B8.",
-                  )}
-                </span>
-              </div>
-            </section>
-
-            <section className="mi-agent-customer-chat-debug-subflow">
-              <h4>
-                Respuesta: B10 forma el resultado que termina devolviendo B5
-              </h4>
-              {renderStep("B10")}
             </section>
 
             <CustomerChatDebugConnector
               kind="return"
               label={edgeLabel(
-                "B5",
                 "B4",
+                "B3",
                 "return",
-                "B5 retorna el resultado completo a B4",
+                "B4 entrega el resultado a B3",
               )}
             />
+            <section className="mi-agent-customer-chat-debug-persistence">
+              <h4>4. Persistencia dentro del servicio B3</h4>
+              {renderStep("B11")}
+            </section>
           </section>
 
-          <CustomerChatDebugConnector
-            kind="return"
-            label={edgeLabel(
-              "B4",
-              "B3",
-              "return",
-              "B4 entrega el resultado a B3",
-            )}
-          />
-          <section className="mi-agent-customer-chat-debug-persistence">
-            <h4>4. Persistencia dentro del servicio B3</h4>
-            {renderStep("B11")}
+          <section className="mi-agent-customer-chat-debug-polling">
+            <strong>5. Entrega asíncrona a la interfaz</strong>
+            <p>
+              B1 consulta periódicamente el job en B2; B2 devuelve el estado y,
+              al completarse, el resultado final.
+            </p>
+            <small>
+              {edgeLabel("B1", "B2", "poll", "GET estado del job")} →{" "}
+              {edgeLabel("B2", "B1", "result", "B2 devuelve el resultado")}
+            </small>
           </section>
-        </section>
-
-        <section className="mi-agent-customer-chat-debug-polling">
-          <strong>5. Entrega asíncrona a la interfaz</strong>
-          <p>
-            B1 consulta periódicamente el job en B2; B2 devuelve el estado y, al
-            completarse, el resultado final.
-          </p>
-          <small>
-            {edgeLabel("B1", "B2", "poll", "GET estado del job")} →{" "}
-            {edgeLabel("B2", "B1", "result", "B2 devuelve el resultado")}
-          </small>
-        </section>
         </div>
       </details>
     </>
@@ -7441,7 +7467,8 @@ export default function MiAgentPage({
                                 La siguiente pregunta reutiliza la sesión
                                 {message.debug.currentTurn?.chatSessionId
                                   ? ` ${message.debug.currentTurn.chatSessionId}`
-                                  : " validada"}; cada turno crea un job nuevo.
+                                  : " validada"}
+                                ; cada turno crea un job nuevo.
                               </p>
                             </div>
                             <details className="mi-agent-customer-chat-debug-json">

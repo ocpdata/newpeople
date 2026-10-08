@@ -116,6 +116,7 @@ export async function runStructuredWebResearch({
   fields,
   aiUsageContext = null,
   useWebSearchTool = true,
+  onResponseMetadata = null,
   signal = null,
 }) {
   if (
@@ -186,6 +187,19 @@ export async function runStructuredWebResearch({
   }
 
   const data = await response.json();
+
+  if (typeof onResponseMetadata === "function") {
+    try {
+      onResponseMetadata({
+        responseId: String(data?.id || "").slice(0, 120) || null,
+        model:
+          String(data?.model || config.openai.model || "").slice(0, 120) ||
+          null,
+      });
+    } catch {
+      // Diagnostic callbacks must not change the research result.
+    }
+  }
 
   if (aiUsageUserId) {
     await recordAiUsageFromOpenAiResponse({
