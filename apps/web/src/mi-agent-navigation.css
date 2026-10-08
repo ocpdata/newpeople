@@ -368,6 +368,101 @@
 .mi-agent-customer-chat-debug.is-error {
   border-color: #d39a96;
 }
+.mi-agent-customer-chat-failure-ids,
+.mi-agent-chat-diagnostics-search,
+.mi-agent-chat-diagnostics-list article,
+.mi-agent-chat-diagnostics-jobs article {
+  display: grid;
+  gap: 10px;
+}
+.mi-agent-customer-chat-failure-ids {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid #d6b56f;
+  border-radius: 5px;
+  background: #fff8e8;
+  color: #654b16;
+}
+.mi-agent-customer-chat-failure-ids > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mi-agent-chat-diagnostics-search {
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 220px) auto;
+  align-items: end;
+  margin: 16px 0;
+}
+.mi-agent-chat-diagnostics-search label {
+  display: grid;
+  gap: 6px;
+  color: #365361;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-agent-chat-diagnostics-search input,
+.mi-agent-chat-diagnostics-search select {
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #b8cbd3;
+  border-radius: 4px;
+  background: #fff;
+  color: #233f4b;
+}
+.mi-agent-chat-diagnostics-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.5fr);
+  gap: 18px;
+  align-items: start;
+}
+.mi-agent-chat-diagnostics-list,
+.mi-agent-chat-diagnostics-jobs {
+  display: grid;
+  gap: 8px;
+}
+.mi-agent-chat-diagnostics-list article,
+.mi-agent-chat-diagnostics-jobs article {
+  padding: 12px;
+  border: 1px solid #cbdbe2;
+  border-radius: 5px;
+  background: #fff;
+}
+.mi-agent-chat-diagnostics-list article > div,
+.mi-agent-chat-diagnostics-jobs article > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.mi-agent-chat-diagnostics-list article span,
+.mi-agent-chat-diagnostics-list article small,
+.mi-agent-chat-diagnostics-jobs article p {
+  overflow-wrap: anywhere;
+  color: #526b77;
+  font-size: 12px;
+}
+.mi-agent-chat-diagnostics-history {
+  display: grid;
+  gap: 8px;
+  padding-left: 24px;
+}
+.mi-agent-chat-diagnostics-history li {
+  padding: 9px;
+  border-left: 2px solid #83a9b5;
+  background: #f4f8fa;
+}
+.mi-agent-chat-diagnostics-history p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 800px) {
+  .mi-agent-chat-diagnostics-search,
+  .mi-agent-chat-diagnostics-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .mi-agent-customer-chat-transport-trace {
   display: grid;
   gap: 8px;
@@ -541,12 +636,12 @@
   font-size: 13px;
   line-height: 1.4;
 }
-  .mi-agent-customer-chat-debug-result-warning {
-    margin: 0;
-    color: #815c14;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
-  }
+.mi-agent-customer-chat-debug-result-warning {
+  margin: 0;
+  color: #815c14;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .mi-agent-customer-chat-debug-phase > h3,
 .mi-agent-customer-chat-debug-scope > header,
 .mi-agent-customer-chat-debug-polling > strong {

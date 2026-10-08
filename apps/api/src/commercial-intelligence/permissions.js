@@ -22,13 +22,21 @@ const COMMERCIAL_INTELLIGENCE_PERMISSIONS = [
     code: "inteligencia_comercial.update",
     module: "inteligencia_comercial",
     action: "update",
-    description: "Confirmar, rechazar y mantener hallazgos de inteligencia comercial",
+    description:
+      "Confirmar, rechazar y mantener hallazgos de inteligencia comercial",
   },
   {
     code: "inteligencia_comercial.admin",
     module: "inteligencia_comercial",
     action: "admin",
-    description: "Administrar configuracion y gobierno de inteligencia comercial",
+    description:
+      "Administrar configuracion y gobierno de inteligencia comercial",
+  },
+  {
+    code: "inteligencia_comercial.chat_diagnostics",
+    module: "inteligencia_comercial",
+    action: "chat_diagnostics",
+    description: "Consultar sesiones y diagnosticos de chat de otros usuarios",
   },
 ];
 
@@ -52,6 +60,10 @@ export async function ensureCommercialIntelligencePermissions(options = {}) {
   await withTransaction(async (conn) => {
     const now = new Date();
 
+    await conn.query(`DELETE FROM permissions WHERE code = ?`, [
+      "inteligencia_comercial.chat_diagnostics.read",
+    ]);
+
     for (const permission of COMMERCIAL_INTELLIGENCE_PERMISSIONS) {
       await conn.query(
         `INSERT INTO permissions (code, module, action, description, created_at, updated_at)
@@ -73,7 +85,9 @@ export async function ensureCommercialIntelligencePermissions(options = {}) {
 
     if (!autoAssignRoles) return;
 
-    const placeholders = COMMERCIAL_INTELLIGENCE_PERMISSIONS.map(() => "?").join(", ");
+    const placeholders = COMMERCIAL_INTELLIGENCE_PERMISSIONS.map(
+      () => "?",
+    ).join(", ");
     const [permissionRows] = await conn.query(
       `SELECT id, code FROM permissions WHERE code IN (${placeholders})`,
       COMMERCIAL_INTELLIGENCE_PERMISSIONS.map((permission) => permission.code),
@@ -84,12 +98,22 @@ export async function ensureCommercialIntelligencePermissions(options = {}) {
     );
     await assignPermissionsToRoles(conn, adminRoles, permissionRows, now);
 
-    const managerPlaceholders = COMMERCIAL_MANAGER_ROLE_NAMES.map(() => "?").join(", ");
+    const managerPlaceholders = COMMERCIAL_MANAGER_ROLE_NAMES.map(
+      () => "?",
+    ).join(", ");
     const [managerRoles] = await conn.query(
       `SELECT id FROM roles WHERE LOWER(TRIM(name)) IN (${managerPlaceholders})`,
       COMMERCIAL_MANAGER_ROLE_NAMES,
     );
-    await assignPermissionsToRoles(conn, managerRoles, permissionRows, now);
+    await assignPermissionsToRoles(
+      conn,
+      managerRoles,
+      permissionRows.filter(
+        (permission) =>
+          permission.code !== "inteligencia_comercial.chat_diagnostics",
+      ),
+      now,
+    );
 
     const [miCoachRoles] = await conn.query(
       `SELECT DISTINCT rp.role_id AS id

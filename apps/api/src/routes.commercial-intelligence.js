@@ -52,6 +52,8 @@ import {
   createCustomerAccountChatSession,
   createCustomerAccountChatJob,
   getCustomerAccountChatSession,
+  getCustomerAccountChatDiagnosticSession,
+  listCustomerAccountChatDiagnostics,
   processCustomerAccountChatJob,
   updateCustomerIntelligenceFindingStatus,
   updateMiCoachGovernanceSettings,
@@ -101,6 +103,22 @@ const customerChatSessionSchema = jobCreateSchema.pick({
   accountId: true,
   opportunityId: true,
   contactId: true,
+});
+
+const customerChatDiagnosticsQuerySchema = z.object({
+  query: z.string().trim().max(160).optional().default(""),
+  status: z.enum(["all", "errors", "active"]).optional().default("all"),
+  accountId: z.coerce.number().int().positive().optional(),
+  dateFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  dateTo: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  page: z.coerce.number().int().min(1).max(100000).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
 
 const governanceSettingsSchema = z.object({
@@ -620,6 +638,55 @@ router.post(
         "No fue posible crear la sesion de chat",
       );
     }
+  },
+);
+
+router.get(
+  "/account-chat/diagnostics/sessions",
+  requirePermission("inteligencia_comercial.chat_diagnostics"),
+  async (req, res) => {
+    const parsed = customerChatDiagnosticsQuerySchema.safeParse(
+      req.query || {},
+    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Filtros de diagnostico invalidos",
+        issues: parsed.error.issues,
+      });
+    }
+    return res.json(await listCustomerAccountChatDiagnostics(parsed.data));
+  },
+);
+
+router.get(
+  "/account-chat/diagnostics/sessions/:sessionId",
+  requirePermission("inteligencia_comercial.chat_diagnostics"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ message: "Sesion invalida" });
+    }
+    const result = await getCustomerAccountChatDiagnosticSession({ sessionId });
+    if (!result) {
+      return res.status(404).json({ message: "Sesion de chat no encontrada" });
+    }
+    return res.json(result);
+  },
+);
+
+router.get(
+  "/account-chat/diagnostics/jobs/:jobId",
+  requirePermission("inteligencia_comercial.chat_diagnostics"),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0) {
+      return res.status(400).json({ message: "Job invalido" });
+    }
+    const result = await getCustomerAccountChatDiagnosticSession({ jobId });
+    if (!result) {
+      return res.status(404).json({ message: "Job de chat no encontrado" });
+    }
+    return res.json(result);
   },
 );
 

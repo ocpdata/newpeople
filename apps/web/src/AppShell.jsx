@@ -197,7 +197,8 @@ export default function AppShell({
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     canReadOpportunities;
-  const canAccessMiAgent = can("mi_coach.use");
+  const canAccessMiAgent =
+    can("mi_coach.use") || can("inteligencia_comercial.chat_diagnostics");
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
   const canAccessCommercialRhythm = can("ritmo_comercial.read");
@@ -449,6 +450,7 @@ export default function AppShell({
             canAccessMiAgent ? (
               <MiAgentPage
                 currentUser={currentUser}
+                canUseCoach={can("mi_coach.use")}
                 canExecuteCoach={can("mi_coach.execute")}
                 canCreateActions={can("oportunidades.update")}
                 canUpdateLeads={can("interacciones.update")}
@@ -485,6 +487,9 @@ export default function AppShell({
                   can("inteligencia_comercial.read") && canReadAccounts
                 }
                 canManageCoach={can("mi_coach.admin")}
+                canDiagnoseCustomerChats={can(
+                  "inteligencia_comercial.chat_diagnostics",
+                )}
               />
             ) : (
               <Navigate to="/" />

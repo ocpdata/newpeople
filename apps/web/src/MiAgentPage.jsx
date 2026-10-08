@@ -2035,6 +2035,7 @@ function formatCoachFieldLabel(field) {
 }
 
 export default function MiAgentPage({
+  canUseCoach = false,
   canExecuteCoach = false,
   canCreateActions = false,
   canUpdateLeads = false,
@@ -2055,9 +2056,22 @@ export default function MiAgentPage({
   canUpdateProspecting = false,
   canReadCustomerIntelligence = false,
   canManageCoach = false,
+  canDiagnoseCustomerChats = false,
 }) {
   const navigate = useNavigate();
-  const [activeWorkspace, setActiveWorkspace] = useState("summary");
+  const [activeWorkspace, setActiveWorkspace] = useState(
+    canDiagnoseCustomerChats && !canUseCoach ? "chat-diagnostics" : "summary",
+  );
+  const [chatDiagnosticsQuery, setChatDiagnosticsQuery] = useState("");
+  const [chatDiagnosticsStatus, setChatDiagnosticsStatus] = useState("all");
+  const [chatDiagnosticsAccountId, setChatDiagnosticsAccountId] = useState("");
+  const [chatDiagnosticsDateFrom, setChatDiagnosticsDateFrom] = useState("");
+  const [chatDiagnosticsDateTo, setChatDiagnosticsDateTo] = useState("");
+  const [chatDiagnosticsPage, setChatDiagnosticsPage] = useState(1);
+  const [chatDiagnosticsResult, setChatDiagnosticsResult] = useState(null);
+  const [chatDiagnosticsSelected, setChatDiagnosticsSelected] = useState(null);
+  const [chatDiagnosticsLoading, setChatDiagnosticsLoading] = useState(false);
+  const [chatDiagnosticsError, setChatDiagnosticsError] = useState("");
   const [dashboard, setDashboard] = useState(null);
   const [coachAccounts, setCoachAccounts] = useState([]);
   const [coachOpportunities, setCoachOpportunities] = useState([]);
@@ -2142,6 +2156,7 @@ export default function MiAgentPage({
     useState("");
   const [customerChatTransportError, setCustomerChatTransportError] =
     useState(null);
+  const [customerChatFailureIds, setCustomerChatFailureIds] = useState(null);
   const [customerFindingUpdatingId, setCustomerFindingUpdatingId] =
     useState(null);
   const [customerFindingApplyDraft, setCustomerFindingApplyDraft] =
@@ -2632,6 +2647,11 @@ export default function MiAgentPage({
   }
 
   useEffect(() => {
+    if (canDiagnoseCustomerChats && !canUseCoach) {
+      setLoading(false);
+      void loadCustomerChatDiagnostics({ page: 1 });
+      return;
+    }
     loadDashboard();
   }, []);
 
@@ -2762,6 +2782,7 @@ export default function MiAgentPage({
     setCustomerChatLoading(false);
     setCustomerChatSessionId(null);
     setCustomerChatSessionLoading(false);
+    setCustomerChatFailureIds(null);
     setCustomerChatPublicResearch(false);
   }
 
@@ -3148,6 +3169,8 @@ export default function MiAgentPage({
     const transportExchanges = [];
     let activeExchange = null;
     let failedJobDebug = null;
+    let activeChatSessionId = Number(customerChatSessionId || 0) || null;
+    let activeChatJobId = null;
     const beginExchange = (label, method, path, requestSummary = null) => {
       activeExchange = {
         label,
@@ -3194,13 +3217,13 @@ export default function MiAgentPage({
     setCustomerChatLoading(true);
     setCustomerIntelligenceError("");
     setCustomerChatTransportError(null);
+    setCustomerChatFailureIds(null);
     setCustomerChatMessages((current) => [
       ...current,
       { role: "seller", text: normalizedQuestion },
     ]);
     setCustomerChatQuestion("");
     try {
-      let activeChatSessionId = customerChatSessionId;
       if (!activeChatSessionId) {
         const sessionRequest = buildCustomerIntelligencePayload();
         const exchange = beginExchange(
@@ -3251,6 +3274,7 @@ export default function MiAgentPage({
         submitExchange.requestSummary,
       );
       const jobId = Number(response.data?.job?.id || 0);
+      activeChatJobId = jobId || null;
       finishExchange(
         submitExchange,
         response,
@@ -3341,6 +3365,11 @@ export default function MiAgentPage({
           },
         },
       ]);
+      setCustomerChatFailureIds(
+        result.responseType === "error"
+          ? { sessionId: activeChatSessionId, jobId: activeChatJobId }
+          : null,
+      );
     } catch (requestError) {
       if (activeExchange) {
         finishExchange(
@@ -3359,6 +3388,12 @@ export default function MiAgentPage({
         exchanges: transportExchanges,
         debug: failedJobDebug,
       });
+      if (activeChatSessionId || activeChatJobId) {
+        setCustomerChatFailureIds({
+          sessionId: activeChatSessionId,
+          jobId: activeChatJobId,
+        });
+      }
       setCustomerIntelligenceError(
         getApiErrorMessage(
           requestError,
@@ -3378,6 +3413,7 @@ export default function MiAgentPage({
     setCustomerChatQuestion("");
     setCustomerIntelligenceError("");
     setCustomerChatTransportError(null);
+    setCustomerChatFailureIds(null);
   }
 
   async function openDiscoveryActivity(nextStep) {
@@ -4146,6 +4182,68 @@ export default function MiAgentPage({
       );
     } finally {
       setCoachGovernanceLoading(false);
+    }
+  }
+
+  async function loadCustomerChatDiagnostics({
+    page = chatDiagnosticsPage,
+    query = chatDiagnosticsQuery,
+    status = chatDiagnosticsStatus,
+    accountId = chatDiagnosticsAccountId,
+    dateFrom = chatDiagnosticsDateFrom,
+    dateTo = chatDiagnosticsDateTo,
+  } = {}) {
+    if (!canDiagnoseCustomerChats) return;
+    setChatDiagnosticsLoading(true);
+    setChatDiagnosticsError("");
+    try {
+      const response = await api.get(
+        "/api/commercial-intelligence/account-chat/diagnostics/sessions",
+        {
+          params: {
+            page,
+            pageSize: 20,
+            query,
+            status,
+            accountId: accountId || undefined,
+            dateFrom: dateFrom || undefined,
+            dateTo: dateTo || undefined,
+          },
+        },
+      );
+      setChatDiagnosticsResult(response.data || null);
+    } catch (requestError) {
+      setChatDiagnosticsError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible consultar las sesiones de chat",
+        ),
+      );
+    } finally {
+      setChatDiagnosticsLoading(false);
+    }
+  }
+
+  async function openCustomerChatDiagnostic({ sessionId, jobId }) {
+    if (!canDiagnoseCustomerChats) return;
+    setChatDiagnosticsLoading(true);
+    setChatDiagnosticsError("");
+    try {
+      const path = jobId
+        ? `/api/commercial-intelligence/account-chat/diagnostics/jobs/${jobId}`
+        : `/api/commercial-intelligence/account-chat/diagnostics/sessions/${sessionId}`;
+      const response = await api.get(path);
+      setChatDiagnosticsSelected(response.data?.session || null);
+    } catch (requestError) {
+      setChatDiagnosticsError(
+        getApiErrorMessage(
+          requestError,
+          "No fue posible abrir el diagnóstico de la sesión",
+        ),
+      );
+      setChatDiagnosticsSelected(null);
+    } finally {
+      setChatDiagnosticsLoading(false);
     }
   }
 
@@ -5545,24 +5643,30 @@ export default function MiAgentPage({
           className="mi-agent-workspace-tabs"
           aria-label="Espacios de Mi Coach"
         >
-          <button
-            type="button"
-            className={activeWorkspace === "summary" ? "is-active" : ""}
-            aria-current={activeWorkspace === "summary" ? "page" : undefined}
-            onClick={() => setActiveWorkspace("summary")}
-          >
-            <LayoutDashboard size={16} aria-hidden="true" />
-            Resumen
-          </button>
-          <button
-            type="button"
-            className={activeWorkspace === "coach" ? "is-active" : ""}
-            aria-current={activeWorkspace === "coach" ? "page" : undefined}
-            onClick={() => setActiveWorkspace("coach")}
-          >
-            <MessageCircle size={16} aria-hidden="true" />
-            Coach
-          </button>
+          {canUseCoach ? (
+            <>
+              <button
+                type="button"
+                className={activeWorkspace === "summary" ? "is-active" : ""}
+                aria-current={
+                  activeWorkspace === "summary" ? "page" : undefined
+                }
+                onClick={() => setActiveWorkspace("summary")}
+              >
+                <LayoutDashboard size={16} aria-hidden="true" />
+                Resumen
+              </button>
+              <button
+                type="button"
+                className={activeWorkspace === "coach" ? "is-active" : ""}
+                aria-current={activeWorkspace === "coach" ? "page" : undefined}
+                onClick={() => setActiveWorkspace("coach")}
+              >
+                <MessageCircle size={16} aria-hidden="true" />
+                Coach
+              </button>
+            </>
+          ) : null}
           {canReadCustomerIntelligence ? (
             <button
               type="button"
@@ -5600,9 +5704,280 @@ export default function MiAgentPage({
             </button>
           </nav>
         ) : null}
+        {canDiagnoseCustomerChats ? (
+          <nav
+            className="mi-agent-workspace-admin"
+            aria-label="Diagnóstico de soporte"
+          >
+            <button
+              type="button"
+              className={
+                activeWorkspace === "chat-diagnostics" ? "is-active" : ""
+              }
+              aria-current={
+                activeWorkspace === "chat-diagnostics" ? "page" : undefined
+              }
+              onClick={() => {
+                setActiveWorkspace("chat-diagnostics");
+                setChatDiagnosticsSelected(null);
+                void loadCustomerChatDiagnostics({ page: 1 });
+                setChatDiagnosticsPage(1);
+              }}
+            >
+              Diagnóstico de chats
+            </button>
+          </nav>
+        ) : null}
       </div>
 
-      {activeWorkspace === "summary" || activeWorkspace === "coach" ? (
+      {activeWorkspace === "chat-diagnostics" && canDiagnoseCustomerChats ? (
+        <section className="mi-agent-workspace-panel mi-agent-governance-panel">
+          <div className="mi-agent-section-heading">
+            <div>
+              <span className="mi-agent-section-label">Soporte</span>
+              <h3>Diagnóstico de chats</h3>
+              <p>
+                Busca por usuario, sesión o job; abre el turno para revisar su
+                traza.
+              </p>
+            </div>
+            <span>Solo lectura</span>
+          </div>
+          <form
+            className="mi-agent-chat-diagnostics-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setChatDiagnosticsPage(1);
+              void loadCustomerChatDiagnostics({ page: 1 });
+            }}
+          >
+            <label>
+              Usuario, correo, cuenta, sessionId o jobId
+              <input
+                value={chatDiagnosticsQuery}
+                onChange={(event) =>
+                  setChatDiagnosticsQuery(event.target.value)
+                }
+                placeholder="Buscar sesiones"
+              />
+            </label>
+            <label>
+              Estado
+              <select
+                value={chatDiagnosticsStatus}
+                onChange={(event) => {
+                  const nextStatus = event.target.value;
+                  setChatDiagnosticsStatus(nextStatus);
+                  setChatDiagnosticsPage(1);
+                  void loadCustomerChatDiagnostics({
+                    page: 1,
+                    status: nextStatus,
+                  });
+                }}
+              >
+                <option value="all">Todas</option>
+                <option value="errors">Con error</option>
+                <option value="active">En proceso</option>
+              </select>
+            </label>
+            <label>
+              Cuenta ID
+              <input
+                inputMode="numeric"
+                value={chatDiagnosticsAccountId}
+                onChange={(event) =>
+                  setChatDiagnosticsAccountId(
+                    event.target.value.replace(/\D/g, ""),
+                  )
+                }
+                placeholder="Todas las cuentas"
+              />
+            </label>
+            <label>
+              Desde
+              <input
+                type="date"
+                value={chatDiagnosticsDateFrom}
+                onChange={(event) =>
+                  setChatDiagnosticsDateFrom(event.target.value)
+                }
+              />
+            </label>
+            <label>
+              Hasta
+              <input
+                type="date"
+                value={chatDiagnosticsDateTo}
+                onChange={(event) =>
+                  setChatDiagnosticsDateTo(event.target.value)
+                }
+              />
+            </label>
+            <button type="submit" disabled={chatDiagnosticsLoading}>
+              Buscar
+            </button>
+          </form>
+          {chatDiagnosticsError ? (
+            <p className="form-error" role="alert">
+              {chatDiagnosticsError}
+            </p>
+          ) : null}
+          <div className="mi-agent-chat-diagnostics-layout">
+            <section aria-label="Sesiones encontradas">
+              <div className="mi-agent-domain-policy-heading">
+                <h4>Sesiones ({chatDiagnosticsResult?.total || 0})</h4>
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  disabled={chatDiagnosticsLoading || chatDiagnosticsPage <= 1}
+                  onClick={() => {
+                    const page = chatDiagnosticsPage - 1;
+                    setChatDiagnosticsPage(page);
+                    void loadCustomerChatDiagnostics({ page });
+                  }}
+                >
+                  Anterior
+                </button>
+                <button
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  disabled={
+                    chatDiagnosticsLoading ||
+                    chatDiagnosticsPage * 20 >=
+                      (chatDiagnosticsResult?.total || 0)
+                  }
+                  onClick={() => {
+                    const page = chatDiagnosticsPage + 1;
+                    setChatDiagnosticsPage(page);
+                    void loadCustomerChatDiagnostics({ page });
+                  }}
+                >
+                  Siguiente
+                </button>
+              </div>
+              {chatDiagnosticsLoading ? (
+                <div className="mi-agent-empty">Cargando sesiones...</div>
+              ) : null}
+              <div className="mi-agent-chat-diagnostics-list">
+                {(chatDiagnosticsResult?.sessions || []).map((session) => (
+                  <article key={session.sessionId}>
+                    <div>
+                      <strong>{session.userName || session.userEmail}</strong>
+                      <span>{session.userEmail}</span>
+                      <span>
+                        {session.accountName ||
+                          `Cuenta ${session.accountId || "sin asignar"}`}
+                      </span>
+                      <small>
+                        Sesión {session.sessionId}
+                        {session.latestJob?.jobId
+                          ? ` · Job ${session.latestJob.jobId}`
+                          : " · Sin jobs"}
+                      </small>
+                      {session.latestJob ? (
+                        <small>
+                          {session.latestJob.status} ·{" "}
+                          {session.latestJob.question || "Sin pregunta"}
+                          {session.latestJob.issueBlock
+                            ? ` · ${session.latestJob.issueBlock}: ${session.latestJob.issueTitle || "Revisión requerida"}`
+                            : ""}
+                        </small>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="mi-agent-secondary-button"
+                      onClick={() =>
+                        void openCustomerChatDiagnostic({
+                          ...(/^\d+$/.test(chatDiagnosticsQuery) &&
+                          Number(chatDiagnosticsQuery) !== session.sessionId
+                            ? { jobId: Number(chatDiagnosticsQuery) }
+                            : { sessionId: session.sessionId }),
+                        })
+                      }
+                    >
+                      Abrir diagnóstico
+                    </button>
+                  </article>
+                ))}
+                {!chatDiagnosticsLoading &&
+                !chatDiagnosticsResult?.sessions?.length ? (
+                  <div className="mi-agent-empty">
+                    No hay sesiones para esos filtros.
+                  </div>
+                ) : null}
+              </div>
+            </section>
+            <section aria-label="Detalle de sesión">
+              {chatDiagnosticsSelected ? (
+                <>
+                  <div className="mi-agent-domain-policy-heading">
+                    <div>
+                      <span className="mi-agent-section-label">
+                        {chatDiagnosticsSelected.user.name} ·{" "}
+                        {chatDiagnosticsSelected.user.email}
+                      </span>
+                      <h4>
+                        Sesión {chatDiagnosticsSelected.id} ·{" "}
+                        {chatDiagnosticsSelected.accountName ||
+                          "Cuenta no disponible"}
+                      </h4>
+                    </div>
+                  </div>
+                  <div className="mi-agent-chat-diagnostics-jobs">
+                    {chatDiagnosticsSelected.jobs.map((job) => (
+                      <article key={job.id}>
+                        <div>
+                          <strong>
+                            Job {job.id} · {job.status}
+                          </strong>
+                          <p>{job.question || "Sin pregunta registrada"}</p>
+                          {job.errorMessage ? (
+                            <p className="form-error">{job.errorMessage}</p>
+                          ) : null}
+                          {job.response.answer ? (
+                            <p>{job.response.answer}</p>
+                          ) : null}
+                        </div>
+                        {job.debug ? (
+                          <details className="mi-agent-customer-chat-debug">
+                            <summary>
+                              Diagnóstico B1–B11 ·{" "}
+                              {job.debug.issue?.block || "Sin bloque señalado"}
+                            </summary>
+                            <CustomerChatDebugFlow debug={job.debug} />
+                          </details>
+                        ) : (
+                          <small>
+                            Este job no conserva diagnóstico técnico.
+                          </small>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                  <details>
+                    <summary>Historial de la sesión</summary>
+                    <ol className="mi-agent-chat-diagnostics-history">
+                      {chatDiagnosticsSelected.history.map((message, index) => (
+                        <li key={`${index}-${message.role}`}>
+                          <strong>
+                            {message.role === "assistant" ? "Chat" : "Usuario"}
+                          </strong>
+                          <p>{message.text}</p>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                </>
+              ) : (
+                <div className="mi-agent-empty">
+                  Selecciona una sesión para revisar el historial y sus jobs.
+                </div>
+              )}
+            </section>
+          </div>
+        </section>
+      ) : activeWorkspace === "summary" || activeWorkspace === "coach" ? (
         <>
           {activeWorkspace === "summary" ? (
             <section
@@ -7033,6 +7408,45 @@ export default function MiAgentPage({
               comercial.
             </div>
           )}
+          {customerChatFailureIds ? (
+            <div className="mi-agent-customer-chat-failure-ids" role="status">
+              <strong>Comparte estos identificadores con soporte:</strong>
+              {customerChatFailureIds.sessionId ? (
+                <span>
+                  Sesión {customerChatFailureIds.sessionId}
+                  <button
+                    type="button"
+                    className="mi-agent-secondary-button"
+                    aria-label="Copiar ID de sesión"
+                    onClick={() =>
+                      void navigator.clipboard?.writeText(
+                        String(customerChatFailureIds.sessionId),
+                      )
+                    }
+                  >
+                    Copiar
+                  </button>
+                </span>
+              ) : null}
+              {customerChatFailureIds.jobId ? (
+                <span>
+                  Job {customerChatFailureIds.jobId}
+                  <button
+                    type="button"
+                    className="mi-agent-secondary-button"
+                    aria-label="Copiar ID de job"
+                    onClick={() =>
+                      void navigator.clipboard?.writeText(
+                        String(customerChatFailureIds.jobId),
+                      )
+                    }
+                  >
+                    Copiar
+                  </button>
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {customerIntelligenceError ? (
             <>
               <p className="form-error">{customerIntelligenceError}</p>

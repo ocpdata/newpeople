@@ -268,6 +268,10 @@ describe("API integration baseline", () => {
       name: `${TEST_PREFIX}_commercial_intelligence_no_account`,
       permissionCodes: ["mi_coach.use", "inteligencia_comercial.read"],
     });
+    ctx.chatDiagnosticsRoleId = await createRole({
+      name: `${TEST_PREFIX}_chat_diagnostics`,
+      permissionCodes: ["inteligencia_comercial.chat_diagnostics"],
+    });
     ctx.prospectResearchRoleId = await createRole({
       name: `${TEST_PREFIX}_prospect_research`,
       permissionCodes: [
@@ -640,6 +644,11 @@ describe("API integration baseline", () => {
       fullName: "API Commercial Intelligence No Account",
       email: `${TEST_PREFIX}.commercial.intelligence.no.account@example.com`,
       roleIds: [ctx.commercialIntelligenceNoAccountRoleId],
+    });
+    ctx.chatDiagnosticsUserId = await createUser({
+      fullName: "API Chat Diagnostics Support",
+      email: `${TEST_PREFIX}.chat.diagnostics.support@example.com`,
+      roleIds: [ctx.chatDiagnosticsRoleId],
     });
     ctx.prospectResearchUserId = await createUser({
       fullName: "API Prospect Research",
@@ -2637,6 +2646,54 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${otherChatOwnerLogin.body.token}`);
     expect(forbiddenSessionReadResponse.status).toBe(404);
 
+    const chatDiagnosticsLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.chat.diagnostics.support@example.com`,
+    );
+    const forbiddenDiagnosticsListResponse = await request(app)
+      .get("/api/commercial-intelligence/account-chat/diagnostics/sessions")
+      .set("Authorization", `Bearer ${otherChatOwnerLogin.body.token}`);
+    expect(forbiddenDiagnosticsListResponse.status).toBe(403);
+    expect(forbiddenDiagnosticsListResponse.body.requiredPermission).toBe(
+      "inteligencia_comercial.chat_diagnostics",
+    );
+    const crossUserDiagnosticsResponse = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-chat/diagnostics/sessions/${accountChatSessionId}`,
+      )
+      .set("Authorization", `Bearer ${chatDiagnosticsLogin.body.token}`);
+    expect(crossUserDiagnosticsResponse.status).toBe(200);
+    expect(crossUserDiagnosticsResponse.body.session).toEqual(
+      expect.objectContaining({
+        id: accountChatSessionId,
+        user: expect.objectContaining({
+          id: ctx.commercialIntelligenceUpdateUserId,
+        }),
+        jobs: expect.any(Array),
+      }),
+    );
+    const crossUserDiagnosticsListResponse = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-chat/diagnostics/sessions?query=${accountChatSessionId}`,
+      )
+      .set("Authorization", `Bearer ${chatDiagnosticsLogin.body.token}`);
+    expect(crossUserDiagnosticsListResponse.status).toBe(200);
+    expect(crossUserDiagnosticsListResponse.body.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: accountChatSessionId,
+          userId: ctx.commercialIntelligenceUpdateUserId,
+        }),
+      ]),
+    );
+    const obsoleteChatDiagnosticsPermissionRows = await query(
+      `SELECT COUNT(*) AS total FROM permissions WHERE code = ?`,
+      ["inteligencia_comercial.chat_diagnostics.read"],
+    );
+    expect(Number(obsoleteChatDiagnosticsPermissionRows[0]?.total || 0)).toBe(
+      0,
+    );
+
     const separateAccountChatSessionResponse = await request(app)
       .post("/api/commercial-intelligence/account-chat/sessions")
       .set("Authorization", `Bearer ${updateLogin.body.token}`)
@@ -2796,6 +2853,18 @@ describe("API integration baseline", () => {
     expect(firstChatTurn.schemaNames).not.toContain("account_contextual_chat");
     expect(firstChatTurn.schemaNames).not.toContain(
       "customer_account_answer_audit",
+    );
+    const crossUserJobDiagnosticsResponse = await request(app)
+      .get(
+        `/api/commercial-intelligence/account-chat/diagnostics/jobs/${accountChatJob.body.job.id}`,
+      )
+      .set("Authorization", `Bearer ${chatDiagnosticsLogin.body.token}`);
+    expect(crossUserJobDiagnosticsResponse.status).toBe(200);
+    expect(crossUserJobDiagnosticsResponse.body.session).toEqual(
+      expect.objectContaining({
+        id: accountChatSessionId,
+        selectedJobId: accountChatJob.body.job.id,
+      }),
     );
     expect(accountChatJob.body.job.result.partialResults).toEqual(
       expect.objectContaining({
@@ -2978,14 +3047,17 @@ describe("API integration baseline", () => {
       ]),
     );
     const adapterSpan = executionTrace.find(
-      (event) => event.from === "B3" && event.to === "B4" && event.phase === "call",
+      (event) =>
+        event.from === "B3" && event.to === "B4" && event.phase === "call",
     );
     const engineSpan = executionTrace.find(
-      (event) => event.from === "B4" && event.to === "B5" && event.phase === "call",
+      (event) =>
+        event.from === "B4" && event.to === "B5" && event.phase === "call",
     );
     expect(engineSpan.parentSpanId).toBe(adapterSpan.spanId);
     const plannerSpan = executionTrace.find(
-      (event) => event.from === "B5" && event.to === "B6" && event.phase === "call",
+      (event) =>
+        event.from === "B5" && event.to === "B6" && event.phase === "call",
     );
     expect(plannerSpan.input).toEqual(
       expect.objectContaining({
@@ -3014,7 +3086,9 @@ describe("API integration baseline", () => {
           status: "started",
           input: expect.objectContaining({
             validatedRouting: expect.anything(),
-            policy: expect.objectContaining({ availableTools: expect.any(Array) }),
+            policy: expect.objectContaining({
+              availableTools: expect.any(Array),
+            }),
           }),
         }),
         expect.objectContaining({
