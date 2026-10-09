@@ -14,6 +14,35 @@ import {
 } from "./prospect-chat-adapter.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
 
+const activeExternalResearchRunIds = new Set();
+
+export const PROSPECT_RESEARCH_TRACKS = [
+  {
+    key: "company_profile",
+    label: "Perfil de empresa",
+    queryTerms:
+      "perfil corporativo productos servicios operaciones ubicaciones",
+  },
+  {
+    key: "business_signals",
+    label: "Señales de negocio",
+    queryTerms:
+      "expansión inversión licitaciones contratos proyectos vacantes noticias",
+  },
+  {
+    key: "technology_signals",
+    label: "Tecnología e infraestructura",
+    queryTerms:
+      "tecnología infraestructura nube Kubernetes APIs WAF DNS DDI redes ciberseguridad observabilidad",
+  },
+  {
+    key: "public_people",
+    label: "Personas y áreas",
+    queryTerms:
+      "CIO CTO CISO director tecnología seguridad redes arquitectura cloud liderazgo",
+  },
+];
+
 function clip(value, max = 1200) {
   const text = String(value || "")
     .replace(/\s+/g, " ")
@@ -109,6 +138,82 @@ function normalizeCompanyDomain(value) {
   } catch {
     return "";
   }
+}
+
+function sameProspectIdentity(left, right) {
+  const leftDomain = normalizeCompanyDomain(left.website);
+  const rightDomain = normalizeCompanyDomain(right.website);
+  if (leftDomain && rightDomain && leftDomain === rightDomain) return true;
+  return (
+    normalizeCompanyName(left.companyName || left.company_name) ===
+      normalizeCompanyName(right.companyName || right.company_name) &&
+    normalizeCompanyName(left.country) === normalizeCompanyName(right.country)
+  );
+}
+
+function groupDuplicateProspectSessions(sessions) {
+  const parents = sessions.map((_, index) => index);
+  const find = (index) => {
+    if (parents[index] !== index) parents[index] = find(parents[index]);
+    return parents[index];
+  };
+  const union = (left, right) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot;
+  };
+  const byDomain = new Map();
+  const byNameCountry = new Map();
+  sessions.forEach((session, index) => {
+    const domain = normalizeCompanyDomain(session.website);
+    const nameCountry = `${normalizeCompanyName(session.companyName || session.company_name)}|${normalizeCompanyName(session.country)}`;
+    for (const [map, key] of [
+      [byDomain, domain],
+      [byNameCountry, nameCountry],
+    ]) {
+      if (!key) continue;
+      const previousIndex = map.get(key);
+      if (previousIndex !== undefined) union(index, previousIndex);
+      else map.set(key, index);
+    }
+  });
+
+  const groups = new Map();
+  sessions.forEach((session, index) => {
+    const root = find(index);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(session);
+  });
+
+  const comparePriority = (left, right) => {
+    if (Boolean(left.isTarget) !== Boolean(right.isTarget)) {
+      return Number(Boolean(right.isTarget)) - Number(Boolean(left.isTarget));
+    }
+    if (
+      Boolean(left.externalResearchedAt) !== Boolean(right.externalResearchedAt)
+    ) {
+      return (
+        Number(Boolean(right.externalResearchedAt)) -
+        Number(Boolean(left.externalResearchedAt))
+      );
+    }
+    const leftDate = new Date(
+      left.externalResearchedAt || left.updatedAt || 0,
+    ).getTime();
+    const rightDate = new Date(
+      right.externalResearchedAt || right.updatedAt || 0,
+    ).getTime();
+    return rightDate - leftDate || Number(right.id) - Number(left.id);
+  };
+
+  return [...groups.values()].map((group) => {
+    const [representative, ...duplicates] = group.sort(comparePriority);
+    return {
+      ...representative,
+      duplicateCount: group.length,
+      duplicateSessionIds: duplicates.map((session) => Number(session.id)),
+    };
+  });
 }
 
 async function findProspectAccountDuplicates({ user, session }) {
@@ -236,6 +341,9 @@ function mapSessionRow(row) {
       row.converted_account_id === null
         ? null
         : Number(row.converted_account_id),
+    isTarget: Boolean(row.is_target),
+    targetAddedAt: row.target_added_at || null,
+    externalResearchedAt: row.external_researched_at || null,
     discardedAt: row.discarded_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -262,6 +370,7 @@ function mapProspectChatJobRow(row) {
 
 function mapFindingRow(row) {
   if (!row) return null;
+  const metadata = parseJson(row.metadata_json, {});
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -270,12 +379,14 @@ function mapFindingRow(row) {
     title: row.title,
     summary: row.summary || "",
     evidenceText: row.evidence_text || "",
+    sourceExcerpt: metadata.sourceExcerpt || "",
+    sourceTitle: metadata.sourceTitle || "",
     sourceType: row.source_type,
     sourceReference: row.source_reference || "",
     confidence: row.confidence,
     certainty: row.certainty,
     status: row.status,
-    metadata: parseJson(row.metadata_json, {}),
+    metadata,
     validatedByUserId:
       row.validated_by_user_id === null
         ? null
@@ -286,8 +397,31 @@ function mapFindingRow(row) {
   };
 }
 
+function mapProspectResearchRunRow(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    publicId: row.public_id,
+    sessionId: Number(row.session_id),
+    status: row.status,
+    query: row.query_text,
+    provider: row.provider,
+    findingCount: Number(row.finding_count || 0),
+    contactCount: Number(row.contact_count || 0),
+    hypothesisCount: Number(row.hypothesis_count || 0),
+    warnings: parseJson(row.warnings_json, []),
+    trackResults: parseJson(row.track_results_json, []),
+    startedAt: row.started_at,
+    finishedAt: row.finished_at || null,
+    newFindingCount: Number(row.new_finding_count || 0),
+    updatedFindingCount: Number(row.updated_finding_count || 0),
+    unchangedFindingCount: Number(row.unchanged_finding_count || 0),
+  };
+}
+
 function mapContactRow(row) {
   if (!row) return null;
+  const metadata = parseJson(row.metadata_json, {});
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -296,11 +430,15 @@ function mapContactRow(row) {
     roleTitle: row.role_title,
     area: row.area,
     email: row.email || "",
+    evidenceText: metadata.evidenceText || "",
+    sourceExcerpt: metadata.sourceExcerpt || "",
+    sourceTitle: metadata.sourceTitle || "",
+    sourcePublishedAt: metadata.sourcePublishedAt || null,
     sourceType: row.source_type,
     sourceReference: row.source_reference || "",
     confidence: row.confidence,
     status: row.status,
-    metadata: parseJson(row.metadata_json, {}),
+    metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -308,6 +446,7 @@ function mapContactRow(row) {
 
 function mapHypothesisRow(row) {
   if (!row) return null;
+  const metadata = parseJson(row.metadata_json, {});
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -318,9 +457,14 @@ function mapHypothesisRow(row) {
     targetArea: row.target_area || "",
     suggestedContactRole: row.suggested_contact_role || "",
     validationQuestion: row.validation_question || "",
+    evidenceText: metadata.evidenceText || "",
+    sourceExcerpt: metadata.sourceExcerpt || "",
+    sourceTitle: metadata.sourceTitle || "",
+    sourceReference: metadata.sourceReference || "",
+    sourcePublishedAt: metadata.sourcePublishedAt || null,
     confidence: row.confidence,
     status: row.status,
-    metadata: parseJson(row.metadata_json, {}),
+    metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -490,6 +634,134 @@ function isHttpUrl(value) {
   }
 }
 
+export function canonicalizeExternalSourceUrl(value) {
+  if (!isHttpUrl(value)) return "";
+  try {
+    const url = new URL(String(value));
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    url.hash = "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(utm_.+|gclid|fbclid|msclkid)$/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    url.searchParams.sort();
+    return url.toString().replace(/\/$/, url.pathname === "/" ? "/" : "");
+  } catch {
+    return "";
+  }
+}
+
+export function deduplicateExternalFindings(findings = []) {
+  const uniqueFindings = [];
+  const sourceUrls = new Set();
+  for (const finding of findings) {
+    const canonicalUrl = canonicalizeExternalSourceUrl(
+      finding?.sourceReference,
+    );
+    if (!canonicalUrl || sourceUrls.has(canonicalUrl)) continue;
+    sourceUrls.add(canonicalUrl);
+    uniqueFindings.push(finding);
+  }
+  return uniqueFindings;
+}
+
+export function keepFindingsWithKnownSources(findings = [], sourceUrls = []) {
+  const allowedSourceUrls = new Set(
+    sourceUrls.map(canonicalizeExternalSourceUrl).filter(Boolean),
+  );
+  return findings.filter((finding) =>
+    allowedSourceUrls.has(
+      canonicalizeExternalSourceUrl(finding?.sourceReference),
+    ),
+  );
+}
+
+function normalizeEvidenceForMatch(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("es");
+}
+
+export function hasSourceEvidenceMatch(item, sources = []) {
+  const sourceUrl = canonicalizeExternalSourceUrl(
+    item?.sourceReference || item?.metadata?.sourceReference,
+  );
+  if (!sourceUrl) return false;
+  const source = sources.find(
+    (candidate) => canonicalizeExternalSourceUrl(candidate?.url) === sourceUrl,
+  );
+  if (!source) return false;
+  const sourceText = normalizeEvidenceForMatch(
+    `${source.title || ""} ${source.content || ""}`,
+  );
+  const evidenceText = normalizeEvidenceForMatch(
+    item?.evidenceText || item?.metadata?.evidenceText,
+  );
+  if (!evidenceText) return false;
+  if (item?.name || item?.roleTitle) {
+    const name = normalizeEvidenceForMatch(item.name);
+    const roleTitle = normalizeEvidenceForMatch(item.roleTitle);
+    return Boolean(
+      name &&
+      roleTitle &&
+      sourceText.includes(name) &&
+      sourceText.includes(roleTitle),
+    );
+  }
+  return true;
+}
+
+export function keepItemsWithSourceEvidence(items = [], sources = []) {
+  return items.filter((item) => hasSourceEvidenceMatch(item, sources));
+}
+
+export function attachRetrievedSourceExcerpt(item, sources = []) {
+  const sourceUrl = canonicalizeExternalSourceUrl(
+    item?.sourceReference || item?.metadata?.sourceReference,
+  );
+  const source = sources.find(
+    (candidate) => canonicalizeExternalSourceUrl(candidate?.url) === sourceUrl,
+  );
+  if (!source) return item;
+  const sourceExcerpt = clip(source.content || source.title || "", 900);
+  return {
+    ...item,
+    metadata: {
+      ...(item.metadata || {}),
+      sourceExcerpt,
+      sourceTitle: clip(source.title, 300),
+      sourcePublishedAt: source.publishedAt || null,
+    },
+  };
+}
+
+function sameExternalFindingContent(existing, incoming) {
+  return [
+    [existing.title, incoming.title],
+    [existing.summary, incoming.summary],
+    [existing.evidence_text, incoming.evidenceText],
+  ].every(
+    ([left, right]) =>
+      String(left || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase() ===
+      String(right || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase(),
+  );
+}
+
+export function classifyExternalFindingObservation(existing, incoming) {
+  if (!existing) return "new";
+  if (sameExternalFindingContent(existing, incoming)) return "unchanged";
+  return "updated";
+}
+
 export function normalizeExternalFinding(
   rawFinding,
   index = 0,
@@ -543,15 +815,264 @@ export function applyExternalEvidencePolicy(findings, requireEvidence) {
   };
 }
 
-async function runProspectExternalResearch({ session, user }) {
-  const tavily = await searchTavily({
-    query: `${session.companyName} ${session.country} ${session.industry || "empresa"} proyectos tecnología noticias`,
+export function buildProspectExternalQuery(
+  session,
+  previousFindingTitles = [],
+) {
+  const previousTopics = previousFindingTitles
+    .map((finding) =>
+      clip(typeof finding === "string" ? finding : finding?.title, 140),
+    )
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(" ");
+  return clip(
+    `${session.companyName} ${session.country} ${session.industry || "empresa"} ${previousTopics ? `actualización novedades ${previousTopics}` : "proyectos tecnología noticias"}`,
+    1000,
+  );
+}
+
+export function buildProspectExternalTrackQueries(
+  session,
+  previousFindingTitles = [],
+) {
+  const baseQuery =
+    typeof previousFindingTitles === "string"
+      ? clip(previousFindingTitles, 1000)
+      : buildProspectExternalQuery(session, previousFindingTitles);
+  return PROSPECT_RESEARCH_TRACKS.map((track) => ({
+    key: track.key,
+    label: track.label,
+    query: clip(`${baseQuery} ${track.queryTerms}`, 1000),
+  }));
+}
+
+export function normalizeExternalContact(rawContact, index = 0) {
+  const sourceReference = clip(
+    rawContact?.sourceUrl || rawContact?.sourceReference || "",
+    500,
+  );
+  const name = clip(rawContact?.name, 190);
+  const roleTitle = clip(rawContact?.roleTitle || rawContact?.title, 190);
+  const evidenceText = clip(
+    rawContact?.evidenceText || rawContact?.evidence || "",
+    2000,
+  );
+  if (!name || !roleTitle || !isHttpUrl(sourceReference) || !evidenceText) {
+    return null;
+  }
+  return {
+    name,
+    roleTitle,
+    area: clip(rawContact?.area || roleTitle, 160),
+    email: "",
+    sourceType: "public_source",
+    sourceReference,
+    confidence: ["high", "medium", "low"].includes(rawContact?.confidence)
+      ? rawContact.confidence
+      : "medium",
+    status: "suggested",
+    metadata: {
+      externalResearch: true,
+      evidenceText,
+      sourcePublishedAt: clip(rawContact?.sourcePublishedAt, 40) || null,
+      sourceIndex: index,
+    },
+  };
+}
+
+export function normalizeExternalHypothesis(rawHypothesis, index = 0) {
+  const sourceReference = clip(
+    rawHypothesis?.sourceUrl || rawHypothesis?.sourceReference || "",
+    500,
+  );
+  const evidenceText = clip(
+    rawHypothesis?.evidenceText || rawHypothesis?.evidence || "",
+    2000,
+  );
+  const title = clip(rawHypothesis?.title, 190);
+  if (!title || !isHttpUrl(sourceReference) || !evidenceText) return null;
+  return {
+    title,
+    businessChallenge: clip(
+      rawHypothesis?.businessChallenge || rawHypothesis?.summary,
+      4000,
+    ),
+    technologyArea: clip(rawHypothesis?.technologyArea, 160),
+    targetArea: clip(rawHypothesis?.targetArea, 160),
+    suggestedContactRole: clip(rawHypothesis?.suggestedContactRole, 190),
+    validationQuestion: clip(rawHypothesis?.validationQuestion, 2000),
+    confidence: ["high", "medium", "low"].includes(rawHypothesis?.confidence)
+      ? rawHypothesis.confidence
+      : "medium",
+    status: "suggested",
+    metadata: {
+      externalResearch: true,
+      evidenceText,
+      sourceReference,
+      sourcePublishedAt: clip(rawHypothesis?.sourcePublishedAt, 40) || null,
+      sourceIndex: index,
+    },
+  };
+}
+
+export function normalizeExternalTargetRole(rawRole, verifiedFindings = []) {
+  const roleTitle = clip(rawRole?.roleTitle, 190);
+  const area = clip(rawRole?.area || roleTitle, 160);
+  const rationale = clip(rawRole?.rationale, 1000);
+  const validationQuestion = clip(rawRole?.validationQuestion, 1000);
+  const basisFindingTitle = clip(rawRole?.basisFindingTitle, 190);
+  const verifiedFinding = verifiedFindings.find(
+    (finding) =>
+      String(finding.title || "")
+        .trim()
+        .toLowerCase() === basisFindingTitle.trim().toLowerCase(),
+  );
+  if (
+    !roleTitle ||
+    !rationale ||
+    !validationQuestion ||
+    !verifiedFinding?.sourceReference
+  ) {
+    return null;
+  }
+  return {
+    roleTitle,
+    area,
+    rationale,
+    validationQuestion,
+    basisFindingTitle: verifiedFinding.title,
+    sourceReference: verifiedFinding.sourceReference,
+    researchTracks: verifiedFinding.metadata?.researchTracks || [],
+  };
+}
+
+export function normalizeExternalSellerBrief(rawBrief, verifiedFindings = []) {
+  const verifiedSources = new Set(
+    verifiedFindings
+      .map((finding) => canonicalizeExternalSourceUrl(finding.sourceReference))
+      .filter(Boolean),
+  );
+  const sourceReferences = [
+    ...new Set(
+      (Array.isArray(rawBrief?.sourceUrls) ? rawBrief.sourceUrls : [])
+        .map(canonicalizeExternalSourceUrl)
+        .filter((source) => verifiedSources.has(source)),
+    ),
+  ];
+  const whyNow = clip(rawBrief?.whyNow, 1200);
+  const recommendedOpening = clip(rawBrief?.recommendedOpening, 1200);
+  const discoveryQuestions = Array.isArray(rawBrief?.discoveryQuestions)
+    ? rawBrief.discoveryQuestions
+        .map((question) => clip(question, 500))
+        .filter(Boolean)
+        .slice(0, 5)
+    : [];
+  if (
+    !whyNow ||
+    !recommendedOpening ||
+    !discoveryQuestions.length ||
+    !sourceReferences.length
+  ) {
+    return null;
+  }
+  return {
+    whyNow,
+    recommendedOpening,
+    discoveryQuestions,
+    sourceReferences,
+  };
+}
+
+export function deduplicateExternalContacts(contacts = []) {
+  const seen = new Set();
+  return contacts.filter((contact) => {
+    const identity = String(contact?.name || "")
+      .trim()
+      .toLocaleLowerCase("es")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "");
+    const source = canonicalizeExternalSourceUrl(contact?.sourceReference);
+    const key = `${identity}|${source}`;
+    if (!identity || !source || seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
-  if (!tavily.enabled || !tavily.results.length) {
+}
+
+export function deduplicateExternalHypotheses(hypotheses = []) {
+  const seen = new Set();
+  return hypotheses.filter((hypothesis) => {
+    const source = canonicalizeExternalSourceUrl(
+      hypothesis?.metadata?.sourceReference,
+    );
+    const title = String(hypothesis?.title || "")
+      .trim()
+      .toLocaleLowerCase("es");
+    const key = `${title}|${source}`;
+    if (!title || !source || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function runProspectExternalResearch({ session, user, queryText }) {
+  const tracks = buildProspectExternalTrackQueries(session, queryText || []);
+  const trackResults = await Promise.all(
+    tracks.map(async (track) => ({
+      ...track,
+      search: await searchTavily({ query: track.query }),
+    })),
+  );
+  const tavilyResults = trackResults.flatMap((track) =>
+    track.search.results.map((source) => ({
+      ...source,
+      researchTrack: track.key,
+    })),
+  );
+  const sourceByCanonicalUrl = new Map(
+    tavilyResults.map((source) => [
+      canonicalizeExternalSourceUrl(source.url),
+      source,
+    ]),
+  );
+  const researchTracksForSource = (sourceReference) => {
+    const canonicalUrl = canonicalizeExternalSourceUrl(sourceReference);
+    return trackResults
+      .filter((track) =>
+        track.search.results.some(
+          (source) =>
+            canonicalizeExternalSourceUrl(source.url) === canonicalUrl,
+        ),
+      )
+      .map((track) => track.key);
+  };
+  const enabled = trackResults.some((track) => track.search.enabled);
+  const tavilyWarnings = trackResults.flatMap((track) =>
+    (track.search.warnings || []).map(
+      (warning) => `${track.label}: ${warning}`,
+    ),
+  );
+  if (!enabled || !tavilyResults.length) {
     return {
       enabled: false,
       findings: [],
-      warnings: tavily.warnings,
+      contacts: [],
+      hypotheses: [],
+      targetRoles: [],
+      sellerBrief: null,
+      trackResults: trackResults.map((track) => ({
+        key: track.key,
+        label: track.label,
+        enabled: track.search.enabled,
+        sourceCount: track.search.results.length,
+        findingCount: 0,
+        contactCount: 0,
+        hypothesisCount: 0,
+        warnings: track.search.warnings || [],
+      })),
+      warnings: tavilyWarnings,
+      sourceUrls: [],
       provider: "tavily",
     };
   }
@@ -559,16 +1080,26 @@ async function runProspectExternalResearch({ session, user }) {
     schemaName: "prospect_external_research",
     systemPrompt: [
       "Eres un agente de investigacion comercial B2B.",
-      "Interpreta exclusivamente las fuentes públicas recuperadas por Tavily.",
-      "No afirmes como hecho lo que sea inferencia; usa confidence y evidenceText.",
-      "Devuelve hallazgos accionables para prospeccion comercial en español.",
+      "Interpreta exclusivamente las fuentes públicas recuperadas por las cuatro búsquedas temáticas.",
+      "No afirmes como hecho lo que sea inferencia; cada elemento debe incluir una sourceUrl de las fuentes entregadas y una síntesis breve de la evidencia en evidenceText. El backend adjuntará por separado el fragmento original de Tavily; no intentes copiarlo palabra por palabra.",
+      "Los contactos solo pueden ser personas cuyo nombre y cargo aparezcan en el título o contenido de la URL citada. No infieras personas, emails ni datos personales.",
+      "Las hipótesis comerciales deben ser preguntas por validar derivadas de evidencia, no afirmar intención de compra.",
+      "Cuando no haya personas públicas verificables, puedes sugerir roles objetivo genéricos, nunca nombres. Cada rol debe enlazarse al título exacto de un hallazgo verificado y ser útil para una conversación inicial.",
+      "La guía para el vendedor debe explicar por qué contactar ahora usando fuentes, proponer una apertura en forma de pregunta y sugerir preguntas abiertas. No declares que la empresa tiene una necesidad ni que pretende comprar.",
+      "Clasifica hallazgos en company_profile, business_challenge, technology_project, stakeholder, decision_area, need, pain_point, risk o next_step.",
     ].join("\n"),
     subject: session.companyName,
     context: {
       country: session.country,
       website: session.website || "",
       industry: session.industry || "",
-      publicSources: tavily.results,
+      researchTracks: trackResults.map((track) => ({
+        key: track.key,
+        label: track.label,
+        query: track.query,
+        sourceCount: track.search.results.length,
+      })),
+      publicSources: tavilyResults,
     },
     currentValues: {},
     fields: [
@@ -589,7 +1120,7 @@ async function runProspectExternalResearch({ session, user }) {
             {
               key: "evidenceText",
               type: "string",
-              example: "Fragmento exacto",
+              example: "La empresa está ampliando sus servicios digitales.",
             },
             {
               key: "sourceUrl",
@@ -604,6 +1135,164 @@ async function runProspectExternalResearch({ session, user }) {
             },
           ],
         },
+      },
+      {
+        key: "contacts",
+        type: "array",
+        example: [],
+        required: false,
+        items: {
+          type: "object",
+          fields: [
+            { key: "name", type: "string", example: "Nombre publicado" },
+            { key: "roleTitle", type: "string", example: "CTO" },
+            { key: "area", type: "string", example: "Tecnología" },
+            {
+              key: "evidenceText",
+              type: "string",
+              example: "El artículo informa que María García fue nombrada CTO.",
+            },
+            {
+              key: "sourceUrl",
+              type: "string",
+              example: "https://example.com",
+            },
+            {
+              key: "sourcePublishedAt",
+              type: "string",
+              example: "",
+            },
+            {
+              key: "confidence",
+              type: "enum",
+              enum: ["high", "medium", "low"],
+              example: "medium",
+            },
+          ],
+        },
+      },
+      {
+        key: "hypotheses",
+        type: "array",
+        example: [],
+        required: false,
+        items: {
+          type: "object",
+          fields: [
+            {
+              key: "title",
+              type: "string",
+              example: "Validar continuidad de aplicaciones",
+            },
+            {
+              key: "businessChallenge",
+              type: "string",
+              example: "Posible reto derivado de la fuente",
+            },
+            {
+              key: "technologyArea",
+              type: "string",
+              example: "Entrega de aplicaciones",
+            },
+            { key: "targetArea", type: "string", example: "Tecnología" },
+            {
+              key: "suggestedContactRole",
+              type: "string",
+              example: "Responsable de infraestructura",
+            },
+            {
+              key: "validationQuestion",
+              type: "string",
+              example: "¿Cómo gestionan actualmente la disponibilidad?",
+            },
+            {
+              key: "evidenceText",
+              type: "string",
+              example:
+                "La compañía describe una expansión de sus aplicaciones.",
+            },
+            {
+              key: "sourceUrl",
+              type: "string",
+              example: "https://example.com",
+            },
+            {
+              key: "sourcePublishedAt",
+              type: "string",
+              example: "",
+            },
+            {
+              key: "confidence",
+              type: "enum",
+              enum: ["high", "medium", "low"],
+              example: "medium",
+            },
+          ],
+        },
+      },
+      {
+        key: "targetRoles",
+        type: "array",
+        example: [],
+        required: false,
+        items: {
+          type: "object",
+          fields: [
+            {
+              key: "roleTitle",
+              type: "string",
+              example: "Responsable de infraestructura",
+            },
+            { key: "area", type: "string", example: "Tecnología" },
+            {
+              key: "rationale",
+              type: "string",
+              example: "Este rol podría validar la señal publicada.",
+            },
+            {
+              key: "validationQuestion",
+              type: "string",
+              example: "¿Quién lidera hoy esta plataforma?",
+            },
+            {
+              key: "basisFindingTitle",
+              type: "string",
+              example: "Modernización de aplicaciones",
+            },
+          ],
+        },
+      },
+      {
+        key: "sellerBrief",
+        type: "object",
+        required: false,
+        fields: [
+          {
+            key: "whyNow",
+            type: "string",
+            example: "La fuente describe un cambio reciente.",
+          },
+          {
+            key: "recommendedOpening",
+            type: "string",
+            example: "¿Cómo están abordando este cambio?",
+          },
+          {
+            key: "discoveryQuestions",
+            type: "array",
+            example: [],
+            items: {
+              type: "string",
+              example: "¿Qué objetivo buscan alcanzar?",
+            },
+          },
+          {
+            key: "sourceUrls",
+            type: "array",
+            example: [],
+            items: { type: "string", example: "https://example.com/source" },
+          },
+        ],
       },
       {
         key: "warnings",
@@ -628,27 +1317,171 @@ async function runProspectExternalResearch({ session, user }) {
     return {
       enabled: false,
       findings: [],
+      contacts: [],
+      hypotheses: [],
+      targetRoles: [],
+      sellerBrief: null,
       warnings: [
         "OpenAI no esta disponible para interpretar los resultados de Tavily.",
       ],
+      trackResults: trackResults.map((track) => ({
+        key: track.key,
+        label: track.label,
+        enabled: track.search.enabled,
+        sourceCount: track.search.results.length,
+        findingCount: 0,
+        contactCount: 0,
+        hypothesisCount: 0,
+        warnings: ["No fue posible sintetizar las fuentes de este tema."],
+      })),
+      sourceUrls: tavilyResults.map((source) => source.url),
       provider: "tavily",
     };
   }
 
-  const findings = Array.isArray(result.findings)
+  const allowedSourceUrls = tavilyResults.map((source) => source.url);
+  const candidateFindings = Array.isArray(result.findings)
     ? result.findings
         .map((finding, index) =>
           normalizeExternalFinding(finding, index, "tavily"),
         )
         .filter((finding) => finding.title)
     : [];
+  const findings = keepItemsWithSourceEvidence(
+    candidateFindings,
+    tavilyResults,
+  ).map((finding) =>
+    attachRetrievedSourceExcerpt(
+      {
+        ...finding,
+        metadata: {
+          ...finding.metadata,
+          researchTracks: researchTracksForSource(finding.sourceReference),
+          sourcePublishedAt:
+            sourceByCanonicalUrl.get(
+              canonicalizeExternalSourceUrl(finding.sourceReference),
+            )?.publishedAt || null,
+        },
+      },
+      tavilyResults,
+    ),
+  );
+  const candidateContacts = Array.isArray(result.contacts)
+    ? result.contacts.map(normalizeExternalContact).filter(Boolean)
+    : [];
+  const contacts = deduplicateExternalContacts(
+    keepItemsWithSourceEvidence(candidateContacts, tavilyResults).map(
+      (contact) =>
+        attachRetrievedSourceExcerpt(
+          {
+            ...contact,
+            metadata: {
+              ...contact.metadata,
+              researchTracks: researchTracksForSource(contact.sourceReference),
+              sourcePublishedAt:
+                sourceByCanonicalUrl.get(
+                  canonicalizeExternalSourceUrl(contact.sourceReference),
+                )?.publishedAt || null,
+            },
+          },
+          tavilyResults,
+        ),
+    ),
+  );
+  const candidateHypotheses = Array.isArray(result.hypotheses)
+    ? result.hypotheses.map(normalizeExternalHypothesis).filter(Boolean)
+    : [];
+  const hypotheses = deduplicateExternalHypotheses(
+    candidateHypotheses
+      .filter(
+        (hypothesis) =>
+          keepItemsWithSourceEvidence(
+            [
+              {
+                ...hypothesis,
+                sourceReference: hypothesis.metadata.sourceReference,
+              },
+            ],
+            tavilyResults,
+          ).length,
+      )
+      .map((hypothesis) =>
+        attachRetrievedSourceExcerpt(
+          {
+            ...hypothesis,
+            metadata: {
+              ...hypothesis.metadata,
+              researchTracks: researchTracksForSource(
+                hypothesis.metadata.sourceReference,
+              ),
+              sourcePublishedAt:
+                sourceByCanonicalUrl.get(
+                  canonicalizeExternalSourceUrl(
+                    hypothesis.metadata.sourceReference,
+                  ),
+                )?.publishedAt || null,
+            },
+          },
+          tavilyResults,
+        ),
+      ),
+  );
+  const targetRoles = Array.isArray(result.targetRoles)
+    ? result.targetRoles
+        .map((role) => normalizeExternalTargetRole(role, findings))
+        .filter(Boolean)
+    : [];
+  const sellerBrief = normalizeExternalSellerBrief(
+    result.sellerBrief,
+    findings,
+  );
+  const trackResultsWithCounts = trackResults.map((track) => {
+    const sourceSet = new Set(
+      track.search.results.map((source) =>
+        canonicalizeExternalSourceUrl(source.url),
+      ),
+    );
+    const belongsToTrack = (sourceReference) =>
+      sourceSet.has(canonicalizeExternalSourceUrl(sourceReference));
+    return {
+      key: track.key,
+      label: track.label,
+      query: track.query,
+      enabled: track.search.enabled,
+      sourceCount: track.search.results.length,
+      findingCount: findings.filter((finding) =>
+        belongsToTrack(finding.sourceReference),
+      ).length,
+      contactCount: contacts.filter((contact) =>
+        belongsToTrack(contact.sourceReference),
+      ).length,
+      hypothesisCount: hypotheses.filter((hypothesis) =>
+        belongsToTrack(hypothesis.metadata.sourceReference),
+      ).length,
+      warnings: track.search.warnings || [],
+    };
+  });
   return {
     enabled: true,
     findings,
+    contacts,
+    hypotheses,
+    targetRoles,
+    sellerBrief,
+    trackResults: trackResultsWithCounts,
+    sourceUrls: allowedSourceUrls,
     warnings: [
-      ...tavily.warnings,
+      ...tavilyWarnings,
       ...(Array.isArray(result.warnings)
         ? result.warnings.filter(Boolean)
+        : []),
+      ...(findings.length + contacts.length + hypotheses.length <
+      (Array.isArray(result.findings) ? result.findings.length : 0) +
+        (Array.isArray(result.contacts) ? result.contacts.length : 0) +
+        (Array.isArray(result.hypotheses) ? result.hypotheses.length : 0)
+        ? [
+            "Se omitieron elementos sin evidencia o cuya fuente no coincide con los resultados recuperados.",
+          ]
         : []),
     ],
     provider: "tavily",
@@ -658,7 +1491,7 @@ async function runProspectExternalResearch({ session, user }) {
 async function getOwnedSession(sessionId, userId) {
   const rows = await query(
     `SELECT * FROM prospect_research_sessions
-     WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
+     WHERE id = ? AND requested_by_user_id = ? AND discarded_at IS NULL LIMIT 1`,
     [Number(sessionId), Number(userId)],
   );
   return rows[0] || null;
@@ -772,6 +1605,30 @@ export async function createProspectResearchSession({ user, payload }) {
   }
   const website = normalizeWebsite(payload.website);
   const industry = clip(payload.industry, 160);
+  const existingSessions = await query(
+    `SELECT * FROM prospect_research_sessions
+     WHERE requested_by_user_id = ? AND discarded_at IS NULL
+     ORDER BY external_researched_at IS NOT NULL DESC, updated_at DESC`,
+    [Number(user.id)],
+  );
+  const existingSession = existingSessions.find((candidate) =>
+    sameProspectIdentity(
+      { companyName, country, website },
+      {
+        company_name: candidate.company_name,
+        country: candidate.country,
+        website: candidate.website,
+      },
+    ),
+  );
+  if (existingSession) {
+    const session = await getProspectResearchSession({
+      user,
+      sessionId: Number(existingSession.id),
+    });
+    return { ...session, reused: true };
+  }
+
   const publicId = `prs_${randomUUID()}`;
   const request = { companyName, country, website, industry };
 
@@ -799,6 +1656,141 @@ export async function createProspectResearchSession({ user, payload }) {
     website,
     industry,
     status: "draft",
+    isTarget: false,
+    targetAddedAt: null,
+    reused: false,
+  };
+}
+
+export async function listProspectResearchSessions({
+  user,
+  search = "",
+  targetOnly = false,
+  limit = 25,
+  offset = 0,
+}) {
+  await ensureProspectResearchSchema();
+  const normalizedLimit = Math.max(1, Math.min(100, Number(limit) || 25));
+  const normalizedOffset = Math.max(0, Number(offset) || 0);
+  const searchText = `%${String(search || "")
+    .trim()
+    .slice(0, 190)}%`;
+  const predicates = [
+    "s.requested_by_user_id = ?",
+    "s.discarded_at IS NULL",
+    "(? = '' OR s.company_name LIKE ? OR s.country LIKE ? OR COALESCE(s.website, '') LIKE ? OR COALESCE(s.industry, '') LIKE ?)",
+    "(? = 0 OR s.is_target = 1)",
+  ];
+  const params = [
+    Number(user.id),
+    String(search || "").trim(),
+    searchText,
+    searchText,
+    searchText,
+    searchText,
+    targetOnly ? 1 : 0,
+  ];
+  const rows = await query(
+    `SELECT s.*,
+       (SELECT COUNT(*) FROM prospect_research_findings f
+        WHERE f.session_id = s.id AND f.source_type IN ('tavily', 'public_web')) AS finding_count,
+       (SELECT COUNT(*) FROM prospect_research_contacts c
+        WHERE c.session_id = s.id AND c.source_type = 'public_source') AS contact_count,
+       (SELECT COUNT(*) FROM prospect_research_opportunity_hypotheses h
+        WHERE h.session_id = s.id AND JSON_EXTRACT(h.metadata_json, '$.externalResearch') = true) AS hypothesis_count,
+       (SELECT COUNT(*) FROM prospect_research_runs r WHERE r.session_id = s.id) AS run_count,
+       (SELECT r.status FROM prospect_research_runs r WHERE r.session_id = s.id
+        ORDER BY r.started_at DESC, r.id DESC LIMIT 1) AS latest_run_status
+     FROM prospect_research_sessions s
+     WHERE ${predicates.join(" AND ")}
+     ORDER BY s.is_target DESC, s.external_researched_at DESC, s.updated_at DESC, s.id DESC`,
+    params,
+  );
+  const uniqueRows = groupDuplicateProspectSessions(
+    rows.map((row) => ({
+      ...mapSessionRow(row),
+      findingCount: Number(row.finding_count || 0),
+      contactCount: Number(row.contact_count || 0),
+      hypothesisCount: Number(row.hypothesis_count || 0),
+      runCount: Number(row.run_count || 0),
+      latestRunStatus: row.latest_run_status || null,
+    })),
+  );
+  const pageRows = uniqueRows.slice(
+    normalizedOffset,
+    normalizedOffset + normalizedLimit,
+  );
+  return {
+    items: pageRows,
+    total: uniqueRows.length,
+    limit: normalizedLimit,
+    offset: normalizedOffset,
+  };
+}
+
+export async function discardProspectResearchSession({ user, sessionId }) {
+  await ensureProspectResearchSchema();
+  const session = await getOwnedSession(sessionId, user.id);
+  if (!session) return null;
+  const userSessions = await query(
+    `SELECT * FROM prospect_research_sessions
+     WHERE requested_by_user_id = ? AND discarded_at IS NULL`,
+    [Number(user.id)],
+  );
+  const duplicates = userSessions.filter((candidate) =>
+    sameProspectIdentity(
+      {
+        companyName: session.company_name,
+        country: session.country,
+        website: session.website,
+      },
+      {
+        companyName: candidate.company_name,
+        country: candidate.country,
+        website: candidate.website,
+      },
+    ),
+  );
+  const sessionIds = duplicates.map((candidate) => Number(candidate.id));
+  if (!sessionIds.includes(Number(sessionId)))
+    sessionIds.push(Number(sessionId));
+  const placeholders = sessionIds.map(() => "?").join(", ");
+  await query(
+    `UPDATE prospect_research_sessions
+     SET discarded_at = NOW(3), is_target = 0, target_added_at = NULL,
+         updated_at = NOW(3)
+     WHERE requested_by_user_id = ? AND id IN (${placeholders})`,
+    [Number(user.id), ...sessionIds],
+  );
+  return { discardedCount: sessionIds.length };
+}
+
+export async function setProspectResearchTarget({ user, sessionId, isTarget }) {
+  await ensureProspectResearchSchema();
+  const session = await getOwnedSession(sessionId, user.id);
+  if (!session) return null;
+  if (isTarget && !session.external_researched_at) {
+    throw createHttpError(
+      409,
+      "Completa una investigación pública antes de agregar la empresa a Cuentas objetivo",
+    );
+  }
+  await query(
+    `UPDATE prospect_research_sessions
+     SET is_target = ?, target_added_at = ?, updated_at = NOW(3)
+     WHERE id = ? AND requested_by_user_id = ?`,
+    [
+      isTarget ? 1 : 0,
+      isTarget ? new Date() : null,
+      Number(sessionId),
+      Number(user.id),
+    ],
+  );
+  const updatedSession = await getOwnedSession(sessionId, user.id);
+  return {
+    id: Number(updatedSession.id),
+    isTarget: Boolean(updatedSession.is_target),
+    targetAddedAt: updatedSession.target_added_at || null,
   };
 }
 
@@ -807,7 +1799,7 @@ export async function getProspectResearchSession({ user, sessionId }) {
   const session = await getOwnedSession(sessionId, user.id);
   if (!session) return null;
 
-  const [findings, contacts, hypotheses] = await Promise.all([
+  const [findings, contacts, hypotheses, researchRuns] = await Promise.all([
     query(
       `SELECT * FROM prospect_research_findings WHERE session_id = ? ORDER BY id ASC`,
       [Number(session.id)],
@@ -820,13 +1812,86 @@ export async function getProspectResearchSession({ user, sessionId }) {
       `SELECT * FROM prospect_research_opportunity_hypotheses WHERE session_id = ? ORDER BY id ASC`,
       [Number(session.id)],
     ),
+    query(
+      `SELECT r.*,
+              COUNT(rf.finding_id) AS finding_count,
+              (SELECT COUNT(*) FROM prospect_research_run_contacts rc WHERE rc.run_id = r.id) AS contact_count,
+              (SELECT COUNT(*) FROM prospect_research_run_hypotheses rh WHERE rh.run_id = r.id) AS hypothesis_count,
+              SUM(CASE WHEN rf.observation_status = 'new' THEN 1 ELSE 0 END) AS new_finding_count,
+              SUM(CASE WHEN rf.observation_status = 'updated' THEN 1 ELSE 0 END) AS updated_finding_count,
+              SUM(CASE WHEN rf.observation_status = 'unchanged' THEN 1 ELSE 0 END) AS unchanged_finding_count
+       FROM prospect_research_runs r
+       LEFT JOIN prospect_research_run_findings rf ON rf.run_id = r.id
+       WHERE r.session_id = ?
+       GROUP BY r.id
+       ORDER BY r.started_at DESC, r.id DESC`,
+      [Number(session.id)],
+    ),
   ]);
+  const latestRunFindings = researchRuns.length
+    ? await query(
+        `SELECT finding_id, observation_status
+         FROM prospect_research_run_findings WHERE run_id = ?`,
+        [Number(researchRuns[0].id)],
+      )
+    : [];
+  const latestRunContacts = researchRuns.length
+    ? await query(
+        `SELECT contact_id, observation_status
+         FROM prospect_research_run_contacts WHERE run_id = ?`,
+        [Number(researchRuns[0].id)],
+      )
+    : [];
+  const latestRunHypotheses = researchRuns.length
+    ? await query(
+        `SELECT hypothesis_id, observation_status
+         FROM prospect_research_run_hypotheses WHERE run_id = ?`,
+        [Number(researchRuns[0].id)],
+      )
+    : [];
+  const latestObservationByFinding = new Map(
+    latestRunFindings.map((item) => [
+      Number(item.finding_id),
+      item.observation_status,
+    ]),
+  );
+  const latestObservationByContact = new Map(
+    latestRunContacts.map((item) => [
+      Number(item.contact_id),
+      item.observation_status,
+    ]),
+  );
+  const latestObservationByHypothesis = new Map(
+    latestRunHypotheses.map((item) => [
+      Number(item.hypothesis_id),
+      item.observation_status,
+    ]),
+  );
 
   const mappedSession = {
     ...mapSessionRow(session),
-    findings: findings.map(mapFindingRow),
-    contacts: contacts.map(mapContactRow),
-    hypotheses: hypotheses.map(mapHypothesisRow),
+    findings: findings.map((finding) => ({
+      ...mapFindingRow(finding),
+      lastResearchObservation:
+        latestObservationByFinding.get(Number(finding.id)) || null,
+    })),
+    contacts: contacts.map((contact) => ({
+      ...mapContactRow(contact),
+      evidenceText: mapContactRow(contact).metadata?.evidenceText || "",
+      sourcePublishedAt:
+        mapContactRow(contact).metadata?.sourcePublishedAt || null,
+      lastResearchObservation:
+        latestObservationByContact.get(Number(contact.id)) || null,
+    })),
+    hypotheses: hypotheses.map((hypothesis) => ({
+      ...mapHypothesisRow(hypothesis),
+      sourceReference:
+        mapHypothesisRow(hypothesis).metadata?.sourceReference || "",
+      evidenceText: mapHypothesisRow(hypothesis).metadata?.evidenceText || "",
+      lastResearchObservation:
+        latestObservationByHypothesis.get(Number(hypothesis.id)) || null,
+    })),
+    externalResearchRuns: researchRuns.map(mapProspectResearchRunRow),
   };
   return {
     ...mappedSession,
@@ -835,7 +1900,6 @@ export async function getProspectResearchSession({ user, sessionId }) {
       : null,
   };
 }
-
 
 export async function createProspectChatJob({ user, sessionId, question }) {
   await ensureProspectResearchSchema();
@@ -857,7 +1921,11 @@ export async function createProspectChatJob({ user, sessionId, question }) {
       `prcj_${randomUUID()}`,
       Number(session.id),
       Number(user.id),
-      JSON.stringify({ question: String(question || "").trim().slice(0, 2000) }),
+      JSON.stringify({
+        question: String(question || "")
+          .trim()
+          .slice(0, 2000),
+      }),
     ],
   );
   return {
@@ -909,7 +1977,9 @@ export async function processProspectChatJob({ user, jobId }) {
       sessionId: job.sessionId,
     });
     if (!session) throw createHttpError(404, "Prospección no encontrada");
-    const question = String(job.request?.question || "").trim().slice(0, 2000);
+    const question = String(job.request?.question || "")
+      .trim()
+      .slice(0, 2000);
     if (!question) throw createHttpError(400, "La pregunta está vacía");
 
     let turn;
@@ -964,7 +2034,9 @@ export async function processProspectChatJob({ user, jobId }) {
     };
     const assistantHistory = {
       role: "assistant",
-      text: String(response.answer || "").trim().slice(0, 2000),
+      text: String(response.answer || "")
+        .trim()
+        .slice(0, 2000),
       ...response,
     };
 
@@ -1157,53 +2229,614 @@ export async function runProspectResearchSession({ user, sessionId }) {
   }
 }
 
-export async function runProspectExternalResearchSession({ user, sessionId }) {
+export async function createProspectExternalResearchRun({ user, sessionId }) {
   await ensureProspectResearchSchema();
-  const governance = await assertExternalResearchGovernance(user);
+  await assertExternalResearchGovernance(user);
   const sessionRow = await getOwnedSession(sessionId, user.id);
   if (!sessionRow) return null;
-  await query(
-    `UPDATE prospect_research_sessions
-     SET external_researched_at = NOW(3), updated_at = NOW(3)
-     WHERE id = ? AND requested_by_user_id = ?`,
+
+  const activeRuns = await query(
+    `SELECT * FROM prospect_research_runs
+     WHERE session_id = ? AND requested_by_user_id = ?
+       AND status IN ('pending', 'running')
+     ORDER BY started_at DESC, id DESC LIMIT 1`,
     [Number(sessionId), Number(user.id)],
   );
+  if (activeRuns.length) {
+    const activeRun = activeRuns[0];
+    if (
+      activeRun.status === "running" &&
+      !activeExternalResearchRunIds.has(Number(activeRun.id))
+    ) {
+      await query(
+        `UPDATE prospect_research_runs SET status = 'pending'
+         WHERE id = ? AND status = 'running'`,
+        [Number(activeRun.id)],
+      );
+      activeRun.status = "pending";
+    }
+    return {
+      ...mapProspectResearchRunRow(activeRun),
+      pollAfterMs: 700,
+    };
+  }
+
   const session = mapSessionRow(sessionRow);
-  const externalResult = await runProspectExternalResearch({ session, user });
-  const evidencePolicy = applyExternalEvidencePolicy(
-    externalResult.findings,
-    governance.requireEvidenceForExternalFindings,
+  const [previousFindings, previousContacts, previousHypotheses] =
+    await Promise.all([
+      query(
+        `SELECT title, MAX(updated_at) AS latest_updated_at
+         FROM prospect_research_findings
+         WHERE session_id = ? AND source_type IN ('tavily', 'public_web')
+           AND source_reference IS NOT NULL
+         GROUP BY title
+         ORDER BY latest_updated_at DESC, title LIMIT 5`,
+        [Number(session.id)],
+      ),
+      query(
+        `SELECT name, role_title, MAX(updated_at) AS latest_updated_at
+         FROM prospect_research_contacts
+         WHERE session_id = ? AND source_type = 'public_source'
+         GROUP BY name, role_title
+         ORDER BY latest_updated_at DESC, name LIMIT 5`,
+        [Number(session.id)],
+      ),
+      query(
+        `SELECT title, MAX(updated_at) AS latest_updated_at
+         FROM prospect_research_opportunity_hypotheses
+         WHERE session_id = ? AND JSON_EXTRACT(metadata_json, '$.externalResearch') = true
+         GROUP BY title
+         ORDER BY latest_updated_at DESC, title LIMIT 5`,
+        [Number(session.id)],
+      ),
+    ]);
+  const previousTopics = [
+    ...previousFindings.map((finding) => finding.title),
+    ...previousContacts.map(
+      (contact) => `${contact.name} ${contact.role_title}`,
+    ),
+    ...previousHypotheses.map((hypothesis) => hypothesis.title),
+  ].slice(0, 8);
+  const queryText = buildProspectExternalQuery(session, previousTopics);
+  const runPublicId = `prr_${randomUUID()}`;
+  const runInsert = await query(
+    `INSERT INTO prospect_research_runs
+      (public_id, session_id, requested_by_user_id, status, query_text,
+       provider, started_at)
+     VALUES (?, ?, ?, 'pending', ?, 'tavily', NOW(3))`,
+    [runPublicId, Number(session.id), Number(user.id), queryText],
   );
-  externalResult.findings = evidencePolicy.findings;
-  if (evidencePolicy.omittedCount) {
-    externalResult.warnings = [
-      ...(externalResult.warnings || []),
-      `${evidencePolicy.omittedCount} hallazgo(s) público(s) se omitieron por falta de URL o evidencia verificable.`,
-    ];
-  }
-
-  let insertedFindings = [];
-  if (externalResult.findings.length) {
-    insertedFindings = await withTransaction(async (conn) =>
-      insertSessionFindings(conn, Number(session.id), externalResult.findings),
-    );
-  }
-
-  const currentResult = parseJson(sessionRow.result_json, {}) || {};
-  const nextResult = {
-    ...currentResult,
-    externalResearch: {
-      enabled: externalResult.enabled,
-      provider: externalResult.provider || "tavily",
-      warnings: externalResult.warnings,
-      findingCount: insertedFindings.length,
-      researchedAt: new Date().toISOString(),
-    },
+  return {
+    id: Number(runInsert.insertId),
+    publicId: runPublicId,
+    sessionId: Number(session.id),
+    status: "pending",
+    query: queryText,
+    provider: "tavily",
+    findingCount: 0,
+    contactCount: 0,
+    hypothesisCount: 0,
+    warnings: [],
+    pollAfterMs: 700,
   };
-  await query(
-    `UPDATE prospect_research_sessions SET result_json = ?, updated_at = NOW(3) WHERE id = ?`,
-    [JSON.stringify(nextResult), Number(session.id)],
+}
+
+export async function getProspectExternalResearchRun({
+  user,
+  sessionId,
+  runId,
+}) {
+  await ensureProspectResearchSchema();
+  const rows = await query(
+    `SELECT r.*,
+            COUNT(rf.finding_id) AS finding_count,
+          (SELECT COUNT(*) FROM prospect_research_run_contacts rc WHERE rc.run_id = r.id) AS contact_count,
+          (SELECT COUNT(*) FROM prospect_research_run_hypotheses rh WHERE rh.run_id = r.id) AS hypothesis_count,
+            SUM(CASE WHEN rf.observation_status = 'new' THEN 1 ELSE 0 END) AS new_finding_count,
+            SUM(CASE WHEN rf.observation_status = 'updated' THEN 1 ELSE 0 END) AS updated_finding_count,
+            SUM(CASE WHEN rf.observation_status = 'unchanged' THEN 1 ELSE 0 END) AS unchanged_finding_count
+     FROM prospect_research_runs r
+     LEFT JOIN prospect_research_run_findings rf ON rf.run_id = r.id
+     WHERE r.id = ? AND r.session_id = ? AND r.requested_by_user_id = ?
+     GROUP BY r.id LIMIT 1`,
+    [Number(runId), Number(sessionId), Number(user.id)],
   );
+  const run = mapProspectResearchRunRow(rows[0]);
+  if (!run) return null;
+  if (["completed", "failed"].includes(run.status)) {
+    run.session = await getProspectResearchSession({ user, sessionId });
+  }
+  return run;
+}
+
+export async function runProspectExternalResearchSession({
+  user,
+  sessionId,
+  researchRunner = runProspectExternalResearch,
+  runId: requestedRunId = null,
+}) {
+  await ensureProspectResearchSchema();
+  let sessionRow;
+  let queryText;
+  let runId;
+
+  if (requestedRunId) {
+    const runRows = await query(
+      `SELECT * FROM prospect_research_runs
+       WHERE id = ? AND session_id = ? AND requested_by_user_id = ? LIMIT 1`,
+      [Number(requestedRunId), Number(sessionId), Number(user.id)],
+    );
+    const run = runRows[0];
+    if (!run) return null;
+    const claim = await query(
+      `UPDATE prospect_research_runs
+       SET status = 'running'
+       WHERE id = ? AND status = 'pending'`,
+      [Number(run.id)],
+    );
+    if (!claim.affectedRows) {
+      return getProspectResearchSession({ user, sessionId });
+    }
+    sessionRow = await getOwnedSession(sessionId, user.id);
+    queryText = run.query_text;
+    runId = Number(run.id);
+  } else {
+    await assertExternalResearchGovernance(user);
+    sessionRow = await getOwnedSession(sessionId, user.id);
+    if (!sessionRow) return null;
+    const session = mapSessionRow(sessionRow);
+    const previousFindings = await query(
+      `SELECT title, MAX(updated_at) AS latest_updated_at
+       FROM prospect_research_findings
+       WHERE session_id = ? AND source_type IN ('tavily', 'public_web')
+         AND source_reference IS NOT NULL
+       GROUP BY title
+       ORDER BY latest_updated_at DESC, title LIMIT 5`,
+      [Number(session.id)],
+    );
+    queryText = buildProspectExternalQuery(session, previousFindings);
+    const runInsert = await query(
+      `INSERT INTO prospect_research_runs
+        (public_id, session_id, requested_by_user_id, status, query_text,
+         provider, started_at)
+       VALUES (?, ?, ?, 'running', ?, 'tavily', NOW(3))`,
+      [`prr_${randomUUID()}`, Number(session.id), Number(user.id), queryText],
+    );
+    runId = Number(runInsert.insertId);
+  }
+  if (!sessionRow) return null;
+  const session = mapSessionRow(sessionRow);
+  activeExternalResearchRunIds.add(runId);
+
+  try {
+    const externalResult = await researchRunner({
+      session,
+      user,
+      queryText,
+    });
+    externalResult.findings = Array.isArray(externalResult.findings)
+      ? externalResult.findings
+      : [];
+    externalResult.contacts = Array.isArray(externalResult.contacts)
+      ? externalResult.contacts
+      : [];
+    externalResult.hypotheses = Array.isArray(externalResult.hypotheses)
+      ? externalResult.hypotheses
+      : [];
+    externalResult.targetRoles = Array.isArray(externalResult.targetRoles)
+      ? externalResult.targetRoles
+      : [];
+    const evidencePolicy = applyExternalEvidencePolicy(
+      externalResult.findings,
+      true,
+    );
+    externalResult.findings = deduplicateExternalFindings(
+      evidencePolicy.findings,
+    );
+    externalResult.contacts = deduplicateExternalContacts(
+      externalResult.contacts.filter(
+        (contact) =>
+          keepFindingsWithKnownSources(
+            [{ sourceReference: contact.sourceReference }],
+            externalResult.sourceUrls ||
+              externalResult.findings.map((item) => item.sourceReference),
+          ).length,
+      ),
+    );
+    externalResult.hypotheses = deduplicateExternalHypotheses(
+      externalResult.hypotheses.filter(
+        (hypothesis) =>
+          keepFindingsWithKnownSources(
+            [
+              {
+                sourceReference: hypothesis.metadata?.sourceReference,
+              },
+            ],
+            externalResult.sourceUrls ||
+              externalResult.findings.map((item) => item.sourceReference),
+          ).length,
+      ),
+    );
+    if (evidencePolicy.omittedCount) {
+      externalResult.warnings = [
+        ...(externalResult.warnings || []),
+        `${evidencePolicy.omittedCount} hallazgo(s) público(s) se omitieron por falta de URL o evidencia verificable.`,
+      ];
+    }
+    if (
+      externalResult.enabled &&
+      !externalResult.findings.length &&
+      !externalResult.contacts.length &&
+      !externalResult.hypotheses.length
+    ) {
+      externalResult.warnings = [
+        ...(externalResult.warnings || []),
+        "Se consultaron fuentes públicas, pero no se encontró información con evidencia suficiente para incluirla en la ficha.",
+      ];
+    }
+
+    const currentResult = parseJson(sessionRow.result_json, {}) || {};
+    const runSummary = {
+      new: 0,
+      updated: 0,
+      unchanged: 0,
+      contacts: { new: 0, updated: 0, unchanged: 0 },
+      hypotheses: { new: 0, updated: 0, unchanged: 0 },
+    };
+
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `SELECT id FROM prospect_research_sessions WHERE id = ? FOR UPDATE`,
+        [Number(session.id)],
+      );
+      const [existingRows] = await conn.query(
+        `SELECT * FROM prospect_research_findings
+         WHERE session_id = ? AND source_type IN ('tavily', 'public_web')
+           AND source_reference IS NOT NULL
+         ORDER BY id DESC FOR UPDATE`,
+        [Number(session.id)],
+      );
+      const existingBySource = new Map();
+      for (const row of existingRows) {
+        const canonicalUrl = canonicalizeExternalSourceUrl(
+          row.source_reference,
+        );
+        if (canonicalUrl && !existingBySource.has(canonicalUrl)) {
+          existingBySource.set(canonicalUrl, row);
+        }
+      }
+
+      for (const finding of externalResult.findings) {
+        const canonicalUrl = canonicalizeExternalSourceUrl(
+          finding.sourceReference,
+        );
+        const existing = existingBySource.get(canonicalUrl);
+        let findingId;
+        let observationStatus;
+        const observation = classifyExternalFindingObservation(
+          existing,
+          finding,
+        );
+
+        if (observation === "new") {
+          const [inserted] = await insertSessionFindings(
+            conn,
+            Number(session.id),
+            [finding],
+          );
+          findingId = inserted.id;
+          observationStatus = "new";
+          runSummary.new += 1;
+          existingBySource.set(canonicalUrl, {
+            id: findingId,
+            ...finding,
+            source_reference: finding.sourceReference,
+            evidence_text: finding.evidenceText,
+          });
+        } else if (observation === "unchanged") {
+          findingId = Number(existing.id);
+          observationStatus = "unchanged";
+          runSummary.unchanged += 1;
+        } else if (observation === "updated") {
+          if (existing.status === "suggested") {
+            await conn.query(
+              `UPDATE prospect_research_findings
+               SET status = 'outdated', updated_at = NOW(3)
+               WHERE id = ?`,
+              [Number(existing.id)],
+            );
+          }
+          const [inserted] = await insertSessionFindings(
+            conn,
+            Number(session.id),
+            [finding],
+          );
+          findingId = inserted.id;
+          observationStatus = "updated";
+          runSummary.updated += 1;
+          existingBySource.set(canonicalUrl, {
+            id: findingId,
+            ...finding,
+            source_reference: finding.sourceReference,
+            evidence_text: finding.evidenceText,
+          });
+        } else {
+          const [inserted] = await insertSessionFindings(
+            conn,
+            Number(session.id),
+            [finding],
+          );
+          findingId = inserted.id;
+          observationStatus = "updated";
+          runSummary.updated += 1;
+          existingBySource.set(canonicalUrl, {
+            id: findingId,
+            ...finding,
+            source_reference: finding.sourceReference,
+            evidence_text: finding.evidenceText,
+          });
+        }
+
+        await conn.query(
+          `INSERT INTO prospect_research_run_findings
+            (run_id, finding_id, observation_status, created_at)
+           VALUES (?, ?, ?, NOW(3))`,
+          [runId, findingId, observationStatus],
+        );
+      }
+
+      const [existingContactRows] = await conn.query(
+        `SELECT * FROM prospect_research_contacts
+         WHERE session_id = ? ORDER BY id DESC FOR UPDATE`,
+        [Number(session.id)],
+      );
+      const existingContactsByKey = new Map();
+      for (const row of existingContactRows) {
+        const key = `${String(row.name || "")
+          .trim()
+          .toLocaleLowerCase(
+            "es",
+          )}|${canonicalizeExternalSourceUrl(row.source_reference)}`;
+        if (!existingContactsByKey.has(key)) {
+          existingContactsByKey.set(key, row);
+        }
+      }
+      for (const contact of externalResult.contacts) {
+        const sourceUrl = canonicalizeExternalSourceUrl(
+          contact.sourceReference,
+        );
+        const key = `${String(contact.name || "")
+          .trim()
+          .toLocaleLowerCase("es")}|${sourceUrl}`;
+        const existing = existingContactsByKey.get(key);
+        const existingMetadata = parseJson(existing?.metadata_json, {});
+        const sameContent = Boolean(
+          existing &&
+          String(existing.role_title || "")
+            .trim()
+            .toLowerCase() ===
+            String(contact.roleTitle || "")
+              .trim()
+              .toLowerCase() &&
+          String(existing.area || "")
+            .trim()
+            .toLowerCase() ===
+            String(contact.area || "")
+              .trim()
+              .toLowerCase() &&
+          String(existingMetadata.evidenceText || "")
+            .trim()
+            .toLowerCase() ===
+            String(contact.metadata?.evidenceText || "")
+              .trim()
+              .toLowerCase(),
+        );
+        let contactId;
+        let observationStatus;
+        if (sameContent) {
+          contactId = Number(existing.id);
+          observationStatus = "unchanged";
+          runSummary.contacts.unchanged += 1;
+        } else {
+          const [inserted] = await insertSessionContacts(
+            conn,
+            Number(session.id),
+            [contact],
+          );
+          contactId = inserted.id;
+          observationStatus = existing ? "updated" : "new";
+          runSummary.contacts[observationStatus] += 1;
+          existingContactsByKey.set(key, {
+            id: contactId,
+            name: contact.name,
+            role_title: contact.roleTitle,
+            area: contact.area,
+            source_reference: contact.sourceReference,
+            metadata_json: JSON.stringify(contact.metadata || {}),
+            status: "suggested",
+          });
+        }
+        await conn.query(
+          `INSERT INTO prospect_research_run_contacts
+            (run_id, contact_id, observation_status, created_at)
+           VALUES (?, ?, ?, NOW(3))`,
+          [runId, contactId, observationStatus],
+        );
+      }
+
+      const [existingHypothesisRows] = await conn.query(
+        `SELECT * FROM prospect_research_opportunity_hypotheses
+         WHERE session_id = ? ORDER BY id DESC FOR UPDATE`,
+        [Number(session.id)],
+      );
+      const existingHypothesesByKey = new Map();
+      for (const row of existingHypothesisRows) {
+        const metadata = parseJson(row.metadata_json, {});
+        const key = `${String(row.title || "")
+          .trim()
+          .toLowerCase()}|${canonicalizeExternalSourceUrl(metadata.sourceReference)}`;
+        if (!existingHypothesesByKey.has(key)) {
+          existingHypothesesByKey.set(key, { ...row, metadata });
+        }
+      }
+      for (const hypothesis of externalResult.hypotheses) {
+        const sourceUrl = canonicalizeExternalSourceUrl(
+          hypothesis.metadata?.sourceReference,
+        );
+        const key = `${String(hypothesis.title || "")
+          .trim()
+          .toLowerCase()}|${sourceUrl}`;
+        const existing = existingHypothesesByKey.get(key);
+        const sameContent = Boolean(
+          existing &&
+          String(existing.business_challenge || "")
+            .trim()
+            .toLowerCase() ===
+            String(hypothesis.businessChallenge || "")
+              .trim()
+              .toLowerCase() &&
+          String(existing.technology_area || "")
+            .trim()
+            .toLowerCase() ===
+            String(hypothesis.technologyArea || "")
+              .trim()
+              .toLowerCase() &&
+          String(existing.metadata.evidenceText || "")
+            .trim()
+            .toLowerCase() ===
+            String(hypothesis.metadata?.evidenceText || "")
+              .trim()
+              .toLowerCase(),
+        );
+        let hypothesisId;
+        let observationStatus;
+        if (sameContent) {
+          hypothesisId = Number(existing.id);
+          observationStatus = "unchanged";
+          runSummary.hypotheses.unchanged += 1;
+        } else {
+          const [inserted] = await insertSessionHypotheses(
+            conn,
+            Number(session.id),
+            [hypothesis],
+          );
+          hypothesisId = inserted.id;
+          observationStatus = existing ? "updated" : "new";
+          runSummary.hypotheses[observationStatus] += 1;
+          existingHypothesesByKey.set(key, {
+            id: hypothesisId,
+            title: hypothesis.title,
+            business_challenge: hypothesis.businessChallenge,
+            technology_area: hypothesis.technologyArea,
+            metadata: hypothesis.metadata || {},
+            status: "suggested",
+          });
+        }
+        await conn.query(
+          `INSERT INTO prospect_research_run_hypotheses
+            (run_id, hypothesis_id, observation_status, created_at)
+           VALUES (?, ?, ?, NOW(3))`,
+          [runId, hypothesisId, observationStatus],
+        );
+      }
+
+      const warnings = externalResult.warnings || [];
+      const findingCount = externalResult.findings.length;
+      const researchedAt = new Date().toISOString();
+      const trackResults = (externalResult.trackResults || []).map((track) => ({
+        ...track,
+        findings: externalResult.findings.filter((finding) =>
+          (finding.metadata?.researchTracks || []).includes(track.key),
+        ).length,
+        contacts: externalResult.contacts.filter((contact) =>
+          (contact.metadata?.researchTracks || []).includes(track.key),
+        ).length,
+        hypotheses: externalResult.hypotheses.filter((hypothesis) =>
+          (hypothesis.metadata?.researchTracks || []).includes(track.key),
+        ).length,
+        targetRoleCount: externalResult.targetRoles.filter((role) =>
+          (role.researchTracks || []).includes(track.key),
+        ).length,
+        targetRoles: externalResult.targetRoles.filter((role) =>
+          (role.researchTracks || []).includes(track.key),
+        ).length,
+      }));
+      const nextResult = {
+        ...currentResult,
+        headline:
+          currentResult.headline ||
+          `Investigación pública para ${session.companyName}`,
+        profile: {
+          ...(currentResult.profile || {}),
+          companyName: session.companyName,
+          country: session.country,
+          website: session.website || "",
+          industry: session.industry || "",
+        },
+        externalResearch: {
+          enabled: externalResult.enabled,
+          provider: externalResult.provider || "tavily",
+          warnings,
+          findingCount,
+          newFindingCount: runSummary.new,
+          updatedFindingCount: runSummary.updated,
+          unchangedFindingCount: runSummary.unchanged,
+          contactCount: externalResult.contacts.length,
+          newContactCount: runSummary.contacts.new,
+          updatedContactCount: runSummary.contacts.updated,
+          unchangedContactCount: runSummary.contacts.unchanged,
+          hypothesisCount: externalResult.hypotheses.length,
+          newHypothesisCount: runSummary.hypotheses.new,
+          updatedHypothesisCount: runSummary.hypotheses.updated,
+          unchangedHypothesisCount: runSummary.hypotheses.unchanged,
+          trackResults,
+          targetRoles: externalResult.targetRoles,
+          sellerBrief: externalResult.sellerBrief || null,
+          researchedAt,
+          runId,
+        },
+      };
+
+      await conn.query(
+        `UPDATE prospect_research_runs
+         SET status = 'completed', finding_count = ?, contact_count = ?,
+             hypothesis_count = ?, warnings_json = ?, track_results_json = ?,
+             finished_at = NOW(3)
+         WHERE id = ?`,
+        [
+          findingCount,
+          externalResult.contacts.length,
+          externalResult.hypotheses.length,
+          JSON.stringify(warnings),
+          JSON.stringify(trackResults),
+          runId,
+        ],
+      );
+      await conn.query(
+        `UPDATE prospect_research_sessions
+         SET status = 'completed', result_json = ?, error_message = NULL,
+             external_researched_at = NOW(3), updated_at = NOW(3),
+             finished_at = NOW(3)
+         WHERE id = ? AND requested_by_user_id = ?`,
+        [JSON.stringify(nextResult), Number(session.id), Number(user.id)],
+      );
+    });
+  } catch (error) {
+    await query(
+      `UPDATE prospect_research_runs
+       SET status = 'failed', warnings_json = ?, finished_at = NOW(3)
+       WHERE id = ?`,
+      [
+        JSON.stringify([
+          clip(error?.message || "No fue posible investigar", 1000),
+        ]),
+        runId,
+      ],
+    ).catch(() => undefined);
+    throw error;
+  } finally {
+    activeExternalResearchRunIds.delete(runId);
+  }
 
   return getProspectResearchSession({ user, sessionId });
 }

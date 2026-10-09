@@ -23,7 +23,8 @@ export function normalizeActivityOperation(action = {}, context = {}) {
     missingFields: [],
     requiresConfirmation: true,
     sourceChannel: "customer_account",
-    opportunityId: Number(action.opportunityId || context.opportunityId || 0) || null,
+    opportunityId:
+      Number(action.opportunityId || context.opportunityId || 0) || null,
     activityId: null,
     actionType: actionTypes.has(action.actionType) ? action.actionType : "call",
     status: statuses.has(action.status) ? action.status : "pending",
@@ -32,10 +33,9 @@ export function normalizeActivityOperation(action = {}, context = {}) {
     dueDate: action.dueDate || null,
     notes: action.notes || "",
     successCriteria: action.successCriteria || "Confirmar el siguiente paso.",
-    source:
-      context.opportunityId
-        ? { type: "opportunity", id: Number(context.opportunityId) }
-        : null,
+    source: context.opportunityId
+      ? { type: "opportunity", id: Number(context.opportunityId) }
+      : null,
   };
 }
 
@@ -65,6 +65,7 @@ export function normalizeProspectConversionOperation(
     targetModule,
     payload: {
       prospectSessionId: Number(prospectSessionId),
+      target,
       actionType: action.actionType || "conversion",
       notes: action.notes || "",
       successCriteria: action.successCriteria || "Conversión confirmada.",

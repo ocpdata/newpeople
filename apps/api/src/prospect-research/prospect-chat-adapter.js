@@ -54,6 +54,34 @@ function executeProspectReadTool({ toolName, snapshot, args = {} }) {
   return { toolName, readOnly: true, result: execute(args) };
 }
 
+const PROSPECT_CONVERSION_TARGETS = new Set([
+  "account",
+  "contact",
+  "opportunity",
+]);
+
+export function normalizeProspectRecommendedActions(actions = []) {
+  if (!Array.isArray(actions)) return [];
+  return actions
+    .filter((action) => {
+      const target = String(action?.target || "")
+        .trim()
+        .toLowerCase();
+      const actionType = String(action?.actionType || "")
+        .trim()
+        .toLowerCase();
+      return (
+        PROSPECT_CONVERSION_TARGETS.has(target) &&
+        ["convert", "conversion", "create"].includes(actionType)
+      );
+    })
+    .map((action) => ({
+      ...action,
+      target: String(action.target).trim().toLowerCase(),
+      requiresConfirmation: true,
+    }));
+}
+
 export function buildProspectFallback(
   snapshot,
   question,
@@ -305,7 +333,18 @@ export function createProspectChatAdapter({ user, session, jobId }) {
               type: "object",
               fields: [
                 { key: "title", type: "string", example: "Validar hipótesis" },
-                { key: "actionType", type: "string", example: "call" },
+                {
+                  key: "target",
+                  type: "enum",
+                  enum: ["account", "contact", "opportunity"],
+                  example: "opportunity",
+                },
+                {
+                  key: "actionType",
+                  type: "enum",
+                  enum: ["convert", "conversion", "create"],
+                  example: "convert",
+                },
                 {
                   key: "notes",
                   type: "string",
@@ -341,12 +380,9 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       conflict: null,
     }),
     normalizeResponse: (result, _snapshot, _question, context) => {
-      const recommendedActions = Array.isArray(result?.recommendedActions)
-        ? result.recommendedActions.map((action) => ({
-            ...action,
-            requiresConfirmation: true,
-          }))
-        : [];
+      const recommendedActions = normalizeProspectRecommendedActions(
+        result?.recommendedActions,
+      );
       return {
         answer: String(result?.answer || "No fue posible responder."),
         evidence: Array.isArray(result?.evidence) ? result.evidence : [],

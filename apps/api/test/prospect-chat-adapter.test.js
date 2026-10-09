@@ -2,9 +2,63 @@ import { describe, expect, it } from "vitest";
 import {
   buildProspectFallback,
   createProspectChatAdapter,
+  normalizeProspectRecommendedActions,
 } from "../src/prospect-research/prospect-chat-adapter.js";
 
 describe("Prospect chat adapter", () => {
+  it("descarta sugerencias de correo y operaciones sin destino de conversión explícito", () => {
+    const actions = normalizeProspectRecommendedActions([
+      {
+        title: "Preparar borrador de correo para María García",
+        actionType: "email_draft",
+      },
+      {
+        title: "Crear cuenta",
+        actionType: "convert",
+      },
+      {
+        title: "Crear oportunidad desde hipótesis confirmada",
+        target: "opportunity",
+        actionType: "convert",
+      },
+    ]);
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        title: "Crear oportunidad desde hipótesis confirmada",
+        target: "opportunity",
+        requiresConfirmation: true,
+      }),
+    ]);
+  });
+
+  it("acepta solo operaciones de conversión con un tipo y destino CRM permitidos", () => {
+    const actions = normalizeProspectRecommendedActions([
+      {
+        title: "Preparar llamada con María",
+        target: "contact",
+        actionType: "call",
+      },
+      {
+        title: "Crear una oportunidad",
+        target: "opportunity",
+        actionType: "convert",
+      },
+      {
+        title: "Crear una nota",
+        target: "note",
+        actionType: "create",
+      },
+    ]);
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        title: "Crear una oportunidad",
+        target: "opportunity",
+      }),
+    ]);
+  });
+
   it("da fallback específico a hallazgos, hipótesis y conversiones sin presentarlos como CRM confirmado", () => {
     const snapshot = {
       profile: { companyName: "Prospecto Demo" },

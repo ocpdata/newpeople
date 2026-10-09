@@ -31,6 +31,13 @@ import { ensureOpportunityWorkspaceSchema } from "../src/opportunity-workspace/s
 import { ensureProspectResearchPermissions } from "../src/prospect-research/permissions.js";
 import { ensureProspectResearchSchema } from "../src/prospect-research/schema.js";
 import {
+  createProspectExternalResearchRun,
+  normalizeExternalContact,
+  normalizeExternalFinding,
+  normalizeExternalHypothesis,
+  runProspectExternalResearchSession,
+} from "../src/prospect-research/service.js";
+import {
   appendCoachSessionTurn,
   createCoachSession,
   persistCoachOperations,
@@ -3722,6 +3729,440 @@ describe("API integration baseline", () => {
     const sessionId = Number(createSessionResponse.body.session.id);
     expect(sessionId).toBeGreaterThan(0);
 
+    const publicOnlySessionResponse = await request(app)
+      .post("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        companyName: `Investigacion Publica ${TEST_PREFIX}`,
+        country: "Mexico",
+        website: "https://public-research.example.com",
+        industry: "Tecnologia",
+      });
+    expect(publicOnlySessionResponse.status).toBe(201);
+    const publicOnlySessionId = Number(
+      publicOnlySessionResponse.body.session.id,
+    );
+    expect(publicOnlySessionResponse.body.session.result).toBeUndefined();
+
+    const duplicateCompanySessionResponse = await request(app)
+      .post("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({
+        companyName: `Investigacion Pública ${TEST_PREFIX}`,
+        country: "Mexico",
+        website: "https://www.public-research.example.com/about",
+        industry: "Alimentos",
+      });
+    expect(duplicateCompanySessionResponse.status).toBe(201);
+    expect(duplicateCompanySessionResponse.body.session).toEqual(
+      expect.objectContaining({ id: publicOnlySessionId, reused: true }),
+    );
+
+    const researchListResponse = await request(app)
+      .get("/api/prospect-research/sessions?search=public-research&limit=10")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+    expect(researchListResponse.status).toBe(200);
+    expect(researchListResponse.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: publicOnlySessionId,
+          companyName: `Investigacion Publica ${TEST_PREFIX}`,
+          isTarget: false,
+        }),
+      ]),
+    );
+
+    const prematureTargetResponse = await request(app)
+      .patch(`/api/prospect-research/sessions/${publicOnlySessionId}/target`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ isTarget: true });
+    expect(prematureTargetResponse.status).toBe(409);
+
+    const governanceRowsForResearch = await query(
+      "SELECT settings_json FROM mi_coach_governance_settings WHERE singleton_key = 'default' LIMIT 1",
+    );
+    const originalResearchGovernanceSettings =
+      typeof governanceRowsForResearch[0]?.settings_json === "string"
+        ? governanceRowsForResearch[0].settings_json
+        : JSON.stringify(governanceRowsForResearch[0]?.settings_json || {});
+    await query(
+      "UPDATE mi_coach_governance_settings SET settings_json = JSON_SET(settings_json, '$.externalSourcesEnabled', true) WHERE singleton_key = 'default'",
+    );
+    let publicOnlyFirstRun;
+    let publicOnlySecondRun;
+    let publicOnlyThirdRun;
+    let fakeResearchRunCount = 0;
+    const capturedResearchQueries = [];
+    const fakeResearchRunner = async ({ queryText }) => {
+      fakeResearchRunCount += 1;
+      capturedResearchQueries.push(queryText);
+      const changedProjectFinding = normalizeExternalFinding(
+        {
+          title: "Proyecto anunciado",
+          summary:
+            fakeResearchRunCount === 1
+              ? "La empresa anunció un proyecto inicial."
+              : "La empresa anunció una expansión del proyecto.",
+          evidenceText: "Comunicado público verificable.",
+          sourceUrl: "https://www.public.example.com/project?utm_source=test",
+          confidence: "high",
+        },
+        0,
+        "tavily",
+      );
+      const results = [changedProjectFinding];
+      if (fakeResearchRunCount > 1) {
+        results.push(
+          normalizeExternalFinding(
+            {
+              title: "Nuevo informe",
+              summary: "La empresa publicó un informe anual.",
+              evidenceText: "El informe está publicado en el sitio oficial.",
+              sourceUrl: "https://public.example.com/annual-report",
+              confidence: "medium",
+            },
+            1,
+            "tavily",
+          ),
+        );
+      }
+      const publicContact = normalizeExternalContact({
+        name: "María García",
+        roleTitle: "CTO",
+        area: "Tecnología",
+        evidenceText: "María García aparece como CTO en el directorio oficial.",
+        sourceUrl: "https://public.example.com/leadership",
+        confidence: "high",
+      });
+      const publicHypothesis = normalizeExternalHypothesis({
+        title: "Validar continuidad de aplicaciones críticas",
+        businessChallenge: "La empresa describe servicios digitales críticos.",
+        technologyArea: "Entrega de aplicaciones",
+        targetArea: "Tecnología",
+        suggestedContactRole: "CTO",
+        validationQuestion: "¿Qué aplicaciones requieren continuidad crítica?",
+        evidenceText: "La fuente describe la criticidad del servicio digital.",
+        sourceUrl: "https://public.example.com/technology",
+        confidence: "medium",
+      });
+      return {
+        enabled: true,
+        findings: results,
+        contacts: [publicContact],
+        hypotheses: [publicHypothesis],
+        targetRoles: [
+          {
+            roleTitle: "Responsable de infraestructura",
+            area: "Tecnología",
+            rationale:
+              "Puede validar el alcance técnico del proyecto publicado.",
+            validationQuestion:
+              "¿Quién lidera la infraestructura de aplicaciones?",
+            basisFindingTitle: "Proyecto anunciado",
+            sourceReference: changedProjectFinding.sourceReference,
+            researchTracks: ["business_signals"],
+          },
+        ],
+        sellerBrief: {
+          whyNow: "La empresa anunció un proyecto reciente.",
+          recommendedOpening: "¿Cómo están abordando ese proyecto?",
+          discoveryQuestions: ["¿Qué resultado esperan conseguir?"],
+          sourceReferences: [changedProjectFinding.sourceReference],
+        },
+        sourceUrls: [
+          "https://www.public.example.com/project?utm_source=test",
+          "https://public.example.com/annual-report",
+          "https://public.example.com/leadership",
+          "https://public.example.com/technology",
+        ],
+        trackResults: [
+          {
+            key: "public_people",
+            label: "Personas y áreas",
+            enabled: true,
+            sourceCount: 1,
+            findingCount: 0,
+            contactCount: 1,
+            hypothesisCount: 0,
+            warnings: [],
+          },
+          {
+            key: "technology_signals",
+            label: "Tecnología e infraestructura",
+            enabled: true,
+            sourceCount: 1,
+            findingCount: 0,
+            contactCount: 0,
+            hypothesisCount: 1,
+            warnings: [],
+          },
+        ],
+        warnings: [],
+        provider: "tavily",
+      };
+    };
+    try {
+      publicOnlyFirstRun = await runProspectExternalResearchSession({
+        user: { id: ctx.prospectResearchUserId },
+        sessionId: publicOnlySessionId,
+        researchRunner: fakeResearchRunner,
+      });
+      expect(publicOnlyFirstRun.status).toBe("completed");
+      expect(publicOnlyFirstRun.contacts).toEqual([
+        expect.objectContaining({
+          name: "María García",
+          roleTitle: "CTO",
+          sourceType: "public_source",
+          sourceReference: "https://public.example.com/leadership",
+          evidenceText:
+            "María García aparece como CTO en el directorio oficial.",
+        }),
+      ]);
+      expect(publicOnlyFirstRun.hypotheses).toEqual([
+        expect.objectContaining({
+          title: "Validar continuidad de aplicaciones críticas",
+          sourceReference: "https://public.example.com/technology",
+          status: "suggested",
+        }),
+      ]);
+      expect(publicOnlyFirstRun.result.externalResearch).toMatchObject({
+        targetRoles: [
+          expect.objectContaining({
+            roleTitle: "Responsable de infraestructura",
+            basisFindingTitle: "Proyecto anunciado",
+          }),
+        ],
+        sellerBrief: expect.objectContaining({
+          whyNow: "La empresa anunció un proyecto reciente.",
+          sourceReferences: [
+            "https://www.public.example.com/project?utm_source=test",
+          ],
+        }),
+      });
+      expect(publicOnlyFirstRun.result.profile).toMatchObject({
+        companyName: `Investigacion Publica ${TEST_PREFIX}`,
+        country: "Mexico",
+        website: "https://public-research.example.com",
+        industry: "Tecnologia",
+      });
+      expect(publicOnlyFirstRun.externalResearchRuns).toHaveLength(1);
+      const addTargetResponse = await request(app)
+        .patch(`/api/prospect-research/sessions/${publicOnlySessionId}/target`)
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+        .send({ isTarget: true });
+      expect(addTargetResponse.status).toBe(200);
+      expect(addTargetResponse.body.isTarget).toBe(true);
+
+      const targetListResponse = await request(app)
+        .get("/api/prospect-research/sessions?targetOnly=true")
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+      expect(targetListResponse.status).toBe(200);
+      expect(targetListResponse.body.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: publicOnlySessionId, isTarget: true }),
+        ]),
+      );
+
+      const removeTargetResponse = await request(app)
+        .patch(`/api/prospect-research/sessions/${publicOnlySessionId}/target`)
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+        .send({ isTarget: false });
+      expect(removeTargetResponse.status).toBe(200);
+      expect(removeTargetResponse.body.isTarget).toBe(false);
+
+      const confirmedPublicFinding = publicOnlyFirstRun.findings.find(
+        (finding) => finding.sourceType === "tavily",
+      );
+      const confirmPublicFindingResponse = await request(app)
+        .post(
+          `/api/prospect-research/findings/${confirmedPublicFinding.id}/confirm`,
+        )
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+        .send({});
+      expect(confirmPublicFindingResponse.status).toBe(200);
+      const confirmPublicHypothesisResponse = await request(app)
+        .post(
+          `/api/prospect-research/hypotheses/${publicOnlyFirstRun.hypotheses[0].id}/confirm`,
+        )
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+        .send({});
+      expect(confirmPublicHypothesisResponse.status).toBe(200);
+
+      publicOnlySecondRun = await runProspectExternalResearchSession({
+        user: { id: ctx.prospectResearchUserId },
+        sessionId: publicOnlySessionId,
+        researchRunner: fakeResearchRunner,
+      });
+      expect(publicOnlySecondRun.id).toBe(publicOnlySessionId);
+      expect(publicOnlySecondRun.externalResearchRuns).toHaveLength(2);
+      expect(publicOnlySecondRun.externalResearchRuns[0]).toMatchObject({
+        status: "completed",
+        findingCount: 2,
+        contactCount: 1,
+        hypothesisCount: 1,
+        updatedFindingCount: 1,
+        newFindingCount: 1,
+      });
+      expect(publicOnlySecondRun.contacts).toHaveLength(1);
+      expect(publicOnlySecondRun.hypotheses).toEqual([
+        expect.objectContaining({ status: "confirmed" }),
+      ]);
+      expect(
+        publicOnlySecondRun.result.externalResearch.targetRoles,
+      ).toHaveLength(1);
+      expect(publicOnlySecondRun.externalResearchRuns[0].trackResults).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            key: "public_people",
+            sourceCount: 1,
+            contactCount: 1,
+          }),
+          expect.objectContaining({
+            key: "technology_signals",
+            sourceCount: 1,
+            hypothesisCount: 1,
+          }),
+        ]),
+      );
+      expect(capturedResearchQueries[1]).toContain("Proyecto anunciado");
+      expect(
+        publicOnlySecondRun.findings.filter(
+          (finding) =>
+            finding.sourceType === "tavily" &&
+            finding.sourceReference.includes("public.example.com/project"),
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "confirmed" }),
+          expect.objectContaining({
+            status: "suggested",
+            lastResearchObservation: "updated",
+          }),
+        ]),
+      );
+
+      publicOnlyThirdRun = await runProspectExternalResearchSession({
+        user: { id: ctx.prospectResearchUserId },
+        sessionId: publicOnlySessionId,
+        researchRunner: fakeResearchRunner,
+      });
+      expect(publicOnlyThirdRun.externalResearchRuns).toHaveLength(3);
+      expect(publicOnlyThirdRun.externalResearchRuns[0]).toMatchObject({
+        findingCount: 2,
+        unchangedFindingCount: 2,
+        newFindingCount: 0,
+        updatedFindingCount: 0,
+      });
+      expect(
+        publicOnlyThirdRun.findings.filter(
+          (finding) =>
+            finding.sourceType === "tavily" &&
+            finding.sourceReference.includes("public.example.com/project"),
+        ),
+      ).toHaveLength(2);
+      expect(
+        publicOnlyThirdRun.findings.find(
+          (finding) =>
+            finding.sourceType === "tavily" &&
+            finding.status === "suggested" &&
+            finding.sourceReference.includes("public.example.com/project"),
+        ).lastResearchObservation,
+      ).toBe("unchanged");
+
+      const reusablePendingRun = await createProspectExternalResearchRun({
+        user: { id: ctx.prospectResearchUserId },
+        sessionId: publicOnlySessionId,
+      });
+      expect(reusablePendingRun.status).toBe("pending");
+
+      const asyncResearchStartResponse = await request(app)
+        .post(
+          `/api/prospect-research/sessions/${publicOnlySessionId}/run-external`,
+        )
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+        .send({});
+      expect(asyncResearchStartResponse.status).toBe(202);
+      const asyncResearchRunId = Number(asyncResearchStartResponse.body.job.id);
+      expect(asyncResearchRunId).toBe(reusablePendingRun.id);
+
+      let completedAsyncResearchJob = null;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const pollResponse = await request(app)
+          .get(
+            `/api/prospect-research/sessions/${publicOnlySessionId}/run-external/${asyncResearchRunId}`,
+          )
+          .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+        expect(pollResponse.status).toBe(200);
+        const job = pollResponse.body.job;
+        if (["completed", "failed"].includes(job.status)) {
+          completedAsyncResearchJob = job;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(completedAsyncResearchJob?.status).toBe("completed");
+      expect(completedAsyncResearchJob.session.id).toBe(publicOnlySessionId);
+      expect(
+        completedAsyncResearchJob.session.externalResearchRuns[0],
+      ).toMatchObject({ id: asyncResearchRunId, status: "completed" });
+
+      const legacyDuplicateInsert = await query(
+        `INSERT INTO prospect_research_sessions
+          (public_id, company_name, country, website, requested_by_user_id,
+           status, request_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'completed', ?, NOW(3), NOW(3))`,
+        [
+          `prs_${TEST_PREFIX}_legacy_duplicate`,
+          `Investigacion Publica Legacy ${TEST_PREFIX}`,
+          "Mexico",
+          "https://www.public-research.example.com/about/",
+          Number(ctx.prospectResearchUserId),
+          JSON.stringify({
+            companyName: `Investigacion Publica Legacy ${TEST_PREFIX}`,
+            country: "Mexico",
+          }),
+        ],
+      );
+      const legacyDuplicateId = Number(legacyDuplicateInsert.insertId);
+      const legacyGroupList = await request(app)
+        .get(
+          `/api/prospect-research/sessions?search=public-research.example.com`,
+        )
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+      expect(legacyGroupList.status).toBe(200);
+      expect(legacyGroupList.body.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: publicOnlySessionId,
+            duplicateCount: 2,
+            duplicateSessionIds: expect.arrayContaining([legacyDuplicateId]),
+          }),
+        ]),
+      );
+
+      const discardGroupResponse = await request(app)
+        .delete(`/api/prospect-research/sessions/${publicOnlySessionId}`)
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+      expect(discardGroupResponse.status).toBe(200);
+      expect(discardGroupResponse.body.discardedCount).toBe(2);
+      const listAfterDiscard = await request(app)
+        .get(
+          `/api/prospect-research/sessions?search=public-research.example.com`,
+        )
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+      expect(listAfterDiscard.body.total).toBe(0);
+      const remainingAccount = await query(
+        "SELECT id FROM accounts WHERE name = ? LIMIT 1",
+        [`Investigacion Publica ${TEST_PREFIX}`],
+      );
+      expect(remainingAccount).toHaveLength(0);
+    } finally {
+      await query(
+        "UPDATE mi_coach_governance_settings SET settings_json = ? WHERE singleton_key = 'default'",
+        [originalResearchGovernanceSettings],
+      );
+    }
+
     const runResponse = await request(app)
       .post(`/api/prospect-research/sessions/${sessionId}/run`)
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)
@@ -3803,9 +4244,7 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)
       .send({ question: "¿Qué información pública debo validar?" });
     expect(prospectChatJobCreateResponse.status).toBe(202);
-    const prospectChatJobId = Number(
-      prospectChatJobCreateResponse.body.job.id,
-    );
+    const prospectChatJobId = Number(prospectChatJobCreateResponse.body.job.id);
     expect(prospectChatJobId).toBeGreaterThan(0);
 
     let completedProspectChatJob = null;
@@ -3915,15 +4354,26 @@ describe("API integration baseline", () => {
     expect(accountId).toBeGreaterThan(0);
     cleanup.accountIds.push(accountId);
 
-    const duplicateSessionResponse = await request(app)
-      .post("/api/prospect-research/sessions")
-      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
-      .send({
-        companyName: `Prospecto ${TEST_PREFIX}`,
-        country: "Mexico",
-        website: "www.prospecto.example.com/",
-      });
-    const duplicateSessionId = Number(duplicateSessionResponse.body.session.id);
+    const duplicateSessionInsert = await query(
+      `INSERT INTO prospect_research_sessions
+        (public_id, company_name, country, website, requested_by_user_id,
+         status, request_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, NOW(3), NOW(3))`,
+      [
+        `prs_${TEST_PREFIX}_duplicate_conversion`,
+        `Prospecto ${TEST_PREFIX}`,
+        "Mexico",
+        "www.prospecto.example.com/",
+        Number(ctx.prospectResearchUserId),
+        JSON.stringify({
+          companyName: `Prospecto ${TEST_PREFIX}`,
+          country: "Mexico",
+          website: "www.prospecto.example.com/",
+          industry: "",
+        }),
+      ],
+    );
+    const duplicateSessionId = Number(duplicateSessionInsert.insertId);
     const duplicateSessionRunResponse = await request(app)
       .post(`/api/prospect-research/sessions/${duplicateSessionId}/run`)
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)

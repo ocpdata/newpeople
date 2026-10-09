@@ -9,14 +9,19 @@ import {
   convertProspectHypothesisToOpportunity,
   convertProspectSessionToAccount,
   convertProspectSessionToLead,
+  createProspectExternalResearchRun,
   createProspectChatJob,
   createProspectResearchSession,
+  discardProspectResearchSession,
   getProspectChatJob,
+  getProspectExternalResearchRun,
   getProspectResearchSession,
+  listProspectResearchSessions,
   processProspectChatJob,
   runProspectChat,
   runProspectExternalResearchSession,
   runProspectResearchSession,
+  setProspectResearchTarget,
   updateProspectResearchFindingStatus,
   updateProspectResearchHypothesisStatus,
 } from "./prospect-research/service.js";
@@ -29,6 +34,15 @@ const createSessionSchema = z.object({
   website: z.string().trim().max(500).optional().default(""),
   industry: z.string().trim().max(160).optional().default(""),
 });
+
+const listSessionsQuerySchema = z.object({
+  search: z.string().trim().max(190).optional().default(""),
+  targetOnly: z.enum(["true", "false"]).optional().default("false"),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(25),
+  offset: z.coerce.number().int().min(0).optional().default(0),
+});
+
+const updateTargetSchema = z.object({ isTarget: z.boolean() });
 
 const prospectChatSchema = z.object({
   question: z.string().trim().min(1).max(2000),
@@ -106,6 +120,66 @@ router.post(
 );
 
 router.get(
+  "/sessions",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.read"),
+  async (req, res) => {
+    try {
+      const payload = listSessionsQuerySchema.parse(req.query || {});
+      const result = await listProspectResearchSessions({
+        user: req.user,
+        search: payload.search,
+        targetOnly: payload.targetOnly === "true",
+        limit: payload.limit,
+        offset: payload.offset,
+      });
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          message: "Parametros de busqueda invalidos",
+          issues: error.issues,
+        });
+      }
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible listar las investigaciones",
+      );
+    }
+  },
+);
+
+router.delete(
+  "/sessions/:sessionId",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.update"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ message: "Sesion invalida" });
+    }
+    const result = await discardProspectResearchSession({
+      user: req.user,
+      sessionId,
+    });
+    if (!result) {
+      return res.status(404).json({ message: "Prospeccion no encontrada" });
+    }
+    await logAuditEvent({
+      req,
+      module: "prospect_research",
+      action: "prospect_research_discarded",
+      entityType: "prospect_research_session",
+      entityId: sessionId,
+      detail: "Investigacion archivada de las listas visibles",
+      after: result,
+    });
+    return res.json(result);
+  },
+);
+
+router.get(
   "/sessions/:sessionId",
   requirePermission("mi_coach.use"),
   requirePermission("prospeccion.read"),
@@ -122,6 +196,55 @@ router.get(
       return res.status(404).json({ message: "Prospeccion no encontrada" });
     }
     return res.json({ session });
+  },
+);
+
+router.patch(
+  "/sessions/:sessionId/target",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.update"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ message: "Sesion invalida" });
+    }
+    try {
+      const payload = updateTargetSchema.parse(req.body || {});
+      const result = await setProspectResearchTarget({
+        user: req.user,
+        sessionId,
+        isTarget: payload.isTarget,
+      });
+      if (!result) {
+        return res.status(404).json({ message: "Prospeccion no encontrada" });
+      }
+      await logAuditEvent({
+        req,
+        module: "prospect_research",
+        action: result.isTarget
+          ? "prospect_research_added_to_targets"
+          : "prospect_research_removed_from_targets",
+        entityType: "prospect_research_session",
+        entityId: sessionId,
+        detail: result.isTarget
+          ? "Investigacion agregada a Cuentas objetivo"
+          : "Investigacion quitada de Cuentas objetivo",
+        after: result,
+      });
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          message: "Payload invalido",
+          issues: error.issues,
+        });
+      }
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible actualizar Cuentas objetivo",
+      );
+    }
   },
 );
 
@@ -157,7 +280,11 @@ router.post(
           issues: error.issues,
         });
       }
-      return sendRouteError(res, error, "No fue posible iniciar el chat de prospecto");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible iniciar el chat de prospecto",
+      );
     }
   },
 );
@@ -211,9 +338,15 @@ router.post(
       return res.json({ result });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Payload invalido", issues: error.issues });
+        return res
+          .status(400)
+          .json({ message: "Payload invalido", issues: error.issues });
       }
-      return sendRouteError(res, error, "No fue posible responder sobre el prospecto");
+      return sendRouteError(
+        res,
+        error,
+        "No fue posible responder sobre el prospecto",
+      );
     }
   },
 );
@@ -249,14 +382,23 @@ router.post(
       return res.status(400).json({ message: "Sesion invalida" });
     }
     try {
-      const session = await runProspectExternalResearchSession({
+      const job = await createProspectExternalResearchRun({
         user: req.user,
         sessionId,
       });
-      if (!session) {
+      if (!job) {
         return res.status(404).json({ message: "Prospeccion no encontrada" });
       }
-      return res.json({ session });
+      if (job.status === "pending") {
+        setImmediate(() =>
+          runProspectExternalResearchSession({
+            user: req.user,
+            sessionId,
+            runId: job.id,
+          }).catch(() => undefined),
+        );
+      }
+      return res.status(202).json({ job });
     } catch (error) {
       return sendRouteError(
         res,
@@ -264,6 +406,36 @@ router.post(
         "No fue posible ejecutar investigacion externa",
       );
     }
+  },
+);
+
+router.get(
+  "/sessions/:sessionId/run-external/:runId",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.create"),
+  requirePermission("fuentes_externas.execute"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    const runId = Number(req.params.runId || 0);
+    if (
+      !Number.isInteger(sessionId) ||
+      sessionId <= 0 ||
+      !Number.isInteger(runId) ||
+      runId <= 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Sesion o investigacion invalida" });
+    }
+    const job = await getProspectExternalResearchRun({
+      user: req.user,
+      sessionId,
+      runId,
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Investigacion no encontrada" });
+    }
+    return res.json({ job });
   },
 );
 

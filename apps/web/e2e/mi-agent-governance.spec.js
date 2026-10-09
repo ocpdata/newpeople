@@ -13,6 +13,7 @@ async function mockMiCoachApi(
     withResponseContextSwitch = false,
     withSituationAnalysis = false,
     withProspect = false,
+    timeoutFirstProspectPoll = false,
     withOpportunityStatusMatrix = false,
     quotaCurrencyCode = "USD",
     usdToTargetRate = 1,
@@ -40,7 +41,12 @@ async function mockMiCoachApi(
         body: "Hola, quisiera conocer sus prioridades.",
         questions: ["¿Cuál es su prioridad actual?"],
       },
-      externalResearch: { enabled: false, warnings: [] },
+      externalResearch: {
+        enabled: true,
+        findingCount: 1,
+        researchedAt: "2026-09-10T09:30:00.000Z",
+        warnings: [],
+      },
     },
     findings: [
       {
@@ -49,7 +55,8 @@ async function mockMiCoachApi(
         category: "company_profile",
         title: "Señal pública",
         summary: "Hallazgo para confirmar con el vendedor.",
-        evidenceText: "Evidencia publicada.",
+        evidenceText: "La fuente apunta a una señal para validar.",
+        sourceExcerpt: "La empresa informó que modernizará su infraestructura.",
         confidence: "high",
         certainty: "evidenced",
         sourceType: "public_source",
@@ -59,11 +66,17 @@ async function mockMiCoachApi(
     contacts: [
       {
         id: 901,
+        name: "María García",
         area: "Tecnología",
-        roleTitle: "Dirección de TI",
-        confidence: "medium",
+        roleTitle: "CTO",
+        sourceType: "public_source",
+        evidenceText:
+          "La fuente identifica a María García como líder de tecnología.",
+        sourceExcerpt: "María García fue nombrada CTO de la compañía.",
+        sourcePublishedAt: "2026-08-15",
+        confidence: "high",
         status: "suggested",
-        sourceReference: "",
+        sourceReference: "https://prospecto-e2e.example.com/leadership",
       },
     ],
     hypotheses: [
@@ -73,6 +86,11 @@ async function mockMiCoachApi(
         title: "Modernizar la plataforma",
         businessChallenge: "Hipótesis por validar con el vendedor.",
         validationQuestion: "¿Qué limitación desean resolver?",
+        evidenceText: "El material apunta a la criticidad de sus aplicaciones.",
+        sourceExcerpt:
+          "La compañía opera aplicaciones críticas para sus clientes.",
+        sourceReference: "https://prospecto-e2e.example.com/technology",
+        sourcePublishedAt: "2026-07-10",
         confidence: "medium",
         status: "suggested",
       },
@@ -92,6 +110,10 @@ async function mockMiCoachApi(
       ],
     },
   };
+  let prospectResearchRunCount = 0;
+  let prospectResearchPollFailureCount = 0;
+  let prospectIsTarget = false;
+  let prospectIsDiscarded = false;
   let prospectChatQuestion = "";
   let prospectChatHistoryPersisted = false;
   const closedCoachSessions = new Set();
@@ -132,6 +154,7 @@ async function mockMiCoachApi(
         job: {
           id: 921,
           status: "completed",
+          externalResearchedAt: "2026-09-10T09:30:00.000Z",
           result: {
             source: "account_intelligence",
             sourceDomain: "mixed",
@@ -159,6 +182,55 @@ async function mockMiCoachApi(
       method === "POST"
     )
       return json({ session: { id: prospectSession.id } }, 201);
+    if (
+      withProspect &&
+      pathname === "/api/prospect-research/sessions" &&
+      method === "GET"
+    ) {
+      const targetOnly = url.searchParams.get("targetOnly") === "true";
+      const items =
+        !prospectIsDiscarded && (!targetOnly || prospectIsTarget)
+          ? [
+              {
+                id: prospectSession.id,
+                companyName: prospectSession.companyName,
+                country: prospectSession.country,
+                website: prospectSession.website,
+                industry: prospectSession.industry,
+                status: prospectSession.status,
+                externalResearchedAt:
+                  prospectSession.result?.externalResearch?.researchedAt ||
+                  null,
+                isTarget: prospectIsTarget,
+                findingCount: prospectSession.findings.length,
+                contactCount: prospectSession.contacts.length,
+                hypothesisCount: prospectSession.hypotheses.length,
+                runCount: prospectSession.externalResearchRuns?.length || 0,
+                latestRunStatus: "completed",
+              },
+            ]
+          : [];
+      return json({ items, total: items.length, limit: 25, offset: 0 });
+    }
+    if (
+      withProspect &&
+      pathname === `/api/prospect-research/sessions/${prospectSession.id}` &&
+      method === "DELETE"
+    ) {
+      prospectIsDiscarded = true;
+      prospectIsTarget = false;
+      return json({ discardedCount: 1 });
+    }
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/target` &&
+      method === "PATCH"
+    ) {
+      prospectIsTarget = Boolean(route.request().postDataJSON()?.isTarget);
+      prospectSession.isTarget = prospectIsTarget;
+      return json({ id: prospectSession.id, isTarget: prospectIsTarget });
+    }
     if (
       withProspect &&
       pathname === `/api/prospect-research/sessions/${prospectSession.id}/run`
@@ -199,12 +271,32 @@ async function mockMiCoachApi(
         operations: [
           {
             kind: "create_account",
-            title: "Revisar conversión del prospecto",
+            title:
+              "Preparar borrador de correo para José Manuel González Guzmán",
+            payload: { actionType: "email_draft" },
+            targetModule: "accounts",
+            requiresConfirmation: true,
+          },
+          {
+            kind: "create_account",
+            title: "Preparar borrador de correo para Erwin Campos Ruiz",
+            payload: { actionType: "email_draft" },
+            targetModule: "accounts",
             requiresConfirmation: true,
           },
         ],
         recommendedActions: [
-          { title: "Validar hipótesis", requiresConfirmation: true },
+          {
+            title:
+              "Preparar borrador de correo para José Manuel González Guzmán",
+            actionType: "email_draft",
+            requiresConfirmation: true,
+          },
+          {
+            title: "Preparar borrador de correo para Erwin Campos Ruiz",
+            actionType: "email_draft",
+            requiresConfirmation: true,
+          },
         ],
         qualityTraceId: 993,
         channel: "prospect",
@@ -245,28 +337,124 @@ async function mockMiCoachApi(
           operations: [
             {
               kind: "create_account",
-              title: "Revisar conversión del prospecto",
+              title:
+                "Preparar borrador de correo para José Manuel González Guzmán",
+              payload: { actionType: "email_draft" },
+              targetModule: "accounts",
               requiresConfirmation: true,
             },
           ],
           recommendedActions: [
-            { title: "Validar hipótesis", requiresConfirmation: true },
+            {
+              title:
+                "Preparar borrador de correo para José Manuel González Guzmán",
+              actionType: "email_draft",
+              requiresConfirmation: true,
+            },
           ],
         },
       });
     if (
       withProspect &&
       pathname ===
-        `/api/prospect-research/sessions/${prospectSession.id}/run-external`
+        `/api/prospect-research/sessions/${prospectSession.id}/run-external` &&
+      method === "POST"
     ) {
-      return json({
-        session: {
-          ...prospectSession,
-          result: {
-            ...prospectSession.result,
-            externalResearch: { enabled: true, findingCount: 1, warnings: [] },
+      return json(
+        {
+          job: {
+            id: 994,
+            sessionId: prospectSession.id,
+            status: "pending",
+            pollAfterMs: 1,
           },
         },
+        202,
+      );
+    }
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/run-external/994` &&
+      method === "GET"
+    ) {
+      if (timeoutFirstProspectPoll && prospectResearchPollFailureCount === 0) {
+        prospectResearchPollFailureCount += 1;
+        return route.abort("timedout");
+      }
+      prospectResearchRunCount += 1;
+      prospectSession.status = "completed";
+      prospectSession.externalResearchRuns = [
+        {
+          id: 1000 + prospectResearchRunCount,
+          status: "completed",
+          findingCount: 1,
+          contactCount: 1,
+          hypothesisCount: 1,
+          targetRoleCount: 1,
+          trackResults: [
+            {
+              key: "public_people",
+              label: "Personas y áreas",
+              sourceCount: 1,
+              findingCount: 0,
+              contactCount: 1,
+              hypothesisCount: 0,
+            },
+          ],
+          startedAt: new Date().toISOString(),
+          warnings: [],
+        },
+        ...(prospectSession.externalResearchRuns || []),
+      ];
+      prospectSession.result = {
+        ...prospectSession.result,
+        externalResearch: {
+          enabled: true,
+          findingCount: 1,
+          contactCount: 1,
+          hypothesisCount: 1,
+          newFindingCount: prospectResearchRunCount === 1 ? 1 : 0,
+          updatedFindingCount: 0,
+          unchangedFindingCount: prospectResearchRunCount > 1 ? 1 : 0,
+          researchedAt: new Date().toISOString(),
+          warnings: [],
+          trackResults: [
+            {
+              key: "public_people",
+              label: "Personas y áreas",
+              sourceCount: 1,
+              findingCount: 0,
+              contactCount: 1,
+              hypothesisCount: 0,
+            },
+          ],
+          targetRoles: [
+            {
+              roleTitle: "Responsable de infraestructura",
+              area: "Tecnología",
+              rationale: "Puede validar el alcance técnico de la señal.",
+              validationQuestion: "¿Quién lidera esta plataforma?",
+              basisFindingTitle: "Señal pública",
+              sourceReference: "https://example.com/evidence",
+              researchTracks: ["technology_signals"],
+            },
+          ],
+          sellerBrief: {
+            whyNow: "La fuente describe una iniciativa reciente.",
+            recommendedOpening: "¿Cómo están abordando esta iniciativa?",
+            discoveryQuestions: ["¿Qué resultado buscan conseguir?"],
+            sourceReferences: ["https://example.com/evidence"],
+          },
+        },
+      };
+      prospectSession.findings = prospectSession.findings.map((finding) => ({
+        ...finding,
+        lastResearchObservation:
+          prospectResearchRunCount === 1 ? "new" : "unchanged",
+      }));
+      return json({
+        job: { id: 994, status: "completed", session: prospectSession },
       });
     }
     if (
@@ -275,6 +463,12 @@ async function mockMiCoachApi(
         `/api/prospect-research/sessions/${prospectSession.id}/convert-to-account`
     )
       return json({ accountId: 777, reused: true }, 200);
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/convert-to-lead`
+    )
+      return json({ interactionId: 812 }, 201);
     if (
       withProspect &&
       pathname === `/api/prospect-research/contacts/901/convert`
@@ -317,6 +511,8 @@ async function mockMiCoachApi(
                 "prospeccion.update",
                 "cuentas.create",
                 "contactos.create",
+                "interacciones.create",
+                "interacciones.update",
                 "oportunidades.create",
               ]
             : []),
@@ -1613,7 +1809,7 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByRole("heading", { name: "Prospección asistida" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Preparar cuenta" }),
+      page.getByRole("button", { name: "Investigar fuentes públicas" }),
     ).toBeVisible();
   });
 
@@ -1643,22 +1839,34 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toHaveCount(0);
   });
 
-  test("Cuenta nueva completa prospección con revisión humana y sin investigación pública automática", async ({
+  test("Cuenta nueva inicia investigación pública y la actualiza sobre la misma ficha", async ({
     page,
   }) => {
     const publicResearchRequests = [];
+    const sessionCreateRequests = [];
+    const internalPreparationRequests = [];
     const prospectChatJobRequests = [];
     page.on("request", (request) => {
       if (
-        request
-          .url()
-          .includes("/api/prospect-research/sessions/991/run-external")
+        new URL(request.url()).pathname === "/api/prospect-research/sessions" &&
+        request.method() === "POST"
       )
-        publicResearchRequests.push(request.method());
+        sessionCreateRequests.push(request.url());
+      if (
+        new URL(request.url()).pathname ===
+          "/api/prospect-research/sessions/991/run" &&
+        request.method() === "POST"
+      )
+        internalPreparationRequests.push(request.url());
       if (
         request
           .url()
-          .includes("/api/prospect-research/sessions/991/chat/jobs")
+          .includes("/api/prospect-research/sessions/991/run-external") &&
+        request.method() === "POST"
+      )
+        publicResearchRequests.push(request.method());
+      if (
+        request.url().includes("/api/prospect-research/sessions/991/chat/jobs")
       ) {
         prospectChatJobRequests.push({
           method: request.method(),
@@ -1666,22 +1874,67 @@ test.describe("Mi Coach governance and workspaces", () => {
         });
       }
     });
-    await mockMiCoachApi(page, { withProspect: true });
+    await mockMiCoachApi(page, {
+      withProspect: true,
+      timeoutFirstProspectPoll: true,
+    });
     await openMiCoach(page, { workspace: "prospect" });
 
     await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
     await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
-    await page.getByRole("button", { name: "Preparar cuenta" }).click();
+    await page
+      .getByRole("button", { name: "Investigar fuentes públicas" })
+      .click();
     await expect(
       page.getByText("Revisión de posibles cuentas duplicadas"),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Abrir fuente" }),
+      page.getByRole("link", { name: "Abrir fuente" }).first(),
     ).toBeVisible();
     await expect(
-      page.getByText("Sugerido · no confirmado en el CRM"),
+      page.getByRole("link", { name: "Abrir fuente" }).nth(1),
     ).toBeVisible();
-    expect(publicResearchRequests).toEqual([]);
+    await expect(
+      page.getByText(
+        "Relevancia: La fuente identifica a María García como líder de tecnología.",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Persona identificada en una fuente pública · no confirmada en CRM",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "La fuente identifica a María García como líder de tecnología.",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText("María García fue nombrada CTO de la compañía."),
+    ).toBeVisible();
+    await expect(page.getByText("Personas y áreas")).toBeVisible();
+    await expect(
+      page.getByText("Guía para iniciar la conversación"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("La fuente describe una iniciativa reciente."),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Roles objetivo sugeridos · no son personas identificadas",
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Responsable de infraestructura"),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Persona identificada en una fuente pública · no confirmada en CRM",
+      ),
+    ).toBeVisible();
+    await expect.poll(() => publicResearchRequests.length).toBe(1);
+    expect(sessionCreateRequests).toHaveLength(1);
+    expect(internalPreparationRequests).toEqual([]);
 
     await page
       .getByPlaceholder("Pregunta sobre el prospecto...")
@@ -1713,9 +1966,21 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     await page
-      .getByRole("button", { name: "Investigar fuentes públicas" })
+      .getByRole("button", { name: "Actualizar investigación" })
       .click();
-    await expect.poll(() => publicResearchRequests.length).toBe(1);
+    await expect.poll(() => publicResearchRequests.length).toBe(2);
+    await expect(page.getByText("Historial de investigación")).toBeVisible();
+    await expect(page.getByText("Sin cambios")).toBeVisible();
+    expect(sessionCreateRequests).toHaveLength(1);
+    expect(internalPreparationRequests).toEqual([]);
+
+    await page.getByRole("button", { name: "Crear lead" }).click();
+    const createdLeadStatus = page.locator(".mi-agent-prospect-success");
+    await expect(createdLeadStatus).toHaveText("Lead creado");
+    await expect(createdLeadStatus).toHaveAttribute("role", "status");
+    await expect(page.getByRole("button", { name: "Lead creado" })).toHaveCount(
+      0,
+    );
 
     await page.getByRole("button", { name: "Vincular esta cuenta" }).click();
     await expect(
@@ -1738,6 +2003,61 @@ test.describe("Mi Coach governance and workspaces", () => {
       .click();
     await expect(
       page.getByRole("button", { name: "Oportunidad creada" }),
+    ).toBeVisible();
+  });
+
+  test("Investigaciones guardadas reabre la misma ficha y Cuentas objetivo es reversible", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, { withProspect: true });
+    await openMiCoach(page, { workspace: "prospect" });
+
+    await page.getByRole("tab", { name: "Investigaciones guardadas" }).click();
+    await expect(
+      page.getByRole("button", { name: "Abrir investigación" }),
+    ).toBeVisible();
+    await expect(page.getByText("Prospecto E2E").first()).toBeVisible();
+
+    await page.getByRole("button", { name: "Abrir investigación" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Prospecto E2E" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("María García fue nombrada CTO de la compañía."),
+    ).toBeVisible();
+
+    await page
+      .getByRole("button", { name: "Agregar a cuentas objetivo" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Quitar de cuentas objetivo" }),
+    ).toBeVisible();
+
+    await page.getByRole("tab", { name: "Cuentas objetivo" }).click();
+    await expect(
+      page.getByRole("button", { name: "Abrir investigación" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Quitar de cuentas objetivo" })
+      .click();
+    await expect(
+      page.getByText("Aún no agregas investigaciones a Cuentas objetivo."),
+    ).toBeVisible();
+
+    await page.getByRole("tab", { name: "Investigaciones guardadas" }).click();
+    await expect(
+      page.getByRole("button", { name: "Abrir investigación" }),
+    ).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", {
+        name: "Eliminar investigación de Prospecto E2E",
+      })
+      .click();
+    await expect(
+      page.getByText(
+        "Aún no hay investigaciones guardadas con esos criterios.",
+      ),
     ).toBeVisible();
   });
 
@@ -1808,7 +2128,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.getByRole("button", { name: "Cuenta nueva" }).click();
     await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
     await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
-    await page.getByRole("button", { name: "Preparar cuenta" }).click();
+    await page
+      .getByRole("button", { name: "Investigar fuentes públicas" })
+      .click();
     await page
       .getByPlaceholder("Pregunta sobre el prospecto...")
       .fill("¿Qué hipótesis debo validar?");
@@ -1820,7 +2142,13 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
     await expect(
       page.getByText("Acciones sugeridas · requieren confirmación"),
-    ).toBeVisible();
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("No tienes permisos para proponer este tipo de cambio."),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText(/Preparar borrador de correo para/),
+    ).toHaveCount(0);
   });
 
   test("cambiar de espacio conserva contexto separado de Coach, Cliente existente y Cuenta nueva", async ({
@@ -1835,7 +2163,9 @@ test.describe("Mi Coach governance and workspaces", () => {
 
     await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
     await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
-    await page.getByRole("button", { name: "Preparar cuenta" }).click();
+    await page
+      .getByRole("button", { name: "Investigar fuentes públicas" })
+      .click();
     await expect(
       page.getByRole("heading", { name: "Prospecto E2E" }),
     ).toBeVisible();
@@ -2476,17 +2806,19 @@ test.describe("Mi Coach governance and workspaces", () => {
     await productsPanel.locator(":scope > summary").click();
     await expect(productsPanel.getByText("Cotización 901")).toBeVisible();
     await expect(productsPanel.getByText("Cotización 903")).toBeVisible();
-    await expect(productsPanel).toContainText("2 cotizaciones · 2 productos · 1 renovación");
+    await expect(productsPanel).toContainText(
+      "2 cotizaciones · 2 productos · 1 renovación",
+    );
     const firstQuotation = productsPanel.getByLabel("Cotización 901");
     await expect(firstQuotation).toContainText("Ganada");
     await expect(firstQuotation).toHaveClass(/is-won/);
     await expect(productsPanel.getByText("Servicio WAAP")).not.toBeVisible();
-    await expect(productsPanel.getByText("Firewall Perimetral")).not.toBeVisible();
+    await expect(
+      productsPanel.getByText("Firewall Perimetral"),
+    ).not.toBeVisible();
     await productsPanel.getByText("Cotización 901").click();
     await expect(
-      productsPanel
-        .locator("li")
-        .filter({ hasText: "Servicio WAAP" }),
+      productsPanel.locator("li").filter({ hasText: "Servicio WAAP" }),
     ).toBeVisible();
     await expect(
       firstQuotation.getByRole("button", {
@@ -2498,7 +2830,9 @@ test.describe("Mi Coach governance and workspaces", () => {
         .locator("li")
         .getByRole("button", { name: "Abrir oportunidad asociada" }),
     ).toHaveCount(0);
-    await expect(productsPanel.getByText("Firewall Perimetral")).not.toBeVisible();
+    await expect(
+      productsPanel.getByText("Firewall Perimetral"),
+    ).not.toBeVisible();
     await productsPanel.getByText("Cotización 903").click();
     await expect(productsPanel.getByText("Firewall Perimetral")).toBeVisible();
     await expect(
@@ -2571,9 +2905,11 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       analysisOperation.getByRole("button", { name: "Analizar cuenta" }),
     ).toBeVisible();
-    await expect(analysisOperation.getByRole("region", {
-      name: "Hallazgos y métricas",
-    })).toBeVisible();
+    await expect(
+      analysisOperation.getByRole("region", {
+        name: "Hallazgos y métricas",
+      }),
+    ).toBeVisible();
     expect(analysisResultBox.y).toBeGreaterThan(
       analysisButtonBox.y + analysisButtonBox.height - 1,
     );
@@ -2612,7 +2948,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(analysisResult).toBeVisible();
     await expect(analysisResult).toHaveJSProperty("open", true);
     await expect(analysisSummary).toBeInViewport();
-    await expect(analysisOperation.getByText("Listo", { exact: true })).toHaveCount(1);
+    await expect(
+      analysisOperation.getByText("Listo", { exact: true }),
+    ).toHaveCount(1);
     await expect(
       page.getByText("Hallazgo interno redundante", { exact: true }),
     ).toBeVisible();
@@ -2663,9 +3001,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(page.getByText("Contexto CRM", { exact: true })).toBeVisible();
     await expect(page.getByText("crm_context", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Contexto CRM disponible.")).toBeVisible();
-    await expect(
-      page.getByText("Fuentes CRM y públicas"),
-    ).toBeVisible();
+    await expect(page.getByText("Fuentes CRM y públicas")).toBeVisible();
     await expect(
       page.getByText("Proyecto de modernización anunciado"),
     ).toBeVisible();
