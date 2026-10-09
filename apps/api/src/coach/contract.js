@@ -287,6 +287,11 @@ export const coachOperationSchema = z.discriminatedUnion("kind", [
   handoffSchema("create_account", "accounts", "account"),
   handoffSchema("create_contact", "contacts", "contact"),
   handoffSchema("create_opportunity", "opportunities", "opportunity"),
+  handoffSchema(
+    "link_contact_to_opportunity",
+    "opportunities",
+    "opportunity",
+  ),
   handoffSchema("create_lead", "interactions", "lead"),
   handoffSchema("create_contact_mapping", "contact_mapping", "contact_mapping"),
   handoffSchema("create_quotation", "quotations", "quotation"),

@@ -81,6 +81,7 @@ const DELEGATED_OPERATION_POLICIES = Object.freeze({
   create_account: ["cuentas.create", "cuentas.request"],
   create_contact: ["contactos.create", "contactos.request"],
   create_opportunity: ["oportunidades.create", "oportunidades.request"],
+  link_contact_to_opportunity: "oportunidades.update",
   create_quotation: [
     "cotizaciones.operacion",
     "cotizaciones.ingreso",

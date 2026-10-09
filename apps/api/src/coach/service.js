@@ -220,6 +220,7 @@ const TARGET_MODULES = {
   create_account: "accounts",
   create_contact: "contacts",
   create_opportunity: "opportunities",
+  link_contact_to_opportunity: "opportunities",
   create_quotation: "quotations",
   create_proposal: "proposals",
 };
@@ -237,6 +238,7 @@ const TARGET_ROUTES = {
   create_account: "/accounts",
   create_contact: "/contacts",
   create_opportunity: "/opportunities",
+  link_contact_to_opportunity: "/opportunities",
   create_quotation: "/quotations",
   create_proposal: "/proposals",
 };
@@ -834,11 +836,11 @@ export async function getLatestActiveCoachSession(userId) {
   await ensureCoachSchema();
   const rows = await query(
     `SELECT s.* FROM coach_conversation_sessions s
-     WHERE s.user_id = ? AND s.status = 'active'
+     WHERE s.user_id = ?
      ORDER BY s.updated_at DESC, s.id DESC LIMIT 1`,
     [Number(userId)],
   );
-  return rows[0] ? mapSession(rows[0]) : null;
+  return rows[0]?.status === "active" ? mapSession(rows[0]) : null;
 }
 
 function mapSession(row) {

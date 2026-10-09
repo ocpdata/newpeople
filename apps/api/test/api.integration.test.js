@@ -244,6 +244,7 @@ describe("API integration baseline", () => {
         "cuentas.create",
         "cuentas.update",
         "desarrollo_comercial.update",
+        "contactos.create",
       ],
     });
     ctx.commercialIntelligenceReadRoleId = await createRole({
@@ -1922,6 +1923,340 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("Cliente existente permite proponer contactos solo para la cuenta fija", async () => {
+    const operatorLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.operator@example.com`,
+    );
+    const authorization = `Bearer ${operatorLogin.body.token}`;
+    const accountId = await createDirectAccount({
+      ownerUserId: ctx.miCoachOperatorUserId,
+      actorUserId: ctx.miCoachOperatorUserId,
+      suffix: `${TEST_PREFIX}_customer_contact`,
+    });
+    const foreignAccountId = await createDirectAccount({
+      ownerUserId: ctx.miCoachOperatorUserId,
+      actorUserId: ctx.miCoachOperatorUserId,
+      suffix: `${TEST_PREFIX}_customer_contact_foreign`,
+    });
+    cleanup.accountIds.push(accountId, foreignAccountId);
+
+    const proposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId },
+        originalIntent: "Crear contacto desde Cliente existente",
+        operation: {
+          kind: "create_contact",
+          sourceChannel: "coach",
+          title: "Crear contacto Oscar Montufar",
+          accountId,
+          payload: {
+            accountId,
+            firstName: "Oscar",
+            lastName: "Montufar",
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(proposal.status).toBe(201);
+    expect(proposal.body.operation).toMatchObject({
+      kind: "create_contact",
+      sourceChannel: "coach",
+      status: "ready",
+      targetModule: "contacts",
+      pendingOperation: { accountId },
+    });
+
+    const crossAccountProposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId },
+        operation: {
+          kind: "create_contact",
+          sourceChannel: "coach",
+          title: "Crear contacto en otra cuenta",
+          accountId: foreignAccountId,
+          payload: {
+            accountId: foreignAccountId,
+            firstName: "Oscar",
+            lastName: "Montufar",
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(crossAccountProposal.status).toBe(403);
+
+    const crossAccountPayloadProposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId },
+        operation: {
+          kind: "create_contact",
+          sourceChannel: "coach",
+          title: "Crear contacto fuera de la cuenta fija",
+          accountId,
+          payload: {
+            accountId: foreignAccountId,
+            firstName: "Oscar",
+            lastName: "Montufar",
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(crossAccountPayloadProposal.status).toBe(403);
+  });
+
+  test("Cliente existente propone oportunidades y vínculos solo dentro de la cuenta fija", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_customer_opportunity_operations`,
+      permissionCodes: [
+        "mi_coach.use",
+        "mi_coach.execute",
+        "cuentas.read",
+        "contactos.read",
+        "oportunidades.read",
+        "oportunidades.create",
+        "oportunidades.update",
+      ],
+    });
+    cleanup.roleIds.push(roleId);
+    const userId = await createUser({
+      fullName: "API Customer Opportunity Operator",
+      email: `${TEST_PREFIX}.customer.opportunity.operator@example.com`,
+      roleIds: [roleId],
+    });
+    cleanup.userIds.push(userId);
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_customer_operation_targets`,
+      {
+        ownerUserId: userId,
+        actorUserId: userId,
+        loginEmail: `${TEST_PREFIX}.customer.opportunity.operator@example.com`,
+      },
+    );
+    const authorization = `Bearer ${fixture.token}`;
+    const foreignAccountId = await createDirectAccount({
+      ownerUserId: userId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_customer_operation_foreign`,
+    });
+    cleanup.accountIds.push(foreignAccountId);
+    const foreignContactId = await createDirectContact({
+      accountId: foreignAccountId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_customer_operation_foreign`,
+    });
+    cleanup.contactIds.push(foreignContactId);
+
+    const createOpportunityProposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId: fixture.accountId },
+        originalIntent: "Crear oportunidad desde Cliente existente",
+        operation: {
+          kind: "create_opportunity",
+          sourceChannel: "coach",
+          title: "Crear oportunidad Renovación anual",
+          accountId: fixture.accountId,
+          payload: {
+            accountId: fixture.accountId,
+            name: "Renovación anual",
+            amountUsd: 12000,
+            closeDate: "2027-12-31",
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(createOpportunityProposal.status).toBe(201);
+    expect(createOpportunityProposal.body.operation).toMatchObject({
+      kind: "create_opportunity",
+      sourceChannel: "coach",
+      status: "ready",
+      targetModule: "opportunities",
+      pendingOperation: {
+        accountId: fixture.accountId,
+        payload: {
+          accountId: fixture.accountId,
+          name: "Renovación anual",
+        },
+      },
+    });
+    const createOpportunityHandoff = await request(app)
+      .post(
+        `/api/mi-agent/coach/operations/${createOpportunityProposal.body.operation.id}/handoff`,
+      )
+      .set("Authorization", authorization);
+    expect(createOpportunityHandoff.status).toBe(200);
+    expect(createOpportunityHandoff.body.handoff).toMatchObject({
+      module: "opportunities",
+      url: expect.stringMatching(/^\/opportunities\?coachDraft=/),
+    });
+
+    const mismatchedOpportunityPayload = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId: fixture.accountId },
+        operation: {
+          kind: "create_opportunity",
+          sourceChannel: "coach",
+          title: "No aceptar cuenta distinta dentro del payload",
+          accountId: fixture.accountId,
+          contactId: fixture.contactId,
+          payload: {
+            accountId: foreignAccountId,
+            contactId: foreignContactId,
+            name: "No debe persistirse",
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(mismatchedOpportunityPayload.status).toBe(403);
+
+    const foreignOpportunityContactProposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId: fixture.accountId },
+        operation: {
+          kind: "create_opportunity",
+          sourceChannel: "coach",
+          title: "No adjuntar un contacto de otra cuenta",
+          accountId: fixture.accountId,
+          contactId: null,
+          payload: {
+            accountId: fixture.accountId,
+            contactId: foreignContactId,
+            name: "Renovación sin contacto ajeno",
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(foreignOpportunityContactProposal.status).toBe(404);
+
+    const linkProposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId: fixture.accountId },
+        originalIntent: "Vincular un contacto a una oportunidad existente",
+        operation: {
+          kind: "link_contact_to_opportunity",
+          sourceChannel: "coach",
+          title: "Vincular contacto a oportunidad",
+          accountId: fixture.accountId,
+          opportunityId: fixture.opportunityId,
+          contactId: fixture.contactId,
+          payload: {
+            accountId: fixture.accountId,
+            contactId: fixture.contactId,
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(linkProposal.status).toBe(201);
+    expect(linkProposal.body.operation).toMatchObject({
+      kind: "link_contact_to_opportunity",
+      status: "ready",
+      targetModule: "opportunities",
+      pendingOperation: {
+        accountId: fixture.accountId,
+        opportunityId: fixture.opportunityId,
+        contactId: fixture.contactId,
+      },
+    });
+    const linkHandoff = await request(app)
+      .post(
+        `/api/mi-agent/coach/operations/${linkProposal.body.operation.id}/handoff`,
+      )
+      .set("Authorization", authorization);
+    expect(linkHandoff.status).toBe(200);
+    expect(linkHandoff.body.handoff).toMatchObject({
+      module: "opportunities",
+      url: expect.stringMatching(/^\/opportunities\?coachDraft=/),
+    });
+
+    const mismatchedContactPayloadLink = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId: fixture.accountId },
+        operation: {
+          kind: "link_contact_to_opportunity",
+          sourceChannel: "coach",
+          title: "No aceptar IDs de contacto contradictorios",
+          accountId: fixture.accountId,
+          opportunityId: fixture.opportunityId,
+          contactId: fixture.contactId,
+          payload: {
+            accountId: fixture.accountId,
+            contactId: foreignContactId,
+          },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(mismatchedContactPayloadLink.status).toBe(403);
+
+    const foreignContactLinkProposal = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", authorization)
+      .send({
+        sessionId: null,
+        originChannel: "customer_account",
+        context: { accountId: fixture.accountId },
+        operation: {
+          kind: "link_contact_to_opportunity",
+          sourceChannel: "coach",
+          title: "No vincular contacto de otra cuenta",
+          accountId: fixture.accountId,
+          opportunityId: fixture.opportunityId,
+          contactId: foreignContactId,
+          payload: { accountId: fixture.accountId, contactId: foreignContactId },
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+        },
+      });
+    expect(foreignContactLinkProposal.status).toBe(404);
+  });
+
   test("mi coach protege y completa sesiones, jobs, handoffs y reversiones", async () => {
     const operatorLogin = await login(
       request(app),
@@ -1960,6 +2295,10 @@ describe("API integration baseline", () => {
       ],
     );
     const jobId = Number(jobResult.insertId);
+    const previousSession = await createCoachSession(
+      ctx.miCoachOperatorUserId,
+      { accountId },
+    );
     const session = await createCoachSession(ctx.miCoachOperatorUserId, {
       accountId,
     });
@@ -2375,7 +2714,7 @@ describe("API integration baseline", () => {
       const activeSession = await request(app)
         .get("/api/mi-agent/coach/sessions/active")
         .set("Authorization", authorization);
-      expect(activeSession.body.session?.id).not.toBe(session.id);
+      expect(activeSession.body.session).toBeNull();
     } finally {
       await query(`DELETE FROM coach_operation_events WHERE session_id = ?`, [
         session.id,
@@ -2385,6 +2724,9 @@ describe("API integration baseline", () => {
       ]);
       await query(`DELETE FROM coach_conversation_sessions WHERE id = ?`, [
         session.id,
+      ]);
+      await query(`DELETE FROM coach_conversation_sessions WHERE id = ?`, [
+        previousSession.id,
       ]);
       await query(`DELETE FROM mi_agent_analysis_jobs WHERE id = ?`, [jobId]);
     }
@@ -3016,6 +3358,21 @@ describe("API integration baseline", () => {
     });
     const debugFlow = accountChatJob.body.job.result.debug.flow;
     const executionTrace = accountChatJob.body.job.result.debug.executionTrace;
+    expect(debugFlow.find((item) => item.block === "B6")?.output.proposedPlan)
+      .toMatchObject({
+        mode: "read_only",
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+        },
+      });
+    expect(
+      debugFlow.find((item) => item.block === "B5")?.output.routingValidation
+        .normalizedRouting.validationDiagnostics,
+    ).toMatchObject({
+      plannerClarificationRequested: false,
+      clarificationRequested: false,
+    });
     expect(executionTrace).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3073,6 +3430,15 @@ describe("API integration baseline", () => {
         policy: expect.objectContaining({ availableTools: expect.any(Array) }),
       }),
     );
+    const answerSpan = executionTrace.find(
+      (event) =>
+        event.from === "B5" && event.to === "B10" && event.phase === "call",
+    );
+    expect(answerSpan.input.context).toMatchObject({
+      accountId,
+      opportunityId: null,
+      contactId: null,
+    });
     expect(executionTrace).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -3116,6 +3482,15 @@ describe("API integration baseline", () => {
       "Resume esta cuenta para mi reunión",
     );
     expect(debugFlow).toHaveLength(11);
+    expect(debugFlow.find((item) => item.block === "B10")).toMatchObject({
+      input: {
+        selectedContext: { accountId },
+        answerGeneration: { source: "deterministic_account_overview" },
+      },
+      output: {
+        answerGeneration: { source: "deterministic_account_overview" },
+      },
+    });
     expect(debugFlow).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4341,7 +4716,7 @@ describe("API integration baseline", () => {
       accountConversionResponse = await request(app)
         .post(`/api/prospect-research/sessions/${sessionId}/convert-to-account`)
         .set("Authorization", `Bearer ${prospectLogin.body.token}`)
-        .send({ duplicateDecision: "create_new" });
+        .send({});
     } finally {
       await query(
         "UPDATE mi_coach_governance_settings SET settings_json = ? WHERE singleton_key = 'default'",
@@ -4395,6 +4770,16 @@ describe("API integration baseline", () => {
     ).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: accountId })]),
     );
+    const createDespiteDuplicateResponse = await request(app)
+      .post(
+        `/api/prospect-research/sessions/${duplicateSessionId}/convert-to-account`,
+      )
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ duplicateDecision: "create_new" });
+    expect(createDespiteDuplicateResponse.status).toBe(409);
+    expect(createDespiteDuplicateResponse.body.duplicateCandidates).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: accountId })]),
+    );
     const linkDuplicateAccountResponse = await request(app)
       .post(
         `/api/prospect-research/sessions/${duplicateSessionId}/convert-to-account`,
@@ -4404,10 +4789,12 @@ describe("API integration baseline", () => {
         duplicateDecision: "link_existing",
         duplicateAccountId: accountId,
       });
-    expect(linkDuplicateAccountResponse.status).toBe(200);
-    expect(linkDuplicateAccountResponse.body).toEqual(
-      expect.objectContaining({ accountId, reused: true }),
+    expect(linkDuplicateAccountResponse.status).toBe(409);
+    const unconvertedDuplicateSession = await query(
+      `SELECT converted_account_id FROM prospect_research_sessions WHERE id = ?`,
+      [duplicateSessionId],
     );
+    expect(unconvertedDuplicateSession[0].converted_account_id).toBeNull();
 
     const suggestedContactId = Number(runResponse.body.session.contacts[0].id);
     const contactConversionResponse = await request(app)
@@ -4943,10 +5330,14 @@ describe("API integration baseline", () => {
         instruction: "Respeta el ámbito de la cuenta de prueba.",
       });
     expect(createAdminRuleResponse.status).toBe(201);
+    expect(createAdminRuleResponse.body.rule).toMatchObject({
+      channel: "customer_account",
+      process: "default",
+    });
     const createdAdminRuleId = createAdminRuleResponse.body.rule.id;
     const customerAdminRulesResponse = await request(app)
       .get(
-        "/api/commercial-intelligence/governance/rules?channel=customer_account&process=account_chat",
+        "/api/commercial-intelligence/governance/rules?channel=customer_account&process=default",
       )
       .set("Authorization", `Bearer ${adminLogin.body.token}`);
     expect(customerAdminRulesResponse.body.rules).toEqual(
@@ -4992,7 +5383,7 @@ describe("API integration baseline", () => {
       title: "Regla temporal editada",
       enabled: false,
       channel: "customer_account",
-      process: "account_chat",
+      process: "default",
     });
     const deleteAdminRuleResponse = await request(app)
       .delete(

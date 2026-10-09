@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const adminRulesDb = vi.hoisted(() => ({
   query: vi.fn(),
+  withTransaction: vi.fn(),
   migrations: new Set(),
   rules: [],
   updateCount: 0,
 }));
 
-vi.mock("../src/db.js", () => ({ query: adminRulesDb.query }));
+vi.mock("../src/db.js", () => adminRulesDb);
 
 import { listCoachAdminRules } from "../src/coach/admin-rules.js";
 
@@ -43,6 +44,16 @@ describe("Coach administrative rule migration", () => {
         is_enabled: 1,
         sort_order: 50,
       },
+      {
+        id: "customer-account-chat-custom",
+        scope_code: "channel",
+        channel_code: "customer_account",
+        process_key: "account_chat",
+        title: "Regla específica conservada",
+        instruction: "Conservar esta instrucción específica.",
+        is_enabled: 0,
+        sort_order: 70,
+      },
     ];
     adminRulesDb.query.mockImplementation(async (sql, params = []) => {
       if (sql.includes("CREATE TABLE")) return [];
@@ -51,18 +62,30 @@ describe("Coach administrative rule migration", () => {
           ? [{ migration_key: params[0] }]
           : [];
       }
+      if (sql.includes("INSERT IGNORE INTO mi_coach_admin_rule_migrations")) {
+        adminRulesDb.migrations.add(params[0]);
+        return [];
+      }
+      if (sql.includes("SET process_key = 'default'")) {
+        for (const rule of adminRulesDb.rules) {
+          if (
+            rule.scope_code === "channel" &&
+            rule.channel_code === "customer_account" &&
+            rule.process_key !== "default"
+          ) {
+            rule.process_key = "default";
+          }
+        }
+        return [];
+      }
       if (sql.includes("UPDATE mi_coach_admin_rules")) {
         adminRulesDb.updateCount += 1;
         const [title, instruction, id, oldTitle, oldInstruction] = params;
         const row = adminRulesDb.rules.find((item) => item.id === id);
-        if (row?.title === oldTitle && row.instruction === oldInstruction) {
+        if (row?.title === oldTitle && row?.instruction === oldInstruction) {
           row.title = title;
           row.instruction = instruction;
         }
-        return [];
-      }
-      if (sql.includes("INSERT IGNORE INTO mi_coach_admin_rule_migrations")) {
-        adminRulesDb.migrations.add(params[0]);
         return [];
       }
       if (sql.includes("FROM mi_coach_admin_rules")) {
@@ -77,6 +100,13 @@ describe("Coach administrative rule migration", () => {
       }
       return [];
     });
+    adminRulesDb.withTransaction.mockImplementation(async (work) =>
+      work({
+        query: async (sql, params = []) => [
+          await adminRulesDb.query(sql, params),
+        ],
+      }),
+    );
   });
 
   it("aligns built-in operation guidance without overwriting admin customization", async () => {
@@ -98,7 +128,18 @@ describe("Coach administrative rule migration", () => {
     expect(customizedRule.instruction).toBe(
       "Regla personalizada conservada por el administrador.",
     );
+    expect(rules).toContainEqual(
+      expect.objectContaining({
+        id: "customer-account-chat-custom",
+        process: "default",
+        instruction: "Conservar esta instrucción específica.",
+        enabled: false,
+      }),
+    );
     expect(adminRulesDb.updateCount).toBe(2);
+    expect(
+      adminRulesDb.migrations.has("customer_account_single_process_v1"),
+    ).toBe(true);
     expect(
       adminRulesDb.migrations.has("align_customer_operations_admin_rules_v3"),
     ).toBe(true);

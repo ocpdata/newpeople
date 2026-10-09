@@ -33,6 +33,7 @@ import {
 } from "./activity-history.js";
 import {
   CUSTOMER_CHAT_EVIDENCE_LIMITS,
+  normalizeCustomerEvidenceAssessment,
   runCustomerEvidenceLoop,
 } from "./customer-chat-evidence.js";
 
@@ -92,6 +93,20 @@ function summarizeAnswerAuditEvidence(authorizedEvidence) {
               : record[field],
           ]),
         );
+        if (item.sourceDomain === "public_web") {
+          summary.publicSource = {
+            title: String(record?.title || record?.name || "").slice(0, 200),
+            summary: String(record?.summary || "").slice(0, 800),
+            evidence: String(
+              record?.evidenceText || record?.evidence || "",
+            ).slice(0, 1000),
+            sourceUrl: String(
+              record?.sourceUrl || record?.sourceReference || "",
+            ).slice(0, 500),
+            confidence: record?.confidence || "low",
+            certainty: record?.certainty || "evidenced",
+          };
+        }
         if (record?.associatedContact) {
           summary.associatedContact = {
             name: String(record.associatedContact.name || "").slice(0, 160),
@@ -105,6 +120,65 @@ function summarizeAnswerAuditEvidence(authorizedEvidence) {
         return summary;
       }),
     };
+  });
+}
+
+function buildCustomerPublicResearchEvidence(agents) {
+  return (Array.isArray(agents) ? agents : [])
+    .filter(
+      (agent) =>
+        agent?.status === "completed" &&
+        agent?.sourceDomain === "public_web" &&
+        Array.isArray(agent.findings),
+    )
+    .flatMap((agent) =>
+      agent.findings.map((finding) => ({
+        agentId: String(agent.agentId || "public_research").slice(0, 80),
+        title: String(finding.title || "").slice(0, 200),
+        summary: String(finding.summary || "").slice(0, 1200),
+        evidence: String(
+          finding.evidenceText || finding.evidence || "",
+        ).slice(0, 1600),
+        sourceUrl: String(
+          finding.sourceUrl || finding.sourceReference || "",
+        ).slice(0, 500),
+        confidence: ["high", "medium", "low"].includes(finding.confidence)
+          ? finding.confidence
+          : "low",
+        certainty: String(finding.certainty || "evidenced").slice(0, 40),
+      })),
+    )
+    .filter((finding) => finding.title || finding.summary || finding.evidence)
+    .slice(0, 24);
+}
+
+function buildCustomerPublicSourceLinks(publicEvidence) {
+  const seenUrls = new Set();
+  return publicEvidence.flatMap((finding) => {
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(finding.sourceUrl);
+    } catch {
+      return [];
+    }
+    if (
+      !["http:", "https:"].includes(parsedUrl.protocol) ||
+      seenUrls.has(parsedUrl.href)
+    ) {
+      return [];
+    }
+    seenUrls.add(parsedUrl.href);
+    return [
+      {
+        title: finding.title || parsedUrl.hostname,
+        url: parsedUrl.href,
+        sourceUrl: parsedUrl.href,
+        domain: parsedUrl.hostname,
+        sourceDomain: "public_web",
+        confidence: finding.confidence,
+        certainty: finding.certainty,
+      },
+    ];
   });
 }
 
@@ -543,8 +617,14 @@ export function buildCustomerQueryPlannerContext({
   catalog,
   snapshot,
   businessRules,
+  allowedOperationKinds: effectiveAllowedOperationKinds = null,
   entityCandidates = null,
+  researchAgents = [],
 } = {}) {
+  const permittedToolNames = (Array.isArray(availableTools) ? availableTools : [])
+    .map((tool) => tool?.name)
+    .filter(Boolean);
+  const permittedToolNameSet = new Set(permittedToolNames);
   const validatedContinuationReferences = getValidatedContinuationReferences(
     snapshot,
     conversationContext,
@@ -571,6 +651,34 @@ export function buildCustomerQueryPlannerContext({
     referenceDateTime: new Date().toISOString(),
     businessTimezone: snapshot?.businessTimezone || config.app.businessTimezone,
     pendingActivity: conversationContext?.pendingActivity || null,
+    availableEvidenceSources: {
+      selectedAccountCrm: Boolean(context?.accountId),
+      preparedAgents: (Array.isArray(researchAgents) ? researchAgents : [])
+        .filter((agent) => agent?.status === "completed" && agent?.agentId)
+        .map((agent) => ({
+          agentId: String(agent.agentId).slice(0, 80),
+          evidenceCount: Array.isArray(agent.evidence)
+            ? agent.evidence.length
+            : 0,
+        })),
+    },
+    plannerGuidance: [
+      "Planifica lecturas CRM; las capacidades de investigación y sus resultados preparados se describen por separado.",
+      "El contexto seleccionado identifica el alcance disponible, no implica que la pregunta se refiera a una oportunidad o contacto.",
+      "Para solicitudes generales sobre la cuenta activa, resuelve el objetivo como account en active_context y no pidas seleccionar un registro hijo.",
+      "Para crear un contacto, elige operationKind=create_contact solo si allowedOperationKinds lo permite. Usa la cuenta seleccionada como parent account con targetType=account, cardinality=single y source=active_context; el nombre del contacto nuevo es dato del borrador, no contactReference ni candidateKey. No pidas elegir un contacto existente.",
+      "Para crear una oportunidad en la cuenta, elige operationKind=create_opportunity solo si allowedOperationKinds lo permite y deja que el formulario de Oportunidades seleccione el contacto requerido. La cuenta seleccionada es el alcance; el nombre de la nueva oportunidad no es opportunityReference ni candidateKey.",
+      "Para cambiar el contacto asociado a una oportunidad existente, elige operationKind=link_contact_to_opportunity solo si está permitido. Usa IDs de oportunidad y contacto presentes en el snapshot autorizado, ambos de la cuenta seleccionada. No lo confundas con crear un mapeo jerárquico de contactos.",
+      "Para preparar una actividad de calendario, usa operationKind=activity. No combines activityDraft.action=prepare con create_contact; al crear un contacto deja activityDraft.action=none.",
+      "Para editar o consultar un contacto existente, conserva la resolución estricta de candidato autorizado y no la confundas con create_contact.",
+      "Pide aclaración solo si falta una referencia, periodo o dato indispensable para fijar el alcance; no declares ambiguo un objetivo que ya está resuelto.",
+      "Si el objetivo, referenceResolution y ambiguity se contradicen, corrige el plan antes de devolverlo.",
+    ],
+    allowedOperationKinds: Array.isArray(effectiveAllowedOperationKinds)
+      ? effectiveAllowedOperationKinds
+      : Array.isArray(businessRules?.operationPolicy?.allowedKinds)
+        ? businessRules.operationPolicy.allowedKinds
+        : [],
     validatedContinuation: conversationContext
       ? {
           opportunityName:
@@ -613,12 +721,75 @@ export function buildCustomerQueryPlannerContext({
         code: intent.code,
         label: intent.label,
         description: intent.description,
+        requiredContext: Array.isArray(intent.requiredContext)
+          ? intent.requiredContext
+          : Array.isArray(intent.context)
+            ? intent.context
+            : [],
+        allowedTools: (Array.isArray(intent.allowedTools)
+          ? intent.allowedTools
+          : Array.isArray(intent.tools)
+            ? intent.tools
+            : []
+        ).filter((toolName) => permittedToolNameSet.has(toolName)),
       }),
     ),
-    permittedToolNames: (Array.isArray(availableTools) ? availableTools : [])
-      .map((tool) => tool?.name)
-      .filter(Boolean),
+    permittedToolNames,
   };
+}
+
+export function buildCustomerEvidenceQueryCoverage({
+  intentCodes = [],
+  channelCatalog = [],
+  authorizedToolNames = [],
+  readToolResults = [],
+  routing = null,
+} = {}) {
+  const authorizedNames = new Set(authorizedToolNames);
+  const readResultsByTool = new Map(
+    readToolResults.map((item) => [item.toolName, item]),
+  );
+  const opportunityScoped =
+    routing?.referenceResolution?.targetType === "opportunity" &&
+    Number(routing?.serverResolvedEntityIds?.opportunityId || 0) > 0;
+  return intentCodes.map((intentCode) => {
+    const intentConfiguration = channelCatalog.find(
+      (intent) => intent.code === intentCode,
+    );
+    const intentToolNames = (
+      Array.isArray(intentConfiguration?.allowedTools)
+        ? intentConfiguration.allowedTools
+        : []
+    ).filter(
+      (toolName) =>
+        authorizedNames.has(toolName) &&
+        !(
+          intentCode === "account_activity_history" &&
+          toolName === "getOpportunityActivities" &&
+          !opportunityScoped
+        ),
+    );
+    const completedToolNames = intentToolNames.filter((toolName) => {
+      const result = readResultsByTool.get(toolName);
+      return result && !result.error;
+    });
+    const failedToolNames = intentToolNames.filter(
+      (toolName) => readResultsByTool.get(toolName)?.error,
+    );
+    const unqueriedToolNames = intentToolNames.filter(
+      (toolName) => !readResultsByTool.has(toolName),
+    );
+    return {
+      intentCode,
+      authorizedTools: intentToolNames,
+      completedTools: completedToolNames,
+      failedTools: failedToolNames,
+      unqueriedTools: unqueriedToolNames,
+      fullyQueried:
+        intentToolNames.length > 0 &&
+        completedToolNames.length === intentToolNames.length,
+    };
+  });
 }
 
 function customerTools(snapshot) {
@@ -1559,12 +1730,12 @@ export function buildCustomerIntentResponse({
   ) {
     return {
       answer:
-        'La política de Cliente existente no permite cambios en campos de oportunidad. Un administrador debe habilitar "Campo de oportunidad" en Gobierno de Mi Coach > Reglas del motor para el proceso account_chat. No se creó una propuesta ni se modificó el CRM.',
+        'La política de Cliente existente no permite cambios en campos de oportunidad. Un administrador debe habilitar "Campo de oportunidad" en Gobierno de Mi Coach > Reglas del motor. No se creó una propuesta ni se modificó el CRM.',
       responseType: "clarification",
       clarification: {
         type: "missing_fields",
         message:
-          'Un administrador debe habilitar "Campo de oportunidad" en las reglas de Cliente existente para el proceso account_chat.',
+          'Un administrador debe habilitar "Campo de oportunidad" en las reglas de Cliente existente.',
         missing: ["Permiso de política para opportunity_field"],
       },
       evidence: [],
@@ -1704,7 +1875,7 @@ function buildCustomerPrompt(
     conversationHistory,
     operationPolicy,
     instruction:
-      "Responde la solicitud sobre la cuenta usando solo el CRM autorizado. Si se pide un correo, redacta un borrador y no lo envíes. Si solicitan un cambio, devuelve operations con el tipo de operación y los IDs exactos del contexto de esta cuenta; nunca propongas una entidad de otra cuenta. Toda operación es una propuesta editable que requiere revisión y confirmación; no afirmes que ya fue ejecutada." +
+      "Responde la solicitud sobre la cuenta usando solo el CRM autorizado. Si se pide un correo, redacta un borrador y no lo envíes. Si solicitan un cambio, devuelve operations con el tipo de operación y los IDs exactos del contexto de esta cuenta; nunca propongas una entidad de otra cuenta. operationKind determina el tipo de escritura: activityDraft solo aplica cuando operationKind=activity y nunca debe convertir create_contact en una actividad. Para create_contact, usa accountId de la cuenta seleccionada y coloca únicamente datos del nuevo contacto en payload; no busques ni inventes un contactId. Para create_opportunity, usa accountId de la cuenta seleccionada, un nombre explícito, los datos comerciales mencionados y solo un contactId existente de esta cuenta si fue identificado. Para link_contact_to_opportunity, usa una oportunidad y un contacto existentes de esta misma cuenta, con sus IDs del snapshot. No inventes correo, teléfono, cargo, nombres ni IDs. Toda operación es una propuesta revisable y requiere confirmación; no afirmes que ya fue ejecutada." +
       (snapshot?.channelIntentRouting
         ? `\n\nEnrutamiento validado por el servidor: ${JSON.stringify(snapshot.channelIntentRouting)}. Responde a esa intención con evidencia del contexto autorizado y no la conviertas en otra clase de consulta.`
         : "") +
@@ -1714,7 +1885,12 @@ function buildCustomerPrompt(
   };
 }
 
-export function normalizeCustomerOperations(operations, snapshot, context) {
+export function normalizeCustomerOperations(
+  operations,
+  snapshot,
+  context,
+  permissions = new Set(),
+) {
   const accountId = Number(snapshot?.account?.id || context.accountId || 0);
   const contactIds = new Set(
     (snapshot?.contacts || []).map((item) => Number(item.id)).filter(Boolean),
@@ -1742,9 +1918,12 @@ export function normalizeCustomerOperations(operations, snapshot, context) {
         requiresConfirmation: true,
       };
       if (
-        ["activity", "stage_answer", "opportunity_field"].includes(
-          operation.kind,
-        )
+        [
+          "activity",
+          "stage_answer",
+          "opportunity_field",
+          "link_contact_to_opportunity",
+        ].includes(operation.kind)
       ) {
         operation.opportunityId =
           Number(operation.opportunityId || context.opportunityId || 0) || null;
@@ -1756,6 +1935,152 @@ export function normalizeCustomerOperations(operations, snapshot, context) {
         operation.contactId =
           Number(operation.contactId || context.contactId || 0) || null;
       }
+      if (operation.kind === "create_opportunity") {
+        const sourcePayload =
+          operation.payload &&
+          typeof operation.payload === "object" &&
+          !Array.isArray(operation.payload)
+            ? operation.payload
+            : {};
+        const proposedAccountId = Number(
+          operation.accountId || sourcePayload.accountId || accountId,
+        );
+        const contactId =
+          Number(operation.contactId || sourcePayload.contactId || 0) || null;
+        if (
+          proposedAccountId !== accountId ||
+          (sourcePayload.accountId &&
+            Number(sourcePayload.accountId) !== accountId) ||
+          (operation.contactId &&
+            sourcePayload.contactId &&
+            Number(operation.contactId) !== Number(sourcePayload.contactId)) ||
+          (contactId && !contactIds.has(contactId))
+        ) {
+          return null;
+        }
+        const payload = { accountId };
+        const name = String(sourcePayload.name || operation.name || "")
+          .trim()
+          .slice(0, 180);
+        if (name) payload.name = name;
+        if (sourcePayload.amountUsd !== undefined) {
+          const amountUsd = Number(sourcePayload.amountUsd);
+          if (Number.isFinite(amountUsd) && amountUsd >= 0) {
+            payload.amountUsd = amountUsd;
+          }
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(sourcePayload.closeDate || ""))) {
+          payload.closeDate = String(sourcePayload.closeDate);
+        }
+        if (contactId) payload.contactId = contactId;
+        return {
+          kind: "create_opportunity",
+          title: String(operation.title || `Crear oportunidad${name ? ` ${name}` : ""}`)
+            .trim()
+            .slice(0, 300),
+          evidence: [],
+          missingFields: Array.isArray(operation.missingFields)
+            ? operation.missingFields
+                .map((field) => String(field || "").trim().slice(0, 120))
+                .filter(Boolean)
+                .slice(0, 30)
+            : [],
+          requiresConfirmation: true,
+          sourceChannel: "customer_account",
+          targetModule: "opportunities",
+          payload,
+          accountId,
+          contactId,
+          opportunityId: null,
+          interactionId: null,
+          quotationVersionId: null,
+          source: { type: "account", id: accountId },
+        };
+      }
+      if (operation.kind === "link_contact_to_opportunity") {
+        const opportunityId = Number(operation.opportunityId || 0) || null;
+        const contactId = Number(operation.contactId || 0) || null;
+        if (
+          !opportunityIds.has(opportunityId) ||
+          !contactIds.has(contactId) ||
+          (operation.accountId && Number(operation.accountId) !== accountId)
+        ) {
+          return null;
+        }
+        return {
+          kind: "link_contact_to_opportunity",
+          title: String(operation.title || "Vincular contacto a oportunidad")
+            .trim()
+            .slice(0, 300),
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+          sourceChannel: "customer_account",
+          targetModule: "opportunities",
+          payload: { accountId, contactId },
+          accountId,
+          contactId,
+          opportunityId,
+          interactionId: null,
+          quotationVersionId: null,
+          source: { type: "opportunity", id: opportunityId },
+        };
+      }
+      if (operation.kind === "create_contact") {
+        const proposedAccountId = Number(
+          operation.accountId || operation.payload?.accountId || 0,
+        );
+        if (proposedAccountId && proposedAccountId !== accountId) return null;
+        const sourcePayload =
+          operation.payload &&
+          typeof operation.payload === "object" &&
+          !Array.isArray(operation.payload)
+            ? operation.payload
+            : {};
+        const contactFields = [
+          "firstName",
+          "lastName",
+          "positionTitle",
+          "email",
+          "phone",
+          "mobile",
+          "department",
+          "city",
+          "stateRegion",
+        ];
+        return {
+          kind: "create_contact",
+          title: String(operation.title || "Crear contacto")
+            .trim()
+            .slice(0, 300),
+          evidence: [],
+          missingFields: Array.isArray(operation.missingFields)
+            ? operation.missingFields
+                .map((field) => String(field || "").trim().slice(0, 120))
+                .filter(Boolean)
+                .slice(0, 30)
+            : [],
+          requiresConfirmation: true,
+          sourceChannel: "customer_account",
+          targetModule: "contacts",
+          payload: {
+            ...Object.fromEntries(
+              contactFields
+                .filter((field) => sourcePayload[field] !== undefined)
+                .map((field) => [
+                  field,
+                  String(sourcePayload[field] || "").trim().slice(0, 500),
+                ]),
+            ),
+            accountId,
+          },
+          accountId,
+          contactId: null,
+          opportunityId: null,
+          interactionId: null,
+          quotationVersionId: null,
+        };
+      } else delete operation.payload;
       return operation;
     },
   );
@@ -1764,6 +2089,42 @@ export function normalizeCustomerOperations(operations, snapshot, context) {
       return Number(operation.accountId) === accountId;
     if (operation.kind === "contact_field")
       return contactIds.has(Number(operation.contactId));
+    if (operation.kind === "create_contact") {
+      const canCreateContact =
+        permissionGranted(permissions, "contactos.create") ||
+        permissionGranted(permissions, "contactos.request");
+      return (
+        accountId > 0 &&
+        Number(operation.accountId) === accountId &&
+        canCreateContact
+      );
+    }
+    if (operation.kind === "create_opportunity") {
+      const canCreateOpportunity =
+        permissionGranted(permissions, "oportunidades.create") ||
+        permissionGranted(permissions, "oportunidades.request");
+      return (
+        accountId > 0 &&
+        Number(operation.accountId) === accountId &&
+        canCreateOpportunity
+      );
+    }
+    if (operation.kind === "link_contact_to_opportunity") {
+      const canUpdateOpportunity = permissionGranted(
+        permissions,
+        "oportunidades.update",
+      );
+      const canReadContact =
+        permissionGranted(permissions, "contactos.read") ||
+        permissionGranted(permissions, "contactos.read_all");
+      return (
+        Number(operation.accountId) === accountId &&
+        opportunityIds.has(Number(operation.opportunityId)) &&
+        contactIds.has(Number(operation.contactId)) &&
+        canUpdateOpportunity &&
+        canReadContact
+      );
+    }
     if (
       ["activity", "stage_answer", "opportunity_field"].includes(operation.kind)
     )
@@ -1779,6 +2140,7 @@ export function normalizeCustomerResponse(
   snapshot,
   _question,
   context,
+  permissions = new Set(),
 ) {
   const normalized = result || {};
   const recommendedActions = Array.isArray(normalized.recommendedActions)
@@ -1794,7 +2156,31 @@ export function normalizeCustomerResponse(
     normalized.operations,
     snapshot,
     context,
+    permissions,
   );
+  const publicSources = Array.isArray(normalized.publicSources)
+    ? normalized.publicSources
+        .map((source) => {
+          const rawUrl = String(source?.url || source?.sourceUrl || "").trim();
+          try {
+            const parsedUrl = new URL(rawUrl);
+            if (!["http:", "https:"].includes(parsedUrl.protocol)) return null;
+            return {
+              title: String(source.title || parsedUrl.hostname).slice(0, 200),
+              url: parsedUrl.href,
+              sourceUrl: parsedUrl.href,
+              domain: parsedUrl.hostname,
+              sourceDomain: "public_web",
+              confidence: source.confidence || "low",
+              certainty: source.certainty || "evidenced",
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+        .slice(0, 24)
+      : [];
   for (const operation of operations) {
     if (operation.kind !== "activity") continue;
     if (
@@ -1854,6 +2240,7 @@ export function normalizeCustomerResponse(
       ? normalized.confidence
       : "low",
     recommendedActions: normalized.activityDraft ? [] : recommendedActions,
+    publicSources,
     activityHistory: normalized.activityHistory || null,
     ...(normalized.activityDraft
       ? { activityDraft: normalized.activityDraft }
@@ -1894,6 +2281,7 @@ export function createCustomerAccountAdapter({
     fallback: { used: false, reasonCode: null },
     evidence: null,
     answerAudit: null,
+    answerGeneration: null,
   };
   let activeBusinessRules = null;
   const availableTools = [
@@ -1912,6 +2300,7 @@ export function createCustomerAccountAdapter({
       conversationContext,
       availableTools: permittedTools,
       catalog,
+      allowedOperationKinds,
       deadlineAt,
     }) => {
       const enabledIntentCodes = (Array.isArray(catalog) ? catalog : [])
@@ -1937,6 +2326,7 @@ export function createCustomerAccountAdapter({
           contactId: Number(context.contactId || 0) || null,
         },
         enabledIntentCodes,
+        allowedOperationKinds,
         availableToolNames: permittedTools.map((tool) => tool.name),
         candidateCounts: Object.fromEntries(
           Object.entries(entityCandidates.publicCandidates || {}).map(
@@ -1956,14 +2346,17 @@ export function createCustomerAccountAdapter({
         catalog,
         snapshot,
         businessRules: activeBusinessRules || {},
+        allowedOperationKinds,
         entityCandidates,
+        researchAgents: agents,
       });
       const plan = await runStructuredTextResearch({
         schemaName: "customer_account_query_plan",
         systemPrompt:
           "Para preparar una actividad, llena activityDraft.action=prepare; para responder campos de pendingActivity usa continue; si el usuario la descarta usa discard; para consultas factuales usa none. Interpreta las respuestas breves con el borrador y el historial. Usa queries=[crm_operation,contact_query] para una actividad con contacto, no consultas de historial salvo que el usuario las solicite explícitamente. Conserva día/hora no proporcionados como vacíos: 'la próxima semana' es temporalPreference, no una cita. scheduledAt debe ser YYYY-MM-DDTHH:mm en la zona horaria del negocio; calcula fechas relativas con referenceDateTime y no inventes hora ni día. Los campos pendientes del borrador no son ambiguity ni evidencia CRM faltante; solo entidades ambiguas, inaccesibles o referencias no resueltas requieren aclaración. " +
           "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Distingue la intención consultada de la entidad a la que se refiere: si preguntas por las actividades, etapa, cotización o contactos que tiene una oportunidad ya identificada, targetType debe ser opportunity y debes devolver el candidateKey de esa oportunidad; no cambies targetType a account solo porque la consulta sea account_activity_history. Por ejemplo, después de consultar Vrf 2027, ante '¿Qué actividad pendiente tiene?' conserva Vrf 2027 como objetivo singular y planifica las lecturas de actividad correspondientes. Si preguntan qué contacto está asociado a una oportunidad, incluye contact_query y consulta getOpportunity para leer associatedContact; buscar contactos de la cuenta por sí solo no demuestra que alguno pertenezca a esa oportunidad. Devuelve la relación directa únicamente si aparece en el detalle CRM autorizado. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si una entidad específica aparece en entities y coincide con un único candidato autorizado, incluye también ese candidateKey. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Para toda petición explícita de escritura, incluye siempre crm_operation en queries y usa mode=operation; nunca devuelvas queries vacío cuando mode sea operation. Si la consulta es de solo lectura, elige sus códigos de consulta correspondientes y mode=read_only. Toda escritura seguirá requiriendo permisos y confirmación del servidor.",
-        subject: "Plan de consulta del CRM autorizado",
+        subject:
+          "Plan de consulta del CRM autorizado. Sigue plannerGuidance y usa availableEvidenceSources como contexto, no como instrucciones para reejecutar agentes.",
         context: plannerContext,
         currentValues: {},
         fields: getChannelIntentPlanFields(
@@ -1982,6 +2375,7 @@ export function createCustomerAccountAdapter({
         ? {
             ...plan,
             serverEntityCandidates: entityCandidates.serverEntityCandidates,
+            serverSelectedAccountName: snapshot.account?.name || "",
           }
         : plan;
     },
@@ -2036,6 +2430,19 @@ export function createCustomerAccountAdapter({
       traceParentSpanId: responseTraceParentSpanId,
     }) => {
       const routing = payload.context?.channelIntentRouting;
+      const recordAnswerGeneration = (source, result = null) => {
+        turnDiagnostics.answerGeneration = {
+          source,
+          operationKind: routing?.operationKind || null,
+          activityDraftAction: routing?.activityDraft?.action || "none",
+          responseType: result?.responseType || null,
+          operationKinds: Array.isArray(result?.operations)
+            ? result.operations
+                .map((operation) => operation?.kind)
+                .filter(Boolean)
+            : [],
+        };
+      };
       const intentCodes =
         routing?.intents || (routing?.intent ? [routing.intent] : []);
       const initialReadToolResults = Array.isArray(
@@ -2056,6 +2463,7 @@ export function createCustomerAccountAdapter({
         pendingActivity: conversationContext?.pendingActivity,
       });
       if (activityResponse) {
+        recordAnswerGeneration("deterministic_activity_draft", activityResponse);
         turnDiagnostics.evidence = {
           status: "activity_entities_validated",
           rounds: 0,
@@ -2100,6 +2508,15 @@ export function createCustomerAccountAdapter({
       const authorizedTools = availableTools.filter((tool) =>
         authorizedToolNames.has(tool.name),
       );
+      const publicEvidence = buildCustomerPublicResearchEvidence(agents);
+      const buildQueryCoverage = (readResults) =>
+        buildCustomerEvidenceQueryCoverage({
+          intentCodes: [...new Set([...intentCodes, ...followUpIntents])],
+          channelCatalog,
+          authorizedToolNames: [...authorizedToolNames],
+          readToolResults: readResults,
+          routing,
+        });
       const conversationHistory = Array.isArray(payload.conversationHistory)
         ? payload.conversationHistory
         : [];
@@ -2119,12 +2536,13 @@ export function createCustomerAccountAdapter({
           round,
           remainingMs,
           hasQueryErrors,
-        }) =>
-          runStructuredTextResearch({
+        }) => {
+          const queryCoverage = buildQueryCoverage(readToolResults);
+          const assessment = await runStructuredTextResearch({
             schemaName: "customer_account_evidence_assessment",
             systemPrompt:
-              "Evalúa si la evidencia CRM autorizada responde todas las partes de la pregunta interpretada junto con recentConversation y validatedContinuation. El historial sirve para resolver la intención y referencias, nunca como prueba de hechos CRM. No redactes la respuesta ni inventes datos. Distingue consultas de hechos de solicitudes para preparar propuestas editables: ante 'proponla' después de ofrecer una llamada, verifica la identidad y vínculos CRM de la cuenta, oportunidad y contacto referidos, pero no exijas preferencias de llamada, acuerdos confirmados, actividades previas ni detalles de un siguiente paso futuro que el vendedor no pidió consultar como hechos. La fecha/hora y otros datos no proporcionados de una propuesta son campos por completar, no hechos CRM que deban existir para proponerla; no los inventes. Preparar una propuesta no ejecuta ni guarda la actividad y sigue sujeto a operationPolicy. Marca sufficient solo si los hechos necesarios están respaldados por resultados concretos. Marca no_results solo cuando las consultas necesarias se ejecutaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Si falta otra fuente disponible, devuelve su código en missingQueries; solicita aclaración para entidades ambiguas, referencias insuficientes o periodos necesarios de una consulta factual. Devuelve missingFacts como etiquetas breves en español para el vendedor, no como códigos internos ni afirmaciones inventadas.",
-            subject: "Verificación de evidencia CRM",
+              "Evalúa si la evidencia autorizada responde todas las partes de la pregunta, incluyendo evidencia CRM y pública, junto con recentConversation y validatedContinuation. El historial sirve para resolver intención y referencias, nunca como prueba factual. No redactes la respuesta ni inventes datos. Usa queryCoverage para saber qué intenciones ya fueron consultadas y no devuelvas en missingQueries una intención fullyQueried cuya evidencia ya cubra la pregunta. Distingue consultas factuales de solicitudes para preparar propuestas editables: ante 'proponla' después de ofrecer una llamada, verifica la identidad y vínculos CRM de la cuenta, oportunidad y contacto referidos, pero no exijas preferencias de llamada, acuerdos confirmados, actividades previas ni detalles futuros que el vendedor no pidió consultar como hechos. La fecha/hora y otros datos no proporcionados de una propuesta son campos pendientes, no hechos CRM; no los inventes. Preparar una propuesta no ejecuta ni guarda la actividad y sigue sujeto a operationPolicy. Marca sufficient solo si cada parte está respaldada por resultados concretos y no faltan hechos. Marca no_results solo cuando las consultas necesarias terminaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Devuelve missingQueries solo para una fuente/intención autorizada con una consulta útil aún no ejecutada; si otra lectura no puede obtener un dato faltante, descríbelo en missingFacts. Solicita aclaración solo para ambigüedades reales, referencias insuficientes o periodos indispensables de una consulta factual. Devuelve missingFacts como etiquetas breves en español para el vendedor, no como códigos internos ni afirmaciones inventadas.",
+            subject: "Verificación de evidencia CRM y pública",
             context: {
               question: payload.question,
               recentConversation: conversationHistory.slice(-8),
@@ -2140,9 +2558,12 @@ export function createCustomerAccountAdapter({
                 : null,
               evidence: readToolResults.map((item) => ({
                 toolName: item.toolName,
+                sourceDomain: "crm_internal",
                 result: item.result,
                 queryFailed: Boolean(item.error),
               })),
+              publicEvidence,
+              queryCoverage,
               round,
               hasQueryErrors,
               snapshotQueryMetrics,
@@ -2157,7 +2578,15 @@ export function createCustomerAccountAdapter({
               jobId,
             },
             signal: getDeadlineSignal(Date.now() + remainingMs),
-          }),
+          });
+          return normalizeCustomerEvidenceAssessment({
+            assessment,
+            queryCoverage,
+            readToolResults,
+            hasQueryErrors,
+            unqueriedAuthorizedTools,
+          });
+        },
         fetchAdditionalEvidence: async ({
           missingQueries,
           readToolResults,
@@ -2243,10 +2672,12 @@ export function createCustomerAccountAdapter({
         ),
       };
       if (!new Set(["sufficient", "no_results"]).has(evidenceLoop.status)) {
-        return buildCustomerEvidenceFailureResponse({
+        const evidenceFailure = buildCustomerEvidenceFailureResponse({
           ...evidenceLoop,
           failedSources: evidenceLoop.failedSources,
         });
+        recordAnswerGeneration("evidence_gate_failure", evidenceFailure);
+        return evidenceFailure;
       }
       payload = {
         ...payload,
@@ -2271,6 +2702,9 @@ export function createCustomerAccountAdapter({
           snapshot,
           evidenceLoop.readToolResults,
         );
+        if (accountOverview) {
+          recordAnswerGeneration("deterministic_account_overview", accountOverview);
+        }
         return (
           accountOverview ||
           buildCustomerEvidenceFailureResponse({
@@ -2281,19 +2715,22 @@ export function createCustomerAccountAdapter({
           })
         );
       }
-      const publicResearchEvidence = (Array.isArray(agents) ? agents : [])
-        .filter(
-          (agent) =>
-            agent.agentId === "public_research" &&
-            Array.isArray(agent.evidence),
-        )
-        .flatMap((agent) =>
-          agent.evidence.map((item) => ({
-            toolName: "public_research",
-            sourceDomain: agent.sourceDomain || "public_web",
-            result: item,
-          })),
-        );
+      const publicSources = buildCustomerPublicSourceLinks(publicEvidence);
+      const publicResearchEvidence = publicEvidence
+        .filter((finding) => /^https?:\/\//i.test(finding.sourceUrl))
+        .map((finding) => ({
+          toolName: finding.agentId,
+          sourceDomain: "public_web",
+          result: {
+            title: finding.title,
+            summary: finding.summary,
+            evidenceText: finding.evidence,
+            sourceUrl: finding.sourceUrl,
+            confidence: finding.confidence,
+            certainty: finding.certainty,
+          },
+          queryFailed: false,
+        }));
       const authorizedEvidence = [
         ...evidenceLoop.readToolResults.map((item) => ({
           toolName: item.toolName,
@@ -2361,7 +2798,7 @@ export function createCustomerAccountAdapter({
         (await runStructuredTextResearch({
           schemaName: "account_contextual_chat",
           systemPrompt:
-            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos. Si el vendedor acepta preparar una actividad ofrecida en el turno anterior, por ejemplo con 'proponla', devuelve el borrador estructurado en operations cuando activity esté permitido y sus vínculos estén verificados; no repitas una oferta de proponerla ni exijas preferencias del contacto o acuerdos que el usuario no pidió consultar. Los detalles futuros son propuestas, no hechos CRM. Si falta fecha/hora, deja scheduledAt vacío, añade scheduledAt a missingFields y pide completarlo para abrir Calendario; nunca inventes una cita ni afirmes que está coordinada, aceptada, guardada o ejecutada.",
+            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Para toda afirmación basada en public_web, incluye en evidence el título o URL de la fuente pública autorizada que la respalda y no generalices más allá del hallazgo. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos. Si el vendedor acepta preparar una actividad ofrecida en el turno anterior, por ejemplo con 'proponla', devuelve el borrador estructurado en operations cuando activity esté permitido y sus vínculos estén verificados; no repitas la oferta ni exijas preferencias del contacto o acuerdos que el usuario no pidió consultar. Los detalles futuros son propuestas, no hechos CRM. Si falta fecha/hora, deja scheduledAt vacío, añade scheduledAt a missingFields y pide completarlo para abrir Calendario; nunca inventes una cita ni afirmes que está coordinada, aceptada, guardada o ejecutada.",
           subject: snapshot.account?.name || "cuenta",
           context: answerEvidenceContext,
           currentValues: {},
@@ -2432,6 +2869,9 @@ export function createCustomerAccountAdapter({
                       "lead_call_outcome",
                       "account_field",
                       "contact_field",
+                      "create_contact",
+                      "create_opportunity",
+                      "link_contact_to_opportunity",
                       "opportunity_field",
                     ],
                     example: "opportunity_field",
@@ -2442,6 +2882,26 @@ export function createCustomerAccountAdapter({
                     example: "Actualizar importe",
                   },
                   { key: "accountId", type: "number", example: 7 },
+                  {
+                    key: "payload",
+                    type: "object",
+                    fields: [
+                      { key: "accountId", type: "number", example: 7 },
+                      { key: "name", type: "string", example: "Renovación anual" },
+                      { key: "amountUsd", type: "number", example: 12000 },
+                      { key: "closeDate", type: "string", example: "2027-12-31" },
+                      { key: "contactId", type: "number", example: 12 },
+                      { key: "firstName", type: "string", example: "" },
+                      { key: "lastName", type: "string", example: "" },
+                      { key: "positionTitle", type: "string", example: "" },
+                      { key: "email", type: "string", example: "" },
+                      { key: "phone", type: "string", example: "" },
+                      { key: "mobile", type: "string", example: "" },
+                      { key: "department", type: "string", example: "" },
+                      { key: "city", type: "string", example: "" },
+                      { key: "stateRegion", type: "string", example: "" },
+                    ],
+                  },
                   { key: "contactId", type: "number", example: 12 },
                   { key: "opportunityId", type: "number", example: 18 },
                   { key: "interactionId", type: "number", example: 25 },
@@ -2527,6 +2987,14 @@ export function createCustomerAccountAdapter({
           },
           signal: getDeadlineSignal(deadlineAt),
         }));
+      recordAnswerGeneration(
+        deterministicOperationResponse
+          ? "deterministic_crm_operation"
+          : aiResult
+            ? "structured_answer_model"
+            : "structured_answer_unavailable",
+        aiResult,
+      );
       if (aiResult) {
         const auditEvidenceSnapshot =
           summarizeAnswerAuditEvidence(authorizedEvidence);
@@ -2550,8 +3018,8 @@ export function createCustomerAccountAdapter({
               answerAuditDiagnostics.model = model || null;
             },
             systemPrompt:
-              "Para una actividad futura solicitada por el vendedor, distingue el borrador propuesto de un hecho CRM: audita sus IDs, identidad y relaciones con authorizedEvidence y su tipo/objetivo con la petición y conversationHistory. Una propuesta editable no demuestra que la llamada esté acordada o guardada; no exijas preferencias o acuerdos previos para proponerla. La ausencia de fecha/hora debe quedar explícita como dato pendiente, nunca inventada. No permitas una propuesta con entidades ambiguas o sin respaldo ni afirmaciones de ejecución. " +
-              "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones CRM están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. Para cada afirmación no respaldada, devuelve en findings la afirmación, el veredicto, el motivo concreto y las referencias a los toolName/registros de authorizedEvidence que revisaste; no inventes referencias. No redactes una respuesta nueva ni autorices operaciones.",
+              "Para una actividad futura solicitada por el vendedor, distingue el borrador propuesto de un hecho CRM: audita sus IDs, identidad y relaciones con authorizedEvidence, y su tipo/objetivo con la petición y conversationHistory. Una propuesta editable no demuestra que la llamada esté acordada o guardada; no exijas preferencias o acuerdos previos. La ausencia de fecha/hora debe quedar explícita como dato pendiente, nunca inventada; no permitas propuestas con entidades ambiguas o sin respaldo ni afirmaciones de ejecución. " +
+              "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Toda afirmación basada en fuentes públicas debe estar respaldada por un registro public_web con URL y referenciar esa evidencia; marca unsupported si la respuesta presenta una señal pública como dato CRM o si no hay fuente pública concreta. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. Para cada afirmación no respaldada, devuelve en findings la afirmación, el veredicto, el motivo concreto y las referencias a los toolName/registros de authorizedEvidence que revisaste; no inventes referencias. No redactes una respuesta nueva ni autorices operaciones.",
             subject: snapshot.account?.name || "cuenta",
             context: {
               question: payload.question,
@@ -2662,13 +3130,15 @@ export function createCustomerAccountAdapter({
                 : [],
             }))
           : [];
-        if (answerAudit?.status === "supported") return aiResult;
+        if (answerAudit?.status === "supported")
+          return { ...aiResult, publicSources };
         const answerAuditFailureCode =
           answerAudit?.status === "unsupported"
             ? "answer_not_grounded"
             : answerAudit?.status === "inconclusive"
               ? "answer_audit_inconclusive"
               : "answer_audit_unavailable";
+              recordAnswerGeneration("answer_audit_rejected", aiResult);
         turnDiagnostics.fallback = {
           used: true,
           reasonCode: answerAuditFailureCode,
@@ -2699,7 +3169,13 @@ export function createCustomerAccountAdapter({
       conflict: null,
     }),
     normalizeResponse: (result, scopedSnapshot, question, context) =>
-      normalizeCustomerResponse(result, scopedSnapshot, question, context),
+      normalizeCustomerResponse(
+        result,
+        scopedSnapshot,
+        question,
+        context,
+        permissions,
+      ),
     featureCode: "commercial_intelligence.account_chat",
     getTurnDiagnostics: () => ({
       ...turnDiagnostics,
@@ -2718,7 +3194,10 @@ export function createCustomerAccountAdapter({
         "lead_call_outcome",
         "account_field",
         "contact_field",
+        "create_contact",
         "opportunity_field",
+        "create_opportunity",
+        "link_contact_to_opportunity",
       ],
       sourceChannel: "customer_account",
     },
@@ -2731,7 +3210,7 @@ export function createCustomerAccountAdapter({
     }) {
       const businessRules = await loadCoachBusinessRules({
         channel: "customer_account",
-        process: "account_chat",
+        process: "default",
       });
       activeBusinessRules = businessRules;
       const currentScope = businessRules.scope || {};

@@ -7,6 +7,11 @@
   flex: 1;
   min-width: 0;
 }
+.mi-agent-coach-view-tabs {
+  flex: 0 0 auto;
+  width: fit-content;
+  margin-top: 8px;
+}
 .mi-agent-workspace-tabs button,
 .mi-agent-workspace-admin button {
   display: flex;
@@ -1440,6 +1445,24 @@
   color: #526d79;
   line-height: 1.45;
 }
+.mi-agent-customer-chat-flow-copy {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 32px;
+}
+.mi-agent-customer-chat-flow-copy > button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+}
+.mi-agent-customer-chat-flow-copy > span {
+  color: #287b76;
+  font-size: 11px;
+}
 .mi-agent-customer-chat-flow-integrity {
   border: 1px solid #d4e0e5;
   border-radius: 4px;
@@ -1713,8 +1736,15 @@
   .mi-agent-workspace-tabs {
     flex-direction: column;
   }
+  .mi-agent-coach-view-tabs {
+    width: 100%;
+    flex-direction: row;
+  }
   .mi-agent-workspace-tabs button {
     justify-content: flex-start;
+  }
+  .mi-agent-coach-view-tabs button {
+    justify-content: center;
   }
   .mi-agent-workspace-admin {
     padding: 12px 0 0;

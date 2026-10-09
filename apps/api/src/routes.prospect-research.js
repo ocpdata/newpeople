@@ -54,10 +54,7 @@ const convertContactSchema = z.object({
   email: z.string().trim().max(190).optional().default(""),
 });
 
-const convertAccountSchema = z.object({
-  duplicateDecision: z.enum(["link_existing", "create_new"]).optional(),
-  duplicateAccountId: z.number().int().positive().optional().nullable(),
-});
+const convertAccountSchema = z.object({});
 
 const convertLeadSchema = z.object({
   accountId: z.number().int().positive().optional().nullable(),
@@ -449,12 +446,10 @@ router.post(
       return res.status(400).json({ message: "Sesion invalida" });
     }
     try {
-      const payload = convertAccountSchema.parse(req.body || {});
+      convertAccountSchema.parse(req.body || {});
       const result = await convertProspectSessionToAccount({
         user: req.user,
         sessionId,
-        duplicateDecision: payload.duplicateDecision,
-        duplicateAccountId: payload.duplicateAccountId,
       });
       if (!result)
         return res.status(404).json({ message: "Prospeccion no encontrada" });

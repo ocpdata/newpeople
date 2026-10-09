@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/db.js", () => ({ query: vi.fn() }));
+const businessRulesDb = vi.hoisted(() => ({
+  query: vi.fn(),
+  withTransaction: vi.fn(),
+}));
 
-import { query } from "../src/db.js";
+vi.mock("../src/db.js", () => businessRulesDb);
+
+import { query, withTransaction } from "../src/db.js";
 import {
   getCoachBusinessRules,
   loadCoachBusinessRules,
@@ -21,6 +26,11 @@ describe("Coach business rules", () => {
       if (sql.includes("SELECT rules_json")) return [];
       return [];
     });
+    withTransaction.mockImplementation(async (work) =>
+      work({
+        query: async (sql, params = []) => [await query(sql, params)],
+      }),
+    );
   });
 
   it("normalizes channel policies without allowing authorization safeguards to be disabled", () => {
@@ -82,19 +92,57 @@ describe("Coach business rules", () => {
     });
   });
 
-  it("allows Cliente existente the same controlled operation kinds as Coach", () => {
+  it("keeps new Customer Existing operations disabled until explicitly configured", () => {
     const coachRules = getCoachBusinessRules({ channel: "coach" });
     const customerRules = getCoachBusinessRules({
       channel: "customer_account",
     });
 
-    expect(customerRules.operationPolicy.allowedKinds).toEqual(
-      coachRules.operationPolicy.allowedKinds,
-    );
+    expect(customerRules.operationPolicy.allowedKinds).toEqual([
+      ...coachRules.operationPolicy.allowedKinds,
+      "create_contact",
+    ]);
     expect(customerRules.operationPolicy.sourceChannel).toBe(
       "customer_account",
     );
     expect(customerRules.scope.accountScoped).toBe(true);
+    expect(customerRules.operationPolicy.allowedKinds).not.toContain(
+      "create_opportunity",
+    );
+    expect(customerRules.operationPolicy.allowedKinds).not.toContain(
+      "link_contact_to_opportunity",
+    );
+
+    const enabledNewOperations = normalizeCoachBusinessRules({
+      channel: "customer_account",
+      overrides: {
+        operationPolicy: {
+          allowedKinds: [
+            ...customerRules.operationPolicy.allowedKinds,
+            "create_opportunity",
+            "link_contact_to_opportunity",
+          ],
+        },
+      },
+    });
+    expect(enabledNewOperations.operationPolicy.allowedKinds).toContain(
+      "create_opportunity",
+    );
+    expect(enabledNewOperations.operationPolicy.allowedKinds).toContain(
+      "link_contact_to_opportunity",
+    );
+
+    const disabledContactCreation = normalizeCoachBusinessRules({
+      channel: "customer_account",
+      overrides: {
+        operationPolicy: {
+          allowedKinds: coachRules.operationPolicy.allowedKinds,
+        },
+      },
+    });
+    expect(disabledContactCreation.operationPolicy.allowedKinds).toEqual(
+      coachRules.operationPolicy.allowedKinds,
+    );
   });
 
   it("normalizes contradictory default active/inactive filters", () => {
@@ -202,6 +250,89 @@ describe("Coach business rules", () => {
       leads: [],
       selectedRecord: null,
     });
+  });
+
+  it("consolidates every Customer Existing process without losing its source snapshot", async () => {
+    const rows = [
+      {
+        id: 1,
+        process_key: "default",
+        rules_json: JSON.stringify({
+          filters: { defaultOpenOnly: true },
+          scope: { accountSearchAllowed: false },
+        }),
+        updated_by_user_id: 11,
+        updated_at: "2026-10-01 00:00:00",
+      },
+      {
+        id: 2,
+        process_key: "account_chat",
+        rules_json: JSON.stringify({
+          filters: {
+            defaultOpenOnly: false,
+            defaultActiveOnly: false,
+          },
+          scope: { contactSearchAllowed: false },
+        }),
+        updated_by_user_id: 22,
+        updated_at: "2026-10-02 00:00:00",
+      },
+      {
+        id: 3,
+        process_key: "legacy_custom",
+        rules_json: JSON.stringify({
+          filters: { defaultInactiveOnly: true },
+        }),
+        updated_by_user_id: 33,
+        updated_at: "2026-10-03 00:00:00",
+      },
+    ];
+    const state = { migration: null, saved: null, rows: [...rows] };
+    query.mockImplementation(async (sql, params = []) => {
+      if (sql.includes("SELECT migration_key")) {
+        return state.migration ? [{ migration_key: state.migration }] : [];
+      }
+      if (sql.includes("FROM mi_coach_business_rules WHERE channel")) {
+        return state.rows;
+      }
+      if (sql.includes("INSERT IGNORE INTO mi_coach_business_rule_migrations")) {
+        state.migration = params[0];
+        state.snapshot = JSON.parse(params[1]);
+        return [];
+      }
+      if (sql.includes("INSERT INTO mi_coach_business_rules")) {
+        state.saved = JSON.parse(params[1]);
+        state.savedUserId = params[2];
+        return [];
+      }
+      if (sql.includes("DELETE FROM mi_coach_business_rules")) {
+        state.rows = state.rows.filter((row) => row.process_key === "default");
+        return [];
+      }
+      if (sql.includes("SELECT rules_json")) {
+        return [{ rules_json: JSON.stringify(state.saved) }];
+      }
+      return [];
+    });
+
+    const rules = await loadCoachBusinessRules({
+      channel: "customer_account",
+      process: "account_chat",
+    });
+
+    expect(rules.process).toBe("default");
+    expect(rules.filters).toMatchObject({
+      defaultOpenOnly: false,
+      defaultInactiveOnly: true,
+    });
+    expect(rules.scope).toMatchObject({
+      accountSearchAllowed: false,
+      contactSearchAllowed: false,
+    });
+    expect(state.savedUserId).toBe(22);
+    expect(state.snapshot).toEqual(rows);
+    expect(state.rows.map((row) => row.process_key)).toEqual(["default"]);
+    expect(state.migration).toBe("customer_account_single_process_v1");
   });
 
   it("persists rules by channel and process and reloads the saved contract", async () => {

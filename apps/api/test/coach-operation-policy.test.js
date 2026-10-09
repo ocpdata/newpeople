@@ -11,6 +11,7 @@ const delegatedPermissionMatrix = [
   ["lead_resolve", ["interacciones.resolve"]],
   ["create_lead", ["interacciones.update"]],
   ["create_contact_mapping", ["contactos.update"]],
+  ["link_contact_to_opportunity", ["oportunidades.update"]],
   ["create_account", ["cuentas.create", "cuentas.request"]],
   ["create_contact", ["contactos.create", "contactos.request"]],
   ["create_opportunity", ["oportunidades.create", "oportunidades.request"]],

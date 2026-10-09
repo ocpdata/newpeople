@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { query } from "../db.js";
+import { query, withTransaction } from "../db.js";
 
 const DEFAULT_RULES = [
   {
@@ -255,6 +255,12 @@ const ADMIN_RULE_ALIGNMENT_MIGRATION = [
 ];
 
 let ensureCoachAdminRulesPromise;
+const CUSTOMER_ACCOUNT_RULE_MIGRATION =
+  "customer_account_single_process_v1";
+
+function canonicalRuleProcess(channel, process = "default") {
+  return channel === "customer_account" ? "default" : process || "default";
+}
 
 async function ensureCoachAdminRulesSchema() {
   if (!ensureCoachAdminRulesPromise) {
@@ -362,6 +368,25 @@ async function ensureCoachAdminRulesSchema() {
           ["align_customer_operations_admin_rules_v3"],
         );
       }
+      await withTransaction(async (connection) => {
+        const [migrations] = await connection.query(
+          `SELECT migration_key FROM mi_coach_admin_rule_migrations
+           WHERE migration_key = ? LIMIT 1`,
+          [CUSTOMER_ACCOUNT_RULE_MIGRATION],
+        );
+        if (migrations.length) return;
+        await connection.query(
+          `UPDATE mi_coach_admin_rules
+           SET process_key = 'default', updated_at = NOW(3)
+           WHERE scope_code = 'channel' AND channel_code = 'customer_account'
+             AND process_key <> 'default'`,
+        );
+        await connection.query(
+          `INSERT IGNORE INTO mi_coach_admin_rule_migrations (migration_key)
+           VALUES (?)`,
+          [CUSTOMER_ACCOUNT_RULE_MIGRATION],
+        );
+      });
     })().catch((error) => {
       ensureCoachAdminRulesPromise = undefined;
       throw error;
@@ -387,6 +412,7 @@ export async function listCoachAdminRules({
   channel,
   process = "default",
 } = {}) {
+  process = canonicalRuleProcess(channel, process);
   await ensureCoachAdminRulesSchema();
   const rows =
     channel === "all"
@@ -414,6 +440,10 @@ export async function listCoachAdminRules({
 export async function createCoachAdminRule({ user, rule }) {
   await ensureCoachAdminRulesSchema();
   const id = randomUUID();
+  const process =
+    rule.scope === "common"
+      ? "default"
+      : canonicalRuleProcess(rule.channel, rule.process);
   await query(
     `INSERT INTO mi_coach_admin_rules
       (id, scope_code, channel_code, process_key, title, instruction, is_enabled,
@@ -423,7 +453,7 @@ export async function createCoachAdminRule({ user, rule }) {
       id,
       rule.scope,
       rule.scope === "common" ? "" : rule.channel,
-      rule.scope === "common" ? "default" : rule.process,
+      process,
       rule.title,
       rule.instruction,
       rule.enabled ? 1 : 0,

@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildAccountHealth,
   buildExpansionHypotheses,
+  classifyCustomerSnapshotDataNeeds,
   deduplicateCustomerIntelligenceFindings,
   filterCustomerOpportunityArtifacts,
   filterCustomerOpportunityHistory,
+  normalizeCustomerSnapshotDataNeeds,
   runAccountIntelligenceAgents,
-  shouldLoadProviderCatalogForQuestion,
   PUBLIC_CONTACT_ROLE_TERMS,
 } from "../src/commercial-intelligence/service.js";
 import {
@@ -19,14 +20,96 @@ import {
 } from "../src/commercial-intelligence/contract.js";
 
 describe("customer intelligence contract", () => {
-  it.each([
-    ["Dame un resumen de la cuenta", false],
-    ["¿Qué productos estaban incluidos en la cotización?", false],
-    ["¿Qué productos complementarios puedo ofrecerle?", true],
-    ["Prepara opciones de expansión para la cuenta", true],
-    ["Analiza una venta cruzada con otro proveedor", true],
-  ])("loads the provider catalog only for explicit expansion requests: %s", (question, expected) => {
-    expect(shouldLoadProviderCatalogForQuestion(question)).toBe(expected);
+  it("asks the AI classifier only about server-authorized optional snapshot domains", async () => {
+    let plannerRequest;
+    const dataNeeds = await classifyCustomerSnapshotDataNeeds({
+      question: "¿Qué contactos históricos participaron en este proyecto?",
+      conversationHistory: [{ role: "user", text: "Lista los contactos" }],
+      selectedContext: { accountId: 7 },
+      user: { id: 5, permissionSet: new Set(["contactos.read"]) },
+      jobId: 81,
+      classifyWithAI: async (request) => {
+        plannerRequest = request;
+        return {
+          domains: ["contact_history", "provider_catalog", "unknown_domain"],
+          confidence: "high",
+        };
+      },
+    });
+
+    expect(plannerRequest.schemaName).toBe(
+      "customer_account_snapshot_data_needs",
+    );
+    expect(plannerRequest.context.availableDataDomains).toEqual([
+      expect.objectContaining({ code: "contact_history" }),
+    ]);
+    expect(plannerRequest.fields[0].items.enum).toEqual(["contact_history"]);
+    expect(dataNeeds).toMatchObject({
+      domains: ["contact_history"],
+      includeContactHistory: true,
+      includeProviderCatalog: false,
+      confidence: "high",
+    });
+  });
+
+  it("does not preload optional data for a low-confidence classification but preserves authorized conversation continuity", async () => {
+    const dataNeeds = await classifyCustomerSnapshotDataNeeds({
+      question: "¿Y los demás?",
+      persistedIntents: ["contact_history"],
+      user: {
+        id: 5,
+        permissionSet: new Set(["contactos.read", "oportunidades.read"]),
+      },
+      classifyWithAI: async () => ({
+        domains: ["provider_catalog"],
+        confidence: "low",
+      }),
+    });
+
+    expect(dataNeeds).toMatchObject({
+      domains: ["contact_history"],
+      includeContactHistory: true,
+      includeProviderCatalog: false,
+      confidence: "low",
+    });
+  });
+
+  it("falls back to baseline snapshot domains if the AI classifier is unavailable", async () => {
+    const dataNeeds = await classifyCustomerSnapshotDataNeeds({
+      question: "¿Qué opciones hay?",
+      user: { id: 5, permissionSet: new Set(["contactos.read", "oportunidades.read"]) },
+      classifyWithAI: async () => {
+        throw new Error("classifier unavailable");
+      },
+    });
+
+    expect(dataNeeds).toMatchObject({
+      domains: [],
+      includeContactHistory: false,
+      includeProviderCatalog: false,
+      confidence: "low",
+    });
+  });
+
+  it("normalizes only known domains at non-low confidence", () => {
+    expect(
+      normalizeCustomerSnapshotDataNeeds(
+        { domains: ["provider_catalog", "unknown_domain"], confidence: "medium" },
+        [],
+        ["provider_catalog"],
+      ),
+    ).toMatchObject({
+      domains: ["provider_catalog"],
+      includeProviderCatalog: true,
+      includeContactHistory: false,
+    });
+    expect(
+      normalizeCustomerSnapshotDataNeeds(
+        { domains: ["provider_catalog"], confidence: "high" },
+        [],
+        [],
+      ).domains,
+    ).toEqual([]);
   });
 
   it("filters active terminal history by its own switch and excludes inactive records", () => {

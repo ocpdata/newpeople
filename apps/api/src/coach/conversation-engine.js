@@ -59,6 +59,43 @@ export function normalizeChannelConversationHistory(
     .slice(-8);
 }
 
+export function summarizeCustomerChatContext(value = {}) {
+  const selectedContext = value.selectedContext || value;
+  const conversationContext = value.conversationContext || {};
+  const routing = value.channelIntentRouting || {};
+  const filters = conversationContext.filters || routing.filters || {};
+  return {
+    accountId:
+      Number(selectedContext.accountId || value.account?.id || value.accountId || 0) ||
+      null,
+    opportunityId:
+      Number(
+        selectedContext.opportunityId ||
+          value.selectedOpportunity?.id ||
+          value.opportunityId ||
+          0,
+      ) || null,
+    contactId:
+      Number(
+        selectedContext.contactId ||
+          value.selectedContact?.id ||
+          value.contactId ||
+          0,
+      ) || null,
+    intents: conversationContext.intents || routing.intents || [],
+    filterNames: Object.keys(filters).filter((key) =>
+      [
+        "opportunityStatus",
+        "stageCode",
+        "closeYear",
+        "periodMonths",
+        "startDate",
+        "endDate",
+      ].includes(key),
+    ),
+  };
+}
+
 function normalizeConversationHistory(history) {
   return normalizeChannelConversationHistory(history, "coach");
 }
@@ -590,16 +627,40 @@ export async function runConversationEngine({
   const summarizeRouting = (routing) => {
     if (!routing) return null;
     return {
+      mode: routing.mode || null,
+      confidence: routing.confidence ?? null,
       intents:
         routing.intents ||
         routing.queries ||
         (routing.intent ? [routing.intent] : []),
       allowedTools: routing.allowedTools || [],
+      operationKind: routing.operationKind || null,
+      clarificationResolution: routing.clarificationResolution || null,
+      validationDiagnostics: routing.validationDiagnostics || null,
+      entities: routing.entities
+        ? Object.fromEntries(
+            [
+              "accountReference",
+              "opportunityReference",
+              "contactReference",
+              "leadReference",
+            ].map((key) => [key, routing.entities[key] || ""]),
+          )
+        : null,
+      activityDraft: routing.activityDraft
+        ? {
+            action: routing.activityDraft.action || "none",
+            actionType: routing.activityDraft.actionType || null,
+            title: routing.activityDraft.title || "",
+            temporalPreference: routing.activityDraft.temporalPreference || "",
+          }
+        : null,
       referenceResolution: routing.referenceResolution
         ? {
             targetType: routing.referenceResolution.targetType || null,
             cardinality: routing.referenceResolution.cardinality || null,
             source: routing.referenceResolution.source || null,
+            candidateKeys: routing.referenceResolution.candidateKeys || [],
           }
         : null,
       filters: Object.fromEntries(
@@ -607,23 +668,22 @@ export async function runConversationEngine({
           safeFilterNames.has(key),
         ),
       ),
-      requiresClarification: Boolean(
-        routing.requiresClarification ||
-        routing.ambiguity?.requiresClarification,
-      ),
+      requiresClarification: Boolean(routing.requiresClarification),
+      ambiguity: routing.ambiguity
+        ? {
+            reason: routing.ambiguity.reason || null,
+            requiresClarification:
+              routing.ambiguity.requiresClarification ?? null,
+            question: routing.ambiguity.clarificationQuestion ||
+              routing.ambiguity.question ||
+              "",
+            missingContext: routing.ambiguity.missingContext || [],
+          }
+        : null,
       missingContext:
         routing.missingContext || routing.ambiguity?.missingContext || [],
     };
   };
-  const summarizeConversationContext = (value = {}) => ({
-    accountId: Number(value.accountId || 0) || null,
-    opportunityId: Number(value.opportunityId || 0) || null,
-    contactId: Number(value.contactId || 0) || null,
-    intents: value.conversationContext?.intents || [],
-    filterNames: Object.keys(value.conversationContext?.filters || {}).filter(
-      (key) => safeFilterNames.has(key),
-    ),
-  });
   const summarizePolicy = () => ({
     channel,
     channelRules: Object.fromEntries(
@@ -664,7 +724,9 @@ export async function runConversationEngine({
           )
             ? request.payload.context.readToolResults.length
             : 0,
-          context: summarizeConversationContext(request.payload?.context || {}),
+          context: summarizeCustomerChatContext(
+            request.payload?.context || {},
+          ),
           validatedRouting: summarizeRouting(
             request.payload?.context?.channelIntentRouting,
           ),
@@ -785,6 +847,7 @@ export async function runConversationEngine({
         conversationContext: context.conversationContext || null,
         availableTools: resolvedTools,
         catalog: channelIntentCatalog,
+        allowedOperationKinds: effectiveOperationPolicy.allowedKinds,
         deadlineAt: turnDeadlineAt,
       };
       const proposedPlan = shouldTrace
@@ -796,7 +859,7 @@ export async function runConversationEngine({
               parentSpanId: traceParentSpanId,
               input: {
                 questionLength: String(question || "").length,
-                context: summarizeConversationContext(context),
+                context: summarizeCustomerChatContext(context),
                 intentCodes: channelIntentCatalog
                   .filter((intent) => intent.enabled !== false)
                   .map((intent) => intent.code),
@@ -826,6 +889,7 @@ export async function runConversationEngine({
           availableTools: resolvedTools,
           context,
           configuration: channelIntentCatalog,
+          allowedOperationKinds: effectiveOperationPolicy.allowedKinds,
           question,
           conversationHistory: channelHistory,
           trustedEntityReferences: context.trustedEntityReferences || [],
@@ -1007,6 +1071,16 @@ export async function runConversationEngine({
       : channel === "customer_account"
         ? []
         : resolvedTools;
+  const channelReadDisposition =
+    channel !== "customer_account"
+      ? null
+      : !channelIntentRouting
+        ? "route_unavailable"
+        : channelIntentRouting.requiresClarification
+          ? "blocked_by_routing_clarification"
+          : routedTools.length
+            ? "authorized_reads_planned"
+            : "no_authorized_reads_planned";
   const readModelInput = {
     user,
     question,
@@ -1035,6 +1109,7 @@ export async function runConversationEngine({
             toolNames: routedTools.map((tool) =>
               typeof tool === "string" ? tool : tool.name,
             ),
+            routeDisposition: channelReadDisposition,
             validatedRouting: summarizeRouting(channelIntentRouting),
             policy: summarizePolicy(),
           },
@@ -1050,6 +1125,7 @@ export async function runConversationEngine({
             .filter(Boolean),
           resultCount: (value.readToolResults || []).length,
           clarificationRequired: Boolean(value.clarification),
+          routeDisposition: channelReadDisposition,
         }),
       )
     : await prepareReadModel(readModelInput);
@@ -1617,6 +1693,7 @@ export async function runConversationEngine({
         used: false,
         reasonCode: null,
       },
+      answerGeneration: adapterDiagnostics.answerGeneration || null,
       evidence: adapterDiagnostics.evidence || null,
       answerAudit: adapterDiagnostics.answerAudit || null,
       agentMetrics: adapterDiagnostics.agentMetrics || [],

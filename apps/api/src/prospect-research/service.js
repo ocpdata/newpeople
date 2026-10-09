@@ -128,6 +128,18 @@ function normalizeCompanyName(value) {
     .replace(/\s+/g, " ");
 }
 
+export function matchesProspectCompanyName(left, right) {
+  const normalizedLeft = normalizeCompanyName(left);
+  const normalizedRight = normalizeCompanyName(right);
+  return Boolean(
+    normalizedLeft &&
+      normalizedRight &&
+      (normalizedLeft === normalizedRight ||
+        normalizedLeft.startsWith(`${normalizedRight} `) ||
+        normalizedRight.startsWith(`${normalizedLeft} `)),
+  );
+}
+
 function normalizeCompanyDomain(value) {
   const normalizedWebsite = normalizeWebsite(value);
   if (!normalizedWebsite) return "";
@@ -262,7 +274,10 @@ async function findProspectAccountDuplicates({ user, session }) {
   const candidates = rows
     .map((row) => {
       const rowDomain = normalizeCompanyDomain(row.website);
-      const nameMatches = normalizeCompanyName(row.name) === normalizedName;
+      const nameMatches = matchesProspectCompanyName(
+        row.name,
+        session.companyName,
+      );
       const domainMatches = Boolean(
         domain && rowDomain && domain === rowDomain,
       );
@@ -2915,8 +2930,6 @@ export async function updateProspectResearchHypothesisStatus({
 export async function convertProspectSessionToAccount({
   user,
   sessionId,
-  duplicateDecision = "",
-  duplicateAccountId = null,
 }) {
   await ensureProspectResearchSchema();
   if (!(await getMiCoachGovernanceSettings()).allowProspectConversion) {
@@ -2949,39 +2962,17 @@ export async function convertProspectSessionToAccount({
       { requiredPermission: "cuentas.read" },
     );
   }
-  const countryId = await resolveCountryId(sessionRow.country);
-  if (
-    duplicateDecision === "link_existing" &&
-    Number.isInteger(Number(duplicateAccountId))
-  ) {
-    const duplicate = duplicateReview.candidates.find(
-      (candidate) => Number(candidate.id) === Number(duplicateAccountId),
-    );
-    if (!duplicate) {
-      throw createHttpError(
-        404,
-        "La cuenta duplicada seleccionada ya no esta disponible",
-      );
-    }
-    await query(
-      `UPDATE prospect_research_sessions SET converted_account_id = ?, updated_at = NOW(3) WHERE id = ?`,
-      [Number(duplicate.id), Number(sessionRow.id)],
-    );
-    return { accountId: Number(duplicate.id), reused: true, duplicate };
-  }
-  if (duplicateDecision === "link_existing") {
-    throw createHttpError(
-      400,
-      "Selecciona una cuenta duplicada valida para vincular",
-    );
-  }
-  if (duplicateReview.candidates.length && duplicateDecision !== "create_new") {
+  if (duplicateReview.candidates.length) {
     throw createHttpError(
       409,
-      "Revisa las posibles cuentas duplicadas antes de crear una cuenta nueva",
-      { duplicateCandidates: duplicateReview.candidates },
+      "No se puede crear una cuenta desde esta prospección porque se encontraron posibles duplicados",
+      {
+        duplicateCandidates: duplicateReview.candidates,
+        duplicateReview,
+      },
     );
   }
+  const countryId = await resolveCountryId(sessionRow.country);
   if (!countryId) {
     throw createHttpError(
       400,

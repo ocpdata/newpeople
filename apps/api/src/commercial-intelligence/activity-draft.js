@@ -11,6 +11,8 @@ export function buildCustomerActivityDraftResponse({
   const draft = routing?.activityDraft;
   if (
     !draft ||
+    (routing.operationKind &&
+      !["none", "activity"].includes(routing.operationKind)) ||
     !["prepare", "continue", "discard"].includes(draft.action) ||
     routing.mode !== "operation" ||
     routing.requiresClarification ||

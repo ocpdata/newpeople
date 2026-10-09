@@ -6,10 +6,10 @@ import {
   ArrowRight,
   CheckCircle2,
   Clock3,
+  Copy,
   Database,
   LayoutDashboard,
   Lightbulb,
-  MessageCircle,
   Pencil,
   Search,
   Settings2,
@@ -580,7 +580,25 @@ function countCustomerChatSpans(spans) {
   );
 }
 
+function buildCustomerChatObservedFlowExport(debug, transportTrace) {
+  const exchanges = Array.isArray(transportTrace?.exchanges)
+    ? transportTrace.exchanges
+    : [];
+  return {
+    schemaVersion: "customer-chat-observed-flow.v1",
+    jobId: Number(debug?.currentTurn?.jobId || 0) || null,
+    chatSessionId: Number(debug?.currentTurn?.chatSessionId || 0) || null,
+    serverTrace: debug || null,
+    browserTrace: {
+      available: Array.isArray(transportTrace?.exchanges),
+      source: transportTrace?.source || null,
+      exchanges,
+    },
+  };
+}
+
 function CustomerChatDetailedTrace({ debug, transportTrace }) {
+  const [copyStatus, setCopyStatus] = useState("");
   const turnDebug = debug || {};
   const executionEvents = Array.isArray(turnDebug.executionTrace)
     ? turnDebug.executionTrace
@@ -630,6 +648,23 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
       children: prepareSpans(span.children),
     }));
   const renderedWorkerSpans = prepareSpans(workerSpans);
+  const copyObservedFlow = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API no disponible");
+      }
+      await navigator.clipboard.writeText(
+        JSON.stringify(
+          buildCustomerChatObservedFlowExport(turnDebug, transportTrace),
+          null,
+          2,
+        ),
+      );
+      setCopyStatus("Flujo copiado");
+    } catch {
+      setCopyStatus("No se pudo copiar el flujo");
+    }
+  };
 
   return (
     <details className="mi-agent-customer-chat-detailed-trace">
@@ -638,6 +673,20 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
         {exchanges.length} intercambios del navegador
       </summary>
       <div className="mi-agent-customer-chat-detailed-trace-content">
+        <div className="mi-agent-customer-chat-flow-copy">
+          <button
+            type="button"
+            className="btn-secondary"
+            aria-label="Copiar flujo del job"
+            title="Copiar flujo del job"
+            onClick={copyObservedFlow}
+          >
+            <Copy size={14} aria-hidden="true" />
+          </button>
+          <span role="status" aria-live="polite">
+            {copyStatus}
+          </span>
+        </div>
         <p>
           Son dos carriles con relojes independientes. Los retornos se enlazan
           con su llamada; las llamadas hijas aparecen anidadas. Los datos CRM se
@@ -1134,6 +1183,7 @@ const COACH_HANDOFF_OPERATION_KINDS = new Set([
   "create_account",
   "create_contact",
   "create_opportunity",
+  "link_contact_to_opportunity",
   "create_lead",
   "create_contact_mapping",
   "create_quotation",
@@ -1244,6 +1294,13 @@ const COACH_INTENT_PROCESS_OPTIONS = [
 ];
 
 function getCoachProcessOption(process, channel = "coach") {
+  if (channel === "customer_account") {
+    return {
+      label: "Conversación de cliente existente",
+      description:
+        "Se aplica a todas las solicitudes de la cuenta seleccionada.",
+    };
+  }
   if (process === "default") {
     return {
       label: "Configuración predeterminada del canal",
@@ -1256,13 +1313,6 @@ function getCoachProcessOption(process, channel = "coach") {
       label: "Conversación de cuenta nueva",
       description:
         "Abarca la conversación del canal de prospección y sus límites de datos y operaciones.",
-    };
-  }
-  if (channel === "customer_account") {
-    return {
-      label: "Conversación de cliente existente",
-      description:
-        "Abarca la conversación vinculada a la cuenta seleccionada y sus límites de datos y operaciones.",
     };
   }
   return (
@@ -1288,26 +1338,52 @@ const COACH_OPPORTUNITY_STAGE_OPTIONS = [
 
 const COACH_OPERATION_OPTIONS = {
   coach: [
-    ["activity", "Actividad"],
-    ["stage_answer", "Respuesta de etapa"],
-    ["lead_call_outcome", "Resultado de llamada de lead"],
-    ["account_field", "Campo de cuenta"],
-    ["contact_field", "Campo de contacto"],
-    ["opportunity_field", "Campo de oportunidad"],
+    ["activity", "Preparar borrador de actividad"],
+    ["stage_answer", "Actualizar respuesta de etapa"],
+    ["lead_call_outcome", "Registrar resultado de llamada de un lead"],
+    ["account_field", "Actualizar datos de la cuenta"],
+    ["contact_field", "Actualizar datos de un contacto existente"],
+    ["opportunity_field", "Actualizar datos de una oportunidad"],
   ],
   customer_account: [
-    ["activity", "Actividad"],
-    ["stage_answer", "Respuesta de etapa"],
-    ["lead_call_outcome", "Resultado de llamada de lead"],
-    ["account_field", "Campo de cuenta"],
-    ["contact_field", "Campo de contacto"],
-    ["opportunity_field", "Campo de oportunidad"],
+    ["activity", "Preparar borrador de actividad"],
+    ["stage_answer", "Actualizar respuesta de etapa"],
+    ["lead_call_outcome", "Registrar resultado de llamada de un lead"],
+    ["account_field", "Actualizar datos de la cuenta"],
+    ["contact_field", "Actualizar datos de un contacto existente"],
+    ["create_contact", "Crear contacto en la cuenta actual"],
+    ["opportunity_field", "Actualizar datos de una oportunidad"],
+    ["create_opportunity", "Crear oportunidad en esta cuenta"],
+    [
+      "link_contact_to_opportunity",
+      "Vincular contacto existente a una oportunidad",
+    ],
   ],
   prospect: [
     ["create_account", "Crear cuenta"],
     ["create_contact", "Crear contacto"],
     ["create_opportunity", "Crear oportunidad"],
   ],
+};
+
+const COACH_OPERATION_DESCRIPTIONS = {
+  activity:
+    "Crea un borrador; las continuaciones completan el mismo borrador. No edita una actividad ya registrada.",
+  stage_answer:
+    "Cambia una respuesta de la etapa actual, no la etapa comercial.",
+  lead_call_outcome:
+    "Registra el resultado de una llamada de un lead autorizado.",
+  account_field: "Propone actualizar campos permitidos de la cuenta.",
+  contact_field:
+    "Propone actualizar campos permitidos de un contacto ya registrado.",
+  create_contact:
+    "Propone un contacto nuevo asociado a la cuenta seleccionada.",
+  opportunity_field:
+    "Propone actualizar campos permitidos de una oportunidad existente.",
+  create_opportunity:
+    "Propone una oportunidad nueva bajo la cuenta seleccionada; se completa y guarda en Oportunidades.",
+  link_contact_to_opportunity:
+    "Propone cambiar el contacto asociado; ambos registros deben pertenecer a esta cuenta.",
 };
 
 const COACH_CONFIDENCE_LABELS = {
@@ -1337,16 +1413,17 @@ const COACH_OPERATION_STATUS_META = {
 };
 
 const COACH_OPERATION_LABELS = {
-  activity: "Registrar actividad",
+  activity: "Preparar borrador de actividad",
   stage_answer: "Actualizar respuesta de etapa",
-  opportunity_field: "Actualizar oportunidad",
-  account_field: "Actualizar cuenta",
-  contact_field: "Actualizar contacto",
+  opportunity_field: "Actualizar datos de oportunidad",
+  account_field: "Actualizar datos de cuenta",
+  contact_field: "Actualizar datos de contacto",
   lead_call_outcome: "Registrar resultado del lead",
   lead_resolve: "Resolver lead",
   create_account: "Crear cuenta",
   create_contact: "Crear contacto",
-  create_opportunity: "Crear oportunidad",
+  create_opportunity: "Crear oportunidad en esta cuenta",
+  link_contact_to_opportunity: "Vincular contacto a oportunidad",
   create_lead: "Crear lead",
   create_contact_mapping: "Crear mapeo de contacto",
   create_quotation: "Crear cotización",
@@ -2171,7 +2248,10 @@ function formatCoachOperationSummary(operation) {
   if (operation?.kind === "lead_resolve") return "Resolver y materializar lead";
   if (operation?.kind === "create_account") return "Crear cuenta";
   if (operation?.kind === "create_contact") return "Crear contacto";
-  if (operation?.kind === "create_opportunity") return "Crear oportunidad";
+  if (operation?.kind === "create_opportunity")
+    return operation.title || "Crear oportunidad en esta cuenta";
+  if (operation?.kind === "link_contact_to_opportunity")
+    return operation.title || "Vincular contacto existente a una oportunidad";
   return `${formatCoachFieldLabel(operation?.field)}: ${operation?.value ?? "Valor pendiente"}`;
 }
 
@@ -2277,7 +2357,6 @@ export default function MiAgentPage({
     () =>
       window.localStorage.getItem(COACH_FOUNDATION_VISIBILITY_KEY) === "true",
   );
-  const [coachMetrics, setCoachMetrics] = useState(null);
   const [coachActionDraft, setCoachActionDraft] = useState(null);
   const [coachOperationDraft, setCoachOperationDraft] = useState(null);
   const [
@@ -2398,6 +2477,8 @@ export default function MiAgentPage({
   const [prospectChatLoading, setProspectChatLoading] = useState(false);
   const [prospectPreparing, setProspectPreparing] = useState(false);
   const [prospectError, setProspectError] = useState("");
+  const [prospectConversionConfirmation, setProspectConversionConfirmation] =
+    useState("");
   const [prospectFindingUpdatingId, setProspectFindingUpdatingId] =
     useState(null);
   const [prospectConverting, setProspectConverting] = useState("");
@@ -2642,12 +2723,8 @@ export default function MiAgentPage({
     setLoading(true);
     setError("");
     try {
-      const [{ data }, metricsResponse] = await Promise.all([
-        api.get("/api/mi-agent/context"),
-        api.get("/api/mi-agent/coach/metrics").catch(() => ({ data: null })),
-      ]);
+      const { data } = await api.get("/api/mi-agent/context");
       setDashboard(data);
-      setCoachMetrics(metricsResponse.data);
       const accountsResponse = await api.get("/api/accounts?activeOnly=true");
       setCoachAccounts(
         Array.isArray(accountsResponse.data) ? accountsResponse.data : [],
@@ -3705,6 +3782,14 @@ export default function MiAgentPage({
     if (operation?.kind === "lead_call_outcome") return canUpdateLeads;
     if (operation?.kind === "account_field") return canUpdateAccounts;
     if (operation?.kind === "contact_field") return canUpdateContacts;
+    if (operation?.kind === "create_contact") return canCreateContacts;
+    if (operation?.kind === "create_opportunity")
+      return canCreateOpportunities;
+    if (operation?.kind === "link_contact_to_opportunity")
+      return (
+        canCreateActions &&
+        Boolean(customerSnapshot?.permissions?.canReadContacts)
+      );
     if (["stage_answer", "opportunity_field"].includes(operation?.kind))
       return canCreateActions;
     return false;
@@ -4170,17 +4255,14 @@ export default function MiAgentPage({
     }
   }
 
-  async function convertProspectAccount(
-    duplicateDecision = "",
-    duplicateAccountId = null,
-  ) {
-    if (!prospectSession?.id) return;
+  async function convertProspectAccount() {
+    if (!prospectSession?.id) return false;
     setProspectConverting("account");
     setProspectError("");
     try {
       const response = await api.post(
         `/api/prospect-research/sessions/${prospectSession.id}/convert-to-account`,
-        { duplicateDecision, duplicateAccountId },
+        {},
       );
       const accountId = Number(response.data?.accountId || 0);
       if (!accountId) throw new Error("No se pudo crear la cuenta");
@@ -4188,15 +4270,31 @@ export default function MiAgentPage({
       setProspectSession((current) =>
         current ? { ...current, convertedAccountId: accountId } : current,
       );
-      setCoachNotice(
-        response.data?.reused
-          ? "Cuenta existente vinculada a la prospección."
-          : "Cuenta creada desde la prospección.",
-      );
+      setCoachNotice("Cuenta creada desde la prospección.");
+      setProspectConversionConfirmation("");
+      return true;
     } catch (requestError) {
+      const duplicateCandidates =
+        requestError.response?.data?.duplicateCandidates;
+      if (Array.isArray(duplicateCandidates) && duplicateCandidates.length) {
+        setProspectSession((current) =>
+          current
+            ? {
+                ...current,
+                duplicateReview: {
+                  ...current.duplicateReview,
+                  completed: true,
+                  candidates: duplicateCandidates,
+                },
+              }
+            : current,
+        );
+        setProspectConversionConfirmation("");
+      }
       setProspectError(
         getApiErrorMessage(requestError, "No fue posible crear la cuenta"),
       );
+      return false;
     } finally {
       setProspectConverting("");
     }
@@ -4235,7 +4333,7 @@ export default function MiAgentPage({
   }
 
   async function convertProspectLead() {
-    if (!prospectSession?.id) return;
+    if (!prospectSession?.id) return false;
     setProspectConverting("lead");
     setProspectError("");
     try {
@@ -4252,12 +4350,23 @@ export default function MiAgentPage({
       if (!interactionId) throw new Error("No se pudo crear el lead");
       setProspectConvertedLeadId(interactionId);
       setCoachNotice("Lead creado desde la prospección.");
+      setProspectConversionConfirmation("");
+      return true;
     } catch (requestError) {
       setProspectError(
         getApiErrorMessage(requestError, "No fue posible crear el lead"),
       );
+      return false;
     } finally {
       setProspectConverting("");
+    }
+  }
+
+  async function confirmProspectConversion() {
+    if (prospectConversionConfirmation === "account") {
+      await convertProspectAccount();
+    } else if (prospectConversionConfirmation === "lead") {
+      await convertProspectLead();
     }
   }
 
@@ -4798,7 +4907,10 @@ export default function MiAgentPage({
         "/api/commercial-intelligence/governance/business-rules",
         {
           channel: coachBusinessRulesChannel,
-          process: coachBusinessRulesProcess,
+          process:
+            coachBusinessRulesChannel === "customer_account"
+              ? "default"
+              : coachBusinessRulesProcess,
           rules,
         },
       );
@@ -4835,6 +4947,7 @@ export default function MiAgentPage({
     channel = coachBusinessRulesChannel,
     process = coachBusinessRulesProcess,
   ) {
+    if (channel === "customer_account") process = "default";
     setCoachGovernanceSaving(true);
     setError("");
     try {
@@ -4867,7 +4980,10 @@ export default function MiAgentPage({
     try {
       const params = new URLSearchParams({
         channel: coachBusinessRulesChannel,
-        process: coachBusinessRulesProcess,
+        process:
+          coachBusinessRulesChannel === "customer_account"
+            ? "default"
+            : coachBusinessRulesProcess,
       });
       const response = await api.delete(
         `/api/commercial-intelligence/governance/business-rules?${params}`,
@@ -4893,6 +5009,7 @@ export default function MiAgentPage({
     channel = "all",
     process = coachBusinessRulesProcess,
   ) {
+    if (channel === "customer_account") process = "default";
     setCoachGovernanceSaving(true);
     setError("");
     try {
@@ -4915,7 +5032,10 @@ export default function MiAgentPage({
     setCoachAdminRuleDraft({
       scope,
       channel: scope === "channel" ? coachBusinessRulesChannel : null,
-      process: scope === "channel" ? coachBusinessRulesProcess : "default",
+      process:
+        scope === "channel" && coachBusinessRulesChannel !== "customer_account"
+          ? coachBusinessRulesProcess
+          : "default",
       title: "",
       instruction: "",
       enabled: true,
@@ -5490,6 +5610,9 @@ export default function MiAgentPage({
                   ? canResolveLeads
                   : operation?.kind === "create_opportunity"
                     ? canCreateOpportunities
+                    : operation?.kind === "link_contact_to_opportunity"
+                      ? canCreateActions &&
+                        Boolean(customerSnapshot?.permissions?.canReadContacts)
                     : operation?.kind === "activity"
                       ? canUpdateCalendar
                       : operation?.kind === "create_lead"
@@ -6032,7 +6155,9 @@ export default function MiAgentPage({
   const coachBusinessRulesSourceLabel =
     coachBusinessRulesSource?.hasSavedOverride &&
     coachBusinessRulesSource.sourceProcess === coachBusinessRulesProcess
-      ? coachBusinessRulesProcess === "default"
+      ? coachBusinessRulesChannel === "customer_account"
+        ? "Hay una configuración guardada para toda la conversación de cliente existente."
+        : coachBusinessRulesProcess === "default"
         ? "Hay una configuración predeterminada guardada para este canal."
         : "Hay ajustes propios guardados para este tipo de consulta."
       : coachBusinessRulesSource?.inheritedFromDefault
@@ -6089,28 +6214,23 @@ export default function MiAgentPage({
           aria-label="Espacios de Mi Coach"
         >
           {canUseCoach ? (
-            <>
-              <button
-                type="button"
-                className={activeWorkspace === "summary" ? "is-active" : ""}
-                aria-current={
-                  activeWorkspace === "summary" ? "page" : undefined
-                }
-                onClick={() => setActiveWorkspace("summary")}
-              >
-                <LayoutDashboard size={16} aria-hidden="true" />
-                Resumen
-              </button>
-              <button
-                type="button"
-                className={activeWorkspace === "coach" ? "is-active" : ""}
-                aria-current={activeWorkspace === "coach" ? "page" : undefined}
-                onClick={() => setActiveWorkspace("coach")}
-              >
-                <MessageCircle size={16} aria-hidden="true" />
-                Coach
-              </button>
-            </>
+            <button
+              type="button"
+              className={
+                activeWorkspace === "summary" || activeWorkspace === "coach"
+                  ? "is-active"
+                  : ""
+              }
+              aria-current={
+                activeWorkspace === "summary" || activeWorkspace === "coach"
+                  ? "page"
+                  : undefined
+              }
+              onClick={() => setActiveWorkspace("summary")}
+            >
+              <LayoutDashboard size={16} aria-hidden="true" />
+              Mi Coach
+            </button>
           ) : null}
           {canReadCustomerIntelligence ? (
             <button
@@ -6174,6 +6294,31 @@ export default function MiAgentPage({
           </nav>
         ) : null}
       </div>
+
+      {canUseCoach &&
+      (activeWorkspace === "summary" || activeWorkspace === "coach") ? (
+        <nav
+          className="mi-agent-workspace-tabs mi-agent-coach-view-tabs"
+          aria-label="Vistas de Mi Coach"
+        >
+          <button
+            type="button"
+            className={activeWorkspace === "summary" ? "is-active" : ""}
+            aria-current={activeWorkspace === "summary" ? "page" : undefined}
+            onClick={() => setActiveWorkspace("summary")}
+          >
+            Resumen
+          </button>
+          <button
+            type="button"
+            className={activeWorkspace === "coach" ? "is-active" : ""}
+            aria-current={activeWorkspace === "coach" ? "page" : undefined}
+            onClick={() => setActiveWorkspace("coach")}
+          >
+            Conversación
+          </button>
+        </nav>
+      ) : null}
 
       {activeWorkspace === "chat-diagnostics" && canDiagnoseCustomerChats ? (
         <section className="mi-agent-workspace-panel mi-agent-governance-panel">
@@ -6580,50 +6725,8 @@ export default function MiAgentPage({
                     >
                       Volver al ámbito general
                     </button>
-                  ) : (
-                    <span>
-                      Menciona una entidad en tu pregunta para centrar el
-                      análisis.
-                    </span>
-                  )}
+                  ) : null}
                 </div>
-                {coachMetrics ? (
-                  <div
-                    className="mi-agent-coach-metrics"
-                    aria-label="Actividad del Coach durante los últimos 30 días"
-                  >
-                    <div>
-                      <strong>Actividad del Coach</strong>
-                      <small>Últimos 30 días</small>
-                    </div>
-                    <dl>
-                      <div>
-                        <dt>Consultas</dt>
-                        <dd>{coachMetrics.requests}</dd>
-                      </div>
-                      <div>
-                        <dt>Propuestas</dt>
-                        <dd>{coachMetrics.proposed || 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Decididas</dt>
-                        <dd>{coachMetrics.decided || 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Aprobadas</dt>
-                        <dd>{coachMetrics.approved || 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Rechazadas</dt>
-                        <dd>{coachMetrics.rejected || 0}</dd>
-                      </div>
-                      <div>
-                        <dt>Completadas</dt>
-                        <dd>{coachMetrics.completed || 0}</dd>
-                      </div>
-                    </dl>
-                  </div>
-                ) : null}
                 <div className="mi-agent-coach-quick-questions">
                   <strong>Preguntas rápidas</strong>
                   <div className="mi-agent-coach-suggestions">
@@ -10619,8 +10722,8 @@ export default function MiAgentPage({
                 ) : prospectSession.duplicateReview.candidates.length ? (
                   <>
                     <p>
-                      Hay coincidencias por nombre o dominio. Revisa en el
-                      módulo de cuentas y elige una decisión explícita.
+                      Se encontraron posibles cuentas existentes. No se creará
+                      ni se vinculará una cuenta desde esta prospección.
                     </p>
                     <div className="mi-agent-prospect-card-grid">
                       {prospectSession.duplicateReview.candidates.map(
@@ -10637,41 +10740,10 @@ export default function MiAgentPage({
                                 ? "dominio"
                                 : "nombre y país"}
                             </small>
-                            <button
-                              type="button"
-                              className="btn-secondary"
-                              onClick={() =>
-                                convertProspectAccount(
-                                  "link_existing",
-                                  candidate.id,
-                                )
-                              }
-                              disabled={
-                                !canUpdateProspecting ||
-                                !canCreateAccounts ||
-                                prospectConverting === "account" ||
-                                Boolean(prospectSession.convertedAccountId)
-                              }
-                            >
-                              Vincular esta cuenta
-                            </button>
                           </article>
                         ),
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="mi-agent-secondary-button"
-                      onClick={() => convertProspectAccount("create_new")}
-                      disabled={
-                        !canUpdateProspecting ||
-                        !canCreateAccounts ||
-                        prospectConverting === "account" ||
-                        Boolean(prospectSession.convertedAccountId)
-                      }
-                    >
-                      Crear una cuenta nueva de todos modos
-                    </button>
                   </>
                 ) : (
                   <p>
@@ -10681,30 +10753,33 @@ export default function MiAgentPage({
                 )}
               </div>
               <div className="mi-agent-prospect-conversion-actions">
-                <button
-                  type="button"
-                  className="mi-agent-primary-button"
-                  onClick={() => convertProspectAccount("create_new")}
-                  disabled={
-                    !canUpdateProspecting ||
-                    !canCreateAccounts ||
-                    prospectConverting === "account" ||
-                    !prospectSession.duplicateReview?.completed ||
-                    !prospectSession.duplicateReview?.countryResolved ||
-                    prospectSession.duplicateReview.candidates.length > 0 ||
-                    Boolean(
-                      prospectConvertedAccountId ||
-                      prospectSession.convertedAccountId,
-                    )
-                  }
-                >
-                  {prospectConvertedAccountId ||
-                  prospectSession.convertedAccountId
-                    ? "Cuenta creada/vinculada"
-                    : prospectConverting === "account"
-                      ? "Creando cuenta..."
-                      : "Crear cuenta revisada"}
-                </button>
+                {!prospectSession.duplicateReview?.candidates?.length ? (
+                  <button
+                    type="button"
+                    className="mi-agent-primary-button"
+                    onClick={() =>
+                      setProspectConversionConfirmation("account")
+                    }
+                    disabled={
+                      !canUpdateProspecting ||
+                      !canCreateAccounts ||
+                      prospectConverting === "account" ||
+                      !prospectSession.duplicateReview?.completed ||
+                      !prospectSession.duplicateReview?.countryResolved ||
+                      Boolean(
+                        prospectConvertedAccountId ||
+                        prospectSession.convertedAccountId,
+                      )
+                    }
+                  >
+                    {prospectConvertedAccountId ||
+                    prospectSession.convertedAccountId
+                      ? "Cuenta creada"
+                      : prospectConverting === "account"
+                        ? "Creando cuenta..."
+                        : "Crear cuenta revisada"}
+                  </button>
+                ) : null}
                 {prospectConvertedLeadId ? (
                   <span className="mi-agent-prospect-success" role="status">
                     <CheckCircle2 size={16} aria-hidden="true" />
@@ -10714,7 +10789,9 @@ export default function MiAgentPage({
                   <button
                     type="button"
                     className="mi-agent-secondary-button"
-                    onClick={convertProspectLead}
+                    onClick={() =>
+                      setProspectConversionConfirmation("lead")
+                    }
                     disabled={
                       !canUpdateProspecting ||
                       !canCreateLeads ||
@@ -11928,54 +12005,60 @@ export default function MiAgentPage({
                       <option value="prospect">Prospección</option>
                     </select>
                   </label>
-                  <label>
-                    Tipo de consulta
-                    <select
-                      value={coachBusinessRulesProcess}
-                      onChange={(event) => {
-                        const process = event.target.value;
-                        setCoachBusinessRulesProcess(process);
-                        loadCoachAdminRules("all", process);
-                        loadCoachBusinessRulesForScope(
-                          coachBusinessRulesChannel,
-                          process,
-                        );
-                      }}
-                    >
-                      <option value="default">
-                        Configuración predeterminada del canal
-                      </option>
-                      {coachBusinessRulesChannel === "coach"
-                        ? COACH_INTENT_PROCESS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))
-                        : [
-                            coachBusinessRulesChannel === "prospect"
-                              ? "prospect_chat"
-                              : "account_chat",
-                          ].map((process) => (
-                            <option key={process} value={process}>
-                              {
-                                getCoachProcessOption(
-                                  process,
-                                  coachBusinessRulesChannel,
-                                ).label
-                              }
-                            </option>
-                          ))}
-                    </select>
-                    <small className="mi-agent-scope-help">
-                      {selectedCoachProcessOption.description}
-                    </small>
-                  </label>
+                  {coachBusinessRulesChannel === "customer_account" ? (
+                    <div className="mi-agent-governance-process-fixed">
+                      <span>Tipo de consulta</span>
+                      <strong>{selectedCoachProcessOption.label}</strong>
+                      <small className="mi-agent-scope-help">
+                        {selectedCoachProcessOption.description}
+                      </small>
+                    </div>
+                  ) : (
+                    <label>
+                      Tipo de consulta
+                      <select
+                        value={coachBusinessRulesProcess}
+                        onChange={(event) => {
+                          const process = event.target.value;
+                          setCoachBusinessRulesProcess(process);
+                          loadCoachAdminRules("all", process);
+                          loadCoachBusinessRulesForScope(
+                            coachBusinessRulesChannel,
+                            process,
+                          );
+                        }}
+                      >
+                        <option value="default">
+                          Configuración predeterminada del canal
+                        </option>
+                        {coachBusinessRulesChannel === "coach"
+                          ? COACH_INTENT_PROCESS_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))
+                          : ["prospect_chat"].map((process) => (
+                              <option key={process} value={process}>
+                                {
+                                  getCoachProcessOption(
+                                    process,
+                                    coachBusinessRulesChannel,
+                                  ).label
+                                }
+                              </option>
+                            ))}
+                      </select>
+                      <small className="mi-agent-scope-help">
+                        {selectedCoachProcessOption.description}
+                      </small>
+                    </label>
+                  )}
                 </div>
 
                 <p className="mi-agent-scope-explainer">
-                  La selección de tipo de consulta solo determina a qué
-                  solicitudes aplican estos ajustes. No selecciona una etapa
-                  comercial ni cambia los controles globales del pipeline.
+                  {coachBusinessRulesChannel === "customer_account"
+                    ? "Esta configuración única se aplica a toda la conversación de cliente existente."
+                    : "La selección de tipo de consulta solo determina a qué solicitudes aplican estos ajustes. No selecciona una etapa comercial ni cambia los controles globales del pipeline."}
                 </p>
 
                 <section className="mi-agent-domain-policy-subsection">
@@ -12049,22 +12132,31 @@ export default function MiAgentPage({
                       {(
                         COACH_OPERATION_OPTIONS[coachBusinessRulesChannel] || []
                       ).map(([kind, label]) => (
-                        <label key={kind}>
-                          <input
-                            type="checkbox"
-                            checked={(
-                              selectedCoachBusinessRules.operationPolicy
-                                ?.allowedKinds || []
-                            ).includes(kind)}
-                            onChange={(event) =>
-                              updateCoachOperationKind(
-                                kind,
-                                event.target.checked,
-                              )
-                            }
-                          />
-                          {label}
-                        </label>
+                        <div
+                          className="mi-agent-operation-policy-option"
+                          key={kind}
+                        >
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={(
+                                selectedCoachBusinessRules.operationPolicy
+                                  ?.allowedKinds || []
+                              ).includes(kind)}
+                              onChange={(event) =>
+                                updateCoachOperationKind(
+                                  kind,
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                            {label}
+                          </label>
+                          <small>
+                            {COACH_OPERATION_DESCRIPTIONS[kind] ||
+                              "La operación requiere revisión y confirmación."}
+                          </small>
+                        </div>
                       ))}
                     </fieldset>
                   </div>
@@ -12735,6 +12827,108 @@ export default function MiAgentPage({
         </div>
       ) : null}
 
+      {prospectConversionConfirmation ? (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={
+            prospectConversionConfirmation === "account"
+              ? "Confirmar creación de cuenta"
+              : "Confirmar creación de lead"
+          }
+        >
+          <div className="modal-dialog mi-agent-coach-action-dialog">
+            <h3 className="modal-title">
+              {prospectConversionConfirmation === "account"
+                ? "Confirmar creación de cuenta"
+                : "Confirmar creación de lead"}
+            </h3>
+            {prospectConversionConfirmation === "account" ? (
+              <>
+                <p className="modal-message">
+                  Se creará una cuenta nueva en el CRM con estos datos:
+                </p>
+                <dl className="mi-agent-prospect-confirmation-details">
+                  <div>
+                    <dt>Empresa</dt>
+                    <dd>{prospectSession?.companyName || "Sin nombre"}</dd>
+                  </div>
+                  <div>
+                    <dt>País</dt>
+                    <dd>{prospectSession?.country || "Sin país"}</dd>
+                  </div>
+                  {prospectSession?.website ? (
+                    <div>
+                      <dt>Sitio web</dt>
+                      <dd>{prospectSession.website}</dd>
+                    </div>
+                  ) : null}
+                  {prospectSession?.industry ? (
+                    <div>
+                      <dt>Industria</dt>
+                      <dd>{prospectSession.industry}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+                <p className="modal-message">
+                  Los hallazgos y las hipótesis de la investigación no se
+                  crearán como registros CRM.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="modal-message">
+                  Se registrará un lead de prospección para{" "}
+                  <strong>{prospectSession?.companyName || "esta empresa"}</strong>
+                  {prospectSession?.country
+                    ? `, en ${prospectSession.country}`
+                    : ""}
+                  {prospectSession?.industry
+                    ? `, industria ${prospectSession.industry}`
+                    : ""}.
+                </p>
+                <p className="modal-message">
+                  {prospectConvertedAccountId ||
+                  prospectSession?.convertedAccountId
+                    ? "El lead quedará asociado a la cuenta creada en esta prospección."
+                    : "El lead quedará sin asociar a una cuenta. No se vinculará a una cuenta existente."}
+                </p>
+              </>
+            )}
+            {prospectError ? (
+              <p className="form-error" role="alert">
+                {prospectError}
+              </p>
+            ) : null}
+            <div className="modal-buttons">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setProspectConversionConfirmation("")}
+                disabled={Boolean(prospectConverting)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={confirmProspectConversion}
+                disabled={Boolean(prospectConverting)}
+              >
+                {prospectConverting === "account"
+                  ? "Creando cuenta..."
+                  : prospectConverting === "lead"
+                    ? "Creando lead..."
+                    : prospectConversionConfirmation === "account"
+                      ? "Confirmar y crear cuenta"
+                      : "Confirmar y crear lead"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {coachActionDraft ? (
         <div
           className="modal-overlay"
@@ -12923,7 +13117,16 @@ export default function MiAgentPage({
           className="modal-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label="Confirmar cambio del Coach"
+          aria-label={
+            coachOperationDraft.operation.kind === "create_contact"
+              ? "Confirmar creación de contacto"
+              : coachOperationDraft.operation.kind === "create_opportunity"
+                ? "Confirmar creación de oportunidad"
+                : coachOperationDraft.operation.kind ===
+                    "link_contact_to_opportunity"
+                  ? "Confirmar vínculo de contacto a oportunidad"
+              : "Confirmar cambio del Coach"
+          }
         >
           <div
             ref={coachDialogRef}
@@ -12936,14 +13139,28 @@ export default function MiAgentPage({
             }}
           >
             <h3 className="modal-title">
-              {coachDraftMissingFields.length
+              {coachOperationDraft.operation.kind === "create_contact"
+                ? "Confirmar creación de contacto"
+                : coachOperationDraft.operation.kind === "create_opportunity"
+                  ? "Confirmar creación de oportunidad"
+                  : coachOperationDraft.operation.kind ===
+                      "link_contact_to_opportunity"
+                    ? "Confirmar vínculo de contacto"
+                : coachDraftMissingFields.length
                 ? "Completar operación"
                 : coachOperationDraft.persistenceStatus === "failed"
                   ? "Corregir operación"
                   : "Confirmar cambio"}
             </h3>
             <p className="modal-message">
-              {coachDraftMissingFields.length
+              {coachOperationDraft.operation.kind === "create_contact"
+                ? "Revisa los datos y confirma para continuar en Contactos. El contacto no se guardará hasta que lo crees en ese módulo."
+                : coachOperationDraft.operation.kind === "create_opportunity"
+                  ? "Revisa la propuesta y confirma para continuar en Oportunidades. La oportunidad no se guardará hasta que completes el formulario y la crees en ese módulo."
+                  : coachOperationDraft.operation.kind ===
+                      "link_contact_to_opportunity"
+                    ? "Revisa el vínculo y confirma para continuar en Oportunidades. El contacto asociado no cambiará hasta que guardes el formulario."
+                : coachDraftMissingFields.length
                 ? "Completa los datos obligatorios antes de continuar al módulo."
                 : "Revisa el valor propuesto antes de actualizar el CRM."}
             </p>
@@ -12977,6 +13194,27 @@ export default function MiAgentPage({
                   disabled
                 />
               </label>
+              {[
+                "create_contact",
+                "create_opportunity",
+                "link_contact_to_opportunity",
+              ].includes(coachOperationDraft.operation.kind) ? (
+                <label>
+                  Cuenta
+                  <input
+                    value={
+                      customerSnapshot?.account?.name ||
+                      coachAccounts.find(
+                        (account) =>
+                          Number(account.id) ===
+                          Number(coachOperationDraft.operation.accountId),
+                      )?.name ||
+                      `Cuenta #${coachOperationDraft.operation.accountId}`
+                    }
+                    disabled
+                  />
+                </label>
+              ) : null}
               {[
                 "create_account",
                 "create_contact",
@@ -13029,7 +13267,7 @@ export default function MiAgentPage({
                           ? ["title", "leadSource", "summary", "sourceNotes"]
                           : coachOperationDraft.operation.kind ===
                               "create_opportunity"
-                            ? ["name", "amountUsd", "closeDate", "summary"]
+                            ? ["name", "amountUsd", "closeDate"]
                             : coachOperationDraft.operation.kind ===
                                 "create_quotation"
                               ? [
@@ -13111,6 +13349,38 @@ export default function MiAgentPage({
                       </small>
                     </div>
                   ) : null}
+                </div>
+              ) : coachOperationDraft.operation.kind ===
+                "link_contact_to_opportunity" ? (
+                <div className="mi-agent-coach-action-form">
+                  <label>
+                    Oportunidad
+                    <input
+                      value={
+                        customerSnapshot?.opportunities?.find(
+                          (item) =>
+                            Number(item.id) ===
+                            Number(coachOperationDraft.operation.opportunityId),
+                        )?.name ||
+                        `Oportunidad #${coachOperationDraft.operation.opportunityId}`
+                      }
+                      disabled
+                    />
+                  </label>
+                  <label>
+                    Contacto que se asociará
+                    <input
+                      value={
+                        customerSnapshot?.contacts?.find(
+                          (item) =>
+                            Number(item.id) ===
+                            Number(coachOperationDraft.operation.contactId),
+                        )?.name ||
+                        `Contacto #${coachOperationDraft.operation.contactId}`
+                      }
+                      disabled
+                    />
+                  </label>
                 </div>
               ) : coachOperationDraft.operation.kind === "activity" ? (
                 <div
@@ -13442,6 +13712,7 @@ export default function MiAgentPage({
                           "create_account",
                           "create_contact",
                           "create_opportunity",
+                          "link_contact_to_opportunity",
                           "create_lead",
                           "create_contact_mapping",
                           "create_quotation",

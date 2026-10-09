@@ -18,6 +18,7 @@ const delegatedOperations = [
   ["create_account", "accounts", "account"],
   ["create_contact", "contacts", "contact"],
   ["create_opportunity", "opportunities", "opportunity"],
+  ["link_contact_to_opportunity", "opportunities", "opportunity"],
   ["create_lead", "interactions", "lead"],
   ["create_contact_mapping", "contact_mapping", "contact_mapping"],
   ["create_quotation", "quotations", "quotation"],

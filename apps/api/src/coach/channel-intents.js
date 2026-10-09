@@ -326,6 +326,27 @@ export function getChannelIntentPlanFields(channel, enabledIntentCodes = null) {
     ...(channel === "customer_account"
       ? [
           {
+            key: "operationKind",
+            type: "enum",
+            enum: [
+              "none",
+              "activity",
+              "stage_answer",
+              "lead_call_outcome",
+              "account_field",
+              "contact_field",
+              "opportunity_field",
+              "create_contact",
+              "create_opportunity",
+              "link_contact_to_opportunity",
+            ],
+            example: "none",
+          },
+        ]
+      : []),
+    ...(channel === "customer_account"
+      ? [
+          {
             key: "activityDraft",
             type: "object",
             fields: [
@@ -568,6 +589,7 @@ function normalizeVerifiedEntityReference(value, sourceTexts = []) {
 export function normalizeChannelIntentPlan({
   channel,
   plan,
+  allowedOperationKinds = [],
   serverEntityCandidates = [],
   availableTools = [],
   context = {},
@@ -599,6 +621,40 @@ export function normalizeChannelIntentPlan({
       config?.enabled !== false
     );
   });
+  const knownOperationKinds = new Set([
+    "none",
+    "activity",
+    "stage_answer",
+    "lead_call_outcome",
+    "account_field",
+    "contact_field",
+    "opportunity_field",
+    "create_contact",
+    "create_opportunity",
+    "link_contact_to_opportunity",
+  ]);
+  const validOperationKind = knownOperationKinds.has(plan.operationKind)
+    ? plan.operationKind
+    : "none";
+  const operationPolicyDenied =
+    validOperationKind !== "none" &&
+    !allowedOperationKinds.includes(validOperationKind);
+  const accountScopedContactCreation =
+    channel === "customer_account" &&
+    validOperationKind === "create_contact" &&
+    !operationPolicyDenied;
+  const accountScopedOpportunityCreation =
+    channel === "customer_account" &&
+    validOperationKind === "create_opportunity" &&
+    !operationPolicyDenied;
+  const accountScopedContactOpportunityLink =
+    channel === "customer_account" &&
+    validOperationKind === "link_contact_to_opportunity" &&
+    !operationPolicyDenied;
+  const accountScopedOperation =
+    accountScopedContactCreation ||
+    accountScopedOpportunityCreation ||
+    accountScopedContactOpportunityLink;
   const rawReferenceResolution = plan.referenceResolution || {};
   const targetTypes = new Set([
     "account",
@@ -655,8 +711,12 @@ export function normalizeChannelIntentPlan({
     ...(Array.isArray(trustedEntityReferences) ? trustedEntityReferences : []),
   ];
   const entityReferenceFields = [
-    ["opportunity", rawEntities.opportunityReference],
-    ["contact", rawEntities.contactReference],
+    ...(accountScopedOperation
+      ? []
+      : [
+          ["opportunity", rawEntities.opportunityReference],
+          ["contact", rawEntities.contactReference],
+        ]),
     ["lead", rawEntities.leadReference],
   ]
     .map(([entityType, value]) => ({
@@ -755,7 +815,8 @@ export function normalizeChannelIntentPlan({
     plan.mode === "clarification" ||
     invalidCandidateSelection ||
     unresolvedConversationalReference ||
-    operationNeedsSingleTarget;
+    operationNeedsSingleTarget ||
+    operationPolicyDenied;
   if (!selectedIntents.length && !plannerRequestedClarification) return null;
 
   const availableNames = new Set(
@@ -806,6 +867,12 @@ export function normalizeChannelIntentPlan({
         : []
       ).filter((key) =>
         ["account", "opportunity", "contact", "lead", "period"].includes(key),
+      ).filter(
+        (key) =>
+          !(
+            accountScopedOperation &&
+            ["contact", "opportunity"].includes(key)
+          ),
       ),
     ),
   ];
@@ -824,8 +891,82 @@ export function normalizeChannelIntentPlan({
     unresolvedReportedContext.length === 0 &&
     missingContext.length === 0 &&
     plan.confidence !== "low";
+  const normalizedAccountReference = normalizeQuestion(
+    rawEntities.accountReference,
+  );
+  const rawAccountReference = String(rawEntities.accountReference || "").trim();
+  const syntheticAccountReference = rawAccountReference.match(
+    /^account_(.+)$/i,
+  );
+  const normalizedSyntheticAccountName = normalizeQuestion(
+    syntheticAccountReference?.[1],
+  );
+  const normalizedSelectedAccountName = normalizeQuestion(
+    plan.serverSelectedAccountName,
+  );
+  const genericAccountReferences = new Set([
+    "cuenta",
+    "esta cuenta",
+    "la cuenta",
+    "cuenta actual",
+    "la cuenta actual",
+    "cuenta seleccionada",
+    "la cuenta seleccionada",
+    "esta cuenta seleccionada",
+  ]);
+  const accountReferenceMatchesActiveScope =
+    !normalizedAccountReference ||
+    genericAccountReferences.has(normalizedAccountReference) ||
+    Boolean(
+      normalizedSelectedAccountName &&
+        (normalizedAccountReference === normalizedSelectedAccountName ||
+          normalizedSyntheticAccountName === normalizedSelectedAccountName),
+    );
+  const accountScopeCanDiscardChildCandidates =
+    channel === "customer_account" &&
+    targetType === "account" &&
+    ["active_context", "account_scope"].includes(referenceSource) &&
+    entityReferenceFields.length === 0 &&
+    candidateKeys.every(
+      (key) => !targetMatchesCandidate(candidateByKey.get(key)),
+    );
+  const accountScopeResolvesPlannerClarification =
+    channel === "customer_account" &&
+    Number(context.accountId || 0) > 0 &&
+    targetType === "account" &&
+    cardinality === "single" &&
+    ["active_context", "account_scope"].includes(referenceSource) &&
+    ["none", "ambiguous_entity", "missing_context"].includes(
+      ambiguityReason,
+    ) &&
+    accountReferenceMatchesActiveScope &&
+    entityReferenceFields.length === 0 &&
+    (!invalidCandidateSelection || accountScopeCanDiscardChildCandidates) &&
+    !unresolvedConversationalReference &&
+    !operationNeedsSingleTarget &&
+    !selectedIntents.some(
+      (intent) =>
+        intent.code === "email_draft" ||
+        (intent.code === "crm_operation" && !accountScopedOperation),
+    ) &&
+    missingContext.length === 0 &&
+    plan.confidence !== "low";
   const clarificationRequested =
-    plannerRequestedClarification && !plannerOnlyReportedMissingContext;
+    plannerRequestedClarification &&
+    !plannerOnlyReportedMissingContext &&
+    !accountScopeResolvesPlannerClarification;
+  const clarificationResolution =
+    plannerRequestedClarification && !clarificationRequested
+      ? accountScopeResolvesPlannerClarification
+        ? accountScopedContactCreation
+          ? "active_account_parent_for_create_contact"
+          : accountScopedOpportunityCreation
+            ? "active_account_parent_for_create_opportunity"
+            : accountScopedContactOpportunityLink
+              ? "active_account_scope_for_contact_opportunity_link"
+              : "active_account_scope"
+        : "required_context_already_present"
+      : null;
   const allowedTools = [
     ...new Set(
       selectedIntents.flatMap((intent) => {
@@ -882,7 +1023,9 @@ export function normalizeChannelIntentPlan({
             action: ["none", "prepare", "continue", "discard"].includes(
               plan.activityDraft.action,
             )
-              ? plan.activityDraft.action
+              ? accountScopedOperation
+                ? "none"
+                : plan.activityDraft.action
               : "none",
             actionType: COMMERCIAL_ACTIVITY_TYPES.some(
               (item) => item.value === plan.activityDraft.actionType,
@@ -911,14 +1054,18 @@ export function normalizeChannelIntentPlan({
         rawEntities.accountReference,
         sourceTexts,
       ),
-      opportunityReference: normalizeVerifiedEntityReference(
-        rawEntities.opportunityReference,
-        sourceTexts,
-      ),
-      contactReference: normalizeVerifiedEntityReference(
-        rawEntities.contactReference,
-        sourceTexts,
-      ),
+      opportunityReference: accountScopedOperation
+        ? ""
+        : normalizeVerifiedEntityReference(
+            rawEntities.opportunityReference,
+            sourceTexts,
+          ),
+      contactReference: accountScopedOperation
+        ? ""
+        : normalizeVerifiedEntityReference(
+            rawEntities.contactReference,
+            sourceTexts,
+          ),
       leadReference: normalizeVerifiedEntityReference(
         rawEntities.leadReference,
         sourceTexts,
@@ -956,21 +1103,41 @@ export function normalizeChannelIntentPlan({
     },
     ambiguity: {
       reason:
-        invalidCandidateSelection || operationNeedsSingleTarget
+        (invalidCandidateSelection &&
+          !accountScopeCanDiscardChildCandidates) ||
+        operationNeedsSingleTarget
           ? "ambiguous_entity"
-          : ambiguityReason,
+          : accountScopeResolvesPlannerClarification
+            ? "none"
+            : ambiguityReason,
       requiresClarification: mode === "clarification",
-      clarificationQuestion: String(
-        rawAmbiguity.question ||
-          (invalidCandidateSelection || operationNeedsSingleTarget
-            ? "No pude validar el registro seleccionado. Indica cuál registro quieres usar."
-            : ""),
-      )
-        .trim()
-        .slice(0, 500),
+      clarificationQuestion:
+        mode === "clarification"
+          ? String(
+              operationPolicyDenied && validOperationKind === "create_contact"
+                ? 'La política de Cliente existente no permite crear contactos. Un administrador debe habilitar "Crear contacto".'
+                : rawAmbiguity.question ||
+                  (invalidCandidateSelection || operationNeedsSingleTarget
+                    ? "No pude validar el registro seleccionado. Indica cuál registro quieres usar."
+                    : ""),
+            )
+              .trim()
+              .slice(0, 500)
+          : "",
       missingContext,
     },
     confidence,
+    operationKind: validOperationKind,
+    clarificationResolution,
+    validationDiagnostics: {
+      plannerClarificationRequested: plannerRequestedClarification,
+      invalidCandidateSelection,
+      unresolvedConversationalReference,
+      operationNeedsSingleTarget,
+      operationPolicyDenied,
+      accountScopeResolved: accountScopeResolvesPlannerClarification,
+      clarificationRequested,
+    },
     label: primaryIntent?.label || "Aclaración necesaria",
     requiredContext,
     missingContext,

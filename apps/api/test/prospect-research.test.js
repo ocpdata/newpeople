@@ -15,11 +15,27 @@ import {
   normalizeExternalHypothesis,
   normalizeExternalSellerBrief,
   normalizeExternalTargetRole,
+  matchesProspectCompanyName,
   deduplicateExternalContacts,
   deduplicateExternalHypotheses,
 } from "../src/prospect-research/service.js";
 
 describe("prospect external evidence policy", () => {
+  test("matches abbreviated company names to full names without inner-token false positives", () => {
+    expect(matchesProspectCompanyName("Raloy", "Raloy Lubricantes")).toBe(
+      true,
+    );
+    expect(
+      matchesProspectCompanyName("Raloy Lubricantes", "Raloy"),
+    ).toBe(true);
+    expect(matchesProspectCompanyName("Raloy", "Laboratorios Raloy")).toBe(
+      false,
+    );
+    expect(matchesProspectCompanyName("Ralo", "Raloy Lubricantes")).toBe(
+      false,
+    );
+  });
+
   test("builds strict structured schemas with every nested property required", () => {
     const format = buildStructuredResearchSchema("prospect_external_research", [
       {

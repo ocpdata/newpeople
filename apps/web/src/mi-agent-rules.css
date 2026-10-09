@@ -582,6 +582,17 @@
 .mi-agent-domain-stage-group input:disabled {
   opacity: 0.55;
 }
+.mi-agent-operation-policy-option {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+}
+.mi-agent-operation-policy-option small {
+  margin-left: 23px;
+  color: #536977;
+  font-size: 11px;
+  line-height: 1.4;
+}
 @media (max-width: 760px) {
   .mi-agent-domain-policy-groups {
     grid-template-columns: 1fr;

@@ -1,4 +1,4 @@
-import { query } from "../db.js";
+import { query, withTransaction } from "../db.js";
 
 const COACH_BASE_RULES = Object.freeze({
   channel: "coach",
@@ -79,9 +79,51 @@ const ALLOWED_OPERATION_KINDS = new Set([
   "create_account",
   "create_contact",
   "create_opportunity",
+  "link_contact_to_opportunity",
 ]);
 const RULE_CHANNELS = new Set(["coach", "customer_account", "prospect"]);
 let ensureCoachBusinessRulesSchemaPromise;
+const CUSTOMER_ACCOUNT_PROCESS_MIGRATION =
+  "customer_account_single_process_v1";
+
+function canonicalBusinessRulesProcess(channel, process = "default") {
+  return channel === "customer_account" ? "default" : process || "default";
+}
+
+function mergeRuleConfiguration(base, override) {
+  if (
+    !base ||
+    typeof base !== "object" ||
+    Array.isArray(base) ||
+    !override ||
+    typeof override !== "object" ||
+    Array.isArray(override)
+  ) {
+    return override;
+  }
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    merged[key] =
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      merged[key] &&
+      typeof merged[key] === "object" &&
+      !Array.isArray(merged[key])
+        ? mergeRuleConfiguration(merged[key], value)
+        : value;
+  }
+  return merged;
+}
+
+function parseStoredRules(value) {
+  if (value && typeof value === "object") return value;
+  try {
+    return JSON.parse(value || "{}");
+  } catch {
+    return {};
+  }
+}
 
 function normalizeAliasMap(base, overrides) {
   const aliases = { ...base };
@@ -116,7 +158,10 @@ function getChannelBaseRules(channel) {
       },
       operationPolicy: {
         sourceChannel: channel,
-        allowedKinds: [...COACH_BASE_RULES.operationPolicy.allowedKinds],
+        allowedKinds: [
+          ...COACH_BASE_RULES.operationPolicy.allowedKinds,
+          "create_contact",
+        ],
       },
       channelRules: {
         scope: channel,
@@ -154,21 +199,102 @@ function getChannelBaseRules(channel) {
   return COACH_BASE_RULES;
 }
 
+async function migrateCustomerAccountBusinessRules(connection) {
+  const execute = async (sql, params = []) => {
+    const [rows] = await connection.query(sql, params);
+    return rows;
+  };
+  const migrations = await execute(
+    `SELECT migration_key FROM mi_coach_business_rule_migrations
+     WHERE migration_key = ? LIMIT 1`,
+    [CUSTOMER_ACCOUNT_PROCESS_MIGRATION],
+  );
+  if (migrations.length) return;
+
+  const rows = await execute(
+    `SELECT id, process_key, rules_json, updated_by_user_id, created_at, updated_at
+     FROM mi_coach_business_rules WHERE channel = ?`,
+    ["customer_account"],
+  );
+  const priority = (row) =>
+    row.process_key === "default"
+      ? 0
+      : row.process_key === "account_chat"
+        ? 2
+        : 1;
+  const orderedRows = [...rows].sort((left, right) => {
+    const priorityDifference = priority(left) - priority(right);
+    if (priorityDifference) return priorityDifference;
+    return String(left.updated_at || "").localeCompare(
+      String(right.updated_at || ""),
+    );
+  });
+  const mergedOverrides = orderedRows.reduce(
+    (merged, row) =>
+      mergeRuleConfiguration(merged, parseStoredRules(row.rules_json)),
+    {},
+  );
+  const preferredUser = [...orderedRows]
+    .reverse()
+    .find((row) => row.updated_by_user_id)?.updated_by_user_id;
+
+  await execute(
+    `INSERT IGNORE INTO mi_coach_business_rule_migrations
+       (migration_key, snapshot_json)
+     VALUES (?, ?)`,
+    [CUSTOMER_ACCOUNT_PROCESS_MIGRATION, JSON.stringify(rows)],
+  );
+  if (rows.length) {
+    const normalized = normalizeCoachBusinessRules({
+      channel: "customer_account",
+      process: "default",
+      overrides: mergedOverrides,
+    });
+    await execute(
+      `INSERT INTO mi_coach_business_rules
+         (channel, process_key, rules_json, updated_by_user_id, created_at, updated_at)
+       VALUES (?, 'default', ?, ?, NOW(3), NOW(3))
+       ON DUPLICATE KEY UPDATE
+         rules_json = VALUES(rules_json),
+         updated_by_user_id = VALUES(updated_by_user_id),
+         updated_at = NOW(3)`,
+      ["customer_account", JSON.stringify(normalized), preferredUser || null],
+    );
+    await execute(
+      `DELETE FROM mi_coach_business_rules
+       WHERE channel = ? AND process_key <> 'default'`,
+      ["customer_account"],
+    );
+  }
+}
+
 function ensureRulesSchema() {
   if (!ensureCoachBusinessRulesSchemaPromise) {
-    ensureCoachBusinessRulesSchemaPromise = query(
-      `CREATE TABLE IF NOT EXISTS mi_coach_business_rules (
-        id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        channel VARCHAR(40) NOT NULL,
-        process_key VARCHAR(80) NOT NULL,
-        rules_json JSON NOT NULL,
-        updated_by_user_id BIGINT UNSIGNED NULL,
-        created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
-        updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
-        CONSTRAINT uq_mi_coach_business_rules_scope UNIQUE (channel, process_key),
-        CONSTRAINT fk_mi_coach_business_rules_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-      )`,
-    ).catch((error) => {
+    ensureCoachBusinessRulesSchemaPromise = (async () => {
+      await query(
+        `CREATE TABLE IF NOT EXISTS mi_coach_business_rules (
+          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+          channel VARCHAR(40) NOT NULL,
+          process_key VARCHAR(80) NOT NULL,
+          rules_json JSON NOT NULL,
+          updated_by_user_id BIGINT UNSIGNED NULL,
+          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+          CONSTRAINT uq_mi_coach_business_rules_scope UNIQUE (channel, process_key),
+          CONSTRAINT fk_mi_coach_business_rules_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        )`,
+      );
+      await query(
+        `CREATE TABLE IF NOT EXISTS mi_coach_business_rule_migrations (
+          migration_key VARCHAR(100) PRIMARY KEY,
+          snapshot_json JSON NOT NULL,
+          applied_at DATETIME(3) NOT NULL DEFAULT NOW(3)
+        )`,
+      );
+      await withTransaction((connection) =>
+        migrateCustomerAccountBusinessRules(connection),
+      );
+    })().catch((error) => {
       ensureCoachBusinessRulesSchemaPromise = undefined;
       throw error;
     });
@@ -183,7 +309,9 @@ export function normalizeCoachBusinessRules({
 } = {}) {
   if (!RULE_CHANNELS.has(channel))
     throw new Error("Canal de reglas no soportado");
-  const normalizedProcess = String(process || "default")
+  const normalizedProcess = String(
+    canonicalBusinessRulesProcess(channel, process),
+  )
     .trim()
     .toLowerCase();
   if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
@@ -191,6 +319,10 @@ export function normalizeCoachBusinessRules({
   }
   const baseRules = getChannelBaseRules(channel);
   const channelOperationKinds = new Set(baseRules.operationPolicy.allowedKinds);
+  if (channel === "customer_account") {
+    channelOperationKinds.add("create_opportunity");
+    channelOperationKinds.add("link_contact_to_opportunity");
+  }
   const requestedOperationKinds = normalizeStringList(
     overrides.operationPolicy?.allowedKinds,
     baseRules.operationPolicy.allowedKinds,
@@ -289,6 +421,7 @@ export async function loadCoachBusinessRulesWithSource({
   channel = "coach",
   process = "default",
 } = {}) {
+  process = canonicalBusinessRulesProcess(channel, process);
   await ensureRulesSchema();
   const exactRows = await query(
     `SELECT rules_json FROM mi_coach_business_rules
@@ -336,6 +469,7 @@ export async function saveCoachBusinessRules({
   process = "default",
   rules = {},
 } = {}) {
+  process = canonicalBusinessRulesProcess(channel, process);
   const normalized = normalizeCoachBusinessRules({
     channel,
     process,
@@ -361,7 +495,9 @@ export async function resetCoachBusinessRules({
 } = {}) {
   if (!RULE_CHANNELS.has(channel))
     throw new Error("Canal de reglas no soportado");
-  const normalizedProcess = String(process || "default")
+  const normalizedProcess = String(
+    canonicalBusinessRulesProcess(channel, process),
+  )
     .trim()
     .toLowerCase();
   if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
@@ -380,7 +516,11 @@ export function getCoachBusinessRuleSummary({
   process = "default",
   overrides = {},
 } = {}) {
-  const rules = getCoachBusinessRules({ channel, process, overrides });
+  const rules = getCoachBusinessRules({
+    channel,
+    process: canonicalBusinessRulesProcess(channel, process),
+    overrides,
+  });
   return {
     channel: rules.channel,
     process: rules.process,

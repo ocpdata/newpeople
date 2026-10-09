@@ -170,7 +170,10 @@ function OpportunitiesPage({ currentUser, can }) {
       setForm((current) => ({ ...current, ...formPatch }));
       return;
     }
-    if (operation.kind === "opportunity_field") {
+    if (
+      operation.kind === "opportunity_field" ||
+      operation.kind === "link_contact_to_opportunity"
+    ) {
       const opportunityId = getCoachHandoffEntityId(
         coachHandoff.handoff,
         "opportunityId",

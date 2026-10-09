@@ -18,6 +18,7 @@ import { matchCoachQueryCase } from "../src/coach/case-catalog.js";
 import { getChannelIntentDefaults } from "../src/coach/channel-intents.js";
 import {
   appendCustomerAccountChatHistory,
+  buildCustomerEvidenceQueryCoverage,
   buildCustomerQuotationResponse,
   buildCustomerReadModel,
   buildCustomerFallback,
@@ -143,7 +144,24 @@ describe("Customer account chat adapter", () => {
           },
         ],
       },
-      agents: [],
+      agents: [
+        {
+          agentId: "public_research",
+          status: "completed",
+          sourceDomain: "public_web",
+          findings: [
+            {
+              title: "Proyecto tecnológico público",
+              summary: "La empresa anunció una iniciativa tecnológica.",
+              evidence: "Fuente pública fechada y verificable.",
+              sourceUrl: "https://example.test/noticia",
+              confidence: "high",
+              certainty: "evidenced",
+              metadata: { contactData: { email: "private@example.test" } },
+            },
+          ],
+        },
+      ],
       jobId: 900,
     });
 
@@ -157,6 +175,65 @@ describe("Customer account chat adapter", () => {
     expect(result.response.answer).toContain("está en Desarrollo");
     expect(result.response.evidence).toHaveLength(2);
     expect(result.response.entities.opportunityId).toBe(11);
+    expect(result.response.publicSources).toEqual([
+      expect.objectContaining({
+        title: "Proyecto tecnológico público",
+        url: "https://example.test/noticia",
+        sourceUrl: "https://example.test/noticia",
+        sourceDomain: "public_web",
+      }),
+    ]);
+    const synthesisEvidence =
+      runStructuredTextResearch.mock.calls[3][0].context.authorizedEvidence;
+    const auditEvidence =
+      runStructuredTextResearch.mock.calls[4][0].context.authorizedEvidence;
+    expect(synthesisEvidence).toEqual(auditEvidence);
+    expect(synthesisEvidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "public_research",
+          sourceDomain: "public_web",
+          result: expect.objectContaining({
+            title: "Proyecto tecnológico público",
+            summary: "La empresa anunció una iniciativa tecnológica.",
+            evidenceText: "Fuente pública fechada y verificable.",
+            sourceUrl: "https://example.test/noticia",
+          }),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(synthesisEvidence)).not.toContain(
+      "private@example.test",
+    );
+    expect(runStructuredTextResearch.mock.calls[1][0].context).toMatchObject({
+      publicEvidence: [
+        {
+          agentId: "public_research",
+          title: "Proyecto tecnológico público",
+          summary: "La empresa anunció una iniciativa tecnológica.",
+          evidence: "Fuente pública fechada y verificable.",
+          sourceUrl: "https://example.test/noticia",
+          confidence: "high",
+          certainty: "evidenced",
+        },
+      ],
+      queryCoverage: expect.arrayContaining([
+        expect.objectContaining({ intentCode: "opportunity_status" }),
+      ]),
+    });
+    expect(
+      JSON.stringify(runStructuredTextResearch.mock.calls[1][0].context),
+    ).not.toContain("private@example.test");
+    expect(runStructuredTextResearch.mock.calls[0][0]).toMatchObject({
+      schemaName: "customer_account_query_plan",
+      subject: expect.stringContaining("Sigue plannerGuidance"),
+      context: {
+        availableEvidenceSources: { selectedAccountCrm: true },
+        plannerGuidance: expect.arrayContaining([
+          expect.stringContaining("no pidas seleccionar un registro hijo"),
+        ]),
+      },
+    });
     expect(runStructuredTextResearch.mock.calls[3][0].fields).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ key: "entities", type: "object" }),
@@ -176,6 +253,20 @@ describe("Customer account chat adapter", () => {
       additionalReadQueries: 2,
       missingFactsCount: 0,
     });
+    expect(result.qualityTrace.diagnostics.answerGeneration).toMatchObject({
+      source: "structured_answer_model",
+      operationKind: "none",
+      activityDraftAction: "none",
+      operationKinds: [],
+    });
+    expect(runStructuredTextResearch.mock.calls[2][0].context.queryCoverage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          intentCode: "account_activity_history",
+          fullyQueried: true,
+        }),
+      ]),
+    );
     expect(runStructuredTextResearch).toHaveBeenCalledTimes(5);
     expect(runStructuredTextResearch.mock.calls[2][0].context.evidence).toEqual(
       expect.arrayContaining([
@@ -1128,7 +1219,10 @@ describe("Customer account chat adapter", () => {
         "lead_call_outcome",
         "account_field",
         "contact_field",
+        "create_contact",
         "opportunity_field",
+        "create_opportunity",
+        "link_contact_to_opportunity",
       ],
       sourceChannel: "customer_account",
     });
@@ -1182,6 +1276,214 @@ describe("Customer account chat adapter", () => {
         (operation) => operation.sourceChannel === "customer_account",
       ),
     ).toBe(true);
+  });
+
+  it("prepara create_contact bajo la cuenta activa y descarta permisos o cuentas ajenas", () => {
+    const operations = normalizeCustomerOperations(
+      [
+        {
+          kind: "create_contact",
+          title: "Crear contacto Oscar Montufar",
+          accountId: null,
+          contactId: 999,
+          payload: {
+            firstName: "Oscar",
+            lastName: "Montufar",
+          },
+        },
+        {
+          kind: "create_contact",
+          title: "Crear contacto en otra cuenta",
+          accountId: 99,
+          payload: { firstName: "Otra", lastName: "Cuenta" },
+        },
+      ],
+      snapshot,
+      { accountId: 7 },
+      new Set(["contactos.create"]),
+    );
+
+    expect(operations).toEqual([
+      expect.objectContaining({
+        kind: "create_contact",
+        accountId: 7,
+        contactId: null,
+        targetModule: "contacts",
+        requiresConfirmation: true,
+        sourceChannel: "customer_account",
+        payload: {
+          firstName: "Oscar",
+          lastName: "Montufar",
+          accountId: 7,
+        },
+      }),
+    ]);
+
+    expect(
+      normalizeCustomerOperations(
+        [
+          {
+            kind: "create_contact",
+            title: "Crear contacto Oscar Montufar",
+            payload: { firstName: "Oscar", lastName: "Montufar" },
+          },
+        ],
+        snapshot,
+        { accountId: 7 },
+        new Set(["cuentas.read", "contactos.read"]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("conserva una propuesta B10 de create_contact bajo la cuenta seleccionada", () => {
+    const result = normalizeCustomerResponse(
+      {
+        answer:
+          "Preparé la propuesta para crear a Oscar Montufar como contacto. Requiere confirmación y todavía no se guardó.",
+        operations: [
+          {
+            kind: "create_contact",
+            title: "Crear contacto Oscar Montufar",
+            accountId: 7,
+            contactId: null,
+            payload: {
+              firstName: "Oscar",
+              lastName: "Montufar",
+            },
+          },
+        ],
+      },
+      snapshot,
+      "Crea el contacto Oscar Montufar para esta cuenta",
+      { accountId: 7 },
+      new Set(["contactos.create"]),
+    );
+
+    expect(result.operations).toEqual([
+      expect.objectContaining({
+        kind: "create_contact",
+        accountId: 7,
+        contactId: null,
+        targetModule: "contacts",
+        requiresConfirmation: true,
+        payload: {
+          firstName: "Oscar",
+          lastName: "Montufar",
+          accountId: 7,
+        },
+      }),
+    ]);
+    expect(
+      normalizeCustomerResponse(
+        {
+          answer: "Propuesta",
+          operations: [
+            {
+              kind: "create_contact",
+              title: "Crear contacto Oscar Montufar",
+              payload: { firstName: "Oscar", lastName: "Montufar" },
+            },
+          ],
+        },
+        snapshot,
+        "Crea el contacto Oscar Montufar para esta cuenta",
+        { accountId: 7 },
+        new Set(["contactos.read"]),
+      ).operations,
+    ).toEqual([]);
+  });
+
+  it("propone oportunidades y vínculos de contacto solo dentro de la cuenta fija", () => {
+    const scopedSnapshot = {
+      ...snapshot,
+      contacts: [{ id: 31, accountId: 7, name: "Contacto autorizado" }],
+      opportunities: [
+        { id: 11, accountId: 7, name: "Oportunidad autorizada" },
+      ],
+    };
+    const operations = normalizeCustomerOperations(
+      [
+        {
+          kind: "create_opportunity",
+          title: "Crear oportunidad de renovación",
+          accountId: 7,
+          payload: {
+            accountId: 7,
+            name: "Renovación anual",
+            amountUsd: 12000,
+            contactId: 31,
+            sellerUserId: 999,
+          },
+        },
+        {
+          kind: "link_contact_to_opportunity",
+          title: "Vincular contacto autorizado",
+          accountId: 7,
+          opportunityId: 11,
+          contactId: 31,
+        },
+        {
+          kind: "link_contact_to_opportunity",
+          title: "No vincular registros de otra cuenta",
+          accountId: 7,
+          opportunityId: 99,
+          contactId: 31,
+        },
+        {
+          kind: "create_opportunity",
+          title: "No crear en otra cuenta",
+          accountId: 99,
+          payload: { accountId: 99, name: "Cuenta ajena" },
+        },
+      ],
+      scopedSnapshot,
+      { accountId: 7 },
+      new Set([
+        "oportunidades.create",
+        "oportunidades.update",
+        "contactos.read",
+      ]),
+    );
+
+    expect(operations).toHaveLength(2);
+    expect(operations[0]).toMatchObject({
+      kind: "create_opportunity",
+      accountId: 7,
+      contactId: 31,
+      targetModule: "opportunities",
+      requiresConfirmation: true,
+      payload: {
+        accountId: 7,
+        name: "Renovación anual",
+        amountUsd: 12000,
+        contactId: 31,
+      },
+    });
+    expect(operations[0].payload).not.toHaveProperty("sellerUserId");
+    expect(operations[1]).toMatchObject({
+      kind: "link_contact_to_opportunity",
+      accountId: 7,
+      opportunityId: 11,
+      contactId: 31,
+      targetModule: "opportunities",
+      requiresConfirmation: true,
+    });
+
+    expect(
+      normalizeCustomerOperations(
+        [
+          {
+            kind: "link_contact_to_opportunity",
+            accountId: 7,
+            opportunityId: 11,
+            contactId: 31,
+          },
+        ],
+        scopedSnapshot,
+        { accountId: 7 },
+        new Set(["oportunidades.update"]),
+      ),
+    ).toEqual([]);
   });
 
   it("prioriza la intencion de correo en el fallback", () => {
@@ -2675,6 +2977,21 @@ describe("Customer account chat adapter", () => {
           label: "Oportunidades",
           description: "Consulta oportunidades autorizadas.",
           enabled: true,
+          requiredContext: ["account"],
+          allowedTools: ["searchOpportunities", "deleteAccount"],
+        },
+      ],
+      researchAgents: [
+        {
+          agentId: "public_research",
+          status: "completed",
+          summary: "6 hallazgos públicos preparados.",
+          evidence: [{ title: "Fuente pública" }],
+        },
+        {
+          agentId: "technology_research",
+          status: "failed",
+          summary: "No hay resultados disponibles.",
         },
       ],
       snapshot: {
@@ -2705,6 +3022,29 @@ describe("Customer account chat adapter", () => {
       "searchOpportunities",
       "searchContacts",
     ]);
+    expect(planningContext.permittedIntentCatalog).toEqual([
+      {
+        code: "opportunity_query",
+        label: "Oportunidades",
+        description: "Consulta oportunidades autorizadas.",
+        requiredContext: ["account"],
+        allowedTools: ["searchOpportunities"],
+      },
+    ]);
+    expect(planningContext.availableEvidenceSources).toEqual({
+      selectedAccountCrm: true,
+      preparedAgents: [
+        {
+          agentId: "public_research",
+          evidenceCount: 1,
+        },
+      ],
+    });
+    expect(planningContext.plannerGuidance).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("no pidas seleccionar un registro hijo"),
+      ]),
+    );
     expect(planningContext.validatedContinuation).toEqual({
       opportunityName: "Proyecto abierto",
       contactName: "Ana Torres",
@@ -2723,6 +3063,52 @@ describe("Customer account chat adapter", () => {
     expect(JSON.stringify(planningContext)).not.toContain('"id"');
     expect(JSON.stringify(planningContext)).not.toContain("ana@example.test");
     expect(JSON.stringify(planningContext)).not.toContain("amountUsd");
+  });
+
+  it("does not require opportunity-only activity reads for account-wide history", () => {
+    const channelCatalog = getChannelIntentDefaults("customer_account");
+    const authorizedToolNames = channelCatalog
+      .find((intent) => intent.code === "account_activity_history")
+      .allowedTools;
+    const readToolResults = [
+      { toolName: "searchAccounts", result: [{ id: 7 }] },
+      { toolName: "searchInteractions", result: [] },
+      { toolName: "searchOpportunities", result: [{ id: 11 }] },
+    ];
+    const accountCoverage = buildCustomerEvidenceQueryCoverage({
+      intentCodes: ["account_activity_history"],
+      channelCatalog,
+      authorizedToolNames,
+      readToolResults,
+      routing: {
+        referenceResolution: { targetType: "account" },
+      },
+    });
+    const opportunityCoverage = buildCustomerEvidenceQueryCoverage({
+      intentCodes: ["account_activity_history"],
+      channelCatalog,
+      authorizedToolNames,
+      readToolResults,
+      routing: {
+        referenceResolution: { targetType: "opportunity" },
+        serverResolvedEntityIds: { opportunityId: 11 },
+      },
+    });
+
+    expect(accountCoverage[0]).toMatchObject({
+      fullyQueried: true,
+      unqueriedTools: [],
+    });
+    expect(accountCoverage[0].authorizedTools).not.toContain(
+      "getOpportunityActivities",
+    );
+    expect(opportunityCoverage[0]).toMatchObject({
+      fullyQueried: false,
+      unqueriedTools: ["getOpportunityActivities"],
+    });
+    expect(opportunityCoverage[0].authorizedTools).toContain(
+      "getOpportunityActivities",
+    );
   });
 
   it("exposes the explicitly selected record as an opaque planner candidate", () => {

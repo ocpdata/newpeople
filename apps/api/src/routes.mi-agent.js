@@ -3472,7 +3472,7 @@ function buildCoachPrompt(
             },
             operations: [
               {
-                kind: "activity|stage_answer|opportunity_field|account_field|contact_field|lead_call_outcome|create_account|create_contact|create_opportunity|create_quotation|create_proposal|lead_resolve",
+                kind: "activity|stage_answer|opportunity_field|account_field|contact_field|lead_call_outcome|create_account|create_contact|create_opportunity|link_contact_to_opportunity|create_quotation|create_proposal|lead_resolve",
                 opportunityId: 0,
                 accountId: 0,
                 contactId: 0,
@@ -4578,6 +4578,71 @@ router.post(
             message: "La operación debe limitarse a la cuenta fija",
           });
         }
+      } else if (coachOperation.kind === "create_contact") {
+        const payloadAccountId = Number(
+          coachOperation.payload?.accountId ||
+            coachOperation.payload?.accountResolution?.accountId ||
+            0,
+        );
+        if (
+          Number(coachOperation.accountId) !== accountId ||
+          (payloadAccountId && payloadAccountId !== accountId)
+        ) {
+          return res.status(403).json({
+            message: "El contacto debe crearse dentro de la cuenta fija",
+          });
+        }
+      } else if (coachOperation.kind === "create_opportunity") {
+        const payloadAccountId = Number(coachOperation.payload?.accountId || 0);
+        const operationContactId = Number(coachOperation.contactId || 0);
+        const payloadContactId = Number(
+          coachOperation.payload?.contactId || 0,
+        );
+        const contactId = operationContactId || payloadContactId;
+        if (
+          Number(coachOperation.accountId) !== accountId ||
+          (payloadAccountId && payloadAccountId !== accountId) ||
+          (operationContactId &&
+            payloadContactId &&
+            operationContactId !== payloadContactId)
+        ) {
+          return res.status(403).json({
+            message: "La oportunidad debe crearse dentro de la cuenta fija",
+          });
+        }
+        if (contactId) {
+          relationRows = await query(
+            "SELECT id FROM contacts WHERE id = ? AND account_id = ? LIMIT 1",
+            [contactId, accountId],
+          );
+        }
+      } else if (coachOperation.kind === "link_contact_to_opportunity") {
+        const payloadAccountId = Number(coachOperation.payload?.accountId || 0);
+        const operationContactId = Number(coachOperation.contactId || 0);
+        const payloadContactId = Number(
+          coachOperation.payload?.contactId || 0,
+        );
+        if (
+          Number(coachOperation.accountId) !== accountId ||
+          (payloadAccountId && payloadAccountId !== accountId) ||
+          (operationContactId &&
+            payloadContactId &&
+            operationContactId !== payloadContactId)
+        ) {
+          return res.status(403).json({
+            message: "El vínculo debe limitarse a la cuenta fija",
+          });
+        }
+        relationRows = await query(
+          `SELECT o.id FROM opportunities o
+           INNER JOIN contacts c ON c.id = ? AND c.account_id = o.account_id
+           WHERE o.id = ? AND o.account_id = ? LIMIT 1`,
+          [
+            operationContactId || payloadContactId,
+            Number(coachOperation.opportunityId || 0),
+            accountId,
+          ],
+        );
       } else if (coachOperation.kind === "contact_field") {
         relationRows = await query(
           "SELECT id FROM contacts WHERE id = ? AND account_id = ? LIMIT 1",
@@ -4603,7 +4668,16 @@ router.post(
             "Este tipo de operación no está disponible en Cliente existente",
         });
       }
-      if (coachOperation.kind !== "account_field" && !relationRows.length) {
+      const createOpportunityWithoutContact =
+        coachOperation.kind === "create_opportunity" &&
+        !Number(
+          coachOperation.contactId || coachOperation.payload?.contactId || 0,
+        );
+      if (
+        !["account_field", "create_contact"].includes(coachOperation.kind) &&
+        !createOpportunityWithoutContact &&
+        !relationRows.length
+      ) {
         return res.status(404).json({
           message: "El registro relacionado no pertenece a la cuenta fija",
         });
@@ -4620,15 +4694,21 @@ router.post(
         hasAnyPermission(req.user, controlledPolicy.domainReadPermissions)
       : delegatedPermissions &&
         hasAnyPermission(req.user, delegatedPermissions);
+    const hasContactReadForLink =
+      coachOperation.kind !== "link_contact_to_opportunity" ||
+      hasAnyPermission(req.user, ["contactos.read", "contactos.read_all"]);
     if (
       (!delegatedPermissions && !controlledPolicy) ||
       !hasPermission(req.user, MI_COACH_EXECUTE_PERMISSION) ||
-      !hasDomainPermission
+      !hasDomainPermission ||
+      !hasContactReadForLink
     ) {
       return res.status(403).json({
         message: "No autorizado para proponer esta operación",
         requiredPermission:
-          controlledPolicy?.domainPermission ||
+          (coachOperation.kind === "link_contact_to_opportunity"
+            ? ["oportunidades.update", "contactos.read"]
+            : controlledPolicy?.domainPermission) ||
           delegatedPermissions ||
           MI_COACH_EXECUTE_PERMISSION,
       });
@@ -4720,14 +4800,21 @@ router.post(
     const delegatedPermissions = getDelegatedCoachOperationPermissions(
       existing.kind,
     );
+    const canReadLinkedContact =
+      existing.kind !== "link_contact_to_opportunity" ||
+      hasAnyPermission(req.user, ["contactos.read", "contactos.read_all"]);
     if (
       !delegatedPermissions ||
       !hasPermission(req.user, MI_COACH_EXECUTE_PERMISSION) ||
-      !hasAnyPermission(req.user, delegatedPermissions)
+      !hasAnyPermission(req.user, delegatedPermissions) ||
+      !canReadLinkedContact
     ) {
       return res.status(403).json({
         message: "No autorizado para enviar esta operación al módulo",
-        requiredPermission: delegatedPermissions || MI_COACH_EXECUTE_PERMISSION,
+        requiredPermission:
+          existing.kind === "link_contact_to_opportunity"
+            ? ["oportunidades.update", "contactos.read"]
+            : delegatedPermissions || MI_COACH_EXECUTE_PERMISSION,
       });
     }
     if (existing.kind === "activity") {

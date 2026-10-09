@@ -11,6 +11,35 @@
   font-weight: 800;
 }
 
+.mi-agent-prospect-confirmation-details {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+  background: #f8fbfc;
+}
+
+.mi-agent-prospect-confirmation-details > div {
+  display: grid;
+  grid-template-columns: minmax(82px, 110px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.mi-agent-prospect-confirmation-details dt {
+  color: #536977;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mi-agent-prospect-confirmation-details dd {
+  min-width: 0;
+  margin: 0;
+  color: #173b52;
+  overflow-wrap: anywhere;
+}
+
 .mi-agent-prospect-library {
   margin-top: 16px;
 }

@@ -11,6 +11,7 @@ import {
   prepareCoachReadModel,
   resolveAvailableCoachTools,
   runConversationEngine,
+  summarizeCustomerChatContext,
   shouldPreserveCoachContextForQuestion,
 } from "../src/coach/conversation-engine.js";
 import { getCoachReadToolCatalog } from "../src/coach/read-tools.js";
@@ -341,6 +342,36 @@ describe("Coach conversation engine", () => {
     expect(applyCoachInteractionModeLimits(response, "coaching")).toBe(
       response,
     );
+  });
+
+  it("summarizes the active account from B10's nested selectedContext", () => {
+    expect(
+      summarizeCustomerChatContext({
+        account: { id: 22, name: "Totalplay" },
+        selectedContext: {
+          accountId: 22,
+          contactId: null,
+          opportunityId: null,
+        },
+        channelIntentRouting: {
+          intents: ["crm_operation", "contact_query"],
+          filters: { opportunityStatus: "unspecified" },
+        },
+      }),
+    ).toEqual({
+      accountId: 22,
+      opportunityId: null,
+      contactId: null,
+      intents: ["crm_operation", "contact_query"],
+      filterNames: ["opportunityStatus"],
+    });
+
+    expect(
+      summarizeCustomerChatContext({
+        accountId: 22,
+        conversationContext: { accountId: 22, intents: [] },
+      }).accountId,
+    ).toBe(22);
   });
 
   it("permite coaching basado en la guía del proceso sin exigir evidencia CRM", () => {

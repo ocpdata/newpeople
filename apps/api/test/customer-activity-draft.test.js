@@ -150,6 +150,20 @@ describe("Customer activity fields versus CRM evidence", () => {
     ).toBeNull();
     expect(build({ routing: { ...routing, mode: "query" } })).toBeNull();
   });
+  it("does not route contact creation through the activity draft handler", () => {
+    expect(
+      build({
+        routing: {
+          ...routing,
+          operationKind: "create_contact",
+          activityDraft: {
+            ...routing.activityDraft,
+            action: "prepare",
+          },
+        },
+      }),
+    ).toBeNull();
+  });
   it.each(["2026-02-30T10:00", "2026-10-13T25:00", "mañana", "2026-10-13"])(
     "keeps invalid date %s pending",
     (scheduledAt) => {

@@ -426,6 +426,389 @@ describe("shared non-Coach channel intent routing", () => {
     ).toContain("account_activity_history");
   });
 
+  it("uses a resolved account scope instead of clarifying a generic entity ambiguity", () => {
+    const plan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      question: "Investiga información pública y compárala con Totalplay",
+      context: { accountId: 7 },
+      availableTools: customerTools,
+      configuration: getChannelIntentDefaults("customer_account"),
+      plan: {
+        objective: "Comparar información con la cuenta seleccionada",
+        queries: ["account_activity_history", "account_overview"],
+        entities: {
+          accountReference: "Totalplay",
+          opportunityReference: "",
+          contactReference: "",
+          leadReference: "",
+        },
+        referenceResolution: {
+          targetType: "account",
+          cardinality: "single",
+          source: "active_context",
+          candidateKeys: ["opportunity_1"],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "ambiguous_entity",
+          requiresClarification: "yes",
+          missingContext: [],
+          question: "Indica cuál registro quieres usar.",
+        },
+        mode: "clarification",
+        confidence: "high",
+        serverSelectedAccountName: "Totalplay",
+      },
+      serverEntityCandidates: [
+        {
+          candidateKey: "opportunity_1",
+          entityType: "opportunity",
+          recordId: 41,
+          accountId: 7,
+          referenceText: "Proyecto de la cuenta",
+        },
+      ],
+    });
+
+    expect(plan).toMatchObject({
+      intent: "account_activity_history",
+      intents: ["account_activity_history", "account_overview"],
+      referenceResolution: {
+        targetType: "account",
+        cardinality: "single",
+        source: "active_context",
+        candidateKeys: [],
+      },
+      ambiguity: {
+        reason: "none",
+        requiresClarification: false,
+        clarificationQuestion: "",
+      },
+      entities: { accountReference: "Totalplay" },
+      requiresClarification: false,
+      mode: "query",
+    });
+    expect(plan.allowedTools).toContain("searchAccounts");
+    expect(plan.allowedTools).toContain("searchInteractions");
+
+    const differentAccountPlan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      question: "Investiga Grupo Nébula y compáralo con la cuenta activa",
+      context: { accountId: 7 },
+      availableTools: customerTools,
+      configuration: getChannelIntentDefaults("customer_account"),
+      plan: {
+        objective: "Investigar Grupo Nébula",
+        queries: ["account_overview"],
+        entities: {
+          accountReference: "Grupo Nébula",
+          opportunityReference: "",
+          contactReference: "",
+          leadReference: "",
+        },
+        referenceResolution: {
+          targetType: "account",
+          cardinality: "single",
+          source: "active_context",
+          candidateKeys: [],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "ambiguous_entity",
+          requiresClarification: "yes",
+          missingContext: [],
+          question: "¿Quieres consultar la cuenta seleccionada?",
+        },
+        mode: "clarification",
+        confidence: "high",
+        serverSelectedAccountName: "Totalplay",
+      },
+    });
+    expect(differentAccountPlan).toMatchObject({
+      ambiguity: { requiresClarification: true },
+      requiresClarification: true,
+      allowedTools: [],
+    });
+  });
+
+  it("resolves new-contact creation to the selected account without a contact candidate", () => {
+    const createPlan = {
+      objective: "Crear contacto Oscar Montufar para la cuenta seleccionada",
+      queries: ["crm_operation"],
+      operationKind: "create_contact",
+      activityDraft: {
+        action: "prepare",
+        actionType: "other",
+        title: "Crear contacto Oscar Montufar",
+        notes: "Crear nuevo contacto llamado Oscar Montufar para esta cuenta.",
+      },
+      entities: {
+        accountReference: "esta cuenta",
+        contactReference: "Oscar Montufar",
+      },
+      referenceResolution: {
+        targetType: "account",
+        cardinality: "single",
+        source: "active_context",
+        candidateKeys: ["contact_1"],
+      },
+      filters: {},
+      ambiguity: {
+        reason: "ambiguous_entity",
+        requiresClarification: "yes",
+        missingContext: ["contact"],
+        question: "Indica cuál registro quieres usar.",
+      },
+      mode: "clarification",
+      confidence: "high",
+    };
+    const common = {
+      channel: "customer_account",
+      question: "Crea el contacto Oscar Montufar para esta cuenta",
+      context: { accountId: 22 },
+      allowedOperationKinds: ["activity", "opportunity_field", "create_contact"],
+      availableTools: customerTools,
+      configuration: getChannelIntentDefaults("customer_account"),
+      serverEntityCandidates: [
+        {
+          candidateKey: "contact_1",
+          entityType: "contact",
+          recordId: 33,
+          accountId: 22,
+          referenceText: "Oscar Montufar",
+        },
+      ],
+      plan: createPlan,
+    };
+
+    const allowedPlan = normalizeChannelIntentPlan(common);
+    expect(allowedPlan).toMatchObject({
+      intent: "crm_operation",
+      operationKind: "create_contact",
+      mode: "operation",
+      requiresClarification: false,
+      referenceResolution: {
+        targetType: "account",
+        cardinality: "single",
+        source: "active_context",
+        candidateKeys: [],
+      },
+      entities: { contactReference: "" },
+      activityDraft: {
+        action: "none",
+      },
+      clarificationResolution: "active_account_parent_for_create_contact",
+      validationDiagnostics: {
+        plannerClarificationRequested: true,
+        invalidCandidateSelection: true,
+        accountScopeResolved: true,
+        clarificationRequested: false,
+      },
+    });
+
+    const canonicalAccountNamePlan = normalizeChannelIntentPlan({
+      ...common,
+      plan: {
+        ...createPlan,
+        entities: {
+          ...createPlan.entities,
+          accountReference: "Totalplay",
+          contactReference: "",
+        },
+        referenceResolution: {
+          ...createPlan.referenceResolution,
+          candidateKeys: [],
+        },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+        serverSelectedAccountName: "Totalplay",
+      },
+    });
+    expect(canonicalAccountNamePlan).toMatchObject({
+      mode: "operation",
+      operationKind: "create_contact",
+      requiresClarification: false,
+      clarificationResolution: null,
+      validationDiagnostics: {
+        invalidCandidateSelection: false,
+        accountScopeResolved: true,
+        clarificationRequested: false,
+      },
+    });
+
+    const syntheticAccountKeyPlan = normalizeChannelIntentPlan({
+      ...common,
+      plan: {
+        ...createPlan,
+        entities: {
+          ...createPlan.entities,
+          accountReference: "account_Totalplay",
+          contactReference: "",
+        },
+        referenceResolution: {
+          ...createPlan.referenceResolution,
+          candidateKeys: ["account_Totalplay"],
+        },
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+        serverSelectedAccountName: "Totalplay",
+      },
+    });
+    expect(syntheticAccountKeyPlan).toMatchObject({
+      mode: "operation",
+      operationKind: "create_contact",
+      requiresClarification: false,
+      referenceResolution: {
+        targetType: "account",
+        source: "active_context",
+        candidateKeys: [],
+      },
+      clarificationResolution: "active_account_parent_for_create_contact",
+      validationDiagnostics: {
+        invalidCandidateSelection: true,
+        accountScopeResolved: true,
+        clarificationRequested: false,
+      },
+    });
+
+    const differentAccountContactPlan = normalizeChannelIntentPlan({
+      ...common,
+      question: "Crea el contacto Oscar Montufar para Grupo Nébula",
+      plan: {
+        ...createPlan,
+        entities: {
+          ...createPlan.entities,
+          accountReference: "Grupo Nébula",
+          contactReference: "",
+        },
+        referenceResolution: {
+          targetType: "account",
+          cardinality: "single",
+          source: "active_context",
+          candidateKeys: [],
+        },
+        ambiguity: {
+          reason: "other_account",
+          requiresClarification: "yes",
+          missingContext: [],
+          question: "La cuenta solicitada no coincide con la cuenta activa.",
+        },
+        mode: "clarification",
+        serverSelectedAccountName: "Totalplay",
+      },
+    });
+    expect(differentAccountContactPlan).toMatchObject({
+      mode: "clarification",
+      operationKind: "create_contact",
+      requiresClarification: true,
+      allowedTools: [],
+      validationDiagnostics: {
+        accountScopeResolved: false,
+        clarificationRequested: true,
+      },
+    });
+
+    const restrictedPlan = normalizeChannelIntentPlan({
+      ...common,
+      allowedOperationKinds: ["activity", "opportunity_field"],
+    });
+    expect(restrictedPlan).toMatchObject({
+      mode: "clarification",
+      requiresClarification: true,
+      operationKind: "create_contact",
+      ambiguity: {
+        clarificationQuestion: expect.stringContaining(
+          'habilitar "Crear contacto"',
+        ),
+      },
+    });
+  });
+
+  it.each(["create_opportunity", "link_contact_to_opportunity"])(
+    "uses the active account as the root for %s proposals",
+    (operationKind) => {
+      const normalized = normalizeChannelIntentPlan({
+        channel: "customer_account",
+        question:
+          "Crea una oportunidad y vincula a Oscar Montufar para esta cuenta",
+        context: { accountId: 22 },
+        allowedOperationKinds: [
+          "activity",
+          "opportunity_field",
+          "create_contact",
+          "create_opportunity",
+          "link_contact_to_opportunity",
+        ],
+        availableTools: customerTools,
+        configuration: getChannelIntentDefaults("customer_account"),
+        serverEntityCandidates: [],
+        plan: {
+          objective: "Proponer una operación en la cuenta seleccionada",
+          queries: ["crm_operation"],
+          operationKind,
+          entities: {
+            accountReference: "account_Totalplay",
+            opportunityReference: "Renovación anual",
+            contactReference: "Oscar Montufar",
+            leadReference: "",
+          },
+          referenceResolution: {
+            targetType: "account",
+            cardinality: "single",
+            source: "active_context",
+            candidateKeys: ["account_Totalplay"],
+          },
+          filters: {},
+          ambiguity: {
+            reason: "ambiguous_entity",
+            requiresClarification: "yes",
+            missingContext: ["contact", "opportunity"],
+            question: "Indica cuál registro quieres usar.",
+          },
+          activityDraft: { action: "prepare" },
+          mode: "clarification",
+          confidence: "high",
+          serverSelectedAccountName: "Totalplay",
+        },
+      });
+
+      expect(normalized).toMatchObject({
+        mode: "operation",
+        operationKind,
+        requiresClarification: false,
+        clarificationResolution:
+          operationKind === "create_opportunity"
+            ? "active_account_parent_for_create_opportunity"
+            : "active_account_scope_for_contact_opportunity_link",
+        entities: {
+          accountReference: "",
+          contactReference: "",
+          opportunityReference: "",
+        },
+        referenceResolution: {
+          targetType: "account",
+          source: "active_context",
+          candidateKeys: [],
+        },
+        activityDraft: { action: "none" },
+        validationDiagnostics: {
+          accountScopeResolved: true,
+          clarificationRequested: false,
+        },
+      });
+    },
+  );
+
   it("turns another-account and low-confidence plans into clarification without tools", () => {
     const basePlan = {
       objective: "Consultar otra cuenta",

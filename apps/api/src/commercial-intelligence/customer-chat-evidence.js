@@ -4,6 +4,62 @@ export const CUSTOMER_CHAT_EVIDENCE_LIMITS = Object.freeze({
   maxTurnMs: 45000,
 });
 
+export function normalizeCustomerEvidenceAssessment({
+  assessment,
+  queryCoverage = [],
+  readToolResults = [],
+  hasQueryErrors = false,
+  unqueriedAuthorizedTools = [],
+} = {}) {
+  if (!assessment || typeof assessment !== "object") return assessment;
+  const coveredIntents = new Set(
+    (Array.isArray(queryCoverage) ? queryCoverage : [])
+      .filter((item) => item?.fullyQueried && item?.intentCode)
+      .map((item) => item.intentCode),
+  );
+  const requestedQueries = Array.isArray(assessment.missingQueries)
+    ? [...new Set(assessment.missingQueries.filter(Boolean))]
+    : [];
+  const missingQueries = requestedQueries.filter(
+    (query) => !coveredIntents.has(query),
+  );
+  const missingFacts = Array.isArray(assessment.missingFacts)
+    ? assessment.missingFacts.filter(Boolean)
+    : [];
+  const hasNonEmptyReadEvidence = (Array.isArray(readToolResults)
+    ? readToolResults
+    : []
+  ).some((item) => {
+    if (!item?.toolName || item.error || item.result == null) return false;
+    if (Array.isArray(item.result)) return item.result.length > 0;
+    if (typeof item.result === "object") {
+      return Object.values(item.result).some((value) =>
+        Array.isArray(value)
+          ? value.length > 0
+          : value !== null && value !== undefined && value !== "",
+      );
+    }
+    return true;
+  });
+  const onlyRepeatedQueries =
+    requestedQueries.length > 0 && missingQueries.length === 0;
+  const canResolveAsSufficient =
+    assessment.status === "incomplete" &&
+    onlyRepeatedQueries &&
+    missingFacts.length === 0 &&
+    hasNonEmptyReadEvidence &&
+    !hasQueryErrors &&
+    !(Array.isArray(unqueriedAuthorizedTools) &&
+      unqueriedAuthorizedTools.length);
+
+  return {
+    ...assessment,
+    status: canResolveAsSufficient ? "sufficient" : assessment.status,
+    missingQueries,
+    ...(canResolveAsSufficient ? { clarificationQuestion: "" } : {}),
+  };
+}
+
 function hasReadQueryError(readToolResults) {
   return readToolResults.some((result) => Boolean(result?.error));
 }

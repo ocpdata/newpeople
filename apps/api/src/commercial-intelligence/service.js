@@ -26,7 +26,6 @@ import { createTurnExecutionTrace } from "./turn-execution-trace.js";
 import {
   getCustomerActivityHistoryRange,
   getCustomerActivityHistoryRangeFromFilters,
-  isCustomerContactHistoryQuestion,
 } from "./activity-history.js";
 import { ensureCommercialCalendarActivitiesSchema } from "./calendar-activities-schema.js";
 import { ensureLandingSchema } from "../landing/schema.js";
@@ -47,6 +46,130 @@ import {
 const FINDING_CATEGORIES = new Set(CUSTOMER_INTELLIGENCE_CATEGORIES);
 const CUSTOMER_SNAPSHOT_QUERY_METRICS = new WeakMap();
 const PROVIDER_CATALOG_RESULT_LIMIT = 1000;
+const CUSTOMER_SNAPSHOT_DATA_DOMAINS = Object.freeze([
+  {
+    code: "contact_history",
+    permission: "contactos",
+    description:
+      "Historial completo de contactos de la cuenta, incluidos inactivos y registros anteriores al límite estándar.",
+  },
+  {
+    code: "provider_catalog",
+    permission: "oportunidades",
+    description:
+      "Catálogo activo de productos y proveedores para consultas de productos complementarios, precios o venta cruzada.",
+  },
+]);
+
+export function normalizeCustomerSnapshotDataNeeds(
+  plan,
+  persistedIntents = [],
+  allowedDomains = CUSTOMER_SNAPSHOT_DATA_DOMAINS.map((domain) => domain.code),
+) {
+  const confidence = ["high", "medium", "low"].includes(plan?.confidence)
+    ? plan.confidence
+    : "low";
+  const availableDomains = new Set(Array.isArray(allowedDomains) ? allowedDomains : []);
+  const requestedDomains = confidence === "low"
+    ? []
+    : [...new Set(Array.isArray(plan?.domains) ? plan.domains : [])].filter(
+        (domain) => availableDomains.has(domain),
+      );
+  const domains = new Set(requestedDomains);
+  if (
+    Array.isArray(persistedIntents) &&
+    persistedIntents.includes("contact_history") &&
+    availableDomains.has("contact_history")
+  ) {
+    domains.add("contact_history");
+  }
+  return {
+    domains: [...domains],
+    confidence,
+    includeContactHistory: domains.has("contact_history"),
+    includeProviderCatalog: domains.has("provider_catalog"),
+  };
+}
+
+export async function classifyCustomerSnapshotDataNeeds({
+  question = "",
+  conversationHistory = [],
+  persistedIntents = [],
+  selectedContext = {},
+  user,
+  jobId,
+  classifyWithAI = runStructuredTextResearch,
+} = {}) {
+  const availableDataDomains = CUSTOMER_SNAPSHOT_DATA_DOMAINS.filter((domain) =>
+    hasReadPermission(user, domain.permission),
+  );
+  if (!availableDataDomains.length) {
+    return normalizeCustomerSnapshotDataNeeds(null, persistedIntents, []);
+  }
+
+  let plan = null;
+  try {
+    plan = await classifyWithAI({
+      schemaName: "customer_account_snapshot_data_needs",
+      systemPrompt:
+        "Clasifica qué dominios internos opcionales necesita el snapshot para responder la solicitud actual. Elige únicamente códigos de availableDataDomains; no inventes consultas, permisos ni dominios. El contexto básico de la cuenta y las lecturas CRM estándar ya se cargan siempre. Selecciona contact_history cuando haga falta el historial completo de contactos o contactos inactivos; selecciona provider_catalog únicamente cuando hagan falta productos o proveedores del catálogo, como una consulta de producto complementario o venta cruzada. Una pregunta sobre crecimiento, expansión comercial, noticias o iniciativas empresariales no requiere por sí sola provider_catalog. No solicites investigación pública: esa opción requiere consentimiento independiente. Si no se necesita una fuente opcional, devuelve domains vacío.",
+      subject: "Necesidades de datos opcionales del snapshot CRM",
+      context: {
+        question: String(question || "").trim().slice(0, 2000),
+        recentConversation: (Array.isArray(conversationHistory)
+          ? conversationHistory
+          : []
+        )
+          .slice(-4)
+          .map((message) => ({
+            role: message?.role === "assistant" ? "assistant" : "user",
+            text: String(message?.text || "").slice(0, 600),
+          })),
+        priorIntents: (Array.isArray(persistedIntents) ? persistedIntents : [])
+          .filter((intent) => typeof intent === "string")
+          .slice(0, 8),
+        selectedContext: {
+          accountSelected: Boolean(selectedContext.accountId),
+          opportunitySelected: Boolean(selectedContext.opportunityId),
+          contactSelected: Boolean(selectedContext.contactId),
+        },
+        availableDataDomains,
+      },
+      currentValues: {},
+      fields: [
+        {
+          key: "domains",
+          type: "array",
+          example: [],
+          items: {
+            type: "enum",
+            enum: availableDataDomains.map((domain) => domain.code),
+          },
+        },
+        {
+          key: "confidence",
+          type: "enum",
+          enum: ["high", "medium", "low"],
+          example: "medium",
+        },
+      ],
+      aiUsageContext: {
+        userId: Number(user?.id || 0),
+        featureCode: "commercial_intelligence.account_chat.snapshot_selection",
+        jobType: "account_chat",
+        jobId,
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    plan = null;
+  }
+  return normalizeCustomerSnapshotDataNeeds(
+    plan,
+    persistedIntents,
+    availableDataDomains.map((domain) => domain.code),
+  );
+}
 
 function sanitizeCustomerResponseEntities(response, snapshot, usedTools = []) {
   const accountId = Number(snapshot?.account?.id || 0) || null;
@@ -819,16 +942,6 @@ export function buildExpansionHypotheses({
       return true;
     })
     .slice(0, 10);
-}
-
-export function shouldLoadProviderCatalogForQuestion(question = "") {
-  const normalizedQuestion = String(question || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  return /\b(expansion|expandir|ampliar|upsell|cross sell|venta cruzada|ventas cruzadas|productos? complementarios?|complementar|catalogo de productos|catalogo de proveedores)\b/.test(
-    normalizedQuestion,
-  );
 }
 
 export async function buildAuthorizedCustomerSnapshot({
@@ -3222,11 +3335,20 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       null,
     );
     activityHistoryRange = getCustomerActivityHistoryRange(request.question);
-    const includeContactHistory =
-      isCustomerContactHistoryQuestion(request.question) ||
-      Boolean(
-        persistedConversationContext?.intents?.includes("contact_history"),
-      );
+    preparationStage = "snapshot_data_needs";
+    const snapshotDataNeeds = await classifyCustomerSnapshotDataNeeds({
+      question: request.question,
+      conversationHistory,
+      persistedIntents: persistedConversationContext?.intents || [],
+      selectedContext: {
+        accountId: Number(job.account_id || 0),
+        opportunityId: Number(job.opportunity_id || 0),
+        contactId: Number(job.contact_id || 0),
+      },
+      user,
+      jobId,
+    });
+    const includeContactHistory = snapshotDataNeeds.includeContactHistory;
     preparationStage = "snapshot";
     snapshot = await executionTrace.span(
       {
@@ -3249,9 +3371,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           activityHistoryStartDate: activityHistoryRange?.startDate || null,
           activityHistoryEndDate: activityHistoryRange?.endDate || null,
           includeContactHistory,
-          includeProviderCatalog: shouldLoadProviderCatalogForQuestion(
-            request.question,
-          ),
+          includeProviderCatalog: snapshotDataNeeds.includeProviderCatalog,
         }),
       (value) => ({
         accountId: value.account?.id || null,
@@ -3307,7 +3427,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   } catch (error) {
     await recordCoachTurnQualityTrace({
       channel: "customer_account",
-      process: "account_chat",
+      process: "default",
       userId: user.id,
       sessionId: request?.chatSessionId,
       jobId,
@@ -3324,7 +3444,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         },
         appliedRules: {
           channel: "customer_account",
-          process: "account_chat",
+          process: "default",
           accountScoped: true,
         },
         validationStatus: "error",
@@ -3567,7 +3687,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       errorCode: "adapter_execution_failed",
     });
     qualityTrace = {
-      process: "account_chat",
+      process: "default",
       validationStatus: "error",
       validationReasons: ["adapter_execution_failed"],
       errorCode: "adapter_execution_failed",
@@ -3606,8 +3726,9 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       snapshotMetrics: getCustomerSnapshotQueryMetrics(snapshot),
     },
   };
-  const publicSources =
-    agents.find((agent) => agent.agentId === "public_research")?.evidence || [];
+  const publicSources = Array.isArray(response.publicSources)
+    ? response.publicSources
+    : [];
   const truncatedSnapshotSources = getCustomerSnapshotQueryMetrics(snapshot)
     .filter((metric) => metric.truncated === true)
     .map((metric) => metric.source)
@@ -3663,7 +3784,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   };
   const qualityTraceId = await recordCoachTurnQualityTrace({
     channel: "customer_account",
-    process: qualityTrace?.process || "account_chat",
+    process: "default",
     userId: user.id,
     sessionId: request.chatSessionId,
     jobId,
@@ -4151,6 +4272,14 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
               input: {
                 plannedTools:
                   plannerDiagnostics?.evaluation?.plannerTools || [],
+                routeDisposition: !response.channelIntentRouting
+                  ? "no_valid_route"
+                  : response.channelIntentRouting.requiresClarification
+                    ? "blocked_by_routing_clarification"
+                    : (plannerDiagnostics?.evaluation?.plannerTools || [])
+                          .length
+                      ? "authorized_reads_planned"
+                      : "no_authorized_reads_planned",
                 validatedRouting: response.channelIntentRouting
                   ? {
                       intents: response.channelIntentRouting.intents || [],
@@ -4283,11 +4412,42 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
               input: {
                 evidenceStatus: evidenceDiagnostics?.status || null,
                 responseType: response.responseType || "informational",
+                selectedContext: {
+                  accountId: snapshot.account?.id || null,
+                  opportunityId:
+                    Number(job.opportunity_id || 0) ||
+                    snapshot.selectedOpportunity?.id ||
+                    null,
+                  contactId:
+                    Number(job.contact_id || 0) ||
+                    snapshot.selectedContact?.id ||
+                    null,
+                },
+                operationKind:
+                  response.channelIntentRouting?.operationKind || null,
+                activityDraftAction:
+                  response.channelIntentRouting?.activityDraft?.action ||
+                  "none",
+                answerGeneration:
+                  qualityTrace?.diagnostics?.answerGeneration || null,
               },
               output: {
                 answer: response.answer || "",
                 responseType: response.responseType || "informational",
                 entities: response.entities || {},
+                operationSummary: (response.operations || []).map(
+                  (operation) => ({
+                    kind: operation.kind || null,
+                    targetModule: operation.targetModule || null,
+                    accountId: Number(operation.accountId || 0) || null,
+                    contactId: Number(operation.contactId || 0) || null,
+                    requiresConfirmation: Boolean(
+                      operation.requiresConfirmation,
+                    ),
+                  }),
+                ),
+                answerGeneration:
+                  qualityTrace?.diagnostics?.answerGeneration || null,
                 auditDiagnostics:
                   qualityTrace?.diagnostics?.answerAudit || null,
               },
