@@ -243,6 +243,23 @@ function mapSessionRow(row) {
   };
 }
 
+function mapProspectChatJobRow(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    publicId: row.public_id,
+    sessionId: Number(row.session_id),
+    requestedByUserId: Number(row.requested_by_user_id),
+    status: row.status,
+    request: parseJson(row.request_json, null),
+    result: parseJson(row.result_json, null),
+    errorMessage: row.error_message || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    finishedAt: row.finished_at || null,
+  };
+}
+
 function mapFindingRow(row) {
   if (!row) return null;
   return {
@@ -817,6 +834,190 @@ export async function getProspectResearchSession({ user, sessionId }) {
       ? await findProspectAccountDuplicates({ user, session: mappedSession })
       : null,
   };
+}
+
+
+export async function createProspectChatJob({ user, sessionId, question }) {
+  await ensureProspectResearchSchema();
+  const session = await getProspectResearchSession({ user, sessionId });
+  if (!session) return null;
+  if (session.status !== "completed" || !session.result) {
+    throw createHttpError(
+      409,
+      "La ficha de prospección debe estar lista antes de iniciar el chat",
+    );
+  }
+
+  const result = await query(
+    `INSERT INTO prospect_research_chat_jobs
+      (public_id, session_id, requested_by_user_id, status, request_json,
+       created_at, updated_at)
+     VALUES (?, ?, ?, 'pending', ?, NOW(3), NOW(3))`,
+    [
+      `prcj_${randomUUID()}`,
+      Number(session.id),
+      Number(user.id),
+      JSON.stringify({ question: String(question || "").trim().slice(0, 2000) }),
+    ],
+  );
+  return {
+    id: Number(result.insertId),
+    sessionId: Number(session.id),
+    status: "pending",
+    pollAfterMs: 700,
+  };
+}
+
+export async function getProspectChatJob({ user, sessionId, jobId }) {
+  await ensureProspectResearchSchema();
+  const rows = await query(
+    `SELECT * FROM prospect_research_chat_jobs
+     WHERE id = ? AND session_id = ? AND requested_by_user_id = ? LIMIT 1`,
+    [Number(jobId), Number(sessionId), Number(user.id)],
+  );
+  return mapProspectChatJobRow(rows[0]);
+}
+
+export async function processProspectChatJob({ user, jobId }) {
+  await ensureProspectResearchSchema();
+  const rows = await query(
+    `SELECT * FROM prospect_research_chat_jobs
+     WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
+    [Number(jobId), Number(user.id)],
+  );
+  const job = mapProspectChatJobRow(rows[0]);
+  if (!job) return null;
+  if (job.status !== "pending") return job;
+
+  const claim = await query(
+    `UPDATE prospect_research_chat_jobs
+     SET status = 'running', updated_at = NOW(3)
+     WHERE id = ? AND requested_by_user_id = ? AND status = 'pending'`,
+    [Number(jobId), Number(user.id)],
+  );
+  if (!claim.affectedRows) {
+    return getProspectChatJob({
+      user,
+      sessionId: job.sessionId,
+      jobId,
+    });
+  }
+
+  try {
+    const session = await getProspectResearchSession({
+      user,
+      sessionId: job.sessionId,
+    });
+    if (!session) throw createHttpError(404, "Prospección no encontrada");
+    const question = String(job.request?.question || "").trim().slice(0, 2000);
+    if (!question) throw createHttpError(400, "La pregunta está vacía");
+
+    let turn;
+    try {
+      turn = await createProspectChatAdapter({
+        user,
+        session,
+        jobId: Number(jobId),
+      }).runTurn({
+        question,
+        history: (Array.isArray(session.chatHistory) ? session.chatHistory : [])
+          .map((message) => ({
+            role: message?.role === "assistant" ? "assistant" : "user",
+            text: String(message?.text || message?.answer || "").slice(0, 2000),
+          }))
+          .filter((message) => message.text),
+      });
+    } catch (error) {
+      turn = {
+        response: buildProspectFallback(session, question),
+        qualityTrace: {
+          process: "prospect_chat",
+          validationStatus: "error",
+          validationReasons: ["adapter_execution_failed"],
+          errorCode: String(
+            error?.code || error?.name || "adapter_execution_failed",
+          ),
+        },
+      };
+    }
+
+    const qualityTraceId = await recordCoachTurnQualityTrace({
+      channel: "prospect",
+      process: turn.qualityTrace?.process || "prospect_chat",
+      userId: user.id,
+      sessionId: session.id,
+      jobId: Number(jobId),
+      trace: turn.qualityTrace,
+    }).catch((error) => {
+      console.warn(
+        "[mi-agent] No fue posible registrar traza de Cuenta nueva:",
+        error?.message || error,
+      );
+      return null;
+    });
+    const response = {
+      ...turn.response,
+      qualityTraceId,
+      channel: "prospect",
+      sessionId: Number(session.id),
+      source: "prospect_research",
+    };
+    const assistantHistory = {
+      role: "assistant",
+      text: String(response.answer || "").trim().slice(0, 2000),
+      ...response,
+    };
+
+    await withTransaction(async (conn) => {
+      const [sessionRows] = await conn.query(
+        `SELECT chat_history_json FROM prospect_research_sessions
+         WHERE id = ? AND requested_by_user_id = ? FOR UPDATE`,
+        [Number(session.id), Number(user.id)],
+      );
+      if (!sessionRows.length) {
+        throw createHttpError(404, "Prospección no encontrada");
+      }
+      const currentHistory = parseJson(sessionRows[0].chat_history_json, []);
+      const nextHistory = [
+        ...(Array.isArray(currentHistory) ? currentHistory : []),
+        { role: "user", text: question },
+        assistantHistory,
+      ]
+        .filter((message) => message.text)
+        .slice(-16);
+      await conn.query(
+        `UPDATE prospect_research_sessions
+         SET chat_history_json = ?, updated_at = NOW(3)
+         WHERE id = ? AND requested_by_user_id = ?`,
+        [JSON.stringify(nextHistory), Number(session.id), Number(user.id)],
+      );
+      await conn.query(
+        `UPDATE prospect_research_chat_jobs
+         SET status = 'completed', result_json = ?, error_message = NULL,
+             updated_at = NOW(3), finished_at = NOW(3)
+         WHERE id = ? AND requested_by_user_id = ?`,
+        [JSON.stringify(response), Number(jobId), Number(user.id)],
+      );
+    });
+  } catch (error) {
+    const errorMessage = clip(
+      error?.message || "No fue posible responder sobre el prospecto",
+      1000,
+    );
+    await query(
+      `UPDATE prospect_research_chat_jobs
+       SET status = 'failed', error_message = ?, updated_at = NOW(3),
+           finished_at = NOW(3)
+       WHERE id = ? AND requested_by_user_id = ?`,
+      [errorMessage, Number(jobId), Number(user.id)],
+    ).catch(() => undefined);
+  }
+
+  return getProspectChatJob({
+    user,
+    sessionId: job.sessionId,
+    jobId,
+  });
 }
 
 export async function runProspectChat({ user, sessionId, question }) {

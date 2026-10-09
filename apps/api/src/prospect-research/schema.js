@@ -28,6 +28,24 @@ const PROSPECT_RESEARCH_SCHEMA_STATEMENTS = [
     INDEX idx_prospect_research_sessions_requester (requested_by_user_id, status, updated_at),
     INDEX idx_prospect_research_sessions_company (company_name, country)
   )`,
+  `CREATE TABLE IF NOT EXISTS prospect_research_chat_jobs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    public_id VARCHAR(64) NOT NULL,
+    session_id BIGINT UNSIGNED NOT NULL,
+    requested_by_user_id BIGINT UNSIGNED NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    request_json JSON NULL,
+    result_json JSON NULL,
+    error_message VARCHAR(1000) NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    finished_at DATETIME(3) NULL,
+    CONSTRAINT uq_prospect_research_chat_jobs_public UNIQUE (public_id),
+    CONSTRAINT fk_prospect_research_chat_jobs_session FOREIGN KEY (session_id) REFERENCES prospect_research_sessions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_prospect_research_chat_jobs_requested_by FOREIGN KEY (requested_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_prospect_research_chat_jobs_session (session_id, created_at),
+    INDEX idx_prospect_research_chat_jobs_requester (requested_by_user_id, status, updated_at)
+  )`,
   `CREATE TABLE IF NOT EXISTS prospect_research_findings (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     public_id VARCHAR(64) NOT NULL,

@@ -1120,6 +1120,7 @@ const COACH_POLL_TIMEOUT_MS = 180000;
 const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
 const CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY =
   "mi-agent-customer-chat-show-foundation";
+const PROSPECT_SESSION_STORAGE_KEY = "mi-agent-prospect-session";
 const customerChatSessionKey = (accountId) =>
   `mi-agent-customer-chat-session:${Number(accountId || 0)}`;
 
@@ -2325,6 +2326,45 @@ export default function MiAgentPage({
   const coachActiveSessionRequestRef = useRef(null);
   const coachContextRevisionRef = useRef(0);
   const coachDraftSaveSignatureRef = useRef("");
+
+  useEffect(() => {
+    const sessionId = Number(
+      window.sessionStorage.getItem(PROSPECT_SESSION_STORAGE_KEY) || 0,
+    );
+    if (!sessionId) return undefined;
+    let cancelled = false;
+    api
+      .get(`/api/prospect-research/sessions/${sessionId}`)
+      .then(({ data }) => {
+        if (cancelled || !data?.session) return;
+        const session = data.session;
+        setProspectSession(session);
+        setProspectForm({
+          companyName: session.companyName || "",
+          country: session.country || "",
+          website: session.website || "",
+          industry: session.industry || "",
+        });
+        setProspectChatMessages(
+          (Array.isArray(session.chatHistory) ? session.chatHistory : []).map(
+            (message) => ({
+              ...message,
+              role:
+                message.role === "assistant" ? "assistant" : "seller",
+              text: message.text || message.answer || "",
+            }),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          window.sessionStorage.removeItem(PROSPECT_SESSION_STORAGE_KEY);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (customerIntelligenceJob?.status !== "completed") return;
@@ -3658,6 +3698,10 @@ export default function MiAgentPage({
       setProspectSession(
         runResponse.data?.session || createResponse.data.session,
       );
+      window.sessionStorage.setItem(
+        PROSPECT_SESSION_STORAGE_KEY,
+        String(sessionId),
+      );
       setProspectConvertedAccountId(null);
       setProspectConvertedLeadId(null);
       setProspectConvertedContacts({});
@@ -3676,6 +3720,7 @@ export default function MiAgentPage({
   async function askProspectChat(question = prospectChatQuestion) {
     const normalizedQuestion = String(question || "").trim();
     if (!normalizedQuestion || !prospectSession?.id) return;
+    const sessionId = Number(prospectSession.id);
     setProspectChatLoading(true);
     setProspectError("");
     setProspectChatMessages((current) => [
@@ -3685,13 +3730,55 @@ export default function MiAgentPage({
     setProspectChatQuestion("");
     try {
       const response = await api.post(
-        `/api/prospect-research/sessions/${prospectSession.id}/chat`,
+        `/api/prospect-research/sessions/${sessionId}/chat/jobs`,
         { question: normalizedQuestion },
       );
+      const jobId = Number(response.data?.job?.id || 0);
+      if (!jobId) throw new Error("No se pudo iniciar el turno de chat");
+
+      let completedJob = null;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const jobResponse = await api.get(
+          `/api/prospect-research/sessions/${sessionId}/chat/jobs/${jobId}`,
+        );
+        const job = jobResponse.data?.job;
+        if (job?.status === "completed") {
+          completedJob = job;
+          break;
+        }
+        if (job?.status === "failed") {
+          throw new Error(
+            job.errorMessage || "No fue posible responder sobre el prospecto",
+          );
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 600));
+      }
+      if (!completedJob?.result) {
+        throw new Error("La respuesta tardó demasiado; inténtalo de nuevo");
+      }
+      const assistantMessage = {
+        role: "assistant",
+        ...completedJob.result,
+        text: completedJob.result.text || completedJob.result.answer || "",
+      };
       setProspectChatMessages((current) => [
         ...current,
-        { role: "assistant", ...(response.data?.result || {}) },
+        assistantMessage,
       ]);
+      setProspectSession((current) =>
+        current
+          ? {
+              ...current,
+              chatHistory: [
+                ...(Array.isArray(current.chatHistory)
+                  ? current.chatHistory
+                  : []),
+                { role: "user", text: normalizedQuestion },
+                assistantMessage,
+              ].slice(-16),
+            }
+          : current,
+      );
     } catch (requestError) {
       setProspectError(
         getApiErrorMessage(
@@ -9626,6 +9713,9 @@ export default function MiAgentPage({
                   website: "",
                   industry: "",
                 });
+                window.sessionStorage.removeItem(
+                  PROSPECT_SESSION_STORAGE_KEY,
+                );
                 setProspectSession(null);
                 setProspectChatMessages([]);
                 setProspectChatQuestion("");

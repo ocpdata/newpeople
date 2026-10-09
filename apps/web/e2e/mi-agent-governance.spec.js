@@ -22,6 +22,7 @@ async function mockMiCoachApi(
   const prospectSession = {
     id: 991,
     status: "completed",
+    chatHistory: [],
     companyName: "Prospecto E2E",
     country: "Mexico",
     website: "https://prospecto-e2e.example.com",
@@ -91,6 +92,8 @@ async function mockMiCoachApi(
       ],
     },
   };
+  let prospectChatQuestion = "";
+  let prospectChatHistoryPersisted = false;
   const closedCoachSessions = new Set();
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -161,6 +164,69 @@ async function mockMiCoachApi(
       pathname === `/api/prospect-research/sessions/${prospectSession.id}/run`
     )
       return json({ session: prospectSession });
+    if (
+      withProspect &&
+      pathname === `/api/prospect-research/sessions/${prospectSession.id}` &&
+      method === "GET"
+    )
+      return json({ session: prospectSession });
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/chat/jobs` &&
+      method === "POST"
+    ) {
+      prospectChatQuestion = route.request().postDataJSON()?.question || "";
+      return json(
+        { job: { id: 992, sessionId: prospectSession.id, status: "pending" } },
+        202,
+      );
+    }
+    if (
+      withProspect &&
+      pathname ===
+        `/api/prospect-research/sessions/${prospectSession.id}/chat/jobs/992` &&
+      method === "GET"
+    ) {
+      const result = {
+        source: "prospect_research",
+        answer:
+          "La hipótesis principal requiere validar continuidad operativa.",
+        evidence: ["Hallazgo de la sesión de prospección."],
+        inferences: ["Podría existir una iniciativa de modernización."],
+        confidence: "medium",
+        entities: { accountId: null, opportunityId: null },
+        operations: [
+          {
+            kind: "create_account",
+            title: "Revisar conversión del prospecto",
+            requiresConfirmation: true,
+          },
+        ],
+        recommendedActions: [
+          { title: "Validar hipótesis", requiresConfirmation: true },
+        ],
+        qualityTraceId: 993,
+        channel: "prospect",
+        sessionId: prospectSession.id,
+      };
+      if (!prospectChatHistoryPersisted) {
+        prospectSession.chatHistory = [
+          ...(prospectSession.chatHistory || []),
+          { role: "user", text: prospectChatQuestion },
+          { role: "assistant", text: result.answer, ...result },
+        ].slice(-16);
+        prospectChatHistoryPersisted = true;
+      }
+      return json({
+        job: {
+          id: 992,
+          sessionId: prospectSession.id,
+          status: "completed",
+          result,
+        },
+      });
+    }
     if (
       withProspect &&
       pathname ===
@@ -1581,6 +1647,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     page,
   }) => {
     const publicResearchRequests = [];
+    const prospectChatJobRequests = [];
     page.on("request", (request) => {
       if (
         request
@@ -1588,6 +1655,16 @@ test.describe("Mi Coach governance and workspaces", () => {
           .includes("/api/prospect-research/sessions/991/run-external")
       )
         publicResearchRequests.push(request.method());
+      if (
+        request
+          .url()
+          .includes("/api/prospect-research/sessions/991/chat/jobs")
+      ) {
+        prospectChatJobRequests.push({
+          method: request.method(),
+          url: request.url(),
+        });
+      }
     });
     await mockMiCoachApi(page, { withProspect: true });
     await openMiCoach(page, { workspace: "prospect" });
@@ -1605,6 +1682,35 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByText("Sugerido · no confirmado en el CRM"),
     ).toBeVisible();
     expect(publicResearchRequests).toEqual([]);
+
+    await page
+      .getByPlaceholder("Pregunta sobre el prospecto...")
+      .fill("¿Qué hipótesis debo validar?");
+    await page.getByRole("button", { name: "Preguntar" }).last().click();
+    await expect(
+      page.getByText(
+        "La hipótesis principal requiere validar continuidad operativa.",
+      ),
+    ).toBeVisible();
+    expect(prospectChatJobRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "POST",
+          url: expect.stringContaining("/chat/jobs"),
+        }),
+        expect.objectContaining({
+          method: "GET",
+          url: expect.stringContaining("/chat/jobs/992"),
+        }),
+      ]),
+    );
+    await page.reload();
+    await page.getByRole("button", { name: "Cuenta nueva" }).click();
+    await expect(
+      page.getByText(
+        "La hipótesis principal requiere validar continuidad operativa.",
+      ),
+    ).toBeVisible();
 
     await page
       .getByRole("button", { name: "Investigar fuentes públicas" })

@@ -9,8 +9,11 @@ import {
   convertProspectHypothesisToOpportunity,
   convertProspectSessionToAccount,
   convertProspectSessionToLead,
+  createProspectChatJob,
   createProspectResearchSession,
+  getProspectChatJob,
   getProspectResearchSession,
+  processProspectChatJob,
   runProspectChat,
   runProspectExternalResearchSession,
   runProspectResearchSession,
@@ -119,6 +122,70 @@ router.get(
       return res.status(404).json({ message: "Prospeccion no encontrada" });
     }
     return res.json({ session });
+  },
+);
+
+router.post(
+  "/sessions/:sessionId/chat/jobs",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.read"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ message: "Sesion invalida" });
+    }
+    try {
+      const payload = prospectChatSchema.parse(req.body || {});
+      const job = await createProspectChatJob({
+        user: req.user,
+        sessionId,
+        question: payload.question,
+      });
+      if (!job) {
+        return res.status(404).json({ message: "Prospeccion no encontrada" });
+      }
+      setImmediate(() =>
+        processProspectChatJob({ user: req.user, jobId: job.id }).catch(
+          () => undefined,
+        ),
+      );
+      return res.status(202).json({ job });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({
+          message: "Payload invalido",
+          issues: error.issues,
+        });
+      }
+      return sendRouteError(res, error, "No fue posible iniciar el chat de prospecto");
+    }
+  },
+);
+
+router.get(
+  "/sessions/:sessionId/chat/jobs/:jobId",
+  requirePermission("mi_coach.use"),
+  requirePermission("prospeccion.read"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    const jobId = Number(req.params.jobId || 0);
+    if (
+      !Number.isInteger(sessionId) ||
+      sessionId <= 0 ||
+      !Number.isInteger(jobId) ||
+      jobId <= 0
+    ) {
+      return res.status(400).json({ message: "Sesion o job invalido" });
+    }
+    const job = await getProspectChatJob({
+      user: req.user,
+      sessionId,
+      jobId,
+    });
+    if (!job) {
+      return res.status(404).json({ message: "Job de chat no encontrado" });
+    }
+    return res.json({ job });
   },
 );
 

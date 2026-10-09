@@ -3798,6 +3798,65 @@ describe("API integration baseline", () => {
       prospectSessionAfterSecondChatResponse.body.session.chatHistory,
     ).toHaveLength(4);
 
+    const prospectChatJobCreateResponse = await request(app)
+      .post(`/api/prospect-research/sessions/${sessionId}/chat/jobs`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`)
+      .send({ question: "¿Qué información pública debo validar?" });
+    expect(prospectChatJobCreateResponse.status).toBe(202);
+    const prospectChatJobId = Number(
+      prospectChatJobCreateResponse.body.job.id,
+    );
+    expect(prospectChatJobId).toBeGreaterThan(0);
+
+    let completedProspectChatJob = null;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const pollResponse = await request(app)
+        .get(
+          `/api/prospect-research/sessions/${sessionId}/chat/jobs/${prospectChatJobId}`,
+        )
+        .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+      expect(pollResponse.status).toBe(200);
+      const job = pollResponse.body.job;
+      if (["completed", "failed"].includes(job.status)) {
+        completedProspectChatJob = job;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(completedProspectChatJob?.status).toBe("completed");
+    expect(completedProspectChatJob.result).toEqual(
+      expect.objectContaining({
+        source: "prospect_research",
+        answer: expect.any(String),
+        qualityTraceId: expect.any(Number),
+      }),
+    );
+    const asyncProspectTraceRows = await query(
+      `SELECT channel, session_id, job_id FROM coach_turn_quality_traces
+       WHERE id = ? LIMIT 1`,
+      [completedProspectChatJob.result.qualityTraceId],
+    );
+    expect(asyncProspectTraceRows[0]).toMatchObject({
+      channel: "prospect",
+      session_id: Number(sessionId),
+      job_id: prospectChatJobId,
+    });
+    const prospectSessionAfterAsyncChatResponse = await request(app)
+      .get(`/api/prospect-research/sessions/${sessionId}`)
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+    expect(
+      prospectSessionAfterAsyncChatResponse.body.session.chatHistory,
+    ).toHaveLength(6);
+    expect(
+      prospectSessionAfterAsyncChatResponse.body.session.chatHistory.at(-1),
+    ).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        answer: completedProspectChatJob.result.answer,
+        qualityTraceId: completedProspectChatJob.result.qualityTraceId,
+      }),
+    );
+
     const findingId = Number(runResponse.body.session.findings[0].id);
     const confirmResponse = await request(app)
       .post(`/api/prospect-research/findings/${findingId}/confirm`)
