@@ -266,6 +266,7 @@ const opportunityWorkspaceActionSchema = z.object({
   id: z.number().int().positive().optional(),
   title: z.string().trim().min(2).max(220),
   actionType: z.string().trim().min(2).max(80),
+  entryKind: z.enum(["activity", "action"]).optional(),
   status: z.enum(["pending", "in_progress", "blocked", "done"]),
   priority: z.enum(["low", "medium", "high"]),
   linkedStageId: z.number().int().positive().optional().nullable(),
@@ -2184,18 +2185,20 @@ router.post(
         success_criteria: parsed.data.successCriteria || null,
         notes: parsed.data.notes || null,
         details_json: JSON.stringify({
-          entryKind: [
-            "call",
-            "meeting",
-            "demo",
-            "presentation",
-            "conference",
-            "visit",
-            "other",
-            "follow_up",
-          ].includes(parsed.data.actionType)
-            ? "activity"
-            : "action",
+          entryKind:
+            parsed.data.entryKind ||
+            ([
+              "call",
+              "meeting",
+              "demo",
+              "presentation",
+              "conference",
+              "visit",
+              "other",
+              "follow_up",
+            ].includes(parsed.data.actionType)
+              ? "activity"
+              : "action"),
           source: "mi_agent_coach",
           approvalStatus: parsed.data.approvalStatus || null,
         }),

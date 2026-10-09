@@ -53,6 +53,7 @@ export function useCoachHandoff({ module }) {
       });
     return () => {
       cancelled = true;
+      if (requestKeyRef.current === requestKey) requestKeyRef.current = "";
     };
   }, [module, token]);
 

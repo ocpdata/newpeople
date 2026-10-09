@@ -176,8 +176,8 @@ describe("Coach operation persistence", () => {
       status: "collecting",
       originalIntent: "Prepara actividades de seguimiento",
       identifiedEntities: { opportunityId: 20 },
-      targetModule: "commercial_development",
-      targetRoute: "/commercial-development",
+      targetModule: "calendar",
+      targetRoute: "/calendar",
     });
     expect(persisted[1].status).toBe("ready");
     expect(

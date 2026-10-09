@@ -14868,6 +14868,73 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("oportunidad registra los diez tipos de calendario y conserva clasificación de propuestas", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_activity_types`,
+    );
+    const types = [
+      "call",
+      "meeting_in_person",
+      "meeting_virtual",
+      "presentation",
+      "demo",
+      "visit",
+      "send_email",
+      "proposal",
+      "event",
+      "other",
+    ];
+    for (const activityType of types) {
+      const created = await request(app)
+        .post(
+          `/api/execution-commercial/opportunities/${fixture.opportunityId}/activities`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          entryKind: "activity",
+          activityType,
+          objective: `Actividad ${activityType}`,
+          scheduledAt: "2026-10-13T10:00",
+          note: "Validar catálogo compartido",
+          details: { entryKind: "activity" },
+        });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      const stored = await query(
+        "SELECT action_type, details_json FROM opportunity_workspace_actions WHERE id = ?",
+        [created.body.id],
+      );
+      expect(stored[0].action_type).toBe(activityType);
+      const details =
+        typeof stored[0].details_json === "string"
+          ? JSON.parse(stored[0].details_json)
+          : stored[0].details_json;
+      expect(details.entryKind).toBe("activity");
+      const proposal = await request(app)
+        .post(`/api/opportunities/${fixture.opportunityId}/workspace/actions`)
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          entryKind: "activity",
+          actionType: activityType,
+          title: `Propuesta ${activityType}`,
+          status: "pending",
+          priority: "medium",
+          scheduledAt: "2026-10-13T10:00",
+          dueDate: "2026-10-13",
+        });
+      expect(proposal.status, JSON.stringify(proposal.body)).toBe(200);
+      const proposed = await query(
+        "SELECT action_type, details_json FROM opportunity_workspace_actions WHERE id = ?",
+        [proposal.body.id],
+      );
+      expect(proposed[0].action_type).toBe(activityType);
+      const proposalDetails =
+        typeof proposed[0].details_json === "string"
+          ? JSON.parse(proposed[0].details_json)
+          : proposed[0].details_json;
+      expect(proposalDetails.entryKind).toBe("activity");
+    }
+  });
+
   test("desarrollo comercial permite programar actividad y reflejarla en la tarjeta", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_commercial_development_activity`,
@@ -15132,6 +15199,250 @@ describe("API integration baseline", () => {
         code: "expired_result",
       }),
     );
+  });
+
+  test("cliente existente recopila fecha y hora y completa la misma actividad persistida", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_customer_activity`,
+      permissionCodes: [
+        "cuentas.read",
+        "contactos.read",
+        "oportunidades.read",
+        "oportunidades.create",
+        "oportunidades.update",
+        "inteligencia_comercial.read",
+        "mi_coach.use",
+        "mi_coach.execute",
+        "calendario_comercial.update",
+      ],
+    });
+    cleanup.roleIds.push(roleId);
+    const email = `${TEST_PREFIX}.customer.activity@example.com`;
+    const userId = await createUser({
+      fullName: "Customer Activity",
+      email,
+      roleIds: [roleId],
+    });
+    cleanup.userIds.push(userId);
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_customer_activity`,
+      { ownerUserId: userId, loginEmail: email },
+    );
+    const sessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ accountId: fixture.accountId });
+    expect(sessionResponse.status).toBe(201);
+    const chatSessionId = sessionResponse.body.session.id;
+    const originalFetch = global.fetch;
+    const originalKey = config.openai.apiKey;
+    const plannerContexts = [];
+    config.openai.apiKey = "test-customer-activity";
+    global.fetch = vi.fn(async (url, init) => {
+      const payload = JSON.parse(init.body);
+      const input = JSON.parse(
+        payload.input.find((item) => item.role === "user").content,
+      );
+      expect(payload.text.format.name).toBe("customer_account_query_plan");
+      plannerContexts.push(input.context);
+      const candidate =
+        input.context.authorizedEntityCandidates.opportunities[0];
+      const continuing = Boolean(input.context.pendingActivity);
+      return {
+        ok: true,
+        json: async () => ({
+          id: "resp_customer_activity",
+          output_text: JSON.stringify({
+            objective: "Preparar llamada",
+            queries: ["crm_operation", "contact_query"],
+            entities: {},
+            referenceResolution: {
+              targetType: "opportunity",
+              cardinality: "single",
+              source: continuing ? "active_context" : "current_message",
+              candidateKeys: [candidate.candidateKey],
+            },
+            filters: {},
+            ambiguity: {
+              reason: "none",
+              requiresClarification: "no",
+              missingContext: [],
+              question: "",
+            },
+            mode: "operation",
+            confidence: "high",
+            activityDraft: {
+              action: "prepare",
+              actionType: "call",
+              title: "Llamada de seguimiento",
+              scheduledAt: continuing ? "2026-10-13T10:00" : "",
+              temporalPreference: "próxima semana",
+              notes: "",
+              successCriteria: "Confirmar el siguiente paso",
+            },
+          }),
+          usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+        }),
+      };
+    });
+    try {
+      const runTurn = async (question) => {
+        const created = await request(app)
+          .post("/api/commercial-intelligence/account-chat/jobs")
+          .set("Authorization", `Bearer ${fixture.token}`)
+          .send({ accountId: fixture.accountId, chatSessionId, question });
+        expect(created.status).toBe(202);
+        let job;
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const polled = await request(app)
+            .get(
+              `/api/commercial-intelligence/account-chat/jobs/${created.body.job.id}`,
+            )
+            .set("Authorization", `Bearer ${fixture.token}`);
+          job = polled.body.job;
+          if (["completed", "failed"].includes(job?.status)) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(job.status, JSON.stringify(job)).toBe("completed");
+        return job.result;
+      };
+      const first = await runTurn(
+        `Quiero programar una llamada para la próxima semana en Oportunidad flujo ${TEST_PREFIX}_customer_activity`,
+      );
+      expect(first.answer).toContain("¿Qué día y a qué hora");
+      expect(first.operations).toHaveLength(1);
+      const operationId = first.operations[0].persistentId;
+      expect(operationId).toBeGreaterThan(0);
+      expect(first.operations[0].persistenceStatus).toBe("collecting");
+      if (first.debug) expect(first.debug.issue.severity).not.toBe("error");
+      const second = await runTurn(
+        "El martes de la próxima semana a las 10:00",
+      );
+      expect(second.operations[0]).toMatchObject({
+        persistentId: operationId,
+        persistenceStatus: "ready",
+        scheduledAt: "2026-10-13T10:00",
+        missingFields: [],
+      });
+      expect(plannerContexts[1].pendingActivity.operationId).toBe(operationId);
+      if (second.debug) expect(second.debug.issue.severity).not.toBe("error");
+      const stored = await request(app)
+        .get(`/api/mi-agent/coach/operations/${operationId}`)
+        .set("Authorization", `Bearer ${fixture.token}`);
+      expect(stored.body.operation.pendingOperation.scheduledAt).toBe(
+        "2026-10-13T10:00",
+      );
+      const reloaded = await request(app)
+        .get(
+          `/api/commercial-intelligence/account-chat/sessions/${chatSessionId}`,
+        )
+        .set("Authorization", `Bearer ${fixture.token}`);
+      expect(
+        reloaded.body.session.history.at(-1).operations[0].persistentId,
+      ).toBe(operationId);
+      const count = await query(
+        "SELECT COUNT(*) AS total FROM coach_session_operations WHERE user_id = ? AND operation_kind = 'activity'",
+        [userId],
+      );
+      expect(Number(count[0].total)).toBe(1);
+      const activities = await query(
+        "SELECT COUNT(*) AS total FROM opportunity_workspace_actions WHERE opportunity_id = ?",
+        [fixture.opportunityId],
+      );
+      expect(Number(activities[0].total)).toBe(0);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalKey;
+    }
+  });
+
+  test("calendario crea los diez tipos sin desarrollo comercial y conserva permiso de oportunidad", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_calendar_coach`,
+      permissionCodes: [
+        "calendario_comercial.update",
+        "calendario_comercial.read",
+        "oportunidades.read",
+        "oportunidades.create",
+        "oportunidades.update",
+      ],
+    });
+    cleanup.roleIds.push(roleId);
+    const email = `${TEST_PREFIX}.calendar.coach@example.com`;
+    const userId = await createUser({
+      fullName: "Calendar Coach",
+      email,
+      roleIds: [roleId],
+    });
+    cleanup.userIds.push(userId);
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_calendar_coach`,
+      { ownerUserId: userId, loginEmail: email },
+    );
+    const customIds = [];
+    const types = [
+      "call",
+      "meeting_in_person",
+      "meeting_virtual",
+      "presentation",
+      "demo",
+      "visit",
+      "send_email",
+      "proposal",
+      "event",
+      "other",
+    ];
+    const payload = {
+      scheduledAt: "2026-12-15T10:30",
+      objective: "Validar actividad",
+      accountLinkMode: "none",
+      contactLinkMode: "none",
+    };
+    try {
+      for (const activityType of types) {
+        const response = await request(app)
+          .post("/api/commercial-development/calendar/activities")
+          .set("Authorization", `Bearer ${fixture.token}`)
+          .send({ ...payload, kind: "standalone", activityType });
+        expect(response.status, JSON.stringify(response.body)).toBe(201);
+        customIds.push(response.body.id);
+      }
+      const response = await request(app)
+        .post("/api/commercial-development/calendar/activities")
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          ...payload,
+          kind: "opportunity",
+          activityType: "meeting_in_person",
+          opportunityId: fixture.opportunityId,
+        });
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+      const invalidResponse = await request(app)
+        .post("/api/commercial-development/calendar/activities")
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({ ...payload, kind: "standalone", activityType: "invalid" });
+      expect(invalidResponse.status).toBe(400);
+      await query(
+        "DELETE rp FROM role_permissions rp INNER JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = ? AND p.code = 'oportunidades.update'",
+        [roleId],
+      );
+      const deniedResponse = await request(app)
+        .post("/api/commercial-development/calendar/activities")
+        .set("Authorization", `Bearer ${fixture.token}`)
+        .send({
+          ...payload,
+          kind: "opportunity",
+          activityType: "call",
+          opportunityId: fixture.opportunityId,
+        });
+      expect(deniedResponse.status).toBe(403);
+    } finally {
+      if (customIds.length)
+        await query(
+          `DELETE FROM commercial_calendar_activities WHERE id IN (${customIds.map(() => "?").join(",")})`,
+          customIds,
+        );
+    }
   });
 
   test("desarrollo comercial expone calendario de actividades por dia semana y mes", async () => {

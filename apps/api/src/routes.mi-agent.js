@@ -4693,6 +4693,20 @@ router.patch(
   },
 );
 
+router.get(
+  "/coach/operations/:operationId",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    const operation = await getCoachOperation(
+      req.user.id,
+      Number(req.params.operationId || 0),
+    );
+    if (!operation)
+      return res.status(404).json({ message: "Operación no encontrada" });
+    return res.json({ operation, sessionId: operation.sessionId });
+  },
+);
+
 router.post(
   "/coach/operations/:operationId/handoff",
   requirePermission(MI_COACH_USE_PERMISSION),
@@ -4715,6 +4729,27 @@ router.post(
         message: "No autorizado para enviar esta operación al módulo",
         requiredPermission: delegatedPermissions || MI_COACH_EXECUTE_PERMISSION,
       });
+    }
+    if (existing.kind === "activity") {
+      const operation = existing.pendingOperation || {};
+      const calendarKind =
+        operation.calendarKind ||
+        (operation.opportunityId
+          ? "opportunity"
+          : operation.interactionId
+            ? "lead"
+            : "standalone");
+      if (
+        !String(operation.title || "").trim() ||
+        !String(operation.scheduledAt || "").trim() ||
+        (calendarKind === "opportunity" && !operation.opportunityId) ||
+        (calendarKind === "lead" && !operation.interactionId)
+      ) {
+        return res.status(409).json({
+          message:
+            "Completa objetivo, fecha/hora y el vínculo del origen seleccionado antes de abrir Calendario.",
+        });
+      }
     }
     const result = await createCoachHandoff(req.user.id, operationId);
     if (result.outcome === "not_found")

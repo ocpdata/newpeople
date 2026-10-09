@@ -9,16 +9,16 @@ import {
   toBusinessDateTimeInputValue,
 } from "./business-timezone";
 import LeadCallOutcomeModal from "./interactions/LeadCallOutcomeModal";
+import { useCoachHandoff } from "./coach/useCoachHandoff";
+import {
+  COMMERCIAL_ACTIVITY_TYPES,
+  getCommercialActivityTypeLabel,
+  normalizeCommercialActivityType,
+} from "../../../shared/commercial-activity-types.js";
 
 const VIEW_OPTIONS = [{ value: "week", label: "Semana" }];
 
-const CALENDAR_ACTIVITY_TYPE_OPTIONS = [
-  { value: "call", label: "Llamada" },
-  { value: "conference", label: "Conferencia" },
-  { value: "visit", label: "Visita" },
-  { value: "presentation", label: "Presentacion" },
-  { value: "other", label: "Otro" },
-];
+const CALENDAR_ACTIVITY_TYPE_OPTIONS = COMMERCIAL_ACTIVITY_TYPES;
 
 const CALENDAR_ACTIVITY_STATUS_OPTIONS = [
   { value: "pending", label: "Programada" },
@@ -171,10 +171,7 @@ function activityStatusLabel(statusValue) {
 }
 
 function activityTypeLabel(typeValue) {
-  return (
-    CALENDAR_ACTIVITY_TYPE_OPTIONS.find((item) => item.value === typeValue)
-      ?.label || "Actividad"
-  );
+  return getCommercialActivityTypeLabel(typeValue) || "Actividad";
 }
 
 function normalizeCalendarActivityDraft(activity) {
@@ -240,9 +237,7 @@ function normalizeCalendarActivityDraft(activity) {
     contactDraftFirstName: String(
       activity.contactDraft?.firstName || "",
     ).trim(),
-    contactDraftLastName: String(
-      activity.contactDraft?.lastName || "",
-    ).trim(),
+    contactDraftLastName: String(activity.contactDraft?.lastName || "").trim(),
     contactDraftEmail: String(activity.contactDraft?.email || "").trim(),
     contactDraftPhone: String(activity.contactDraft?.phone || "").trim(),
     contactDraftPositionTitle: String(
@@ -487,7 +482,12 @@ function CalendarActivityEditorModal({
 
   return (
     <div className="modal-overlay" onClick={handleOverlayClick}>
-      <div className="modal-dialog calendar-activity-editor-modal">
+      <div
+        className="modal-dialog calendar-activity-editor-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={isCreateMode ? "Nueva actividad" : "Actualizar registro"}
+      >
         <div className="modal-header calendar-activity-editor-header">
           <div>
             <h3 className="modal-title">
@@ -554,8 +554,8 @@ function CalendarActivityEditorModal({
                 </span>
                 <h4>{draft.objective?.trim() || "Nueva actividad"}</h4>
                 <p>
-                  Define origen, vinculos y agenda sin perder contexto ni
-                  saltar entre modales.
+                  Define origen, vinculos y agenda sin perder contexto ni saltar
+                  entre modales.
                 </p>
               </div>
               <div className="calendar-activity-editor-hero-meta">
@@ -616,6 +616,13 @@ function CalendarActivityEditorModal({
                       onChange("activityType", event.target.value)
                     }
                   >
+                    {!CALENDAR_ACTIVITY_TYPE_OPTIONS.some(
+                      (option) => option.value === draft.activityType,
+                    ) ? (
+                      <option value={draft.activityType}>
+                        {activityTypeLabel(draft.activityType)}
+                      </option>
+                    ) : null}
                     {CALENDAR_ACTIVITY_TYPE_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
@@ -629,7 +636,9 @@ function CalendarActivityEditorModal({
                     Oportunidad abierta
                     <select
                       value={draft.opportunityId || ""}
-                      disabled={readOnly || saving || calendarOpportunitiesLoading}
+                      disabled={
+                        readOnly || saving || calendarOpportunitiesLoading
+                      }
                       onChange={(event) =>
                         onChange("opportunityId", event.target.value)
                       }
@@ -640,16 +649,26 @@ function CalendarActivityEditorModal({
                           : "Selecciona una oportunidad"}
                       </option>
                       {calendarOpportunityOptions.map((opportunity) => {
-                        const accountName = String(opportunity.accountName || "")
-                          .trim();
-                        const stageName = String(opportunity.stageName || "")
-                          .trim();
-                        const label = [opportunity.opportunityName, accountName, stageName]
+                        const accountName = String(
+                          opportunity.accountName || "",
+                        ).trim();
+                        const stageName = String(
+                          opportunity.stageName || "",
+                        ).trim();
+                        const label = [
+                          opportunity.opportunityName,
+                          accountName,
+                          stageName,
+                        ]
                           .filter(Boolean)
                           .join(" · ");
                         return (
-                          <option key={opportunity.opportunityId} value={opportunity.opportunityId}>
-                            {label || `Oportunidad ${opportunity.opportunityId}`}
+                          <option
+                            key={opportunity.opportunityId}
+                            value={opportunity.opportunityId}
+                          >
+                            {label ||
+                              `Oportunidad ${opportunity.opportunityId}`}
                           </option>
                         );
                       })}
@@ -676,8 +695,9 @@ function CalendarActivityEditorModal({
                         const leadStatus = String(lead.analysisStatus || "")
                           .trim()
                           .replace(/_/g, " ");
-                        const accountName = String(lead.accountName || "")
-                          .trim();
+                        const accountName = String(
+                          lead.accountName || "",
+                        ).trim();
                         const label = [lead.title, accountName, leadStatus]
                           .filter(Boolean)
                           .join(" · ");
@@ -698,9 +718,7 @@ function CalendarActivityEditorModal({
                 <div className="calendar-activity-editor-section-header">
                   <div>
                     <strong>Cuentas y contactos</strong>
-                    <p>
-                      Puedes vincular existentes o crear nuevos desde aqui.
-                    </p>
+                    <p>Puedes vincular existentes o crear nuevos desde aqui.</p>
                   </div>
                 </div>
 
@@ -822,8 +840,7 @@ function CalendarActivityEditorModal({
                           saving ||
                           !Number(draft.accountId || 0) ||
                           loadingContacts ||
-                          String(draft.accountLinkMode || "none") !==
-                            "existing"
+                          String(draft.accountLinkMode || "none") !== "existing"
                         }
                         onChange={(event) =>
                           onChange("contactId", event.target.value)
@@ -873,10 +890,7 @@ function CalendarActivityEditorModal({
                           value={draft.contactDraftLastName || ""}
                           disabled={readOnly || saving}
                           onChange={(event) =>
-                            onChange(
-                              "contactDraftLastName",
-                              event.target.value,
-                            )
+                            onChange("contactDraftLastName", event.target.value)
                           }
                         />
                       </label>
@@ -1249,6 +1263,7 @@ function CalendarDayActivitiesModal({
 }
 
 export default function CalendarPage({ currentUser }) {
+  const coachHandoff = useCoachHandoff({ module: "calendar" });
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
     [currentUser],
@@ -1274,6 +1289,8 @@ export default function CalendarPage({ currentUser }) {
     normalizeCalendarActivityDraft(null),
   );
   const activityModalCloseTimerRef = useRef(null);
+  const coachHandoffHandledRef = useRef("");
+  const coachCreatedActivityRef = useRef(null);
   const [leadOutcomeModalOpen, setLeadOutcomeModalOpen] = useState(false);
   const [leadOutcomeSaving, setLeadOutcomeSaving] = useState(false);
   const [leadOutcomeDetail, setLeadOutcomeDetail] = useState(null);
@@ -1287,11 +1304,14 @@ export default function CalendarPage({ currentUser }) {
   const [calendarAccountOptions, setCalendarAccountOptions] = useState([]);
   const [calendarContactOptions, setCalendarContactOptions] = useState([]);
   const [calendarLeadOptions, setCalendarLeadOptions] = useState([]);
-  const [calendarOpportunityOptions, setCalendarOpportunityOptions] = useState([]);
+  const [calendarOpportunityOptions, setCalendarOpportunityOptions] = useState(
+    [],
+  );
   const [calendarAccountsLoading, setCalendarAccountsLoading] = useState(false);
   const [calendarContactsLoading, setCalendarContactsLoading] = useState(false);
   const [calendarLeadsLoading, setCalendarLeadsLoading] = useState(false);
-  const [calendarOpportunitiesLoading, setCalendarOpportunitiesLoading] = useState(false);
+  const [calendarOpportunitiesLoading, setCalendarOpportunitiesLoading] =
+    useState(false);
 
   const loadCalendarModule = useCallback(async () => {
     setLoading(true);
@@ -1378,8 +1398,28 @@ export default function CalendarPage({ currentUser }) {
     };
   }, [clearActivityModalCloseTimer]);
 
-  const closeActivityModal = () => {
+  const closeActivityModal = async () => {
     if (activitySaving) return;
+    if (coachHandoff.token && coachHandoff.handoff) {
+      try {
+        if (coachCreatedActivityRef.current) {
+          await coachHandoff.complete(coachCreatedActivityRef.current);
+        } else {
+          await coachHandoff.cancel(
+            "El usuario cerró el borrador en Calendario",
+          );
+        }
+      } catch (requestError) {
+        setActivityError(
+          getApiErrorMessage(
+            requestError,
+            "No fue posible cerrar el borrador del Coach.",
+          ),
+        );
+        return;
+      }
+    }
+    coachCreatedActivityRef.current = null;
     clearActivityModalCloseTimer();
     setActivityModalOpen(false);
     setActivityLoading(false);
@@ -1492,9 +1532,12 @@ export default function CalendarPage({ currentUser }) {
       if (selectedSellerId && selectedSellerId !== "all") {
         params.sellerUserId = Number(selectedSellerId);
       }
-      const response = await api.get("/api/commercial-tracking/open-opportunities", {
-        params,
-      });
+      const response = await api.get(
+        "/api/commercial-tracking/open-opportunities",
+        {
+          params,
+        },
+      );
       const payload = response.data;
       const options = Array.isArray(payload?.items) ? payload.items : [];
       setCalendarOpportunityOptions(options);
@@ -1504,6 +1547,75 @@ export default function CalendarPage({ currentUser }) {
       setCalendarOpportunitiesLoading(false);
     }
   }, [selectedSellerId]);
+
+  useEffect(() => {
+    const handoff = coachHandoff.handoff;
+    if (!handoff || coachHandoff.loading) return;
+    const handoffKey = `${coachHandoff.token}:${handoff.operationId}`;
+    if (coachHandoffHandledRef.current === handoffKey) return;
+    coachHandoffHandledRef.current = handoffKey;
+    if (!canUpdateActivities || handoff.kind !== "activity") {
+      setError(
+        !canUpdateActivities
+          ? "Necesitas permiso de actualización de Calendario para abrir esta actividad."
+          : "El borrador recibido no corresponde a una actividad de Calendario.",
+      );
+      return;
+    }
+    const operation = handoff.payload || {};
+    const kind =
+      operation.calendarKind ||
+      (operation.opportunityId
+        ? "opportunity"
+        : operation.interactionId
+          ? "lead"
+          : "standalone");
+    const accountId = Number(operation.accountId || 0) || null;
+    const contactId = Number(operation.contactId || 0) || null;
+    setActivityDraft(
+      normalizeCalendarActivityDraft({
+        kind,
+        calendarSource: kind,
+        opportunityId: operation.opportunityId,
+        interactionId: operation.interactionId,
+        accountId,
+        contactId,
+        accountLinkMode:
+          kind === "standalone" && accountId ? "existing" : "none",
+        contactLinkMode:
+          kind === "standalone" && contactId ? "existing" : "none",
+        activityType: normalizeCommercialActivityType(operation.actionType),
+        status: "pending",
+        scheduledAt: operation.scheduledAt || "",
+        objective: operation.title || "",
+        note: operation.notes || "",
+        successCriteria: operation.successCriteria || "",
+      }),
+    );
+    coachCreatedActivityRef.current = null;
+    setActivityError("");
+    setActivityNotice("");
+    setActivityModalOpen(true);
+    if (kind === "opportunity") void loadCalendarOpportunityOptions();
+    else if (kind === "lead") void loadCalendarLeadOptions();
+    else {
+      void loadCalendarAccountOptions();
+      if (accountId) void loadCalendarContactOptions(accountId);
+    }
+  }, [
+    canUpdateActivities,
+    coachHandoff.handoff,
+    coachHandoff.loading,
+    coachHandoff.token,
+    loadCalendarAccountOptions,
+    loadCalendarContactOptions,
+    loadCalendarLeadOptions,
+    loadCalendarOpportunityOptions,
+  ]);
+
+  useEffect(() => {
+    if (coachHandoff.error) setError(coachHandoff.error);
+  }, [coachHandoff.error]);
 
   const openNewActivityModal = () => {
     clearActivityModalCloseTimer();
@@ -1647,8 +1759,10 @@ export default function CalendarPage({ currentUser }) {
         interactionId: value === "lead" ? current.interactionId : null,
         accountId: value === "standalone" ? current.accountId : null,
         contactId: value === "standalone" ? current.contactId : null,
-        accountLinkMode: value === "standalone" ? current.accountLinkMode : "none",
-        contactLinkMode: value === "standalone" ? current.contactLinkMode : "none",
+        accountLinkMode:
+          value === "standalone" ? current.accountLinkMode : "none",
+        contactLinkMode:
+          value === "standalone" ? current.contactLinkMode : "none",
       }));
       setActivityError("");
       setActivityNotice("");
@@ -1775,7 +1889,9 @@ export default function CalendarPage({ currentUser }) {
     setActivityError("");
     setActivityNotice("");
     try {
-      if ((activityDraft?.kind || activityDraft?.calendarSource) === "opportunity") {
+      if (
+        (activityDraft?.kind || activityDraft?.calendarSource) === "opportunity"
+      ) {
         if (!opportunityId) {
           setActivityError("No se encontro la oportunidad de la actividad.");
           return false;
@@ -1895,7 +2011,11 @@ export default function CalendarPage({ currentUser }) {
       setActivityError("Para lead debes indicar Interaction ID.");
       return;
     }
-    if (kind === "standalone" && accountLinkMode === "existing" && !payload.accountId) {
+    if (
+      kind === "standalone" &&
+      accountLinkMode === "existing" &&
+      !payload.accountId
+    ) {
       setActivityError("Selecciona una cuenta existente.");
       return;
     }
@@ -1956,9 +2076,30 @@ export default function CalendarPage({ currentUser }) {
     setActivityError("");
     setActivityNotice("");
     try {
-      await api.post("/api/commercial-development/calendar/activities", payload);
+      if (!coachCreatedActivityRef.current) {
+        const response = await api.post(
+          "/api/commercial-development/calendar/activities",
+          payload,
+        );
+        if (coachHandoff.token && coachHandoff.handoff) {
+          coachCreatedActivityRef.current = {
+            entityType:
+              kind === "opportunity"
+                ? "opportunity_activity"
+                : "commercial_calendar_activity",
+            entityId: response.data.id,
+            result: { kind, activityType: payload.activityType },
+          };
+        }
+      }
+      if (coachCreatedActivityRef.current) {
+        await coachHandoff.complete(coachCreatedActivityRef.current);
+        coachCreatedActivityRef.current = null;
+        setActivityModalOpen(false);
+      }
       await loadCalendarModule();
       setActivityNotice("Actividad creada.");
+      if (coachHandoff.token) return;
       clearActivityModalCloseTimer();
       activityModalCloseTimerRef.current = window.setTimeout(() => {
         closeActivityModal();
@@ -2362,7 +2503,11 @@ export default function CalendarPage({ currentUser }) {
               Total: {Number(alerts?.counters?.total || 0)} · Vencidas:{" "}
               {Number(alerts?.counters?.overdue || 0)}
             </span>
-            <div className="calendar-module-alert-filter" role="group" aria-label="Filtrar alertas por semaforo">
+            <div
+              className="calendar-module-alert-filter"
+              role="group"
+              aria-label="Filtrar alertas por semaforo"
+            >
               {[
                 { value: "all", label: "Todas" },
                 { value: "red", label: "Rojas" },
@@ -2372,9 +2517,7 @@ export default function CalendarPage({ currentUser }) {
                 <button
                   key={option.value}
                   type="button"
-                  className={`calendar-module-badge calendar-module-alert-filter-badge ${
-                    `is-${option.value}`
-                  } ${
+                  className={`calendar-module-badge calendar-module-alert-filter-badge ${`is-${option.value}`} ${
                     alertTrafficFilter === option.value ? "is-active" : ""
                   }`.trim()}
                   onClick={() => setAlertTrafficFilter(option.value)}

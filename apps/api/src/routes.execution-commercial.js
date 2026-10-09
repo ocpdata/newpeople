@@ -17,6 +17,10 @@ import {
 import { listCommercialLibraryFilesForEmail as listCommercialLibraryFilesForEmailShared } from "./commercial-email/shared.js";
 import { ensureCommercialNarrativeJobSchema } from "./commercial-development/narrative-jobs-schema.js";
 import {
+  COMMERCIAL_ACTIVITY_TYPES,
+  normalizeCommercialActivityType,
+} from "../../../shared/commercial-activity-types.js";
+import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
@@ -119,6 +123,7 @@ const NEXT_STEP_ACTION_TYPES = new Set([
 ]);
 
 const COMMERCIAL_ACTIVITY_ACTION_TYPES = new Set([
+  ...COMMERCIAL_ACTIVITY_TYPES.map((item) => item.value),
   "call",
   "conference",
   "visit",
@@ -3965,7 +3970,10 @@ async function createCustomCalendarActivity({
     throw Object.assign(new Error("kind invalido"), { status: 400 });
   }
 
-  const activityType = String(payload.activityType || "").trim();
+  const activityType = normalizeCommercialActivityType(
+    payload.activityType,
+    "",
+  );
   if (!CALENDAR_CUSTOM_ACTIVITY_TYPES.has(activityType)) {
     throw Object.assign(new Error("activityType invalido"), { status: 400 });
   }
@@ -4042,9 +4050,10 @@ async function updateCustomCalendarActivity({
 
   const kind = String(current.kind || "standalone").trim() || "standalone";
   const activityType =
-    payload.activityType === undefined
+    payload.activityType === undefined ||
+    payload.activityType === current.activity_type
       ? String(current.activity_type || "other")
-      : String(payload.activityType || "").trim();
+      : normalizeCommercialActivityType(payload.activityType, "");
   if (!CALENDAR_CUSTOM_ACTIVITY_TYPES.has(activityType)) {
     throw Object.assign(new Error("activityType invalido"), { status: 400 });
   }
@@ -8753,7 +8762,7 @@ router.post(
     try {
       if (kind === "opportunity") {
         if (
-          !userHasPermission(req.user, "desarrollo_comercial.update") ||
+          !userHasPermission(req.user, "calendario_comercial.update") ||
           !userHasPermission(req.user, "oportunidades.update")
         ) {
           return res.status(403).json({ message: "No autorizado" });
@@ -8773,7 +8782,10 @@ router.post(
             .json({ message: "opportunityId es obligatorio" });
         }
 
-        const activityType = String(req.body?.activityType || "").trim();
+        const activityType = normalizeCommercialActivityType(
+          req.body?.activityType,
+          "",
+        );
         if (!COMMERCIAL_ACTIVITY_ACTION_TYPES.has(activityType)) {
           return res.status(400).json({ message: "activityType invalido" });
         }
@@ -8989,7 +9001,7 @@ router.post(
       }
 
       if (
-        !userHasPermission(req.user, "desarrollo_comercial.update") ||
+        !userHasPermission(req.user, "calendario_comercial.update") ||
         !userHasPermission(req.user, "oportunidades.update")
       ) {
         return res.status(403).json({ message: "No autorizado" });

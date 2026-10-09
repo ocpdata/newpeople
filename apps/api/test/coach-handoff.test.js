@@ -137,6 +137,34 @@ describe("Coach handoffs", () => {
     });
   });
 
+  it("routes existing pending activity handoffs to Calendar without rewriting history", async () => {
+    const token = "legacy-activity";
+    const readRow = installQueryStore(
+      buildRow({
+        operation_kind: "activity",
+        target_module: "commercial_development",
+        target_route: "/commercial-development",
+        status: "handed_off",
+        handoff_token: token,
+        handoff_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        pending_operation: JSON.stringify({
+          kind: "activity",
+          opportunityId: 22,
+          actionType: "call",
+          title: "Actividad",
+        }),
+      }),
+    );
+    expect(await getCoachHandoff(7, token, "calendar")).toMatchObject({
+      outcome: "ready",
+      operation: { targetModule: "calendar", targetRoute: "/calendar" },
+    });
+    expect(readRow().target_module).toBe("commercial_development");
+    expect(
+      (await getCoachHandoff(7, token, "commercial_development")).outcome,
+    ).toBe("wrong_module");
+  });
+
   it("enforces ownership, module and expiration while loading", async () => {
     const token = "token-accounts";
     const readRow = installQueryStore(

@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import { config } from "../config.js";
+import { getCommercialSettings } from "../settings.js";
+import {
+  loadCustomerPendingActivity,
+  persistCustomerActivityDraft,
+} from "./activity-draft-persistence.js";
 import {
   runStructuredTextResearch,
   runStructuredWebResearch,
@@ -3260,6 +3265,18 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     );
     nextConversationContext = conversationContext;
     continuationContext = conversationContext;
+    const commercialSettings = await getCommercialSettings();
+    snapshot.businessTimezone =
+      commercialSettings?.businessTimezone || config.app.businessTimezone;
+    if (conversationContext?.pendingActivity) {
+      const pendingActivity = await loadCustomerPendingActivity(
+        user.id,
+        conversationContext,
+      );
+      conversationContext = { ...conversationContext, pendingActivity };
+      continuationContext = conversationContext;
+      nextConversationContext = conversationContext;
+    }
     preparationStage = "agents";
     agents = await executionTrace.span(
       {
@@ -3515,6 +3532,24 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       );
       conversationContextUpdated = true;
     }
+    const pendingActivity = await persistCustomerActivityDraft({
+      userId: user.id,
+      response,
+      context: continuationContext || { accountId: snapshot.account.id },
+      originalIntent: request.question,
+    });
+    if (pendingActivity || response.activityDraftDiscarded) {
+      nextConversationContext = {
+        ...(nextConversationContext ||
+          continuationContext || {
+            version: 1,
+            accountId: snapshot.account.id,
+            intents: [],
+            filters: {},
+          }),
+        pendingActivity,
+      };
+    }
   } catch (error) {
     console.error("[account-chat] Adapter execution failed", {
       jobId: Number(jobId),
@@ -3681,7 +3716,10 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         persistedConversationHistory,
         request.question,
         response.answer,
-        { activityHistory: response.activityHistory },
+        {
+          activityHistory: response.activityHistory,
+          operations: response.operations,
+        },
       );
       persistedHistoryForTrace = nextHistory;
       const persistedConversationContext =
@@ -3758,9 +3796,12 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           };
         } else if (
           evidenceStatus &&
-          !["sufficient", "no_results", "clarification"].includes(
-            evidenceStatus,
-          )
+          ![
+            "sufficient",
+            "no_results",
+            "clarification",
+            "activity_entities_validated",
+          ].includes(evidenceStatus)
         ) {
           issue = {
             severity: "error",

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { COMMERCIAL_ACTIVITY_TYPES } from "../../../shared/commercial-activity-types.js";
 
 function bootstrapAuthenticatedSession(page, token = "jwt-token") {
   return page.addInitScript((value) => {
@@ -715,6 +716,157 @@ async function openOpportunityEditor(page, opportunityName = "Expansion 2026") {
 }
 
 test.describe("contacts opportunities", () => {
+  test("comparte los diez tipos de Calendario y conserva actividades históricas", async ({
+    page,
+  }) => {
+    const fixture = createCommercialFlowFixture();
+    await mockCommercialFlowApi(page, fixture);
+    const actions = [
+      {
+        id: 601,
+        actionType: "conference",
+        title: "Reunión histórica",
+        status: "pending",
+        scheduledAt: "2026-10-13T10:00",
+        details: {},
+      },
+      {
+        id: 602,
+        actionType: "send_email",
+        title: "Correo operativo",
+        status: "pending",
+        details: { entryKind: "action" },
+      },
+    ];
+    const createdPayloads = [];
+    await page.route("**/api/**", async (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      const method = route.request().method();
+      const json = (body) =>
+        route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(body),
+        });
+      if (pathname === "/api/auth/me")
+        return json({
+          id: 31,
+          full_name: "Demo Seller",
+          roles: [{ name: "Vendedor" }],
+          permissions: [
+            "mi_coach.use",
+            "oportunidades.read",
+            "oportunidades.update",
+            "desarrollo_comercial.read",
+            "desarrollo_comercial.update",
+          ],
+        });
+      if (pathname === "/api/opportunities/501/commercial-context")
+        return json({
+          ...fixture.buildCommercialContext(),
+          workspace: { actions },
+        });
+      if (pathname === "/api/execution-commercial/dashboard")
+        return json({ workboard: [], dependencies: [] });
+      if (pathname === "/api/interactions") return json({ items: [] });
+      if (
+        pathname === "/api/execution-commercial/opportunities/501/activities" &&
+        method === "POST"
+      ) {
+        const payload = route.request().postDataJSON();
+        createdPayloads.push(payload);
+        const id = 610 + createdPayloads.length;
+        actions.push({
+          id,
+          actionType: payload.activityType,
+          title: payload.objective,
+          status: "pending",
+          scheduledAt: payload.scheduledAt,
+          details: {},
+        });
+        return json({ id });
+      }
+      return route.fallback();
+    });
+    await bootstrapAuthenticatedSession(page);
+    await page.goto("/opportunities");
+    await openOpportunityEditor(page);
+    await page
+      .locator(
+        '.opportunity-development-header button[aria-controls="opportunity-development-section-body"]',
+      )
+      .click();
+    const execution = page.locator(".opportunity-development-execution-card");
+    const expand = execution.getByRole("button", {
+      name: "Expandir",
+      exact: true,
+    });
+    if (await expand.isVisible()) await expand.click();
+    const form = page.getByRole("group", {
+      name: "Nueva actividad",
+      exact: true,
+    });
+    await expect(form).toBeVisible();
+    await expect(
+      form
+        .getByRole("combobox", { name: "Tipo", exact: true })
+        .locator("option"),
+    ).toHaveText(COMMERCIAL_ACTIVITY_TYPES.map((item) => item.label));
+    await expect(
+      execution.getByText("Reunión (tipo no especificado)", { exact: false }),
+    ).toBeVisible();
+    for (const { value, label } of COMMERCIAL_ACTIVITY_TYPES) {
+      await form
+        .getByRole("combobox", { name: "Tipo", exact: true })
+        .selectOption(value);
+      await form
+        .getByRole("textbox", { name: "Fecha", exact: true })
+        .fill("2026-10-13");
+      await form
+        .getByRole("textbox", { name: "Hora", exact: true })
+        .fill("10:00");
+      await form
+        .getByRole("textbox", { name: "Objetivo", exact: true })
+        .fill(`Actividad ${label}`);
+      await form
+        .getByRole("button", { name: "Agregar actividad", exact: true })
+        .click();
+      await expect(
+        execution.getByText(`Actividad ${label}`, { exact: true }),
+      ).toBeVisible();
+    }
+    expect(createdPayloads.map((payload) => payload.activityType)).toEqual(
+      COMMERCIAL_ACTIVITY_TYPES.map((item) => item.value),
+    );
+    expect(
+      createdPayloads.every((payload) => payload.entryKind === "activity"),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+    await openOpportunityEditor(page);
+    await page
+      .locator(
+        '.opportunity-development-header button[aria-controls="opportunity-development-section-body"]',
+      )
+      .click();
+    const reopenedExpand = execution.getByRole("button", {
+      name: "Expandir",
+      exact: true,
+    });
+    if (await reopenedExpand.isVisible()) await reopenedExpand.click();
+    await expect(
+      execution.getByText("Actividades 11", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      execution.getByText("Operaciones 1", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(
+      execution.getByText("Reunión (tipo no especificado)", { exact: false }),
+    ).toBeVisible();
+    for (const { label } of COMMERCIAL_ACTIVITY_TYPES)
+      await expect(
+        execution.getByText(`Actividad ${label}`, { exact: true }),
+      ).toBeVisible();
+  });
+
   test("abre oportunidades relacionadas desde el kebab de contactos", async ({
     page,
   }) => {

@@ -1,4 +1,6 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
+import { config } from "../config.js";
+import { buildCustomerActivityDraftResponse } from "./activity-draft.js";
 import { resolveCoachEntities } from "../coach/entity-resolver.js";
 import { executeCoachReadTool } from "../coach/crm-read-tools.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
@@ -566,6 +568,9 @@ export function buildCustomerQueryPlannerContext({
       contactSelected: Boolean(context?.contactId),
     },
     selectedAccountName: snapshot?.account?.name || "",
+    referenceDateTime: new Date().toISOString(),
+    businessTimezone: snapshot?.businessTimezone || config.app.businessTimezone,
+    pendingActivity: conversationContext?.pendingActivity || null,
     validatedContinuation: conversationContext
       ? {
           opportunityName:
@@ -1648,6 +1653,9 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && message.turnDebug
         ? { turnDebug: message.turnDebug }
         : {}),
+      ...(message.role === "assistant" && Array.isArray(message.operations)
+        ? { operations: message.operations }
+        : {}),
     }));
   return [
     ...normalizedHistory,
@@ -1663,6 +1671,9 @@ export function appendCustomerAccountChatHistory(
             : {}),
           ...(assistantMetadata.turnDebug
             ? { turnDebug: assistantMetadata.turnDebug }
+            : {}),
+          ...(Array.isArray(assistantMetadata.operations)
+            ? { operations: assistantMetadata.operations }
             : {}),
         }
       : null,
@@ -1842,8 +1853,14 @@ export function normalizeCustomerResponse(
     confidence: ["high", "medium", "low"].includes(normalized.confidence)
       ? normalized.confidence
       : "low",
-    recommendedActions,
+    recommendedActions: normalized.activityDraft ? [] : recommendedActions,
     activityHistory: normalized.activityHistory || null,
+    ...(normalized.activityDraft
+      ? { activityDraft: normalized.activityDraft }
+      : {}),
+    ...(normalized.activityDraftDiscarded
+      ? { activityDraftDiscarded: true }
+      : {}),
     source: "account_intelligence",
     entities: {
       accountId: context.accountId || null,
@@ -1851,7 +1868,9 @@ export function normalizeCustomerResponse(
         Number(
           normalized.entities?.opportunityId || context.opportunityId || 0,
         ) || null,
-      contactId: context.contactId || null,
+      contactId:
+        Number(normalized.entities?.contactId || context.contactId || 0) ||
+        null,
       leadId: null,
       names: [],
     },
@@ -1942,6 +1961,7 @@ export function createCustomerAccountAdapter({
       const plan = await runStructuredTextResearch({
         schemaName: "customer_account_query_plan",
         systemPrompt:
+          "Para preparar una actividad, llena activityDraft.action=prepare; para responder campos de pendingActivity usa continue; si el usuario la descarta usa discard; para consultas factuales usa none. Interpreta las respuestas breves con el borrador y el historial. Usa queries=[crm_operation,contact_query] para una actividad con contacto, no consultas de historial salvo que el usuario las solicite explícitamente. Conserva día/hora no proporcionados como vacíos: 'la próxima semana' es temporalPreference, no una cita. scheduledAt debe ser YYYY-MM-DDTHH:mm en la zona horaria del negocio; calcula fechas relativas con referenceDateTime y no inventes hora ni día. Los campos pendientes del borrador no son ambiguity ni evidencia CRM faltante; solo entidades ambiguas, inaccesibles o referencias no resueltas requieren aclaración. " +
           "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Distingue la intención consultada de la entidad a la que se refiere: si preguntas por las actividades, etapa, cotización o contactos que tiene una oportunidad ya identificada, targetType debe ser opportunity y debes devolver el candidateKey de esa oportunidad; no cambies targetType a account solo porque la consulta sea account_activity_history. Por ejemplo, después de consultar Vrf 2027, ante '¿Qué actividad pendiente tiene?' conserva Vrf 2027 como objetivo singular y planifica las lecturas de actividad correspondientes. Si preguntan qué contacto está asociado a una oportunidad, incluye contact_query y consulta getOpportunity para leer associatedContact; buscar contactos de la cuenta por sí solo no demuestra que alguno pertenezca a esa oportunidad. Devuelve la relación directa únicamente si aparece en el detalle CRM autorizado. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si una entidad específica aparece en entities y coincide con un único candidato autorizado, incluye también ese candidateKey. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Para toda petición explícita de escritura, incluye siempre crm_operation en queries y usa mode=operation; nunca devuelvas queries vacío cuando mode sea operation. Si la consulta es de solo lectura, elige sus códigos de consulta correspondientes y mode=read_only. Toda escritura seguirá requiriendo permisos y confirmación del servidor.",
         subject: "Plan de consulta del CRM autorizado",
         context: plannerContext,
@@ -2028,6 +2048,22 @@ export function createCustomerAccountAdapter({
       )
         ? payload.context.skippedAuthorizedTools
         : [];
+      const activityResponse = buildCustomerActivityDraftResponse({
+        routing,
+        readToolResults: initialReadToolResults,
+        snapshot,
+        permissions,
+        pendingActivity: conversationContext?.pendingActivity,
+      });
+      if (activityResponse) {
+        turnDiagnostics.evidence = {
+          status: "activity_entities_validated",
+          rounds: 0,
+          additionalReadQueries: 0,
+          missingFactsCount: 0,
+        };
+        return activityResponse;
+      }
       const snapshotQueryErrors = snapshotQueryMetrics
         .filter((metric) => metric.errorCode)
         .map((metric) => ({ source: metric.source }));
@@ -2087,10 +2123,13 @@ export function createCustomerAccountAdapter({
           runStructuredTextResearch({
             schemaName: "customer_account_evidence_assessment",
             systemPrompt:
-              "Evalúa si la evidencia CRM autorizada responde todas las partes de la pregunta. No redactes la respuesta ni inventes datos. Marca sufficient solo si cada parte está respaldada por resultados concretos. Marca no_results solo cuando las consultas necesarias se ejecutaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Si falta otra fuente disponible, devuelve su código en missingQueries; solicita aclaración para entidades ambiguas, referencias insuficientes o periodos necesarios. Devuelve missingFacts como etiquetas breves, no como afirmaciones inventadas.",
+              "Evalúa si la evidencia CRM autorizada responde todas las partes de la pregunta interpretada junto con recentConversation y validatedContinuation. El historial sirve para resolver la intención y referencias, nunca como prueba de hechos CRM. No redactes la respuesta ni inventes datos. Distingue consultas de hechos de solicitudes para preparar propuestas editables: ante 'proponla' después de ofrecer una llamada, verifica la identidad y vínculos CRM de la cuenta, oportunidad y contacto referidos, pero no exijas preferencias de llamada, acuerdos confirmados, actividades previas ni detalles de un siguiente paso futuro que el vendedor no pidió consultar como hechos. La fecha/hora y otros datos no proporcionados de una propuesta son campos por completar, no hechos CRM que deban existir para proponerla; no los inventes. Preparar una propuesta no ejecuta ni guarda la actividad y sigue sujeto a operationPolicy. Marca sufficient solo si los hechos necesarios están respaldados por resultados concretos. Marca no_results solo cuando las consultas necesarias se ejecutaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Si falta otra fuente disponible, devuelve su código en missingQueries; solicita aclaración para entidades ambiguas, referencias insuficientes o periodos necesarios de una consulta factual. Devuelve missingFacts como etiquetas breves en español para el vendedor, no como códigos internos ni afirmaciones inventadas.",
             subject: "Verificación de evidencia CRM",
             context: {
               question: payload.question,
+              recentConversation: conversationHistory.slice(-8),
+              validatedContinuation: conversationContext || null,
+              operationPolicy: payload.operationPolicy || {},
               intentPlan: routing
                 ? {
                     objective: routing.objective || "",
@@ -2322,7 +2361,7 @@ export function createCustomerAccountAdapter({
         (await runStructuredTextResearch({
           schemaName: "account_contextual_chat",
           systemPrompt:
-            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos.",
+            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos. Si el vendedor acepta preparar una actividad ofrecida en el turno anterior, por ejemplo con 'proponla', devuelve el borrador estructurado en operations cuando activity esté permitido y sus vínculos estén verificados; no repitas una oferta de proponerla ni exijas preferencias del contacto o acuerdos que el usuario no pidió consultar. Los detalles futuros son propuestas, no hechos CRM. Si falta fecha/hora, deja scheduledAt vacío, añade scheduledAt a missingFields y pide completarlo para abrir Calendario; nunca inventes una cita ni afirmes que está coordinada, aceptada, guardada o ejecutada.",
           subject: snapshot.account?.name || "cuenta",
           context: answerEvidenceContext,
           currentValues: {},
@@ -2511,11 +2550,14 @@ export function createCustomerAccountAdapter({
               answerAuditDiagnostics.model = model || null;
             },
             systemPrompt:
+              "Para una actividad futura solicitada por el vendedor, distingue el borrador propuesto de un hecho CRM: audita sus IDs, identidad y relaciones con authorizedEvidence y su tipo/objetivo con la petición y conversationHistory. Una propuesta editable no demuestra que la llamada esté acordada o guardada; no exijas preferencias o acuerdos previos para proponerla. La ausencia de fecha/hora debe quedar explícita como dato pendiente, nunca inventada. No permitas una propuesta con entidades ambiguas o sin respaldo ni afirmaciones de ejecución. " +
               "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones CRM están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. Para cada afirmación no respaldada, devuelve en findings la afirmación, el veredicto, el motivo concreto y las referencias a los toolName/registros de authorizedEvidence que revisaste; no inventes referencias. No redactes una respuesta nueva ni autorices operaciones.",
             subject: snapshot.account?.name || "cuenta",
             context: {
               question: payload.question,
               channelIntentRouting: routing,
+              conversationHistory,
+              operationPolicy: payload.operationPolicy || {},
               proposalOrigin: deterministicOperationResponse
                 ? "server_deterministic"
                 : "model_generated",

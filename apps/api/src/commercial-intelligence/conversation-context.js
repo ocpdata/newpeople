@@ -136,6 +136,24 @@ export function validateCustomerConversationContext(
     leadId: leadId && visibleLeadIds.has(leadId) ? leadId : null,
     intents,
     filters: validatedFilters(context.filters),
+    ...(positiveId(context.pendingActivity?.operationId) &&
+    positiveId(context.pendingActivity?.sessionId) &&
+    visibleOpportunityIds.has(
+      positiveId(context.pendingActivity?.operation?.opportunityId),
+    ) &&
+    Number(context.pendingActivity?.operation?.accountId) === accountId
+      ? {
+          pendingActivity: {
+            operationId: positiveId(context.pendingActivity.operationId),
+            sessionId: positiveId(context.pendingActivity.sessionId),
+            version: positiveId(context.pendingActivity.version),
+            temporalPreference: String(
+              context.pendingActivity.temporalPreference || "",
+            ).slice(0, 1200),
+            operation: context.pendingActivity.operation,
+          },
+        }
+      : {}),
   };
 }
 

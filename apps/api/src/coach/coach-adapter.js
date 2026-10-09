@@ -2,6 +2,17 @@ import { getCoachReadToolCatalog } from "./read-tools.js";
 import { runConversationEngine } from "./conversation-engine.js";
 import { getCoachBusinessRules } from "./business-rules.js";
 import { listCoachAdminRules } from "./admin-rules.js";
+import { createCoachBlockPipeline } from "./block-pipeline.js";
+import { createCoachBlockTrace } from "./block-runtime.js";
+
+export function coachBlockPipelineEnabled(dependencies = {}) {
+  if (typeof dependencies.coachBlockPipelineEnabled === "boolean")
+    return dependencies.coachBlockPipelineEnabled;
+  return (
+    String(process.env.COACH_BLOCK_PIPELINE_ENABLED || "true").toLowerCase() !==
+    "false"
+  );
+}
 
 export function createCoachAdapter({
   user,
@@ -19,24 +30,80 @@ export function createCoachAdapter({
     channelRules: effectiveBusinessRules.channelRules,
     permissions,
     operationPolicy: effectiveBusinessRules.operationPolicy,
-    runTurn({ question, context = {}, history = [], jobId }) {
-      return runConversationEngine({
-        question,
-        context,
-        history,
-        user,
-        jobId,
-        availableTools,
-        channelRules: effectiveBusinessRules.channelRules,
-        permissions,
-        operationPolicy: effectiveBusinessRules.operationPolicy,
-        businessRules: effectiveBusinessRules,
-        dependencies: {
-          ...dependencies,
-          loadAdministrativeRules:
-            dependencies.loadAdministrativeRules || listCoachAdminRules,
+    async runTurn({
+      question,
+      context = {},
+      history = [],
+      jobId,
+      executionTrace = null,
+    }) {
+      const enabled = coachBlockPipelineEnabled(dependencies);
+      const trace = executionTrace || createCoachBlockTrace({ jobId });
+      const pipeline = enabled
+        ? createCoachBlockPipeline({
+            dependencies: {
+              ...dependencies,
+              loadAdministrativeRules:
+                dependencies.loadAdministrativeRules || listCoachAdminRules,
+            },
+            user,
+            businessRules: effectiveBusinessRules,
+            trace,
+            jobId,
+            question,
+            history,
+            context,
+          })
+        : null;
+      const execute = () =>
+        runConversationEngine({
+          question,
+          context,
+          history,
+          user,
+          jobId,
+          availableTools,
+          channelRules: effectiveBusinessRules.channelRules,
+          permissions,
+          operationPolicy: effectiveBusinessRules.operationPolicy,
+          businessRules: effectiveBusinessRules,
+          dependencies: {
+            ...dependencies,
+            loadAdministrativeRules:
+              dependencies.loadAdministrativeRules || listCoachAdminRules,
+            ...(pipeline?.hooks || {}),
+          },
+        });
+      if (!pipeline) return execute();
+      const result = await trace.span(
+        "B4",
+        "B5",
+        "Ejecutar motor de Coach",
+        execute,
+        (value) => ({
+          responseType: value.response?.responseType || null,
+          toolCount: value.readToolResults?.length || 0,
+        }),
+      );
+      await pipeline.finalize(result);
+      result.qualityTrace = {
+        ...result.qualityTrace,
+        responseType: result.response.responseType,
+        diagnostics: {
+          ...result.qualityTrace?.diagnostics,
+          ...pipeline.diagnostics,
+          executionTrace: trace.events,
         },
-      });
+      };
+      result.response.coachArchitecture = {
+        version: "coach_blocks_v1",
+        channel: "coach",
+        executionTrace: trace.events,
+        planner: pipeline.diagnostics.planner,
+        evidence: pipeline.diagnostics.evidence,
+        answerAudit: pipeline.diagnostics.answerAudit,
+      };
+      return result;
     },
   };
 }

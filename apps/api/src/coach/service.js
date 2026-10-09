@@ -208,7 +208,7 @@ const OPERATION_TRANSITIONS = {
 };
 
 const TARGET_MODULES = {
-  activity: "commercial_development",
+  activity: "calendar",
   stage_answer: "opportunities",
   opportunity_field: "opportunities",
   account_field: "accounts",
@@ -225,7 +225,7 @@ const TARGET_MODULES = {
 };
 
 const TARGET_ROUTES = {
-  activity: "/commercial-development",
+  activity: "/calendar",
   stage_answer: "/opportunities",
   opportunity_field: "/opportunities",
   account_field: "/accounts",
@@ -269,15 +269,25 @@ export function mapCoachOperationRow(row) {
     operationIndex: Number(row.operation_index),
     kind: row.operation_kind,
     sourceChannel:
-      pendingOperation.sourceChannel || originalOperation.sourceChannel || "coach",
+      pendingOperation.sourceChannel ||
+      originalOperation.sourceChannel ||
+      "coach",
     status: row.status,
     originalIntent: row.original_intent,
     identifiedEntities: parseJson(row.identified_entities, {}),
     collectedFields: parseJson(row.collected_fields, {}),
     missingFields: parseJson(row.missing_fields, []),
     evidence: parseJson(row.evidence, []),
-    targetModule: row.target_module || null,
-    targetRoute: row.target_route || null,
+    targetModule:
+      row.operation_kind === "activity" &&
+      ACTIVE_OPERATION_STATUSES.includes(row.status)
+        ? TARGET_MODULES.activity
+        : row.target_module || null,
+    targetRoute:
+      row.operation_kind === "activity" &&
+      ACTIVE_OPERATION_STATUSES.includes(row.status)
+        ? TARGET_ROUTES.activity
+        : row.target_route || null,
     handoffToken: row.handoff_token || null,
     handoffExpiresAt: row.handoff_expires_at,
     handoffConsumedAt: row.handoff_consumed_at,
@@ -780,12 +790,12 @@ export async function transitionCoachOperation(
     );
     const eventType = explicitEventType || transitionEventType(status);
     if (eventType) {
-          await recordCoachJobAction(execute, existing, {
-            event: eventType || status,
-            status,
-            domainModule: domainModule || existing.targetModule,
-            domainAuditId: domainAuditId || null,
-          });
+      await recordCoachJobAction(execute, existing, {
+        event: eventType || status,
+        status,
+        domainModule: domainModule || existing.targetModule,
+        domainAuditId: domainAuditId || null,
+      });
       await insertCoachOperationEvent(execute, {
         operationId: existing.id,
         sessionId: existing.sessionId,
@@ -907,8 +917,7 @@ export async function closeCoachSession(userId, sessionId) {
          AND status IN (${ACTIVE_OPERATION_STATUSES.map(() => "?").join(", ")})`,
       [Number(sessionId), Number(userId), ...ACTIVE_OPERATION_STATUSES],
     );
-    if (pendingOperations.length)
-      return { outcome: "operations_in_progress" };
+    if (pendingOperations.length) return { outcome: "operations_in_progress" };
 
     await execute(
       `UPDATE coach_conversation_sessions

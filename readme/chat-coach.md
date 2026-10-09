@@ -153,10 +153,16 @@ La transferencia se realiza mediante un `coachDraft` opaco en la URL. El token:
 - puede reutilizarse mientras siga vigente y la operación continúe abierta;
 - no autoriza escrituras directas ni sustituye los permisos del módulo;
 - se completa solo después de que el formulario oficial guarda correctamente;
-- se conserva si el usuario cierra el formulario sin guardar;
+- se conserva si el usuario cierra el formulario sin guardar, salvo actividades de Calendario: cerrar su modal cancela el borrador;
 - puede descartarse explícitamente desde el aviso del Coach en el módulo destino.
 
-Los módulos de cuentas, contactos, oportunidades, desarrollo comercial, interacciones, mapeo de contactos, cotizaciones y propuestas consumen este contrato. Cada uno aplica una lista blanca de campos precargables y conserva sus catálogos, valores predeterminados, validaciones, controles de duplicados y aprobaciones.
+Los módulos de cuentas, contactos, oportunidades, calendario, interacciones, mapeo de contactos, cotizaciones y propuestas consumen este contrato. Cada uno aplica una lista blanca de campos precargables y conserva sus catálogos, valores predeterminados, validaciones, controles de duplicados y aprobaciones.
+
+Las actividades del chat se transfieren a `/calendar?coachDraft=...`, donde se abre **Nueva actividad** con origen independiente, lead u oportunidad y los datos proporcionados. El chat exige objetivo, fecha/hora y el vínculo obligatorio del origen antes de transferir. El vendedor puede editar el formulario y confirmar su guardado; abrirlo no crea registros. Al guardar se completa el handoff con el ID de actividad; ante errores el formulario permanece abierto.
+
+Chat y Calendario comparten los tipos **Llamada, Reunión presencial, Reunión virtual, Presentación, Demostración, Visita, Correo, Propuesta, Evento y Otro**. Correo y Propuesta son tipos de actividad: no envían mensajes ni crean propuestas por sí mismos. Los registros históricos conservan su código; una reunión antigua sin modalidad se muestra como **Reunión (tipo no especificado)**.
+
+El flujo requiere `mi_coach.execute` y `calendario_comercial.update`, además del acceso al módulo. Crear actividades de oportunidad también requiere `oportunidades.update`; no requiere `desarrollo_comercial.update`. El resto del módulo Desarrollo Comercial permanece disponible.
 
 El mismo flujo aplica a:
 

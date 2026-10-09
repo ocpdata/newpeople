@@ -473,6 +473,10 @@ export default function AppShell({
                 canUpdateCommercialDevelopment={can(
                   "desarrollo_comercial.update",
                 )}
+                canUpdateCalendar={
+                  canAccessCommercialCalendar &&
+                  can("calendario_comercial.update")
+                }
                 canCreateQuotations={[
                   "cotizaciones.operacion",
                   "cotizaciones.ingreso",

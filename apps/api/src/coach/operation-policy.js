@@ -74,7 +74,7 @@ const CONTROLLED_OPERATION_POLICIES = Object.freeze({
 });
 
 const DELEGATED_OPERATION_POLICIES = Object.freeze({
-  activity: "desarrollo_comercial.update",
+  activity: "calendario_comercial.update",
   lead_resolve: "interacciones.resolve",
   create_lead: "interacciones.update",
   create_contact_mapping: "contactos.update",

@@ -1,3 +1,5 @@
+import { COMMERCIAL_ACTIVITY_TYPES } from "../../../../shared/commercial-activity-types.js";
+
 const CHANNEL_INTENTS = Object.freeze({
   customer_account: [
     {
@@ -324,6 +326,29 @@ export function getChannelIntentPlanFields(channel, enabledIntentCodes = null) {
     ...(channel === "customer_account"
       ? [
           {
+            key: "activityDraft",
+            type: "object",
+            fields: [
+              {
+                key: "action",
+                type: "enum",
+                enum: ["none", "prepare", "continue", "discard"],
+                example: "none",
+              },
+              {
+                key: "actionType",
+                type: "enum",
+                enum: COMMERCIAL_ACTIVITY_TYPES.map((item) => item.value),
+                example: "call",
+              },
+              { key: "title", type: "string", example: "" },
+              { key: "scheduledAt", type: "string", example: "" },
+              { key: "temporalPreference", type: "string", example: "" },
+              { key: "notes", type: "string", example: "" },
+              { key: "successCriteria", type: "string", example: "" },
+            ],
+          },
+          {
             key: "referenceResolution",
             type: "object",
             fields: [
@@ -620,9 +645,7 @@ export function normalizeChannelIntentPlan({
   let candidateKeys = Array.isArray(rawReferenceResolution.candidateKeys)
     ? [...new Set(rawReferenceResolution.candidateKeys)].slice(0, 8)
     : [];
-  let selectedCandidates = candidateKeys.map((key) =>
-    candidateByKey.get(key),
-  );
+  let selectedCandidates = candidateKeys.map((key) => candidateByKey.get(key));
   const rawEntities = plan.entities || {};
   const sourceTexts = [
     question,
@@ -676,7 +699,9 @@ export function normalizeChannelIntentPlan({
     (candidate.entityType === targetType ||
       (targetType === "quotation" && candidate.entityType === "opportunity"));
   const invalidCandidateSelection =
-    selectedCandidates.some((candidate) => !targetMatchesCandidate(candidate)) ||
+    selectedCandidates.some(
+      (candidate) => !targetMatchesCandidate(candidate),
+    ) ||
     (cardinality === "single" && candidateKeys.length > 1) ||
     (cardinality === "none" && candidateKeys.length > 0) ||
     unresolvedModelReference;
@@ -768,8 +793,8 @@ export function normalizeChannelIntentPlan({
     if (key === "period") {
       return (
         Number(rawFilters.periodMonths || 0) > 0 ||
-        Boolean(normalizePlanDate(rawFilters.startDate)) &&
-          Boolean(normalizePlanDate(rawFilters.endDate))
+        (Boolean(normalizePlanDate(rawFilters.startDate)) &&
+          Boolean(normalizePlanDate(rawFilters.endDate)))
       );
     }
     return Number(contextValues[key] || 0) > 0;
@@ -780,9 +805,7 @@ export function normalizeChannelIntentPlan({
         ? rawAmbiguity.missingContext
         : []
       ).filter((key) =>
-        ["account", "opportunity", "contact", "lead", "period"].includes(
-          key,
-        ),
+        ["account", "opportunity", "contact", "lead", "period"].includes(key),
       ),
     ),
   ];
@@ -853,6 +876,36 @@ export function normalizeChannelIntentPlan({
     objective: String(plan.objective || "")
       .trim()
       .slice(0, 500),
+    ...(channel === "customer_account" && plan.activityDraft
+      ? {
+          activityDraft: {
+            action: ["none", "prepare", "continue", "discard"].includes(
+              plan.activityDraft.action,
+            )
+              ? plan.activityDraft.action
+              : "none",
+            actionType: COMMERCIAL_ACTIVITY_TYPES.some(
+              (item) => item.value === plan.activityDraft.actionType,
+            )
+              ? plan.activityDraft.actionType
+              : "other",
+            ...Object.fromEntries(
+              [
+                "title",
+                "scheduledAt",
+                "temporalPreference",
+                "notes",
+                "successCriteria",
+              ].map((field) => [
+                field,
+                String(plan.activityDraft[field] || "")
+                  .trim()
+                  .slice(0, field === "notes" ? 4000 : 1200),
+              ]),
+            ),
+          },
+        }
+      : {}),
     entities: {
       accountReference: normalizeVerifiedEntityReference(
         rawEntities.accountReference,

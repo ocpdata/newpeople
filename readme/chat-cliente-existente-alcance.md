@@ -49,18 +49,30 @@ La lectura de cotizaciones no expone costo interno, margen ni notas internas. Un
 
 El chat puede presentar las operaciones siguientes si el modelo propone una acción válida y el usuario cuenta con los permisos requeridos. Esta matriz describe operaciones propuestas, no una autorización para ejecutarlas automáticamente.
 
-| Operación propuesta                                         | Permiso de dominio para escribir | Condiciones adicionales                                                                                    |
-| ----------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Proponer una actividad comercial o seguimiento              | `desarrollo_comercial.update`    | Actividad ligada a la cuenta u oportunidad autorizada; revisar y confirmar                                 |
-| Actualizar respuesta de etapa                               | `oportunidades.update`           | Oportunidad de la cuenta; validar estado y reglas de etapa; revisar y confirmar                            |
-| Actualizar nombre, importe o fecha de cierre de oportunidad | `oportunidades.update`           | Solo campos permitidos; oportunidad abierta y perteneciente a la cuenta; revisar valor vigente y confirmar |
-| Actualizar campos permitidos de cuenta                      | `cuentas.update`                 | Cuenta seleccionada; campo permitido; revisar valor vigente y confirmar                                    |
-| Actualizar campos permitidos de contacto                    | `contactos.update`               | Contacto vinculado a la cuenta; campo permitido; revisar valor vigente y confirmar                         |
-| Registrar resultado de llamada de lead                      | `interacciones.update`           | Lead/interacción autorizada y asociada con la cuenta; validar estado; revisar y confirmar                  |
+| Operación propuesta                                         | Permiso de dominio para escribir | Condiciones adicionales                                                                                                               |
+| ----------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Proponer una actividad comercial o seguimiento              | `calendario_comercial.update`    | Oportunidad y contacto verificados en la cuenta; requiere también `oportunidades.update`; revisar y guardar manualmente en Calendario |
+| Actualizar respuesta de etapa                               | `oportunidades.update`           | Oportunidad de la cuenta; validar estado y reglas de etapa; revisar y confirmar                                                       |
+| Actualizar nombre, importe o fecha de cierre de oportunidad | `oportunidades.update`           | Solo campos permitidos; oportunidad abierta y perteneciente a la cuenta; revisar valor vigente y confirmar                            |
+| Actualizar campos permitidos de cuenta                      | `cuentas.update`                 | Cuenta seleccionada; campo permitido; revisar valor vigente y confirmar                                                               |
+| Actualizar campos permitidos de contacto                    | `contactos.update`               | Contacto vinculado a la cuenta; campo permitido; revisar valor vigente y confirmar                                                    |
+| Registrar resultado de llamada de lead                      | `interacciones.update`           | Lead/interacción autorizada y asociada con la cuenta; validar estado; revisar y confirmar                                             |
 
 Las operaciones controladas requieren además `mi_coach.execute`, una entidad identificada sin ambigüedad, validación de alcance en el servidor y la confirmación explícita del vendedor. La API debe ser la autoridad final sobre la elegibilidad y la ejecución.
 
 Una instrucción explícita para cambiar el monto se trata como una operación aunque el planificador la clasifique como consulta. Si la instrucción abarca varias oportunidades y no identifica un único registro, el chat debe pedir que se seleccione o nombre una oportunidad; no debe afirmar que preparó propuestas individuales ni ejecutar cambios masivos.
+
+### Recopilación conversacional de actividades
+
+El planificador IA extrae `activityDraft`: acción (preparar, continuar o descartar), tipo, objetivo, fecha/hora, preferencia temporal, notas y resultado esperado. Recibe el borrador pendiente, el historial reciente, la fecha de referencia del servidor y la zona horaria del negocio. Las referencias CRM se resuelven con candidatos autorizados, no con IDs inventados por el modelo.
+
+Para una actividad de oportunidad con contacto, el servidor verifica el detalle de la oportunidad, la asociación directa del contacto, la cuenta y los permisos. La disponibilidad del contacto, sus preferencias o actividades previas no son requisitos para preparar una propuesta. Una consulta explícita sobre esos hechos sigue pasando por la verificación de evidencia habitual.
+
+Los campos faltantes de la propuesta no son `missingFacts` del CRM. Por ejemplo, "la próxima semana" conserva una preferencia temporal y deja `scheduledAt` pendiente hasta que el vendedor indique día y hora. El servidor pregunta por esos campos sin inventar una cita ni afirmar que el contacto la aceptó.
+
+El primer borrador se persiste en `coach_session_operations` con estado `collecting`; el contexto del chat guarda su referencia. Las respuestas posteriores actualizan la misma operación y la pasan a `ready` al completar los datos. La identidad y versión se comprueban en el servidor, incluso si la IA etiqueta una continuación como preparación. Las operaciones cerradas no se reutilizan. Al reabrir el chat se conserva el acceso al borrador; el botón recupera la versión actual por ID antes de continuar a Calendario. Descartar la propuesta la cancela y no crea ninguna actividad.
+
+Preparar o completar el borrador no guarda una actividad de Calendario. El vendedor abre el formulario oficial, revisa los datos y confirma el guardado manualmente.
 
 ## Comportamiento esperado ante preguntas
 
@@ -71,7 +83,7 @@ Una instrucción explícita para cambiar el monto se trata como una operación a
 | Pregunta sobre varios dominios                                                                | Consultar cada dominio necesario dentro de los permisos y alcance disponibles; separar los resultados por tema                                                 |
 | Referencia a un elemento de un turno anterior                                                 | Resolverla contra el contexto conversacional y la cuenta actual; no reutilizar entidades de otra sesión                                                        |
 | Varias oportunidades o contactos posibles                                                     | Preguntar cuál registro quiere decir el vendedor antes de dar un dato específico o proponer una escritura                                                      |
-| Cambio de monto solicitado para varias oportunidades                                            | Pedir una oportunidad específica; no anunciar propuestas individuales ni aplicar una actualización masiva                                                     |
+| Cambio de monto solicitado para varias oportunidades                                          | Pedir una oportunidad específica; no anunciar propuestas individuales ni aplicar una actualización masiva                                                      |
 | Solicitud sobre una cuenta distinta a la seleccionada                                         | Negarse a consultar o actuar sobre esa cuenta e indicar que debe seleccionarse desde la interfaz                                                               |
 | Consulta general sin periodo (por ejemplo, listar oportunidades actuales)                     | No inventar un periodo. Usar el conjunto predeterminado que devuelve la consulta autorizada y comunicar su alcance o cualquier truncamiento                    |
 | Pregunta que depende de un periodo no especificado (por ejemplo, comparar actividad reciente) | Preguntar el periodo antes de concluir; no inferir fechas a partir de expresiones vagas                                                                        |

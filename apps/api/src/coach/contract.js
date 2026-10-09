@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COMMERCIAL_ACTIVITY_TYPES } from "../../../../shared/commercial-activity-types.js";
 
 const positiveId = z.number().int().positive();
 const nullablePositiveId = positiveId.nullable().optional();
@@ -119,22 +120,21 @@ const activityOperationSchema = z
   .object({
     kind: z.literal("activity"),
     ...operationCommon,
+    calendarKind: z.enum(["standalone", "lead", "opportunity"]).optional(),
     opportunityId: nullablePositiveId,
+    interactionId: nullablePositiveId,
+    accountId: nullablePositiveId,
+    contactId: nullablePositiveId,
     activityId: nullablePositiveId,
     actionType: z.enum([
+      ...COMMERCIAL_ACTIVITY_TYPES.map((activityType) => activityType.value),
       "next_step",
       "follow_up",
-      "call",
       "meeting",
       "conference",
-      "presentation",
-      "visit",
-      "send_email",
       "waiting_customer",
-      "demo",
       "quotation",
       "negotiation",
-      "other",
     ]),
     status: z.enum(["pending", "in_progress", "blocked", "done"]),
     priority: z.enum(["low", "medium", "high"]),
@@ -144,7 +144,14 @@ const activityOperationSchema = z
     successCriteria: optionalText(1200),
     activitySearch: optionalText(300),
     entityType: z.literal("opportunity_activity").optional(),
-    source: sourceSchema("opportunity").nullable().optional(),
+    source: z
+      .union([
+        sourceSchema("opportunity"),
+        sourceSchema("lead"),
+        sourceSchema("account"),
+      ])
+      .nullable()
+      .optional(),
   })
   .strict();
 

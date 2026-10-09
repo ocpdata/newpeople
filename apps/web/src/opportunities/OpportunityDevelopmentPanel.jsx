@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import {
+  COMMERCIAL_ACTIVITY_TYPES,
+  getCommercialActivityTypeLabel,
+  normalizeCommercialActivityType,
+} from "../../../../shared/commercial-activity-types.js";
+import {
   formatBusinessDate,
   formatBusinessDateTime,
   toBusinessDateTimeInputValue,
@@ -32,49 +37,48 @@ function parseOpportunityAmount(value) {
 }
 
 function getInteractionActivityTypeLabel(value) {
-  return {
-    call: "Llamada",
-    meeting: "Reunión",
-    demo: "Demostración",
-    email: "Correo",
-    other: "Otra actividad",
-  }[normalizeText(value).toLowerCase()] || "Actividad";
+  return getCommercialActivityTypeLabel(
+    normalizeText(value).toLowerCase() === "email" ? "send_email" : value,
+  );
 }
 
 function normalizeInteractionActivityType(value) {
   const normalized = normalizeText(value).toLowerCase();
-  return {
-    demo: "presentation",
-    meeting: "conference",
-    email: "other",
-    call: "call",
-    presentation: "presentation",
-    conference: "conference",
-    visit: "visit",
-    other: "other",
-  }[normalized] || "other";
+  if (normalized === "conference" || normalized === "meeting")
+    return "conference";
+  return normalizeCommercialActivityType(
+    normalized === "email" ? "send_email" : normalized,
+  );
 }
 
 function getInteractionFieldLabel(value) {
-  return {
-    budgetUsd: "Presupuesto de la oportunidad",
-    type: "Tipo de actividad",
-    scheduledDate: "Fecha propuesta",
-    dueDate: "Fecha del próximo paso",
-    title: "Título de la actividad",
-    note: "Nota de la actividad",
-    implementationDate: "Fecha de implementación",
-    approvalRequired: "Aprobación requerida",
-    successCriteria: "Criterio de éxito",
-  }[normalizeText(value)] || normalizeText(value) || "Cambio detectado";
+  return (
+    {
+      budgetUsd: "Presupuesto de la oportunidad",
+      type: "Tipo de actividad",
+      scheduledDate: "Fecha propuesta",
+      dueDate: "Fecha del próximo paso",
+      title: "Título de la actividad",
+      note: "Nota de la actividad",
+      implementationDate: "Fecha de implementación",
+      approvalRequired: "Aprobación requerida",
+      successCriteria: "Criterio de éxito",
+    }[normalizeText(value)] ||
+    normalizeText(value) ||
+    "Cambio detectado"
+  );
 }
 
 function getInteractionConfidenceLabel(value) {
-  return {
-    high: "alta",
-    medium: "media",
-    low: "baja",
-  }[normalizeText(value).toLowerCase()] || normalizeText(value) || "media";
+  return (
+    {
+      high: "alta",
+      medium: "media",
+      low: "baja",
+    }[normalizeText(value).toLowerCase()] ||
+    normalizeText(value) ||
+    "media"
+  );
 }
 
 function isStepAnswerMissing(answer) {
@@ -177,15 +181,14 @@ function parseActivityTimestamp(value) {
 }
 
 function normalizeInteractionAnalysisResult(result) {
-  const source = result && typeof result === "object" && !Array.isArray(result)
-    ? result
-    : {};
+  const source =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? result
+      : {};
   return {
     ...source,
     changes: Array.isArray(source.changes)
-      ? source.changes.filter(
-          (change) => change && typeof change === "object",
-        )
+      ? source.changes.filter((change) => change && typeof change === "object")
       : [],
     activity:
       source.activity && typeof source.activity === "object"
@@ -215,7 +218,9 @@ function buildStructuredInteractionDraft(
     /[T\s](\d{2}:\d{2})(?::\d{2})?/,
   )?.[1];
   const structuredProposals = [];
-  const amountChange = (Array.isArray(result?.changes) ? result.changes : []).find(
+  const amountChange = (
+    Array.isArray(result?.changes) ? result.changes : []
+  ).find(
     (change) =>
       normalizeText(change?.entity).toLowerCase() === "opportunity" &&
       ["amountusd", "amount_usd", "importe", "monto"].includes(
@@ -255,14 +260,23 @@ function buildStructuredInteractionDraft(
       selected: true,
       source: { type: "chatbot", rawText: fallbackNote },
       fields: {
-        activityType: String(activityResult?.type || legacy.activityType || "call"),
-        objective:
-          String(
-            activityResult?.objective || activityResult?.title || legacy.objective || "",
-          ).trim(),
+        activityType: String(
+          activityResult?.type || legacy.activityType || "call",
+        ),
+        objective: String(
+          activityResult?.objective ||
+            activityResult?.title ||
+            legacy.objective ||
+            "",
+        ).trim(),
         scheduledDate: String(
-          activityResult?.scheduledAt || activityResult?.scheduledDate || legacy.scheduledDate || "",
-        ).slice(0, 10).trim(),
+          activityResult?.scheduledAt ||
+            activityResult?.scheduledDate ||
+            legacy.scheduledDate ||
+            "",
+        )
+          .slice(0, 10)
+          .trim(),
         scheduledTime: String(
           activityResult?.scheduledTime ||
             activityResult?.time ||
@@ -271,7 +285,9 @@ function buildStructuredInteractionDraft(
             legacy.scheduledTime ||
             "09:00",
         ).trim(),
-        note: String(activityResult?.note || legacy.note || fallbackNote || "").trim(),
+        note: String(
+          activityResult?.note || legacy.note || fallbackNote || "",
+        ).trim(),
         status: "pending",
         ownerUserId: null,
         confidence: 0.92,
@@ -292,7 +308,9 @@ function buildStructuredInteractionDraft(
       source: { type: "chatbot", rawText: fallbackNote },
       fields: {
         title: nextStepTitle,
-        dueDate: String(nextStep?.dueDate || legacy.nextStepDueDate || "").slice(0, 10),
+        dueDate: String(
+          nextStep?.dueDate || legacy.nextStepDueDate || "",
+        ).slice(0, 10),
         successCriteria:
           String(
             nextStep?.successCriteria ||
@@ -306,7 +324,9 @@ function buildStructuredInteractionDraft(
     });
   }
 
-  const stageAnswerChange = (Array.isArray(result?.changes) ? result.changes : []).find(
+  const stageAnswerChange = (
+    Array.isArray(result?.changes) ? result.changes : []
+  ).find(
     (change) =>
       ["stageanswer", "stageanswers"].includes(
         normalizeText(change?.entity).toLowerCase().replace(/[_-]/g, ""),
@@ -330,24 +350,24 @@ function buildStructuredInteractionDraft(
           candidate?.newValue,
       ),
     ) || {};
-  const stageAnswerQuestionId = [
-    stageAnswer?.questionId,
-    stageAnswer?.question_id,
-    stageAnswerChange?.questionId,
-    stageAnswerChange?.question_id,
-    stageAnswerChange?.field,
-    stageAnswer?.id,
-    stageQuestions[0]?.questionId,
-    stageQuestions[0]?.question_id,
-    stageQuestions[0]?.id,
-  ]
-    .map((value) => Number(value))
-    .find((value) => Number.isInteger(value) && value > 0) || 0;
+  const stageAnswerQuestionId =
+    [
+      stageAnswer?.questionId,
+      stageAnswer?.question_id,
+      stageAnswerChange?.questionId,
+      stageAnswerChange?.question_id,
+      stageAnswerChange?.field,
+      stageAnswer?.id,
+      stageQuestions[0]?.questionId,
+      stageQuestions[0]?.question_id,
+      stageQuestions[0]?.id,
+    ]
+      .map((value) => Number(value))
+      .find((value) => Number.isInteger(value) && value > 0) || 0;
   const matchedStageQuestion = stageQuestions.find(
     (question) =>
-      Number(
-        question?.question_id || question?.questionId || question?.id,
-      ) === stageAnswerQuestionId,
+      Number(question?.question_id || question?.questionId || question?.id) ===
+      stageAnswerQuestionId,
   );
   const stageAnswerValue = normalizeText(
     stageAnswer?.answerValue ||
@@ -355,7 +375,11 @@ function buildStructuredInteractionDraft(
       stageAnswer?.proposedAnswer ||
       stageAnswer?.newValue,
   );
-  if (proposedAmount === null && stageAnswerQuestionId > 0 && stageAnswerValue) {
+  if (
+    proposedAmount === null &&
+    stageAnswerQuestionId > 0 &&
+    stageAnswerValue
+  ) {
     structuredProposals.unshift({
       proposalId: "stage-answer-proposal",
       kind: "stage_answer",
@@ -369,12 +393,19 @@ function buildStructuredInteractionDraft(
           normalizeText(stageAnswer?.questionPrompt) ||
           normalizeText(stageAnswer?.question_prompt) ||
           normalizeText(matchedStageQuestion?.prompt),
-        stageName: normalizeText(stageAnswer?.stageName) || normalizeText(stageName),
+        stageName:
+          normalizeText(stageAnswer?.stageName) || normalizeText(stageName),
       },
       fields: {
         answerValue: stageAnswerValue,
-        previousAnswer: normalizeText(matchedStageQuestion?.answerValue || matchedStageQuestion?.answer_value),
-        answerMode: normalizeText(matchedStageQuestion?.answerValue || matchedStageQuestion?.answer_value)
+        previousAnswer: normalizeText(
+          matchedStageQuestion?.answerValue ||
+            matchedStageQuestion?.answer_value,
+        ),
+        answerMode: normalizeText(
+          matchedStageQuestion?.answerValue ||
+            matchedStageQuestion?.answer_value,
+        )
           ? "replace"
           : "replace",
         confidence: stageAnswer?.confidence || "high",
@@ -406,13 +437,15 @@ function buildStructuredInteractionDraft(
 }
 
 function formatProposalLabel(kind) {
-  return {
-    stage_answer: "Respuesta de etapa",
-    activity: "Actividad",
-    next_step: "Próximo paso",
-    stage_transition: "Cambio de etapa",
-    commercial_close: "Cierre comercial",
-  }[kind] || "Cambio sugerido";
+  return (
+    {
+      stage_answer: "Respuesta de etapa",
+      activity: "Actividad",
+      next_step: "Próximo paso",
+      stage_transition: "Cambio de etapa",
+      commercial_close: "Cierre comercial",
+    }[kind] || "Cambio sugerido"
+  );
 }
 
 function updateInteractionApprovalProposalById(current, proposalId, updater) {
@@ -447,7 +480,9 @@ function formatProposalSummaryText(proposal) {
   if (proposal.kind === "next_step") {
     return `${proposal.fields?.title || "Próximo paso"} · ${proposal.fields?.dueDate || "Sin fecha"}`;
   }
-  return normalizeText(proposal.fields?.reason || proposal.fields?.title || "Cambio sugerido");
+  return normalizeText(
+    proposal.fields?.reason || proposal.fields?.title || "Cambio sugerido",
+  );
 }
 
 function formatActivityTimestamp(value) {
@@ -506,13 +541,7 @@ function SaveExecutionItemIcon() {
   );
 }
 
-const ACTIVITY_TYPE_OPTIONS = [
-  { value: "call", label: "Llamada" },
-  { value: "conference", label: "Conferencia" },
-  { value: "visit", label: "Visita" },
-  { value: "presentation", label: "Presentacion" },
-  { value: "other", label: "Otra actividad" },
-];
+const ACTIVITY_TYPE_OPTIONS = COMMERCIAL_ACTIVITY_TYPES;
 
 const DEPENDENCY_TYPE_OPTIONS = [
   { value: "presales_support", label: "Preventa" },
@@ -524,16 +553,14 @@ const DEPENDENCY_TYPE_OPTIONS = [
   { value: "operations_alignment", label: "Operaciones" },
 ];
 
-const ACTIVITY_TYPE_LABELS = Object.fromEntries(
-  ACTIVITY_TYPE_OPTIONS.map((item) => [item.value, item.label]),
-);
 const DEPENDENCY_TYPE_LABELS = Object.fromEntries(
   DEPENDENCY_TYPE_OPTIONS.map((item) => [item.value, item.label]),
 );
 
-const ACTIVITY_TYPE_SET = new Set(
-  ACTIVITY_TYPE_OPTIONS.map((item) => item.value),
-);
+const ACTIVITY_TYPE_SET = new Set([
+  ...ACTIVITY_TYPE_OPTIONS.map((item) => item.value),
+  "conference",
+]);
 
 function getWorkspaceEntryKind(item) {
   const explicitKind = normalizeText(item?.details?.entryKind).toLowerCase();
@@ -1294,7 +1321,10 @@ export default function OpportunityDevelopmentPanel({
   const visibleWorkspaceActions = [
     ...localInteractionEntries,
     ...workspaceActions.filter(
-      (item) => !localInteractionEntries.some((local) => Number(local.id) === Number(item.id)),
+      (item) =>
+        !localInteractionEntries.some(
+          (local) => Number(local.id) === Number(item.id),
+        ),
     ),
   ];
   const previousActivities = visibleWorkspaceActions
@@ -1385,7 +1415,9 @@ export default function OpportunityDevelopmentPanel({
     const defaultDateTime = toDateTimeLocalInputValue(
       defaultDate.toISOString(),
     );
-    const defaultTime = defaultDateTime ? defaultDateTime.slice(11, 16) : "09:00";
+    const defaultTime = defaultDateTime
+      ? defaultDateTime.slice(11, 16)
+      : "09:00";
 
     setActivityDraft({
       activityType: "call",
@@ -1718,9 +1750,7 @@ export default function OpportunityDevelopmentPanel({
     const scheduledDate = normalizeText(activityDraft.scheduledDate);
     const scheduledTime = normalizeText(activityDraft.scheduledTime);
     const scheduledAt =
-      scheduledDate && scheduledTime
-        ? `${scheduledDate}T${scheduledTime}`
-        : "";
+      scheduledDate && scheduledTime ? `${scheduledDate}T${scheduledTime}` : "";
 
     if (!scheduledAt) {
       setSourceError("Debes indicar fecha y hora para agendar la actividad.");
@@ -1753,7 +1783,10 @@ export default function OpportunityDevelopmentPanel({
     }
   }
 
-  function buildInteractionApprovalDraftFromAnalysis(result, fallbackNote = interactionNote) {
+  function buildInteractionApprovalDraftFromAnalysis(
+    result,
+    fallbackNote = interactionNote,
+  ) {
     return buildStructuredInteractionDraft(
       result,
       fallbackNote,
@@ -1793,16 +1826,21 @@ export default function OpportunityDevelopmentPanel({
           questionPrompt: normalizeText(answer?.prompt),
           answerValue: normalizeText(answer?.answer_value),
           required: Boolean(answer?.is_required),
-          stageName: normalizeText(currentCommercialStage?.name || commercialContext?.salesStage?.name),
+          stageName: normalizeText(
+            currentCommercialStage?.name || commercialContext?.salesStage?.name,
+          ),
         })),
       });
       const jobId = Number(queued.data?.job?.id || 0);
-      if (!jobId) throw new Error("No se pudo iniciar el análisis de la conversación");
+      if (!jobId)
+        throw new Error("No se pudo iniciar el análisis de la conversación");
 
       let result = null;
       for (;;) {
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        const response = await api.get(`/api/mi-agent/interaction/jobs/${jobId}`);
+        const response = await api.get(
+          `/api/mi-agent/interaction/jobs/${jobId}`,
+        );
         const status = String(response.data?.job?.status || "");
         setInteractionJobStatus(status);
         if (status === "completed") {
@@ -1935,10 +1973,12 @@ export default function OpportunityDevelopmentPanel({
       if (activityProposal) {
         const scheduledDate = activityProposal.fields?.scheduledDate || "";
         const scheduledTime = activityProposal.fields?.scheduledTime || "09:00";
-        const scheduledAt = scheduledDate && scheduledTime
-          ? `${scheduledDate}T${scheduledTime}`
-          : new Date().toISOString().slice(0, 16);
-        const activityObjective = activityProposal.fields?.objective || "Actividad comercial";
+        const scheduledAt =
+          scheduledDate && scheduledTime
+            ? `${scheduledDate}T${scheduledTime}`
+            : new Date().toISOString().slice(0, 16);
+        const activityObjective =
+          activityProposal.fields?.objective || "Actividad comercial";
         const activityNote = activityProposal.fields?.note || interactionNote;
         const activityStatus = inferInteractionActivityStatus({
           title: activityObjective,
@@ -1946,20 +1986,28 @@ export default function OpportunityDevelopmentPanel({
           result: interactionAnalysis.activity?.result || activityNote,
           scheduledDate,
         });
-        const activityResponse = await api.post(`/api/opportunities/${editingOpportunityId}/workspace/actions`, {
-          actionType: normalizeInteractionActivityType(activityProposal.fields?.activityType || "call"),
-          title: activityObjective,
-          status: activityStatus,
-          priority: "medium",
-          dueDate: scheduledAt.slice(0, 10),
-          scheduledAt,
-          notes: activityNote,
-          successCriteria: "Resultado registrado desde la conversación.",
-          ownerUserId: null,
-        });
+        const activityResponse = await api.post(
+          `/api/opportunities/${editingOpportunityId}/workspace/actions`,
+          {
+            entryKind: "activity",
+            actionType: normalizeInteractionActivityType(
+              activityProposal.fields?.activityType || "call",
+            ),
+            title: activityObjective,
+            status: activityStatus,
+            priority: "medium",
+            dueDate: scheduledAt.slice(0, 10),
+            scheduledAt,
+            notes: activityNote,
+            successCriteria: "Resultado registrado desde la conversación.",
+            ownerUserId: null,
+          },
+        );
         localEntries.push({
           id: Number(activityResponse.data?.id || Date.now()),
-          actionType: normalizeInteractionActivityType(activityProposal.fields?.activityType || "call"),
+          actionType: normalizeInteractionActivityType(
+            activityProposal.fields?.activityType || "call",
+          ),
           status: activityStatus,
           title: activityObjective,
           notes: activityNote,
@@ -1969,22 +2017,33 @@ export default function OpportunityDevelopmentPanel({
           isPrimaryNextStep: false,
         });
       }
-      if (nextStepProposal?.fields?.title || interactionApprovalDraft.nextStepTitle) {
-        const nextStepTitle = nextStepProposal?.fields?.title || interactionApprovalDraft.nextStepTitle;
-        const nextStepDueDate = nextStepProposal?.fields?.dueDate || interactionApprovalDraft.nextStepDueDate || null;
+      if (
+        nextStepProposal?.fields?.title ||
+        interactionApprovalDraft.nextStepTitle
+      ) {
+        const nextStepTitle =
+          nextStepProposal?.fields?.title ||
+          interactionApprovalDraft.nextStepTitle;
+        const nextStepDueDate =
+          nextStepProposal?.fields?.dueDate ||
+          interactionApprovalDraft.nextStepDueDate ||
+          null;
         const nextStepSuccessCriteria =
           nextStepProposal?.fields?.successCriteria ||
           interactionApprovalDraft.nextStepSuccessCriteria ||
           "Registrar compromiso del cliente.";
-        const nextStepResponse = await api.post(`/api/opportunities/${editingOpportunityId}/workspace/actions`, {
-          title: nextStepTitle,
-          actionType: "next_step",
-          status: "pending",
-          priority: "high",
-          dueDate: nextStepDueDate,
-          successCriteria: nextStepSuccessCriteria,
-          ownerUserId: null,
-        });
+        const nextStepResponse = await api.post(
+          `/api/opportunities/${editingOpportunityId}/workspace/actions`,
+          {
+            title: nextStepTitle,
+            actionType: "next_step",
+            status: "pending",
+            priority: "high",
+            dueDate: nextStepDueDate,
+            successCriteria: nextStepSuccessCriteria,
+            ownerUserId: null,
+          },
+        );
         localEntries.push({
           id: Number(nextStepResponse.data?.id || Date.now() + 1),
           actionType: "next_step",
@@ -1997,12 +2056,17 @@ export default function OpportunityDevelopmentPanel({
       }
       setLocalInteractionEntries((current) => [...localEntries, ...current]);
       if (stageAnswerProposal) {
-        const proposedAnswer = normalizeText(stageAnswerProposal.fields?.answerValue);
-        const previousAnswer = normalizeText(stageAnswerProposal.fields?.previousAnswer);
+        const proposedAnswer = normalizeText(
+          stageAnswerProposal.fields?.answerValue,
+        );
+        const previousAnswer = normalizeText(
+          stageAnswerProposal.fields?.previousAnswer,
+        );
         const answerMode = stageAnswerProposal.fields?.answerMode || "replace";
-        const answerValue = answerMode === "append" && previousAnswer
-          ? `${previousAnswer}\n${proposedAnswer}`
-          : proposedAnswer;
+        const answerValue =
+          answerMode === "append" && previousAnswer
+            ? `${previousAnswer}\n${proposedAnswer}`
+            : proposedAnswer;
         const stageAnswerPayload = {
           answers: [
             {
@@ -2012,7 +2076,10 @@ export default function OpportunityDevelopmentPanel({
           ],
         };
         if (Number(stageAnswerProposal.question?.id || 0) > 0) {
-          await api.post(`/api/opportunities/${editingOpportunityId}/stage-answers`, stageAnswerPayload);
+          await api.post(
+            `/api/opportunities/${editingOpportunityId}/stage-answers`,
+            stageAnswerPayload,
+          );
           if (typeof updateCommercialAnswer === "function") {
             updateCommercialAnswer(
               Number(stageAnswerProposal.question.id),
@@ -2045,7 +2112,9 @@ export default function OpportunityDevelopmentPanel({
       });
       await refreshExecutionSection();
     } catch (error) {
-      setSourceError(getApiErrorMessage(error, "No fue posible aplicar los cambios"));
+      setSourceError(
+        getApiErrorMessage(error, "No fue posible aplicar los cambios"),
+      );
     } finally {
       setApplyingInteraction(false);
     }
@@ -2988,467 +3057,851 @@ export default function OpportunityDevelopmentPanel({
             <h5>Ejecucion comercial</h5>
             <span className="field-hint">
               Registra y da seguimiento sin salir de la oportunidad.
-          {showOpportunityCoach ? <div className="opportunity-development-interaction-coach">
-            <div className="opportunity-development-execution-section-header">
-              <h6>Coach de oportunidad</h6>
-              <span className="field-hint">Habla con el asistente y revisa los cambios antes de guardarlos.</span>
-            </div>
+              {showOpportunityCoach ? (
+                <div className="opportunity-development-interaction-coach">
+                  <div className="opportunity-development-execution-section-header">
+                    <h6>Coach de oportunidad</h6>
+                    <span className="field-hint">
+                      Habla con el asistente y revisa los cambios antes de
+                      guardarlos.
+                    </span>
+                  </div>
 
-            <div style={{ display: "grid", gap: "12px" }}>
-              <div style={{ display: "grid", gap: "8px", maxHeight: "240px", overflowY: "auto", padding: "8px 10px", border: "1px solid #d9dfe8", borderRadius: "12px", background: "#f8fafc" }}>
-                {chatMessages.map((message) => (
-                  <div key={message.id} style={{ display: "flex", justifyContent: message.role === "user" ? "flex-end" : "flex-start" }}>
+                  <div style={{ display: "grid", gap: "12px" }}>
                     <div
                       style={{
-                        maxWidth: "80%",
-                        padding: "9px 12px",
+                        display: "grid",
+                        gap: "8px",
+                        maxHeight: "240px",
+                        overflowY: "auto",
+                        padding: "8px 10px",
+                        border: "1px solid #d9dfe8",
                         borderRadius: "12px",
-                        background: message.role === "user" ? "#1d4ed8" : "#ffffff",
-                        color: message.role === "user" ? "#fff" : "#0f172a",
-                        border: message.role === "assistant" ? "1px solid #d9dfe8" : "none",
-                        boxShadow: message.role === "assistant" ? "0 1px 2px rgba(15,23,42,0.04)" : "none",
+                        background: "#f8fafc",
                       }}
                     >
-                      {message.text}
+                      {chatMessages.map((message) => (
+                        <div
+                          key={message.id}
+                          style={{
+                            display: "flex",
+                            justifyContent:
+                              message.role === "user"
+                                ? "flex-end"
+                                : "flex-start",
+                          }}
+                        >
+                          <div
+                            style={{
+                              maxWidth: "80%",
+                              padding: "9px 12px",
+                              borderRadius: "12px",
+                              background:
+                                message.role === "user" ? "#1d4ed8" : "#ffffff",
+                              color:
+                                message.role === "user" ? "#fff" : "#0f172a",
+                              border:
+                                message.role === "assistant"
+                                  ? "1px solid #d9dfe8"
+                                  : "none",
+                              boxShadow:
+                                message.role === "assistant"
+                                  ? "0 1px 2px rgba(15,23,42,0.04)"
+                                  : "none",
+                            }}
+                          >
+                            {message.text}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
-              </div>
 
-              <div style={{ display: "grid", gap: "10px" }}>
-                <textarea
-                  rows={3}
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="Ej. La demo fue muy bien. El cliente confirmó interés y quiere avanzado con la propuesta. Agéndame reunión con compras el jueves a las 11:00."
-                />
-                <div style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "space-between" }}>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={handleChatSubmit}
-                    disabled={analyzingInteraction || !normalizeText(chatInput)}
-                  >
-                    {analyzingInteraction ? "Analizando..." : "Enviar al coach"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => {
-                      setChatInput("");
-                      setInteractionNote("");
-                    }}
-                  >
-                    Limpiar
-                  </button>
-                </div>
-              </div>
+                    <div style={{ display: "grid", gap: "10px" }}>
+                      <textarea
+                        rows={3}
+                        value={chatInput}
+                        onChange={(event) => setChatInput(event.target.value)}
+                        placeholder="Ej. La demo fue muy bien. El cliente confirmó interés y quiere avanzado con la propuesta. Agéndame reunión con compras el jueves a las 11:00."
+                      />
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "10px",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={handleChatSubmit}
+                          disabled={
+                            analyzingInteraction || !normalizeText(chatInput)
+                          }
+                        >
+                          {analyzingInteraction
+                            ? "Analizando..."
+                            : "Enviar al coach"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => {
+                            setChatInput("");
+                            setInteractionNote("");
+                          }}
+                        >
+                          Limpiar
+                        </button>
+                      </div>
+                    </div>
 
-              {interactionJobStatus ? <p className="field-hint">Estado: {interactionJobStatus === "running" ? "analizando" : interactionJobStatus === "completed" ? "análisis listo" : interactionJobStatus}</p> : null}
+                    {interactionJobStatus ? (
+                      <p className="field-hint">
+                        Estado:{" "}
+                        {interactionJobStatus === "running"
+                          ? "analizando"
+                          : interactionJobStatus === "completed"
+                            ? "análisis listo"
+                            : interactionJobStatus}
+                      </p>
+                    ) : null}
 
-              {interactionAnalysis ? (
-                <div className="opportunity-development-interaction-review">
-                  <strong>{interactionAnalysis.summary || "Detecté cambios posibles"}</strong>
-                  {interactionAnalysis.activity ? (
-                    <div className="opportunity-development-proposed-activity">
-                      <h6>Nueva actividad propuesta</h6>
-                      <p>
-                        <strong>Tipo:</strong>{" "}
-                        {getInteractionActivityTypeLabel(
-                          interactionAnalysis.activity.type,
+                    {interactionAnalysis ? (
+                      <div className="opportunity-development-interaction-review">
+                        <strong>
+                          {interactionAnalysis.summary ||
+                            "Detecté cambios posibles"}
+                        </strong>
+                        {interactionAnalysis.activity ? (
+                          <div className="opportunity-development-proposed-activity">
+                            <h6>Nueva actividad propuesta</h6>
+                            <p>
+                              <strong>Tipo:</strong>{" "}
+                              {getInteractionActivityTypeLabel(
+                                interactionAnalysis.activity.type,
+                              )}
+                            </p>
+                            <p>
+                              <strong>Objetivo:</strong>{" "}
+                              {interactionAnalysis.activity.objective ||
+                                interactionAnalysis.activity.title ||
+                                "Sin objetivo"}
+                            </p>
+                            <p>
+                              <strong>Fecha:</strong>{" "}
+                              {interactionAnalysis.activity.scheduledDate ||
+                                "Seleccionar fecha"}
+                              {interactionAnalysis.activity.scheduledTime
+                                ? ` ${interactionAnalysis.activity.scheduledTime}`
+                                : ""}
+                            </p>
+                            <p>
+                              <strong>Nota:</strong>{" "}
+                              {interactionAnalysis.activity.note ||
+                                interactionNote}
+                            </p>
+                          </div>
+                        ) : null}
+                        <h6>Cambios detectados en la oportunidad</h6>
+                        {interactionChanges.filter(
+                          (change) => change.entity !== "activity",
+                        ).length ? (
+                          <ul>
+                            {interactionChanges
+                              .filter((change) => change.entity !== "activity")
+                              .map((change, index) => (
+                                <li
+                                  key={`${change.entity}-${change.field}-${index}`}
+                                >
+                                  <span>
+                                    {getInteractionFieldLabel(
+                                      change.field || change.entity,
+                                    )}
+                                  </span>
+                                  <small>
+                                    Propuesto:{" "}
+                                    {change.newValue || "Sin valor detectado"}
+                                  </small>
+                                  <em>
+                                    Confianza{" "}
+                                    {getInteractionConfidenceLabel(
+                                      change.confidence,
+                                    )}{" "}
+                                    · {change.evidence || "Sin evidencia"}
+                                  </em>
+                                </li>
+                              ))}
+                          </ul>
+                        ) : (
+                          <p className="field-hint">
+                            No hay cambios adicionales en la oportunidad; la
+                            actividad nueva se muestra arriba.
+                          </p>
                         )}
-                      </p>
-                      <p>
-                        <strong>Objetivo:</strong>{" "}
-                        {interactionAnalysis.activity.objective || interactionAnalysis.activity.title || "Sin objetivo"}
-                      </p>
-                      <p>
-                        <strong>Fecha:</strong>{" "}
-                        {interactionAnalysis.activity.scheduledDate || "Seleccionar fecha"}
-                        {interactionAnalysis.activity.scheduledTime ? ` ${interactionAnalysis.activity.scheduledTime}` : ""}
-                      </p>
-                      <p>
-                        <strong>Nota:</strong>{" "}
-                        {interactionAnalysis.activity.note || interactionNote}
-                      </p>
-                    </div>
-                  ) : null}
-                  <h6>Cambios detectados en la oportunidad</h6>
-                  {interactionChanges.filter((change) => change.entity !== "activity").length ? (
-                    <ul>
-                      {interactionChanges
-                        .filter((change) => change.entity !== "activity")
-                        .map((change, index) => (
-                          <li key={`${change.entity}-${change.field}-${index}`}>
-                            <span>{getInteractionFieldLabel(change.field || change.entity)}</span>
-                            <small>Propuesto: {change.newValue || "Sin valor detectado"}</small>
-                            <em>
-                              Confianza {getInteractionConfidenceLabel(change.confidence)} · {change.evidence || "Sin evidencia"}
-                            </em>
-                          </li>
-                        ))}
-                    </ul>
-                  ) : (
-                    <p className="field-hint">
-                      No hay cambios adicionales en la oportunidad; la actividad nueva se muestra arriba.
-                    </p>
-                  )}
-                  <div className="opportunity-development-interaction-review-actions">
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={() => setIsInteractionApprovalOpen(true)}
-                      disabled={applyingInteraction || !interactionAnalysis}
-                    >
-                      {applyingInteraction ? "Aplicando..." : "Revisar y aprobar"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => {
-                        setInteractionAnalysis(null);
-                        setIsInteractionApprovalOpen(false);
-                      }}
-                      disabled={applyingInteraction}
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            {interactionAnalysis && isInteractionApprovalOpen ? (
-              <div className="opportunity-interaction-approval-backdrop" role="dialog" aria-modal="true" aria-label="Aprobacion de propuesta del coach">
-                <div className="opportunity-development-execution-form opportunity-interaction-approval-modal">
-                  <div className="opportunity-development-execution-form-header">
-                    <h6>Revisar y aprobar</h6>
-                    <span className="record-id-badge state-pending">Aprobación</span>
+                        <div className="opportunity-development-interaction-review-actions">
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            onClick={() => setIsInteractionApprovalOpen(true)}
+                            disabled={
+                              applyingInteraction || !interactionAnalysis
+                            }
+                          >
+                            {applyingInteraction
+                              ? "Aplicando..."
+                              : "Revisar y aprobar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => {
+                              setInteractionAnalysis(null);
+                              setIsInteractionApprovalOpen(false);
+                            }}
+                            disabled={applyingInteraction}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="opportunity-development-execution-form-grid is-activity">
-                    <div className="opportunity-development-interaction-review-summary" style={{ gridColumn: "1 / -1" }}>
-                      <strong>{interactionApprovalDraft.summary?.title || "Resumen del cambio sugerido"}</strong>
-                      <p>{interactionApprovalDraft.summary?.message || "El coach detectó cambios sugeridos para la oportunidad."}</p>
-                    </div>
+                  {interactionAnalysis && isInteractionApprovalOpen ? (
+                    <div
+                      className="opportunity-interaction-approval-backdrop"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label="Aprobacion de propuesta del coach"
+                    >
+                      <div className="opportunity-development-execution-form opportunity-interaction-approval-modal">
+                        <div className="opportunity-development-execution-form-header">
+                          <h6>Revisar y aprobar</h6>
+                          <span className="record-id-badge state-pending">
+                            Aprobación
+                          </span>
+                        </div>
 
-                    {(interactionApprovalDraft.proposals || []).length ? (
-                      interactionApprovalDraft.proposals.map((proposal) => (
-                        <div key={proposal.proposalId} className="opportunity-development-proposed-activity" style={{ gridColumn: "1 / -1" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "10px" }}>
-                            <strong>{formatProposalLabel(proposal.kind)}</strong>
-                            <label style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "12px", margin: 0 }}>
-                              <input
-                                type="checkbox"
-                                checked={Boolean(proposal.selected)}
-                                onChange={(event) => toggleInteractionProposalSelected(proposal.proposalId, event.target.checked)}
-                              />
-                              Aplicar
-                            </label>
+                        <div className="opportunity-development-execution-form-grid is-activity">
+                          <div
+                            className="opportunity-development-interaction-review-summary"
+                            style={{ gridColumn: "1 / -1" }}
+                          >
+                            <strong>
+                              {interactionApprovalDraft.summary?.title ||
+                                "Resumen del cambio sugerido"}
+                            </strong>
+                            <p>
+                              {interactionApprovalDraft.summary?.message ||
+                                "El coach detectó cambios sugeridos para la oportunidad."}
+                            </p>
                           </div>
 
-                          {proposal.kind === "opportunity_field" ? (
-                            <div style={{ display: "grid", gap: "10px" }}>
-                              <div>
-                                <strong>Campo: {proposal.fields?.label || "Importe en dólares"}</strong>
-                                <p style={{ margin: "6px 0 0" }}>
-                                  Valor actual: {proposal.fields?.previousValue ?? "Sin valor registrado"}
-                                </p>
-                              </div>
-                              <label style={{ display: "block" }}>
-                                Nuevo importe en dólares
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={proposal.fields?.value ?? ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.value", event.target.value)}
-                                />
-                              </label>
-                            </div>
-                          ) : null}
-
-                          {proposal.kind === "stage_answer" ? (
-                            <>
-                              <div style={{ marginBottom: "12px", padding: "10px 12px", borderRadius: "8px", background: "#e8f1ff", border: "1px solid #c8dcfb" }}>
-                                <strong style={{ display: "block", marginBottom: "4px" }}>
-                                  Etapa: {proposal.question?.stageName || "Etapa actual"}
-                                </strong>
-                                <span style={{ color: "#4b6380" }}>
-                                  Verifica que la respuesta corresponda a esta etapa antes de guardarla.
-                                </span>
-                              </div>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
-                                Pregunta de la etapa
-                                <input
-                                  value={proposal.question?.prompt || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "question.prompt", event.target.value)}
-                                  disabled
-                                />
-                              </label>
-                              <label style={{ display: "block" }}>
-                                Respuesta sugerida
-                                <textarea
-                                  rows={3}
-                                  value={proposal.fields?.answerValue || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.answerValue", event.target.value)}
-                                />
-                              </label>
-                              {proposal.fields?.previousAnswer ? (
-                                <div style={{ marginTop: "12px" }}>
-                                  <label style={{ display: "block", marginBottom: "6px" }}>
-                                    Qué hacer con la respuesta anterior
-                                    <select
-                                      value={proposal.fields?.answerMode || "replace"}
-                                      onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.answerMode", event.target.value)}
+                          {(interactionApprovalDraft.proposals || []).length ? (
+                            interactionApprovalDraft.proposals.map(
+                              (proposal) => (
+                                <div
+                                  key={proposal.proposalId}
+                                  className="opportunity-development-proposed-activity"
+                                  style={{ gridColumn: "1 / -1" }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "center",
+                                      gap: "12px",
+                                      marginBottom: "10px",
+                                    }}
+                                  >
+                                    <strong>
+                                      {formatProposalLabel(proposal.kind)}
+                                    </strong>
+                                    <label
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "8px",
+                                        fontSize: "12px",
+                                        margin: 0,
+                                      }}
                                     >
-                                      <option value="replace">Reemplazar la respuesta anterior</option>
-                                      <option value="append">Adicionar a la respuesta anterior</option>
-                                    </select>
-                                  </label>
-                                  <div style={{ padding: "10px 12px", borderRadius: "8px", background: "#fff", border: "1px solid #d9dfe8" }}>
-                                    <strong style={{ display: "block", marginBottom: "4px" }}>Respuesta anterior</strong>
-                                    <span style={{ whiteSpace: "pre-wrap" }}>{proposal.fields.previousAnswer}</span>
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(proposal.selected)}
+                                        onChange={(event) =>
+                                          toggleInteractionProposalSelected(
+                                            proposal.proposalId,
+                                            event.target.checked,
+                                          )
+                                        }
+                                      />
+                                      Aplicar
+                                    </label>
                                   </div>
-                                </div>
-                              ) : (
-                                <p className="field-hint" style={{ marginTop: "8px" }}>
-                                  No existe una respuesta anterior para esta pregunta.
-                                </p>
-                              )}
-                            </>
-                          ) : null}
 
-                          {proposal.kind === "activity" ? (
+                                  {proposal.kind === "opportunity_field" ? (
+                                    <div
+                                      style={{ display: "grid", gap: "10px" }}
+                                    >
+                                      <div>
+                                        <strong>
+                                          Campo:{" "}
+                                          {proposal.fields?.label ||
+                                            "Importe en dólares"}
+                                        </strong>
+                                        <p style={{ margin: "6px 0 0" }}>
+                                          Valor actual:{" "}
+                                          {proposal.fields?.previousValue ??
+                                            "Sin valor registrado"}
+                                        </p>
+                                      </div>
+                                      <label style={{ display: "block" }}>
+                                        Nuevo importe en dólares
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={proposal.fields?.value ?? ""}
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.value",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                    </div>
+                                  ) : null}
+
+                                  {proposal.kind === "stage_answer" ? (
+                                    <>
+                                      <div
+                                        style={{
+                                          marginBottom: "12px",
+                                          padding: "10px 12px",
+                                          borderRadius: "8px",
+                                          background: "#e8f1ff",
+                                          border: "1px solid #c8dcfb",
+                                        }}
+                                      >
+                                        <strong
+                                          style={{
+                                            display: "block",
+                                            marginBottom: "4px",
+                                          }}
+                                        >
+                                          Etapa:{" "}
+                                          {proposal.question?.stageName ||
+                                            "Etapa actual"}
+                                        </strong>
+                                        <span style={{ color: "#4b6380" }}>
+                                          Verifica que la respuesta corresponda
+                                          a esta etapa antes de guardarla.
+                                        </span>
+                                      </div>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Pregunta de la etapa
+                                        <input
+                                          value={
+                                            proposal.question?.prompt || ""
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "question.prompt",
+                                              event.target.value,
+                                            )
+                                          }
+                                          disabled
+                                        />
+                                      </label>
+                                      <label style={{ display: "block" }}>
+                                        Respuesta sugerida
+                                        <textarea
+                                          rows={3}
+                                          value={
+                                            proposal.fields?.answerValue || ""
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.answerValue",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      {proposal.fields?.previousAnswer ? (
+                                        <div style={{ marginTop: "12px" }}>
+                                          <label
+                                            style={{
+                                              display: "block",
+                                              marginBottom: "6px",
+                                            }}
+                                          >
+                                            Qué hacer con la respuesta anterior
+                                            <select
+                                              value={
+                                                proposal.fields?.answerMode ||
+                                                "replace"
+                                              }
+                                              onChange={(event) =>
+                                                editInteractionProposal(
+                                                  proposal.proposalId,
+                                                  "fields.answerMode",
+                                                  event.target.value,
+                                                )
+                                              }
+                                            >
+                                              <option value="replace">
+                                                Reemplazar la respuesta anterior
+                                              </option>
+                                              <option value="append">
+                                                Adicionar a la respuesta
+                                                anterior
+                                              </option>
+                                            </select>
+                                          </label>
+                                          <div
+                                            style={{
+                                              padding: "10px 12px",
+                                              borderRadius: "8px",
+                                              background: "#fff",
+                                              border: "1px solid #d9dfe8",
+                                            }}
+                                          >
+                                            <strong
+                                              style={{
+                                                display: "block",
+                                                marginBottom: "4px",
+                                              }}
+                                            >
+                                              Respuesta anterior
+                                            </strong>
+                                            <span
+                                              style={{ whiteSpace: "pre-wrap" }}
+                                            >
+                                              {proposal.fields.previousAnswer}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <p
+                                          className="field-hint"
+                                          style={{ marginTop: "8px" }}
+                                        >
+                                          No existe una respuesta anterior para
+                                          esta pregunta.
+                                        </p>
+                                      )}
+                                    </>
+                                  ) : null}
+
+                                  {proposal.kind === "activity" ? (
+                                    <>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Tipo
+                                        <select
+                                          value={
+                                            proposal.fields?.activityType ||
+                                            "call"
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.activityType",
+                                              event.target.value,
+                                            )
+                                          }
+                                        >
+                                          {proposal.fields?.activityType &&
+                                          !ACTIVITY_TYPE_OPTIONS.some(
+                                            (option) =>
+                                              option.value ===
+                                              proposal.fields.activityType,
+                                          ) ? (
+                                            <option
+                                              value={
+                                                proposal.fields.activityType
+                                              }
+                                            >
+                                              {getInteractionActivityTypeLabel(
+                                                proposal.fields.activityType,
+                                              )}
+                                            </option>
+                                          ) : null}
+                                          {ACTIVITY_TYPE_OPTIONS.map(
+                                            (option) => (
+                                              <option
+                                                key={option.value}
+                                                value={option.value}
+                                              >
+                                                {option.label}
+                                              </option>
+                                            ),
+                                          )}
+                                        </select>
+                                      </label>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Fecha
+                                        <input
+                                          type="date"
+                                          value={
+                                            proposal.fields?.scheduledDate || ""
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.scheduledDate",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Hora
+                                        <input
+                                          type="time"
+                                          value={
+                                            proposal.fields?.scheduledTime ||
+                                            "09:00"
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.scheduledTime",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Objetivo
+                                        <textarea
+                                          rows={2}
+                                          value={
+                                            proposal.fields?.objective || ""
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.objective",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label style={{ display: "block" }}>
+                                        Nota
+                                        <textarea
+                                          rows={2}
+                                          value={proposal.fields?.note || ""}
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.note",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                    </>
+                                  ) : null}
+
+                                  {proposal.kind === "next_step" ? (
+                                    <>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Título
+                                        <input
+                                          value={proposal.fields?.title || ""}
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.title",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        Fecha límite
+                                        <input
+                                          type="date"
+                                          value={proposal.fields?.dueDate || ""}
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.dueDate",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label style={{ display: "block" }}>
+                                        Criterio de éxito
+                                        <input
+                                          value={
+                                            proposal.fields?.successCriteria ||
+                                            ""
+                                          }
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.successCriteria",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                    </>
+                                  ) : null}
+
+                                  {proposal.kind === "stage_transition" ? (
+                                    <>
+                                      <p style={{ margin: 0 }}>
+                                        De{" "}
+                                        {proposal.fields?.fromStageName ||
+                                          "etapa actual"}{" "}
+                                        a{" "}
+                                        {proposal.fields?.toStageName ||
+                                          "siguiente etapa"}
+                                      </p>
+                                      <label
+                                        style={{
+                                          display: "block",
+                                          marginTop: "8px",
+                                        }}
+                                      >
+                                        Motivo
+                                        <textarea
+                                          rows={2}
+                                          value={proposal.fields?.reason || ""}
+                                          onChange={(event) =>
+                                            editInteractionProposal(
+                                              proposal.proposalId,
+                                              "fields.reason",
+                                              event.target.value,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                    </>
+                                  ) : null}
+                                </div>
+                              ),
+                            )
+                          ) : (
                             <>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
+                              <label>
                                 Tipo
                                 <select
-                                  value={proposal.fields?.activityType || "call"}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.activityType", event.target.value)}
+                                  value={interactionApprovalDraft.activityType}
+                                  onChange={(event) =>
+                                    setInteractionApprovalDraft((current) => ({
+                                      ...current,
+                                      activityType: event.target.value,
+                                    }))
+                                  }
                                 >
+                                  {!ACTIVITY_TYPE_OPTIONS.some(
+                                    (option) =>
+                                      option.value ===
+                                      interactionApprovalDraft.activityType,
+                                  ) ? (
+                                    <option
+                                      value={
+                                        interactionApprovalDraft.activityType
+                                      }
+                                    >
+                                      {getInteractionActivityTypeLabel(
+                                        interactionApprovalDraft.activityType,
+                                      )}
+                                    </option>
+                                  ) : null}
                                   {ACTIVITY_TYPE_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                    <option
+                                      key={option.value}
+                                      value={option.value}
+                                    >
+                                      {option.label}
+                                    </option>
                                   ))}
                                 </select>
                               </label>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
+                              <label>
                                 Fecha
                                 <input
                                   type="date"
-                                  value={proposal.fields?.scheduledDate || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.scheduledDate", event.target.value)}
+                                  value={interactionApprovalDraft.scheduledDate}
+                                  onChange={(event) =>
+                                    setInteractionApprovalDraft((current) => ({
+                                      ...current,
+                                      scheduledDate: event.target.value,
+                                    }))
+                                  }
                                 />
                               </label>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
+                              <label>
                                 Hora
                                 <input
                                   type="time"
-                                  value={proposal.fields?.scheduledTime || "09:00"}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.scheduledTime", event.target.value)}
+                                  value={interactionApprovalDraft.scheduledTime}
+                                  onChange={(event) =>
+                                    setInteractionApprovalDraft((current) => ({
+                                      ...current,
+                                      scheduledTime: event.target.value,
+                                    }))
+                                  }
                                 />
                               </label>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
+                              <label className="is-span-3">
                                 Objetivo
                                 <textarea
                                   rows={2}
-                                  value={proposal.fields?.objective || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.objective", event.target.value)}
+                                  value={interactionApprovalDraft.objective}
+                                  onChange={(event) =>
+                                    setInteractionApprovalDraft((current) => ({
+                                      ...current,
+                                      objective: event.target.value,
+                                    }))
+                                  }
                                 />
                               </label>
-                              <label style={{ display: "block" }}>
+                              <label className="is-span-3">
                                 Nota
                                 <textarea
-                                  rows={2}
-                                  value={proposal.fields?.note || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.note", event.target.value)}
+                                  rows={3}
+                                  value={interactionApprovalDraft.note}
+                                  onChange={(event) =>
+                                    setInteractionApprovalDraft((current) => ({
+                                      ...current,
+                                      note: event.target.value,
+                                    }))
+                                  }
                                 />
                               </label>
+                              {interactionApprovalDraft.nextStepTitle ||
+                              interactionAnalysis.nextStep?.title ? (
+                                <>
+                                  <label className="is-span-3">
+                                    Próximo paso
+                                    <input
+                                      value={
+                                        interactionApprovalDraft.nextStepTitle
+                                      }
+                                      onChange={(event) =>
+                                        setInteractionApprovalDraft(
+                                          (current) => ({
+                                            ...current,
+                                            nextStepTitle: event.target.value,
+                                          }),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Fecha del próximo paso
+                                    <input
+                                      type="date"
+                                      value={
+                                        interactionApprovalDraft.nextStepDueDate
+                                      }
+                                      onChange={(event) =>
+                                        setInteractionApprovalDraft(
+                                          (current) => ({
+                                            ...current,
+                                            nextStepDueDate: event.target.value,
+                                          }),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Criterio de éxito
+                                    <input
+                                      value={
+                                        interactionApprovalDraft.nextStepSuccessCriteria
+                                      }
+                                      onChange={(event) =>
+                                        setInteractionApprovalDraft(
+                                          (current) => ({
+                                            ...current,
+                                            nextStepSuccessCriteria:
+                                              event.target.value,
+                                          }),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                </>
+                              ) : null}
                             </>
-                          ) : null}
-
-                          {proposal.kind === "next_step" ? (
-                            <>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
-                                Título
-                                <input
-                                  value={proposal.fields?.title || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.title", event.target.value)}
-                                />
-                              </label>
-                              <label style={{ display: "block", marginBottom: "8px" }}>
-                                Fecha límite
-                                <input
-                                  type="date"
-                                  value={proposal.fields?.dueDate || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.dueDate", event.target.value)}
-                                />
-                              </label>
-                              <label style={{ display: "block" }}>
-                                Criterio de éxito
-                                <input
-                                  value={proposal.fields?.successCriteria || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.successCriteria", event.target.value)}
-                                />
-                              </label>
-                            </>
-                          ) : null}
-
-                          {proposal.kind === "stage_transition" ? (
-                            <>
-                              <p style={{ margin: 0 }}>De {proposal.fields?.fromStageName || "etapa actual"} a {proposal.fields?.toStageName || "siguiente etapa"}</p>
-                              <label style={{ display: "block", marginTop: "8px" }}>
-                                Motivo
-                                <textarea
-                                  rows={2}
-                                  value={proposal.fields?.reason || ""}
-                                  onChange={(event) => editInteractionProposal(proposal.proposalId, "fields.reason", event.target.value)}
-                                />
-                              </label>
-                            </>
-                          ) : null}
+                          )}
                         </div>
-                      ))
-                    ) : (
-                      <>
-                        <label>
-                          Tipo
-                          <select
-                            value={interactionApprovalDraft.activityType}
-                            onChange={(event) =>
-                              setInteractionApprovalDraft((current) => ({
-                                ...current,
-                                activityType: event.target.value,
-                              }))
-                            }
+
+                        <div className="opportunity-development-interaction-review-actions">
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            onClick={handleApplyInteraction}
+                            disabled={applyingInteraction}
                           >
-                            {ACTIVITY_TYPE_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          Fecha
-                          <input
-                            type="date"
-                            value={interactionApprovalDraft.scheduledDate}
-                            onChange={(event) =>
-                              setInteractionApprovalDraft((current) => ({
-                                ...current,
-                                scheduledDate: event.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          Hora
-                          <input
-                            type="time"
-                            value={interactionApprovalDraft.scheduledTime}
-                            onChange={(event) =>
-                              setInteractionApprovalDraft((current) => ({
-                                ...current,
-                                scheduledTime: event.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label className="is-span-3">
-                          Objetivo
-                          <textarea
-                            rows={2}
-                            value={interactionApprovalDraft.objective}
-                            onChange={(event) =>
-                              setInteractionApprovalDraft((current) => ({
-                                ...current,
-                                objective: event.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label className="is-span-3">
-                          Nota
-                          <textarea
-                            rows={3}
-                            value={interactionApprovalDraft.note}
-                            onChange={(event) =>
-                              setInteractionApprovalDraft((current) => ({
-                                ...current,
-                                note: event.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                        {interactionApprovalDraft.nextStepTitle || interactionAnalysis.nextStep?.title ? (
-                          <>
-                            <label className="is-span-3">
-                              Próximo paso
-                              <input
-                                value={interactionApprovalDraft.nextStepTitle}
-                                onChange={(event) =>
-                                  setInteractionApprovalDraft((current) => ({
-                                    ...current,
-                                    nextStepTitle: event.target.value,
-                                  }))
-                                }
-                              />
-                            </label>
-                            <label>
-                              Fecha del próximo paso
-                              <input
-                                type="date"
-                                value={interactionApprovalDraft.nextStepDueDate}
-                                onChange={(event) =>
-                                  setInteractionApprovalDraft((current) => ({
-                                    ...current,
-                                    nextStepDueDate: event.target.value,
-                                  }))
-                                }
-                              />
-                            </label>
-                            <label>
-                              Criterio de éxito
-                              <input
-                                value={interactionApprovalDraft.nextStepSuccessCriteria}
-                                onChange={(event) =>
-                                  setInteractionApprovalDraft((current) => ({
-                                    ...current,
-                                    nextStepSuccessCriteria: event.target.value,
-                                  }))
-                                }
-                              />
-                            </label>
-                          </>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-
-                  <div className="opportunity-development-interaction-review-actions">
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={handleApplyInteraction}
-                      disabled={applyingInteraction}
-                    >
-                      {applyingInteraction ? "Guardando..." : "Aprobar y guardar"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => setIsInteractionApprovalOpen(false)}
-                      disabled={applyingInteraction}
-                    >
-                      Volver a revisar
-                    </button>
-                  </div>
+                            {applyingInteraction
+                              ? "Guardando..."
+                              : "Aprobar y guardar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setIsInteractionApprovalOpen(false)}
+                            disabled={applyingInteraction}
+                          >
+                            Volver a revisar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              </div>
-            ) : null}
-          </div> : null}
-
+              ) : null}
             </span>
           </div>
           <div className="opportunity-collapsible-section-actions">
@@ -3720,10 +4173,8 @@ export default function OpportunityDevelopmentPanel({
                         <div className="opportunity-development-execution-history-main">
                           <strong>{item.title || "Sin titulo"}</strong>
                           <span>
-                            {ACTIVITY_TYPE_LABELS[item.actionType] ||
-                              item.actionType ||
-                              "Actividad"}{" "}
-                            · {getExecutionStatusLabel(item.status)}
+                            {getCommercialActivityTypeLabel(item.actionType)} ·{" "}
+                            {getExecutionStatusLabel(item.status)}
                           </span>
                           <span>
                             {item.scheduledAt

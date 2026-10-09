@@ -503,6 +503,7 @@ async function mockMiCoachApi(
           "cuentas.read",
           "oportunidades.read",
           "desarrollo_comercial.update",
+          "calendario_comercial.update",
           "fuentes_externas.execute",
           ...(withProspect
             ? [
@@ -911,7 +912,7 @@ async function mockMiCoachApi(
                 kind: "activity",
                 status: "collecting",
                 version: 2,
-                targetModule: "commercial_development",
+                targetModule: "calendar",
                 missingFields: ["scheduledAt"],
                 pendingOperation: {
                   kind: "activity",
@@ -1499,6 +1500,145 @@ async function openMiCoach(page, { workspace = "coach" } = {}) {
     await page.getByRole("button", { name: "Cliente existente" }).click();
 }
 
+test("Cliente existente permite confirmar actividad persistida y abrir Calendario", async ({
+  page,
+}) => {
+  await mockMiCoachApi(page, { withCustomerHealth: true });
+  const pendingOperation = {
+    kind: "activity",
+    title: "Llamada con Rene Negrete",
+    sourceChannel: "coach",
+    calendarKind: "opportunity",
+    accountId: 160,
+    opportunityId: 300,
+    contactId: 109,
+    actionType: "call",
+    scheduledAt: "2026-10-13T10:00",
+    status: "pending",
+    priority: "medium",
+    notes: "Revisar avances",
+    successCriteria: "Acordar siguiente paso",
+    missingFields: [],
+    evidence: [],
+    requiresConfirmation: true,
+  };
+  let operation = {
+    id: 70,
+    sessionId: 65,
+    version: 2,
+    status: "ready",
+    targetModule: "calendar",
+    pendingOperation,
+    missingFields: [],
+  };
+  const requests = [];
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const method = route.request().method();
+    const json = (body) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    requests.push({ path, method });
+    if (path === "/api/commercial-intelligence/account-chat/jobs/921")
+      return json({
+        job: {
+          id: 921,
+          status: "completed",
+          result: {
+            answer: "El borrador está listo para revisar en Calendario.",
+            responseType: "operation",
+            confidence: "high",
+            recommendedActions: [],
+            operations: [
+              {
+                ...pendingOperation,
+                sourceChannel: "customer_account",
+                persistentId: 70,
+                persistenceVersion: 2,
+                persistenceStatus: "ready",
+              },
+            ],
+          },
+        },
+      });
+    if (path === "/api/mi-agent/coach/operations/70") {
+      if (method === "PATCH") {
+        const body = route.request().postDataJSON();
+        operation = {
+          ...operation,
+          version: 3,
+          pendingOperation: body.pendingOperation,
+        };
+      }
+      return json({ operation, sessionId: 65 });
+    }
+    if (path === "/api/mi-agent/coach/operations/70/handoff")
+      return json({
+        operation,
+        handoff: {
+          module: "calendar",
+          url: "/calendar?coachDraft=activity-70",
+        },
+      });
+    if (path === "/api/mi-agent/coach/handoffs/activity-70")
+      return json({
+        handoff: {
+          operationId: 70,
+          kind: "activity",
+          module: "calendar",
+          payload: pendingOperation,
+        },
+      });
+    if (path === "/api/commercial-development/calendar")
+      return json({ days: [], sellers: [], alerts: {}, indicators: {} });
+    if (path === "/api/commercial-tracking/open-opportunities")
+      return json({ items: [{ id: 300, name: "Vrf 2027" }] });
+    return route.fallback();
+  });
+  await openMiCoach(page, { workspace: "customer" });
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  const chat = page.getByRole("region", { name: "Chat de cuenta" });
+  await chat.getByRole("button", { name: "Resumen para reunión" }).click();
+  await expect(
+    chat.getByText("Llamada con Rene Negrete", { exact: false }),
+  ).toBeVisible();
+  await chat.getByRole("button", { name: "Revisar operación" }).click();
+  const confirmation = page.getByRole("dialog", {
+    name: "Confirmar cambio del Coach",
+  });
+  await expect(confirmation).toBeVisible();
+  await expect(
+    confirmation.locator('input[type="datetime-local"]'),
+  ).toHaveValue("2026-10-13T10:00");
+  await confirmation
+    .getByRole("button", { name: "Continuar en el módulo" })
+    .click();
+  await expect(page).toHaveURL(/\/calendar\?coachDraft=activity-70/);
+  const calendar = page.getByRole("dialog", {
+    name: "Nueva actividad",
+    exact: true,
+  });
+  await expect(calendar).toBeVisible();
+  await expect(
+    calendar.getByRole("textbox", { name: "Objetivo", exact: true }),
+  ).toHaveValue("Llamada con Rene Negrete");
+  expect(
+    requests.some(
+      (item) =>
+        item.path === "/api/mi-agent/coach/operations" &&
+        item.method === "POST",
+    ),
+  ).toBe(false);
+  expect(
+    requests.some(
+      (item) =>
+        item.path.endsWith("/calendar/activities") && item.method === "POST",
+    ),
+  ).toBe(false);
+});
+
 const coachCreationJourneys = [
   ["create_account", "accounts", "/accounts", "account", "Cuentas"],
   ["create_contact", "contacts", "/contacts", "contact", "Contactos"],
@@ -1517,13 +1657,7 @@ const coachCreationJourneys = [
     "contact_mapping",
     "Mapeo de contactos",
   ],
-  [
-    "activity",
-    "commercial_development",
-    "/commercial-development",
-    "activity",
-    "Desarrollo comercial",
-  ],
+  ["activity", "calendar", "/calendar", "activity", "Calendario"],
   [
     "create_quotation",
     "quotations",
@@ -1597,6 +1731,7 @@ async function mockCoachCreationJourney(
           "oportunidades.create",
           "desarrollo_comercial.read",
           "desarrollo_comercial.update",
+          "calendario_comercial.update",
           "interacciones.read",
           "interacciones.update",
           "cotizaciones.operacion",
@@ -3165,6 +3300,22 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       dialog.getByRole("heading", { name: "Completar operación" }),
     ).toBeVisible();
+    await expect(
+      dialog
+        .getByRole("combobox", { name: "Tipo", exact: true })
+        .locator("option"),
+    ).toHaveText([
+      "Llamada",
+      "Reunión presencial",
+      "Reunión virtual",
+      "Presentación",
+      "Demostración",
+      "Visita",
+      "Correo",
+      "Propuesta",
+      "Evento",
+      "Otro",
+    ]);
     await expect(
       dialog.getByText("Fecha y hora", { exact: true }).first(),
     ).toBeVisible();

@@ -28,6 +28,7 @@ import {
   normalizeCustomerResponse,
 } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import { getCoachBusinessRules } from "../src/coach/business-rules.js";
+import { normalizeActivityOperation } from "../src/coach/operation-contract.js";
 import { enforceCoachBusinessEvidence } from "../src/coach/conversation-engine.js";
 import {
   buildCustomerContactHistoryResponse,
@@ -524,6 +525,177 @@ describe("Customer account chat adapter", () => {
       "customer_account_answer_audit",
     );
   });
+
+  it.each(["supported", "unsupported"])(
+    "resolves 'proponla' as an editable call proposal while preserving the %s audit",
+    async (auditStatus) => {
+      const businessRules = getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      });
+      vi.spyOn(
+        coachBusinessRulesModule,
+        "loadCoachBusinessRules",
+      ).mockResolvedValue(businessRules);
+      vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
+        [],
+      );
+      vi.spyOn(
+        channelIntentGovernanceModule,
+        "loadChannelIntentConfigurations",
+      ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+      const history = [
+        { role: "user", text: "quiero coordinar una llamada con el" },
+        {
+          role: "assistant",
+          text: 'El contacto asociado a la oportunidad "Vrf 2027" en Totalplay es Rene Negrete. Puedo proponer una operación para coordinar una llamada con él si lo confirma.',
+        },
+      ];
+      const continuation = {
+        accountId: 7,
+        opportunityId: 11,
+        contactId: 109,
+        intents: ["contact_query"],
+        filters: {},
+      };
+      const draft = {
+        ...normalizeActivityOperation(
+          { title: "Llamar a Rene Negrete", actionType: "call" },
+          { opportunityId: 11, accountId: 7, contactId: 109 },
+        ),
+        missingFields: ["scheduledAt"],
+      };
+      runStructuredTextResearch.mockImplementation(async (request) => {
+        if (request.schemaName === "customer_account_query_plan")
+          return {
+            objective: "Proponer una llamada con el contacto asociado",
+            queries: ["crm_operation", "contact_query"],
+            entities: { opportunityReference: "opportunity_1" },
+            referenceResolution: {
+              targetType: "opportunity",
+              cardinality: "single",
+              source: "conversation_history",
+              candidateKeys: ["opportunity_1"],
+            },
+            filters: {},
+            ambiguity: {
+              reason: "none",
+              requiresClarification: "no",
+              missingContext: [],
+              question: "",
+            },
+            mode: "operation",
+            confidence: "high",
+          };
+        if (request.schemaName === "customer_account_evidence_assessment") {
+          expect(request.context).toMatchObject({
+            question: "proponla",
+            recentConversation: history,
+            validatedContinuation: continuation,
+            operationPolicy: {
+              allowedKinds: expect.arrayContaining(["activity"]),
+            },
+          });
+          expect(request.systemPrompt).toContain(
+            "campos por completar, no hechos CRM",
+          );
+          expect(request.context.evidence).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                toolName: "getOpportunity",
+                result: expect.objectContaining({
+                  id: 11,
+                  associatedContact: {
+                    name: "Rene Negrete",
+                    positionTitle: "Gerente de Operaciones",
+                  },
+                }),
+              }),
+            ]),
+          );
+          return { status: "sufficient", missingQueries: [], missingFacts: [] };
+        }
+        if (request.schemaName === "account_contextual_chat") {
+          expect(request.context.conversationHistory).toEqual(history);
+          expect(request.systemPrompt).toContain("deja scheduledAt vacío");
+          return {
+            answer:
+              "Propongo una llamada con Rene Negrete para Vrf 2027. Completa la fecha y hora para abrir Calendario; no se ha guardado ni coordinado la llamada.",
+            entities: { opportunityId: 11 },
+            evidence: ["getOpportunity: contacto asociado Rene Negrete"],
+            inferences: [],
+            confidence: "high",
+            pendingItems: ["Fecha y hora"],
+            recommendedActions: [],
+            operations: [draft],
+          };
+        }
+        if (request.schemaName === "customer_account_answer_audit") {
+          expect(request.context.conversationHistory).toEqual(history);
+          expect(request.context.proposedAnswer.operations).toEqual([draft]);
+          return {
+            status: auditStatus,
+            unsupportedClaims:
+              auditStatus === "unsupported" ? ["Vínculo no respaldado"] : [],
+          };
+        }
+        throw new Error(`Unexpected schema: ${request.schemaName}`);
+      });
+      const adapter = createCustomerAccountAdapter({
+        user: {
+          id: 31,
+          permissionSet: new Set([
+            "cuentas.read",
+            "oportunidades.read",
+            "contactos.read",
+            "calendario_comercial.update",
+            "mi_coach.execute",
+          ]),
+        },
+        snapshot: {
+          ...snapshot,
+          opportunities: [
+            { ...snapshot.opportunities[0], name: "Vrf 2027", contactId: 109 },
+          ],
+          contacts: [
+            {
+              id: 109,
+              accountId: 7,
+              name: "Rene Negrete",
+              positionTitle: "Gerente de Operaciones",
+              activationStatusCode: "activado",
+            },
+          ],
+          permissions: { canReadContacts: true },
+        },
+        conversationContext: continuation,
+        agents: [],
+        jobId: 909,
+      });
+      const result = await adapter.runTurn({
+        question: "proponla",
+        context: { accountId: 7 },
+        history,
+      });
+      if (auditStatus === "supported") {
+        expect(result.response.operations).toEqual([
+          expect.objectContaining({
+            kind: "activity",
+            actionType: "call",
+            opportunityId: 11,
+            contactId: 109,
+            scheduledAt: "",
+            missingFields: ["scheduledAt"],
+            requiresConfirmation: true,
+          }),
+        ]);
+        expect(result.response.answer).not.toContain("Falta verificar");
+      } else {
+        expect(result.response.operations).toEqual([]);
+        expect(result.response.responseType).toBe("error");
+      }
+    },
+  );
 
   it("answers the associated contact from authorized opportunity detail", async () => {
     const businessRules = getCoachBusinessRules({

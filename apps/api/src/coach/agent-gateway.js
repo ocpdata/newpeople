@@ -4,7 +4,11 @@ import {
   resolveCoachTurnContext,
 } from "./conversation-engine.js";
 import { classifyCoachIntent } from "./phase-one-engine.js";
-import { createCoachAdapter } from "./coach-adapter.js";
+import {
+  createCoachAdapter,
+  coachBlockPipelineEnabled,
+} from "./coach-adapter.js";
+import { createCoachBlockTrace } from "./block-runtime.js";
 import { loadCoachBusinessRules } from "./business-rules.js";
 import { recordCoachTurnQualityTrace } from "./observability.js";
 
@@ -150,6 +154,16 @@ export async function runCoachJob({
   const startedAt = Date.now();
   const { query, persistCoachOperations, appendCoachSessionTurn } =
     dependencies;
+  const executionTrace = coachBlockPipelineEnabled(dependencies)
+    ? createCoachBlockTrace({ jobId })
+    : null;
+  executionTrace?.record({
+    from: "B2",
+    to: "B3",
+    label: "Procesar job de Coach",
+    phase: "call",
+    status: "started",
+  });
 
   try {
     await query(
@@ -170,12 +184,23 @@ export async function runCoachJob({
       dependencies,
       businessRules,
     });
-    const engineResult = await coachAdapter.runTurn({
-      question,
-      context: selectedContext,
-      history: conversationHistory,
-      jobId,
-    });
+    const runAdapter = () =>
+      coachAdapter.runTurn({
+        question,
+        context: selectedContext,
+        history: conversationHistory,
+        jobId,
+        executionTrace,
+      });
+    const engineResult = executionTrace
+      ? await executionTrace.span(
+          "B3",
+          "B4",
+          "Delegar turno al adaptador Coach",
+          runAdapter,
+          (value) => ({ responseType: value.response?.responseType || null }),
+        )
+      : await runAdapter();
     const qualityTraceId = await recordCoachTurnQualityTrace({
       channel: "coach",
       process: engineResult.qualityTrace?.process,
@@ -197,6 +222,13 @@ export async function runCoachJob({
     } = engineResult;
     if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
     conversationHistory = engineResult.conversationHistory;
+    executionTrace?.record({
+      from: "B3",
+      to: "B11",
+      label: "Persistir operaciones y sesión de Coach",
+      phase: "call",
+      status: "started",
+    });
     const persistedOperations = sessionId
       ? await persistCoachOperations({
           userId: user.id,
@@ -217,25 +249,6 @@ export async function runCoachJob({
         }),
       );
     }
-    await query(
-      `UPDATE mi_agent_analysis_jobs
-       SET status = 'completed', result_json = ?, observability_json = ?, latency_ms = ?,
-           error_message = NULL, updated_at = NOW(3)
-       WHERE id = ?`,
-      [
-        JSON.stringify(normalizedResult),
-        JSON.stringify(
-          buildTurnObservability({
-            result: normalizedResult,
-            readToolResults,
-            startedAt,
-            activeContext,
-          }),
-        ),
-        Math.max(0, Date.now() - startedAt),
-        jobId,
-      ],
-    );
     if (sessionId) {
       await setCoachPendingQuestion(user.id, sessionId, null);
     }
@@ -257,7 +270,64 @@ export async function runCoachJob({
         activeContext,
       );
     }
+    if (executionTrace) {
+      executionTrace.record({
+        from: "B11",
+        to: "B3",
+        label: "Persistir operaciones y sesión de Coach",
+        phase: "return",
+        status: "completed",
+        output: {
+          sessionPersisted: Boolean(sessionId),
+          operationsPersisted: persistedOperations.length,
+        },
+      });
+      executionTrace.record({
+        from: "B3",
+        to: "B2",
+        label: "Procesar job de Coach",
+        phase: "return",
+        status: "completed",
+        output: {
+          responseType: normalizedResult.responseType,
+          validationStatus: engineResult.qualityTrace?.validationStatus,
+        },
+      });
+    }
+    await query(
+      `UPDATE mi_agent_analysis_jobs
+       SET status = 'completed', result_json = ?, observability_json = ?, latency_ms = ?,
+           error_message = NULL, updated_at = NOW(3)
+       WHERE id = ?`,
+      [
+        JSON.stringify(normalizedResult),
+        JSON.stringify({
+          ...buildTurnObservability({
+            result: normalizedResult,
+            readToolResults,
+            startedAt,
+            activeContext,
+          }),
+          ...(executionTrace
+            ? {
+                architecture: "coach_blocks_v1",
+                executionTrace: executionTrace.events,
+              }
+            : {}),
+        }),
+        Math.max(0, Date.now() - startedAt),
+        jobId,
+      ],
+    );
   } catch (error) {
+    executionTrace?.record({
+      from: "B3",
+      to: "B2",
+      label: "Procesar job de Coach",
+      phase: "return",
+      status: "failed",
+      errorCode: String(error.code || error.name || "coach_job_failed"),
+    });
     await recordCoachTurnQualityTrace({
       channel: "coach",
       process: classifyCoachIntent(question).type,

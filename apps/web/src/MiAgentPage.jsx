@@ -19,6 +19,10 @@ import {
   X,
 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
+import {
+  COMMERCIAL_ACTIVITY_TYPES,
+  normalizeCommercialActivityType,
+} from "../../../shared/commercial-activity-types.js";
 import { validateCustomerChatObservedFlow } from "./customer-chat-trace-validation";
 import "./mi-agent.css";
 import "./mi-agent-prospect.css";
@@ -1357,6 +1361,7 @@ const COACH_TARGET_MODULE_LABELS = {
   contact_mapping: "Mapeo de contactos",
   quotations: "Cotizaciones",
   proposals: "Propuestas",
+  calendar: "Calendario",
   commercial_development: "Desarrollo comercial",
 };
 
@@ -1375,22 +1380,7 @@ const COACH_SOURCE_LABELS = {
   conversation: "Conversación",
 };
 
-const COACH_ACTIVITY_TYPE_OPTIONS = [
-  ["call", "Llamada"],
-  ["conference", "Reunión"],
-  ["presentation", "Demostración"],
-  ["visit", "Visita"],
-  ["send_email", "Correo"],
-  ["next_step", "Tarea de seguimiento"],
-  ["waiting_customer", "Esperando cliente"],
-  ["other", "Otro"],
-];
-
-const COACH_ACTIVITY_TYPE_ALIASES = {
-  meeting: "conference",
-  demo: "presentation",
-  follow_up: "call",
-};
+const COACH_ACTIVITY_TYPE_OPTIONS = COMMERCIAL_ACTIVITY_TYPES;
 
 const CUSTOMER_FINDING_CATEGORY_LABELS = {
   company_profile: "Perfil de empresa",
@@ -1597,7 +1587,7 @@ const CUSTOMER_FINDING_APPLY_FIELDS = {
 };
 
 function normalizeCoachActivityType(value) {
-  return COACH_ACTIVITY_TYPE_ALIASES[value] || value || "other";
+  return normalizeCommercialActivityType(value);
 }
 
 function formatCurrency(value, currency = "USD") {
@@ -1860,7 +1850,25 @@ function serializeCoachOperationDraft(draft) {
   } else if (operation.kind === "lead_call_outcome") {
     operation.comment = draft.value;
   } else if (operation.kind === "activity") {
-    operation.opportunityId = Number(draft.opportunityId || 0) || null;
+    const calendarKind =
+      operation.calendarKind ||
+      (draft.opportunityId
+        ? "opportunity"
+        : operation.interactionId
+          ? "lead"
+          : "standalone");
+    operation.calendarKind = calendarKind;
+    operation.opportunityId =
+      calendarKind === "opportunity"
+        ? Number(draft.opportunityId || 0) || null
+        : null;
+    operation.interactionId =
+      calendarKind === "lead"
+        ? Number(operation.interactionId || 0) || null
+        : null;
+    operation.actionType = normalizeCommercialActivityType(
+      operation.actionType,
+    );
   } else if (operation.field) {
     operation.value = draft.value;
   }
@@ -1869,7 +1877,29 @@ function serializeCoachOperationDraft(draft) {
 
 function unresolvedCoachFields(operation) {
   const payload = operation?.payload || {};
-  return (operation?.missingFields || []).filter((field) => {
+  const requiredFields =
+    operation?.kind === "activity"
+      ? [
+          "title",
+          "scheduledAt",
+          ...(operation.calendarKind === "opportunity"
+            ? ["opportunityId"]
+            : operation.calendarKind === "lead"
+              ? ["interactionId"]
+              : []),
+        ]
+      : [];
+  return [
+    ...new Set([
+      ...(operation?.missingFields || []).filter(
+        (field) =>
+          operation?.kind !== "activity" ||
+          field !== "opportunityId" ||
+          operation.calendarKind === "opportunity",
+      ),
+      ...requiredFields,
+    ]),
+  ].filter((field) => {
     const value = payload[field] ?? operation[field];
     return value === null || value === undefined || String(value).trim() === "";
   });
@@ -2196,6 +2226,7 @@ export default function MiAgentPage({
   canResolveLeads = false,
   canCreateOpportunities = false,
   canUpdateCommercialDevelopment = false,
+  canUpdateCalendar = false,
   canCreateQuotations = false,
   canCreateProposals = false,
   canUseExternalSources = false,
@@ -2961,6 +2992,7 @@ export default function MiAgentPage({
                     role: "assistant",
                     answer: message.text,
                     activityHistory: message.activityHistory || null,
+                    operations: message.operations || [],
                     debug: message.turnDebug || null,
                     sourceDomain: "crm_internal",
                   },
@@ -3564,8 +3596,7 @@ export default function MiAgentPage({
 
   async function openDiscoveryActivity(nextStep) {
     const opportunityId = Number(nextStep?.opportunityId || 0);
-    if (!opportunityId || !canExecuteCoach || !canUpdateCommercialDevelopment)
-      return;
+    if (!opportunityId || !canExecuteCoach || !canUpdateCalendar) return;
     const snapshotAccountId = Number(customerSnapshot?.account?.id || 0);
     const customerOpportunity = [
       ...(customerSnapshot?.opportunities || []),
@@ -3595,13 +3626,17 @@ export default function MiAgentPage({
         operation: {
           kind: "activity",
           sourceChannel: "coach",
+          calendarKind: "opportunity",
+          accountId: Number(customerAccountId || 0) || null,
           title: nextStep.title || "Seguimiento comercial",
           evidence: Array.isArray(nextStep.evidence) ? nextStep.evidence : [],
           missingFields: [],
           requiresConfirmation: true,
           opportunityId,
           activityId: null,
-          actionType: nextStep.actionType || "call",
+          actionType: normalizeCommercialActivityType(
+            nextStep.actionType || "call",
+          ),
           status: "pending",
           priority: nextStep.priority || "medium",
           scheduledAt: nextStep.scheduledAt || null,
@@ -3613,7 +3648,9 @@ export default function MiAgentPage({
         },
       });
       const persistedOperation = response.data?.operation;
-      const destinationSessionId = Number(response.data?.sessionId || 0);
+      const destinationSessionId = Number(
+        response.data?.sessionId || persistedOperation?.sessionId || 0,
+      );
       if (!persistedOperation?.id || !destinationSessionId) {
         throw new Error(
           "No se pudo persistir la actividad en una sesión nueva del Coach",
@@ -3664,7 +3701,7 @@ export default function MiAgentPage({
 
   function canReviewCustomerOperation(operation) {
     if (!canExecuteCoach) return false;
-    if (operation?.kind === "activity") return canUpdateCommercialDevelopment;
+    if (operation?.kind === "activity") return canUpdateCalendar;
     if (operation?.kind === "lead_call_outcome") return canUpdateLeads;
     if (operation?.kind === "account_field") return canUpdateAccounts;
     if (operation?.kind === "contact_field") return canUpdateContacts;
@@ -3686,20 +3723,26 @@ export default function MiAgentPage({
         sourceChannel: "coach",
         requiresConfirmation: true,
       };
-      const response = await api.post("/api/mi-agent/coach/operations", {
-        sessionId: null,
-        originChannel: "customer_account",
-        originalIntent: `Propuesta desde Cliente existente: ${operation.title || operation.kind}`,
-        context: {
-          accountId,
-          opportunityId,
-          contactId,
-          leadId: null,
-        },
-        operation: coachOperation,
-      });
+      const response = operation.persistentId
+        ? await api.get(
+            `/api/mi-agent/coach/operations/${operation.persistentId}`,
+          )
+        : await api.post("/api/mi-agent/coach/operations", {
+            sessionId: null,
+            originChannel: "customer_account",
+            originalIntent: `Propuesta desde Cliente existente: ${operation.title || operation.kind}`,
+            context: {
+              accountId,
+              opportunityId,
+              contactId,
+              leadId: null,
+            },
+            operation: coachOperation,
+          });
       const persistedOperation = response.data?.operation;
-      const destinationSessionId = Number(response.data?.sessionId || 0);
+      const destinationSessionId = Number(
+        response.data?.sessionId || persistedOperation?.sessionId || 0,
+      );
       if (!persistedOperation?.id || !destinationSessionId) {
         throw new Error("No se pudo preparar la operación en el Coach");
       }
@@ -5448,7 +5491,7 @@ export default function MiAgentPage({
                   : operation?.kind === "create_opportunity"
                     ? canCreateOpportunities
                     : operation?.kind === "activity"
-                      ? canUpdateCommercialDevelopment
+                      ? canUpdateCalendar
                       : operation?.kind === "create_lead"
                         ? canCreateLeads
                         : operation?.kind === "create_contact_mapping"
@@ -5476,6 +5519,7 @@ export default function MiAgentPage({
           "create_opportunity",
           "create_quotation",
           "create_proposal",
+          "activity",
         ].includes(operation?.kind))
     )
       return;
@@ -5599,6 +5643,14 @@ export default function MiAgentPage({
       draft = await persistCoachOperationDraft(draft);
       operation = draft?.operation;
       if (delegatesToModule) {
+        if (
+          operation?.kind === "activity" &&
+          unresolvedCoachFields(serializeCoachOperationDraft(draft)).length
+        ) {
+          throw new Error(
+            "Completa el objetivo, fecha/hora y el vínculo del origen seleccionado antes de abrir Calendario.",
+          );
+        }
         if (!draft?.persistentId)
           throw new Error("La operación no tiene un borrador persistente");
         const response = await api.post(
@@ -7080,7 +7132,7 @@ export default function MiAgentPage({
                                     </small>
                                     {(
                                       operation.kind === "activity"
-                                        ? canUpdateCommercialDevelopment
+                                        ? canUpdateCalendar
                                         : operation.kind === "lead_call_outcome"
                                           ? canUpdateLeads
                                           : operation.kind === "account_field"
@@ -8401,7 +8453,7 @@ export default function MiAgentPage({
                                 </span>
                                 {action.opportunityId &&
                                 canExecuteCoach &&
-                                canUpdateCommercialDevelopment ? (
+                                canUpdateCalendar ? (
                                   <button
                                     type="button"
                                     className="mi-agent-link-button"
@@ -8435,16 +8487,11 @@ export default function MiAgentPage({
                           )}
                         </div>
                       ) : null}
-                      {message.operations?.some(
-                        (operation) => operation.kind !== "activity",
-                      ) ? (
+                      {message.operations?.length ? (
                         <div className="mi-agent-customer-chat-actions">
                           <strong>Operaciones propuestas</strong>
-                          {message.operations
-                            .filter(
-                              (operation) => operation.kind !== "activity",
-                            )
-                            .map((operation, operationIndex) => (
+                          {message.operations.map(
+                            (operation, operationIndex) => (
                               <article
                                 key={`${operation.kind}-${operation.title}-${operationIndex}`}
                               >
@@ -8470,7 +8517,8 @@ export default function MiAgentPage({
                                   </small>
                                 )}
                               </article>
-                            ))}
+                            ),
+                          )}
                         </div>
                       ) : null}
                     </div>
@@ -8582,7 +8630,7 @@ export default function MiAgentPage({
                                 opportunity.commercialStatusCode,
                               ),
                           ) &&
-                          canUpdateCommercialDevelopment ? (
+                          canUpdateCalendar ? (
                             <button
                               type="button"
                               className="mi-agent-link-button"
@@ -8665,7 +8713,7 @@ export default function MiAgentPage({
                   >
                     Abrir oportunidad
                   </button>
-                ) : canExecuteCoach && canUpdateCommercialDevelopment ? (
+                ) : canExecuteCoach && canUpdateCalendar ? (
                   customerSnapshot.opportunities?.some((opportunity) =>
                     ["open", undefined].includes(opportunity.lifecycle),
                   ) ? (
@@ -9107,7 +9155,7 @@ export default function MiAgentPage({
                       </div>
                       {hypothesis.opportunityId &&
                       canExecuteCoach &&
-                      canUpdateCommercialDevelopment &&
+                      canUpdateCalendar &&
                       customerSnapshot.opportunities.some(
                         (opportunity) =>
                           Number(opportunity.id) ===
@@ -9683,8 +9731,7 @@ export default function MiAgentPage({
                                     "Revisar y confirmar el siguiente paso."}
                                 </p>
                               </div>
-                              {action.opportunityId &&
-                              canUpdateCommercialDevelopment ? (
+                              {action.opportunityId && canUpdateCalendar ? (
                                 <button
                                   type="button"
                                   className="btn-secondary"
@@ -9854,8 +9901,7 @@ export default function MiAgentPage({
                             <strong>{step.title}</strong>
                             <p>{step.successCriteria}</p>
                           </div>
-                          {step.opportunityId &&
-                          canUpdateCommercialDevelopment ? (
+                          {step.opportunityId && canUpdateCalendar ? (
                             <button
                               type="button"
                               className="btn-secondary"
@@ -13075,33 +13121,84 @@ export default function MiAgentPage({
                   }}
                 >
                   <label>
-                    Oportunidad
+                    Origen
                     <select
-                      value={coachOperationDraft.opportunityId}
-                      aria-invalid={coachDraftMissingSet.has("opportunityId")}
+                      value={
+                        coachOperationDraft.operation.calendarKind ||
+                        (coachOperationDraft.opportunityId
+                          ? "opportunity"
+                          : coachOperationDraft.operation.interactionId
+                            ? "lead"
+                            : "standalone")
+                      }
                       onChange={(event) =>
                         setCoachOperationDraft((current) => ({
                           ...current,
-                          opportunityId: event.target.value,
+                          operation: {
+                            ...current.operation,
+                            calendarKind: event.target.value,
+                          },
                         }))
                       }
                     >
-                      <option value="">Selecciona una oportunidad</option>
-                      {(
-                        coachOperationOpportunityOptionsOverride ||
-                        snapshot.pipeline.opportunities
-                      ).map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} · {item.accountName || "Sin cuenta"}
-                        </option>
-                      ))}
+                      <option value="standalone">Independiente</option>
+                      <option value="lead">Lead</option>
+                      <option value="opportunity">Oportunidad</option>
                     </select>
-                    {coachDraftMissingSet.has("opportunityId") ? (
-                      <small className="mi-agent-coach-field-error">
-                        Selecciona una oportunidad para continuar.
-                      </small>
-                    ) : null}
                   </label>
+                  {coachOperationDraft.operation.calendarKind === "lead" ? (
+                    <label>
+                      Lead ID
+                      <input
+                        type="number"
+                        min="1"
+                        value={
+                          coachOperationDraft.operation.interactionId || ""
+                        }
+                        onChange={(event) =>
+                          setCoachOperationDraft((current) => ({
+                            ...current,
+                            operation: {
+                              ...current.operation,
+                              interactionId: Number(event.target.value) || null,
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  ) : (coachOperationDraft.operation.calendarKind ||
+                      (coachOperationDraft.opportunityId
+                        ? "opportunity"
+                        : "standalone")) === "opportunity" ? (
+                    <label>
+                      Oportunidad
+                      <select
+                        value={coachOperationDraft.opportunityId}
+                        aria-invalid={coachDraftMissingSet.has("opportunityId")}
+                        onChange={(event) =>
+                          setCoachOperationDraft((current) => ({
+                            ...current,
+                            opportunityId: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Selecciona una oportunidad</option>
+                        {(
+                          coachOperationOpportunityOptionsOverride ||
+                          snapshot.pipeline.opportunities
+                        ).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} · {item.accountName || "Sin cuenta"}
+                          </option>
+                        ))}
+                      </select>
+                      {coachDraftMissingSet.has("opportunityId") ? (
+                        <small className="mi-agent-coach-field-error">
+                          Selecciona una oportunidad para continuar.
+                        </small>
+                      ) : null}
+                    </label>
+                  ) : null}
                   {[
                     ["title", "Título"],
                     ["actionType", "Tipo"],
@@ -13129,11 +13226,13 @@ export default function MiAgentPage({
                             }))
                           }
                         >
-                          {COACH_ACTIVITY_TYPE_OPTIONS.map(([value, label]) => (
-                            <option key={value} value={value}>
-                              {label}
-                            </option>
-                          ))}
+                          {COACH_ACTIVITY_TYPE_OPTIONS.map(
+                            ({ value, label }) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ),
+                          )}
                         </select>
                       ) : field === "priority" ? (
                         <select
