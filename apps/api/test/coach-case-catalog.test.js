@@ -18,6 +18,18 @@ describe("Coach case catalog", () => {
     expect(matchCoachQueryCase(question)?.id).toBe(caseId);
   });
 
+  it.each([
+    ["¿Qué cuenta es?", "brief_context", "brief_context"],
+    ["¿Qué oportunidades debería priorizar?", "seller_coaching", "coaching"],
+  ])(
+    "maps additional coaching requests",
+    (question, policyProcess, interactionMode) => {
+      expect(classifyCoachIntent(question)).toMatchObject({
+        policyProcess,
+        interactionMode,
+      });
+    },
+  );
   it("uses stable IDs and exposes only deterministic catalog metadata", () => {
     expect(listCoachCaseCatalog().map((item) => item.id)).toEqual([
       "COACH-STAGE-RISK-001",
@@ -31,11 +43,49 @@ describe("Coach case catalog", () => {
   });
 
   it("returns the governed stage-question case through the intent layer", () => {
-    expect(classifyCoachIntent("¿Qué preguntas debo hacer en Cotización?")).toMatchObject({
+    expect(
+      classifyCoachIntent("¿Qué preguntas debo hacer en Cotización?"),
+    ).toMatchObject({
       type: "stage_readiness",
       subtype: "stage_questions",
+      interactionMode: "coaching",
+      policyProcess: "seller_coaching",
       caseId: "COACH-STAGE-QUESTIONS-001",
       operationRequested: false,
+    });
+  });
+
+  it.each([
+    [
+      "¿Cómo puedo mejorar mi desempeño comercial?",
+      "seller_coaching",
+      "coaching",
+    ],
+    ["Dame un resumen de la cuenta", "brief_context", "brief_context"],
+    ["Actualiza el teléfono de esta cuenta", "operation", "operation"],
+    [
+      "Dame el historial completo de esta cuenta",
+      "default",
+      "deep_exploration",
+    ],
+    ["", "default", "clarification"],
+  ])(
+    "selects the Coach policy process for %s without replacing its granular type",
+    (question, policyProcess, interactionMode) => {
+      expect(classifyCoachIntent(question)).toMatchObject({
+        policyProcess,
+        interactionMode,
+      });
+    },
+  );
+
+  it("keeps the CRM topic separate from a seller-coaching objective", () => {
+    expect(
+      classifyCoachIntent("¿Cómo priorizo los contactos de esta cuenta?"),
+    ).toMatchObject({
+      type: "contact_query",
+      interactionMode: "coaching",
+      policyProcess: "seller_coaching",
     });
   });
 });

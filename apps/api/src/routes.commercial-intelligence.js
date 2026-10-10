@@ -221,6 +221,7 @@ const coachBusinessRulesSchema = z.object({
                 "create_account",
                 "create_contact",
                 "create_opportunity",
+                "link_contact_to_opportunity",
               ]),
             )
             .optional(),
@@ -906,7 +907,7 @@ router.put(
         action: "mi_coach_business_rules_updated",
         entityType: "mi_coach_business_rules",
         entityId: null,
-        detail: `Reglas de ${parsed.data.channel}/${parsed.data.process} actualizadas`,
+        detail: `Reglas de ${businessRules.channel}/${businessRules.process} actualizadas`,
         after: businessRules,
       });
       return res.json({
@@ -959,7 +960,7 @@ router.delete(
         action: "mi_coach_business_rules_reset",
         entityType: "mi_coach_business_rules",
         entityId: null,
-        detail: `Reglas de ${parsed.data.channel}/${parsed.data.process} restablecidas`,
+        detail: `Reglas de ${businessRules.channel}/${businessRules.process} restablecidas`,
         after: businessRules,
       });
       return res.json({ businessRules, configurationSource });

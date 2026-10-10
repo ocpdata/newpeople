@@ -105,14 +105,14 @@ async function mockMiCoachApi(
       countryResolved: true,
       candidates: withProspectDuplicates
         ? [
-        {
-          id: 777,
-          name: "Prospecto E2E existente",
-          website: "https://prospecto-e2e.example.com",
-          domain: "prospecto-e2e.example.com",
-          country: "Mexico",
-          matchType: "domain",
-        },
+            {
+              id: 777,
+              name: "Prospecto E2E existente",
+              website: "https://prospecto-e2e.example.com",
+              domain: "prospecto-e2e.example.com",
+              country: "Mexico",
+              matchType: "domain",
+            },
           ]
         : [],
     },
@@ -269,7 +269,7 @@ async function mockMiCoachApi(
                         requiresConfirmation: true,
                       },
                     ]
-              : [],
+                  : [],
             recommendedActions: [
               {
                 title: "Preparar siguiente llamada",
@@ -310,8 +310,7 @@ async function mockMiCoachApi(
       method === "POST"
     ) {
       const operation = route.request().postDataJSON()?.operation;
-      const operationId =
-        operation?.kind === "create_opportunity" ? 904 : 905;
+      const operationId = operation?.kind === "create_opportunity" ? 904 : 905;
       persistedCustomerOpportunityOperation = {
         id: operationId,
         sessionId: 924,
@@ -1334,7 +1333,11 @@ async function mockMiCoachApi(
     ) {
       return json({
         opportunityId: 300,
-        salesStage: { id: 1, code: "contacto_inicial", name: "Contacto Inicial" },
+        salesStage: {
+          id: 1,
+          code: "contacto_inicial",
+          name: "Contacto Inicial",
+        },
         commercialStatus: { code: "en_proceso" },
       });
     }
@@ -2505,9 +2508,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     });
     await expect(accountConfirmation).toContainText("Prospecto E2E");
     await expect(accountConfirmation).toContainText("Mexico");
-    await accountConfirmation
-      .getByRole("button", { name: "Cancelar" })
-      .click();
+    await accountConfirmation.getByRole("button", { name: "Cancelar" }).click();
     expect(accountConversionRequests).toHaveLength(0);
 
     await page.getByRole("button", { name: "Crear cuenta revisada" }).click();
@@ -2637,7 +2638,9 @@ test.describe("Mi Coach governance and workspaces", () => {
   test("copia el flujo completo del job de Cliente existente como JSON", async ({
     page,
   }) => {
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
     await mockMiCoachApi(page, {
       withCustomerHealth: true,
       withCustomerChatTrace: true,
@@ -2682,7 +2685,9 @@ test.describe("Mi Coach governance and workspaces", () => {
         ]),
         executionTrace: expect.arrayContaining([
           expect.objectContaining({
-            output: expect.objectContaining({ operationKind: "create_contact" }),
+            output: expect.objectContaining({
+              operationKind: "create_contact",
+            }),
           }),
         ]),
       },
@@ -2839,7 +2844,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       .getByRole("button", { name: "Continuar en el módulo" })
       .click();
 
-    await expect(page).toHaveURL(/\/contacts\?coachDraft=customer-contact-903$/);
+    await expect(page).toHaveURL(
+      /\/contacts\?coachDraft=customer-contact-903$/,
+    );
     const contactModal = page.locator(".modal-dialog-account");
     await expect(
       contactModal.getByRole("heading", { name: "Crear contacto" }),
@@ -2876,7 +2883,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       .getByPlaceholder("Pregunta sobre la cuenta...")
       .fill("Crea una oportunidad de renovación para esta cuenta");
     await customerChat.getByRole("button", { name: "Preguntar" }).click();
-    await customerChat.getByRole("button", { name: "Revisar operación" }).click();
+    await customerChat
+      .getByRole("button", { name: "Revisar operación" })
+      .click();
 
     const confirmation = page.getByRole("dialog", {
       name: "Confirmar creación de oportunidad",
@@ -2898,7 +2907,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByRole("heading", { name: "Crear oportunidad" }),
     ).toBeVisible();
     await expect(
-      page.locator(".opportunity-edit-modal .account-create-form input").first(),
+      page
+        .locator(".opportunity-edit-modal .account-create-form input")
+        .first(),
     ).toHaveValue("Renovación anual");
     expect(opportunityWrites).toEqual([]);
   });
@@ -2910,9 +2921,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     page.on("request", (request) => {
       if (
         request.method() === "PUT" &&
-        /^\/api\/opportunities\/\d+$/.test(
-          new URL(request.url()).pathname,
-        )
+        /^\/api\/opportunities\/\d+$/.test(new URL(request.url()).pathname)
       ) {
         opportunityWrites.push(request.postDataJSON());
       }
@@ -2929,7 +2938,9 @@ test.describe("Mi Coach governance and workspaces", () => {
       .getByPlaceholder("Pregunta sobre la cuenta...")
       .fill("Vincula a Ana Compras con Proyecto abierto");
     await customerChat.getByRole("button", { name: "Preguntar" }).click();
-    await customerChat.getByRole("button", { name: "Revisar operación" }).click();
+    await customerChat
+      .getByRole("button", { name: "Revisar operación" })
+      .click();
 
     const confirmation = page.getByRole("dialog", {
       name: "Confirmar vínculo de contacto a oportunidad",
@@ -2938,9 +2949,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(confirmation.getByLabel("Oportunidad")).toHaveValue(
       "Proyecto abierto",
     );
-    await expect(confirmation.getByLabel("Contacto que se asociará")).toHaveValue(
-      "Ana Compras",
-    );
+    await expect(
+      confirmation.getByLabel("Contacto que se asociará"),
+    ).toHaveValue("Ana Compras");
     await confirmation
       .getByRole("button", { name: "Continuar en el módulo" })
       .click();
@@ -3465,17 +3476,122 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByRole("heading", { name: "Configuración, límites y métricas" }),
     ).toBeVisible();
     await expect(
+      page.getByRole("heading", { name: "Calidad y métricas" }),
+    ).toHaveCount(0);
+    const governanceSettings = page.locator(
+      "details.mi-agent-governance-settings",
+    );
+    await expect(governanceSettings.locator("summary")).toBeVisible();
+    await expect(
+      governanceSettings.getByLabel("Fuentes externas habilitadas"),
+    ).toBeHidden();
+    await governanceSettings.locator("summary").click();
+    await expect(
+      governanceSettings.getByLabel("Fuentes externas habilitadas"),
+    ).toBeVisible();
+    await expect(
       page.getByRole("button", { name: "Guardar configuración" }),
     ).toBeVisible();
 
-    const channelPolicy = page.locator(
-      'section[aria-labelledby="mi-agent-channel-policy-title"]',
+    const intentRouting = page.locator(".mi-agent-intent-governance");
+    const intentChannelSelector = intentRouting.getByRole("combobox", {
+      name: "Canal para intenciones y enrutamiento",
+    });
+    await expect(intentRouting.locator("summary")).toBeVisible();
+    await expect(intentChannelSelector).toBeHidden();
+    await intentRouting.locator("summary").click();
+    await expect(intentChannelSelector).toHaveValue("coach");
+    await expect(
+      intentRouting.getByRole("navigation", {
+        name: "Catálogo de intenciones",
+      }),
+    ).toBeVisible();
+    await expect(
+      intentRouting.getByRole("heading", {
+        name: "Enrutamiento · Cliente existente",
+      }),
+    ).toHaveCount(0);
+
+    const customerIntentCatalogRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .endsWith(
+            "/api/commercial-intelligence/governance/channel-intents/customer_account",
+          ) && request.method() === "GET",
     );
+    await intentChannelSelector.selectOption("customer_account");
+    await customerIntentCatalogRequest;
+    await expect(
+      intentRouting.getByRole("heading", {
+        name: "Enrutamiento · Cliente existente",
+      }),
+    ).toBeVisible();
+    await expect(
+      intentRouting.getByRole("navigation", {
+        name: "Catálogo de intenciones",
+      }),
+    ).toHaveCount(0);
+
+    const prospectIntentCatalogRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .endsWith(
+            "/api/commercial-intelligence/governance/channel-intents/prospect",
+          ) && request.method() === "GET",
+    );
+    await intentChannelSelector.selectOption("prospect");
+    await prospectIntentCatalogRequest;
+    await expect(
+      intentRouting.getByRole("heading", {
+        name: "Enrutamiento · Cuenta nueva",
+      }),
+    ).toBeVisible();
+
+    await intentChannelSelector.selectOption("coach");
+    await expect(
+      intentRouting.getByRole("navigation", {
+        name: "Catálogo de intenciones",
+      }),
+    ).toBeVisible();
+
+    const conversationalRules = page.locator("details.mi-agent-admin-rules");
+    await expect(conversationalRules.locator("summary").first()).toBeVisible();
+    await expect(
+      conversationalRules.locator(".mi-agent-admin-rule-groups"),
+    ).toBeHidden();
+    await conversationalRules.locator("summary").first().click();
+    await expect(
+      conversationalRules.locator(".mi-agent-admin-rule-groups"),
+    ).toBeVisible();
+    const ruleGroups = conversationalRules.locator(
+      ".mi-agent-admin-rule-group",
+    );
+    await expect(ruleGroups).toHaveCount(4);
+    await expect(
+      ruleGroups.nth(0).locator(".mi-agent-admin-rule-empty"),
+    ).toBeHidden();
+    await ruleGroups.nth(0).locator("summary").click();
+    await expect(
+      ruleGroups.nth(0).locator(".mi-agent-admin-rule-empty"),
+    ).toBeVisible();
+    await expect(
+      ruleGroups.nth(1).locator(".mi-agent-admin-rule-empty"),
+    ).toBeHidden();
+
+    const channelPolicy = page.locator(
+      'details[aria-labelledby="mi-agent-channel-policy-title"]',
+    );
+    await channelPolicy.locator("summary").first().click();
     const consultationType = channelPolicy.getByRole("combobox", {
       name: "Tipo de consulta",
     });
-    const channelSelector = channelPolicy.locator("label").first().locator("select");
-    await expect(consultationType).toBeVisible();
+    const channelSelector = channelPolicy
+      .locator("label")
+      .first()
+      .locator("select");
+    await expect(consultationType).toHaveCount(0);
     await channelSelector.selectOption("customer_account");
     await expect(
       channelPolicy.getByText("Conversación de cliente existente", {
@@ -3506,7 +3622,84 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).not.toBeChecked();
     await expect(consultationType).toHaveCount(0);
     await channelSelector.selectOption("coach");
-    await expect(consultationType).toBeVisible();
+    await expect(
+      channelPolicy.getByText("Asesoría de desarrollo comercial", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(consultationType).toHaveCount(0);
+    const intentOverrides = channelPolicy
+      .locator("details")
+      .filter({ hasText: "Ajustes avanzados por intención" });
+    await expect(intentOverrides.locator("summary")).toBeVisible();
+    await expect(intentOverrides.locator("select")).toBeHidden();
+    await intentOverrides.locator("summary").click();
+    const intentPolicySelector = intentOverrides.getByRole("combobox", {
+      name: "Intención con ajuste específico",
+    });
+    await expect(intentPolicySelector).toBeVisible();
+    await expect(intentPolicySelector.locator("option")).toHaveText([
+      "Sin ajuste específico · usar configuración general",
+      "Coaching del vendedor",
+      "Contexto breve",
+      "Propuesta de operación",
+    ]);
+    const briefContextRulesRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .includes(
+            "/api/commercial-intelligence/governance/business-rules?channel=coach&process=brief_context",
+          ) && request.method() === "GET",
+    );
+    await intentPolicySelector.selectOption("brief_context");
+    await briefContextRulesRequest;
+    const coachOverrideSaveRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .endsWith("/api/commercial-intelligence/governance/business-rules") &&
+        request.method() === "PUT",
+    );
+    await channelPolicy
+      .getByRole("button", { name: "Guardar ajuste de intención" })
+      .click();
+    expect((await coachOverrideSaveRequest).postDataJSON()).toMatchObject({
+      channel: "coach",
+      process: "brief_context",
+    });
+    const prospectRulesRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .includes(
+            "/api/commercial-intelligence/governance/business-rules?channel=prospect&process=default",
+          ) && request.method() === "GET",
+    );
+    await channelSelector.selectOption("prospect");
+    await expect(
+      channelPolicy
+        .getByText("Conversación de cuenta nueva", {
+          exact: true,
+        })
+        .first(),
+    ).toBeVisible();
+    await expect(consultationType).toHaveCount(0);
+    await prospectRulesRequest;
+    const prospectSaveRequest = page.waitForRequest(
+      (request) =>
+        request
+          .url()
+          .endsWith("/api/commercial-intelligence/governance/business-rules") &&
+        request.method() === "PUT",
+    );
+    await channelPolicy
+      .getByRole("button", { name: "Guardar políticas del canal" })
+      .click();
+    expect((await prospectSaveRequest).postDataJSON()).toMatchObject({
+      channel: "prospect",
+      process: "default",
+    });
 
     const externalSources = page.getByLabel("Fuentes externas habilitadas");
     const wonOpportunities = page.getByLabel("Incluir oportunidades ganadas");

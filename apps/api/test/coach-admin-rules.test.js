@@ -5,6 +5,7 @@ const adminRulesDb = vi.hoisted(() => ({
   withTransaction: vi.fn(),
   migrations: new Set(),
   rules: [],
+  snapshots: new Map(),
   updateCount: 0,
 }));
 
@@ -54,7 +55,48 @@ describe("Coach administrative rule migration", () => {
         is_enabled: 0,
         sort_order: 70,
       },
+      {
+        id: "prospect-default-custom",
+        scope_code: "channel",
+        channel_code: "prospect",
+        process_key: "default",
+        title: "Regla general de Cuenta nueva",
+        instruction: "Mantener la regla general.",
+        is_enabled: 1,
+        sort_order: 30,
+      },
+      {
+        id: "prospect-chat-custom",
+        scope_code: "channel",
+        channel_code: "prospect",
+        process_key: "prospect_chat",
+        title: "Regla específica de Cuenta nueva",
+        instruction: "Conservar la instrucción específica.",
+        is_enabled: 0,
+        sort_order: 40,
+      },
+      {
+        id: "coach-opportunity-query-custom",
+        scope_code: "channel",
+        channel_code: "coach",
+        process_key: "opportunity_query",
+        title: "Detalle de oportunidades",
+        instruction: "Mantener el contexto breve de oportunidades.",
+        is_enabled: 1,
+        sort_order: 60,
+      },
+      {
+        id: "coach-stage-readiness-custom",
+        scope_code: "channel",
+        channel_code: "coach",
+        process_key: "stage_readiness",
+        title: "Guía de etapas personalizada",
+        instruction: "Priorizar evidencia y avance de etapa.",
+        is_enabled: 1,
+        sort_order: 70,
+      },
     ];
+    adminRulesDb.snapshots = new Map();
     adminRulesDb.query.mockImplementation(async (sql, params = []) => {
       if (sql.includes("CREATE TABLE")) return [];
       if (sql.includes("SELECT migration_key")) {
@@ -66,16 +108,40 @@ describe("Coach administrative rule migration", () => {
         adminRulesDb.migrations.add(params[0]);
         return [];
       }
+      if (
+        sql.includes(
+          "INSERT IGNORE INTO mi_coach_admin_rule_migration_snapshots",
+        )
+      ) {
+        adminRulesDb.snapshots.set(params[0], JSON.parse(params[1]));
+        return [];
+      }
+      if (
+        sql.startsWith("SELECT id, scope_code, channel_code, process_key") &&
+        sql.includes("WHERE scope_code = 'channel' AND channel_code = ?")
+      ) {
+        return adminRulesDb.rules.filter(
+          (rule) =>
+            rule.scope_code === "channel" && rule.channel_code === params[0],
+        );
+      }
       if (sql.includes("SET process_key = 'default'")) {
+        const channel = params[0];
         for (const rule of adminRulesDb.rules) {
           if (
             rule.scope_code === "channel" &&
-            rule.channel_code === "customer_account" &&
+            rule.channel_code === channel &&
             rule.process_key !== "default"
           ) {
             rule.process_key = "default";
           }
         }
+        return [];
+      }
+      if (sql.includes("SET process_key = ?")) {
+        const [process, id] = params;
+        const row = adminRulesDb.rules.find((item) => item.id === id);
+        if (row) row.process_key = process;
         return [];
       }
       if (sql.includes("UPDATE mi_coach_admin_rules")) {
@@ -114,6 +180,11 @@ describe("Coach administrative rule migration", () => {
       channel: "customer_account",
       process: "account_chat",
     });
+    expect(
+      adminRulesDb.rules.find(
+        (rule) => rule.id === "customer-account-chat-custom",
+      ).process_key,
+    ).toBe("default");
     const activityPolicy = rules.find(
       (rule) => rule.id === "customer-limit-operations",
     );
@@ -143,5 +214,52 @@ describe("Coach administrative rule migration", () => {
     expect(
       adminRulesDb.migrations.has("align_customer_operations_admin_rules_v3"),
     ).toBe(true);
+    expect(adminRulesDb.migrations.has("prospect_single_process_v1")).toBe(
+      true,
+    );
+    expect(
+      adminRulesDb.rules.find((rule) => rule.id === "prospect-chat-custom")
+        .process_key,
+    ).toBe("default");
+    expect(
+      adminRulesDb.rules.find(
+        (rule) => rule.id === "coach-opportunity-query-custom",
+      ).process_key,
+    ).toBe("brief_context");
+    expect(
+      adminRulesDb.rules.find(
+        (rule) => rule.id === "coach-stage-readiness-custom",
+      ).process_key,
+    ).toBe("seller_coaching");
+    expect(
+      adminRulesDb.snapshots.get("coach_interaction_policy_processes_v1"),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "coach-opportunity-query-custom",
+          process_key: "opportunity_query",
+        }),
+      ]),
+    );
+
+    const prospectRules = await listCoachAdminRules({
+      channel: "prospect",
+      process: "prospect_chat",
+    });
+    expect(prospectRules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "prospect-default-custom",
+          process: "default",
+          instruction: "Mantener la regla general.",
+        }),
+        expect.objectContaining({
+          id: "prospect-chat-custom",
+          process: "default",
+          instruction: "Conservar la instrucción específica.",
+          enabled: false,
+        }),
+      ]),
+    );
   });
 });

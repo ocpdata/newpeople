@@ -30,6 +30,8 @@ Cada turno se clasifica por tema y por objetivo de interacción:
 
 La IA propone tema y objetivo, pero el servidor decide requisitos de contexto y herramientas permitidas. Las herramientas de lectura mantienen sus validaciones de permisos y ownership. El handoff solo contiene IDs determinados por el contexto autorizado y ofrece destinos fijos; la página de destino vuelve a validar acceso. Si no hay contexto inequívoco o permiso para abrir el espacio, Coach solicita aclaración o informa la limitación y no lee el detalle.
 
+La política de Coach tiene una configuración general (`default`) y puede tener ajustes opcionales por objetivo: coaching del vendedor, contexto breve o propuesta de operación. B3 clasifica el objetivo para elegir el ajuste y conserva aparte el tema CRM (cuenta, oportunidad, contacto, lead, actividad o cotización) para resolver contexto y herramientas. Una intención sin ajuste propio hereda la configuración general. La exploración detallada no es configurable: siempre se deriva al espacio o módulo autorizado. Esta clasificación de políticas solo aplica a Coach; Cliente existente y Cuenta nueva mantienen sus propias políticas de canal.
+
 Este documento describe exclusivamente el Chat del Coach. No cubre el Análisis de situación comercial, Cliente existente, Cuenta nueva, investigación pública, biblioteca, reportes ni administración de gobierno, excepto cuando una dependencia del chat exige mencionarlos.
 
 ## Principios de funcionamiento

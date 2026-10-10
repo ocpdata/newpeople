@@ -66,8 +66,9 @@ export function summarizeCustomerChatContext(value = {}) {
   const filters = conversationContext.filters || routing.filters || {};
   return {
     accountId:
-      Number(selectedContext.accountId || value.account?.id || value.accountId || 0) ||
-      null,
+      Number(
+        selectedContext.accountId || value.account?.id || value.accountId || 0,
+      ) || null,
     opportunityId:
       Number(
         selectedContext.opportunityId ||
@@ -569,6 +570,7 @@ export async function runConversationEngine({
   permissions = {},
   operationPolicy = {},
   businessRules: configuredBusinessRules = null,
+  coachIntentClassification: configuredCoachIntentClassification = null,
   executionTrace = null,
   traceParentSpanId = null,
   dependencies,
@@ -674,7 +676,8 @@ export async function runConversationEngine({
             reason: routing.ambiguity.reason || null,
             requiresClarification:
               routing.ambiguity.requiresClarification ?? null,
-            question: routing.ambiguity.clarificationQuestion ||
+            question:
+              routing.ambiguity.clarificationQuestion ||
               routing.ambiguity.question ||
               "",
             missingContext: routing.ambiguity.missingContext || [],
@@ -724,9 +727,7 @@ export async function runConversationEngine({
           )
             ? request.payload.context.readToolResults.length
             : 0,
-          context: summarizeCustomerChatContext(
-            request.payload?.context || {},
-          ),
+          context: summarizeCustomerChatContext(request.payload?.context || {}),
           validatedRouting: summarizeRouting(
             request.payload?.context?.channelIntentRouting,
           ),
@@ -968,7 +969,9 @@ export async function runConversationEngine({
           })
         : null;
   const legacyIntent =
-    channel === "coach" ? classifyCoachIntent(question) : null;
+    channel === "coach"
+      ? configuredCoachIntentClassification || classifyCoachIntent(question)
+      : null;
   const legacyIntentCode = [
     "stage_readiness",
     "activity_query",
@@ -1043,7 +1046,17 @@ export async function runConversationEngine({
                     confidence: 1,
                     contextNeeded: [],
                   }
-                : rawIntentClassification,
+                : [
+                      "coaching",
+                      "brief_context",
+                      "deep_exploration",
+                      "operation",
+                    ].includes(legacyIntent?.interactionMode)
+                  ? {
+                      ...rawIntentClassification,
+                      mode: legacyIntent.interactionMode,
+                    }
+                  : rawIntentClassification,
         )
       : null;
   const coachingPermissionSet = user?.permissionSet || permissions;

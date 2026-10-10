@@ -157,12 +157,18 @@ export async function runCoachJob({
   const executionTrace = coachBlockPipelineEnabled(dependencies)
     ? createCoachBlockTrace({ jobId })
     : null;
+  const coachIntentClassification = classifyCoachIntent(question);
   executionTrace?.record({
     from: "B2",
     to: "B3",
     label: "Procesar job de Coach",
     phase: "call",
     status: "started",
+    input: {
+      intentType: coachIntentClassification.type,
+      interactionMode: coachIntentClassification.interactionMode,
+      policyProcess: coachIntentClassification.policyProcess,
+    },
   });
 
   try {
@@ -173,16 +179,17 @@ export async function runCoachJob({
     const businessRules = dependencies.loadCoachBusinessRules
       ? await dependencies.loadCoachBusinessRules({
           channel: "coach",
-          process: classifyCoachIntent(question).type,
+          process: coachIntentClassification.policyProcess,
         })
       : await loadCoachBusinessRules({
           channel: "coach",
-          process: classifyCoachIntent(question).type,
+          process: coachIntentClassification.policyProcess,
         });
     const coachAdapter = createCoachAdapter({
       user,
       dependencies,
       businessRules,
+      coachIntentClassification,
     });
     const runAdapter = () =>
       coachAdapter.runTurn({
@@ -289,6 +296,9 @@ export async function runCoachJob({
         phase: "return",
         status: "completed",
         output: {
+          intentType: coachIntentClassification.type,
+          interactionMode: coachIntentClassification.interactionMode,
+          policyProcess: coachIntentClassification.policyProcess,
           responseType: normalizedResult.responseType,
           validationStatus: engineResult.qualityTrace?.validationStatus,
         },
@@ -330,13 +340,13 @@ export async function runCoachJob({
     });
     await recordCoachTurnQualityTrace({
       channel: "coach",
-      process: classifyCoachIntent(question).type,
+      process: coachIntentClassification.type,
       userId: user.id,
       sessionId,
       jobId,
       trace: {
-        intentType: classifyCoachIntent(question).type,
-        intentSubtype: classifyCoachIntent(question).subtype,
+        intentType: coachIntentClassification.type,
+        intentSubtype: coachIntentClassification.subtype,
         primaryEntity: selectedContext.opportunityId
           ? "opportunity"
           : selectedContext.leadId
@@ -346,7 +356,11 @@ export async function runCoachJob({
               : selectedContext.accountId
                 ? "account"
                 : "none",
-        appliedRules: { channel: "coach", engineMode: "gateway" },
+        appliedRules: {
+          channel: "coach",
+          engineMode: "gateway",
+          policyProcess: coachIntentClassification.policyProcess,
+        },
         validationStatus: "error",
         validationReasons: ["turn_execution_failed"],
         errorCode: String(

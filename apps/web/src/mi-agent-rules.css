@@ -1,28 +1,43 @@
 .mi-agent-admin-rules {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   margin: 18px 0;
-  padding-top: 16px;
-  border-top: 1px solid #dbe5ea;
+  padding: 16px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
 }
-.mi-agent-admin-rules-heading,
+.mi-agent-admin-rules-summary {
+  display: list-item;
+  color: #173b52;
+  cursor: pointer;
+}
+.mi-agent-admin-rules-summary::marker {
+  color: #24877f;
+  font-size: 14px;
+}
+.mi-agent-admin-rules-summary strong {
+  margin-right: 12px;
+  font-size: 15px;
+}
+.mi-agent-admin-rules-summary span {
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-admin-rules-content {
+  display: grid;
+  gap: 16px;
+  padding-top: 8px;
+}
 .mi-agent-admin-rule-editor-heading {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 14px;
 }
-.mi-agent-admin-rules-heading h4,
 .mi-agent-admin-rule-editor h5 {
   margin: 0;
   color: #173b52;
   font-size: 15px;
-}
-.mi-agent-admin-rules-heading p {
-  margin: 5px 0 0;
-  color: #536977;
-  font-size: 12px;
-  line-height: 1.45;
 }
 .mi-agent-admin-rules-actions,
 .mi-agent-admin-rule-controls {
@@ -51,11 +66,31 @@
 }
 .mi-agent-admin-rule-group {
   min-width: 0;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+  overflow: hidden;
 }
-.mi-agent-admin-rule-group h5 {
-  margin: 0 0 8px;
+.mi-agent-admin-rule-group-summary {
+  display: list-item;
+  padding: 10px 12px;
+  color: #286f70;
+  cursor: pointer;
+}
+.mi-agent-admin-rule-group-summary::marker {
+  color: #24877f;
+}
+.mi-agent-admin-rule-group-summary h5 {
+  display: inline;
+  margin: 0 10px 0 0;
   color: #286f70;
   font-size: 12px;
+}
+.mi-agent-admin-rule-group-summary span {
+  color: #657982;
+  font-size: 11px;
+}
+.mi-agent-admin-rule-group-content {
+  padding: 0 10px 10px;
 }
 .mi-agent-admin-rule-list {
   display: grid;
@@ -193,6 +228,20 @@
 .mi-agent-admin-rules-advanced[open] summary {
   margin-bottom: 12px;
 }
+.mi-agent-intent-policy-overrides > label {
+  display: grid;
+  gap: 6px;
+  max-width: 520px;
+  color: #365769;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-agent-intent-policy-overrides > p {
+  max-width: 760px;
+  color: #536977;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .mi-agent-admin-rules-advanced > label textarea {
   width: 100%;
   box-sizing: border-box;
@@ -222,23 +271,79 @@
   display: grid;
   gap: 14px;
   margin: 18px 0;
-  padding: 16px 0;
-  border-top: 1px solid #dbe5ea;
-  border-bottom: 1px solid #dbe5ea;
+  padding: 16px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+}
+.mi-agent-domain-policy > summary {
+  display: list-item;
+  color: #173b52;
+  cursor: pointer;
+}
+.mi-agent-domain-policy > summary::marker {
+  color: #24877f;
+  font-size: 14px;
+}
+.mi-agent-domain-policy-main-summary strong {
+  margin-right: 14px;
+  font-size: 15px;
+}
+.mi-agent-domain-policy-main-summary span {
+  color: #536977;
+  font-size: 12px;
 }
 .mi-agent-domain-policy-subsection {
   display: grid;
-  gap: 14px;
   padding: 16px 0;
   border-top: 1px solid #e6edef;
+}
+.mi-agent-domain-policy-subsection-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+.mi-agent-domain-policy-subsection-heading h4 {
+  margin: 0;
+}
+.mi-agent-domain-policy-subsection-heading span {
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-domain-policy-content {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
 }
 .mi-agent-governance-settings {
   display: grid;
   gap: 14px;
   margin: 20px 0;
-  padding: 18px 0;
-  border-top: 1px solid #dbe5ea;
-  border-bottom: 1px solid #dbe5ea;
+  padding: 18px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+}
+.mi-agent-governance-settings-summary {
+  display: list-item;
+  color: #173b52;
+  cursor: pointer;
+}
+.mi-agent-governance-settings-summary::marker {
+  color: #24877f;
+  font-size: 14px;
+}
+.mi-agent-governance-settings-summary strong {
+  margin-right: 12px;
+  font-size: 15px;
+}
+.mi-agent-governance-settings-summary span {
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-governance-settings-content {
+  display: grid;
+  gap: 14px;
+  padding-top: 8px;
 }
 .mi-agent-governance-settings h4,
 .mi-agent-governance-metrics-section > h4 {
@@ -265,8 +370,31 @@
   display: grid;
   gap: 14px;
   margin: 20px 0;
-  padding: 18px 0;
-  border-top: 1px solid #dbe5ea;
+  padding: 16px;
+  border: 1px solid #dbe5ea;
+  border-radius: 6px;
+}
+.mi-agent-intent-governance-summary {
+  display: list-item;
+  color: #173b52;
+  cursor: pointer;
+}
+.mi-agent-intent-governance-summary::marker {
+  color: #24877f;
+  font-size: 14px;
+}
+.mi-agent-intent-governance-summary strong {
+  margin-right: 12px;
+  font-size: 15px;
+}
+.mi-agent-intent-governance-summary span {
+  color: #536977;
+  font-size: 12px;
+}
+.mi-agent-intent-governance-content {
+  display: grid;
+  gap: 14px;
+  padding-top: 8px;
 }
 .mi-agent-intent-layout {
   display: grid;
@@ -563,6 +691,18 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+.mi-agent-domain-option {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+}
+.mi-agent-domain-option small {
+  margin-left: 23px;
+  color: #536977;
+  font-size: 11px;
+  line-height: 1.4;
+}
 .mi-agent-domain-stage-group input {
   flex: 0 0 auto;
   width: 16px;
@@ -672,8 +812,9 @@
   overflow-wrap: anywhere;
 }
 @media (max-width: 760px) {
-  .mi-agent-admin-rules-heading {
-    flex-direction: column;
+  .mi-agent-admin-rules-summary span {
+    display: block;
+    margin-top: 5px;
   }
   .mi-agent-channel-intent-channel {
     width: 100%;

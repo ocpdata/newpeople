@@ -2248,7 +2248,10 @@ describe("API integration baseline", () => {
           accountId: fixture.accountId,
           opportunityId: fixture.opportunityId,
           contactId: foreignContactId,
-          payload: { accountId: fixture.accountId, contactId: foreignContactId },
+          payload: {
+            accountId: fixture.accountId,
+            contactId: foreignContactId,
+          },
           evidence: [],
           missingFields: [],
           requiresConfirmation: true,
@@ -3358,14 +3361,15 @@ describe("API integration baseline", () => {
     });
     const debugFlow = accountChatJob.body.job.result.debug.flow;
     const executionTrace = accountChatJob.body.job.result.debug.executionTrace;
-    expect(debugFlow.find((item) => item.block === "B6")?.output.proposedPlan)
-      .toMatchObject({
-        mode: "read_only",
-        ambiguity: {
-          reason: "none",
-          requiresClarification: "no",
-        },
-      });
+    expect(
+      debugFlow.find((item) => item.block === "B6")?.output.proposedPlan,
+    ).toMatchObject({
+      mode: "read_only",
+      ambiguity: {
+        reason: "none",
+        requiresClarification: "no",
+      },
+    });
     expect(
       debugFlow.find((item) => item.block === "B5")?.output.routingValidation
         .normalizedRouting.validationDiagnostics,
@@ -5199,7 +5203,7 @@ describe("API integration baseline", () => {
     expect(rulesByIntentResponse.status).toBe(200);
     expect(rulesByIntentResponse.body.businessRules).toMatchObject({
       channel: "coach",
-      process: "opportunity_query",
+      process: "brief_context",
       filters: { defaultActiveOnly: false },
       aliases: { stage: { "fase empresarial": "negociacion" } },
     });
@@ -5209,6 +5213,9 @@ describe("API integration baseline", () => {
       )
       .set("Authorization", `Bearer ${adminLogin.body.token}`);
     expect(reloadedRulesResponse.status).toBe(200);
+    expect(reloadedRulesResponse.body.businessRules.process).toBe(
+      "brief_context",
+    );
     expect(
       reloadedRulesResponse.body.businessRules.filters.defaultActiveOnly,
     ).toBe(false);
@@ -5218,9 +5225,145 @@ describe("API integration baseline", () => {
       )
       .set("Authorization", `Bearer ${adminLogin.body.token}`);
     expect(resetRulesResponse.status).toBe(200);
-    expect(resetRulesResponse.body.businessRules.process).toBe(
-      "opportunity_query",
+    expect(resetRulesResponse.body.businessRules.process).toBe("brief_context");
+
+    const customerOperationKinds = [
+      "activity",
+      "stage_answer",
+      "lead_call_outcome",
+      "account_field",
+      "contact_field",
+      "create_contact",
+      "opportunity_field",
+      "create_opportunity",
+      "link_contact_to_opportunity",
+    ];
+    const originalCustomerRules = await query(
+      `SELECT rules_json, updated_by_user_id, created_at, updated_at
+       FROM mi_coach_business_rules
+       WHERE channel = 'customer_account' AND process_key = 'default'
+       LIMIT 1`,
     );
+    try {
+      const customerRulesResponse = await request(app)
+        .put("/api/commercial-intelligence/governance/business-rules")
+        .set("Authorization", adminAuthorization)
+        .send({
+          channel: "customer_account",
+          process: "default",
+          rules: {
+            operationPolicy: { allowedKinds: customerOperationKinds },
+          },
+        });
+      expect(customerRulesResponse.status).toBe(200);
+      expect(
+        customerRulesResponse.body.businessRules.operationPolicy.allowedKinds,
+      ).toEqual(customerOperationKinds);
+
+      const reloadedCustomerRulesResponse = await request(app)
+        .get(
+          "/api/commercial-intelligence/governance/business-rules?channel=customer_account&process=default",
+        )
+        .set("Authorization", adminAuthorization);
+      expect(reloadedCustomerRulesResponse.status).toBe(200);
+      expect(
+        reloadedCustomerRulesResponse.body.businessRules.operationPolicy
+          .allowedKinds,
+      ).toEqual(customerOperationKinds);
+    } finally {
+      if (originalCustomerRules.length) {
+        const originalCustomerRule = originalCustomerRules[0];
+        await query(
+          `UPDATE mi_coach_business_rules
+           SET rules_json = ?, updated_by_user_id = ?, created_at = ?, updated_at = ?
+           WHERE channel = 'customer_account' AND process_key = 'default'`,
+          [
+            typeof originalCustomerRule.rules_json === "string"
+              ? originalCustomerRule.rules_json
+              : JSON.stringify(originalCustomerRule.rules_json),
+            originalCustomerRule.updated_by_user_id,
+            originalCustomerRule.created_at,
+            originalCustomerRule.updated_at,
+          ],
+        );
+      } else {
+        await query(
+          `DELETE FROM mi_coach_business_rules
+           WHERE channel = 'customer_account' AND process_key = 'default'`,
+        );
+      }
+    }
+
+    const initialProspectRulesResponse = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/business-rules?channel=prospect&process=prospect_chat",
+      )
+      .set("Authorization", adminAuthorization);
+    expect(initialProspectRulesResponse.status).toBe(200);
+    expect(initialProspectRulesResponse.body.businessRules.process).toBe(
+      "default",
+    );
+    const originalProspectRules = await query(
+      `SELECT rules_json, updated_by_user_id, created_at, updated_at
+       FROM mi_coach_business_rules
+       WHERE channel = 'prospect' AND process_key = 'default'
+       LIMIT 1`,
+    );
+    try {
+      const prospectRulesResponse = await request(app)
+        .put("/api/commercial-intelligence/governance/business-rules")
+        .set("Authorization", adminAuthorization)
+        .send({
+          channel: "prospect",
+          process: "prospect_chat",
+          rules: {
+            filters: { defaultActiveOnly: false },
+            operationPolicy: { allowedKinds: ["create_account"] },
+          },
+        });
+      expect(prospectRulesResponse.status).toBe(200);
+      expect(prospectRulesResponse.body.businessRules).toMatchObject({
+        channel: "prospect",
+        process: "default",
+        filters: { defaultActiveOnly: false },
+      });
+
+      const reloadedProspectRulesResponse = await request(app)
+        .get(
+          "/api/commercial-intelligence/governance/business-rules?channel=prospect&process=prospect_chat",
+        )
+        .set("Authorization", adminAuthorization);
+      expect(reloadedProspectRulesResponse.status).toBe(200);
+      expect(reloadedProspectRulesResponse.body.businessRules.process).toBe(
+        "default",
+      );
+      expect(
+        reloadedProspectRulesResponse.body.businessRules.filters
+          .defaultActiveOnly,
+      ).toBe(false);
+    } finally {
+      if (originalProspectRules.length) {
+        const originalProspectRule = originalProspectRules[0];
+        await query(
+          `UPDATE mi_coach_business_rules
+           SET rules_json = ?, updated_by_user_id = ?, created_at = ?, updated_at = ?
+           WHERE channel = 'prospect' AND process_key = 'default'`,
+          [
+            typeof originalProspectRule.rules_json === "string"
+              ? originalProspectRule.rules_json
+              : JSON.stringify(originalProspectRule.rules_json),
+            originalProspectRule.updated_by_user_id,
+            originalProspectRule.created_at,
+            originalProspectRule.updated_at,
+          ],
+        );
+      } else {
+        await query(
+          `DELETE FROM mi_coach_business_rules
+           WHERE channel = 'prospect' AND process_key = 'default'`,
+        );
+      }
+    }
 
     const initialAdminRulesResponse = await request(app)
       .get(
@@ -5367,6 +5510,39 @@ describe("API integration baseline", () => {
         expect.objectContaining({ scope: "common" }),
       ]),
     );
+    const createProspectAdminRuleResponse = await request(app)
+      .post("/api/commercial-intelligence/governance/rules")
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        scope: "channel",
+        channel: "prospect",
+        process: "prospect_chat",
+        title: "Regla temporal de Cuenta nueva",
+        instruction: "Usa la configuración única del canal.",
+      });
+    expect(createProspectAdminRuleResponse.status).toBe(201);
+    expect(createProspectAdminRuleResponse.body.rule).toMatchObject({
+      channel: "prospect",
+      process: "default",
+    });
+    const prospectAdminRulesAfterCreate = await request(app)
+      .get(
+        "/api/commercial-intelligence/governance/rules?channel=prospect&process=prospect_chat",
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
+    expect(prospectAdminRulesAfterCreate.body.rules).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: createProspectAdminRuleResponse.body.rule.id,
+          process: "default",
+        }),
+      ]),
+    );
+    await request(app)
+      .delete(
+        `/api/commercial-intelligence/governance/rules/${createProspectAdminRuleResponse.body.rule.id}`,
+      )
+      .set("Authorization", `Bearer ${adminLogin.body.token}`);
     const updateAdminRuleResponse = await request(app)
       .put(
         `/api/commercial-intelligence/governance/rules/${createdAdminRuleId}`,

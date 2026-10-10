@@ -18,6 +18,7 @@ export function createCoachAdapter({
   user,
   dependencies,
   businessRules = null,
+  coachIntentClassification = null,
 }) {
   const availableTools = getCoachReadToolCatalog();
   const permissions = user?.permissionSet || new Set();
@@ -67,6 +68,7 @@ export function createCoachAdapter({
           permissions,
           operationPolicy: effectiveBusinessRules.operationPolicy,
           businessRules: effectiveBusinessRules,
+          coachIntentClassification,
           dependencies: {
             ...dependencies,
             loadAdministrativeRules:

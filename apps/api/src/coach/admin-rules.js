@@ -255,11 +255,40 @@ const ADMIN_RULE_ALIGNMENT_MIGRATION = [
 ];
 
 let ensureCoachAdminRulesPromise;
-const CUSTOMER_ACCOUNT_RULE_MIGRATION =
-  "customer_account_single_process_v1";
+const CUSTOMER_ACCOUNT_RULE_MIGRATION = "customer_account_single_process_v1";
+const PROSPECT_RULE_MIGRATION = "prospect_single_process_v1";
+const COACH_INTERACTION_RULE_MIGRATION =
+  "coach_interaction_policy_processes_v1";
+const COACH_POLICY_PROCESS_BY_LEGACY_PROCESS = Object.freeze({
+  account_query: "brief_context",
+  contact_query: "brief_context",
+  activity_query: "brief_context",
+  quotation_query: "brief_context",
+  opportunity_query: "brief_context",
+  lead_query: "brief_context",
+  account_ranking: "seller_coaching",
+  temporal_filter: "seller_coaching",
+  stage_readiness: "seller_coaching",
+  general_query: "seller_coaching",
+});
 
 function canonicalRuleProcess(channel, process = "default") {
-  return channel === "customer_account" ? "default" : process || "default";
+  if (["customer_account", "prospect"].includes(channel)) return "default";
+  if (channel !== "coach") return process || "default";
+  const normalized = String(process || "default")
+    .trim()
+    .toLowerCase();
+  if (
+    ["default", "seller_coaching", "brief_context", "operation"].includes(
+      normalized,
+    )
+  ) {
+    return normalized;
+  }
+  if (normalized === "unknown") return "default";
+  return (
+    COACH_POLICY_PROCESS_BY_LEGACY_PROCESS[normalized] || "seller_coaching"
+  );
 }
 
 async function ensureCoachAdminRulesSchema() {
@@ -285,6 +314,13 @@ async function ensureCoachAdminRulesSchema() {
       await query(
         `CREATE TABLE IF NOT EXISTS mi_coach_admin_rule_migrations (
           migration_key VARCHAR(100) PRIMARY KEY,
+          applied_at DATETIME(3) NOT NULL DEFAULT NOW(3)
+        )`,
+      );
+      await query(
+        `CREATE TABLE IF NOT EXISTS mi_coach_admin_rule_migration_snapshots (
+          migration_key VARCHAR(100) PRIMARY KEY,
+          snapshot_json JSON NOT NULL,
           applied_at DATETIME(3) NOT NULL DEFAULT NOW(3)
         )`,
       );
@@ -369,23 +405,65 @@ async function ensureCoachAdminRulesSchema() {
         );
       }
       await withTransaction(async (connection) => {
-        const [migrations] = await connection.query(
+        const [coachMigrations] = await connection.query(
           `SELECT migration_key FROM mi_coach_admin_rule_migrations
            WHERE migration_key = ? LIMIT 1`,
-          [CUSTOMER_ACCOUNT_RULE_MIGRATION],
+          [COACH_INTERACTION_RULE_MIGRATION],
         );
-        if (migrations.length) return;
-        await connection.query(
-          `UPDATE mi_coach_admin_rules
-           SET process_key = 'default', updated_at = NOW(3)
-           WHERE scope_code = 'channel' AND channel_code = 'customer_account'
-             AND process_key <> 'default'`,
-        );
-        await connection.query(
-          `INSERT IGNORE INTO mi_coach_admin_rule_migrations (migration_key)
-           VALUES (?)`,
-          [CUSTOMER_ACCOUNT_RULE_MIGRATION],
-        );
+        if (!coachMigrations.length) {
+          const [coachRules] = await connection.query(
+            `SELECT id, scope_code, channel_code, process_key, title, instruction,
+                    is_enabled, sort_order, created_by_user_id, updated_by_user_id,
+                    created_at, updated_at
+             FROM mi_coach_admin_rules
+             WHERE scope_code = 'channel' AND channel_code = ?`,
+            ["coach"],
+          );
+          await connection.query(
+            `INSERT IGNORE INTO mi_coach_admin_rule_migration_snapshots
+               (migration_key, snapshot_json)
+             VALUES (?, ?)`,
+            [COACH_INTERACTION_RULE_MIGRATION, JSON.stringify(coachRules)],
+          );
+          for (const rule of coachRules) {
+            const process = canonicalRuleProcess("coach", rule.process_key);
+            if (process === rule.process_key) continue;
+            await connection.query(
+              `UPDATE mi_coach_admin_rules
+               SET process_key = ?, updated_at = NOW(3) WHERE id = ?`,
+              [process, rule.id],
+            );
+          }
+          await connection.query(
+            `INSERT IGNORE INTO mi_coach_admin_rule_migrations (migration_key)
+             VALUES (?)`,
+            [COACH_INTERACTION_RULE_MIGRATION],
+          );
+        }
+
+        for (const [channel, migrationKey] of [
+          ["customer_account", CUSTOMER_ACCOUNT_RULE_MIGRATION],
+          ["prospect", PROSPECT_RULE_MIGRATION],
+        ]) {
+          const [migrations] = await connection.query(
+            `SELECT migration_key FROM mi_coach_admin_rule_migrations
+             WHERE migration_key = ? LIMIT 1`,
+            [migrationKey],
+          );
+          if (migrations.length) continue;
+          await connection.query(
+            `UPDATE mi_coach_admin_rules
+             SET process_key = 'default', updated_at = NOW(3)
+             WHERE scope_code = 'channel' AND channel_code = ?
+               AND process_key <> 'default'`,
+            [channel],
+          );
+          await connection.query(
+            `INSERT IGNORE INTO mi_coach_admin_rule_migrations (migration_key)
+             VALUES (?)`,
+            [migrationKey],
+          );
+        }
       });
     })().catch((error) => {
       ensureCoachAdminRulesPromise = undefined;

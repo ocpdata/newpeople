@@ -83,11 +83,44 @@ const ALLOWED_OPERATION_KINDS = new Set([
 ]);
 const RULE_CHANNELS = new Set(["coach", "customer_account", "prospect"]);
 let ensureCoachBusinessRulesSchemaPromise;
-const CUSTOMER_ACCOUNT_PROCESS_MIGRATION =
-  "customer_account_single_process_v1";
+const CUSTOMER_ACCOUNT_PROCESS_MIGRATION = "customer_account_single_process_v1";
+const PROSPECT_PROCESS_MIGRATION = "prospect_single_process_v1";
+const COACH_INTERACTION_POLICY_MIGRATION =
+  "coach_interaction_policy_processes_v1";
+const COACH_POLICY_PROCESS_BY_LEGACY_PROCESS = Object.freeze({
+  account_query: "brief_context",
+  contact_query: "brief_context",
+  activity_query: "brief_context",
+  quotation_query: "brief_context",
+  opportunity_query: "brief_context",
+  lead_query: "brief_context",
+  account_ranking: "seller_coaching",
+  temporal_filter: "seller_coaching",
+  stage_readiness: "seller_coaching",
+  general_query: "seller_coaching",
+});
 
 function canonicalBusinessRulesProcess(channel, process = "default") {
-  return channel === "customer_account" ? "default" : process || "default";
+  return ["customer_account", "prospect"].includes(channel)
+    ? "default"
+    : process || "default";
+}
+
+function canonicalCoachPolicyProcess(process = "default") {
+  const normalized = String(process || "default")
+    .trim()
+    .toLowerCase();
+  if (
+    ["default", "seller_coaching", "brief_context", "operation"].includes(
+      normalized,
+    )
+  ) {
+    return normalized;
+  }
+  if (normalized === "unknown") return "default";
+  return (
+    COACH_POLICY_PROCESS_BY_LEGACY_PROCESS[normalized] || "seller_coaching"
+  );
 }
 
 function mergeRuleConfiguration(base, override) {
@@ -199,7 +232,10 @@ function getChannelBaseRules(channel) {
   return COACH_BASE_RULES;
 }
 
-async function migrateCustomerAccountBusinessRules(connection) {
+async function migrateSingleProcessBusinessRules(
+  connection,
+  { channel, migrationKey, preferredProcess },
+) {
   const execute = async (sql, params = []) => {
     const [rows] = await connection.query(sql, params);
     return rows;
@@ -207,19 +243,19 @@ async function migrateCustomerAccountBusinessRules(connection) {
   const migrations = await execute(
     `SELECT migration_key FROM mi_coach_business_rule_migrations
      WHERE migration_key = ? LIMIT 1`,
-    [CUSTOMER_ACCOUNT_PROCESS_MIGRATION],
+    [migrationKey],
   );
   if (migrations.length) return;
 
   const rows = await execute(
     `SELECT id, process_key, rules_json, updated_by_user_id, created_at, updated_at
      FROM mi_coach_business_rules WHERE channel = ?`,
-    ["customer_account"],
+    [channel],
   );
   const priority = (row) =>
     row.process_key === "default"
       ? 0
-      : row.process_key === "account_chat"
+      : row.process_key === preferredProcess
         ? 2
         : 1;
   const orderedRows = [...rows].sort((left, right) => {
@@ -242,11 +278,11 @@ async function migrateCustomerAccountBusinessRules(connection) {
     `INSERT IGNORE INTO mi_coach_business_rule_migrations
        (migration_key, snapshot_json)
      VALUES (?, ?)`,
-    [CUSTOMER_ACCOUNT_PROCESS_MIGRATION, JSON.stringify(rows)],
+    [migrationKey, JSON.stringify(rows)],
   );
   if (rows.length) {
     const normalized = normalizeCoachBusinessRules({
-      channel: "customer_account",
+      channel,
       process: "default",
       overrides: mergedOverrides,
     });
@@ -258,14 +294,88 @@ async function migrateCustomerAccountBusinessRules(connection) {
          rules_json = VALUES(rules_json),
          updated_by_user_id = VALUES(updated_by_user_id),
          updated_at = NOW(3)`,
-      ["customer_account", JSON.stringify(normalized), preferredUser || null],
+      [channel, JSON.stringify(normalized), preferredUser || null],
     );
     await execute(
       `DELETE FROM mi_coach_business_rules
        WHERE channel = ? AND process_key <> 'default'`,
-      ["customer_account"],
+      [channel],
     );
   }
+}
+
+async function migrateCoachInteractionPolicyBusinessRules(connection) {
+  const execute = async (sql, params = []) => {
+    const [rows] = await connection.query(sql, params);
+    return rows;
+  };
+  const migrations = await execute(
+    `SELECT migration_key FROM mi_coach_business_rule_migrations
+     WHERE migration_key = ? LIMIT 1`,
+    [COACH_INTERACTION_POLICY_MIGRATION],
+  );
+  if (migrations.length) return;
+
+  const rows = await execute(
+    `SELECT id, process_key, rules_json, updated_by_user_id, created_at, updated_at
+     FROM mi_coach_business_rules WHERE channel = ?`,
+    ["coach"],
+  );
+  await execute(
+    `INSERT IGNORE INTO mi_coach_business_rule_migrations
+       (migration_key, snapshot_json)
+     VALUES (?, ?)`,
+    [COACH_INTERACTION_POLICY_MIGRATION, JSON.stringify(rows)],
+  );
+
+  const groupedRows = new Map();
+  for (const row of rows) {
+    const process = canonicalCoachPolicyProcess(row.process_key);
+    const processRows = groupedRows.get(process) || [];
+    processRows.push(row);
+    groupedRows.set(process, processRows);
+  }
+
+  for (const [process, processRows] of groupedRows) {
+    const orderedRows = [...processRows].sort((left, right) => {
+      const canonicalDifference =
+        Number(left.process_key === process) -
+        Number(right.process_key === process);
+      if (canonicalDifference) return canonicalDifference;
+      return String(left.updated_at || "").localeCompare(
+        String(right.updated_at || ""),
+      );
+    });
+    const mergedOverrides = orderedRows.reduce(
+      (merged, row) =>
+        mergeRuleConfiguration(merged, parseStoredRules(row.rules_json)),
+      {},
+    );
+    const preferredUser = [...orderedRows]
+      .reverse()
+      .find((row) => row.updated_by_user_id)?.updated_by_user_id;
+    const normalized = normalizeCoachBusinessRules({
+      channel: "coach",
+      process,
+      overrides: mergedOverrides,
+    });
+    await execute(
+      `INSERT INTO mi_coach_business_rules
+         (channel, process_key, rules_json, updated_by_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, NOW(3), NOW(3))
+       ON DUPLICATE KEY UPDATE
+         rules_json = VALUES(rules_json),
+         updated_by_user_id = VALUES(updated_by_user_id),
+         updated_at = NOW(3)`,
+      ["coach", process, JSON.stringify(normalized), preferredUser || null],
+    );
+  }
+
+  await execute(
+    `DELETE FROM mi_coach_business_rules
+     WHERE channel = ? AND process_key NOT IN (?, ?, ?, ?)`,
+    ["coach", "default", "seller_coaching", "brief_context", "operation"],
+  );
 }
 
 function ensureRulesSchema() {
@@ -291,9 +401,19 @@ function ensureRulesSchema() {
           applied_at DATETIME(3) NOT NULL DEFAULT NOW(3)
         )`,
       );
-      await withTransaction((connection) =>
-        migrateCustomerAccountBusinessRules(connection),
-      );
+      await withTransaction(async (connection) => {
+        await migrateCoachInteractionPolicyBusinessRules(connection);
+        await migrateSingleProcessBusinessRules(connection, {
+          channel: "customer_account",
+          migrationKey: CUSTOMER_ACCOUNT_PROCESS_MIGRATION,
+          preferredProcess: "account_chat",
+        });
+        await migrateSingleProcessBusinessRules(connection, {
+          channel: "prospect",
+          migrationKey: PROSPECT_PROCESS_MIGRATION,
+          preferredProcess: "prospect_chat",
+        });
+      });
     })().catch((error) => {
       ensureCoachBusinessRulesSchemaPromise = undefined;
       throw error;
@@ -309,11 +429,11 @@ export function normalizeCoachBusinessRules({
 } = {}) {
   if (!RULE_CHANNELS.has(channel))
     throw new Error("Canal de reglas no soportado");
-  const normalizedProcess = String(
-    canonicalBusinessRulesProcess(channel, process),
-  )
-    .trim()
-    .toLowerCase();
+  const canonicalProcess =
+    channel === "coach"
+      ? canonicalCoachPolicyProcess(process)
+      : canonicalBusinessRulesProcess(channel, process);
+  const normalizedProcess = String(canonicalProcess).trim().toLowerCase();
   if (!/^[a-z0-9_-]{1,80}$/.test(normalizedProcess)) {
     throw new Error("Proceso de reglas invalido");
   }
@@ -421,7 +541,10 @@ export async function loadCoachBusinessRulesWithSource({
   channel = "coach",
   process = "default",
 } = {}) {
-  process = canonicalBusinessRulesProcess(channel, process);
+  process =
+    channel === "coach"
+      ? canonicalCoachPolicyProcess(process)
+      : canonicalBusinessRulesProcess(channel, process);
   await ensureRulesSchema();
   const exactRows = await query(
     `SELECT rules_json FROM mi_coach_business_rules
@@ -469,7 +592,10 @@ export async function saveCoachBusinessRules({
   process = "default",
   rules = {},
 } = {}) {
-  process = canonicalBusinessRulesProcess(channel, process);
+  process =
+    channel === "coach"
+      ? canonicalCoachPolicyProcess(process)
+      : canonicalBusinessRulesProcess(channel, process);
   const normalized = normalizeCoachBusinessRules({
     channel,
     process,
@@ -496,7 +622,9 @@ export async function resetCoachBusinessRules({
   if (!RULE_CHANNELS.has(channel))
     throw new Error("Canal de reglas no soportado");
   const normalizedProcess = String(
-    canonicalBusinessRulesProcess(channel, process),
+    channel === "coach"
+      ? canonicalCoachPolicyProcess(process)
+      : canonicalBusinessRulesProcess(channel, process),
   )
     .trim()
     .toLowerCase();
@@ -518,7 +646,10 @@ export function getCoachBusinessRuleSummary({
 } = {}) {
   const rules = getCoachBusinessRules({
     channel,
-    process: canonicalBusinessRulesProcess(channel, process),
+    process:
+      channel === "coach"
+        ? canonicalCoachPolicyProcess(process)
+        : canonicalBusinessRulesProcess(channel, process),
     overrides,
   });
   return {

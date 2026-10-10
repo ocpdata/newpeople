@@ -4,7 +4,7 @@
 
 Coach utiliza el motor conversacional existente mediante dependencias inyectadas. La planificación, verificación y auditoría adicionales viven en `apps/api/src/coach/block-pipeline.js`; tiempos, límites y trazas viven en `block-runtime.js`. Solo `coach-adapter.js` y `agent-gateway.js` conectan estos módulos.
 
-Cliente existente, Cuenta nueva, sus políticas, sus servicios, su interfaz y el motor compartido no se modifican ni reciben estos hooks. Los historiales y sesiones siguen separados. Los contratos de operaciones y sus destinos mantienen sus validaciones actuales.
+Cliente existente y Cuenta nueva no reciben la clasificación de políticas de Coach ni cambian sus políticas, servicios, interfaz, historiales o sesiones. El motor compartido acepta el contexto opcional de intención solo desde el adaptador Coach; los otros canales no lo envían. Los contratos de operaciones y sus destinos mantienen sus validaciones actuales.
 
 ## Activación
 
@@ -14,19 +14,19 @@ No existe fallback silencioso ante fallos de planificación, verificación o aud
 
 ## Recorrido
 
-| Bloque | Implementación Coach                                                                                                                            |
-| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| B1     | Interfaz existente y consulta asíncrona del job, sin cambios de frontend.                                                                       |
-| B2     | Rutas HTTP existentes, autenticación y entrega del resultado.                                                                                   |
-| B3     | Gateway Coach, reglas vigentes, sesión, job y coordinación de persistencia.                                                                     |
-| B4     | Adaptador Coach; inyecta los hooks exclusivos y conserva el canal `coach`.                                                                      |
-| B5     | Motor compartido existente, sin modificación.                                                                                                   |
-| B6     | IA propone intención, modo y lecturas; se validan catálogo, confianza, filtros y herramientas. No se aceptan IDs CRM del modelo en los filtros. |
-| B7     | Resolución de contexto autorizada existente; las lecturas se derivan del plan, no de palabras clave.                                            |
-| B8     | Herramientas CRM existentes con alcance, permisos y reglas del servidor. Los IDs provienen del contexto validado.                               |
-| B9     | Evaluación estructurada de suficiencia, lecturas adicionales acotadas y dictamen seguro.                                                        |
-| B10    | Síntesis conservando instrucciones, políticas y reglas de Coach, seguida de auditoría de la respuesta normalizada.                              |
-| B11    | Persistencia existente de operaciones, historial, contexto, resultado y observabilidad del job Coach.                                           |
+| Bloque | Implementación Coach                                                                                                                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| B1     | Interfaz existente y consulta asíncrona del job, sin cambios de frontend.                                                                                                                                     |
+| B2     | Rutas HTTP existentes, autenticación y entrega del resultado.                                                                                                                                                 |
+| B3     | Gateway Coach clasifica objetivo y tema CRM, carga el override de `seller_coaching`, `brief_context` u `operation`, o usa `default`; mantiene sesión, job y persistencia. La clasificación se limita a Coach. |
+| B4     | Adaptador Coach; inyecta los hooks exclusivos y conserva el canal `coach`.                                                                                                                                    |
+| B5     | Motor conversacional compartido; recibe el modo clasificado por B3 únicamente desde Coach y conserva los comportamientos propios de los demás canales.                                                        |
+| B6     | IA propone intención, modo y lecturas; se validan catálogo, confianza, filtros y herramientas. No se aceptan IDs CRM del modelo en los filtros.                                                               |
+| B7     | Resolución de contexto autorizada existente; las lecturas se derivan del plan, no de palabras clave.                                                                                                          |
+| B8     | Herramientas CRM existentes con alcance, permisos y reglas del servidor. Los IDs provienen del contexto validado.                                                                                             |
+| B9     | Evaluación estructurada de suficiencia, lecturas adicionales acotadas y dictamen seguro.                                                                                                                      |
+| B10    | Síntesis conservando instrucciones, políticas y reglas de Coach, seguida de auditoría de la respuesta normalizada.                                                                                            |
+| B11    | Persistencia existente de operaciones, historial, contexto, resultado y observabilidad del job Coach.                                                                                                         |
 
 Los bloques se ejecutan según la necesidad del turno. Una consulta conceptual puede usar guía autorizada sin B8; una aclaración o derivación no necesita síntesis factual. Una respuesta determinista también se verifica y audita antes de entregarse.
 
