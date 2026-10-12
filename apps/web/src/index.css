@@ -15523,6 +15523,42 @@ td {
   min-height: 0;
 }
 
+.permission-family-group {
+  margin: 8px 10px;
+  overflow: hidden;
+  border: 1px solid #cbd8e7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.permission-family-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  color: #29465a;
+  background: #edf3f8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.permission-family-description {
+  color: #607887;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.permission-family-subgroups {
+  margin: 0 12px 8px;
+  padding-left: 10px;
+  border-left: 2px solid #dce6f0;
+}
+
+.permission-family-subgroups > .permission-module-group:first-child {
+  border-top: 0;
+}
+
 .permission-module-group + .permission-module-group {
   border-top: 1px solid #dce6f5;
 }
@@ -15544,6 +15580,11 @@ td {
   border-radius: 0;
   padding: 8px 12px;
   margin-bottom: 0;
+}
+
+.permission-module-subgroup .permission-module-header {
+  color: #405d70;
+  background: #f8fafc;
 }
 
 .checkbox-grid {

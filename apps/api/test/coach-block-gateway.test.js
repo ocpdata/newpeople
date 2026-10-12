@@ -10,8 +10,13 @@ vi.mock("../src/coach/observability.js", async (importOriginal) => ({
 import { runCoachJob } from "../src/coach/agent-gateway.js";
 import { COACH_INTENT_CATALOG } from "../src/coach/intent-governance.js";
 import { getCoachBusinessRules } from "../src/coach/business-rules.js";
+import { recordCoachTurnQualityTrace } from "../src/coach/observability.js";
 
-async function run(auditStatus = "supported", question = "¿Qué cuenta es?") {
+async function run(
+  auditStatus = "supported",
+  question = "¿Qué cuenta es?",
+  finalIntent = "account_query",
+) {
   const query = vi.fn().mockResolvedValue({ affectedRows: 1 });
   const appendCoachSessionTurn = vi.fn().mockResolvedValue(null);
   const persistCoachOperations = vi.fn().mockResolvedValue([]);
@@ -19,6 +24,12 @@ async function run(auditStatus = "supported", question = "¿Qué cuenta es?") {
     getCoachBusinessRules({ channel, process }),
   );
   const requestMiAgentJson = vi.fn(async ({ phase }) => {
+    if (phase === "coach_final_intent")
+      return {
+        intent: finalIntent,
+        confidence: 0.9,
+        reason: "classified by B6 model",
+      };
     if (phase === "coach_intent_route")
       return {
         intent: "account_query",
@@ -84,6 +95,7 @@ async function run(auditStatus = "supported", question = "¿Qué cuenta es?") {
   if (failure) throw new Error(`Coach gateway failed: ${failure[1][0]}`);
   return {
     query,
+    requestMiAgentJson,
     appendCoachSessionTurn,
     persistCoachOperations,
     loadCoachBusinessRules,
@@ -151,11 +163,48 @@ describe("Coach blocks job persistence", () => {
     const result = await run(
       "supported",
       "¿Qué oportunidades debería priorizar?",
+      "seller_coaching",
     );
     expect(result.loadCoachBusinessRules).toHaveBeenCalledWith({
       channel: "coach",
       process: "seller_coaching",
     });
+  });
+
+  it("uses the B6 model classification as the final server decision", async () => {
+    const result = await run(
+      "supported",
+      "¿Qué cuenta es?",
+      "account_performance",
+    );
+    const finalWrite = result.query.mock.calls.find(([sql]) =>
+      sql.includes("SET status = 'completed'"),
+    );
+    const observability = JSON.parse(finalWrite[1][1]);
+
+    expect(result.requestMiAgentJson).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: "coach_final_intent" }),
+    );
+    expect(result.loadCoachBusinessRules).toHaveBeenCalledWith({
+      channel: "coach",
+      process: "seller_coaching",
+    });
+    expect(observability.decision.intent).toBe("account_performance");
+    expect(observability.decision.semanticIntent).toBe("account_performance");
+    expect(recordCoachTurnQualityTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trace: expect.objectContaining({
+          diagnostics: expect.objectContaining({
+            decision: expect.objectContaining({
+              intent: "account_performance",
+              b3Bucket: "brief_context",
+              semanticIntent: "account_performance",
+              policyProcess: "seller_coaching",
+            }),
+          }),
+        }),
+      }),
+    );
   });
   it("persists an error without proposed operations when final audit rejects", async () => {
     const result = await run("unsupported");

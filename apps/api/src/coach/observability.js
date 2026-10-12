@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { query } from "../db.js";
 import { ensureCoachSchema } from "./schema.js";
+import { summarizeCoachDecisionTrace } from "./decision-trace.js";
 
 export const COACH_CHANNELS = ["coach", "customer_account", "prospect"];
 const COACH_ROLLOUT_CHANNELS = ["coach", "prospect"];
@@ -135,6 +136,7 @@ export function summarizeCoachToolResults(toolResults = []) {
 
 function sanitizeTraceDiagnostics(diagnostics = {}) {
   const routing = diagnostics.channelIntentRouting;
+  const finalDecision = diagnostics.finalDecision || diagnostics.decision || {};
   const planner = diagnostics.planner || {};
   const evidence = diagnostics.evidence || {};
   const fallback = diagnostics.fallback || {};
@@ -329,6 +331,33 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
                 .map((item) => String(item).slice(0, 40))
             : [],
           requiresClarification: Boolean(routing.requiresClarification),
+        }
+      : null,
+    decision: finalDecision
+      ? {
+          intent: String(finalDecision.intent || "unknown").slice(0, 80),
+          b3Bucket: String(finalDecision.b3Bucket || "unknown").slice(0, 80),
+          semanticIntent: String(
+            finalDecision.semanticIntent || finalDecision.b6Intent || "unknown",
+          ).slice(0, 80),
+          interactionMode: String(
+            finalDecision.interactionMode || "unknown",
+          ).slice(0, 40),
+          policyProcess: String(finalDecision.policyProcess || "unknown").slice(
+            0,
+            40,
+          ),
+          confidence: Number.isFinite(Number(finalDecision.confidence))
+            ? Math.max(0, Math.min(1, Number(finalDecision.confidence)))
+            : null,
+          requiresClarification: Boolean(finalDecision.requiresClarification),
+          resolution: String(finalDecision.resolution || "unknown").slice(
+            0,
+            60,
+          ),
+          conflict: String(finalDecision.conflict || "aligned").slice(0, 40),
+          reason: String(finalDecision.reason || "").slice(0, 280) || null,
+          source: finalDecision.source || null,
         }
       : null,
     fallback: {
@@ -582,6 +611,127 @@ export async function submitCoachTurnFeedback({
     [rating, category, Boolean(corrected), Number(traceId), Number(userId)],
   );
   return { outcome: result.affectedRows ? "saved" : "not_found" };
+}
+
+export async function recordCoachDecisionReview({
+  traceId,
+  userId,
+  status = "needs_review",
+  note = "",
+}) {
+  await ensureCoachSchema();
+  const validStatus = ["accepted", "rejected", "needs_review", "unreviewed"];
+  if (!validStatus.includes(status)) {
+    return { outcome: "invalid_status" };
+  }
+  const result = await query(
+    `UPDATE coach_turn_quality_traces
+     SET review_status = ?, review_note = ?, reviewed_by_user_id = ?, reviewed_at = UTC_TIMESTAMP(3)
+     WHERE id = ?`,
+    [
+      status,
+      String(note || "").slice(0, 2000),
+      Number(userId) || null,
+      Number(traceId),
+    ],
+  );
+  return { outcome: result.affectedRows ? "saved" : "not_found" };
+}
+
+export async function listCoachDecisionTraces({
+  channel = "coach",
+  limit = 20,
+  reviewStatus = "all",
+  dateFrom = null,
+  dateTo = null,
+} = {}) {
+  if (!COACH_CHANNELS.includes(channel)) return [];
+  await ensureCoachSchema();
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+  const validReviewStatus = [
+    "all",
+    "accepted",
+    "rejected",
+    "needs_review",
+    "unreviewed",
+  ];
+  const selectedReviewStatus = validReviewStatus.includes(reviewStatus)
+    ? reviewStatus
+    : "all";
+  const whereClauses = ["channel = ?"];
+  const params = [channel];
+  if (selectedReviewStatus !== "all") {
+    whereClauses.push("review_status = ?");
+    params.push(selectedReviewStatus);
+  }
+  if (dateFrom) {
+    whereClauses.push("DATE(created_at_utc) >= DATE(?)");
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    whereClauses.push("DATE(created_at_utc) <= DATE(?)");
+    params.push(dateTo);
+  }
+  const rows = await query(
+    `SELECT id, channel, process_key, intent_type, intent_subtype,
+            response_type, confidence, validation_status,
+            diagnostics_json, review_status, review_note, reviewed_by_user_id,
+            reviewed_at, created_at_utc
+     FROM coach_turn_quality_traces
+     WHERE ${whereClauses.join(" AND ")}
+     ORDER BY created_at_utc DESC LIMIT ?`,
+    [...params, safeLimit],
+  );
+
+  return rows.map((row) => {
+    const diagnostics = parseJsonValue(row.diagnostics_json, {});
+    const decision = diagnostics.decision || diagnostics.finalDecision || {};
+    const summary = summarizeCoachDecisionTrace({
+      preDecision: {
+        bucket: decision.b3Bucket || "unknown",
+        confidence: decision.confidence ? Number(decision.confidence) : 0,
+      },
+      semanticDecision: {
+        intent: decision.semanticIntent || decision.b6Intent || "unknown",
+        confidence: decision.confidence ? Number(decision.confidence) : 0,
+      },
+      finalDecision: {
+        intent: decision.intent || "unknown",
+        interactionMode: decision.interactionMode || null,
+        policyProcess: decision.policyProcess || null,
+        requiresClarification: Boolean(decision.requiresClarification),
+        confidence: decision.confidence ? Number(decision.confidence) : 0,
+        reason: decision.reason || null,
+        source: decision.source || {
+          resolver: decision.resolution || "unknown",
+        },
+      },
+    });
+
+    return {
+      id: Number(row.id),
+      channel: row.channel,
+      process: row.process_key,
+      intent: summary.intent,
+      b3Bucket: summary.b3Bucket,
+      semanticIntent: summary.semanticIntent,
+      interactionMode: summary.interactionMode,
+      policyProcess: summary.policyProcess,
+      resolution: summary.resolution,
+      conflict: summary.conflict,
+      requiresClarification: summary.requiresClarification,
+      confidence: summary.confidence,
+      responseType: row.response_type,
+      validationStatus: row.validation_status,
+      reviewStatus: row.review_status || "unreviewed",
+      reviewNote: row.review_note || "",
+      reviewedByUserId: row.reviewed_by_user_id
+        ? Number(row.reviewed_by_user_id)
+        : null,
+      reviewedAt: row.reviewed_at,
+      createdAt: row.created_at_utc,
+    };
+  });
 }
 
 export async function listCoachQualityTraces({

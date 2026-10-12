@@ -54,6 +54,7 @@ export function createCoachAdapter({
             question,
             history,
             context,
+            coachIntentClassification,
           })
         : null;
       const execute = () =>

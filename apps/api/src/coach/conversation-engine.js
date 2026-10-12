@@ -9,7 +9,8 @@ import {
 } from "./read-tools.js";
 import { getCoachBusinessRules } from "./business-rules.js";
 import { matchCoachQueryCase } from "./case-catalog.js";
-import { CUSTOMER_CHAT_EVIDENCE_LIMITS } from "../commercial-intelligence/customer-chat-evidence.js";
+import { getCustomerEvidenceLimits } from "./server-policy.js";
+import { runWithinDeadline } from "../commercial-intelligence/customer-chat-evidence.js";
 import {
   classifyChannelIntent,
   getChannelIntentDefaults,
@@ -590,12 +591,12 @@ export async function runConversationEngine({
     channelRules.scope ||
     operationPolicy.sourceChannel ||
     "coach";
-  const turnDeadlineAt =
-    channel === "customer_account"
-      ? turnStartedAt + CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs
-      : null;
   const businessRules =
     configuredBusinessRules || getCoachBusinessRules({ channel });
+  const turnDeadlineAt =
+    channel === "customer_account"
+      ? turnStartedAt + getCustomerEvidenceLimits(businessRules).maxTurnMs
+      : null;
   const jobType = getConversationChannelJobType(channel);
   const channelHistory = normalizeChannelConversationHistory(history, channel);
   const effectiveOperationPolicy = {
@@ -613,8 +614,13 @@ export async function runConversationEngine({
     ...channelRules,
     scope: channel,
   };
-  const prepareReadModel =
+  const prepareChannelReadModel =
     dependencies.prepareReadModel || prepareCoachReadModel;
+  const prepareReadModel = channel === "customer_account"
+    ? (input) => runWithinDeadline(
+        () => prepareChannelReadModel(input), turnDeadlineAt - Date.now(),
+      )
+    : prepareChannelReadModel;
   const buildPrompt = dependencies.buildPrompt || buildCoachPrompt;
   const requestResponse = dependencies.requestResponse || requestMiAgentJson;
   const shouldTrace = channel === "customer_account" && executionTrace;
@@ -689,6 +695,10 @@ export async function runConversationEngine({
   };
   const summarizePolicy = () => ({
     channel,
+    ...(channel === "customer_account" ? {
+      serverRulesVersion: businessRules.serverRulesVersion ?? 0,
+      serverPolicy: businessRules.serverPolicy,
+    } : {}),
     channelRules: Object.fromEntries(
       Object.entries(effectiveChannelRules).filter(
         ([key, value]) =>
@@ -1313,8 +1323,15 @@ export async function runConversationEngine({
           intendedAction: "continue_request",
         }
       : null;
+  const serverClarification =
+    channel === "customer_account" && dependencies.validateServerRequest
+      ? dependencies.validateServerRequest({
+          question, routing: channelIntentRouting, readModel,
+          businessRules, operationPolicy: effectiveOperationPolicy,
+        })
+      : null;
   const effectiveClarification =
-    clarification || routingClarification || channelRoutingClarification;
+    serverClarification || clarification || routingClarification || channelRoutingClarification;
   const deterministicResult =
     effectiveClarification ||
     channel !== "coach" ||
@@ -1650,6 +1667,11 @@ export async function runConversationEngine({
       filtersDefault: businessRules.filters,
       operationPolicy: effectiveOperationPolicy,
       channelRules: effectiveChannelRules,
+      ...(channel === "customer_account" ? {
+        serverRulesVersion: businessRules.serverRulesVersion ?? 0,
+        serverPolicy: businessRules.serverPolicy,
+        decisions: adapterDiagnostics.serverRules?.decisions || [],
+      } : {}),
     },
     diagnostics: {
       planner: {

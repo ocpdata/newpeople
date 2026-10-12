@@ -49,6 +49,10 @@ export const COACH_CASE_CATALOG = Object.freeze([
     subtype: "pending_activity_detail",
     requiresOpportunityContext: true,
     phrases: [
+      "que actividad pendiente tiene",
+      "que actividades pendientes tiene",
+      "que actividad pendiente hay",
+      "que actividades pendientes hay",
       "que actividades estan pendientes",
       "actividades pendientes de la oportunidad",
       "siguientes actividades de la oportunidad",
@@ -109,18 +113,22 @@ export function matchCoachQueryCase(value = "") {
   const text = normalizeCoachCaseText(value);
   return (
     COACH_CASE_CATALOG.find((item) =>
-      item.phrases.some((phrase) => text.includes(normalizeCoachCaseText(phrase))),
+      item.phrases.some((phrase) =>
+        text.includes(normalizeCoachCaseText(phrase)),
+      ),
     ) || null
   );
 }
 
 export function listCoachCaseCatalog() {
-  return COACH_CASE_CATALOG.map(({ id, type, subtype, readTool, requiresOpportunityContext, phrases }) => ({
-    id,
-    type,
-    subtype,
-    phrases: [...phrases],
-    ...(readTool ? { readTool } : {}),
-    ...(requiresOpportunityContext ? { requiresOpportunityContext } : {}),
-  }));
+  return COACH_CASE_CATALOG.map(
+    ({ id, type, subtype, readTool, requiresOpportunityContext, phrases }) => ({
+      id,
+      type,
+      subtype,
+      phrases: [...phrases],
+      ...(readTool ? { readTool } : {}),
+      ...(requiresOpportunityContext ? { requiresOpportunityContext } : {}),
+    }),
+  );
 }

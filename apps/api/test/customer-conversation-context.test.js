@@ -15,6 +15,28 @@ const snapshot = {
 };
 
 describe("Customer conversation context memory", () => {
+  it("retains a pending amount and filters only for currently authorized candidates in the same account", () => {
+    const result = validateCustomerConversationContext({
+      accountId: 41,
+      pendingAmountSelection: {
+        accountId: 41, amount: 1000000, candidateIds: [72, 72, 999],
+        filters: { opportunityStatus: "open", closeYear: 2026, unknown: true },
+      },
+    }, snapshot, 41);
+    expect(result.pendingAmountSelection).toEqual({
+      accountId: 41, amount: 1000000, candidateIds: [72],
+      filters: { opportunityStatus: "open", closeYear: 2026 },
+    });
+    for (const pending of [
+      { accountId: 42, amount: 1000000, candidateIds: [72] },
+      { accountId: 41, amount: -1, candidateIds: [72] },
+      { accountId: 41, amount: Infinity, candidateIds: [72] },
+    ]) {
+      expect(validateCustomerConversationContext({
+        accountId: 41, pendingAmountSelection: pending,
+      }, snapshot, 41).pendingAmountSelection).toBeUndefined();
+    }
+  });
   it("retains only same-account entities present in the authorized snapshot", () => {
     const result = validateCustomerConversationContext(
       {

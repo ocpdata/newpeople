@@ -98,7 +98,7 @@ function collectToolNames(readToolResults) {
   );
 }
 
-async function runWithinDeadline(work, remainingMs) {
+export async function runWithinDeadline(work, remainingMs) {
   if (remainingMs <= 0) {
     const timeoutError = new Error("Customer chat turn deadline exceeded");
     timeoutError.code = "CUSTOMER_CHAT_TURN_TIMEOUT";

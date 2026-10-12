@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
+import ServerRulesSection from "./ServerRulesSection";
 import {
   COMMERCIAL_ACTIVITY_TYPES,
   normalizeCommercialActivityType,
@@ -2324,6 +2325,23 @@ export default function MiAgentPage({
   const [coachGovernance, setCoachGovernance] = useState(null);
   const [coachGovernanceLoading, setCoachGovernanceLoading] = useState(false);
   const [coachGovernanceSaving, setCoachGovernanceSaving] = useState(false);
+  const [plannerPrompts, setPlannerPrompts] = useState([]);
+  const [plannerPromptSaving, setPlannerPromptSaving] = useState("");
+  const [plannerPromptNotice, setPlannerPromptNotice] = useState("");
+  const [coachQualitySummary, setCoachQualitySummary] = useState(null);
+  const [coachDecisionTraces, setCoachDecisionTraces] = useState([]);
+  const [coachDecisionTraceDetail, setCoachDecisionTraceDetail] =
+    useState(null);
+  const [coachDecisionTraceFilters, setCoachDecisionTraceFilters] = useState({
+    channel: "coach",
+    reviewStatus: "all",
+    limit: 8,
+  });
+  const [coachQualityLoading, setCoachQualityLoading] = useState(false);
+  const [coachDecisionTraceLoading, setCoachDecisionTraceLoading] =
+    useState(false);
+  const [coachDecisionReviewSaving, setCoachDecisionReviewSaving] =
+    useState(false);
   const [coachBusinessRulesDraft, setCoachBusinessRulesDraft] = useState("");
   const [coachBusinessRulesChannel, setCoachBusinessRulesChannel] =
     useState("coach");
@@ -4599,6 +4617,7 @@ export default function MiAgentPage({
         businessRulesResponse,
         intentsResponse,
         channelIntentsResponse,
+        plannerPromptsResponse,
       ] = await Promise.all([
         api.get("/api/commercial-intelligence/governance"),
         api.get(
@@ -4617,7 +4636,15 @@ export default function MiAgentPage({
               .catch((requestError) => ({
                 data: { loadError: requestError },
               })),
+        api.get("/api/mi-agent/coach/admin/planner-prompts"),
       ]);
+      setPlannerPrompts(
+        (plannerPromptsResponse.data?.prompts || []).map((prompt) => ({
+          ...prompt,
+          draft: prompt.instruction,
+        })),
+      );
+      setPlannerPromptNotice("");
       setCoachGovernance(response.data || null);
       setCoachBusinessRulesDraft(
         JSON.stringify(
@@ -4675,6 +4702,73 @@ export default function MiAgentPage({
       );
     } finally {
       setCoachGovernanceLoading(false);
+      if (canManageCoach) {
+        void loadCoachQualitySummary();
+      }
+    }
+  }
+
+  async function loadCoachQualitySummary(
+    nextFilters = coachDecisionTraceFilters,
+  ) {
+    if (!canManageCoach) return;
+    setCoachQualityLoading(true);
+    setCoachDecisionTraceLoading(true);
+    try {
+      const [qualityResponse, decisionsResponse] = await Promise.all([
+        api.get("/api/mi-agent/coach/quality", {
+          params: { periodDays: 30 },
+        }),
+        api.get("/api/mi-agent/coach/quality/decisions", {
+          params: {
+            channel: nextFilters.channel || "coach",
+            limit: nextFilters.limit || 8,
+            reviewStatus: nextFilters.reviewStatus || "all",
+          },
+        }),
+      ]);
+      setCoachQualitySummary(qualityResponse.data?.quality || null);
+      setCoachDecisionTraces(decisionsResponse.data?.traces || []);
+      setCoachDecisionTraceDetail((current) => {
+        if (!current) return null;
+        const nextSelected = (decisionsResponse.data?.traces || []).find(
+          (trace) => trace.id === current.id,
+        );
+        return nextSelected || null;
+      });
+    } catch (requestError) {
+      setCoachQualitySummary(null);
+      setCoachDecisionTraces([]);
+    } finally {
+      setCoachQualityLoading(false);
+      setCoachDecisionTraceLoading(false);
+    }
+  }
+
+  async function reviewCoachDecisionTrace(traceId, status, note = "") {
+    if (!traceId || !canManageCoach) return;
+    setCoachDecisionReviewSaving(true);
+    try {
+      await api.post(
+        `/api/mi-agent/coach/quality/decisions/${traceId}/review`,
+        {
+          status,
+          note,
+        },
+      );
+      await loadCoachQualitySummary();
+      setCoachDecisionTraceDetail((current) =>
+        current && current.id === traceId ? null : current,
+      );
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No se pudo guardar la revisión de la trazabilidad",
+        ),
+      );
+    } finally {
+      setCoachDecisionReviewSaving(false);
     }
   }
 
@@ -4764,6 +4858,7 @@ export default function MiAgentPage({
           ),
         );
       }
+
       setCoachNotice("Configuración de gobierno guardada.");
     } catch (requestError) {
       setError(
@@ -4774,6 +4869,97 @@ export default function MiAgentPage({
       );
     } finally {
       setCoachGovernanceSaving(false);
+    }
+  }
+
+  async function savePlannerPrompt(channel) {
+    const prompt = plannerPrompts.find((item) => item.channel === channel);
+    if (!prompt || !canManageCoach) return;
+    setPlannerPromptSaving(channel);
+    setPlannerPromptNotice("");
+    setError("");
+    try {
+      const response = await api.put(
+        `/api/mi-agent/coach/admin/planner-prompts/${channel}`,
+        { instruction: prompt.draft, expectedVersion: prompt.version },
+      );
+      const saved = response.data.prompt;
+      setPlannerPrompts((current) =>
+        current.map((item) =>
+          item.channel === channel
+            ? {
+                ...saved,
+                draft: saved.instruction,
+                revisions: [
+                  {
+                    version: saved.version,
+                    instruction: saved.instruction,
+                    createdByUserId: saved.updatedByUserId,
+                    createdAt: saved.updatedAt,
+                  },
+                  ...(item.revisions || []),
+                ],
+              }
+            : item,
+        ),
+      );
+      setPlannerPromptNotice(
+        saved.connected
+          ? "Versión guardada. Se aplicará en la próxima planificación de Cliente existente."
+          : "Versión guardada. Este canal aún no consume el prompt editable.",
+      );
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No se pudo guardar el prompt del planificador",
+        ),
+      );
+    } finally {
+      setPlannerPromptSaving("");
+    }
+  }
+
+  function loadInitialPlannerPrompt(channel) {
+    const prompt = plannerPrompts.find((item) => item.channel === channel);
+    if (!prompt || !canManageCoach) return;
+    if (
+      !window.confirm(
+        "¿Cargar el prompt inicial? Reemplazará el texto del editor. Pulsa Guardar para activarlo; el historial se conservará.",
+      )
+    ) return;
+    setPlannerPrompts((current) =>
+      current.map((item) =>
+        item.channel === channel
+          ? { ...item, draft: item.initialInstruction }
+          : item,
+      ),
+    );
+    setPlannerPromptNotice("Prompt inicial cargado en el editor. Pulsa Guardar para activarlo.");
+  }
+
+  async function reloadPlannerPrompts() {
+    if (!canManageCoach) return;
+    setPlannerPromptSaving("reload");
+    setPlannerPromptNotice("");
+    setError("");
+    try {
+      const response = await api.get("/api/mi-agent/coach/admin/planner-prompts");
+      setPlannerPrompts(
+        response.data.prompts.map((prompt) => ({
+          ...prompt,
+          draft: prompt.instruction,
+        })),
+      );
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "No se pudieron recargar los prompts del planificador",
+        ),
+      );
+    } finally {
+      setPlannerPromptSaving("");
     }
   }
 
@@ -6208,6 +6394,7 @@ export default function MiAgentPage({
               onClick={() => {
                 setActiveWorkspace("admin");
                 loadCoachGovernance();
+                void loadCoachQualitySummary();
               }}
             >
               <Settings2 size={16} aria-hidden="true" />
@@ -11159,6 +11346,120 @@ export default function MiAgentPage({
           ) : null}
           {coachGovernance ? (
             <>
+              <details className="mi-agent-planner-prompts">
+                <summary className="mi-agent-intent-governance-summary">
+                  <strong role="heading" aria-level={4}>
+                    Prompts del planificador
+                  </strong>
+                  <span>
+                    Instrucciones versionadas por canal. El prompt técnico base
+                    y el esquema JSON están protegidos.
+                  </span>
+                </summary>
+                <div className="mi-agent-intent-governance-content">
+                  <p>
+                    Estas instrucciones orientan la planificación; no conceden
+                    permisos ni sustituyen las validaciones del servidor.
+                  </p>
+                  {plannerPromptNotice ? (
+                    <p role="status">{plannerPromptNotice}</p>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="mi-agent-secondary-button"
+                    disabled={Boolean(plannerPromptSaving)}
+                    onClick={reloadPlannerPrompts}
+                  >
+                    Recargar prompts guardados
+                  </button>
+                  {plannerPrompts.map((prompt) => {
+                    const label = {
+                      coach: "Coach",
+                      customer_account: "Cliente existente",
+                      prospect: "Cuenta nueva",
+                    }[prompt.channel];
+                    return (
+                      <article
+                        className="mi-agent-admin-rule-group"
+                        key={prompt.channel}
+                      >
+                        <h4>{label}</h4>
+                        <p>
+                          {prompt.connected
+                            ? "Conectado a B6. La versión guardada se aplica a la próxima planificación."
+                            : "No conectado: esta configuración todavía no afecta su flujo."}
+                        </p>
+                        <p>
+                          {prompt.source === "default"
+                            ? "Versión inicial"
+                            : `Versión ${prompt.version}`}
+                        </p>
+                        <label>
+                          Instrucciones del planificador de {label}
+                          <textarea
+                            rows={6}
+                            maxLength={8000}
+                            value={prompt.draft}
+                            disabled={Boolean(plannerPromptSaving)}
+                            onChange={(event) => {
+                              const draft = event.target.value;
+                              setPlannerPrompts((current) =>
+                                current.map((item) =>
+                                  item.channel === prompt.channel
+                                    ? { ...item, draft }
+                                    : item,
+                                ),
+                              );
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="mi-agent-primary-button"
+                          disabled={
+                            Boolean(plannerPromptSaving) ||
+                            !prompt.draft.trim() ||
+                            prompt.draft.trim() === prompt.instruction
+                          }
+                          onClick={() => savePlannerPrompt(prompt.channel)}
+                        >
+                          {plannerPromptSaving === prompt.channel
+                            ? "Guardando..."
+                            : `Guardar prompt de ${label}`}
+                        </button>
+                        <button
+                          type="button"
+                          className="mi-agent-secondary-button"
+                          disabled={
+                            Boolean(plannerPromptSaving) ||
+                            !prompt.initialInstruction ||
+                            prompt.draft === prompt.initialInstruction
+                          }
+                          onClick={() => loadInitialPlannerPrompt(prompt.channel)}
+                        >
+                          Cargar prompt inicial de {label}
+                        </button>
+                        <details>
+                          <summary>Historial de versiones de {label}</summary>
+                          {prompt.revisions?.length ? (
+                            prompt.revisions.map((revision) => (
+                              <div key={revision.version}>
+                                <h5>Versión {revision.version}</h5>
+                                <p>
+                                  {new Date(revision.createdAt).toLocaleString()}
+                                </p>
+                                <pre>{revision.instruction}</pre>
+                              </div>
+                            ))
+                          ) : (
+                            <p>Todavía no hay versiones personalizadas.</p>
+                          )}
+                        </details>
+                      </article>
+                    );
+                  })}
+                </div>
+              </details>
               <details
                 className="mi-agent-intent-governance"
                 aria-labelledby="mi-agent-intent-governance-title"
@@ -11728,6 +12029,279 @@ export default function MiAgentPage({
 
               <details
                 className="mi-agent-admin-rules"
+                aria-labelledby="mi-agent-decision-observability-title"
+              >
+                <summary className="mi-agent-admin-rules-summary">
+                  <strong
+                    id="mi-agent-decision-observability-title"
+                    role="heading"
+                    aria-level={4}
+                  >
+                    Observabilidad de la decisión final
+                  </strong>
+                  <span>
+                    Muestra B3, B6 y la resolución del servidor para validar la
+                    intención final antes de ejecutar la respuesta.
+                  </span>
+                </summary>
+                <div className="mi-agent-admin-rules-content">
+                  {coachQualityLoading || coachDecisionTraceLoading ? (
+                    <div className="mi-agent-empty">
+                      Cargando trazas de decisión...
+                    </div>
+                  ) : null}
+                  {coachQualitySummary ? (
+                    <div className="mi-agent-domain-policy-content">
+                      <div className="mi-agent-governance-grid">
+                        <div className="mi-agent-domain-option">
+                          <strong>{coachQualitySummary.totalTurns || 0}</strong>
+                          <small>turnos analizados</small>
+                        </div>
+                        <div className="mi-agent-domain-option">
+                          <strong>
+                            {coachQualitySummary.channels?.[0]
+                              ?.clarificationRate
+                              ? `${Math.round(
+                                  coachQualitySummary.channels[0]
+                                    .clarificationRate * 100,
+                                )}%`
+                              : "0%"}
+                          </strong>
+                          <small>tasa de aclaración</small>
+                        </div>
+                        <div className="mi-agent-domain-option">
+                          <strong>
+                            {coachQualitySummary.channels?.[0]
+                              ?.averageLatencyMs || 0}{" "}
+                            ms
+                          </strong>
+                          <small>latencia media</small>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="mi-agent-governance-grid">
+                    <label>
+                      Canal
+                      <select
+                        value={coachDecisionTraceFilters.channel}
+                        onChange={(event) => {
+                          const nextFilters = {
+                            ...coachDecisionTraceFilters,
+                            channel: event.target.value,
+                          };
+                          setCoachDecisionTraceFilters(nextFilters);
+                          void loadCoachQualitySummary(nextFilters);
+                        }}
+                      >
+                        <option value="coach">Coach</option>
+                        <option value="customer_account">
+                          Cliente existente
+                        </option>
+                        <option value="prospect">Cuenta nueva</option>
+                      </select>
+                    </label>
+                    <label>
+                      Estado de revisión
+                      <select
+                        value={coachDecisionTraceFilters.reviewStatus}
+                        onChange={(event) => {
+                          const nextFilters = {
+                            ...coachDecisionTraceFilters,
+                            reviewStatus: event.target.value,
+                          };
+                          setCoachDecisionTraceFilters(nextFilters);
+                          void loadCoachQualitySummary(nextFilters);
+                        }}
+                      >
+                        <option value="all">Todas</option>
+                        <option value="accepted">Aceptadas</option>
+                        <option value="rejected">Rechazadas</option>
+                        <option value="needs_review">Necesitan revisión</option>
+                        <option value="unreviewed">Sin revisar</option>
+                      </select>
+                    </label>
+                    <label>
+                      Límite
+                      <select
+                        value={String(coachDecisionTraceFilters.limit)}
+                        onChange={(event) => {
+                          const nextFilters = {
+                            ...coachDecisionTraceFilters,
+                            limit: Number(event.target.value),
+                          };
+                          setCoachDecisionTraceFilters(nextFilters);
+                          void loadCoachQualitySummary(nextFilters);
+                        }}
+                      >
+                        <option value="5">5</option>
+                        <option value="8">8</option>
+                        <option value="12">12</option>
+                        <option value="20">20</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="mi-agent-intent-revisions">
+                    <h5>Decisiones finales recientes</h5>
+                    {coachDecisionTraces.length ? (
+                      <div className="mi-agent-admin-rule-list">
+                        {coachDecisionTraces.map((trace) => (
+                          <article
+                            className="mi-agent-admin-rule"
+                            key={trace.id}
+                          >
+                            <div className="mi-agent-admin-rule-copy">
+                              <strong>{trace.intent}</strong>
+                              <span>
+                                {trace.policyProcess || "default"} ·{" "}
+                                {trace.interactionMode || "unknown"}
+                              </span>
+                              <p>
+                                Preclasificación: {trace.b3Bucket || "unknown"}{" "}
+                                · Intención IA:{" "}
+                                {trace.semanticIntent || "unknown"} ·
+                                Resolución: {trace.resolution || "unknown"}
+                              </p>
+                            </div>
+                            <div className="mi-agent-admin-rule-controls">
+                              <small>
+                                Confianza{" "}
+                                {Math.round((trace.confidence || 0) * 100)}% ·{" "}
+                                {trace.conflict === "conflict"
+                                  ? "conflicto"
+                                  : "alineado"}
+                              </small>
+                              <small>
+                                {trace.requiresClarification
+                                  ? "requiere aclaración"
+                                  : "sin aclaración"}
+                              </small>
+                              <button
+                                type="button"
+                                className="mi-agent-secondary-button"
+                                onClick={() =>
+                                  setCoachDecisionTraceDetail(trace)
+                                }
+                                disabled={coachDecisionReviewSaving}
+                              >
+                                Detalle
+                              </button>
+                              <button
+                                type="button"
+                                className="mi-agent-secondary-button"
+                                onClick={() =>
+                                  reviewCoachDecisionTrace(trace.id, "accepted")
+                                }
+                                disabled={coachDecisionReviewSaving}
+                              >
+                                Aceptar
+                              </button>
+                              <button
+                                type="button"
+                                className="mi-agent-secondary-button"
+                                onClick={() =>
+                                  reviewCoachDecisionTrace(trace.id, "rejected")
+                                }
+                                disabled={coachDecisionReviewSaving}
+                              >
+                                Rechazar
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p>
+                        No hay decisiones finales registradas en la última
+                        ventana.
+                      </p>
+                    )}
+                  </div>
+                  {coachDecisionTraceDetail ? (
+                    <div className="mi-agent-admin-rule-editor">
+                      <div className="mi-agent-admin-rule-editor-heading">
+                        <h5>Detalle de decisión</h5>
+                        <span>
+                          {coachDecisionTraceDetail.reviewStatus ||
+                            "unreviewed"}
+                        </span>
+                      </div>
+                      <dl className="mi-agent-intent-metadata">
+                        <div>
+                          <dt>Intento final</dt>
+                          <dd>{coachDecisionTraceDetail.intent}</dd>
+                        </div>
+                        <div>
+                          <dt>Preclasificación determinista</dt>
+                          <dd>{coachDecisionTraceDetail.b3Bucket}</dd>
+                        </div>
+                        <div>
+                          <dt>Intención semántica (IA)</dt>
+                          <dd>{coachDecisionTraceDetail.semanticIntent}</dd>
+                        </div>
+                        <div>
+                          <dt>Resolución</dt>
+                          <dd>{coachDecisionTraceDetail.resolution}</dd>
+                        </div>
+                        <div>
+                          <dt>Modo</dt>
+                          <dd>{coachDecisionTraceDetail.interactionMode}</dd>
+                        </div>
+                        <div>
+                          <dt>Proceso</dt>
+                          <dd>{coachDecisionTraceDetail.policyProcess}</dd>
+                        </div>
+                        <div>
+                          <dt>Confianza</dt>
+                          <dd>
+                            {Math.round(
+                              (coachDecisionTraceDetail.confidence || 0) * 100,
+                            )}
+                            %
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Validación</dt>
+                          <dd>{coachDecisionTraceDetail.validationStatus}</dd>
+                        </div>
+                      </dl>
+                      <div className="mi-agent-workspace-actions">
+                        <button
+                          type="button"
+                          className="mi-agent-primary-button"
+                          onClick={() =>
+                            reviewCoachDecisionTrace(
+                              coachDecisionTraceDetail.id,
+                              "accepted",
+                              "Revisado por administración",
+                            )
+                          }
+                          disabled={coachDecisionReviewSaving}
+                        >
+                          Marcar correcta
+                        </button>
+                        <button
+                          type="button"
+                          className="mi-agent-secondary-button"
+                          onClick={() =>
+                            reviewCoachDecisionTrace(
+                              coachDecisionTraceDetail.id,
+                              "rejected",
+                              "Revisado por administración",
+                            )
+                          }
+                          disabled={coachDecisionReviewSaving}
+                        >
+                          Marcar como revisión
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+
+              <details
+                className="mi-agent-admin-rules"
                 aria-labelledby="mi-agent-admin-rules-title"
               >
                 <summary className="mi-agent-admin-rules-summary">
@@ -11973,6 +12547,8 @@ export default function MiAgentPage({
                 </div>
               </details>
 
+              <ServerRulesSection />
+
               <details
                 className="mi-agent-domain-policy"
                 aria-labelledby="mi-agent-channel-policy-title"
@@ -12063,6 +12639,14 @@ export default function MiAgentPage({
                     )}
                   </div>
 
+                  {coachBusinessRulesChannel === "customer_account" ? (
+                    <p>Las políticas de Cliente existente ahora se administran en{" "}
+                      <a href="#mi-agent-server-rules" onClick={() => {
+                        const section = document.getElementById("mi-agent-server-rules");
+                        if (section) section.open = true;
+                      }}>Reglas del servidor</a>. Se utiliza la misma configuración, sin duplicarla.</p>
+                  ) : (
+                    <>
                   {coachBusinessRulesChannel === "coach" ? (
                     <details className="mi-agent-admin-rules-advanced mi-agent-intent-policy-overrides">
                       <summary>Ajustes avanzados por intención</summary>
@@ -12271,6 +12855,8 @@ export default function MiAgentPage({
                       </div>
                     </div>
                   </section>
+                    </>
+                  )}
                 </div>
               </details>
 

@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1580" viewBox="0 0 1600 1580" role="img" aria-labelledby="title description">
+  <title id="title">Flujo conversacional y responsabilidades B1 a B11</title>
+  <desc id="description">B1 crea el job con B2 y consulta su estado mientras B3 procesa el turno. B3 valida y prepara contexto, B4 adapta el canal, y B5 coordina la planificación B6, las lecturas B7 y B8, la verificación B9 y la respuesta B10. B9 puede pedir otra lectura. El resultado regresa por B4 a B3, que ejecuta la persistencia B11; B2 lo entrega a B1 cuando consulta el job.</desc>
+  <defs>
+    <marker id="arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#496579"/>
+    </marker>
+    <marker id="arrow-return" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#187b70"/>
+    </marker>
+    <marker id="arrow-loop" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#ae7418"/>
+    </marker>
+    <style>
+      .canvas { fill: #f4f7f8; }
+      .title { fill: #173544; font: 700 32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #526b78; font: 400 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .zone { fill: #fff; stroke: #d5e0e4; stroke-width: 1.5; rx: 14; }
+      .zone-title { fill: #526b78; font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 1px; }
+      .engine { fill: #eff7f8; stroke: #5f9bb0; stroke-width: 2; rx: 16; }
+      .node { stroke-width: 1.6; rx: 10; }
+      .node-title { fill: #173544; font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .node-copy { fill: #405b68; font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .node-small { fill: #526b78; font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .engine-title { fill: #1b586e; font: 700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .edge { fill: none; stroke: #496579; stroke-width: 2.2; marker-end: url(#arrow-flow); }
+      .return { fill: none; stroke: #187b70; stroke-width: 2.5; marker-end: url(#arrow-return); }
+      .loop { fill: none; stroke: #ae7418; stroke-width: 2.2; stroke-dasharray: 8 6; marker-end: url(#arrow-loop); }
+      .edge-label { fill: #405b68; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-bg { fill: #fff; stroke: #dce6e9; stroke-width: 1; rx: 5; }
+      .legend { fill: #526b78; font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .note { fill: #173544; font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1600" height="1580" rx="18"/>
+  <text class="title" x="48" y="58">Flujo conversacional por responsabilidades</text>
+  <text class="subtitle" x="48" y="88">La interfaz sondea el job en paralelo; dentro del servidor, B5 coordina ramas de planificación, lecturas y evidencia.</text>
+
+  <rect class="zone" x="40" y="115" width="1520" height="205"/>
+  <text class="zone-title" x="64" y="148">ENTRADA ASÍNCRONA · INTERFAZ Y API</text>
+  <rect class="node" x="78" y="170" width="600" height="112" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="104" y="205">B1 · Interfaz</text>
+  <text class="node-copy" x="104" y="237">
+    <tspan x="104" dy="0">Envía la pregunta, conserva sesión/job y muestra el resultado.</tspan>
+    <tspan x="104" dy="21">Consulta el estado mientras el worker procesa el turno.</tspan>
+  </text>
+  <rect class="node" x="922" y="170" width="600" height="112" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="948" y="205">B2 · Rutas y jobs</text>
+  <text class="node-copy" x="948" y="237">
+    <tspan x="948" dy="0">Acepta el job, despacha el worker y expone estado/resultado.</tspan>
+    <tspan x="948" dy="21">No redacta la respuesta conversacional.</tspan>
+  </text>
+  <path class="edge" d="M678 205 H912"/>
+  <rect class="label-bg" x="737" y="178" width="116" height="22"/>
+  <text class="edge-label" x="749" y="193">POST · pregunta</text>
+  <path class="return" d="M922 252 H688"/>
+  <rect class="label-bg" x="715" y="259" width="158" height="22"/>
+  <text class="edge-label" x="725" y="274">202 / estado / resultado</text>
+
+  <rect class="zone" x="40" y="345" width="1520" height="290"/>
+  <text class="zone-title" x="64" y="378">SERVICIO DEL CANAL · VALIDACIÓN Y ADAPTACIÓN</text>
+  <rect class="node" x="130" y="410" width="610" height="112" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="158" y="446">B3 · Servicio del canal</text>
+  <text class="node-copy" x="158" y="478">
+    <tspan x="158" dy="0">Valida usuario, job, sesión y alcance; prepara contexto/snapshot.</tspan>
+    <tspan x="158" dy="21">En Coach resuelve intención y política antes de delegar.</tspan>
+  </text>
+  <rect class="node" x="860" y="410" width="610" height="112" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="888" y="446">B4 · Adaptador del canal</text>
+  <text class="node-copy" x="888" y="478">
+    <tspan x="888" dy="0">Entrega a B5 reglas, permisos, contexto y herramientas del canal.</tspan>
+    <tspan x="888" dy="21">Devuelve a B3 el resultado del motor.</tspan>
+  </text>
+  <path class="edge" d="M740 445 H850"/>
+  <rect class="label-bg" x="749" y="416" width="92" height="22"/>
+  <text class="edge-label" x="760" y="431">contexto</text>
+  <path class="return" d="M860 492 H750"/>
+  <rect class="label-bg" x="753" y="498" width="91" height="22"/>
+  <text class="edge-label" x="764" y="513">resultado</text>
+  <path class="edge" d="M1220 282 V330 H435 V400"/>
+  <rect class="label-bg" x="532" y="319" width="118" height="22"/>
+  <text class="edge-label" x="543" y="334">despacha worker</text>
+
+  <rect class="node" x="130" y="540" width="610" height="66" fill="#f5f7f8" stroke="#9aafbf" stroke-dasharray="6 4"/>
+  <text class="node-title" x="158" y="568">B11 · Persistencia</text>
+  <text class="node-small" x="360" y="559">
+    <tspan x="360" dy="0">Al recibir el resultado de B4, B3 guarda job,</tspan>
+    <tspan x="360" dy="18">historial/contexto y trazas.</tspan>
+  </text>
+  <path class="edge" d="M435 522 V532"/>
+
+  <rect class="engine" x="40" y="665" width="1520" height="690"/>
+  <text class="engine-title" x="72" y="710">B5 · Motor conversacional</text>
+  <text class="node-copy" x="72" y="738">Recibe la configuración de B4, coordina el turno y devuelve el resultado a B4.</text>
+
+  <rect class="node" x="100" y="790" width="420" height="145" fill="#fff1d8" stroke="#d7a84e"/>
+  <text class="node-title" x="126" y="827">B6 · Planificador</text>
+  <text class="node-copy" x="126" y="860">
+    <tspan x="126" dy="0">Propone ruta/lecturas y filtros según el canal.</tspan>
+    <tspan x="126" dy="22">No ejecuta consultas ni concede permisos.</tspan>
+  </text>
+  <rect class="node" x="590" y="790" width="420" height="145" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="616" y="827">B7 · Read model</text>
+  <text class="node-copy" x="616" y="860">
+    <tspan x="616" dy="0">Acota contexto y prepara herramienta/filtros</tspan>
+    <tspan x="616" dy="22">para una lectura autorizada.</tspan>
+  </text>
+  <rect class="node" x="1080" y="790" width="420" height="145" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="1106" y="827">B8 · Herramientas de lectura</text>
+  <text class="node-copy" x="1106" y="860">
+    <tspan x="1106" dy="0">Lee el snapshot CRM o la sesión de prospecto.</tspan>
+    <tspan x="1106" dy="22">Devuelve datos o un estado de error/calidad.</tspan>
+  </text>
+
+  <path class="edge" d="M310 765 V780"/>
+  <text class="edge-label" x="118" y="775">B5 solicita plan</text>
+  <path class="return" d="M445 790 V770"/>
+  <text class="edge-label" x="455" y="779">B6 propone</text>
+  <path class="edge" d="M800 765 V780"/>
+  <text class="edge-label" x="814" y="778">plan validado</text>
+  <path class="edge" d="M1010 862 H1070"/>
+  <rect class="label-bg" x="1012" y="833" width="61" height="22"/>
+  <text class="edge-label" x="1023" y="848">lectura</text>
+  <path class="return" d="M1290 935 V970 H800 V945"/>
+  <rect class="label-bg" x="1010" y="954" width="174" height="22"/>
+  <text class="edge-label" x="1021" y="969">B8 devuelve resultados</text>
+
+  <rect class="node" x="280" y="1055" width="470" height="170" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="306" y="1093">B9 · Verificador de evidencia</text>
+  <text class="node-copy" x="306" y="1127">
+    <tspan x="306" dy="0">Determina si las lecturas respaldan lo pedido.</tspan>
+    <tspan x="306" dy="22">Puede pedir otra lectura autorizada o aclarar.</tspan>
+  </text>
+  <rect class="node" x="850" y="1055" width="470" height="170" fill="#eaf1e7" stroke="#9ab78d"/>
+  <text class="node-title" x="876" y="1093">B10 · Respuesta</text>
+  <text class="node-copy" x="876" y="1127">
+    <tspan x="876" dy="0">Redacta con evidencia; en Coach, audita</tspan>
+    <tspan x="876" dy="22">sus afirmaciones antes de volver a B5.</tspan>
+  </text>
+
+  <path class="edge" d="M800 980 V1018 H515 V1045"/>
+  <text class="edge-label" x="572" y="1010">evidencia acumulada</text>
+  <path class="edge" d="M750 1135 H840"/>
+  <text class="edge-label" x="758" y="1119">suficiente</text>
+  <path class="loop" d="M280 1140 H205 V860 H580"/>
+  <rect class="label-bg" x="90" y="977" width="105" height="39"/>
+  <text class="edge-label" x="99" y="993">falta dato:</text>
+  <text class="edge-label" x="99" y="1008">otra lectura</text>
+  <path class="loop" d="M850 1190 H800 V1260 H515 V1235"/>
+  <rect class="label-bg" x="657" y="1239" width="165" height="22"/>
+  <text class="edge-label" x="668" y="1254">auditoría Coach: B10→B9</text>
+  <path class="return" d="M1085 1055 V1025 H1400 V755 H1448"/>
+  <rect class="label-bg" x="1195" y="1005" width="152" height="22"/>
+  <text class="edge-label" x="1206" y="1020">respuesta a B5/B4</text>
+
+  <path class="return" d="M1548 1280 V530 H1478"/>
+  <rect class="label-bg" x="1350" y="620" width="152" height="22"/>
+  <text class="edge-label" x="1361" y="635">B5 → B4 → B3</text>
+
+  <rect x="64" y="1400" width="16" height="4" rx="2" fill="#496579"/>
+  <text class="legend" x="88" y="1405">Llamada / paso del flujo</text>
+  <rect x="290" y="1400" width="16" height="4" rx="2" fill="#187b70"/>
+  <text class="legend" x="314" y="1405">Retorno de resultados</text>
+  <rect x="520" y="1400" width="16" height="4" rx="2" fill="#ae7418"/>
+  <text class="legend" x="544" y="1405">Reintento acotado / auditoría</text>
+  <text class="note" x="64" y="1450">B11 es una tarea de B3. B2 expone el job persistido; B1 sondea y muestra su resultado.</text>
+  <text class="node-small" x="64" y="1480">Las flechas muestran la responsabilidad lógica. Algunos adaptadores agrupan preparación y lecturas en una llamada de código.</text>
+</svg>

@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { getCustomerServerPolicy } from "./server-policy.js";
 
 const COACH_BASE_RULES = Object.freeze({
   channel: "coach",
@@ -378,7 +379,7 @@ async function migrateCoachInteractionPolicyBusinessRules(connection) {
   );
 }
 
-function ensureRulesSchema() {
+export function ensureRulesSchema() {
   if (!ensureCoachBusinessRulesSchemaPromise) {
     ensureCoachBusinessRulesSchemaPromise = (async () => {
       await query(
@@ -491,6 +492,9 @@ export function normalizeCoachBusinessRules({
   return {
     channel,
     process: normalizedProcess,
+    ...(channel === "customer_account"
+      ? { serverPolicy: getCustomerServerPolicy(overrides) }
+      : {}),
     operationPolicy: {
       ...baseRules.operationPolicy,
       ...(overrides.operationPolicy || {}),
@@ -568,7 +572,12 @@ export async function loadCoachBusinessRulesWithSource({
         ? JSON.parse(rows[0].rules_json)
         : rows[0].rules_json
       : {};
-  } catch {
+  } catch (error) {
+    if (channel === "customer_account") {
+      throw Object.assign(new Error("La configuración de Cliente existente no es válida"), {
+        code: "customer_server_rules_invalid_storage", cause: error,
+      });
+    }
     overrides = {};
   }
   return {
@@ -582,6 +591,10 @@ export async function loadCoachBusinessRulesWithSource({
 }
 
 export async function loadCoachBusinessRules(options = {}) {
+  if (options.channel === "customer_account") {
+    const { loadCustomerEffectiveRules } = await import("./customer-server-rules.js");
+    return loadCustomerEffectiveRules();
+  }
   const { businessRules } = await loadCoachBusinessRulesWithSource(options);
   return businessRules;
 }
@@ -592,6 +605,11 @@ export async function saveCoachBusinessRules({
   process = "default",
   rules = {},
 } = {}) {
+  if (channel === "customer_account") {
+    const { saveCustomerServerRules } = await import("./customer-server-rules.js");
+    const saved = await saveCustomerServerRules({ user, rules, legacy: true });
+    return saved.businessRules;
+  }
   process =
     channel === "coach"
       ? canonicalCoachPolicyProcess(process)
@@ -619,6 +637,13 @@ export async function resetCoachBusinessRules({
   channel = "coach",
   process = "default",
 } = {}) {
+  if (channel === "customer_account") {
+    const { saveCustomerServerRules } = await import("./customer-server-rules.js");
+    const saved = await saveCustomerServerRules({
+      rules: getCoachBusinessRules({ channel }), legacy: true, replace: true,
+    });
+    return saved.businessRules;
+  }
   if (!RULE_CHANNELS.has(channel))
     throw new Error("Canal de reglas no soportado");
   const normalizedProcess = String(

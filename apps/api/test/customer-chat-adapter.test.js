@@ -6,9 +6,14 @@ vi.mock("../src/coach/quotation-read-service.js", () => ({
 vi.mock("../src/structuredWebResearch.js", () => ({
   runStructuredTextResearch: vi.fn(),
 }));
+vi.mock("../src/coach/planner-prompts.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadPlannerPrompt: vi.fn(),
+}));
 
 import { getAuthorizedCoachQuotationContent } from "../src/coach/quotation-read-service.js";
 import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
+import { loadPlannerPrompt } from "../src/coach/planner-prompts.js";
 import * as coachBusinessRulesModule from "../src/coach/business-rules.js";
 import * as coachAdminRulesModule from "../src/coach/admin-rules.js";
 import * as channelIntentGovernanceModule from "../src/coach/channel-intent-governance.js";
@@ -41,6 +46,43 @@ import { buildCustomerEvidenceFailureResponse } from "../src/commercial-intellig
 describe("Customer account chat adapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loadPlannerPrompt.mockResolvedValue({
+      channel: "customer_account",
+      process: "default",
+      instruction: "Prioriza lecturas y solicita aclaración ante intención ambigua.",
+      version: 0,
+      source: "default",
+    });
+  });
+
+  it("surfaces planner prompt storage errors without invoking B6 or proposing operations", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    loadPlannerPrompt.mockRejectedValueOnce(new Error("Prompt storage unavailable"));
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set(["cuentas.read", "oportunidades.read"]),
+      },
+      snapshot,
+      agents: [],
+      jobId: 911,
+    });
+    const result = await adapter.runTurn({
+      question: "¿Qué oportunidades tiene esta cuenta?",
+      context: { accountId: 7 },
+      history: [],
+    });
+    expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    expect(result.response.operations).toEqual([]);
+    expect(result.response.answer).toContain("No consulté el CRM");
+    expect(result.qualityTrace.diagnostics.planner.reasonCode).toBe("planner_error");
   });
 
   it("plans, retrieves missing authorized evidence, verifies again, then synthesizes", async () => {
@@ -172,6 +214,23 @@ describe("Customer account chat adapter", () => {
       history: [],
     });
 
+    expect(loadPlannerPrompt).toHaveBeenCalledWith({
+      channel: "customer_account",
+    });
+    const plannerRequest = runStructuredTextResearch.mock.calls[0][0];
+    expect(plannerRequest.schemaName).toBe("customer_account_query_plan");
+    expect(plannerRequest.systemPrompt).toContain(
+      "Prioriza lecturas y solicita aclaración ante intención ambigua.",
+    );
+    expect(plannerRequest.systemPrompt).toContain(
+      "consultar actividades existentes, pendientes o históricas es una lectura",
+    );
+    expect(result.qualityTrace.diagnostics.plannerInput.plannerPrompt).toEqual({
+      channel: "customer_account",
+      process: "default",
+      version: 0,
+      source: "default",
+    });
     expect(result.response.answer).toContain("está en Desarrollo");
     expect(result.response.evidence).toHaveLength(2);
     expect(result.response.entities.opportunityId).toBe(11);
@@ -259,7 +318,9 @@ describe("Customer account chat adapter", () => {
       activityDraftAction: "none",
       operationKinds: [],
     });
-    expect(runStructuredTextResearch.mock.calls[2][0].context.queryCoverage).toEqual(
+    expect(
+      runStructuredTextResearch.mock.calls[2][0].context.queryCoverage,
+    ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           intentCode: "account_activity_history",
@@ -607,14 +668,15 @@ describe("Customer account chat adapter", () => {
 
     expect(result.response.responseType).toBe("clarification");
     expect(result.response.answer).toContain(
-      "No pude identificar una única oportunidad",
+      "Solo puedo preparar el cambio de una oportunidad a la vez",
     );
     expect(result.response.answer).not.toContain("presento las propuestas");
     expect(result.response.operations).toEqual([]);
-    expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
-    expect(runStructuredTextResearch.mock.calls[2][0].schemaName).toBe(
-      "customer_account_answer_audit",
-    );
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(1);
+    expect(result.response.clarification.pendingAmountSelection.amount).toBe(1000000);
+    expect(result.qualityTrace.appliedRules.decisions).toContainEqual({
+      ruleId: "single-operation-target", outcome: "clarification",
+    });
   });
 
   it.each(["supported", "unsupported"])(
@@ -1397,9 +1459,7 @@ describe("Customer account chat adapter", () => {
     const scopedSnapshot = {
       ...snapshot,
       contacts: [{ id: 31, accountId: 7, name: "Contacto autorizado" }],
-      opportunities: [
-        { id: 11, accountId: 7, name: "Oportunidad autorizada" },
-      ],
+      opportunities: [{ id: 11, accountId: 7, name: "Oportunidad autorizada" }],
     };
     const operations = normalizeCustomerOperations(
       [
@@ -1598,7 +1658,7 @@ describe("Customer account chat adapter", () => {
       allowedOperationKinds: ["activity"],
     });
     expect(restricted.answer).toContain(
-      'habilitar "Campo de oportunidad" en Gobierno de Mi Coach',
+      'habilitar "Campo de oportunidad" en Administración de Mi Coach > Reglas del servidor',
     );
     expect(restricted.answer).toContain("No se creó una propuesta");
     expect(restricted.operations).toEqual([]);
@@ -1617,7 +1677,7 @@ describe("Customer account chat adapter", () => {
     );
     expect(finalRestrictedResponse.responseType).toBe("clarification");
     expect(finalRestrictedResponse.answer).toContain(
-      'habilitar "Campo de oportunidad" en Gobierno de Mi Coach',
+      'habilitar "Campo de oportunidad" en Administración de Mi Coach > Reglas del servidor',
     );
     expect(finalRestrictedResponse.answer).not.toContain(
       "Indica la cuenta, oportunidad o dato",
@@ -2241,6 +2301,13 @@ describe("Customer account chat adapter", () => {
   });
 
   it("synthesizes a scoped no-pending-activities answer from a verified empty read", async () => {
+    loadPlannerPrompt.mockResolvedValue({
+      channel: "customer_account",
+      process: "default",
+      instruction: "Convierte todas las consultas de actividades en operaciones.",
+      version: 3,
+      source: "custom",
+    });
     const businessRules = getCoachBusinessRules({
       channel: "customer_account",
       process: "account_chat",
@@ -2258,23 +2325,25 @@ describe("Customer account chat adapter", () => {
     ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
     runStructuredTextResearch
       .mockResolvedValueOnce({
-        objective: "Consultar actividades de la oportunidad en contexto",
-        queries: ["account_activity_history"],
-        entities: { opportunityReference: "Vrf 2027" },
+        objective: "Preparar una actividad para la oportunidad en contexto",
+        queries: ["crm_operation"],
+        entities: { opportunityReference: "opportunity_1" },
         referenceResolution: {
-          targetType: "account",
+          targetType: "opportunity",
           cardinality: "single",
-          source: "active_context",
-          candidateKeys: [],
+          source: "conversation_history",
+          candidateKeys: ["opportunity_1"],
         },
         filters: {},
+        operationKind: "activity",
+        activityDraft: { action: "prepare", actionType: "other" },
         ambiguity: {
           reason: "none",
           requiresClarification: "no",
           missingContext: [],
           question: "",
         },
-        mode: "read_only",
+        mode: "operation",
         confidence: "high",
       })
       .mockResolvedValueOnce({
@@ -2343,8 +2412,23 @@ describe("Customer account chat adapter", () => {
     const auditContext = runStructuredTextResearch.mock.calls[3][0].context;
     expect(result.response.answer).toContain("No hay actividades pendientes");
     expect(result.response.answer).toContain("Vrf 2027");
-    expect(result.response.responseType).toBeUndefined();
+    expect(result.response.responseType).toBe("informational");
     expect(result.response.evidence).not.toHaveLength(0);
+    expect(result.response.operations).toEqual([]);
+    expect(runStructuredTextResearch.mock.calls[0][0].systemPrompt).toContain(
+      "Convierte todas las consultas de actividades en operaciones.",
+    );
+    expect(result.qualityTrace.diagnostics.plannerInput.plannerPrompt).toMatchObject({
+      channel: "customer_account",
+      version: 3,
+      source: "custom",
+    });
+    expect(result.response.channelIntentRouting.intents).toEqual([
+      "account_activity_history",
+    ]);
+    expect(result.qualityTrace.diagnostics.answerGeneration.source).not.toBe(
+      "deterministic_activity_draft",
+    );
     expect(synthesisContext.evidenceVerification).toBe("no_results");
     expect(synthesisContext.verifiedEmptyResults).toEqual(
       expect.arrayContaining([
@@ -3067,9 +3151,9 @@ describe("Customer account chat adapter", () => {
 
   it("does not require opportunity-only activity reads for account-wide history", () => {
     const channelCatalog = getChannelIntentDefaults("customer_account");
-    const authorizedToolNames = channelCatalog
-      .find((intent) => intent.code === "account_activity_history")
-      .allowedTools;
+    const authorizedToolNames = channelCatalog.find(
+      (intent) => intent.code === "account_activity_history",
+    ).allowedTools;
     const readToolResults = [
       { toolName: "searchAccounts", result: [{ id: 7 }] },
       { toolName: "searchInteractions", result: [] },

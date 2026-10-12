@@ -1,4 +1,13 @@
 function formatPermissionModuleName(moduleName) {
+  if (moduleName === "mi_coach") {
+    return "Coach";
+  }
+  if (moduleName === "inteligencia_comercial") {
+    return "Cliente existente · Inteligencia comercial";
+  }
+  if (moduleName === "prospeccion") {
+    return "Cuenta nueva · Prospección";
+  }
   if (moduleName === "interacciones") {
     return "Leads";
   }
@@ -28,6 +37,52 @@ export default function RolesWorkspaceSection({
   roleUsers,
   selectRole,
 }) {
+  const coachModules = new Set([
+    "mi_coach",
+    "inteligencia_comercial",
+    "prospeccion",
+  ]);
+  const coachPermissionGroups = permissionsByModule.filter(([moduleName]) =>
+    coachModules.has(moduleName),
+  );
+  const otherPermissionGroups = permissionsByModule.filter(
+    ([moduleName]) => !coachModules.has(moduleName),
+  );
+  const renderPermissionGroup = (
+    [moduleName, modulePermissions],
+    isSubgroup = false,
+  ) => (
+    <div
+      key={moduleName}
+      className={`permission-module-group${isSubgroup ? " permission-module-subgroup" : ""}`}
+    >
+      <div className="permission-module-header">
+        {formatPermissionModuleName(moduleName)}
+      </div>
+      <div className="checkbox-grid">
+        {modulePermissions.map((permission) => (
+          <label key={permission.id}>
+            <input
+              type="checkbox"
+              checked={selectedPerms.includes(Number(permission.id))}
+              onChange={(event) =>
+                togglePermission(permission.id, event.target.checked)
+              }
+            />
+            <span className="permission-label">
+              <span className="permission-code">{permission.action}</span>
+              {permission.description && (
+                <span className="permission-description">
+                  {permission.description}
+                </span>
+              )}
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <>
       <div className="roles-pills-bar">
@@ -48,7 +103,9 @@ export default function RolesWorkspaceSection({
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
             <span className="status-filter-pill-text">Activos</span>
-            <span className="status-filter-pill-count">{roleStatusCounts.active}</span>
+            <span className="status-filter-pill-count">
+              {roleStatusCounts.active}
+            </span>
           </button>
           <button
             type="button"
@@ -62,7 +119,9 @@ export default function RolesWorkspaceSection({
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
             <span className="status-filter-pill-text">Desactivados</span>
-            <span className="status-filter-pill-count">{roleStatusCounts.inactive}</span>
+            <span className="status-filter-pill-count">
+              {roleStatusCounts.inactive}
+            </span>
           </button>
           <button
             type="button"
@@ -76,7 +135,9 @@ export default function RolesWorkspaceSection({
           >
             <span className="status-filter-pill-dot" aria-hidden="true" />
             <span className="status-filter-pill-text">Todos</span>
-            <span className="status-filter-pill-count">{roleStatusCounts.all}</span>
+            <span className="status-filter-pill-count">
+              {roleStatusCounts.all}
+            </span>
           </button>
         </div>
       </div>
@@ -101,7 +162,10 @@ export default function RolesWorkspaceSection({
                   .filter(Boolean)
                   .join(" ")}
               >
-                <button className="roles-card-btn" onClick={() => selectRole(role.id)}>
+                <button
+                  className="roles-card-btn"
+                  onClick={() => selectRole(role.id)}
+                >
                   <div className="roles-card-top">
                     <span className="roles-card-name">{role.name}</span>
                     <span
@@ -148,14 +212,18 @@ export default function RolesWorkspaceSection({
                         <button
                           type="button"
                           disabled={Number(role.is_active) === 1}
-                          onClick={() => runRoleAction(() => updateRoleStatus(role, true))}
+                          onClick={() =>
+                            runRoleAction(() => updateRoleStatus(role, true))
+                          }
                         >
                           Activar
                         </button>
                         <button
                           type="button"
                           disabled={Number(role.is_active) !== 1}
-                          onClick={() => runRoleAction(() => updateRoleStatus(role, false))}
+                          onClick={() =>
+                            runRoleAction(() => updateRoleStatus(role, false))
+                          }
                         >
                           Desactivar
                         </button>
@@ -231,34 +299,24 @@ export default function RolesWorkspaceSection({
           </div>
           {selectedRoleId ? (
             <div className="permissions-by-module">
-              {permissionsByModule.map(([moduleName, modulePermissions]) => (
-                <div key={moduleName} className="permission-module-group">
-                  <div className="permission-module-header">
-                    {formatPermissionModuleName(moduleName)}
+              {coachPermissionGroups.length > 0 && (
+                <section className="permission-family-group">
+                  <div className="permission-family-header">
+                    <span>Mi Coach</span>
+                    <span className="permission-family-description">
+                      Acceso general y espacios de trabajo
+                    </span>
                   </div>
-                  <div className="checkbox-grid">
-                    {modulePermissions.map((permission) => (
-                      <label key={permission.id}>
-                        <input
-                          type="checkbox"
-                          checked={selectedPerms.includes(Number(permission.id))}
-                          onChange={(event) =>
-                            togglePermission(permission.id, event.target.checked)
-                          }
-                        />
-                        <span className="permission-label">
-                          <span className="permission-code">{permission.action}</span>
-                          {permission.description && (
-                            <span className="permission-description">
-                              {permission.description}
-                            </span>
-                          )}
-                        </span>
-                      </label>
-                    ))}
+                  <div className="permission-family-subgroups">
+                    {coachPermissionGroups.map((group) =>
+                      renderPermissionGroup(group, true),
+                    )}
                   </div>
-                </div>
-              ))}
+                </section>
+              )}
+              {otherPermissionGroups.map((group) =>
+                renderPermissionGroup(group),
+              )}
             </div>
           ) : (
             <div className="roles-empty-state">
@@ -285,7 +343,9 @@ export default function RolesWorkspaceSection({
           <div className="roles-col-header">
             <div className="roles-col-header-left">
               <span className="roles-col-title">Usuarios asignados</span>
-              {selectedRoleId && <span className="roles-col-count">{roleUsers.length}</span>}
+              {selectedRoleId && (
+                <span className="roles-col-count">{roleUsers.length}</span>
+              )}
             </div>
           </div>
           {selectedRoleId ? (

@@ -136,6 +136,21 @@ export function validateCustomerConversationContext(
     leadId: leadId && visibleLeadIds.has(leadId) ? leadId : null,
     intents,
     filters: validatedFilters(context.filters),
+    ...(Number(context.pendingAmountSelection?.accountId) === accountId &&
+    typeof context.pendingAmountSelection?.amount === "number" &&
+    Number.isFinite(context.pendingAmountSelection.amount) &&
+    context.pendingAmountSelection.amount >= 0 &&
+    Array.isArray(context.pendingAmountSelection.candidateIds)
+      ? {
+          pendingAmountSelection: {
+            accountId,
+            amount: context.pendingAmountSelection.amount,
+            candidateIds: [...new Set(context.pendingAmountSelection.candidateIds
+              .map(positiveId).filter((id) => visibleOpportunityIds.has(id)))],
+            filters: validatedFilters(context.pendingAmountSelection.filters),
+          },
+        }
+      : {}),
     ...(positiveId(context.pendingActivity?.operationId) &&
     positiveId(context.pendingActivity?.sessionId) &&
     visibleOpportunityIds.has(

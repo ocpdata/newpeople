@@ -79,6 +79,7 @@ export function createCoachBlockPipeline({
   question,
   history,
   context,
+  coachIntentClassification = null,
   limits = COACH_BLOCK_LIMITS,
 }) {
   const deadlineAt = Date.now() + limits.maxTurnMs;
@@ -362,11 +363,33 @@ export function createCoachBlockPipeline({
       },
       classifyCoachIntentWithModel: async ({ catalog }) => {
         try {
+          const finalIntent =
+            coachIntentClassification?.decisionTrace?.finalDecision?.intent;
+          const authoritativeRoutes = {
+            seller_coaching: { intent: "seller_coaching", mode: "coaching" },
+            account_performance: {
+              intent: "seller_coaching",
+              mode: "coaching",
+            },
+            account_query: { intent: "account_query", mode: "brief_context" },
+            opportunity_query: {
+              intent: "opportunity_query",
+              mode: "brief_context",
+            },
+            create_opportunity: { intent: "operation", mode: "operation" },
+            update_opportunity: { intent: "operation", mode: "operation" },
+            general_query: { intent: "general_query", mode: "coaching" },
+            clarify_needed: { intent: "clarification", mode: "coaching" },
+          };
+          const authoritativeRoute = authoritativeRoutes[finalIntent] || null;
           const prompt = buildCoachIntentPreviewPrompt(question, catalog);
           prompt.model = config.openai.model;
           prompt.text = { format: { type: "json_object" } };
           prompt.input[0].content +=
             " Incluye reads:[{toolName,filters:{}}] con herramientas del catálogo de la intención elegida. Los filtros admiten text,stageCodes,commercialStatusCodes,activeOnly,inactiveOnly,openOnly,closeYear. No devuelvas IDs CRM; el servidor resolverá las entidades. Para deep_exploration no planifiques lecturas: se deriva al módulo apropiado. Considera historial y contexto para interpretar referencias. No cambies las políticas de Coach.";
+          if (authoritativeRoute) {
+            prompt.input[0].content += ` La intención autoritativa ya fue resuelta por B6 y el servidor: intent=${authoritativeRoute.intent}, mode=${authoritativeRoute.mode}. No la reclasifiques; solo propone lecturas compatibles con ella.`;
+          }
           prompt.input[0].content +=
             " En filters omite propiedades no necesarias: no uses null, cadenas vacías para booleanos o años, ni accountId/opportunityId/contactId/leadId. Usa arrays de códigos para stageCodes/commercialStatusCodes, booleanos para activeOnly/inactiveOnly/openOnly y número entero para closeYear. Seleccionar una cuenta autorizada no es explorar su historial; una pregunta por su nombre es account_query con mode=brief_context y searchAccounts. No uses process_information para preguntar datos de una cuenta. El enum de intents clasifica la solicitud; las herramientas no son intents.";
           const promptInput = JSON.parse(prompt.input[1].content);
@@ -393,7 +416,21 @@ export function createCoachBlockPipeline({
               plannedReadCount: value.reads?.length || 0,
             }),
           );
-          const classification = validateCoachIntentClassification(proposed);
+          const planningProposal = authoritativeRoute
+            ? {
+                ...proposed,
+                ...authoritativeRoute,
+                confidence: Math.max(
+                  0.68,
+                  Number(
+                    coachIntentClassification?.decisionTrace?.semanticDecision
+                      ?.confidence || proposed.confidence,
+                  ),
+                ),
+              }
+            : proposed;
+          const classification =
+            validateCoachIntentClassification(planningProposal);
           const parsedReads = planReadsSchema.safeParse(proposed.reads || []);
           if (
             !parsedReads.success ||
@@ -422,7 +459,7 @@ export function createCoachBlockPipeline({
             };
           }
           plan = {
-            ...proposed,
+            ...planningProposal,
             reads:
               classification.mode === "deep_exploration"
                 ? []

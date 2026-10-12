@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import {
+  CUSTOMER_SERVER_POLICY_DEFAULTS,
+  CUSTOMER_SERVER_RULE_CATEGORIES,
+  CUSTOMER_OPERATION_KINDS,
+} from "../../api/src/coach/server-policy.js";
 
 async function mockMiCoachApi(
   page,
@@ -125,7 +130,32 @@ async function mockMiCoachApi(
   let prospectChatHistoryPersisted = false;
   let persistedCustomerContactOperation = null;
   let persistedCustomerOpportunityOperation = null;
+  const plannerPrompts = ["coach", "customer_account", "prospect"].map((channel) => ({
+    channel,
+    process: "default",
+    connected: channel === "customer_account",
+    instruction: `Instrucción inicial de ${channel}`,
+    initialInstruction: `Instrucción inicial de ${channel}`,
+    version: 0,
+    source: "default",
+    revisions: [],
+  }));
   const closedCoachSessions = new Set();
+  const initialServerRules = {
+    scope: {
+      accountSearchAllowed: true, opportunitySearchAllowed: true,
+      contactSearchAllowed: true, leadSearchAllowed: true, quotationSearchAllowed: true,
+    },
+    filters: { defaultOpenOnly: true, defaultActiveOnly: true, defaultInactiveOnly: false },
+    operationPolicy: { allowedKinds: CUSTOMER_OPERATION_KINDS.filter((kind) =>
+      !["create_opportunity", "link_contact_to_opportunity"].includes(kind)) },
+    serverPolicy: { ...CUSTOMER_SERVER_POLICY_DEFAULTS },
+  };
+  const serverRules = {
+    channel: "customer_account", version: 0, connected: true,
+    rules: structuredClone(initialServerRules), initialRules: initialServerRules,
+    categories: CUSTOMER_SERVER_RULE_CATEGORIES, revisions: [],
+  };
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const { pathname } = url;
@@ -136,6 +166,49 @@ async function mockMiCoachApi(
         contentType: "application/json",
         body: JSON.stringify(body),
       });
+    if (pathname === "/api/commercial-intelligence/governance/server-rules" && method === "GET") {
+      return json(serverRules);
+    }
+    if (pathname === "/api/commercial-intelligence/governance/server-rules/customer_account" && method === "PUT") {
+      const input = route.request().postDataJSON();
+      if (input.expectedVersion !== serverRules.version) {
+        return json({ message: "Las reglas cambiaron. Recarga antes de guardar." }, 409);
+      }
+      if (!serverRules.revisions.length) {
+        serverRules.revisions.push({ version: 0, rules: structuredClone(serverRules.rules) });
+      }
+      serverRules.rules = input.rules;
+      serverRules.version += 1;
+      serverRules.revisions.unshift({
+        version: serverRules.version, rules: structuredClone(input.rules),
+        createdAt: "2026-10-12T12:00:00.000Z",
+      });
+      return json(serverRules);
+    }
+
+    if (pathname === "/api/mi-agent/coach/admin/planner-prompts" && method === "GET") {
+      return json({ prompts: plannerPrompts });
+    }
+    if (pathname.startsWith("/api/mi-agent/coach/admin/planner-prompts/") && method === "PUT") {
+      const channel = pathname.split("/").pop();
+      const prompt = plannerPrompts.find((item) => item.channel === channel);
+      const input = route.request().postDataJSON();
+      if (!prompt || prompt.version !== input.expectedVersion) {
+        return json({ message: "El prompt cambió. Recarga antes de guardar." }, 409);
+      }
+      prompt.instruction = input.instruction.trim();
+      prompt.version += 1;
+      prompt.source = "custom";
+      prompt.updatedAt = "2026-10-11T12:00:00.000Z";
+      prompt.updatedByUserId = 31;
+      prompt.revisions.unshift({
+        version: prompt.version,
+        instruction: prompt.instruction,
+        createdAt: prompt.updatedAt,
+        createdByUserId: 31,
+      });
+      return json({ prompt });
+    }
 
     if (
       withCustomerHealth &&
@@ -3448,6 +3521,227 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByText("Avance no disponible: falta tipo de cambio"),
     ).toBeVisible();
+  });
+
+  test("administra reglas del servidor en nueve categorias, guarda y restaura versiones solo en Cliente existente", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-server-rules");
+    await section.locator(":scope > summary").click();
+    await expect(section.getByText("Versión 0", { exact: true })).toBeVisible();
+    await expect(section.locator(".mi-agent-server-rule-category")).toHaveCount(10);
+    await section.getByText("4. Lectura de datos y evidencia", { exact: true }).click();
+    const budget = section.getByLabel("Máximo de lecturas por turno");
+    await expect(section.getByText("No es un límite de filas:", { exact: false })).toBeVisible();
+    await expect(section.getByText("Con cero se mantiene la evaluación inicial", { exact: false })).toBeVisible();
+    await expect(budget).toHaveValue("8");
+    await budget.fill("3");
+    const saveRequest = page.waitForRequest((req) => req.method() === "PUT" &&
+      req.url().endsWith("/governance/server-rules/customer_account"));
+    await section.getByRole("button", { name: "Guardar reglas del servidor", exact: true }).click();
+    expect((await saveRequest).postDataJSON()).toMatchObject({
+      expectedVersion: 0, rules: { serverPolicy: { maxReadQueries: 3 } },
+    });
+    await expect(section.getByRole("status")).toContainText("Versión 1 guardada");
+    await budget.fill("2");
+    await section.getByRole("button", { name: "Guardar reglas del servidor", exact: true }).click();
+    await expect(section.getByRole("status")).toContainText("Versión 2 guardada");
+    await section.getByText("Historial de versiones", { exact: true }).click();
+    await section.getByLabel("Versión para restaurar").selectOption("0");
+    page.once("dialog", (dialog) => dialog.accept());
+    await section.getByRole("button", { name: "Cargar versión en formulario" }).click();
+    await expect(budget).toHaveValue("8");
+    await expect(section.getByText("Versión 2", { exact: true })).toBeVisible();
+    await section.getByRole("button", { name: "Guardar reglas del servidor", exact: true }).click();
+    await expect(section.getByRole("status")).toContainText("Versión 3 guardada");
+    await section.getByLabel("Canal de reglas del servidor").selectOption("coach");
+    await expect(section.getByText("Este canal está preparado", { exact: false })).toBeVisible();
+    await expect(section.getByRole("button", { name: "Guardar reglas del servidor", exact: true })).toHaveCount(0);
+    await section.getByLabel("Canal de reglas del servidor").selectOption("prospect");
+    await expect(section.getByText("todavía no modifica sus flujos", { exact: false })).toBeVisible();
+    await section.getByLabel("Canal de reglas del servidor").selectOption("customer_account");
+    await section.getByText("1. Acceso, solicitud y sesión", { exact: true }).click();
+    const protectedRule = section.locator(".mi-agent-server-rule").filter({
+      has: page.getByText("Permisos y propiedad", { exact: true }),
+    });
+    await expect(protectedRule.getByText("Control protegido", { exact: false })).toBeVisible();
+    await expect(protectedRule.getByText("conocer el identificador de una conversación de otro vendedor", { exact: false })).toBeVisible();
+    await expect(protectedRule.locator("input, select")).toHaveCount(0);
+    const legacyPolicy = page.locator("details[aria-labelledby='mi-agent-channel-policy-title']");
+    await legacyPolicy.locator(":scope > summary").click();
+    await legacyPolicy.getByRole("combobox", { name: "Canal", exact: true }).selectOption("customer_account");
+    await expect(legacyPolicy.getByRole("link", { name: "Reglas del servidor" })).toBeVisible();
+    await expect(legacyPolicy.getByRole("button", { name: "Guardar políticas del canal" })).toHaveCount(0);
+  });
+
+  test("las casillas de reglas del servidor no se superponen y permiten editar y guardar operaciones", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-server-rules");
+    await section.locator(":scope > summary").click();
+    await section.getByText("2. Herramientas y operaciones disponibles", { exact: true }).click();
+    const operations = section.locator(".mi-agent-server-rules-operations");
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const label of await operations.locator("label").all()) {
+        const checkboxBox = await label.locator("input").boundingBox();
+        const textBox = await label.locator("span").boundingBox();
+        const labelBox = await label.boundingBox();
+        expect(checkboxBox.width).toBe(18);
+        expect(checkboxBox.height).toBe(18);
+        expect(textBox.x).toBeGreaterThanOrEqual(checkboxBox.x + checkboxBox.width + 7);
+        expect(textBox.x + textBox.width).toBeLessThanOrEqual(labelBox.x + labelBox.width + 1);
+      }
+    }
+    const activity = operations.getByRole("checkbox", { name: "Actividad", exact: true });
+    await expect(activity).toBeChecked();
+    await operations.getByText("Actividad", { exact: true }).click();
+    await expect(activity).not.toBeChecked();
+    const creation = operations.getByRole("checkbox", { name: "Crear oportunidad", exact: true });
+    await expect(creation).not.toBeChecked();
+    await operations.getByText("Crear oportunidad", { exact: true }).click();
+    await expect(creation).toBeChecked();
+    const request = page.waitForRequest((req) => req.method() === "PUT" &&
+      req.url().endsWith("/governance/server-rules/customer_account"));
+    await section.getByRole("button", { name: "Guardar reglas del servidor", exact: true }).click();
+    const kinds = (await request).postDataJSON().rules.operationPolicy.allowedKinds;
+    expect(kinds).not.toContain("activity");
+    expect(kinds).toContain("create_opportunity");
+    await expect(section.getByRole("status")).toContainText("Versión 1 guardada");
+    await expect(activity).not.toBeChecked();
+    await expect(creation).toBeChecked();
+    const accountRead = section.getByRole("checkbox", { name: "Consultar cuentas", exact: true });
+    expect((await accountRead.boundingBox()).width).toBe(18);
+    await accountRead.uncheck();
+    await expect(accountRead).not.toBeChecked();
+  });
+
+  test("reglas del servidor informa conflictos y conserva el borrador hasta recargar", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await page.route("**/governance/server-rules/customer_account", (route) => route.fulfill({
+      status: 409, contentType: "application/json",
+      body: JSON.stringify({ message: "Las reglas cambiaron. Recarga antes de guardar." }),
+    }));
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-server-rules");
+    await section.locator(":scope > summary").click();
+    await section.getByText("4. Lectura de datos y evidencia", { exact: true }).click();
+    const budget = section.getByLabel("Máximo de lecturas por turno");
+    await budget.fill("3");
+    await section.getByRole("button", { name: "Guardar reglas del servidor", exact: true }).click();
+    await expect(section.getByRole("alert")).toContainText("Las reglas cambiaron");
+    await expect(budget).toHaveValue("3");
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await section.getByRole("button", { name: "Cargar reglas iniciales" }).click();
+    await expect(budget).toHaveValue("3");
+    page.once("dialog", (dialog) => dialog.accept());
+    await section.getByRole("button", { name: "Recargar reglas guardadas" }).click();
+    await expect(budget).toHaveValue("8");
+    await expect(section.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("edita prompts versionados por canal y solo conecta Cliente existente", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-planner-prompts");
+    await section.locator(":scope > summary").click();
+    await expect(section.getByText("Versión inicial", { exact: true })).toHaveCount(3);
+    await expect(section.getByText("Instrucción predeterminada (sin personalización)", { exact: true })).toHaveCount(0);
+    await expect(section.getByText("No conectado:", { exact: false })).toHaveCount(2);
+    await expect(section.getByText("Conectado a B6.", { exact: false })).toHaveCount(1);
+    await expect(section.getByText("El prompt técnico base y el esquema JSON están protegidos.", { exact: false })).toBeVisible();
+    const customerInput = section.getByLabel("Instrucciones del planificador de Cliente existente");
+    await customerInput.fill("Consultar actividades existentes es una lectura.");
+    const saveRequest = page.waitForRequest((request) =>
+      request.method() === "PUT" &&
+      request.url().endsWith("/coach/admin/planner-prompts/customer_account"),
+    );
+    await section.getByRole("button", { name: "Guardar prompt de Cliente existente" }).click();
+    expect((await saveRequest).postDataJSON()).toEqual({
+      instruction: "Consultar actividades existentes es una lectura.",
+      expectedVersion: 0,
+    });
+    await expect(section.getByRole("status")).toContainText("próxima planificación de Cliente existente");
+    await section.getByText("Historial de versiones de Cliente existente", { exact: true }).click();
+    await expect(section.getByRole("heading", { name: "Versión 1", exact: true })).toBeVisible();
+    await expect(section.getByLabel("Instrucciones del planificador de Coach")).toHaveValue("Instrucción inicial de coach");
+    await section.getByLabel("Instrucciones del planificador de Coach").fill("Priorizar evidencia comercial.");
+    await section.getByRole("button", { name: "Guardar prompt de Coach", exact: true }).click();
+    await expect(section.getByRole("status")).toContainText("aún no consume");
+    await section.getByLabel("Instrucciones del planificador de Cuenta nueva").fill("Distinguir evidencia pública.");
+    await section.getByRole("button", { name: "Guardar prompt de Cuenta nueva", exact: true }).click();
+    await expect(section.getByRole("status")).toContainText("aún no consume");
+    await section.getByRole("button", { name: "Recargar prompts guardados" }).click();
+    await expect(customerInput).toHaveValue("Consultar actividades existentes es una lectura.");
+    await expect(section.getByLabel("Instrucciones del planificador de Coach")).toHaveValue("Priorizar evidencia comercial.");
+    await expect(section.getByLabel("Instrucciones del planificador de Cuenta nueva")).toHaveValue("Distinguir evidencia pública.");
+  });
+
+  test("recupera el prompt inicial después de varias versiones sin borrar el historial", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-planner-prompts");
+    await section.locator(":scope > summary").click();
+    const input = section.getByLabel("Instrucciones del planificador de Cliente existente");
+    const save = section.getByRole("button", { name: "Guardar prompt de Cliente existente" });
+    const restore = section.getByRole("button", { name: "Cargar prompt inicial de Cliente existente" });
+    for (const text of ["Primera edición", "Segunda edición"]) {
+      await input.fill(text);
+      await save.click();
+      await expect(save).toBeDisabled();
+    }
+    await input.fill("Cambio sin guardar");
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await restore.click();
+    await expect(input).toHaveValue("Cambio sin guardar");
+    page.once("dialog", (dialog) => dialog.accept());
+    await restore.click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+    await expect(section.getByRole("status")).toContainText("Pulsa Guardar para activarlo");
+    await section.getByRole("button", { name: "Recargar prompts guardados" }).click();
+    await expect(input).toHaveValue("Segunda edición");
+    page.once("dialog", (dialog) => dialog.accept());
+    await restore.click();
+    await save.click();
+    await expect(save).toBeDisabled();
+    await section.getByText("Historial de versiones de Cliente existente", { exact: true }).click();
+    for (const version of [1, 2, 3]) {
+      await expect(section.getByRole("heading", { name: `Versión ${version}`, exact: true })).toBeVisible();
+    }
+    await section.getByRole("button", { name: "Recargar prompts guardados" }).click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+    await input.fill("Nueva edición después de restaurar");
+    page.once("dialog", (dialog) => dialog.accept());
+    await restore.click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+  });
+
+  test("conserva el borrador y muestra el conflicto al guardar un prompt obsoleto", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await page.route("**/api/mi-agent/coach/admin/planner-prompts/customer_account", (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "El prompt cambió desde que lo abriste. Recarga antes de guardar." }),
+      }),
+    );
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-planner-prompts");
+    await section.locator(":scope > summary").click();
+    const input = section.getByLabel("Instrucciones del planificador de Cliente existente");
+    await input.fill("Borrador local");
+    await section.getByRole("button", { name: "Guardar prompt de Cliente existente" }).click();
+    await expect(page.getByText("El prompt cambió desde que lo abriste. Recarga antes de guardar.")).toBeVisible();
+    await expect(input).toHaveValue("Borrador local");
+    await expect(section.getByRole("status")).toHaveCount(0);
+    await section.getByRole("button", { name: "Recargar prompts guardados" }).click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
   });
 
   test("permite abrir y guardar gobierno con permiso administrativo", async ({

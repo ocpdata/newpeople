@@ -11,6 +11,9 @@ import {
 import { createCoachBlockTrace } from "./block-runtime.js";
 import { loadCoachBusinessRules } from "./business-rules.js";
 import { recordCoachTurnQualityTrace } from "./observability.js";
+import { runCoachDecision } from "./coach-orchestrator.js";
+import { summarizeCoachDecisionTrace } from "./decision-trace.js";
+import { config } from "../config.js";
 
 export function coachSessionContextMatchesRequest(
   requestContext,
@@ -68,6 +71,45 @@ function collectIds(value, ids = new Set()) {
   return ids;
 }
 
+function buildCoachPermissionSnapshot(user = {}) {
+  const permissionSet = user?.permissionSet || new Set();
+  const permissionValues = Array.from(permissionSet || []);
+
+  return {
+    canReadAccounts:
+      permissionValues.some((value) =>
+        [
+          "cuentas.read",
+          "cuentas.leer",
+          "account.read",
+          "read:accounts",
+        ].includes(value),
+      ) || Boolean(user?.canReadAccounts),
+    canReadOpportunities:
+      permissionValues.some((value) =>
+        [
+          "oportunidades.read",
+          "oportunidades.leer",
+          "opportunities.read",
+          "read:opportunities",
+        ].includes(value),
+      ) || Boolean(user?.canReadOpportunities),
+    canWriteOpportunities:
+      permissionValues.some((value) =>
+        [
+          "oportunidades.write",
+          "oportunidades.editar",
+          "opportunities.write",
+          "write:opportunities",
+        ].includes(value),
+      ) || Boolean(user?.canWriteOpportunities),
+    canReadHistory:
+      permissionValues.some((value) =>
+        ["historial.read", "history.read", "read:history"].includes(value),
+      ) || Boolean(user?.canReadHistory),
+  };
+}
+
 function buildTurnObservability({
   result,
   readToolResults = [],
@@ -84,12 +126,37 @@ function buildTurnObservability({
         : activeContext.accountId
           ? "account"
           : "none";
+  const decisionTrace = result?.decisionTrace || result?.finalDecision || null;
   return {
     intent: result?.intent || (error ? "error" : "unknown"),
     responseType: result?.responseType || (error ? "error" : "unknown"),
     primaryEntity,
     toolsUsed: readToolResults.map((tool) => tool.toolName).filter(Boolean),
     queriedIds: [...collectIds(readToolResults)],
+    decision: decisionTrace
+      ? {
+          intent:
+            decisionTrace.finalDecision?.intent || decisionTrace.intent || null,
+          b3Bucket: decisionTrace.preDecision?.bucket || null,
+          semanticIntent: decisionTrace.semanticDecision?.intent || null,
+          interactionMode: decisionTrace.finalDecision?.interactionMode || null,
+          policyProcess: decisionTrace.finalDecision?.policyProcess || null,
+          requiresClarification: Boolean(
+            decisionTrace.finalDecision?.requiresClarification,
+          ),
+          confidence:
+            decisionTrace.finalDecision?.confidence ??
+            decisionTrace.summary?.confidence ??
+            result?.confidence ??
+            null,
+          resolution:
+            decisionTrace.finalDecision?.source?.resolver ||
+            decisionTrace.summary?.resolution ||
+            null,
+          conflict: decisionTrace.summary?.conflict || null,
+          reason: decisionTrace.finalDecision?.reason || null,
+        }
+      : null,
     result: {
       confidence: result?.confidence || null,
       hasClarification: Boolean(result?.clarification),
@@ -157,7 +224,69 @@ export async function runCoachJob({
   const executionTrace = coachBlockPipelineEnabled(dependencies)
     ? createCoachBlockTrace({ jobId })
     : null;
-  const coachIntentClassification = classifyCoachIntent(question);
+  const permissionSnapshot = buildCoachPermissionSnapshot(user);
+  const decisionContext = {
+    ...selectedContext,
+    accountId: selectedContext?.accountId || null,
+  };
+  const classifySemanticIntent = dependencies.requestMiAgentJson
+    ? ({ message, context }) =>
+        dependencies.requestMiAgentJson({
+          payload: {
+            model: config.openai.model,
+            temperature: 0,
+            text: { format: { type: "json_object" } },
+            input: [
+              {
+                role: "system",
+                content:
+                  "Clasifica la intención del usuario para Coach usando exactamente uno de estos valores: seller_coaching, account_performance, account_query, opportunity_query, create_opportunity, update_opportunity, general_query, clarify_needed. Usa clarify_needed si la petición es ambigua o no alcanza confianza 0.68. Devuelve JSON con intent, confidence entre 0 y 1 y reason. No propongas herramientas, no decidas permisos y no ejecutes acciones.",
+              },
+              {
+                role: "user",
+                content: JSON.stringify({
+                  message,
+                  context: {
+                    selectedAccount: Boolean(context?.accountId),
+                    selectedOpportunity: Boolean(context?.opportunityId),
+                    selectedContact: Boolean(context?.contactId),
+                    selectedLead: Boolean(context?.leadId),
+                  },
+                  conversationHistory,
+                }),
+              },
+            ],
+          },
+          user,
+          jobId,
+          startedAt: new Date(),
+          phase: "coach_final_intent",
+          featureCode: dependencies.featureCode || "mi_coach",
+          jobType: "mi_coach_chat",
+        })
+    : null;
+  const decision = await runCoachDecision(
+    question,
+    decisionContext,
+    permissionSnapshot,
+    classifySemanticIntent,
+  );
+  const decisionTraceSummary = summarizeCoachDecisionTrace(decision);
+  const coachIntentClassification = {
+    ...classifyCoachIntent(question),
+    type: decision.finalDecision.intent,
+    subtype: decision.finalDecision.intent,
+    interactionMode: decision.finalDecision.interactionMode,
+    policyProcess: decision.finalDecision.policyProcess,
+    requiresClarification: decision.finalDecision.requiresClarification,
+    operationRequested:
+      decision.finalDecision.intent === "create_opportunity" ||
+      decision.finalDecision.intent === "update_opportunity",
+    decisionTrace: {
+      ...decision,
+      summary: decisionTraceSummary,
+    },
+  };
   executionTrace?.record({
     from: "B2",
     to: "B3",
@@ -168,6 +297,7 @@ export async function runCoachJob({
       intentType: coachIntentClassification.type,
       interactionMode: coachIntentClassification.interactionMode,
       policyProcess: coachIntentClassification.policyProcess,
+      decisionTrace: decision,
     },
   });
 
@@ -214,7 +344,25 @@ export async function runCoachJob({
       userId: user.id,
       sessionId,
       jobId,
-      trace: engineResult.qualityTrace,
+      trace: {
+        ...engineResult.qualityTrace,
+        diagnostics: {
+          ...engineResult.qualityTrace?.diagnostics,
+          decision: {
+            intent: decision.finalDecision.intent,
+            b3Bucket: decision.preDecision.bucket,
+            semanticIntent: decision.semanticDecision.intent,
+            interactionMode: decision.finalDecision.interactionMode,
+            policyProcess: decision.finalDecision.policyProcess,
+            confidence: decision.finalDecision.confidence,
+            requiresClarification: decision.finalDecision.requiresClarification,
+            resolution: decision.finalDecision.source?.resolver || "unknown",
+            conflict: decisionTraceSummary.conflict,
+            reason: decision.finalDecision.reason,
+            source: decision.finalDecision.source,
+          },
+        },
+      },
     }).catch((error) => {
       console.warn(
         "[mi-agent] No fue posible registrar traza de calidad:",
@@ -227,6 +375,10 @@ export async function runCoachJob({
       activeContext,
       readToolResults,
     } = engineResult;
+    normalizedResult.decisionTrace = {
+      ...decision,
+      summary: decisionTraceSummary,
+    };
     if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
     conversationHistory = engineResult.conversationHistory;
     executionTrace?.record({

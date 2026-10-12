@@ -226,6 +226,10 @@ export async function ensureCoachSchema() {
           feedback_category ENUM('intent', 'entity', 'response', 'evidence', 'other') NULL,
           feedback_corrected BOOLEAN NOT NULL DEFAULT FALSE,
           feedback_at DATETIME(3) NULL,
+          review_status ENUM('accepted', 'rejected', 'needs_review', 'unreviewed') NOT NULL DEFAULT 'unreviewed',
+          review_note TEXT NULL,
+          reviewed_by_user_id BIGINT UNSIGNED NULL,
+          reviewed_at DATETIME(3) NULL,
           created_at_utc DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
           INDEX idx_coach_quality_channel_date (channel, created_at_utc),
           INDEX idx_coach_quality_process_date (channel, process_key, created_at_utc),
@@ -258,6 +262,17 @@ export async function ensureCoachSchema() {
       ) {
         await query(
           `ALTER TABLE coach_turn_quality_traces ADD COLUMN diagnostics_json JSON NULL AFTER tool_metrics_json`,
+        );
+      }
+      if (
+        !qualityTraceColumns.some((column) => column.Field === "review_status")
+      ) {
+        await query(
+          `ALTER TABLE coach_turn_quality_traces
+           ADD COLUMN review_status ENUM('accepted', 'rejected', 'needs_review', 'unreviewed') NOT NULL DEFAULT 'unreviewed' AFTER feedback_at,
+           ADD COLUMN review_note TEXT NULL AFTER review_status,
+           ADD COLUMN reviewed_by_user_id BIGINT UNSIGNED NULL AFTER review_note,
+           ADD COLUMN reviewed_at DATETIME(3) NULL AFTER reviewed_by_user_id`,
         );
       }
       await query(`

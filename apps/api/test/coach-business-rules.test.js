@@ -374,6 +374,9 @@ describe("Coach business rules", () => {
       savedUserByKey: new Map(),
     };
     query.mockImplementation(async (sql, params = []) => {
+      if (sql.includes("SELECT version") && sql.includes("mi_coach_server_rule_versions")) {
+        return [{ version: 0 }];
+      }
       if (sql.includes("SELECT migration_key")) {
         return state.migrations.has(params[0])
           ? [{ migration_key: params[0] }]

@@ -3610,6 +3610,27 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         qualityTrace?.toolsUsed || [],
       ),
     };
+    const pendingAmountSelection = response.clarification?.pendingAmountSelection;
+    if (pendingAmountSelection) {
+      nextConversationContext = validateCustomerConversationContext({
+        version: 1,
+        accountId: snapshot.account.id,
+        opportunityId: null,
+        contactId: null,
+        intents: ["crm_operation"],
+        filters: pendingAmountSelection.filters,
+        pendingAmountSelection,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    } else if (continuationContext?.pendingAmountSelection) {
+      nextConversationContext = { ...continuationContext };
+      const remainsUnresolved = response.responseType === "clarification" &&
+        (!engineResult.channelIntentRouting?.intent ||
+          engineResult.channelIntentRouting.intent === "crm_operation") &&
+        !/\b(?:cancela|descarta|olvida)\b/i.test(request.question);
+      if (!remainsUnresolved) delete nextConversationContext.pendingAmountSelection;
+      conversationContextUpdated = true;
+    }
     if (
       response?.responseType !== "error" &&
       response?.responseType !== "clarification" &&
@@ -3686,12 +3707,23 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       status: "adapter_execution_error",
       errorCode: "adapter_execution_failed",
     });
+    const failedServerRules = adapter.getTurnDiagnostics().serverRules;
     qualityTrace = {
       process: "default",
       validationStatus: "error",
       validationReasons: ["adapter_execution_failed"],
       errorCode: "adapter_execution_failed",
       toolMetrics: [],
+      appliedRules: {
+        serverRulesVersion: failedServerRules.version,
+        serverPolicy: failedServerRules.policy || null,
+        decisions: [
+          ...failedServerRules.decisions,
+          ...(error?.code === "CUSTOMER_CHAT_TURN_TIMEOUT" ? [{
+            ruleId: "turn-deadline", outcome: "limited",
+          }] : []),
+        ],
+      },
       diagnostics: {
         fallback: {
           used: true,

@@ -73,13 +73,19 @@ import {
 import { getAuthorizedCoachQuotationContent } from "./coach/quotation-read-service.js";
 import {
   getCoachQualityDashboard,
+  listCoachDecisionTraces,
   listCoachQualityTraces,
   listCoachChannelRollouts,
+  recordCoachDecisionReview,
   saveCoachChannelRollouts,
   submitCoachTurnFeedback,
 } from "./coach/observability.js";
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
+import {
+  listPlannerPrompts,
+  savePlannerPrompt,
+} from "./coach/planner-prompts.js";
 
 const router = express.Router();
 
@@ -3293,7 +3299,7 @@ async function requestMiAgentJson({
   const isCoachChatResponse =
     featureCode === MI_COACH_FEATURE_CODE &&
     jobType === "mi_coach_chat" &&
-    ["coach_intent_route", "coach"].includes(phase);
+    ["coach_final_intent", "coach_intent_route", "coach"].includes(phase);
   const requestPayload = isCoachChatResponse
     ? {
         ...payload,
@@ -4595,9 +4601,7 @@ router.post(
       } else if (coachOperation.kind === "create_opportunity") {
         const payloadAccountId = Number(coachOperation.payload?.accountId || 0);
         const operationContactId = Number(coachOperation.contactId || 0);
-        const payloadContactId = Number(
-          coachOperation.payload?.contactId || 0,
-        );
+        const payloadContactId = Number(coachOperation.payload?.contactId || 0);
         const contactId = operationContactId || payloadContactId;
         if (
           Number(coachOperation.accountId) !== accountId ||
@@ -4619,9 +4623,7 @@ router.post(
       } else if (coachOperation.kind === "link_contact_to_opportunity") {
         const payloadAccountId = Number(coachOperation.payload?.accountId || 0);
         const operationContactId = Number(coachOperation.contactId || 0);
-        const payloadContactId = Number(
-          coachOperation.payload?.contactId || 0,
-        );
+        const payloadContactId = Number(coachOperation.payload?.contactId || 0);
         if (
           Number(coachOperation.accountId) !== accountId ||
           (payloadAccountId && payloadAccountId !== accountId) ||
@@ -5107,6 +5109,47 @@ router.get(
 );
 
 router.get(
+  "/coach/admin/planner-prompts",
+  requirePermission("mi_coach.admin"),
+  async (_req, res) => {
+    return res.json({ prompts: await listPlannerPrompts() });
+  },
+);
+
+router.put(
+  "/coach/admin/planner-prompts/:channel",
+  requirePermission("mi_coach.admin"),
+  async (req, res, next) => {
+    try {
+      const saved = await savePlannerPrompt({
+        channel: req.params.channel,
+        user: req.user,
+        input: req.body,
+      });
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "mi_coach_planner_prompt_updated",
+        entityType: "mi_coach_planner_prompts",
+        entityId: null,
+        detail: `Prompt del planificador ${req.params.channel}, versión ${saved.after.version}`,
+        before: saved.before,
+        after: saved.after,
+      });
+      return res.json({ prompt: saved.after });
+    } catch (error) {
+      if (error.status === 400 || error.status === 409) {
+        return res.status(error.status).json({
+          message: error.message,
+          code: error.code,
+        });
+      }
+      return next(error);
+    }
+  },
+);
+
+router.get(
   "/coach/quality",
   requirePermission("mi_coach.admin"),
   async (req, res) => {
@@ -5119,6 +5162,44 @@ router.get(
       listCoachChannelRollouts(),
     ]);
     return res.json({ quality, rollouts });
+  },
+);
+
+router.get(
+  "/coach/quality/decisions",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const channel = String(req.query?.channel || "coach");
+    const traces = await listCoachDecisionTraces({
+      channel,
+      limit: req.query?.limit,
+      reviewStatus: req.query?.reviewStatus,
+      dateFrom: req.query?.dateFrom,
+      dateTo: req.query?.dateTo,
+    });
+    return res.json({ traces });
+  },
+);
+
+router.post(
+  "/coach/quality/decisions/:traceId/review",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const traceId = Number(req.params.traceId || 0);
+    const { status, note } = req.body || {};
+    const result = await recordCoachDecisionReview({
+      traceId,
+      userId: req.user.id,
+      status,
+      note,
+    });
+    if (result.outcome === "invalid_status") {
+      return res.status(400).json({ message: "Estado de revisión inválido" });
+    }
+    if (result.outcome === "not_found") {
+      return res.status(404).json({ message: "Traza no encontrada" });
+    }
+    return res.json({ outcome: "saved" });
   },
 );
 

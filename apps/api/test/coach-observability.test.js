@@ -8,6 +8,7 @@ import {
   getCoachQualityDashboard,
   isCoachUserInRollout,
   recordCoachTurnQualityTrace,
+  listCoachDecisionTraces,
   listCoachQualityTraces,
   saveCoachChannelRollouts,
   summarizeCoachToolResults,
@@ -55,6 +56,35 @@ describe("Coach observability", () => {
       ]),
     );
     expect(query.mock.calls[0][0]).not.toContain("question_text");
+  });
+
+  it("maps historical b6Intent diagnostics to semanticIntent", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: 45,
+        channel: "coach",
+        process_key: "seller_coaching",
+        diagnostics_json: JSON.stringify({
+          decision: {
+            intent: "account_performance",
+            b3Bucket: "coaching",
+            b6Intent: "account_performance",
+            interactionMode: "coaching",
+            policyProcess: "seller_coaching",
+            confidence: 0.9,
+            resolution: "final_decision",
+          },
+        }),
+      },
+    ]);
+
+    const traces = await listCoachDecisionTraces({ channel: "coach" });
+
+    expect(traces[0]).toMatchObject({
+      b3Bucket: "coaching",
+      semanticIntent: "account_performance",
+      intent: "account_performance",
+    });
   });
 
   it("summarizes tool outcomes without retaining result contents", () => {

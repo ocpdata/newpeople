@@ -13,9 +13,19 @@ import {
 import {
   getCoachReadToolCatalog,
   inferCoachOpportunityFilters,
+  searchCoachOpportunities,
 } from "../coach/read-tools.js";
+import {
+  customerSingleTargetClarification,
+  getCustomerEvidenceLimits,
+  getCustomerServerPolicy,
+} from "../coach/server-policy.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
+import {
+  loadPlannerPrompt,
+  buildCustomerPlannerPromptSupplement,
+} from "../coach/planner-prompts.js";
 import { summarizeCoachToolResults } from "../coach/observability.js";
 import { matchCoachQueryCase } from "../coach/case-catalog.js";
 import {
@@ -32,7 +42,6 @@ import {
   getCustomerActivityHistoryRangeFromFilters,
 } from "./activity-history.js";
 import {
-  CUSTOMER_CHAT_EVIDENCE_LIMITS,
   normalizeCustomerEvidenceAssessment,
   runCustomerEvidenceLoop,
 } from "./customer-chat-evidence.js";
@@ -136,9 +145,10 @@ function buildCustomerPublicResearchEvidence(agents) {
         agentId: String(agent.agentId || "public_research").slice(0, 80),
         title: String(finding.title || "").slice(0, 200),
         summary: String(finding.summary || "").slice(0, 1200),
-        evidence: String(
-          finding.evidenceText || finding.evidence || "",
-        ).slice(0, 1600),
+        evidence: String(finding.evidenceText || finding.evidence || "").slice(
+          0,
+          1600,
+        ),
         sourceUrl: String(
           finding.sourceUrl || finding.sourceReference || "",
         ).slice(0, 500),
@@ -187,6 +197,29 @@ function normalize(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+function isExplicitCustomerActivityRequest(question) {
+  return /\b(?:agenda|agendar|agendame|crear|crea|creame|programa|programar|prepara|preparar|coordina|coordinar|registra|registrar)\b/.test(
+    normalize(question),
+  );
+}
+
+function normalizeCustomerActivityQueryPlan(question, plan) {
+  if (
+    !plan ||
+    matchCoachQueryCase(question)?.type !== "activity_query" ||
+    isExplicitCustomerActivityRequest(question)
+  ) {
+    return plan;
+  }
+  return {
+    ...plan,
+    queries: ["account_activity_history"],
+    mode: "read_only",
+    operationKind: "none",
+    activityDraft: { ...plan.activityDraft, action: "none" },
+  };
 }
 
 function isOpen(opportunity) {
@@ -621,7 +654,9 @@ export function buildCustomerQueryPlannerContext({
   entityCandidates = null,
   researchAgents = [],
 } = {}) {
-  const permittedToolNames = (Array.isArray(availableTools) ? availableTools : [])
+  const permittedToolNames = (
+    Array.isArray(availableTools) ? availableTools : []
+  )
     .map((tool) => tool?.name)
     .filter(Boolean);
   const permittedToolNameSet = new Set(permittedToolNames);
@@ -651,6 +686,14 @@ export function buildCustomerQueryPlannerContext({
     referenceDateTime: new Date().toISOString(),
     businessTimezone: snapshot?.businessTimezone || config.app.businessTimezone,
     pendingActivity: conversationContext?.pendingActivity || null,
+    pendingAmountSelection: conversationContext?.pendingAmountSelection ? {
+      amount: conversationContext.pendingAmountSelection.amount,
+      filters: conversationContext.pendingAmountSelection.filters,
+      candidateKeys: (entityCandidates?.serverEntityCandidates || [])
+        .filter((candidate) => candidate.entityType === "opportunity" &&
+          conversationContext.pendingAmountSelection.candidateIds.includes(candidate.recordId))
+        .map((candidate) => candidate.candidateKey),
+    } : null,
     availableEvidenceSources: {
       selectedAccountCrm: Boolean(context?.accountId),
       preparedAgents: (Array.isArray(researchAgents) ? researchAgents : [])
@@ -673,6 +716,7 @@ export function buildCustomerQueryPlannerContext({
       "Para editar o consultar un contacto existente, conserva la resolución estricta de candidato autorizado y no la confundas con create_contact.",
       "Pide aclaración solo si falta una referencia, periodo o dato indispensable para fijar el alcance; no declares ambiguo un objetivo que ya está resuelto.",
       "Si el objetivo, referenceResolution y ambiguity se contradicen, corrige el plan antes de devolverlo.",
+      "pendingAmountSelection conserva una solicitud de cambio de monto a la espera de un objetivo individual. Una respuesta inequívoca con el nombre de un candidato continúa esa operación; una pregunta diferente que mencione ese nombre no es una selección.",
     ],
     allowedOperationKinds: Array.isArray(effectiveAllowedOperationKinds)
       ? effectiveAllowedOperationKinds
@@ -899,8 +943,12 @@ export async function buildCustomerReadModel({
   conversationContext = null,
   executionTrace = null,
   traceParentSpanId = null,
+  readQueryBudget = null,
 }) {
   snapshot = scopeCustomerSnapshot(snapshot || {}); // Ensure snapshot is scoped correctly
+  const evidenceLimits = getCustomerEvidenceLimits(businessRules);
+  const maxReadQueries = readQueryBudget === null ? evidenceLimits.maxReadQueries :
+    Math.min(evidenceLimits.maxReadQueries, Math.max(0, readQueryBudget));
   const crmSnapshot = {
     accounts: accountRecord(snapshot),
     coachOpportunities: opportunityRecords(snapshot),
@@ -1008,12 +1056,15 @@ export async function buildCustomerReadModel({
     queryCase?.readTool === "getOpportunityQuotation" ||
     channelIntentRouting?.intent === "quotation_query" ||
     channelIntentRouting?.intents?.includes("quotation_query");
-  const selectedOpportunityQuotation =
+  const quotationReadAttempted = Boolean(
     quotationRequested &&
     selectedOpportunity &&
     scope.opportunitySearchAllowed !== false &&
     scope.quotationSearchAllowed !== false &&
-    toolNames.has("getOpportunityQuotation")
+    toolNames.has("getOpportunityQuotation") &&
+    maxReadQueries > 0,
+  );
+  const selectedOpportunityQuotation = quotationReadAttempted
       ? await getAuthorizedCoachQuotationContent({
           user,
           opportunityId: selectedOpportunity.id,
@@ -1036,17 +1087,17 @@ export async function buildCustomerReadModel({
   const routeAllows = (toolName, legacyCondition = true) =>
     routedToolNames ? routedToolNames.has(toolName) : legacyCondition;
   const readToolResults = [];
-  let initialReadQueryCount = selectedOpportunityQuotation ? 1 : 0;
+  let initialReadQueryCount = quotationReadAttempted ? 1 : 0;
   const skippedAuthorizedTools = [];
   const availableNames = new Set(availableTools.map((tool) => tool.name));
   const pushTool = (toolName, args = {}) => {
     if (!availableNames.has(toolName)) return;
     const quotationAlreadyFetched =
       toolName === "getOpportunityQuotation" &&
-      Boolean(selectedOpportunityQuotation);
+      quotationReadAttempted;
     if (
       !quotationAlreadyFetched &&
-      initialReadQueryCount >= CUSTOMER_CHAT_EVIDENCE_LIMITS.maxReadQueries
+      initialReadQueryCount >= maxReadQueries
     ) {
       skippedAuthorizedTools.push(toolName);
       return;
@@ -1455,6 +1506,8 @@ function buildCustomerDeterministicResponse({
   routing,
   permissions,
   allowedOperationKinds,
+  businessRules,
+  pendingAmountSelection,
 }) {
   const intentResponse = buildCustomerIntentResponse({
     snapshot,
@@ -1462,6 +1515,8 @@ function buildCustomerDeterministicResponse({
     routing,
     permissions,
     allowedOperationKinds,
+    businessRules,
+    pendingAmountSelection,
   });
   if (intentResponse) return intentResponse;
   const quotationResponse = buildCustomerQuotationResponse(snapshot, question);
@@ -1593,17 +1648,38 @@ function formatUsd(value) {
   return `USD ${Number(value || 0).toLocaleString("es-MX")}`;
 }
 
-function resolveCustomerOpportunity(snapshot, question) {
+function resolveCustomerOpportunity(snapshot, question, routing, businessRules, availableCandidates) {
   const resolution = resolveCoachEntities(
     {
       accounts: accountRecord(snapshot),
-      coachOpportunities: opportunityRecords(snapshot),
+      coachOpportunities: availableCandidates || opportunityRecords(snapshot),
     },
     question,
     {},
     { ignoreStageFilters: true },
   );
-  return resolution.opportunity || snapshot.selectedOpportunity || null;
+  if (resolution.opportunity) return resolution.opportunity;
+  const policy = getCustomerServerPolicy(businessRules);
+  if (resolution.candidates.opportunities.length > 1 && policy.ambiguousTarget === "ask") return null;
+  const resolvedId = Number(routing?.serverResolvedEntityIds?.opportunityId || 0);
+  const namedReference = String(routing?.entities?.opportunityReference || "").trim();
+  const text = normalize(question);
+  const genericSelection = /\b(?:esta|esa|la oportunidad seleccionada|la oportunidad actual)\b/.test(text) ||
+    !/\boportunidad\b/.test(text) ||
+    /\boportunidad(?:\s+(?:a|en|por)\s+\$?\d|\s*[.!?]*$)/.test(text);
+  if (!genericSelection) return null;
+  if (namedReference && (
+    !resolvedId ||
+    (!/^opportunity_\d+$/.test(namedReference) &&
+      normalize(namedReference) !== normalize(snapshot.selectedOpportunity?.name))
+  )) return null;
+  if (policy.selectedOpportunityFallback === "require_explicit") {
+    return null;
+  }
+  const selected = snapshot.selectedOpportunity;
+  return selected && (availableCandidates || opportunityRecords(snapshot))
+    .some((item) => Number(item.id) === Number(selected.id))
+    ? selected : null;
 }
 
 function isExplicitCustomerAmountChange(question) {
@@ -1613,6 +1689,19 @@ function isExplicitCustomerAmountChange(question) {
       normalizedQuestion,
     ) && /\b(?:monto|importe)\b/.test(normalizedQuestion)
   );
+}
+
+function isPendingAmountSelectionReply(snapshot, question, pending) {
+  if (!pending || !Array.isArray(pending.candidateIds) ||
+    Number(pending.accountId) !== Number(snapshot?.account?.id)) return false;
+  const words = (text) => normalize(text).replace(/[^a-z0-9]+/g, " ").trim();
+  const rawReply = words(question);
+  const reply = rawReply
+    .replace(/^(?:(?:la|el|oportunidad|selecciona|elige|quiero|solo|solamente|esa|esta|entonces)\s+)+/, "")
+    .replace(/\s+por favor$/, "");
+  return opportunityRecords(scopeCustomerSnapshot(snapshot || {})).some((item) =>
+    pending.candidateIds.includes(Number(item.id)) && words(item.name) &&
+    [rawReply, reply].includes(words(item.name)));
 }
 
 function buildCustomerEmailDraft(snapshot, question, contactReadAllowed) {
@@ -1676,6 +1765,8 @@ export function buildCustomerIntentResponse({
   routing,
   permissions,
   allowedOperationKinds,
+  businessRules = {},
+  pendingAmountSelection = null,
 } = {}) {
   if (routing?.intent === "email_draft") {
     return buildCustomerEmailDraft(
@@ -1687,11 +1778,14 @@ export function buildCustomerIntentResponse({
   if (routing?.intent !== "crm_operation") return null;
 
   const normalizedQuestion = normalize(question);
-  if (!/\b(monto|importe)\b/.test(normalizedQuestion)) return null;
+  const continuingSelection = !isExplicitCustomerAmountChange(question) &&
+    isPendingAmountSelectionReply(snapshot, question, pendingAmountSelection);
+  if (!/\b(monto|importe)\b/.test(normalizedQuestion) && !continuingSelection) return null;
   const amountMatch = String(question || "").match(
     /\b(?:a|en|por)\s+\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(?:usd|dolares?)?\b/i,
   );
-  const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, "")) : NaN;
+  const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, "")) :
+    continuingSelection ? Number(pendingAmountSelection.amount) : NaN;
   if (!Number.isFinite(amount) || amount < 0) {
     return {
       answer:
@@ -1724,13 +1818,23 @@ export function buildCustomerIntentResponse({
       source: "account_intelligence",
     };
   }
+  if (businessRules.scope?.opportunitySearchAllowed === false) {
+    return {
+      answer: "La consulta de oportunidades está deshabilitada para este canal. No se creó una propuesta.",
+      responseType: "clarification", operations: [], evidence: [], inferences: [],
+      clarification: {
+        type: "missing_fields", ruleId: "opportunitySearchAllowed",
+        message: "La consulta de oportunidades está deshabilitada para este canal.",
+      },
+    };
+  }
   if (
     Array.isArray(allowedOperationKinds) &&
     !allowedOperationKinds.includes("opportunity_field")
   ) {
     return {
       answer:
-        'La política de Cliente existente no permite cambios en campos de oportunidad. Un administrador debe habilitar "Campo de oportunidad" en Gobierno de Mi Coach > Reglas del motor. No se creó una propuesta ni se modificó el CRM.',
+        'La política de Cliente existente no permite cambios en campos de oportunidad. Un administrador debe habilitar "Campo de oportunidad" en Administración de Mi Coach > Reglas del servidor. No se creó una propuesta ni se modificó el CRM.',
       responseType: "clarification",
       clarification: {
         type: "missing_fields",
@@ -1746,20 +1850,53 @@ export function buildCustomerIntentResponse({
       source: "account_intelligence",
     };
   }
-  const opportunity = resolveCustomerOpportunity(
-    snapshot || {},
-    question || "",
+  const scoped = scopeCustomerSnapshot(snapshot || {});
+  const filters = continuingSelection ? pendingAmountSelection.filters : routing?.filters || {};
+  const status = filters?.opportunityStatus;
+  const openOnly = status === "open" || /\babiertas?\b/.test(normalizedQuestion);
+  const opportunities = searchCoachOpportunities({
+    coachOpportunities: opportunityRecords(scoped),
+  }, {
+    accountId: scoped.account?.id,
+    openOnly,
+    activeOnly: openOnly,
+    commercialStatusCodes: openOnly ? ["en_proceso"] :
+      status === "historical" ? ["ganada", "perdida", "anulada"] : [],
+    stageCodes: filters?.stageCode ? [filters.stageCode] : [],
+    closeYear: filters?.closeYear,
+  }).filter((item) => !continuingSelection ||
+    pendingAmountSelection.candidateIds.includes(Number(item.id)));
+  const multiple = customerSingleTargetClarification(question, routing, businessRules);
+  const opportunity = multiple ? null : resolveCustomerOpportunity(
+    scoped, question || "", routing,
+    continuingSelection ? {
+      ...businessRules,
+      serverPolicy: { ...businessRules.serverPolicy, selectedOpportunityFallback: "require_explicit" },
+    } : businessRules,
+    opportunities,
   );
   if (!opportunity) {
+    const message = multiple?.message ||
+      "No pude identificar una única oportunidad de esta cuenta. Selecciónala o indica su nombre para preparar el cambio.";
     return {
-      answer:
-        "No pude identificar una única oportunidad de esta cuenta. Selecciónala o indica su nombre para preparar el cambio. No se modificó el CRM.",
+      answer: `${message} No se modificó el CRM.`,
       responseType: "clarification",
       clarification: {
         type: "select_opportunity",
-        message:
-          "No pude identificar una única oportunidad de esta cuenta. Selecciónala o indica su nombre para preparar el cambio.",
+        message,
         missing: ["Oportunidad única"],
+        candidates: opportunities.map((item) => ({
+          id: Number(item.id), name: item.name, entityType: "opportunity",
+        })),
+        ruleId: multiple?.ruleId || "ambiguous-target",
+        pendingAmountSelection: {
+          accountId: Number(scoped.account?.id), amount,
+          candidateIds: opportunities.map((item) => Number(item.id)),
+          filters: {
+            ...filters,
+            ...(/\babiertas?\b/.test(normalizedQuestion) ? { opportunityStatus: "open" } : {}),
+          },
+        },
       },
       evidence: [],
       inferences: [],
@@ -1799,6 +1936,7 @@ export function buildCustomerIntentResponse({
     confidence: "high",
     recommendedActions: [],
     operations: [operation],
+    amountSelectionCompleted: continuingSelection,
     source: "account_intelligence",
   };
 }
@@ -1975,13 +2113,19 @@ export function normalizeCustomerOperations(
         if (contactId) payload.contactId = contactId;
         return {
           kind: "create_opportunity",
-          title: String(operation.title || `Crear oportunidad${name ? ` ${name}` : ""}`)
+          title: String(
+            operation.title || `Crear oportunidad${name ? ` ${name}` : ""}`,
+          )
             .trim()
             .slice(0, 300),
           evidence: [],
           missingFields: Array.isArray(operation.missingFields)
             ? operation.missingFields
-                .map((field) => String(field || "").trim().slice(0, 120))
+                .map((field) =>
+                  String(field || "")
+                    .trim()
+                    .slice(0, 120),
+                )
                 .filter(Boolean)
                 .slice(0, 30)
             : [],
@@ -2056,7 +2200,11 @@ export function normalizeCustomerOperations(
           evidence: [],
           missingFields: Array.isArray(operation.missingFields)
             ? operation.missingFields
-                .map((field) => String(field || "").trim().slice(0, 120))
+                .map((field) =>
+                  String(field || "")
+                    .trim()
+                    .slice(0, 120),
+                )
                 .filter(Boolean)
                 .slice(0, 30)
             : [],
@@ -2069,7 +2217,9 @@ export function normalizeCustomerOperations(
                 .filter((field) => sourcePayload[field] !== undefined)
                 .map((field) => [
                   field,
-                  String(sourcePayload[field] || "").trim().slice(0, 500),
+                  String(sourcePayload[field] || "")
+                    .trim()
+                    .slice(0, 500),
                 ]),
             ),
             accountId,
@@ -2180,7 +2330,7 @@ export function normalizeCustomerResponse(
         })
         .filter(Boolean)
         .slice(0, 24)
-      : [];
+    : [];
   for (const operation of operations) {
     if (operation.kind !== "activity") continue;
     if (
@@ -2282,8 +2432,10 @@ export function createCustomerAccountAdapter({
     evidence: null,
     answerAudit: null,
     answerGeneration: null,
+    serverRules: { version: null, decisions: [] },
   };
   let activeBusinessRules = null;
+  let activeConversationContext = conversationContext;
   const availableTools = [
     ...COACH_READ_TOOL_CATALOG,
     {
@@ -2293,6 +2445,31 @@ export function createCustomerAccountAdapter({
     },
   ];
   const dependencies = {
+    validateServerRequest: ({ question, routing, businessRules, operationPolicy }) => {
+      if (["other_account", "out_of_scope"].includes(routing?.ambiguity?.reason)) return null;
+      if (!isExplicitCustomerAmountChange(question) && (
+        routing?.mode === "operation" ||
+        routing?.intents?.includes("crm_operation") ||
+        /\b(?:actualiza|cambia|modifica|ajusta|elimina|borra)\b/i.test(normalize(question))
+      )) {
+        const multiple = customerSingleTargetClarification(question, routing, businessRules);
+        if (multiple) {
+          turnDiagnostics.serverRules.decisions.push({ ruleId: multiple.ruleId, outcome: "clarification" });
+          return { ...multiple, type: "select_opportunity", candidates: [] };
+        }
+      }
+      if (!isExplicitCustomerAmountChange(question)) return null;
+      const response = buildCustomerIntentResponse({
+        snapshot, question, routing: { ...routing, intent: "crm_operation" },
+        permissions, allowedOperationKinds: operationPolicy.allowedKinds, businessRules,
+      });
+      if (!response || response.operations?.length) return null;
+      const ruleId = response.clarification?.ruleId || "amount-input";
+      turnDiagnostics.serverRules.decisions.push({ ruleId, outcome: "clarification" });
+      return response.clarification || {
+        type: "missing_fields", message: response.answer, candidates: [], ruleId,
+      };
+    },
     planChannelIntent: async ({
       question,
       context,
@@ -2307,6 +2484,9 @@ export function createCustomerAccountAdapter({
         .filter((intent) => intent.enabled !== false)
         .map((intent) => intent.code);
       if (!enabledIntentCodes.length) return null;
+      const plannerPrompt = await loadPlannerPrompt({
+        channel: "customer_account",
+      });
       const entityCandidates = buildCustomerPlanEntityCandidates(
         snapshot,
         question,
@@ -2316,6 +2496,12 @@ export function createCustomerAccountAdapter({
         permittedTools,
       );
       turnDiagnostics.plannerInput = {
+        plannerPrompt: {
+          channel: plannerPrompt.channel,
+          process: plannerPrompt.process,
+          version: plannerPrompt.version,
+          source: plannerPrompt.source,
+        },
         questionLength: String(question || "").length,
         historyMessageCount: Array.isArray(conversationHistory)
           ? conversationHistory.length
@@ -2350,7 +2536,7 @@ export function createCustomerAccountAdapter({
         entityCandidates,
         researchAgents: agents,
       });
-      const plan = await runStructuredTextResearch({
+      const plannerRequest = {
         schemaName: "customer_account_query_plan",
         systemPrompt:
           "Para preparar una actividad, llena activityDraft.action=prepare; para responder campos de pendingActivity usa continue; si el usuario la descarta usa discard; para consultas factuales usa none. Interpreta las respuestas breves con el borrador y el historial. Usa queries=[crm_operation,contact_query] para una actividad con contacto, no consultas de historial salvo que el usuario las solicite explícitamente. Conserva día/hora no proporcionados como vacíos: 'la próxima semana' es temporalPreference, no una cita. scheduledAt debe ser YYYY-MM-DDTHH:mm en la zona horaria del negocio; calcula fechas relativas con referenceDateTime y no inventes hora ni día. Los campos pendientes del borrador no son ambiguity ni evidencia CRM faltante; solo entidades ambiguas, inaccesibles o referencias no resueltas requieren aclaración. " +
@@ -2370,14 +2556,46 @@ export function createCustomerAccountAdapter({
           jobId,
         },
         signal: getDeadlineSignal(deadlineAt),
+      };
+      const plan = await runStructuredTextResearch({
+        ...plannerRequest,
+        systemPrompt:
+          plannerRequest.systemPrompt +
+          buildCustomerPlannerPromptSupplement(plannerPrompt),
       });
-      return plan
+      let normalizedPlan = normalizeCustomerActivityQueryPlan(question, plan);
+      const pending = conversationContext?.pendingAmountSelection;
+      if (normalizedPlan && isPendingAmountSelectionReply(snapshot, question, pending)) {
+        const response = buildCustomerIntentResponse({
+          snapshot, question, routing: { intent: "crm_operation" },
+          permissions, allowedOperationKinds, businessRules: activeBusinessRules || {},
+          pendingAmountSelection: pending,
+        });
+        const operation = response?.operations?.[0];
+        const candidate = entityCandidates.serverEntityCandidates.find((item) =>
+          item.entityType === "opportunity" && item.recordId === operation?.opportunityId);
+        if (operation && candidate) {
+          normalizedPlan = {
+            ...normalizedPlan, queries: ["crm_operation"], mode: "operation",
+            operationKind: "opportunity_field", confidence: "high",
+            entities: { opportunityReference: candidate.referenceText },
+            filters: pending.filters,
+            referenceResolution: {
+              targetType: "opportunity", cardinality: "single",
+              source: "conversation_history", candidateKeys: [candidate.candidateKey],
+            },
+            ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
+          };
+          turnDiagnostics.serverRules.decisions.push({ ruleId: "amount-target", outcome: "continued" });
+        }
+      }
+      return normalizedPlan
         ? {
-            ...plan,
+            ...normalizedPlan,
             serverEntityCandidates: entityCandidates.serverEntityCandidates,
             serverSelectedAccountName: snapshot.account?.name || "",
           }
-        : plan;
+        : normalizedPlan;
     },
     loadChannelIntentConfigurations: ({ channel }) =>
       loadChannelIntentConfigurations({ channel }),
@@ -2401,7 +2619,7 @@ export function createCustomerAccountAdapter({
         authorizedTools: permittedTools,
         conversationHistory,
         businessRules,
-        conversationContext: readConversationContext || conversationContext,
+        conversationContext: readConversationContext || activeConversationContext,
         channelIntentRouting,
         channelIntentCatalog,
         executionTrace,
@@ -2460,10 +2678,13 @@ export function createCustomerAccountAdapter({
         readToolResults: initialReadToolResults,
         snapshot,
         permissions,
-        pendingActivity: conversationContext?.pendingActivity,
+        pendingActivity: activeConversationContext?.pendingActivity,
       });
       if (activityResponse) {
-        recordAnswerGeneration("deterministic_activity_draft", activityResponse);
+        recordAnswerGeneration(
+          "deterministic_activity_draft",
+          activityResponse,
+        );
         turnDiagnostics.evidence = {
           status: "activity_entities_validated",
           rounds: 0,
@@ -2483,6 +2704,8 @@ export function createCustomerAccountAdapter({
           : routing,
         permissions,
         allowedOperationKinds: payload.operationPolicy?.allowedKinds,
+        businessRules: activeBusinessRules || {},
+        pendingAmountSelection: activeConversationContext?.pendingAmountSelection || null,
       });
       const deterministicOperationResponse = isExplicitCustomerAmountChange(
         payload.question,
@@ -2522,9 +2745,10 @@ export function createCustomerAccountAdapter({
         : [];
       const turnDeadline =
         Number(deadlineAt) ||
-        Date.now() + CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs;
+        Date.now() + getCustomerEvidenceLimits(activeBusinessRules || {}).maxTurnMs;
       const followUpIntents = new Set();
       const evidenceLoop = await runCustomerEvidenceLoop({
+        limits: getCustomerEvidenceLimits(activeBusinessRules || {}),
         initialReadToolResults,
         initialQueryErrors: snapshotQueryErrors,
         unqueriedAuthorizedTools,
@@ -2546,7 +2770,7 @@ export function createCustomerAccountAdapter({
             context: {
               question: payload.question,
               recentConversation: conversationHistory.slice(-8),
-              validatedContinuation: conversationContext || null,
+              validatedContinuation: activeConversationContext || null,
               operationPolicy: payload.operationPolicy || {},
               intentPlan: routing
                 ? {
@@ -2637,12 +2861,13 @@ export function createCustomerAccountAdapter({
           if (!followUpTools.length) return { readToolResults: [] };
           for (const code of followUpRouting.intents) followUpIntents.add(code);
           const followUpReadModel = await buildCustomerReadModel({
+            readQueryBudget: remainingReadQueries,
             user,
             question: payload.question,
             snapshot,
             availableTools: followUpTools,
             conversationHistory,
-            conversationContext,
+            conversationContext: activeConversationContext,
             businessRules: activeBusinessRules || {},
             channelIntentRouting: {
               ...followUpRouting,
@@ -2671,6 +2896,16 @@ export function createCustomerAccountAdapter({
           evidenceLoop.readToolResults.slice(initialReadToolResults.length),
         ),
       };
+      turnDiagnostics.serverRules.decisions.push({
+        ruleId: "read-budget",
+        outcome: evidenceLoop.errorCode === "read_query_limit_reached" ? "limited" : "applied",
+        readQueries: evidenceLoop.readToolResults.length,
+      }, {
+        ruleId: "evidence-rounds", outcome: evidenceLoop.status,
+        rounds: evidenceLoop.rounds,
+      }, {
+        ruleId: "turn-deadline", outcome: evidenceLoop.errorCode === "turn_timeout" ? "limited" : "applied",
+      });
       if (!new Set(["sufficient", "no_results"]).has(evidenceLoop.status)) {
         const evidenceFailure = buildCustomerEvidenceFailureResponse({
           ...evidenceLoop,
@@ -2703,7 +2938,10 @@ export function createCustomerAccountAdapter({
           evidenceLoop.readToolResults,
         );
         if (accountOverview) {
-          recordAnswerGeneration("deterministic_account_overview", accountOverview);
+          recordAnswerGeneration(
+            "deterministic_account_overview",
+            accountOverview,
+          );
         }
         return (
           accountOverview ||
@@ -2887,9 +3125,17 @@ export function createCustomerAccountAdapter({
                     type: "object",
                     fields: [
                       { key: "accountId", type: "number", example: 7 },
-                      { key: "name", type: "string", example: "Renovación anual" },
+                      {
+                        key: "name",
+                        type: "string",
+                        example: "Renovación anual",
+                      },
                       { key: "amountUsd", type: "number", example: 12000 },
-                      { key: "closeDate", type: "string", example: "2027-12-31" },
+                      {
+                        key: "closeDate",
+                        type: "string",
+                        example: "2027-12-31",
+                      },
                       { key: "contactId", type: "number", example: 12 },
                       { key: "firstName", type: "string", example: "" },
                       { key: "lastName", type: "string", example: "" },
@@ -3029,6 +3275,7 @@ export function createCustomerAccountAdapter({
               proposalOrigin: deterministicOperationResponse
                 ? "server_deterministic"
                 : "model_generated",
+              validatedAmountSelection: activeConversationContext?.pendingAmountSelection || null,
               proposedAnswer: {
                 answer: aiResult.answer,
                 evidence: Array.isArray(aiResult.evidence)
@@ -3107,6 +3354,9 @@ export function createCustomerAccountAdapter({
           throw error;
         }
         answerAuditDiagnostics.status = answerAudit?.status || "unavailable";
+        turnDiagnostics.serverRules.decisions.push({
+          ruleId: "answer-audit", outcome: answerAuditDiagnostics.status,
+        });
         answerAuditDiagnostics.unsupportedClaims = Array.isArray(
           answerAudit?.unsupportedClaims,
         )
@@ -3138,7 +3388,7 @@ export function createCustomerAccountAdapter({
             : answerAudit?.status === "inconclusive"
               ? "answer_audit_inconclusive"
               : "answer_audit_unavailable";
-              recordAnswerGeneration("answer_audit_rejected", aiResult);
+        recordAnswerGeneration("answer_audit_rejected", aiResult);
         turnDiagnostics.fallback = {
           used: true,
           reasonCode: answerAuditFailureCode,
@@ -3168,14 +3418,43 @@ export function createCustomerAccountAdapter({
       changed: false,
       conflict: null,
     }),
-    normalizeResponse: (result, scopedSnapshot, question, context) =>
-      normalizeCustomerResponse(
+    normalizeResponse: (result, scopedSnapshot, question, context) => {
+      let response = normalizeCustomerResponse(
         result,
         scopedSnapshot,
         question,
         context,
         permissions,
-      ),
+      );
+      const targetsByKind = new Map();
+      for (const operation of response.operations) {
+        const id = operation.kind === "account_field" ? operation.accountId :
+          operation.kind === "contact_field" ? operation.contactId :
+          ["opportunity_field", "stage_answer", "activity"].includes(operation.kind)
+            ? operation.opportunityId : null;
+        if (!id) continue;
+        if (!targetsByKind.has(operation.kind)) targetsByKind.set(operation.kind, new Set());
+        targetsByKind.get(operation.kind).add(Number(id));
+      }
+      if ([...targetsByKind.values()].some((ids) => ids.size > 1)) {
+        const message = "Solo puedo preparar operaciones para un registro a la vez. ¿Cuál quieres modificar?";
+        response = {
+          ...response, answer: message, responseType: "clarification",
+          operations: [], recommendedActions: [],
+          clarification: { type: "missing_fields", message, ruleId: "single-operation-target" },
+        };
+        turnDiagnostics.serverRules.decisions.push({
+          ruleId: "single-operation-target", outcome: "rejected",
+        });
+      }
+      turnDiagnostics.serverRules.decisions.push({
+        ruleId: "proposal-contract",
+        outcome: response.operations.length < (result.operations?.length || 0) ? "rejected" : "validated",
+        proposed: result.operations?.length || 0,
+        accepted: response.operations.length,
+      });
+      return response;
+    },
     featureCode: "commercial_intelligence.account_chat",
     getTurnDiagnostics: () => ({
       ...turnDiagnostics,
@@ -3184,6 +3463,7 @@ export function createCustomerAccountAdapter({
   };
   return {
     channel: "customer_account",
+    getTurnDiagnostics: dependencies.getTurnDiagnostics,
     availableTools,
     permissions,
     channelRules: { accountScoped: true, noSharedCoachSession: true },
@@ -3213,6 +3493,9 @@ export function createCustomerAccountAdapter({
         process: "default",
       });
       activeBusinessRules = businessRules;
+      turnDiagnostics.serverRules.decisions = [];
+      turnDiagnostics.serverRules.version = businessRules.serverRulesVersion ?? 0;
+      turnDiagnostics.serverRules.policy = getCustomerServerPolicy(businessRules);
       const currentScope = businessRules.scope || {};
       const storedContinuationContext =
         turnConversationContext || conversationContext;
@@ -3229,6 +3512,7 @@ export function createCustomerAccountAdapter({
                 : storedContinuationContext.contactId,
           }
         : null;
+      activeConversationContext = effectiveConversationContext;
       const effectiveContext = {
         ...context,
         opportunityId:
@@ -3291,6 +3575,8 @@ export function createCustomerAccountAdapter({
                   ),
                 },
                 policy: {
+                  serverRulesVersion: businessRules.serverRulesVersion ?? 0,
+                  serverPolicy: businessRules.serverPolicy,
                   channelRules: this.channelRules,
                   businessScope: Object.fromEntries(
                     Object.entries(currentScope).filter(

@@ -12,6 +12,7 @@ function fixture({
   audit = { status: "supported" },
   reads = {},
   mode = "brief_context",
+  coachIntentClassification = null,
   guide = "Guía autorizada: confirmar necesidades antes de avanzar",
   limits,
 } = {}) {
@@ -72,6 +73,7 @@ function fixture({
     question: "¿Qué debo revisar?",
     history: [],
     context: { accountId: 7 },
+    coachIntentClassification,
     limits,
   });
   return { pipeline, trace, calls, executeReadTool, prepareReadModel };
@@ -98,6 +100,30 @@ async function run(f, tools = ["searchAccounts"]) {
 }
 
 describe("Coach B6–B10 pipeline", () => {
+  it("uses B6's resolved intent to constrain the planner's proposed reads", async () => {
+    const f = fixture({
+      coachIntentClassification: {
+        decisionTrace: {
+          finalDecision: { intent: "account_query" },
+          semanticDecision: { confidence: 0.9 },
+        },
+      },
+      plan: {
+        intent: "seller_coaching",
+        mode: "coaching",
+        reads: [{ toolName: "searchOpportunities", filters: {} }],
+      },
+    });
+
+    const plan = await f.pipeline.hooks.classifyCoachIntentWithModel({
+      catalog: COACH_INTENT_CATALOG,
+    });
+
+    expect(plan.intent).toBe("account_query");
+    expect(plan.mode).toBe("brief_context");
+    expect(plan.reads).toEqual([]);
+  });
+
   it("plans, reads, verifies, synthesizes and audits with call/return traces", async () => {
     const f = fixture();
     const result = await run(f);

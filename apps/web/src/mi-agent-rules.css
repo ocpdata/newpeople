@@ -1,10 +1,22 @@
-.mi-agent-admin-rules {
+.mi-agent-admin-rules,
+.mi-agent-planner-prompts {
   display: grid;
   gap: 14px;
   margin: 18px 0;
   padding: 16px;
   border: 1px solid #dbe5ea;
   border-radius: 6px;
+}
+.mi-agent-planner-prompts article {
+  padding: 14px;
+}
+.mi-agent-planner-prompts textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.mi-agent-planner-prompts pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .mi-agent-admin-rules-summary {
   display: list-item;
@@ -822,4 +834,68 @@
   .mi-agent-channel-intent-options {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+.mi-agent-server-rule-category {
+  border: 1px solid #dbe4ec;
+  border-radius: 8px;
+  margin: 12px 0;
+  padding: 12px;
+}
+
+.mi-agent-server-rule-category > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mi-agent-server-rule {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #dbe4ec;
+  padding: 14px 0;
+  margin-top: 12px;
+}
+
+.mi-agent-server-rule p {
+  margin: 0;
+}
+
+.mi-agent-server-rule-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.mi-agent-server-rules-operations {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px 16px;
+}
+
+.mi-agent-server-rules-operations label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 0;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.mi-agent-server-rules input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: #087c74;
+  cursor: pointer;
+}
+
+.mi-agent-server-rules input[type="checkbox"]:disabled {
+  cursor: default;
+}
+
+.mi-agent-server-rules-error {
+  color: #b42318;
 }

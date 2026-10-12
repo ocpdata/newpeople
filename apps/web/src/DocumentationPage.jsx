@@ -53,7 +53,10 @@ function renderInlineMarkdown(text = "", documentPath = "", assetUrls = {}) {
     const src = escapeHtml(assetUrls[resolvedSource] || resolvedSource);
     return `<img src="${src}" alt="${alt}" loading="lazy" />`;
   });
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  html = html.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+  );
   return html;
 }
 
@@ -68,98 +71,162 @@ function splitMarkdownTableRow(row) {
 
 function isMarkdownTableSeparator(row) {
   const cells = splitMarkdownTableRow(row);
-  return (
-    cells.length > 0 &&
-    cells.every((cell) => /^:?-{3,}:?$/.test(cell))
-  );
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-function renderMarkdownToHtml(markdown = "", documentPath = "", assetUrls = {}) {
-  const content = String(markdown || "").replace(/\r\n/g, "\n").trim();
+function renderMarkdownToHtml(
+  markdown = "",
+  documentPath = "",
+  assetUrls = {},
+) {
+  const content = String(markdown || "")
+    .replace(/\r\n/g, "\n")
+    .trim();
   if (!content) return "";
 
-  const blocks = content.split(/\n\s*\n/);
+  const renderBlock = (block) => {
+    const trimmed = block.trim();
+    if (!trimmed) return "";
 
-  return blocks
-    .map((block) => {
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const text = renderInlineMarkdown(
+        headingMatch[2],
+        documentPath,
+        assetUrls,
+      );
+      return `<h${level}>${text}</h${level}>`;
+    }
+
+    const fencedCode = trimmed.match(/^```(\w+)?\n([\s\S]*?)\n```$/);
+    if (fencedCode) {
+      const code = escapeHtml(fencedCode[2]);
+      return `<pre class="documentation-code"><code>${code}</code></pre>`;
+    }
+
+    const listLines = trimmed.split(/\n/);
+    if (
+      listLines.length >= 2 &&
+      listLines[0].includes("|") &&
+      isMarkdownTableSeparator(listLines[1])
+    ) {
+      const headers = splitMarkdownTableRow(listLines[0]);
+      const rows = listLines.slice(2).map(splitMarkdownTableRow);
+      const headerHtml = headers
+        .map(
+          (cell) =>
+            `<th>${renderInlineMarkdown(cell, documentPath, assetUrls)}</th>`,
+        )
+        .join("");
+      const bodyHtml = rows
+        .map(
+          (row) =>
+            `<tr>${headers
+              .map(
+                (_header, index) =>
+                  `<td>${renderInlineMarkdown(
+                    row[index] || "",
+                    documentPath,
+                    assetUrls,
+                  )}</td>`,
+              )
+              .join("")}</tr>`,
+        )
+        .join("");
+      return `<div class="documentation-table-wrap"><table class="documentation-table"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
+    }
+
+    const isList = listLines.every((line) =>
+      /^([-*+]\s+|\d+\.\s+)/.test(line.trim()),
+    );
+    if (isList) {
+      const ordered = listLines.every((line) => /^\d+\.\s+/.test(line.trim()));
+      const tag = ordered ? "ol" : "ul";
+      const items = listLines
+        .map((line) => {
+          const cleaned = line.trim();
+          const text = cleaned.replace(/^([-*+]|\d+\.)\s+/, "");
+          return `<li>${renderInlineMarkdown(text, documentPath, assetUrls)}</li>`;
+        })
+        .join("");
+
+      return `<${tag}>${items}</${tag}>`;
+    }
+
+    const quoteLines = trimmed.split(/\n/);
+    const isQuote = quoteLines.every((line) => /^>\s?/.test(line));
+    if (isQuote) {
+      const quoteHtml = quoteLines
+        .map((line) =>
+          renderInlineMarkdown(
+            line.replace(/^>\s?/, ""),
+            documentPath,
+            assetUrls,
+          ),
+        )
+        .join("<br />");
+      return `<blockquote>${quoteHtml}</blockquote>`;
+    }
+
+    const paragraph = renderInlineMarkdown(trimmed, documentPath, assetUrls);
+    return `<p>${paragraph}</p>`;
+  };
+
+  const renderBlocks = (blocks) => {
+    const rendered = [];
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index];
       const trimmed = block.trim();
-      if (!trimmed) return "";
+      if (!trimmed) continue;
 
-      const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
-      if (headingMatch) {
-        const level = headingMatch[1].length;
-        const text = renderInlineMarkdown(headingMatch[2], documentPath, assetUrls);
-        return `<h${level}>${text}</h${level}>`;
+      const detailsMatch = trimmed.match(/^:::details[ \t]+(.+)$/);
+      if (detailsMatch) {
+        let depth = 1;
+        const innerBlocks = [];
+        let closingIndex = -1;
+
+        for (
+          let candidateIndex = index + 1;
+          candidateIndex < blocks.length;
+          candidateIndex += 1
+        ) {
+          const candidate = blocks[candidateIndex].trim();
+          if (/^:::details[ \t]+/.test(candidate)) {
+            depth += 1;
+            innerBlocks.push(blocks[candidateIndex]);
+          } else if (candidate === ":::") {
+            depth -= 1;
+            if (depth === 0) {
+              closingIndex = candidateIndex;
+              break;
+            }
+            innerBlocks.push(blocks[candidateIndex]);
+          } else {
+            innerBlocks.push(blocks[candidateIndex]);
+          }
+        }
+
+        if (closingIndex >= 0) {
+          const summary = renderInlineMarkdown(
+            detailsMatch[1],
+            documentPath,
+            assetUrls,
+          );
+          rendered.push(
+            `<details class="documentation-collapsible"><summary>${summary}</summary><div class="documentation-collapsible-content">${renderBlocks(innerBlocks)}</div></details>`,
+          );
+          index = closingIndex;
+          continue;
+        }
       }
 
-      const fencedCode = trimmed.match(/^```(\w+)?\n([\s\S]*?)\n```$/);
-      if (fencedCode) {
-        const code = escapeHtml(fencedCode[2]);
-        return `<pre class="documentation-code"><code>${code}</code></pre>`;
-      }
+      rendered.push(renderBlock(block));
+    }
+    return rendered.join("");
+  };
 
-      const listLines = trimmed.split(/\n/);
-      if (
-        listLines.length >= 2 &&
-        listLines[0].includes("|") &&
-        isMarkdownTableSeparator(listLines[1])
-      ) {
-        const headers = splitMarkdownTableRow(listLines[0]);
-        const rows = listLines.slice(2).map(splitMarkdownTableRow);
-        const headerHtml = headers
-          .map(
-            (cell) =>
-              `<th>${renderInlineMarkdown(cell, documentPath, assetUrls)}</th>`,
-          )
-          .join("");
-        const bodyHtml = rows
-          .map(
-            (row) =>
-              `<tr>${headers
-                .map(
-                  (_header, index) =>
-                    `<td>${renderInlineMarkdown(
-                      row[index] || "",
-                      documentPath,
-                      assetUrls,
-                    )}</td>`,
-                )
-                .join("")}</tr>`,
-          )
-          .join("");
-        return `<div class="documentation-table-wrap"><table class="documentation-table"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
-      }
-
-      const isList = listLines.every((line) => /^([-*+]\s+|\d+\.\s+)/.test(line.trim()));
-      if (isList) {
-        const ordered = listLines.every((line) => /^\d+\.\s+/.test(line.trim()));
-        const tag = ordered ? "ol" : "ul";
-        const items = listLines
-          .map((line) => {
-            const cleaned = line.trim();
-            const text = cleaned.replace(/^([-*+]|\d+\.)\s+/, "");
-            return `<li>${renderInlineMarkdown(text, documentPath, assetUrls)}</li>`;
-          })
-          .join("");
-
-        return `<${tag}>${items}</${tag}>`;
-      }
-
-      const quoteLines = trimmed.split(/\n/);
-      const isQuote = quoteLines.every((line) => /^>\s?/.test(line));
-      if (isQuote) {
-        const quoteHtml = quoteLines
-          .map((line) =>
-            renderInlineMarkdown(line.replace(/^>\s?/, ""), documentPath, assetUrls),
-          )
-          .join("<br />");
-        return `<blockquote>${quoteHtml}</blockquote>`;
-      }
-
-      const paragraph = renderInlineMarkdown(trimmed, documentPath, assetUrls);
-      return `<p>${paragraph}</p>`;
-    })
-    .join("");
+  return renderBlocks(content.split(/\n\s*\n/));
 }
 
 export default function DocumentationPage() {
@@ -214,16 +281,15 @@ export default function DocumentationPage() {
       setLoading(true);
       setError("");
       try {
-        const { data } = await api.get(`/api/documentation/${encodeURIComponent(docId)}`);
+        const { data } = await api.get(
+          `/api/documentation/${encodeURIComponent(docId)}`,
+        );
         if (ignore) return;
         setSelectedItem(data?.item || null);
       } catch (loadError) {
         if (ignore) return;
         setError(
-          getApiErrorMessage(
-            loadError,
-            "No fue posible cargar este documento",
-          ),
+          getApiErrorMessage(loadError, "No fue posible cargar este documento"),
         );
       } finally {
         if (!ignore) {
@@ -297,9 +363,12 @@ export default function DocumentationPage() {
           <div>
             <div className="module-title-with-icon">
               <h2>Documentación</h2>
-              <span className="module-title-icon documentation-title-icon" aria-hidden="true">
+              <span
+                className="module-title-icon documentation-title-icon"
+                aria-hidden="true"
+              >
                 <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M6 2.75A2.75 2.75 0 0 0 3.25 5.5v13A2.75 2.75 0 0 0 6 21.25h12.75a1 1 0 0 0 1-1V5a2 2 0 0 0-2-2H6Zm1 3.5h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h5.5a1 1 0 0 1 0 2H7a1 1 0 0 1 0-2Z"/>
+                  <path d="M6 2.75A2.75 2.75 0 0 0 3.25 5.5v13A2.75 2.75 0 0 0 6 21.25h12.75a1 1 0 0 0 1-1V5a2 2 0 0 0-2-2H6Zm1 3.5h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h5.5a1 1 0 0 1 0 2H7a1 1 0 0 1 0-2Z" />
                 </svg>
               </span>
             </div>
@@ -344,14 +413,18 @@ export default function DocumentationPage() {
         <div>
           <div className="module-title-with-icon">
             <h2>Documentación</h2>
-            <span className="module-title-icon documentation-title-icon" aria-hidden="true">
+            <span
+              className="module-title-icon documentation-title-icon"
+              aria-hidden="true"
+            >
               <svg viewBox="0 0 24 24" focusable="false">
-                <path d="M6 2.75A2.75 2.75 0 0 0 3.25 5.5v13A2.75 2.75 0 0 0 6 21.25h12.75a1 1 0 0 0 1-1V5a2 2 0 0 0-2-2H6Zm1 3.5h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h5.5a1 1 0 0 1 0 2H7a1 1 0 0 1 0-2Z"/>
+                <path d="M6 2.75A2.75 2.75 0 0 0 3.25 5.5v13A2.75 2.75 0 0 0 6 21.25h12.75a1 1 0 0 0 1-1V5a2 2 0 0 0-2-2H6Zm1 3.5h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h8.5a1 1 0 1 1 0 2H7a1 1 0 1 1 0-2Zm0 4h5.5a1 1 0 0 1 0 2H7a1 1 0 0 1 0-2Z" />
               </svg>
             </span>
           </div>
           <p className="roles-subtitle">
-            Bibliografía interna del sistema y guías operativas para administración.
+            Bibliografía interna del sistema y guías operativas para
+            administración.
           </p>
         </div>
       </header>
@@ -372,10 +445,15 @@ export default function DocumentationPage() {
                     </div>
                   </div>
 
-                  <p className="documentation-description">{item.description}</p>
+                  <p className="documentation-description">
+                    {item.description}
+                  </p>
                   <div className="documentation-card-footer">
                     <span className="field-hint">{item.path}</span>
-                    <Link className="btn-primary" to={`/documentation/${item.slug}`}>
+                    <Link
+                      className="btn-primary"
+                      to={`/documentation/${item.slug}`}
+                    >
                       Ver documento
                     </Link>
                   </div>

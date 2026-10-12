@@ -4,6 +4,11 @@ import {
   saveCoachBusinessRules,
 } from "./coach/business-rules.js";
 import {
+  getCustomerServerRulesAdmin,
+  saveCustomerServerRules,
+} from "./coach/customer-server-rules.js";
+import { serverRulesUpdateSchema } from "./coach/server-policy.js";
+import {
   createCoachAdminRule,
   deleteCoachAdminRule,
   getCoachAdminRule,
@@ -885,10 +890,53 @@ router.get(
   },
 );
 
+router.get(
+  "/governance/server-rules",
+  requirePermission("mi_coach.admin"),
+  async (_req, res) => {
+    try {
+      return res.json(await getCustomerServerRulesAdmin());
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cargar las reglas del servidor");
+    }
+  },
+);
+
+router.put(
+  "/governance/server-rules/customer_account",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = serverRulesUpdateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Reglas del servidor inválidas", issues: parsed.error.issues,
+      });
+    }
+    try {
+      const saved = await saveCustomerServerRules({ user: req.user, ...parsed.data });
+      await logAuditEvent({
+        req, module: "mi_coach", action: "mi_coach_server_rules_updated",
+        entityType: "mi_coach_business_rules", entityId: null,
+        detail: `Reglas de customer_account/default: versión ${saved.version}`,
+        before: saved.before,
+        after: { ...saved.businessRules, serverRulesVersion: saved.version },
+      });
+      return res.json(await getCustomerServerRulesAdmin());
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible guardar las reglas del servidor");
+    }
+  },
+);
+
 router.put(
   "/governance/business-rules",
   requirePermission("mi_coach.admin"),
   async (req, res) => {
+    if (req.body?.channel === "customer_account") {
+      return res.status(409).json({
+        message: "Cliente existente se administra en Reglas del servidor. Usa el endpoint versionado para evitar sobrescribir cambios concurrentes.",
+      });
+    }
     const parsed = coachBusinessRulesSchema.safeParse(req.body || {});
     if (!parsed.success) {
       return res.status(400).json({
@@ -932,6 +980,11 @@ router.delete(
   "/governance/business-rules",
   requirePermission("mi_coach.admin"),
   async (req, res) => {
+    if (req.query?.channel === "customer_account") {
+      return res.status(409).json({
+        message: "Restaura Cliente existente desde Reglas del servidor y guarda una nueva versión. El historial no se elimina.",
+      });
+    }
     const parsed = z
       .object({
         channel: z
