@@ -4619,7 +4619,7 @@ test.describe("Mi Coach governance and workspaces", () => {
       "Mapa de relaciones de la cuenta",
       "Productos y renovaciones",
       "Hipótesis de expansión",
-      "Hallazgos y métricas",
+      "Ver análisis completo",
     ];
     for (const name of analysisSections) {
       await expect(page.getByRole("region", { name, exact: true })).toHaveCount(0);
@@ -4764,7 +4764,7 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByRole("button", { name: "Preparar llamada" }),
     ).toBeVisible();
     const analysisResult = page.getByRole("region", {
-      name: "Hallazgos y métricas",
+      name: "Ver análisis completo",
     });
     const analysisOperation = page.getByRole("region", {
       name: "Analizar cuenta",
@@ -4801,7 +4801,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
     await expect(
       analysisOperation.getByRole("region", {
-        name: "Hallazgos y métricas",
+        name: "Ver análisis completo",
       }),
     ).toBeVisible();
     expect(analysisResultBox.y).toBeGreaterThan(
@@ -4879,6 +4879,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.setViewportSize(desktopViewport);
     await analysisResult.locator(":scope > summary").click();
     await expect(analysisSummary).toBeVisible();
+    await expect(page.getByText("https://cuenta-demo.example")).not.toBeVisible();
     await expect(
       page.getByText("Hallazgo interno redundante", { exact: true }),
     ).not.toBeVisible();

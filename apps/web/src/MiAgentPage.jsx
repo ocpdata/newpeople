@@ -9053,6 +9053,27 @@ export default function MiAgentPage({
                 </div>
               </header>
               {customerAnalysisSnapshot ? (
+                <CustomerActionResult
+                  label="Ver análisis completo"
+                  className="is-result-wide"
+                  showStatus={false}
+                  status={getCustomerActionStatus({
+                    loading: customerInvestigating,
+                    error: customerActionErrors.analysis,
+                    job: customerIntelligenceJob,
+                  })}
+                  preview={
+                    customerFindings.length
+                      ? `${customerFindings.length} hallazgos · ${customerFindings.filter((finding) => finding.category === "missing_information").length} huecos`
+                      : customerIntelligenceJob?.status === "completed"
+                        ? "No se generaron hallazgos."
+                        : "El detalle del análisis aparecerá aquí."
+                  }
+                  open={openCustomerAction === "analysis"}
+                  onToggle={(isOpen) =>
+                    setCustomerActionResultOpen("analysis", isOpen)
+                  }
+                >
                 <>
                   <section aria-label="Resumen comercial de cuenta">
                     <div className="mi-agent-customer-overview-grid">
@@ -9786,29 +9807,6 @@ export default function MiAgentPage({
                     </details>
                   ) : null}
                 </>
-              ) : null}
-              {customerAnalysisSnapshot ? (
-                <CustomerActionResult
-                  label="Hallazgos y métricas"
-                  className="is-result-wide"
-                  showStatus={false}
-                  status={getCustomerActionStatus({
-                    loading: customerInvestigating,
-                    error: customerActionErrors.analysis,
-                    job: customerIntelligenceJob,
-                  })}
-                  preview={
-                    customerFindings.length
-                      ? `${customerFindings.length} hallazgos · ${customerFindings.filter((finding) => finding.category === "missing_information").length} huecos`
-                      : customerIntelligenceJob?.status === "completed"
-                        ? "No se generaron hallazgos."
-                        : "Los hallazgos aparecerán aquí al analizar la cuenta."
-                  }
-                  open={openCustomerAction === "analysis"}
-                  onToggle={(isOpen) =>
-                    setCustomerActionResultOpen("analysis", isOpen)
-                  }
-                >
                   {customerIntelligenceJob ? (
                     <div className="mi-agent-intelligence-summary">
                       <article>
