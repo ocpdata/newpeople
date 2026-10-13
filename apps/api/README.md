@@ -106,6 +106,13 @@ consultas de B6 ni conceden permisos.
 - Un error al cargar la configuracion falla explicitamente; no reemplaza una
   personalizacion guardada por un valor predeterminado silencioso.
 
+El chat de Cliente existente genera y conserva el mismo diagnostico del turno
+en development y production, incluidas las trazas de ejecucion, el contexto de
+continuidad y los fallos de persistencia. No requiere cambiar `NODE_ENV` ni activar
+una opcion de Administracion. El diagnostico se entrega al usuario autorizado
+para ese job y se conserva al recargar su conversacion; no agrega un permiso
+adicional para los detalles del panel. Los turnos anteriores no se reconstruyen.
+
 Documentacion tecnica relacionada:
 
 - `../../readme/arquitectura-mi-coach.md`

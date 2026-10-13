@@ -388,6 +388,12 @@ En síntesis, B3 guarda el estado y el resultado del job; cuando B1 consulta el 
 - **Job:** cambia su estado final a `completed` y guarda el resultado serializado; o lo marca `failed` con un mensaje de error acotado si el procesamiento/cierre falla. En los canales que lo usan, también actualiza `finished_at` y metadatos de diagnóstico.
 - **Conversación:** agrega la pregunta del usuario y la respuesta del asistente al historial de la sesión, y guarda el contexto actualizado para que el siguiente turno pueda continuar con referencias/filtros vigentes.
 - **Trazabilidad:** conserva la traza de calidad y los diagnósticos asociados al canal/job, como routing, entidades, herramientas usadas, evidencia, auditoría, errores y latencia, según las reglas de cada canal.
+
+En Cliente existente, el diagnóstico del turno y su traza de ejecución se generan
+y persisten tanto en development como en production. La respuesta del job y el
+historial recargado conservan el mismo panel técnico, sin una activación adicional
+por entorno ni un permiso adicional para ese panel. También se conservan las
+trazas de fallos de preparación y persistencia; no se reconstruyen turnos antiguos.
 - **Coach:** puede guardar las operaciones propuestas como registros pendientes/editables asociados al job y a la sesión. Guardar una propuesta no significa ejecutarla ni escribir el cambio en CRM; eso requiere el flujo posterior de confirmación/operación.
 
 **Variación por canal:** Coach actualiza el job y los turnos de la sesión, además de enlazar trazas y propuestas; Cliente existente guarda el resultado junto con el historial y contexto de la sesión de chat de la cuenta; Cuenta nueva guarda el resultado del job y añade los mensajes al historial de la sesión de prospecto. Cada canal persiste solo sus datos de sesión y alcance autorizados.

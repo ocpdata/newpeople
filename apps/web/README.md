@@ -25,6 +25,11 @@ src/
 
 ## Levantar en desarrollo
 
+El panel de Diagnostico de Cliente existente funciona tanto en development como
+en production cuando la API actualizada entrega el diagnostico del turno. Su
+presentacion y detalles son los mismos en ambos entornos; no hay una casilla de
+activacion ni un permiso adicional para ese panel.
+
 ```bash
 npm run dev
 ```

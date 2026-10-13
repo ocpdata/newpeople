@@ -3455,7 +3455,7 @@ export async function createCustomerAccountChatJob({ user, payload }) {
 
 export async function processCustomerAccountChatJob({ jobId, user }) {
   const executionTrace = createTurnExecutionTrace({
-    enabled: config.nodeEnv !== "production",
+    enabled: true,
   });
   const workerSpanId = `account-chat-worker-${Number(jobId)}`;
   const workerStartedAt = Date.now();
@@ -4116,7 +4116,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       persistedHistoryForTrace = nextHistory;
       const persistedConversationContext =
         nextConversationContext || parseJson(sessionRows[0].context_json, null);
-      if (config.nodeEnv !== "production") {
+      {
         const plannerDiagnostics = qualityTrace?.diagnostics?.planner || null;
         const evidenceDiagnostics = qualityTrace?.diagnostics?.evidence || null;
         const toolsUsed = Array.isArray(qualityTrace?.toolsUsed)
@@ -4927,7 +4927,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           Number(user.id),
         ],
       );
-      if (config.nodeEnv !== "production" && response.debug) {
+      if (response.debug) {
         executionTrace.record({
           spanId: persistenceSpanId,
           parentSpanId: workerSpanId,
@@ -5065,9 +5065,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
        WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'`,
       [
         persistenceError,
-        config.nodeEnv === "production"
-          ? null
-          : JSON.stringify({ debug: failureDebug }),
+        JSON.stringify({ debug: failureDebug }),
         Number(jobId),
         Number(user.id),
       ],
