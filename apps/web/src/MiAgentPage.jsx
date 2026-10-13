@@ -2306,14 +2306,24 @@ export default function MiAgentPage({
   canReadProspecting = false,
   canCreateProspecting = false,
   canUpdateProspecting = false,
+  canAccessProspectChat = false,
   canReadCustomerIntelligence = false,
+  canAccessCustomerChat = false,
   canManageCoach = false,
   canDiagnoseCustomerChats = false,
 }) {
   const navigate = useNavigate();
-  const [activeWorkspace, setActiveWorkspace] = useState(
-    canDiagnoseCustomerChats && !canUseCoach ? "chat-diagnostics" : "summary",
-  );
+  const [activeWorkspace, setActiveWorkspace] = useState(() => {
+    if (canUseCoach) return "summary";
+    if (canAccessCustomerChat && canReadCustomerIntelligence) return "customer";
+    if (
+      canAccessProspectChat &&
+      (canReadProspecting || canCreateProspecting)
+    ) return "prospect";
+    if (canManageCoach) return "admin";
+    if (canDiagnoseCustomerChats) return "chat-diagnostics";
+    return "empty";
+  });
   const [chatDiagnosticsQuery, setChatDiagnosticsQuery] = useState("");
   const [chatDiagnosticsStatus, setChatDiagnosticsStatus] = useState("all");
   const [chatDiagnosticsAccountId, setChatDiagnosticsAccountId] = useState("");
@@ -2627,6 +2637,10 @@ export default function MiAgentPage({
 
   useEffect(() => {
     if (coachActiveSessionCheckedRef.current || coachSessionId) return;
+    if (!canUseCoach) {
+      coachActiveSessionCheckedRef.current = true;
+      return;
+    }
     coachActiveSessionCheckedRef.current = true;
     const contextRevision = coachContextRevisionRef.current;
     const request = api.get("/api/mi-agent/coach/sessions/active");
@@ -2656,7 +2670,7 @@ export default function MiAgentPage({
           coachActiveSessionRequestRef.current = null;
         }
       });
-  }, [coachSessionId]);
+  }, [canUseCoach, coachSessionId]);
 
   useEffect(() => {
     if (!coachOperationDraft?.persistentId || savingCoachOperation)
@@ -2745,15 +2759,25 @@ export default function MiAgentPage({
     setLoading(true);
     setError("");
     try {
-      const { data } = await api.get("/api/mi-agent/context");
-      setDashboard(data);
-      const accountsResponse = await api.get("/api/accounts?activeOnly=true");
-      setCoachAccounts(
-        Array.isArray(accountsResponse.data) ? accountsResponse.data : [],
-      );
-      setCustomerAccounts(
-        Array.isArray(accountsResponse.data) ? accountsResponse.data : [],
-      );
+      if (canUseCoach) {
+        const { data } = await api.get("/api/mi-agent/context");
+        setDashboard(data);
+      } else {
+        setDashboard(null);
+      }
+      if (canUseCoach || canReadCustomerIntelligence) {
+        const accountsResponse = await api.get("/api/accounts?activeOnly=true");
+        const accounts = Array.isArray(accountsResponse.data)
+          ? accountsResponse.data
+          : [];
+        setCoachAccounts(canUseCoach ? accounts : []);
+        setCustomerAccounts(
+          canReadCustomerIntelligence ? accounts : [],
+        );
+      } else {
+        setCoachAccounts([]);
+        setCustomerAccounts([]);
+      }
     } catch (requestError) {
       setError(
         getApiErrorMessage(
@@ -2998,7 +3022,12 @@ export default function MiAgentPage({
   }
 
   useEffect(() => {
-    if (canDiagnoseCustomerChats && !canUseCoach) {
+    if (
+      canDiagnoseCustomerChats &&
+      !canUseCoach &&
+      !canAccessCustomerChat &&
+      !canAccessProspectChat
+    ) {
       setLoading(false);
       void loadCustomerChatDiagnostics({ page: 1 });
       return;
@@ -6587,7 +6616,7 @@ export default function MiAgentPage({
               Mi Coach
             </button>
           ) : null}
-          {canReadCustomerIntelligence ? (
+          {canAccessCustomerChat && canReadCustomerIntelligence ? (
             <button
               type="button"
               className={activeWorkspace === "customer" ? "is-active" : ""}
@@ -6597,7 +6626,8 @@ export default function MiAgentPage({
               Cliente existente
             </button>
           ) : null}
-          {canReadProspecting || canCreateProspecting ? (
+          {canAccessProspectChat &&
+          (canReadProspecting || canCreateProspecting) ? (
             <button
               type="button"
               className={activeWorkspace === "prospect" ? "is-active" : ""}
@@ -6652,7 +6682,8 @@ export default function MiAgentPage({
       </div>
 
       {canUseCoach &&
-      (activeWorkspace === "summary" || activeWorkspace === "coach") ? (
+      (activeWorkspace === "summary" ||
+        (activeWorkspace === "coach" && canUseCoach)) ? (
         <nav
           className="mi-agent-workspace-tabs mi-agent-coach-view-tabs"
           aria-label="Vistas de Mi Coach"
@@ -6665,14 +6696,16 @@ export default function MiAgentPage({
           >
             Resumen
           </button>
-          <button
-            type="button"
-            className={activeWorkspace === "coach" ? "is-active" : ""}
-            aria-current={activeWorkspace === "coach" ? "page" : undefined}
-            onClick={() => setActiveWorkspace("coach")}
-          >
-            Conversación
-          </button>
+          {canUseCoach ? (
+            <button
+              type="button"
+              className={activeWorkspace === "coach" ? "is-active" : ""}
+              aria-current={activeWorkspace === "coach" ? "page" : undefined}
+              onClick={() => setActiveWorkspace("coach")}
+            >
+              Conversación
+            </button>
+          ) : null}
         </nav>
       ) : null}
 
@@ -6923,7 +6956,8 @@ export default function MiAgentPage({
             </section>
           </div>
         </section>
-      ) : activeWorkspace === "summary" || activeWorkspace === "coach" ? (
+      ) : activeWorkspace === "summary" ||
+        (activeWorkspace === "coach" && canUseCoach) ? (
         <>
           {activeWorkspace === "summary" ? (
             <section
@@ -7913,7 +7947,7 @@ export default function MiAgentPage({
                               >
                                 Abrir oportunidad
                               </button>
-                            ) : (
+                            ) : canUseCoach ? (
                               <button
                                 type="button"
                                 className="mi-agent-link-button"
@@ -7921,7 +7955,7 @@ export default function MiAgentPage({
                               >
                                 Consultar con Coach
                               </button>
-                            )}
+                            ) : null}
                           </div>
                         ))
                       ) : (
@@ -11641,7 +11675,7 @@ export default function MiAgentPage({
             </section>
           ) : null}
         </section>
-      ) : (
+      ) : activeWorkspace === "admin" && canManageCoach ? (
         <section className="mi-agent-workspace-panel mi-agent-governance-panel">
           <div className="mi-agent-section-heading">
             <div>
@@ -13442,7 +13476,13 @@ export default function MiAgentPage({
             </div>
           ) : null}
         </section>
-      )}
+      ) : activeWorkspace === "empty" ? (
+        <section className="mi-agent-workspace-panel">
+          <div className="mi-agent-empty">
+            No tienes canales habilitados en Mi Coach.
+          </div>
+        </section>
+      ) : null}
 
       {customerContactApplyDraft ? (
         <div

@@ -44,7 +44,10 @@ import { startOpportunityStageValidationWorker } from "./opportunity-stage-valid
 import { ensureOpportunityStageValidationJobSchema } from "./opportunity-stage-validations/schema.js";
 import { startOpportunityDocumentProcessingWorker } from "./opportunity-documents/async.js";
 import { ensureOpportunityDocumentSchema } from "./opportunity-documents/schema.js";
-import { ensureCorePermissions } from "./permissions.js";
+import {
+  ensureCorePermissions,
+  migrateMiCoachPermissions,
+} from "./permissions.js";
 import { ensureAiUsageSchema } from "./ai-usage/service.js";
 import { ensureChatbotSchema } from "./chatbot/schema.js";
 import { startChatbotWorker } from "./routes.chatbot.js";
@@ -76,6 +79,7 @@ export async function startServer() {
   await ensureCommercialTrackingPermissions({ autoAssignRoles });
   await ensureCommercialIntelligencePermissions({ autoAssignRoles });
   await ensureProspectResearchPermissions({ autoAssignRoles });
+  await migrateMiCoachPermissions();
   await ensureCommercialEnablementPermissions({ autoAssignRoles });
   await ensureCommercialPlanningPermissions({ autoAssignRoles });
   await ensureManufacturerRegistrationPermissions({ autoAssignRoles });

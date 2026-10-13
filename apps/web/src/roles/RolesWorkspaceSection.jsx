@@ -14,6 +14,72 @@ function formatPermissionModuleName(moduleName) {
   return moduleName.charAt(0).toUpperCase() + moduleName.slice(1);
 }
 
+const SHARED_COACH_PERMISSION_CODES = new Set([
+  "mi_coach.access",
+  "mi_coach.execute",
+  "mi_coach.admin",
+  "mi_coach.chat_diagnostics",
+  "fuentes_externas.execute",
+]);
+const SHARED_COACH_PERMISSION_LABELS = {
+  "mi_coach.access": {
+    label: "Entrar al módulo Mi Coach",
+    description: "No habilita ningún canal por sí solo.",
+  },
+  "mi_coach.use": {
+    label: "Acceder a Coach",
+    description: "Ver el resumen y abrir la pestaña Coach.",
+  },
+  "mi_coach.execute": {
+    label: "Confirmar propuestas del Coach",
+    description:
+      "También necesitas permiso para cambiar el registro involucrado.",
+  },
+  "mi_coach.admin": {
+    label: "Administrar Mi Coach",
+    description: "Cambiar la configuración y las reglas de Mi Coach.",
+  },
+  "mi_coach.chat_diagnostics": {
+    label: "Revisar conversaciones para soporte",
+    description:
+      "Permite ver conversaciones de otros usuarios. Solo para soporte autorizado.",
+  },
+  "fuentes_externas.execute": {
+    label: "Consultar fuentes públicas",
+    description:
+      "Buscar información pública cuando Administración lo permita.",
+  },
+  "inteligencia_comercial.access": {
+    label: "Acceder a Cliente existente",
+    description: "Ver la pestaña de clientes existentes.",
+  },
+  "inteligencia_comercial.read": {
+    label: "Ver datos de clientes",
+    description:
+      "Consultar cuentas y hallazgos permitidos por tus otros permisos.",
+  },
+  "inteligencia_comercial.update": {
+    label: "Actualizar hallazgos de clientes",
+    description: "Confirmar, rechazar o corregir hallazgos.",
+  },
+  "prospeccion.access": {
+    label: "Acceder a Cuenta nueva",
+    description: "Ver la pestaña de investigación de cuentas nuevas.",
+  },
+  "prospeccion.read": {
+    label: "Ver investigaciones de Cuenta nueva",
+    description: "Abrir fichas y consultar sus hallazgos.",
+  },
+  "prospeccion.create": {
+    label: "Crear investigaciones",
+    description: "Iniciar la investigación de una empresa nueva.",
+  },
+  "prospeccion.update": {
+    label: "Actualizar investigaciones",
+    description: "Confirmar, rechazar o corregir sus hallazgos.",
+  },
+};
+
 export default function RolesWorkspaceSection({
   canUpdateRoles,
   roleStatusFilter,
@@ -41,23 +107,34 @@ export default function RolesWorkspaceSection({
     "mi_coach",
     "inteligencia_comercial",
     "prospeccion",
+    "fuentes_externas",
   ]);
-  const coachPermissionGroups = permissionsByModule.filter(([moduleName]) =>
-    coachModules.has(moduleName),
+  const sharedCoachPermissions = permissions.filter((permission) =>
+    SHARED_COACH_PERMISSION_CODES.has(permission.code),
   );
+  const coachPermissionGroups = permissionsByModule
+    .filter(([moduleName]) => coachModules.has(moduleName))
+    .map(([moduleName, modulePermissions]) => [
+      moduleName,
+      modulePermissions.filter(
+        (permission) => !SHARED_COACH_PERMISSION_CODES.has(permission.code),
+      ),
+    ])
+    .filter(([, modulePermissions]) => modulePermissions.length > 0);
   const otherPermissionGroups = permissionsByModule.filter(
     ([moduleName]) => !coachModules.has(moduleName),
   );
   const renderPermissionGroup = (
     [moduleName, modulePermissions],
     isSubgroup = false,
+    label = "",
   ) => (
     <div
-      key={moduleName}
+      key={`${moduleName}-${label || "module"}`}
       className={`permission-module-group${isSubgroup ? " permission-module-subgroup" : ""}`}
     >
       <div className="permission-module-header">
-        {formatPermissionModuleName(moduleName)}
+        {label || formatPermissionModuleName(moduleName)}
       </div>
       <div className="checkbox-grid">
         {modulePermissions.map((permission) => (
@@ -70,10 +147,15 @@ export default function RolesWorkspaceSection({
               }
             />
             <span className="permission-label">
-              <span className="permission-code">{permission.action}</span>
-              {permission.description && (
+              <span className="permission-code">
+                {SHARED_COACH_PERMISSION_LABELS[permission.code]?.label ||
+                  permission.action}
+              </span>
+              {(SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||
+                permission.description) && (
                 <span className="permission-description">
-                  {permission.description}
+                  {SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||
+                    permission.description}
                 </span>
               )}
             </span>
@@ -304,10 +386,17 @@ export default function RolesWorkspaceSection({
                   <div className="permission-family-header">
                     <span>Mi Coach</span>
                     <span className="permission-family-description">
-                      Acceso general y espacios de trabajo
+                      Acceso común, chats y capacidades compartidas
                     </span>
                   </div>
                   <div className="permission-family-subgroups">
+                    {sharedCoachPermissions.length > 0
+                      ? renderPermissionGroup(
+                          ["mi_coach", sharedCoachPermissions],
+                          true,
+                          "Acceso y capacidades comunes",
+                        )
+                      : null}
                     {coachPermissionGroups.map((group) =>
                       renderPermissionGroup(group, true),
                     )}

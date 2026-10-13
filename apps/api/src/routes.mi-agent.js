@@ -2,7 +2,7 @@ import express from "express";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { requirePermission } from "./auth.js";
+import { requireAnyPermission, requirePermission } from "./auth.js";
 import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
@@ -106,7 +106,72 @@ const coachIntentPreviewSchema = z.object({
 const MI_AGENT_FEATURE_CODE = "mi_agent.analysis";
 const MI_COACH_FEATURE_CODE = "mi_coach.chat";
 const MI_COACH_USE_PERMISSION = "mi_coach.use";
+const CUSTOMER_CHAT_PERMISSION = "inteligencia_comercial.access";
 const MI_COACH_EXECUTE_PERMISSION = "mi_coach.execute";
+const requireCoachOperationAccess = requireAnyPermission([
+  MI_COACH_USE_PERMISSION,
+  CUSTOMER_CHAT_PERMISSION,
+]);
+
+router.use(requirePermission("mi_coach.access"));
+
+router.use(async (req, res, next) => {
+  const path = req.path;
+  if (req.method === "POST" && path === "/coach/operations") {
+    const permission =
+      String(req.body?.originChannel || "coach") === "customer_account"
+        ? CUSTOMER_CHAT_PERMISSION
+        : MI_COACH_USE_PERMISSION;
+    return requirePermission(permission)(req, res, next);
+  }
+  const operationMatch = path.match(/^\/coach\/operations\/(\d+)(?:\/|$)/);
+  if (operationMatch) {
+    try {
+      const operation = await getCoachOperation(
+        req.user.id,
+        Number(operationMatch[1]),
+      );
+      if (!operation) return next();
+      const permission =
+        operation.sourceChannel === "customer_account"
+          ? CUSTOMER_CHAT_PERMISSION
+          : MI_COACH_USE_PERMISSION;
+      return requirePermission(permission)(req, res, next);
+    } catch (error) {
+      return next(error);
+    }
+  }
+  const handoffMatch = path.match(/^\/coach\/handoffs\/([^/]+)/);
+  if (handoffMatch) {
+    try {
+      const rows = await query(
+        `SELECT id FROM coach_session_operations
+         WHERE handoff_token = ? AND user_id = ? LIMIT 1`,
+        [String(handoffMatch[1]), Number(req.user.id)],
+      );
+      if (!rows.length) return next();
+      const operation = await getCoachOperation(
+        req.user.id,
+        Number(rows[0].id),
+      );
+      const permission =
+        operation?.sourceChannel === "customer_account"
+          ? CUSTOMER_CHAT_PERMISSION
+          : MI_COACH_USE_PERMISSION;
+      return requirePermission(permission)(req, res, next);
+    } catch (error) {
+      return next(error);
+    }
+  }
+  const isCoachChatRoute =
+    path === "/coach" ||
+    /^\/coach\/(sessions|jobs|leads)(\/|$)/.test(path) ||
+    path === "/coach/observability" ||
+    path === "/coach/quality/traces" ||
+    /^\/coach\/quality\/[^/]+\/feedback$/.test(path);
+  if (!isCoachChatRoute) return next();
+  return requirePermission(MI_COACH_USE_PERMISSION)(req, res, next);
+});
 const TERMINAL_OPPORTUNITY_COLLECTIONS = [
   "wonOpportunities",
   "lostOpportunities",
@@ -4527,7 +4592,7 @@ router.post(
 
 router.post(
   "/coach/operations",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const parsed = coachOperationSchema.safeParse(req.body?.operation);
     if (!parsed.success) {
@@ -4554,7 +4619,7 @@ router.post(
     if (!new Set(["coach", "customer_account"]).has(originChannel)) {
       return res.status(400).json({ message: "Canal de origen no valido" });
     }
-    const coachOperation = { ...parsed.data, sourceChannel: "coach" };
+    const coachOperation = { ...parsed.data, sourceChannel: originChannel };
     if (originChannel === "customer_account") {
       const accountId = Number(req.body?.context?.accountId || 0);
       if (!accountId || Number(req.body?.sessionId || 0)) {
@@ -4749,7 +4814,7 @@ router.post(
 
 router.patch(
   "/coach/operations/:operationId",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const operationId = Number(req.params.operationId || 0);
     const version = Number(req.body?.version || 0);
@@ -4782,7 +4847,7 @@ router.patch(
 
 router.get(
   "/coach/operations/:operationId",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const operation = await getCoachOperation(
       req.user.id,
@@ -4796,7 +4861,7 @@ router.get(
 
 router.post(
   "/coach/operations/:operationId/handoff",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const operationId = Number(req.params.operationId || 0);
     if (!operationId)
@@ -4874,7 +4939,7 @@ router.post(
 
 router.post(
   "/coach/operations/:operationId/review",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     try {
       const operation = await reviewControlledCoachOperation({
@@ -4898,7 +4963,7 @@ router.post(
 
 router.post(
   "/coach/operations/:operationId/execute",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     try {
       const operation = await executeControlledCoachOperation({
@@ -4932,7 +4997,7 @@ router.post(
 
 router.post(
   "/coach/operations/:operationId/revert",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     try {
       const operation = await revertControlledCoachOperation({
@@ -4953,7 +5018,7 @@ router.post(
 
 router.get(
   "/coach/handoffs/:token",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const moduleName = String(req.query?.module || "").trim();
     if (!moduleName)
@@ -4990,7 +5055,7 @@ router.get(
 
 router.post(
   "/coach/handoffs/:token/complete",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const moduleName = String(req.body?.module || "").trim();
     const entityId = Number(req.body?.entityId || 0) || null;
@@ -5022,7 +5087,7 @@ router.post(
 
 router.post(
   "/coach/handoffs/:token/cancel",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const moduleName = String(req.body?.module || "").trim();
     const reason = String(req.body?.reason || "").trim();
@@ -5050,7 +5115,7 @@ router.post(
 
 router.post(
   "/coach/operations/:operationId/status",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const operationId = Number(req.params.operationId || 0);
     const status = String(req.body?.status || "");
@@ -5336,7 +5401,7 @@ router.post(
 
 router.post(
   "/coach/operations/:operationId/reject",
-  requirePermission(MI_COACH_USE_PERMISSION),
+  requireCoachOperationAccess,
   async (req, res) => {
     const operationId = Number(req.params.operationId || 0);
     if (!operationId)

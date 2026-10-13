@@ -25,7 +25,10 @@ import { processPendingProposalExecutiveSummaryGenerationJobs } from "../src/rou
 import { processPendingOpportunityStageAnswerSuggestionJobs } from "../src/opportunity-stage-answer-suggestions/service.js";
 import { processPendingOpportunityStageValidationJobs } from "../src/opportunity-stage-validations/service.js";
 import { processPendingOpportunityDocumentJobs } from "../src/opportunity-documents/service.js";
-import { ensureCorePermissions } from "../src/permissions.js";
+import {
+  ensureCorePermissions,
+  migrateMiCoachPermissions,
+} from "../src/permissions.js";
 import { ensureOpportunityDocumentSchema } from "../src/opportunity-documents/schema.js";
 import { ensureOpportunityWorkspaceSchema } from "../src/opportunity-workspace/schema.js";
 import { ensureProspectResearchPermissions } from "../src/prospect-research/permissions.js";
@@ -93,6 +96,7 @@ describe("API integration baseline", () => {
       governanceSettingsRows[0]?.settings_json;
     await ensureProspectResearchPermissions();
     await ensureProspectResearchSchema();
+    await migrateMiCoachPermissions();
     await ensureCommercialTrackingPermissions();
     await ensureCommercialPlanningPermissions();
     await ensureCommercialPlanningSchema();
@@ -229,16 +233,18 @@ describe("API integration baseline", () => {
     });
     ctx.miCoachUseRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_coach_use`,
-      permissionCodes: ["mi_coach.use"],
+      permissionCodes: ["mi_coach.access", "mi_coach.use"],
     });
     ctx.miCoachAdminRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_coach_admin`,
-      permissionCodes: ["mi_coach.use", "mi_coach.admin"],
+      permissionCodes: ["mi_coach.access", "mi_coach.use", "mi_coach.admin"],
     });
     ctx.miCoachOperatorRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_coach_operator`,
       permissionCodes: [
+        "mi_coach.access",
         "mi_coach.use",
+        "inteligencia_comercial.access",
         "mi_coach.execute",
         "cuentas.read",
         "cuentas.create",
@@ -250,7 +256,8 @@ describe("API integration baseline", () => {
     ctx.commercialIntelligenceReadRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_intelligence_read`,
       permissionCodes: [
-        "mi_coach.use",
+        "mi_coach.access",
+        "inteligencia_comercial.access",
         "inteligencia_comercial.read",
         "cuentas.read",
         "contactos.read",
@@ -262,7 +269,8 @@ describe("API integration baseline", () => {
     ctx.commercialIntelligenceUpdateRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_intelligence_update`,
       permissionCodes: [
-        "mi_coach.use",
+        "mi_coach.access",
+        "inteligencia_comercial.access",
         "inteligencia_comercial.read",
         "inteligencia_comercial.update",
         "cuentas.read",
@@ -274,17 +282,22 @@ describe("API integration baseline", () => {
     });
     ctx.commercialIntelligenceNoAccountRoleId = await createRole({
       name: `${TEST_PREFIX}_commercial_intelligence_no_account`,
-      permissionCodes: ["mi_coach.use", "inteligencia_comercial.read"],
+      permissionCodes: [
+        "mi_coach.access",
+        "inteligencia_comercial.access",
+        "inteligencia_comercial.read",
+      ],
     });
     ctx.chatDiagnosticsRoleId = await createRole({
       name: `${TEST_PREFIX}_chat_diagnostics`,
-      permissionCodes: ["inteligencia_comercial.chat_diagnostics"],
+      permissionCodes: ["mi_coach.access", "mi_coach.chat_diagnostics"],
     });
     ctx.prospectResearchRoleId = await createRole({
       name: `${TEST_PREFIX}_prospect_research`,
       permissionCodes: [
-        "mi_coach.use",
+        "mi_coach.access",
         "prospeccion.read",
+        "prospeccion.access",
         "prospeccion.create",
         "prospeccion.update",
         "cuentas.create",
@@ -1150,9 +1163,9 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${opportunityOnlyLogin.body.token}`);
 
     expect(forbiddenContextResponse.status).toBe(403);
-    expect(forbiddenContextResponse.body.requiredPermission).toBe(
-      "mi_coach.use",
-    );
+      expect(forbiddenContextResponse.body.requiredPermission).toBe(
+        "mi_coach.access",
+      );
 
     const coachLogin = await login(
       request(app),
@@ -1182,10 +1195,224 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("cada chat requiere su propio permiso además del acceso al módulo", async () => {
+    const customerNoChatRoleId = await createRole({
+      name: `${TEST_PREFIX}_customer_no_chat_access`,
+      permissionCodes: [
+        "mi_coach.access",
+        "inteligencia_comercial.read",
+        "cuentas.read",
+      ],
+    });
+    const prospectNoChatRoleId = await createRole({
+      name: `${TEST_PREFIX}_prospect_no_chat_access`,
+      permissionCodes: ["mi_coach.access", "prospeccion.read"],
+    });
+    cleanup.roleIds.push(customerNoChatRoleId, prospectNoChatRoleId);
+
+    const customerUserId = await createUser({
+      fullName: "API Customer Without Chat Access",
+      email: `${TEST_PREFIX}.customer.no.chat@example.com`,
+      roleIds: [customerNoChatRoleId],
+    });
+    const prospectUserId = await createUser({
+      fullName: "API Prospect Without Chat Access",
+      email: `${TEST_PREFIX}.prospect.no.chat@example.com`,
+      roleIds: [prospectNoChatRoleId],
+    });
+    cleanup.userIds.push(customerUserId, prospectUserId);
+
+    const customerLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.customer.no.chat@example.com`,
+    );
+    const customerResponse = await request(app)
+      .get("/api/commercial-intelligence/account-intelligence/snapshot?accountId=1")
+      .set("Authorization", `Bearer ${customerLogin.body.token}`);
+    expect(customerResponse.status).toBe(403);
+    expect(customerResponse.body.requiredPermission).toBe(
+      "inteligencia_comercial.access",
+    );
+    const customerOperationResponse = await request(app)
+      .post("/api/mi-agent/coach/operations")
+      .set("Authorization", `Bearer ${customerLogin.body.token}`)
+      .send({ originChannel: "customer_account", operation: {} });
+    expect(customerOperationResponse.status).toBe(403);
+    expect(customerOperationResponse.body.requiredPermission).toBe(
+      "inteligencia_comercial.access",
+    );
+
+    const prospectLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.prospect.no.chat@example.com`,
+    );
+    const prospectResponse = await request(app)
+      .get("/api/prospect-research/sessions")
+      .set("Authorization", `Bearer ${prospectLogin.body.token}`);
+    expect(prospectResponse.status).toBe(403);
+    expect(prospectResponse.body.requiredPermission).toBe("prospeccion.access");
+  });
+
+  test("el bootstrap conserva accesos por chat y consolida administración", async () => {
+    const legacyAccessRoleId = await createRole({
+      name: `${TEST_PREFIX}_legacy_chat_access`,
+      permissionCodes: [
+        "mi_coach.use",
+        "inteligencia_comercial.read",
+        "cuentas.read",
+        "prospeccion.read",
+      ],
+    });
+    const baseOnlyRoleId = await createRole({
+      name: `${TEST_PREFIX}_base_only_access`,
+      permissionCodes: ["mi_coach.use"],
+    });
+    const legacyAdminRoleId = await createRole({
+      name: `${TEST_PREFIX}_legacy_admin_access`,
+      permissionCodes: [],
+    });
+    const legacyCoachRoleId = await createRole({
+      name: `${TEST_PREFIX}_legacy_coach_chat_access`,
+      permissionCodes: [],
+    });
+    cleanup.roleIds.push(
+      legacyAccessRoleId,
+      baseOnlyRoleId,
+      legacyAdminRoleId,
+      legacyCoachRoleId,
+    );
+
+    const now = new Date();
+    await query(
+      `INSERT INTO permissions
+        (code, module, action, description, created_at, updated_at)
+       VALUES ('mi_coach.chat', 'mi_coach', 'chat', 'Legacy Coach chat', ?, ?)`,
+      [now, now],
+    );
+    const [legacyCoachChatPermission] = await query(
+      "SELECT id FROM permissions WHERE code = 'mi_coach.chat' LIMIT 1",
+    );
+    await query(
+      `INSERT INTO role_permissions (role_id, permission_id, created_at)
+       VALUES (?, ?, ?)`,
+      [legacyCoachRoleId, Number(legacyCoachChatPermission.id), now],
+    );
+    const legacyAdminCodes = [
+      "inteligencia_comercial.admin",
+      "prospeccion.admin",
+    ];
+    for (const [module, code] of [
+      ["inteligencia_comercial", legacyAdminCodes[0]],
+      ["prospeccion", legacyAdminCodes[1]],
+    ]) {
+      await query(
+        `INSERT INTO permissions
+          (code, module, action, description, created_at, updated_at)
+         VALUES (?, ?, 'admin', 'Legacy admin permission', ?, ?)`,
+        [code, module, now, now],
+      );
+      const [legacyPermission] = await query(
+        "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+        [code],
+      );
+      await query(
+        `INSERT INTO role_permissions (role_id, permission_id, created_at)
+         VALUES (?, ?, ?)`,
+        [legacyAdminRoleId, Number(legacyPermission.id), now],
+      );
+    }
+
+    await query(
+      "DELETE FROM mi_coach_permission_migrations WHERE migration_key = ?",
+      ["mi_coach_access_model_v4"],
+    );
+    await migrateMiCoachPermissions();
+
+    const assignedRows = await query(
+      `SELECT r.name AS role_name, p.code
+       FROM role_permissions rp
+       INNER JOIN roles r ON r.id = rp.role_id
+       INNER JOIN permissions p ON p.id = rp.permission_id
+      WHERE rp.role_id IN (?, ?, ?, ?)`,
+          [legacyAccessRoleId, baseOnlyRoleId, legacyAdminRoleId, legacyCoachRoleId],
+    );
+    const permissionsByRole = new Map();
+    for (const row of assignedRows) {
+      if (!permissionsByRole.has(row.role_name))
+        permissionsByRole.set(row.role_name, new Set());
+      permissionsByRole.get(row.role_name).add(row.code);
+    }
+    const legacyChatPermissions = permissionsByRole.get(
+      `${TEST_PREFIX}_legacy_chat_access`,
+    );
+    expect(legacyChatPermissions).toBeInstanceOf(Set);
+    expect(Array.from(legacyChatPermissions)).toEqual(
+      expect.arrayContaining([
+        "mi_coach.access",
+        "mi_coach.use",
+        "inteligencia_comercial.access",
+        "prospeccion.access",
+      ]),
+    );
+    expect(
+      Array.from(
+        permissionsByRole.get(`${TEST_PREFIX}_base_only_access`) || [],
+      ),
+    ).toContain("mi_coach.use");
+    expect(
+      Array.from(
+        permissionsByRole.get(`${TEST_PREFIX}_base_only_access`) || [],
+      ),
+    ).toContain("mi_coach.access");
+    expect(
+      Array.from(
+        permissionsByRole.get(`${TEST_PREFIX}_base_only_access`) || [],
+      ),
+    ).not.toEqual(
+      expect.arrayContaining([
+        "inteligencia_comercial.access",
+        "prospeccion.access",
+      ]),
+    );
+    expect(
+      Array.from(
+        permissionsByRole.get(`${TEST_PREFIX}_legacy_admin_access`) || [],
+      ),
+    ).toContain("mi_coach.admin");
+    expect(
+      Array.from(
+        permissionsByRole.get(`${TEST_PREFIX}_legacy_coach_chat_access`) || [],
+      ),
+    ).toContain("mi_coach.use");
+    expect(
+      Array.from(
+        permissionsByRole.get(`${TEST_PREFIX}_legacy_coach_chat_access`) || [],
+      ),
+    ).toContain("mi_coach.access");
+    expect(
+      await query("SELECT id FROM permissions WHERE code = ?", ["mi_coach.chat"]),
+    ).toEqual([]);
+    expect(
+      await query(
+        "SELECT code FROM permissions WHERE code IN (?, ?)",
+        legacyAdminCodes,
+      ),
+    ).toEqual([]);
+    const diagnosticsPermission = await query(
+      "SELECT code, module FROM permissions WHERE code = ? LIMIT 1",
+      ["mi_coach.chat_diagnostics"],
+    );
+    expect(diagnosticsPermission[0]).toEqual({
+      code: "mi_coach.chat_diagnostics",
+      module: "mi_coach",
+    });
+  });
+
   test("Coach baseline preserves the selected opportunity through question, job response, and session persistence", async () => {
     const baselineRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_coach_baseline`,
       permissionCodes: [
+        "mi_coach.access",
         "mi_coach.use",
         "oportunidades.read",
         "cuentas.read",
@@ -1483,6 +1710,7 @@ describe("API integration baseline", () => {
     const gatewayRoleId = await createRole({
       name: `${TEST_PREFIX}_coach_gateway`,
       permissionCodes: [
+        "mi_coach.access",
         "mi_coach.use",
         "oportunidades.read",
         "cuentas.read",
@@ -1632,6 +1860,7 @@ describe("API integration baseline", () => {
     const analysisRoleId = await createRole({
       name: `${TEST_PREFIX}_mi_agent_analysis_scope`,
       permissionCodes: [
+        "mi_coach.access",
         "mi_coach.use",
         "oportunidades.read",
         "cuentas.read",
@@ -1951,7 +2180,7 @@ describe("API integration baseline", () => {
         originalIntent: "Crear contacto desde Cliente existente",
         operation: {
           kind: "create_contact",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "Crear contacto Oscar Montufar",
           accountId,
           payload: {
@@ -1967,7 +2196,7 @@ describe("API integration baseline", () => {
     expect(proposal.status).toBe(201);
     expect(proposal.body.operation).toMatchObject({
       kind: "create_contact",
-      sourceChannel: "coach",
+      sourceChannel: "customer_account",
       status: "ready",
       targetModule: "contacts",
       pendingOperation: { accountId },
@@ -1982,7 +2211,7 @@ describe("API integration baseline", () => {
         context: { accountId },
         operation: {
           kind: "create_contact",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "Crear contacto en otra cuenta",
           accountId: foreignAccountId,
           payload: {
@@ -2006,7 +2235,7 @@ describe("API integration baseline", () => {
         context: { accountId },
         operation: {
           kind: "create_contact",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "Crear contacto fuera de la cuenta fija",
           accountId,
           payload: {
@@ -2026,7 +2255,8 @@ describe("API integration baseline", () => {
     const roleId = await createRole({
       name: `${TEST_PREFIX}_customer_opportunity_operations`,
       permissionCodes: [
-        "mi_coach.use",
+        "mi_coach.access",
+        "inteligencia_comercial.access",
         "mi_coach.execute",
         "cuentas.read",
         "contactos.read",
@@ -2074,7 +2304,7 @@ describe("API integration baseline", () => {
         originalIntent: "Crear oportunidad desde Cliente existente",
         operation: {
           kind: "create_opportunity",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "Crear oportunidad Renovación anual",
           accountId: fixture.accountId,
           payload: {
@@ -2091,7 +2321,7 @@ describe("API integration baseline", () => {
     expect(createOpportunityProposal.status).toBe(201);
     expect(createOpportunityProposal.body.operation).toMatchObject({
       kind: "create_opportunity",
-      sourceChannel: "coach",
+      sourceChannel: "customer_account",
       status: "ready",
       targetModule: "opportunities",
       pendingOperation: {
@@ -2122,7 +2352,7 @@ describe("API integration baseline", () => {
         context: { accountId: fixture.accountId },
         operation: {
           kind: "create_opportunity",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "No aceptar cuenta distinta dentro del payload",
           accountId: fixture.accountId,
           contactId: fixture.contactId,
@@ -2147,7 +2377,7 @@ describe("API integration baseline", () => {
         context: { accountId: fixture.accountId },
         operation: {
           kind: "create_opportunity",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "No adjuntar un contacto de otra cuenta",
           accountId: fixture.accountId,
           contactId: null,
@@ -2173,7 +2403,7 @@ describe("API integration baseline", () => {
         originalIntent: "Vincular un contacto a una oportunidad existente",
         operation: {
           kind: "link_contact_to_opportunity",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "Vincular contacto a oportunidad",
           accountId: fixture.accountId,
           opportunityId: fixture.opportunityId,
@@ -2218,7 +2448,7 @@ describe("API integration baseline", () => {
         context: { accountId: fixture.accountId },
         operation: {
           kind: "link_contact_to_opportunity",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "No aceptar IDs de contacto contradictorios",
           accountId: fixture.accountId,
           opportunityId: fixture.opportunityId,
@@ -2243,7 +2473,7 @@ describe("API integration baseline", () => {
         context: { accountId: fixture.accountId },
         operation: {
           kind: "link_contact_to_opportunity",
-          sourceChannel: "coach",
+          sourceChannel: "customer_account",
           title: "No vincular contacto de otra cuenta",
           accountId: fixture.accountId,
           opportunityId: fixture.opportunityId,
@@ -2815,7 +3045,7 @@ describe("API integration baseline", () => {
       .send({ accountId });
 
     expect(noCoachResponse.status).toBe(403);
-    expect(noCoachResponse.body.requiredPermission).toBe("mi_coach.use");
+    expect(noCoachResponse.body.requiredPermission).toBe("mi_coach.access");
 
     const noAccountLogin = await login(
       request(app),
@@ -3007,7 +3237,7 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${otherChatOwnerLogin.body.token}`);
     expect(forbiddenDiagnosticsListResponse.status).toBe(403);
     expect(forbiddenDiagnosticsListResponse.body.requiredPermission).toBe(
-      "inteligencia_comercial.chat_diagnostics",
+      "mi_coach.chat_diagnostics",
     );
     const crossUserDiagnosticsResponse = await request(app)
       .get(
@@ -3858,7 +4088,8 @@ describe("API integration baseline", () => {
     const accountOnlyRoleId = await createRole({
       name: `${TEST_PREFIX}_account_chat_without_contact_read`,
       permissionCodes: [
-        "mi_coach.use",
+        "mi_coach.access",
+        "inteligencia_comercial.access",
         "inteligencia_comercial.read",
         "cuentas.read",
         "interacciones.read",
@@ -4103,7 +4334,7 @@ describe("API integration baseline", () => {
       });
 
     expect(forbiddenResponse.status).toBe(403);
-    expect(forbiddenResponse.body.requiredPermission).toBe("mi_coach.use");
+    expect(forbiddenResponse.body.requiredPermission).toBe("mi_coach.access");
 
     const prospectLogin = await login(
       request(app),
@@ -4899,7 +5130,10 @@ describe("API integration baseline", () => {
   test("gobierno de Mi Coach exige admin y actualiza configuracion y metricas", async () => {
     const governanceContextRoleId = await createRole({
       name: `${TEST_PREFIX}_governance_context`,
-      permissionCodes: ["mi_coach.use", "inteligencia_comercial.read"],
+      permissionCodes: [
+        "mi_coach.access",
+        "inteligencia_comercial.read",
+      ],
     });
     cleanup.roleIds.push(governanceContextRoleId);
     const governanceContextUserId = await createUser({
@@ -15801,8 +16035,9 @@ describe("API integration baseline", () => {
         "contactos.read",
         "oportunidades.read",
         "oportunidades.update",
+        "mi_coach.access",
+        "inteligencia_comercial.access",
         "inteligencia_comercial.read",
-        "mi_coach.use",
         "mi_coach.execute",
         "calendario_comercial.update",
       ],
@@ -15945,8 +16180,9 @@ describe("API integration baseline", () => {
         "oportunidades.read",
         "oportunidades.create",
         "oportunidades.update",
+        "mi_coach.access",
+        "inteligencia_comercial.access",
         "inteligencia_comercial.read",
-        "mi_coach.use",
         "mi_coach.execute",
         "calendario_comercial.update",
       ],

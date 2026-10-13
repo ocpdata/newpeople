@@ -92,9 +92,11 @@ router.use(async (_req, res, next) => {
   }
 });
 
+router.use(requirePermission("mi_coach.access"));
+router.use(requirePermission("prospeccion.access"));
+
 router.post(
   "/sessions",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.create"),
   async (req, res) => {
     try {
@@ -118,7 +120,6 @@ router.post(
 
 router.get(
   "/sessions",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.read"),
   async (req, res) => {
     try {
@@ -149,7 +150,6 @@ router.get(
 
 router.delete(
   "/sessions/:sessionId",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -178,7 +178,6 @@ router.delete(
 
 router.get(
   "/sessions/:sessionId",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.read"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -198,7 +197,6 @@ router.get(
 
 router.patch(
   "/sessions/:sessionId/target",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -247,7 +245,6 @@ router.patch(
 
 router.post(
   "/sessions/:sessionId/chat/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.read"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -288,7 +285,6 @@ router.post(
 
 router.get(
   "/sessions/:sessionId/chat/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.read"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -315,7 +311,6 @@ router.get(
 
 router.post(
   "/sessions/:sessionId/chat",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.read"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -350,7 +345,6 @@ router.post(
 
 router.post(
   "/sessions/:sessionId/run",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.create"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -370,7 +364,6 @@ router.post(
 
 router.post(
   "/sessions/:sessionId/run-external",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.create"),
   requirePermission("fuentes_externas.execute"),
   async (req, res) => {
@@ -408,7 +401,6 @@ router.post(
 
 router.get(
   "/sessions/:sessionId/run-external/:runId",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.create"),
   requirePermission("fuentes_externas.execute"),
   async (req, res) => {
@@ -438,7 +430,6 @@ router.get(
 
 router.post(
   "/sessions/:sessionId/convert-to-account",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -481,7 +472,6 @@ router.post(
 
 router.post(
   "/sessions/:sessionId/convert-to-lead",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -523,7 +513,6 @@ router.post(
 
 router.post(
   "/contacts/:contactId/convert",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => {
     const contactId = Number(req.params.contactId || 0);
@@ -569,7 +558,6 @@ router.post(
 
 router.post(
   "/hypotheses/:hypothesisId/convert-to-opportunity",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => {
     const hypothesisId = Number(req.params.hypothesisId || 0);
@@ -680,28 +668,24 @@ async function updateHypothesisStatus(req, res, status) {
 
 router.post(
   "/findings/:findingId/confirm",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => updateFindingStatus(req, res, "confirmed"),
 );
 
 router.post(
   "/findings/:findingId/reject",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => updateFindingStatus(req, res, "rejected"),
 );
 
 router.post(
   "/hypotheses/:hypothesisId/confirm",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => updateHypothesisStatus(req, res, "confirmed"),
 );
 
 router.post(
   "/hypotheses/:hypothesisId/reject",
-  requirePermission("mi_coach.use"),
   requirePermission("prospeccion.update"),
   async (req, res) => updateHypothesisStatus(req, res, "rejected"),
 );

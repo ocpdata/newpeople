@@ -20,6 +20,12 @@ const PROSPECT_RESEARCH_PERMISSIONS = [
     description: "Ver sesiones y fichas de prospeccion asistida",
   },
   {
+    code: "prospeccion.access",
+    module: "prospeccion",
+    action: "access",
+    description: "Abrir el espacio Cuenta nueva",
+  },
+  {
     code: "prospeccion.create",
     module: "prospeccion",
     action: "create",
@@ -30,12 +36,6 @@ const PROSPECT_RESEARCH_PERMISSIONS = [
     module: "prospeccion",
     action: "update",
     description: "Confirmar, rechazar y mantener hallazgos de prospeccion",
-  },
-  {
-    code: "prospeccion.admin",
-    module: "prospeccion",
-    action: "admin",
-    description: "Administrar configuracion y gobierno de prospeccion asistida",
   },
 ];
 
@@ -97,7 +97,7 @@ export async function ensureProspectResearchPermissions(options = {}) {
       COMMERCIAL_ROLE_NAMES,
     );
     const nonAdminPermissionRows = permissionRows.filter((permission) =>
-      ["prospeccion.read", "prospeccion.create", "prospeccion.update"].includes(
+      ["prospeccion.read", "prospeccion.access", "prospeccion.create", "prospeccion.update"].includes(
         permission.code,
       ),
     );

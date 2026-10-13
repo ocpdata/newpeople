@@ -9,7 +9,10 @@ async function mockMiCoachApi(
   page,
   {
     canAdmin = false,
+    withCoachModuleAccess = true,
+    withCoachAccess = true,
     withCustomerHealth = false,
+    withCustomerChatAccess = withCustomerHealth,
     withCustomerChatTrace = false,
     withCustomerContactOperation = false,
     withCustomerOpportunityOperation = false,
@@ -22,6 +25,7 @@ async function mockMiCoachApi(
     withResponseContextSwitch = false,
     withSituationAnalysis = false,
     withProspect = false,
+    withProspectChatAccess = withProspect,
     withProspectDuplicates = true,
     timeoutFirstProspectPoll = false,
     withOpportunityStatusMatrix = false,
@@ -128,6 +132,7 @@ async function mockMiCoachApi(
   let prospectIsDiscarded = false;
   let prospectChatQuestion = "";
   let prospectChatHistoryPersisted = false;
+  let customerChatJobCount = 0;
   let persistedCustomerContactOperation = null;
   let persistedCustomerOpportunityOperation = null;
   const plannerPrompts = ["coach", "customer_account", "prospect"].map((channel) => ({
@@ -141,7 +146,6 @@ async function mockMiCoachApi(
     revisions: [],
   }));
   const classifierPrompts = structuredClone(plannerPrompts);
-  const closedCoachSessions = new Set();
   const initialServerRules = {
     scope: {
       accountSearchAllowed: true, opportunitySearchAllowed: true,
@@ -251,19 +255,31 @@ async function mockMiCoachApi(
       pathname === "/api/commercial-intelligence/account-chat/jobs" &&
       method === "POST"
     ) {
+      customerChatJobCount += 1;
       return json(
-        { job: { id: 921, status: "pending", pollAfterMs: 500 } },
+        {
+          job: {
+            id: 920 + customerChatJobCount,
+            status: "pending",
+            pollAfterMs: 500,
+          },
+        },
         202,
       );
     }
     if (
       withCustomerHealth &&
-      pathname === "/api/commercial-intelligence/account-chat/jobs/921" &&
+      /^\/api\/commercial-intelligence\/account-chat\/jobs\/\d+$/.test(
+        pathname,
+      ) &&
       method === "GET"
     ) {
+      const jobId = Number(pathname.split("/").pop());
+      if (jobId <= 920 || jobId > 920 + customerChatJobCount)
+        return json({ message: "Chat no encontrado" }, 404);
       return json({
         job: {
-          id: 921,
+          id: jobId,
           status: "completed",
           externalResearchedAt: "2026-09-10T09:30:00.000Z",
           result: {
@@ -311,7 +327,7 @@ async function mockMiCoachApi(
                       },
                     ],
                     currentTurn: {
-                      jobId: 921,
+                      jobId,
                       chatSessionId: 920,
                       question: "Resume la cuenta",
                       diagnostics: { responseType: "clarification" },
@@ -864,7 +880,8 @@ async function mockMiCoachApi(
         status: "active",
         roles: [{ name: canAdmin ? "Administrador" : "Vendedor" }],
         permissions: [
-          "mi_coach.use",
+          ...(withCoachModuleAccess ? ["mi_coach.access"] : []),
+          ...(withCoachAccess ? ["mi_coach.use"] : []),
           "mi_coach.execute",
           "cuentas.read",
           "oportunidades.read",
@@ -883,8 +900,12 @@ async function mockMiCoachApi(
                 "oportunidades.create",
               ]
             : []),
+          ...(withProspectChatAccess ? ["prospeccion.access"] : []),
           ...(withCustomerHealth
             ? ["inteligencia_comercial.read", "contactos.read"]
+            : []),
+          ...(withCustomerChatAccess
+            ? ["inteligencia_comercial.access"]
             : []),
           ...(withCustomerContactOperation ? ["contactos.create"] : []),
           ...(withCustomerOpportunityOperation
@@ -2516,6 +2537,7 @@ async function mockCoachCreationJourney(
         status: "active",
         roles: [{ name: "Vendedor" }],
         permissions: [
+          "mi_coach.access",
           "mi_coach.use",
           "mi_coach.execute",
           "cuentas.read",
@@ -2693,6 +2715,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     });
     await mockMiCoachApi(page, {
       withCustomerHealth: true,
+      withCustomerChatTrace: true,
       withProspect: true,
     });
     await openMiCoach(page, { workspace: "summary" });
@@ -3165,6 +3188,7 @@ test.describe("Mi Coach governance and workspaces", () => {
   }) => {
     await mockMiCoachApi(page, {
       withCustomerHealth: true,
+      withCustomerChatTrace: true,
       withProspect: true,
     });
     await openMiCoach(page, { workspace: "customer" });
@@ -3176,30 +3200,20 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       customerChat.getByText("La cuenta requiere seguimiento comercial."),
     ).toBeVisible();
-    const transportTrace = customerChat.getByRole("region", {
-      name: "Intercambios HTTP observados",
-    });
-    await expect(
-      transportTrace.getByText(
-        "B1 → B2 · POST /api/commercial-intelligence/account-chat/sessions",
-      ),
-    ).toBeVisible();
-    await expect(transportTrace.getByText("B2 → B1 · HTTP 201")).toBeVisible();
-    await expect(
-      transportTrace.getByText(
-        "B1 → B2 · POST /api/commercial-intelligence/account-chat/jobs",
-      ),
-    ).toBeVisible();
-    await expect(transportTrace.getByText("B2 → B1 · HTTP 202")).toBeVisible();
-    await expect(
-      transportTrace.getByText(
-        "B1 → B2 · GET /api/commercial-intelligence/account-chat/jobs/921",
-      ),
-    ).toBeVisible();
-    await expect(transportTrace.getByText("B2 → B1 · HTTP 200")).toBeVisible();
-    await expect(
-      transportTrace.getByText(/estado final completed/),
-    ).toBeVisible();
+    await customerChat
+      .locator(".mi-agent-customer-chat-debug > summary")
+      .last()
+      .click();
+    const observedFlow = customerChat.locator(
+      ".mi-agent-customer-chat-detailed-trace",
+    );
+    await observedFlow.locator(":scope > summary").click();
+    const transportTrace = observedFlow.locator(
+      ".mi-agent-customer-chat-detailed-trace-content",
+    );
+    await expect(transportTrace).toContainText(
+      "/api/commercial-intelligence/account-chat/jobs",
+    );
     const customerFoundation = customerChat.getByRole("switch");
     await expect(customerFoundation).toBeVisible();
     await customerFoundation.check();
@@ -3212,18 +3226,6 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       customerChat.getByText("La cuenta requiere seguimiento comercial."),
     ).toHaveCount(2);
-    const reusedSessionTrace = customerChat
-      .getByRole("region", { name: "Intercambios HTTP observados" })
-      .nth(1);
-    await expect(
-      reusedSessionTrace.getByText("B1 · Reutilizar sesión existente"),
-    ).toBeVisible();
-    await expect(
-      reusedSessionTrace.getByText(
-        "Sesión 920 reutilizada; no se hizo una llamada HTTP para crearla.",
-      ),
-    ).toBeVisible();
-
     await page.getByRole("button", { name: "Cuenta nueva" }).click();
     await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
     await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
@@ -3792,6 +3794,96 @@ test.describe("Mi Coach governance and workspaces", () => {
     await openCoachConversation(page);
     await expect(
       page.getByText("La oportunidad aún no está lista para avanzar."),
+    ).toHaveCount(0);
+  });
+
+  test("mi_coach.use permite Coach, pero no Cliente existente ni Cuenta nueva", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCoachModuleAccess: true,
+      withCustomerHealth: true,
+      withCustomerChatAccess: false,
+      withProspect: true,
+      withProspectChatAccess: false,
+    });
+    await openMiCoach(page, { workspace: "summary" });
+
+    const workspaces = page.getByRole("navigation", {
+      name: "Espacios de Mi Coach",
+    });
+    await expect(
+      workspaces.getByRole("button", { name: "Mi Coach", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("navigation", { name: "Vistas de Mi Coach" })
+        .getByRole("button", { name: "Conversación", exact: true }),
+    ).toBeVisible();
+    await expect(
+      workspaces.getByRole("button", { name: "Cliente existente" }),
+    ).toHaveCount(0);
+    await expect(
+      workspaces.getByRole("button", { name: "Cuenta nueva" }),
+    ).toHaveCount(0);
+  });
+
+  test("la entrada al módulo no habilita canales por sí sola", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCoachModuleAccess: true,
+      withCoachAccess: false,
+      withCustomerHealth: true,
+      withCustomerChatAccess: false,
+      withProspect: true,
+      withProspectChatAccess: false,
+    });
+    await openMiCoach(page, { workspace: "summary" });
+
+    const workspaces = page.getByRole("navigation", {
+      name: "Espacios de Mi Coach",
+    });
+    await expect(workspaces).toBeVisible();
+    await expect(
+      workspaces.getByRole("button", { name: "Mi Coach", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      workspaces.getByRole("button", { name: "Cliente existente" }),
+    ).toHaveCount(0);
+    await expect(
+      workspaces.getByRole("button", { name: "Cuenta nueva" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("No tienes canales habilitados en Mi Coach."),
+    ).toBeVisible();
+  });
+
+  test("Cliente existente funciona sin permiso de Coach", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCoachModuleAccess: true,
+      withCoachAccess: false,
+      withCustomerHealth: true,
+      withCustomerChatAccess: true,
+    });
+    await openMiCoach(page, { workspace: "customer" });
+
+    const workspaces = page.getByRole("navigation", {
+      name: "Espacios de Mi Coach",
+    });
+    await expect(
+      workspaces.getByRole("button", { name: "Cliente existente" }),
+    ).toBeVisible();
+    await expect(
+      workspaces.getByRole("button", { name: "Mi Coach", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Chat de cuenta" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: "Vistas de Mi Coach" }),
     ).toHaveCount(0);
   });
 

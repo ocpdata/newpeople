@@ -66,6 +66,20 @@ import {
 
 const router = express.Router();
 
+router.use(requirePermission("mi_coach.access"));
+
+router.use((req, res, next) => {
+  if (
+    req.path.startsWith("/governance") ||
+    req.path.startsWith("/account-chat/diagnostics")
+  ) {
+    return next();
+  }
+  return requirePermission("mi_coach.access")(req, res, () =>
+    requirePermission("inteligencia_comercial.access")(req, res, next),
+  );
+});
+
 const jobCreateSchema = z.object({
   accountId: z.number().int().positive().optional().nullable(),
   opportunityId: z.number().int().positive().optional().nullable(),
@@ -317,7 +331,6 @@ router.use(async (_req, res, next) => {
 
 router.post(
   "/customer-research/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -350,7 +363,6 @@ router.post(
 
 router.post(
   "/account-internal-analysis/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -378,7 +390,6 @@ router.post(
 
 router.get(
   "/account-internal-analysis/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
@@ -395,7 +406,6 @@ router.get(
 
 router.get(
   "/customer-research/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
@@ -412,7 +422,6 @@ router.get(
 
 router.post(
   "/external-research/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   requirePermission("fuentes_externas.execute"),
   async (req, res) => {
@@ -446,7 +455,6 @@ router.post(
 
 router.get(
   "/external-research/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   requirePermission("fuentes_externas.execute"),
   async (req, res) => {
@@ -465,7 +473,6 @@ router.get(
 
 router.post(
   "/commercial-discovery/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -498,7 +505,6 @@ router.post(
 
 router.get(
   "/commercial-discovery/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
@@ -517,7 +523,6 @@ router.get(
 
 router.post(
   "/executive-briefing/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -549,7 +554,6 @@ router.post(
 
 router.get(
   "/executive-briefing/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
@@ -566,7 +570,6 @@ router.get(
 
 router.post(
   "/agents/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -598,7 +601,6 @@ router.post(
 
 router.get(
   "/agents/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
@@ -613,7 +615,6 @@ router.get(
 
 router.get(
   "/agents/metrics",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     return res.json(await getAccountIntelligenceMetrics({ user: req.user }));
@@ -622,7 +623,6 @@ router.get(
 
 router.post(
   "/account-chat/sessions",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -649,7 +649,7 @@ router.post(
 
 router.get(
   "/account-chat/diagnostics/sessions",
-  requirePermission("inteligencia_comercial.chat_diagnostics"),
+  requirePermission("mi_coach.chat_diagnostics"),
   async (req, res) => {
     const parsed = customerChatDiagnosticsQuerySchema.safeParse(
       req.query || {},
@@ -666,7 +666,7 @@ router.get(
 
 router.get(
   "/account-chat/diagnostics/sessions/:sessionId",
-  requirePermission("inteligencia_comercial.chat_diagnostics"),
+  requirePermission("mi_coach.chat_diagnostics"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
     if (!Number.isInteger(sessionId) || sessionId <= 0) {
@@ -682,7 +682,7 @@ router.get(
 
 router.get(
   "/account-chat/diagnostics/jobs/:jobId",
-  requirePermission("inteligencia_comercial.chat_diagnostics"),
+  requirePermission("mi_coach.chat_diagnostics"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
     if (!Number.isInteger(jobId) || jobId <= 0) {
@@ -698,7 +698,6 @@ router.get(
 
 router.get(
   "/account-chat/sessions/:sessionId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const sessionId = Number(req.params.sessionId || 0);
@@ -718,7 +717,6 @@ router.get(
 
 router.post(
   "/account-chat/jobs",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -755,7 +753,6 @@ router.post(
 
 router.get(
   "/account-chat/jobs/:jobId",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     const jobId = Number(req.params.jobId || 0);
@@ -770,7 +767,6 @@ router.get(
 
 router.post(
   "/findings/:findingId/apply-contact",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.update"),
   async (req, res) => {
     try {
@@ -801,7 +797,6 @@ router.post(
 
 router.get(
   "/findings",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -829,7 +824,6 @@ router.get(
 
 router.get(
   "/account-intelligence/snapshot",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
     try {
@@ -1442,7 +1436,6 @@ const applyFindingSchema = z.object({
 
 router.post(
   "/findings/:findingId/apply",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.update"),
   async (req, res) => {
     const findingId = Number(req.params.findingId || 0);
@@ -1479,14 +1472,12 @@ router.post(
 
 router.post(
   "/findings/:findingId/confirm",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.update"),
   async (req, res) => updateFindingStatus(req, res, "confirmed"),
 );
 
 router.post(
   "/findings/:findingId/reject",
-  requirePermission("mi_coach.use"),
   requirePermission("inteligencia_comercial.update"),
   async (req, res) => updateFindingStatus(req, res, "rejected"),
 );

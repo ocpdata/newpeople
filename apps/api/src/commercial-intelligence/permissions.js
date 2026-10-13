@@ -19,24 +19,17 @@ const COMMERCIAL_INTELLIGENCE_PERMISSIONS = [
     description: "Ver inteligencia comercial y hallazgos de clientes",
   },
   {
+    code: "inteligencia_comercial.access",
+    module: "inteligencia_comercial",
+    action: "access",
+    description: "Abrir el espacio Cliente existente",
+  },
+  {
     code: "inteligencia_comercial.update",
     module: "inteligencia_comercial",
     action: "update",
     description:
       "Confirmar, rechazar y mantener hallazgos de inteligencia comercial",
-  },
-  {
-    code: "inteligencia_comercial.admin",
-    module: "inteligencia_comercial",
-    action: "admin",
-    description:
-      "Administrar configuracion y gobierno de inteligencia comercial",
-  },
-  {
-    code: "inteligencia_comercial.chat_diagnostics",
-    module: "inteligencia_comercial",
-    action: "chat_diagnostics",
-    description: "Consultar sesiones y diagnosticos de chat de otros usuarios",
   },
 ];
 
@@ -115,15 +108,5 @@ export async function ensureCommercialIntelligencePermissions(options = {}) {
       now,
     );
 
-    const [miCoachRoles] = await conn.query(
-      `SELECT DISTINCT rp.role_id AS id
-       FROM role_permissions rp
-       INNER JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.code = 'mi_coach.use'`,
-    );
-    const readPermissionRows = permissionRows.filter((permission) =>
-      ["inteligencia_comercial.read"].includes(permission.code),
-    );
-    await assignPermissionsToRoles(conn, miCoachRoles, readPermissionRows, now);
   });
 }

@@ -197,8 +197,14 @@ export default function AppShell({
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     canReadOpportunities;
-  const canAccessMiAgent =
-    can("mi_coach.use") || can("inteligencia_comercial.chat_diagnostics");
+  const canAccessCustomerChat =
+    can("inteligencia_comercial.access") &&
+    can("inteligencia_comercial.read") &&
+    canReadAccounts;
+  const canAccessProspectChat =
+    can("prospeccion.access") &&
+    (can("prospeccion.read") || can("prospeccion.create"));
+  const canAccessMiAgent = can("mi_coach.access");
   const canAccessCommercialTracking =
     can("seguimiento_comercial.read") && canReadOpportunities;
   const canAccessCommercialRhythm = can("ritmo_comercial.read");
@@ -487,12 +493,14 @@ export default function AppShell({
                 canReadProspecting={can("prospeccion.read")}
                 canCreateProspecting={can("prospeccion.create")}
                 canUpdateProspecting={can("prospeccion.update")}
+                canAccessProspectChat={canAccessProspectChat}
                 canReadCustomerIntelligence={
                   can("inteligencia_comercial.read") && canReadAccounts
                 }
+                canAccessCustomerChat={canAccessCustomerChat}
                 canManageCoach={can("mi_coach.admin")}
                 canDiagnoseCustomerChats={can(
-                  "inteligencia_comercial.chat_diagnostics",
+                  "mi_coach.chat_diagnostics",
                 )}
               />
             ) : (

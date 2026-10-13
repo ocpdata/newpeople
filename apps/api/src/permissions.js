@@ -1,4 +1,4 @@
-import { withTransaction } from "./db.js";
+import { query, withTransaction } from "./db.js";
 
 const CORE_PERMISSIONS = [
   {
@@ -50,10 +50,16 @@ const CORE_PERMISSIONS = [
     description: "Bypasear la validacion de etapa solo en Demostracion",
   },
   {
+    code: "mi_coach.access",
+    module: "mi_coach",
+    action: "access",
+    description: "Entrar al módulo Mi Coach",
+  },
+  {
     code: "mi_coach.use",
     module: "mi_coach",
     action: "use",
-    description: "Usar Mi Coach comercial",
+    description: "Ver el resumen y usar el espacio Coach",
   },
   {
     code: "mi_coach.execute",
@@ -66,6 +72,12 @@ const CORE_PERMISSIONS = [
     module: "mi_coach",
     action: "admin",
     description: "Administrar gobierno, limites y configuracion de Mi Coach",
+  },
+  {
+    code: "mi_coach.chat_diagnostics",
+    module: "mi_coach",
+    action: "chat_diagnostics",
+    description: "Revisar conversaciones de otros usuarios para soporte",
   },
   {
     code: "fuentes_externas.execute",
@@ -288,14 +300,56 @@ export async function ensureCorePermissions(options = {}) {
       await withTransaction(async (conn) => {
         const now = new Date();
 
+        const [legacyDiagnosticsRows] = await conn.query(
+          "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+          ["inteligencia_comercial.chat_diagnostics"],
+        );
+        const [currentDiagnosticsRows] = await conn.query(
+          "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+          ["mi_coach.chat_diagnostics"],
+        );
+        if (legacyDiagnosticsRows.length && currentDiagnosticsRows.length) {
+          const legacyId = Number(legacyDiagnosticsRows[0].id);
+          const currentId = Number(currentDiagnosticsRows[0].id);
+          await conn.query(
+            `INSERT INTO role_permissions (role_id, permission_id, created_at)
+             SELECT legacy.role_id, ?, ?
+             FROM role_permissions legacy
+             WHERE legacy.permission_id = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM role_permissions existing
+                 WHERE existing.role_id = legacy.role_id
+                   AND existing.permission_id = ?
+               )`,
+            [currentId, now, legacyId, currentId],
+          );
+          await conn.query(
+            "DELETE FROM role_permissions WHERE permission_id = ?",
+            [legacyId],
+          );
+          await conn.query("DELETE FROM permissions WHERE id = ?", [legacyId]);
+        } else if (legacyDiagnosticsRows.length) {
+          await conn.query(
+            `UPDATE permissions
+             SET code = ?, module = ?, action = ?, description = ?, updated_at = ?
+             WHERE id = ?`,
+            [
+              "mi_coach.chat_diagnostics",
+              "mi_coach",
+              "chat_diagnostics",
+              "Revisar conversaciones de otros usuarios para soporte",
+              now,
+              Number(legacyDiagnosticsRows[0].id),
+            ],
+          );
+        }
+
         for (const permission of CORE_PERMISSIONS) {
           await conn.query(
             `INSERT INTO permissions (code, module, action, description, created_at, updated_at)
              SELECT ?, ?, ?, ?, ?, ?
              WHERE NOT EXISTS (
-               SELECT 1
-               FROM permissions
-               WHERE code = ?
+               SELECT 1 FROM permissions WHERE code = ?
              )`,
             [
               permission.code,
@@ -365,4 +419,194 @@ export async function ensureCorePermissions(options = {}) {
       await wait(120 * attempt);
     }
   }
+}
+
+export async function migrateMiCoachPermissions() {
+  await query(
+    `CREATE TABLE IF NOT EXISTS mi_coach_permission_migrations (
+      migration_key VARCHAR(120) NOT NULL PRIMARY KEY,
+      applied_at DATETIME(3) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+  );
+
+  await withTransaction(async (conn) => {
+    const migrationKey = "mi_coach_access_model_v4";
+    const [migrationResult] = await conn.query(
+      `INSERT IGNORE INTO mi_coach_permission_migrations (migration_key, applied_at)
+       VALUES (?, NOW(3))`,
+      [migrationKey],
+    );
+    if (!migrationResult.affectedRows) return;
+
+    const now = new Date();
+    const transferLegacyPermission = async (legacyCode, currentCode) => {
+      const [legacyRows] = await conn.query(
+        "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+        [legacyCode],
+      );
+      if (!legacyRows.length) return;
+      const [currentRows] = await conn.query(
+        "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+        [currentCode],
+      );
+      if (!currentRows.length) {
+        throw new Error(`No existe el permiso ${currentCode}`);
+      }
+      const legacyPermissionId = Number(legacyRows[0].id);
+      const currentPermissionId = Number(currentRows[0].id);
+      await conn.query(
+        `INSERT INTO role_permissions (role_id, permission_id, created_at)
+         SELECT legacy.role_id, ?, ?
+         FROM role_permissions legacy
+         WHERE legacy.permission_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM role_permissions existing
+             WHERE existing.role_id = legacy.role_id
+               AND existing.permission_id = ?
+           )`,
+        [currentPermissionId, now, legacyPermissionId, currentPermissionId],
+      );
+      await conn.query(
+        "DELETE FROM role_permissions WHERE permission_id = ?",
+        [legacyPermissionId],
+      );
+      await conn.query("DELETE FROM permissions WHERE id = ?", [
+        legacyPermissionId,
+      ]);
+    };
+
+    await transferLegacyPermission("mi_coach.chat", "mi_coach.use");
+    await transferLegacyPermission(
+      "inteligencia_comercial.chat",
+      "inteligencia_comercial.access",
+    );
+    await transferLegacyPermission("prospeccion.chat", "prospeccion.access");
+    await transferLegacyPermission(
+      "inteligencia_comercial.chat_diagnostics",
+      "mi_coach.chat_diagnostics",
+    );
+    await transferLegacyPermission(
+      "inteligencia_comercial.admin",
+      "mi_coach.admin",
+    );
+    await transferLegacyPermission("prospeccion.admin", "mi_coach.admin");
+
+    const [moduleAccessRows] = await conn.query(
+      "SELECT id FROM permissions WHERE code = 'mi_coach.access' LIMIT 1",
+    );
+    const moduleAccessPermissionId = Number(moduleAccessRows[0]?.id || 0);
+    if (!moduleAccessPermissionId) {
+      throw new Error("No existe el permiso mi_coach.access");
+    }
+    await conn.query(
+      `INSERT INTO role_permissions (role_id, permission_id, created_at)
+      SELECT DISTINCT existing.role_id, ?, ?
+       FROM role_permissions existing
+       INNER JOIN permissions permission ON permission.id = existing.permission_id
+       WHERE permission.code IN (
+         'mi_coach.use',
+         'inteligencia_comercial.access',
+         'prospeccion.access',
+         'mi_coach.admin',
+         'mi_coach.chat_diagnostics'
+       )
+         AND NOT EXISTS (
+           SELECT 1 FROM role_permissions module_access
+           WHERE module_access.role_id = existing.role_id
+             AND module_access.permission_id = ?
+         )`,
+      [moduleAccessPermissionId, now, moduleAccessPermissionId],
+    );
+
+    await conn.query(
+      `INSERT INTO role_permissions (role_id, permission_id, created_at)
+       SELECT coach_use.role_id, chat.id, ?
+       FROM permissions chat
+       INNER JOIN role_permissions coach_use ON coach_use.permission_id = (
+         SELECT id FROM permissions WHERE code = 'mi_coach.use' LIMIT 1
+       )
+      WHERE chat.code = 'inteligencia_comercial.access'
+         AND EXISTS (
+           SELECT 1 FROM role_permissions intelligence_read
+           INNER JOIN permissions permission
+             ON permission.id = intelligence_read.permission_id
+           WHERE intelligence_read.role_id = coach_use.role_id
+             AND permission.code = 'inteligencia_comercial.read'
+         )
+         AND EXISTS (
+           SELECT 1 FROM role_permissions account_read
+           INNER JOIN permissions permission
+             ON permission.id = account_read.permission_id
+           WHERE account_read.role_id = coach_use.role_id
+             AND permission.code IN ('cuentas.read', 'cuentas.read_all')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM role_permissions existing
+           WHERE existing.role_id = coach_use.role_id
+             AND existing.permission_id = chat.id
+         )`,
+      [now],
+    );
+
+    await conn.query(
+      `INSERT INTO role_permissions (role_id, permission_id, created_at)
+       SELECT coach_use.role_id, chat.id, ?
+       FROM permissions chat
+       INNER JOIN role_permissions coach_use ON coach_use.permission_id = (
+         SELECT id FROM permissions WHERE code = 'mi_coach.use' LIMIT 1
+       )
+      WHERE chat.code = 'prospeccion.access'
+         AND EXISTS (
+           SELECT 1 FROM role_permissions workspace_access
+           INNER JOIN permissions permission
+             ON permission.id = workspace_access.permission_id
+           WHERE workspace_access.role_id = coach_use.role_id
+             AND permission.code IN ('prospeccion.read', 'prospeccion.create')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM role_permissions existing
+           WHERE existing.role_id = coach_use.role_id
+             AND existing.permission_id = chat.id
+         )`,
+      [now],
+    );
+
+    const [coachAdminRows] = await conn.query(
+      "SELECT id FROM permissions WHERE code = 'mi_coach.admin' LIMIT 1",
+    );
+    const coachAdminPermissionId = Number(coachAdminRows[0]?.id || 0);
+    if (!coachAdminPermissionId) {
+      throw new Error("No existe el permiso mi_coach.admin");
+    }
+    const [legacyAdminRows] = await conn.query(
+      `SELECT id FROM permissions
+       WHERE code IN ('inteligencia_comercial.admin', 'prospeccion.admin')`,
+    );
+    for (const legacyPermission of legacyAdminRows) {
+      await conn.query(
+        `INSERT INTO role_permissions (role_id, permission_id, created_at)
+         SELECT legacy.role_id, ?, ?
+         FROM role_permissions legacy
+         WHERE legacy.permission_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM role_permissions existing
+             WHERE existing.role_id = legacy.role_id
+               AND existing.permission_id = ?
+           )`,
+        [
+          coachAdminPermissionId,
+          now,
+          Number(legacyPermission.id),
+          coachAdminPermissionId,
+        ],
+      );
+      await conn.query(
+        "DELETE FROM role_permissions WHERE permission_id = ?",
+        [Number(legacyPermission.id)],
+      );
+      await conn.query("DELETE FROM permissions WHERE id = ?", [
+        Number(legacyPermission.id),
+      ]);
+    }
+  });
 }
