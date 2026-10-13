@@ -85,6 +85,84 @@ describe("Customer account chat adapter", () => {
     expect(result.qualityTrace.diagnostics.planner.reasonCode).toBe("planner_error");
   });
 
+  it("returns an email draft when B3 intent conflicts with B6 activity planning", async () => {
+    const businessRules = getCoachBusinessRules({
+      channel: "customer_account",
+      process: "default",
+    });
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      businessRules,
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    runStructuredTextResearch.mockReset().mockResolvedValueOnce({
+      objective: "Pedir una reunión por correo",
+      queries: ["crm_operation"],
+      operationKind: "activity",
+      activityDraft: { action: "prepare", actionType: "send_email" },
+      entities: {},
+      referenceResolution: {
+        targetType: "none",
+        cardinality: "none",
+        source: "none",
+        candidateKeys: [],
+      },
+      filters: {},
+      ambiguity: {
+        reason: "none",
+        requiresClarification: "no",
+        missingContext: [],
+        question: "",
+      },
+      mode: "operation",
+      confidence: "high",
+    });
+
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "contactos.read",
+          "mi_coach.execute",
+          "calendario_comercial.update",
+        ]),
+      },
+      snapshot,
+      authoritativeIntent: {
+        intent: "email_draft",
+        confidence: 0.95,
+        requiresClarification: false,
+      },
+      channelIntentConfiguration: getChannelIntentDefaults("customer_account"),
+      agents: [],
+      jobId: 912,
+    });
+
+    const result = await adapter.runTurn({
+      question: "Ayúdame a escribir un correo para pedirle una reunión",
+      context: { accountId: 7 },
+      history: [],
+    });
+
+    expect(runStructuredTextResearch.mock.calls[0][0].context.authoritativeIntent)
+      .toMatchObject({ intent: "email_draft", confidence: 0.95 });
+    expect(result.channelIntentRouting).toMatchObject({
+      intent: "email_draft",
+      operationKind: "none",
+      activityDraft: { action: "none" },
+    });
+    expect(result.response.answer).toContain("Borrador de correo");
+    expect(result.response.answer).toContain("Asunto:");
+    expect(result.response.answer).toContain("No se envió el correo.");
+    expect(result.response.operations).toEqual([]);
+    expect(result.response.pendingItems).toEqual([]);
+  });
+
   it("plans, retrieves missing authorized evidence, verifies again, then synthesizes", async () => {
     const businessRules = getCoachBusinessRules({
       channel: "customer_account",

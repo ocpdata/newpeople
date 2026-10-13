@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1580" viewBox="0 0 1600 1580" role="img" aria-labelledby="title description">
   <title id="title">Flujo conversacional y responsabilidades B1 a B11</title>
-  <desc id="description">B1 crea el job con B2 y consulta su estado mientras B3 procesa el turno. B3 valida y prepara contexto, B4 adapta el canal, y B5 coordina la planificación B6, las lecturas B7 y B8, la verificación B9 y la respuesta B10. B9 puede pedir otra lectura. El resultado regresa por B4 a B3, que ejecuta la persistencia B11; B2 lo entrega a B1 cuando consulta el job.</desc>
+  <desc id="description">B1 crea el job con B2 y consulta su estado mientras B3 procesa el turno. B3 valida y prepara contexto; Coach usa preclasificador, clasificador semántico y resolver, mientras Cliente existente usa señales de contenido/operación, clasificador semántico y resolver propios. B4 adapta el canal; B5 entrega la intención autoritativa a B6 y valida que el plan sea compatible antes de coordinar lecturas B7/B8, verificación B9 y respuesta B10. B9 puede pedir otra lectura. El resultado regresa por B4 a B3, que ejecuta la persistencia B11; B2 lo entrega a B1 cuando consulta el job.</desc>
   <defs>
     <marker id="arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0 L10 5 L0 10 z" fill="#496579"/>
@@ -63,13 +63,13 @@
   <rect class="node" x="130" y="410" width="610" height="112" fill="#eaf0f5" stroke="#9aafbf"/>
   <text class="node-title" x="158" y="446">B3 · Servicio del canal</text>
   <text class="node-copy" x="158" y="478">
-    <tspan x="158" dy="0">Valida usuario, job, sesión y alcance; prepara contexto/snapshot.</tspan>
-    <tspan x="158" dy="21">En Coach resuelve intención y política antes de delegar.</tspan>
+    <tspan x="158" dy="0">Valida usuario, job, sesión y alcance; prepara snapshot.</tspan>
+    <tspan x="158" dy="21">Preclasificador → intención semántica → resolver en B3.</tspan>
   </text>
   <rect class="node" x="860" y="410" width="610" height="112" fill="#eaf0f5" stroke="#9aafbf"/>
   <text class="node-title" x="888" y="446">B4 · Adaptador del canal</text>
   <text class="node-copy" x="888" y="478">
-    <tspan x="888" dy="0">Entrega a B5 reglas, permisos, contexto y herramientas del canal.</tspan>
+    <tspan x="888" dy="0">Entrega a B5 intención, reglas, permisos, contexto y herramientas.</tspan>
     <tspan x="888" dy="21">Devuelve a B3 el resultado del motor.</tspan>
   </text>
   <path class="edge" d="M740 445 H850"/>
@@ -97,7 +97,7 @@
   <rect class="node" x="100" y="790" width="420" height="145" fill="#fff1d8" stroke="#d7a84e"/>
   <text class="node-title" x="126" y="827">B6 · Planificador</text>
   <text class="node-copy" x="126" y="860">
-    <tspan x="126" dy="0">Propone ruta/lecturas y filtros según el canal.</tspan>
+    <tspan x="126" dy="0">Planifica según la intención resuelta por B3.</tspan>
     <tspan x="126" dy="22">No ejecuta consultas ni concede permisos.</tspan>
   </text>
   <rect class="node" x="590" y="790" width="420" height="145" fill="#eaf5f3" stroke="#87b7ad"/>

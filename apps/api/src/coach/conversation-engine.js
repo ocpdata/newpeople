@@ -896,6 +896,7 @@ export async function runConversationEngine({
         normalizeChannelIntentPlan({
           channel,
           plan: proposedPlan,
+          authoritativeIntent: dependencies.authoritativeIntent,
           serverEntityCandidates: proposedPlan?.serverEntityCandidates,
           availableTools: resolvedTools,
           context,

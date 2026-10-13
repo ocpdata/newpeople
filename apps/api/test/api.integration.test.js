@@ -3078,7 +3078,32 @@ describe("API integration baseline", () => {
         const userInput = payload.input.find((item) => item.role === "user");
         const requestContext = JSON.parse(userInput.content);
         let output = requestContext.expectedJsonShape || {};
-        if (payload.text?.format?.name === "customer_account_query_plan") {
+        if (
+          payload.text?.format?.name === "customer_account_request_intent"
+        ) {
+          const currentQuestion = String(requestContext.context?.question || "");
+          const isEmailDraft =
+            /\b(?:escrib|redact|modelo|borrador)\w*\b/i.test(currentQuestion) &&
+            /\b(?:correo|email)\b/i.test(currentQuestion);
+          const isOperationRequest =
+            /\b(?:prepara|prop[oó]n|actualiza|modifica|cambia|agenda|agendar)\w*\b/i.test(
+              currentQuestion,
+            );
+          output = {
+            intent: isEmailDraft
+              ? "email_draft"
+              : isOperationRequest
+                ? "crm_operation"
+                : "account_overview",
+            confidence: "high",
+            reason: "Clasificación semántica de prueba",
+            clarificationQuestion: "",
+          };
+        } else if (
+          payload.text?.format?.name === "customer_account_snapshot_data_needs"
+        ) {
+          output = { domains: [], confidence: "high" };
+        } else if (payload.text?.format?.name === "customer_account_query_plan") {
           plannerContexts.push(requestContext.context);
           const isOperationRequest =
             /\b(?:prepara|prop[oó]n|actualiza|modifica|cambia)\b/i.test(
@@ -15768,6 +15793,149 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("cliente existente redacta correo sin convertir la reunión en actividad", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_customer_email_draft`,
+      permissionCodes: [
+        "cuentas.read",
+        "contactos.read",
+        "oportunidades.read",
+        "oportunidades.update",
+        "inteligencia_comercial.read",
+        "mi_coach.use",
+        "mi_coach.execute",
+        "calendario_comercial.update",
+      ],
+    });
+    cleanup.roleIds.push(roleId);
+    const email = `${TEST_PREFIX}.customer.email.draft@example.com`;
+    const userId = await createUser({
+      fullName: "Customer Email Draft",
+      email,
+      roleIds: [roleId],
+    });
+    cleanup.userIds.push(userId);
+    const loginResult = await login(request(app), email);
+    const accountId = await createDirectAccount({
+      ownerUserId: userId,
+      actorUserId: userId,
+      suffix: `${TEST_PREFIX}_customer_email_draft`,
+    });
+    cleanup.accountIds.push(accountId);
+    const sessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${loginResult.body.token}`)
+      .send({ accountId });
+    expect(sessionResponse.status).toBe(201);
+    const originalFetch = global.fetch;
+    const originalKey = config.openai.apiKey;
+    config.openai.apiKey = "test-customer-email-draft";
+    global.fetch = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      const schemaName = payload.text.format.name;
+      const input = JSON.parse(
+        payload.input.find((item) => item.role === "user").content,
+      );
+      let output;
+      if (schemaName === "customer_account_request_intent") {
+        expect(input.context.question).toBe(
+          "Ayúdame a escribir un correo para pedirle una reunión",
+        );
+        output = {
+          intent: "email_draft",
+          confidence: "high",
+          reason: "El vendedor solicita redactar un correo.",
+          clarificationQuestion: "",
+        };
+      } else if (schemaName === "customer_account_snapshot_data_needs") {
+        output = { domains: [], confidence: "high" };
+      } else if (schemaName === "customer_account_query_plan") {
+        expect(input.context.authoritativeIntent).toMatchObject({
+          intent: "email_draft",
+          confidence: 0.98,
+        });
+        output = {
+          objective: "Preparar una actividad de correo para solicitar reunión",
+          queries: ["crm_operation"],
+          operationKind: "activity",
+          activityDraft: {
+            action: "prepare",
+            actionType: "send_email",
+            title: "Solicitar reunión",
+          },
+          entities: {
+            accountReference: "",
+            opportunityReference: "",
+            contactReference: "",
+            leadReference: "",
+          },
+          referenceResolution: {
+            targetType: "none",
+            cardinality: "none",
+            source: "none",
+            candidateKeys: [],
+          },
+          filters: {
+            opportunityStatus: "unspecified",
+            stageCode: "",
+            closeYear: 0,
+            periodMonths: 0,
+            startDate: "",
+            endDate: "",
+          },
+          ambiguity: {
+            reason: "none",
+            requiresClarification: "no",
+            missingContext: [],
+            question: "",
+          },
+          mode: "operation",
+          confidence: "high",
+        };
+      } else {
+        throw new Error(`Unexpected structured request: ${schemaName}`);
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          id: `resp_customer_email_draft_${schemaName}`,
+          output_text: JSON.stringify(output),
+          usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+        }),
+      };
+    });
+
+    try {
+      const created = await request(app)
+        .post("/api/commercial-intelligence/account-chat/jobs")
+        .set("Authorization", `Bearer ${loginResult.body.token}`)
+        .send({
+          accountId,
+          chatSessionId: sessionResponse.body.session.id,
+          question: "Ayúdame a escribir un correo para pedirle una reunión",
+        });
+      expect(created.status).toBe(202);
+      let job;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const response = await request(app)
+          .get(`/api/commercial-intelligence/account-chat/jobs/${created.body.job.id}`)
+          .set("Authorization", `Bearer ${loginResult.body.token}`);
+        job = response.body.job;
+        if (["completed", "failed"].includes(job?.status)) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(job.status, JSON.stringify(job)).toBe("completed");
+      expect(job.result.answer).toContain("Borrador de correo");
+      expect(job.result.answer).toContain("Asunto:");
+      expect(job.result.answer).toContain("No se envió el correo.");
+      expect(job.result.operations).toEqual([]);
+      expect(job.result.pendingItems).toEqual([]);
+    } finally {
+      global.fetch = originalFetch;
+      config.openai.apiKey = originalKey;
+    }
+  });
+
   test("cliente existente recopila fecha y hora y completa la misma actividad persistida", async () => {
     const roleId = await createRole({
       name: `${TEST_PREFIX}_customer_activity`,
@@ -15810,8 +15978,32 @@ describe("API integration baseline", () => {
       const input = JSON.parse(
         payload.input.find((item) => item.role === "user").content,
       );
-      expect(payload.text.format.name).toBe("customer_account_query_plan");
-      plannerContexts.push(input.context);
+      let output;
+      if (payload.text.format.name === "customer_account_request_intent") {
+        output = {
+          intent: "crm_operation",
+          confidence: "high",
+          reason: "Solicitud explícita de preparar una llamada",
+          clarificationQuestion: "",
+        };
+      } else if (
+        payload.text.format.name === "customer_account_snapshot_data_needs"
+      ) {
+        output = { domains: [], confidence: "high" };
+      } else {
+        expect(payload.text.format.name).toBe("customer_account_query_plan");
+        plannerContexts.push(input.context);
+      }
+      if (payload.text.format.name !== "customer_account_query_plan") {
+        return {
+          ok: true,
+          json: async () => ({
+            id: `resp_customer_activity_${payload.text.format.name}`,
+            output_text: JSON.stringify(output),
+            usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+          }),
+        };
+      }
       const candidate =
         input.context.authorizedEntityCandidates.opportunities[0];
       const continuing = Boolean(input.context.pendingActivity);

@@ -30,7 +30,12 @@ import {
 import { ensureCommercialCalendarActivitiesSchema } from "./calendar-activities-schema.js";
 import { ensureLandingSchema } from "../landing/schema.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
+import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
+import {
+  classifyCustomerRequestB3,
+  resolveCustomerIntentB3,
+} from "./customer-intent-classification.js";
 import {
   appendCustomerAccountChatHistory,
   buildCustomerEvidenceFailureResponse,
@@ -169,6 +174,154 @@ export async function classifyCustomerSnapshotDataNeeds({
     persistedIntents,
     availableDataDomains.map((domain) => domain.code),
   );
+}
+
+const CUSTOMER_INTENT_CONFIDENCE = Object.freeze({
+  high: 0.95,
+  medium: 0.75,
+  low: 0.35,
+});
+
+async function classifyCustomerIntentSemantically({
+  question = "",
+  conversationHistory = [],
+  selectedContext = {},
+  conversationContext = null,
+  intents = [],
+  user,
+  jobId,
+  classifyWithAI = runStructuredTextResearch,
+} = {}) {
+  const availableIntents = (Array.isArray(intents) ? intents : [])
+    .filter((intent) => intent?.enabled !== false && intent?.code)
+    .map((intent) => ({
+      code: String(intent.code),
+      label: String(intent.label || intent.code),
+      description: String(intent.description || ""),
+    }));
+  const clarification = (reason, confidence = 0, questionText = "") => ({
+    intent: "clarify_needed",
+    confidence,
+    reason: String(reason || "intent_uncertain").slice(0, 300),
+    clarificationQuestion:
+      String(questionText || "").trim().slice(0, 500) ||
+      "¿Quieres redactar contenido, consultar la cuenta o preparar una operación en el CRM/Calendario?",
+    requiresClarification: true,
+  });
+  if (!String(question || "").trim() || !availableIntents.length) {
+    return clarification("missing_question_or_intents");
+  }
+
+  let plan;
+  try {
+    plan = await classifyWithAI({
+      schemaName: "customer_account_request_intent",
+      systemPrompt:
+        "Clasifica el resultado principal que solicita el vendedor en el chat de Cliente existente; no planifiques consultas ni redactes la respuesta. Elige solo una intención de availableIntents o clarify_needed. Distingue entre preparar contenido y ejecutar una acción descrita dentro de ese contenido: pedir que se redacte un correo para solicitar una reunión no pide agendarla. crm_operation requiere una solicitud explícita de registrar, crear, actualizar, vincular o agendar algo en CRM/Calendario. Interpreta respuestas breves como 'sí', 'proponla' o 'continúa' usando recentConversation y validatedContinuation; usa crm_operation solo cuando remitan inequívocamente a una operación previa ofrecida o pendiente. Si se solicitan por separado contenido y una operación, no existe una continuación verificable o no puedes distinguir con confianza el resultado buscado, usa clarify_needed y formula una pregunta breve. No inventes permisos, IDs ni datos.",
+      subject: "Intención del vendedor en Cliente existente",
+      context: {
+        question: String(question).trim().slice(0, 2000),
+        recentConversation: (Array.isArray(conversationHistory)
+          ? conversationHistory
+          : []
+        )
+          .slice(-6)
+          .map((message) => ({
+            role: message?.role === "assistant" ? "assistant" : "user",
+            text: String(message?.text || "").slice(0, 600),
+          })),
+        validatedContinuation: conversationContext
+          ? {
+              intents: Array.isArray(conversationContext.intents)
+                ? conversationContext.intents.slice(0, 8)
+                : [],
+              hasPendingActivity: Boolean(conversationContext.pendingActivity),
+              pendingActivity: conversationContext.pendingActivity
+                ? {
+                    title: String(
+                      conversationContext.pendingActivity.operation?.title || "",
+                    ).slice(0, 200),
+                    actionType: String(
+                      conversationContext.pendingActivity.operation?.actionType || "",
+                    ).slice(0, 40),
+                    missingFields: Array.isArray(
+                      conversationContext.pendingActivity.operation?.missingFields,
+                    )
+                      ? conversationContext.pendingActivity.operation.missingFields.slice(0, 8)
+                      : [],
+                  }
+                : null,
+            }
+          : null,
+        selectedContext: {
+          accountSelected: Boolean(selectedContext.accountId),
+          opportunitySelected: Boolean(selectedContext.opportunityId),
+          contactSelected: Boolean(selectedContext.contactId),
+        },
+        availableIntents,
+      },
+      currentValues: {},
+      fields: [
+        {
+          key: "intent",
+          type: "enum",
+          enum: [...availableIntents.map((intent) => intent.code), "clarify_needed"],
+          example: "clarify_needed",
+        },
+        {
+          key: "confidence",
+          type: "enum",
+          enum: ["high", "medium", "low"],
+          example: "medium",
+        },
+        { key: "reason", type: "string", example: "" },
+        { key: "clarificationQuestion", type: "string", example: "" },
+      ],
+      aiUsageContext: {
+        userId: Number(user?.id || 0),
+        featureCode: "commercial_intelligence.account_chat.intent",
+        jobType: "account_chat",
+        jobId,
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
+    return clarification("intent_classifier_unavailable");
+  }
+
+  const confidence = CUSTOMER_INTENT_CONFIDENCE[plan?.confidence] || 0;
+  const intent = String(plan?.intent || "").trim();
+  const reason = String(plan?.reason || "semantic_classification").slice(0, 300);
+  if (intent === "clarify_needed") {
+    return clarification(
+      reason,
+      confidence,
+      plan?.clarificationQuestion,
+    );
+  }
+  if (
+    confidence < 0.68 ||
+    !availableIntents.some((item) => item.code === intent)
+  ) {
+    return clarification("invalid_or_low_confidence_intent", confidence);
+  }
+  return {
+    intent,
+    confidence,
+    reason,
+    clarificationQuestion: "",
+    requiresClarification: false,
+  };
+}
+
+export async function classifyCustomerIntent(input = {}) {
+  const preDecision = classifyCustomerRequestB3(input.question || "");
+  const semanticDecision = await classifyCustomerIntentSemantically(input);
+  return resolveCustomerIntentB3({
+    preDecision,
+    semanticDecision,
+    availableIntents: input.intents,
+  });
 }
 
 function sanitizeCustomerResponseEntities(response, snapshot, usedTools = []) {
@@ -3297,6 +3450,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   let activityHistoryRange = null;
   let nextConversationContext = null;
   let conversationContextUpdated = false;
+  let channelIntentConfiguration = null;
+  let authoritativeIntent = null;
   let preparationStage = "request";
   const turnStartedAt = Date.now();
   try {
@@ -3335,16 +3490,21 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       null,
     );
     activityHistoryRange = getCustomerActivityHistoryRange(request.question);
+    preparationStage = "request_classification";
     preparationStage = "snapshot_data_needs";
+    channelIntentConfiguration = await loadChannelIntentConfigurations({
+      channel: "customer_account",
+    });
+    const selectedContext = {
+      accountId: Number(job.account_id || 0),
+      opportunityId: Number(job.opportunity_id || 0),
+      contactId: Number(job.contact_id || 0),
+    };
     const snapshotDataNeeds = await classifyCustomerSnapshotDataNeeds({
       question: request.question,
       conversationHistory,
       persistedIntents: persistedConversationContext?.intents || [],
-      selectedContext: {
-        accountId: Number(job.account_id || 0),
-        opportunityId: Number(job.opportunity_id || 0),
-        contactId: Number(job.contact_id || 0),
-      },
+      selectedContext,
       user,
       jobId,
     });
@@ -3397,33 +3557,73 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       continuationContext = conversationContext;
       nextConversationContext = conversationContext;
     }
-    preparationStage = "agents";
-    agents = await executionTrace.span(
-      {
-        from: "B3",
-        to: "agents",
-        label: "Preparar agentes de inteligencia",
-        parentSpanId: workerSpanId,
-        input: {
-          includePublicResearch: Boolean(request.includePublicResearch),
-          accountId: snapshot.account?.id || null,
+    preparationStage = "intent_classification_and_agents";
+    const [classifiedIntent, preparedAgents] = await Promise.all([
+      executionTrace.span(
+        {
+          from: "B3",
+          to: "B3",
+          label: "Clasificar intención de la solicitud",
+          parentSpanId: workerSpanId,
+          input: {
+            questionLength: String(request.question || "").length,
+            historyMessageCount: conversationHistory.length,
+            hasValidatedContinuation: Boolean(conversationContext),
+            hasPendingActivity: Boolean(conversationContext?.pendingActivity),
+            enabledIntents: channelIntentConfiguration
+              .filter((intent) => intent.enabled !== false)
+              .map((intent) => intent.code),
+          },
         },
-      },
-      () =>
-        runAccountIntelligenceAgents(snapshot, {
-          includePublicResearch: Boolean(request.includePublicResearch),
-          user,
-          jobId,
+        () =>
+          classifyCustomerIntent({
+            question: request.question,
+            conversationHistory,
+            selectedContext,
+            conversationContext,
+            intents: channelIntentConfiguration,
+            user,
+            jobId,
+          }),
+        (value) => ({
+          intent: value.intent,
+          confidence: value.confidence,
+          requiresClarification: value.requiresClarification,
+          reason: value.reason,
+          preclassifierBucket: value.source?.preclassifierBucket || "unknown",
+          semanticIntent: value.source?.semanticIntent || null,
+          resolver: value.source?.resolver || "unknown",
         }),
-      (value) =>
-        (Array.isArray(value) ? value : []).map((agent) => ({
-          agentId: agent.agentId,
-          status: agent.status,
-          evidenceCount: Array.isArray(agent.evidence)
-            ? agent.evidence.length
-            : 0,
-        })),
-    );
+      ),
+      executionTrace.span(
+        {
+          from: "B3",
+          to: "agents",
+          label: "Preparar agentes de inteligencia",
+          parentSpanId: workerSpanId,
+          input: {
+            includePublicResearch: Boolean(request.includePublicResearch),
+            accountId: snapshot.account?.id || null,
+          },
+        },
+        () =>
+          runAccountIntelligenceAgents(snapshot, {
+            includePublicResearch: Boolean(request.includePublicResearch),
+            user,
+            jobId,
+          }),
+        (value) =>
+          (Array.isArray(value) ? value : []).map((agent) => ({
+            agentId: agent.agentId,
+            status: agent.status,
+            evidenceCount: Array.isArray(agent.evidence)
+              ? agent.evidence.length
+              : 0,
+          })),
+      ),
+    ]);
+    authoritativeIntent = classifiedIntent;
+    agents = preparedAgents;
   } catch (error) {
     await recordCoachTurnQualityTrace({
       channel: "customer_account",
@@ -3521,6 +3721,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   }
   const adapter = createCustomerAccountAdapter({
     user,
+    authoritativeIntent,
+    channelIntentConfiguration,
     snapshot: {
       ...snapshot,
       selectedOpportunity:

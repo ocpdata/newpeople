@@ -2419,6 +2419,8 @@ export function normalizeCustomerResponse(
 export function createCustomerAccountAdapter({
   user,
   snapshot,
+  authoritativeIntent = null,
+  channelIntentConfiguration = null,
   conversationContext = null,
   snapshotQueryMetrics = [],
   agents,
@@ -2445,6 +2447,7 @@ export function createCustomerAccountAdapter({
     },
   ];
   const dependencies = {
+    authoritativeIntent,
     validateServerRequest: ({ question, routing, businessRules, operationPolicy }) => {
       if (["other_account", "out_of_scope"].includes(routing?.ambiguity?.reason)) return null;
       if (!isExplicitCustomerAmountChange(question) && (
@@ -2536,9 +2539,19 @@ export function createCustomerAccountAdapter({
         entityCandidates,
         researchAgents: agents,
       });
+      plannerContext.authoritativeIntent = authoritativeIntent
+        ? {
+            intent: authoritativeIntent.intent,
+            confidence: authoritativeIntent.confidence,
+            requiresClarification: authoritativeIntent.requiresClarification,
+          }
+        : null;
       const plannerRequest = {
         schemaName: "customer_account_query_plan",
         systemPrompt:
+          (authoritativeIntent
+            ? `Intención resuelta por B3: ${authoritativeIntent.intent} (confianza ${authoritativeIntent.confidence}). No la sustituyas por otra intención; si requiere aclaración, devuelve una aclaración sin proponer operaciones. `
+            : "") +
           "Para preparar una actividad, llena activityDraft.action=prepare; para responder campos de pendingActivity usa continue; si el usuario la descarta usa discard; para consultas factuales usa none. Interpreta las respuestas breves con el borrador y el historial. Usa queries=[crm_operation,contact_query] para una actividad con contacto, no consultas de historial salvo que el usuario las solicite explícitamente. Conserva día/hora no proporcionados como vacíos: 'la próxima semana' es temporalPreference, no una cita. scheduledAt debe ser YYYY-MM-DDTHH:mm en la zona horaria del negocio; calcula fechas relativas con referenceDateTime y no inventes hora ni día. Los campos pendientes del borrador no son ambiguity ni evidencia CRM faltante; solo entidades ambiguas, inaccesibles o referencias no resueltas requieren aclaración. " +
           "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Distingue la intención consultada de la entidad a la que se refiere: si preguntas por las actividades, etapa, cotización o contactos que tiene una oportunidad ya identificada, targetType debe ser opportunity y debes devolver el candidateKey de esa oportunidad; no cambies targetType a account solo porque la consulta sea account_activity_history. Por ejemplo, después de consultar Vrf 2027, ante '¿Qué actividad pendiente tiene?' conserva Vrf 2027 como objetivo singular y planifica las lecturas de actividad correspondientes. Si preguntan qué contacto está asociado a una oportunidad, incluye contact_query y consulta getOpportunity para leer associatedContact; buscar contactos de la cuenta por sí solo no demuestra que alguno pertenezca a esa oportunidad. Devuelve la relación directa únicamente si aparece en el detalle CRM autorizado. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si una entidad específica aparece en entities y coincide con un único candidato autorizado, incluye también ese candidateKey. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Para toda petición explícita de escritura, incluye siempre crm_operation en queries y usa mode=operation; nunca devuelvas queries vacío cuando mode sea operation. Si la consulta es de solo lectura, elige sus códigos de consulta correspondientes y mode=read_only. Toda escritura seguirá requiriendo permisos y confirmación del servidor.",
         subject:
@@ -2598,7 +2611,9 @@ export function createCustomerAccountAdapter({
         : normalizedPlan;
     },
     loadChannelIntentConfigurations: ({ channel }) =>
-      loadChannelIntentConfigurations({ channel }),
+      channel === "customer_account" && Array.isArray(channelIntentConfiguration)
+        ? channelIntentConfiguration
+        : loadChannelIntentConfigurations({ channel }),
     loadAdministrativeRules: listCoachAdminRules,
     prepareReadModel: async ({
       question,
@@ -2692,6 +2707,22 @@ export function createCustomerAccountAdapter({
           missingFactsCount: 0,
         };
         return activityResponse;
+      }
+      if (routing?.intent === "email_draft") {
+        const emailDraftResponse = buildCustomerIntentResponse({
+          snapshot: payload.context,
+          question: payload.question,
+          routing,
+          permissions,
+          allowedOperationKinds: payload.operationPolicy?.allowedKinds,
+          businessRules: activeBusinessRules || {},
+          pendingAmountSelection:
+            activeConversationContext?.pendingAmountSelection || null,
+        });
+        if (emailDraftResponse) {
+          recordAnswerGeneration("deterministic_email_draft", emailDraftResponse);
+          return emailDraftResponse;
+        }
       }
       const snapshotQueryErrors = snapshotQueryMetrics
         .filter((metric) => metric.errorCode)

@@ -589,6 +589,7 @@ function normalizeVerifiedEntityReference(value, sourceTexts = []) {
 export function normalizeChannelIntentPlan({
   channel,
   plan,
+  authoritativeIntent = null,
   allowedOperationKinds = [],
   serverEntityCandidates = [],
   availableTools = [],
@@ -607,6 +608,69 @@ export function normalizeChannelIntentPlan({
       item,
     ]),
   );
+  const authoritativeCode = String(authoritativeIntent?.intent || "");
+  const authoritativeConfidence = Number(authoritativeIntent?.confidence || 0);
+  if (
+    channel === "customer_account" &&
+    authoritativeCode === "clarify_needed"
+  ) {
+    plan = {
+      ...plan,
+      queries: [],
+      mode: "clarification",
+      operationKind: "none",
+      activityDraft: { ...plan.activityDraft, action: "none" },
+      ambiguity: {
+        reason: "ambiguous_entity",
+        requiresClarification: "yes",
+        missingContext: [],
+        question: String(
+          authoritativeIntent.clarificationQuestion ||
+            authoritativeIntent.question ||
+            "Necesito aclarar qué resultado buscas antes de continuar.",
+        ),
+      },
+    };
+  } else if (
+    channel === "customer_account" &&
+    authoritativeConfidence >= 0.68 &&
+    catalog.some(({ code }) => code === authoritativeCode) &&
+    configurationByCode.get(authoritativeCode)?.enabled !== false
+  ) {
+    const authoritativeIsOperation = authoritativeCode === "crm_operation";
+    const compatibleSupportingIntents = authoritativeIsOperation
+      ? (Array.isArray(plan.queries) ? plan.queries : []).filter(
+          (code) => code === "contact_query",
+        )
+      : [];
+    plan = {
+      ...plan,
+      queries: authoritativeIsOperation
+        ? [authoritativeCode, ...compatibleSupportingIntents]
+        : [authoritativeCode],
+      mode:
+        authoritativeIsOperation && plan.mode !== "clarification"
+          ? "operation"
+          : plan.mode === "clarification"
+            ? "clarification"
+            : "read_only",
+      ...(authoritativeIsOperation
+        ? {}
+        : {
+            operationKind: "none",
+            activityDraft: { ...plan.activityDraft, action: "none" },
+          }),
+      ambiguity:
+        plan.mode === "clarification"
+          ? plan.ambiguity
+          : {
+              reason: "none",
+              requiresClarification: "no",
+              missingContext: [],
+              question: "",
+            },
+    };
+  }
   const requestedCodes = Array.isArray(plan.queries) ? plan.queries : [];
   const recoverMissingOperationIntent =
     channel === "customer_account" &&

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyCustomerIntent,
   buildAccountHealth,
   buildExpansionHypotheses,
   classifyCustomerSnapshotDataNeeds,
@@ -10,6 +11,7 @@ import {
   runAccountIntelligenceAgents,
   PUBLIC_CONTACT_ROLE_TERMS,
 } from "../src/commercial-intelligence/service.js";
+import { classifyCustomerRequestB3 } from "../src/commercial-intelligence/customer-intent-classification.js";
 import {
   customerIntelligenceFindingSchema,
   normalizeCustomerIntelligenceOrchestration,
@@ -20,6 +22,194 @@ import {
 } from "../src/commercial-intelligence/contract.js";
 
 describe("customer intelligence contract", () => {
+  it("preclassifies draft, explicit operation, and mixed requests without treating a meeting mention as scheduling", () => {
+    expect(
+      classifyCustomerRequestB3(
+        "Ayúdame a escribir un correo para pedirle una reunión",
+      ),
+    ).toMatchObject({ bucket: "content_draft" });
+    expect(
+      classifyCustomerRequestB3("Agenda una reunión con Eduardo"),
+    ).toMatchObject({ bucket: "operation_request" });
+    expect(
+      classifyCustomerRequestB3("Escribe un correo y agenda la reunión"),
+    ).toMatchObject({ bucket: "mixed_request" });
+    expect(
+      classifyCustomerRequestB3("Escribe un correo para agendar una reunión"),
+    ).toMatchObject({ bucket: "content_draft" });
+  });
+
+  it("classifies a requested draft separately from an operation mentioned in its content", async () => {
+    let plannerRequest;
+    const decision = await classifyCustomerIntent({
+      question: "Ayúdame a escribir un correo para pedirle una reunión",
+      conversationHistory: [],
+      selectedContext: { accountId: 7, opportunityId: 11 },
+      conversationContext: {
+        intents: ["crm_operation"],
+        pendingActivity: {
+          operation: {
+            title: "Llamada con Ana",
+            actionType: "call",
+            missingFields: ["scheduledAt"],
+          },
+        },
+      },
+      intents: [
+        { code: "email_draft", label: "Borrador de correo", enabled: true },
+        { code: "crm_operation", label: "Operación CRM", enabled: true },
+      ],
+      user: { id: 5 },
+      jobId: 81,
+      classifyWithAI: async (request) => {
+        plannerRequest = request;
+        return {
+          intent: "email_draft",
+          confidence: "high",
+          reason: "El usuario pide redactar un correo.",
+          clarificationQuestion: "",
+        };
+      },
+    });
+
+    expect(plannerRequest.schemaName).toBe("customer_account_request_intent");
+    expect(plannerRequest.context.question).toContain("escribir un correo");
+    expect(plannerRequest.context.validatedContinuation).toMatchObject({
+      hasPendingActivity: true,
+      pendingActivity: {
+        title: "Llamada con Ana",
+        actionType: "call",
+        missingFields: ["scheduledAt"],
+      },
+    });
+    expect(plannerRequest.systemPrompt).toContain(
+      "Interpreta respuestas breves como 'sí', 'proponla' o 'continúa'",
+    );
+    expect(decision).toMatchObject({
+      intent: "email_draft",
+      confidence: 0.98,
+      requiresClarification: false,
+    });
+  });
+
+  it("fails closed when the intent classifier is low confidence or unavailable", async () => {
+    const lowConfidence = await classifyCustomerIntent({
+      question: "Prepara esto",
+      intents: [{ code: "crm_operation", enabled: true }],
+      classifyWithAI: async () => ({
+        intent: "crm_operation",
+        confidence: "low",
+      }),
+    });
+    const unavailable = await classifyCustomerIntent({
+      question: "Agenda una reunión",
+      intents: [{ code: "crm_operation", enabled: true }],
+      classifyWithAI: async () => {
+        throw new Error("classifier unavailable");
+      },
+    });
+
+    expect(lowConfidence).toMatchObject({
+      intent: "clarify_needed",
+      requiresClarification: true,
+    });
+    expect(unavailable).toMatchObject({
+      intent: "clarify_needed",
+      requiresClarification: true,
+    });
+  });
+
+  it("keeps an explicit scheduling request separate from a mixed draft-and-operation request", async () => {
+    const intents = [
+      { code: "email_draft", label: "Borrador", enabled: true },
+      { code: "crm_operation", label: "Operación CRM", enabled: true },
+    ];
+    const scheduling = await classifyCustomerIntent({
+      question: "Agenda una reunión con Eduardo",
+      intents,
+      classifyWithAI: async () => ({
+        intent: "crm_operation",
+        confidence: "high",
+      }),
+    });
+    const mixed = await classifyCustomerIntent({
+      question: "Escribe un correo y agenda la reunión",
+      intents,
+      classifyWithAI: async () => ({
+        intent: "clarify_needed",
+        confidence: "medium",
+        clarificationQuestion: "¿Quieres el borrador, agendar la reunión o ambas cosas?",
+      }),
+    });
+
+    expect(scheduling).toMatchObject({
+      intent: "crm_operation",
+      requiresClarification: false,
+    });
+    expect(mixed).toMatchObject({
+      intent: "clarify_needed",
+      requiresClarification: true,
+      clarificationQuestion: "¿Quieres solo el borrador, agendar la reunión o ambas cosas?",
+    });
+  });
+
+  it("resolves a draft-versus-operation conflict before it reaches B5", async () => {
+    const intents = [
+      { code: "email_draft", label: "Borrador", enabled: true },
+      { code: "crm_operation", label: "Operación CRM", enabled: true },
+    ];
+    const draftRequest = await classifyCustomerIntent({
+      question: "Ayúdame a escribir un correo para pedirle una reunión",
+      intents,
+      classifyWithAI: async () => ({
+        intent: "crm_operation",
+        confidence: "high",
+        reason: "El modelo confundió la reunión mencionada con una operación.",
+      }),
+    });
+    const mixedRequest = await classifyCustomerIntent({
+      question: "Escribe un correo y agenda la reunión",
+      intents,
+      classifyWithAI: async () => ({
+        intent: "crm_operation",
+        confidence: "high",
+      }),
+    });
+    const genericContentRequest = await classifyCustomerIntent({
+      question: "Redacta un mensaje para actualizar los datos de la cuenta",
+      intents,
+      classifyWithAI: async () => ({
+        intent: "crm_operation",
+        confidence: "high",
+      }),
+    });
+
+    expect(draftRequest).toMatchObject({
+      intent: "email_draft",
+      requiresClarification: false,
+      source: {
+        preclassifierBucket: "content_draft",
+        resolver: "deterministic_draft_request",
+      },
+    });
+    expect(mixedRequest).toMatchObject({
+      intent: "clarify_needed",
+      requiresClarification: true,
+      source: {
+        preclassifierBucket: "mixed_request",
+        resolver: "strong_conflict",
+      },
+    });
+    expect(genericContentRequest).toMatchObject({
+      intent: "clarify_needed",
+      requiresClarification: true,
+      source: {
+        preclassifierBucket: "content_draft",
+        resolver: "strong_conflict",
+      },
+    });
+  });
+
   it("asks the AI classifier only about server-authorized optional snapshot domains", async () => {
     let plannerRequest;
     const dataNeeds = await classifyCustomerSnapshotDataNeeds({

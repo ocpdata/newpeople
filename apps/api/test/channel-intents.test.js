@@ -27,6 +27,150 @@ const prospectTools = [
 ].map((name) => ({ name }));
 
 describe("shared non-Coach channel intent routing", () => {
+  it("uses B3's confident email-draft intent instead of a contradictory activity plan", () => {
+    const normalized = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      authoritativeIntent: { intent: "email_draft", confidence: 0.94 },
+      context: { accountId: 7 },
+      availableTools: customerTools.map((tool) => tool.name),
+      configuration: getChannelIntentDefaults("customer_account"),
+      question: "Ayúdame a escribir un correo para pedirle una reunión",
+      plan: {
+        objective: "Preparar correo para solicitar una reunión",
+        queries: ["crm_operation"],
+        operationKind: "activity",
+        activityDraft: { action: "prepare", actionType: "send_email" },
+        entities: {},
+        referenceResolution: {
+          targetType: "none",
+          cardinality: "none",
+          source: "none",
+          candidateKeys: [],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+        confidence: "high",
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      intent: "email_draft",
+      intents: ["email_draft"],
+      mode: "query",
+      operationKind: "none",
+      activityDraft: { action: "none" },
+      requiresClarification: false,
+    });
+  });
+
+  it("does not allow an operation plan through when B3 requires clarification", () => {
+    const normalized = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      authoritativeIntent: {
+        intent: "clarify_needed",
+        confidence: 0.35,
+        clarificationQuestion: "¿Quieres redactar o agendar la reunión?",
+      },
+      context: { accountId: 7 },
+      availableTools: customerTools.map((tool) => tool.name),
+      configuration: getChannelIntentDefaults("customer_account"),
+      question: "Prepara esto",
+      plan: {
+        queries: ["crm_operation"],
+        operationKind: "activity",
+        activityDraft: { action: "prepare", actionType: "meeting_in_person" },
+        entities: {},
+        referenceResolution: {
+          targetType: "none",
+          cardinality: "none",
+          source: "none",
+          candidateKeys: [],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+        confidence: "high",
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      intent: "clarification",
+      mode: "clarification",
+      operationKind: "none",
+      activityDraft: { action: "none" },
+      requiresClarification: true,
+      allowedTools: [],
+    });
+    expect(normalized.ambiguity.clarificationQuestion).toBe(
+      "¿Quieres redactar o agendar la reunión?",
+    );
+  });
+
+  it("preserves an activity plan when B3 confirms an explicit CRM operation", () => {
+    const normalized = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      authoritativeIntent: { intent: "crm_operation", confidence: 0.95 },
+      allowedOperationKinds: ["activity"],
+      serverEntityCandidates: [
+        {
+          candidateKey: "opportunity_1",
+          entityType: "opportunity",
+          recordId: 11,
+          accountId: 7,
+          referenceText: "Proyecto abierto",
+        },
+      ],
+      availableTools: customerTools.map((tool) => tool.name),
+      context: { accountId: 7 },
+      configuration: getChannelIntentDefaults("customer_account"),
+      question: "Agenda una reunión para Proyecto abierto",
+      plan: {
+        queries: ["email_draft", "crm_operation", "contact_query"],
+        operationKind: "activity",
+        activityDraft: {
+          action: "prepare",
+          actionType: "meeting_in_person",
+        },
+        entities: { opportunityReference: "Proyecto abierto" },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "current_message",
+          candidateKeys: ["opportunity_1"],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "operation",
+        confidence: "high",
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      intent: "crm_operation",
+      intents: ["crm_operation", "contact_query"],
+      mode: "operation",
+      operationKind: "activity",
+      activityDraft: { action: "prepare", actionType: "meeting_in_person" },
+      requiresClarification: false,
+    });
+  });
+
   it("routes opportunity guidance to detail, activity, readiness, and interaction tools", () => {
     const configuration = getChannelIntentDefaults("customer_account");
     const classified = classifyChannelIntent({
