@@ -364,26 +364,6 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
       used: Boolean(fallback.used),
       reasonCode: normalizeTraceErrorCode(fallback.reasonCode),
     },
-    targetValidation: diagnostics.targetValidation
-      ? {
-          status: ["aligned", "other_account", "ambiguous", "mismatch", "inconclusive", "unavailable"]
-            .includes(diagnostics.targetValidation.status)
-            ? diagnostics.targetValidation.status : "unavailable",
-          reason: String(diagnostics.targetValidation.reason || "").slice(0, 1000),
-          issues: Array.isArray(diagnostics.targetValidation.issues)
-            ? diagnostics.targetValidation.issues.slice(0, 8).map((issue) => ({
-                path: String(issue.path || "").slice(0, 160),
-                code: String(issue.code || "").slice(0, 80),
-              })) : [],
-          references: Array.isArray(diagnostics.targetValidation.references)
-            ? diagnostics.targetValidation.references.slice(0, 8).map((reference) => ({
-                text: String(reference.text || "").slice(0, 300),
-                kind: ["entity", "collection"].includes(reference.kind) ? reference.kind : null,
-                entityType: String(reference.entityType || "").slice(0, 40),
-                candidateKeys: Array.isArray(reference.candidateKeys)
-                  ? reference.candidateKeys.slice(0, 8).map((key) => String(key).slice(0, 80)) : [],
-              })) : [],
-        } : null,
     serverRules: diagnostics.serverRules
       ? {
           version: Number(diagnostics.serverRules.version) || 0,
@@ -405,8 +385,6 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
           status: allowedAnswerAuditStatuses.has(answerAudit.status)
             ? answerAudit.status
             : "unavailable",
-          targetStatus: ["aligned", "mismatch", "inconclusive"].includes(answerAudit.targetStatus)
-            ? answerAudit.targetStatus : "unavailable",
           errorCode: normalizeTraceErrorCode(answerAudit.errorCode),
           proposedAnswer: String(answerAudit.proposedAnswer || "").slice(
             0,

@@ -4499,24 +4499,12 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
               input: qualityTrace?.diagnostics?.plannerInput || null,
               output: {
                 diagnostics: plannerDiagnostics,
-                targetValidation: qualityTrace?.diagnostics?.targetValidation || null,
                 proposedPlan:
                   plannerReturnEvent?.output?.proposedRouting || null,
                 routingValidation: routingValidationEvent?.output || null,
                 normalizedPlan: response.channelIntentRouting || null,
               },
               checks: [
-                ...(qualityTrace?.diagnostics?.targetValidation ? [
-                  diagnosticCheck({
-                    field: "targetCorrespondence",
-                    state: qualityTrace.diagnostics.targetValidation.status === "aligned" ? "pass" : "warning",
-                    expected: "objetivo del plan correspondiente al mensaje actual",
-                    actual: qualityTrace.diagnostics.targetValidation,
-                    message: qualityTrace.diagnostics.targetValidation.status === "aligned"
-                      ? "La validación independiente aprobó el objetivo del plan."
-                      : "El objetivo no se aprobó. El servidor detuvo las lecturas para no sustituir la entidad solicitada.",
-                  }),
-                ] : []),
                 diagnosticCheck({
                   field: "normalizedPlan",
                   state: response.channelIntentRouting ? "pass" : "warning",
@@ -4741,8 +4729,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                         field: "answerAudit",
                         state:
                           qualityTrace.diagnostics.answerAudit.status ===
-                          "supported" &&
-                          qualityTrace.diagnostics.answerAudit.targetStatus === "aligned"
+                          "supported"
                             ? "pass"
                             : qualityTrace.diagnostics.answerAudit.status ===
                                 "unsupported"
@@ -4751,7 +4738,6 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                         expected: "auditoría de respuesta respaldada",
                         actual: {
                           status: qualityTrace.diagnostics.answerAudit.status,
-                          targetStatus: qualityTrace.diagnostics.answerAudit.targetStatus,
                           unsupportedClaimCount: Array.isArray(
                             qualityTrace.diagnostics.answerAudit
                               .unsupportedClaims,
@@ -4765,8 +4751,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                         },
                         message:
                           qualityTrace.diagnostics.answerAudit.status ===
-                          "supported" &&
-                          qualityTrace.diagnostics.answerAudit.targetStatus === "aligned"
+                          "supported"
                             ? "La auditoría respaldó la respuesta propuesta."
                             : qualityTrace.diagnostics.answerAudit.status ===
                                 "unsupported"

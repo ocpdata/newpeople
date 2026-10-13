@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/commercial-intelligence/customer-target-validation.js", async (original) => ({
-  ...(await original()),
-  validateCustomerPlanTarget: vi.fn(),
-}));
-import { validateCustomerPlanTarget } from "../src/commercial-intelligence/customer-target-validation.js";
 vi.mock("../src/coach/quotation-read-service.js", () => ({
   getAuthorizedCoachQuotationContent: vi.fn(),
 }));
@@ -68,7 +63,6 @@ import {
 describe("Customer account chat adapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    validateCustomerPlanTarget.mockResolvedValue({ status: "aligned", reason: "", references: [] });
     loadSemanticClassifierPrompt.mockResolvedValue({
       channel: "customer_account",
       instruction: SEMANTIC_CLASSIFIER_DEFAULTS.customer_account,
@@ -247,7 +241,7 @@ describe("Customer account chat adapter", () => {
         operations: [],
       })
       .mockResolvedValueOnce({
-        status: "supported", targetStatus: "aligned",
+        status: "supported",
         unsupportedClaims: [],
       });
 
@@ -506,7 +500,7 @@ describe("Customer account chat adapter", () => {
         recommendedActions: [],
         operations: [],
       })
-      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
 
     const adapter = createCustomerAccountAdapter({
       user: {
@@ -599,7 +593,7 @@ describe("Customer account chat adapter", () => {
         missingQueries: [],
         missingFacts: [],
       })
-      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
 
     const opportunity = {
       ...snapshot.opportunities[0],
@@ -733,7 +727,7 @@ describe("Customer account chat adapter", () => {
         missingQueries: [],
         missingFacts: [],
       })
-      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
 
     const adapter = createCustomerAccountAdapter({
       user: {
@@ -895,7 +889,6 @@ describe("Customer account chat adapter", () => {
           expect(request.context.proposedAnswer.operations).toEqual([draft]);
           return {
             status: auditStatus,
-            targetStatus: "aligned",
             unsupportedClaims:
               auditStatus === "unsupported" ? ["Vínculo no respaldado"] : [],
           };
@@ -1020,7 +1013,7 @@ describe("Customer account chat adapter", () => {
           responseId: "resp_audit_test",
           model: "test-audit-model",
         });
-        return { status: "supported", targetStatus: "aligned", unsupportedClaims: [] };
+        return { status: "supported", unsupportedClaims: [] };
       });
 
     const opportunity = {
@@ -2472,7 +2465,7 @@ describe("Customer account chat adapter", () => {
         recommendedActions: [],
         operations: [],
       })
-      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
 
     const opportunity = {
       ...snapshot.opportunities[0],

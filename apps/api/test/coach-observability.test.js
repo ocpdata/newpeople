@@ -87,31 +87,6 @@ describe("Coach observability", () => {
     });
   });
 
-  it("preserves the entity-versus-collection distinction in target diagnostics", async () => {
-    query.mockResolvedValueOnce({ insertId: 46 });
-    await recordCoachTurnQualityTrace({
-      channel: "customer_account", process: "account_chat", userId: 17,
-      trace: {
-        validationStatus: "valid",
-        diagnostics: {
-          targetValidation: {
-            status: "aligned", reason: "account_collection",
-            references: [
-              { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: [] },
-              { text: "Totalplay", kind: "entity", entityType: "account", candidateKeys: [] },
-            ],
-          },
-        },
-      },
-    });
-    const serialized = query.mock.calls[0][1].find((value) =>
-      typeof value === "string" && value.includes('"targetValidation"'));
-    expect(JSON.parse(serialized).targetValidation.references).toEqual([
-      { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: [] },
-      { text: "Totalplay", kind: "entity", entityType: "account", candidateKeys: [] },
-    ]);
-  });
-
   it("summarizes tool outcomes without retaining result contents", () => {
     const metrics = summarizeCoachToolResults([
       {

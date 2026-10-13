@@ -106,30 +106,6 @@ consultas de B6 ni conceden permisos.
 - Un error al cargar la configuracion falla explicitamente; no reemplaza una
   personalizacion guardada por un valor predeterminado silencioso.
 
-### Correspondencia obligatoria del objetivo
-
-Cliente existente verifica el mensaje original contra el plan de B6 mediante
-una evaluacion semantica independiente antes de preparar lecturas. El servidor
-comprueba las citas literales y las claves de candidatos autorizados; una entidad
-explicita no puede sustituirse por el historial ni ampliar la cuenta seleccionada.
-Las referencias distinguen `kind=entity` (nombre o identificador concreto) de
-`kind=collection` (lista, conteo o agregado). Una consulta como «que oportunidades
-hay abiertas?» no requiere una oportunidad individual: se valida el alcance de la
-cuenta y los filtros del plan. Una coleccion tampoco puede reducirse al registro
-del historial; sus referencias especificas a cuentas o entidades siguen sujetas
-a correspondencia.
-Un desajuste, otra cuenta o una referencia ambigua detienen el plan con aclaracion.
-Una evaluacion no disponible o invalida bloquea el flujo, sin aprobarlo por defecto.
-
-La verificacion de evidencia recibe ese objetivo. La auditoria final exige tanto
-respaldo factual como `targetStatus=aligned`; un dato verdadero sobre otra entidad,
-un dictamen inconcluso o un campo ausente bloquean respuesta y operaciones.
-Las reglas protegidas `plan-target-correspondence` y `answer-target-correspondence`
-aparecen en las categorias 3 y 8 de Administracion. Los dictamenes y motivos quedan
-en los diagnosticos del turno. No requieren activar una casilla ni modifican los
-prompts personalizados guardados. La evaluacion adicional comparte el plazo del
-turno y registra su uso de IA.
-
 Documentacion tecnica relacionada:
 
 - `../../readme/arquitectura-mi-coach.md`

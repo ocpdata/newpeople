@@ -92,11 +92,7 @@ describe("Connected customer server rules", () => {
     expect(result.categories).toHaveLength(9);
     expect(result.channels.filter((item) => item.connected).map((item) => item.channel)).toEqual(["customer_account"]);
     expect(CUSTOMER_SERVER_RULE_CATEGORIES.flatMap((item) => item.rules).map((rule) => rule.id))
-      .toEqual(expect.arrayContaining(["single-operation-target", "user-access", "answer-audit", "execution-access", "plan-target-correspondence", "answer-target-correspondence"]));
-    for (const id of ["plan-target-correspondence", "answer-target-correspondence"]) {
-      expect(result.categories.flatMap((category) => category.rules)
-        .find((rule) => rule.id === id).kind).toBe("protected");
-    }
+      .toEqual(expect.arrayContaining(["single-operation-target", "user-access", "answer-audit", "execution-access"]));
   });
 
   it("strictly rejects protected fields, unknown keys and unsafe values", () => {

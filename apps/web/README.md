@@ -75,10 +75,6 @@ Las secciones se agrupan en este orden:
 
 El orden facilita la administracion; no representa una secuencia estricta de
 ejecucion B1-B11. Las secciones conservan sus controles y permisos.
-En **Reglas del servidor**, las categorias 3 y 8 muestran las protecciones
-obligatorias de correspondencia del objetivo y de la respuesta. No son casillas
-editables: bloquean sustituciones de entidades o respuestas sobre otro objetivo,
-ademas de las comprobaciones de permisos y evidencia existentes.
 
 ## Administracion del clasificador B3
 

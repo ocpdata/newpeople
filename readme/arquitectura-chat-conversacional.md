@@ -281,23 +281,6 @@ En síntesis, B3 guarda el estado y el resultado del job; cuando B1 consulta el 
 
 **Entrega a B5:** devuelve únicamente el plan estructurado y, cuando corresponda, los campos de aclaración. B5 valida esquema, catálogo, herramientas, filtros, permisos, política de operaciones, contexto y referencias confiables; elimina o rechaza elementos no permitidos. Solo un plan válido continúa a B7 para preparar lecturas y a B8 para ejecutarlas. Si el plan falla o requiere aclaración, B5 detiene las lecturas pertinentes.
 
-**Correspondencia obligatoria en Cliente existente:** el adaptador verifica de
-forma semántica independiente el mensaje original frente al plan, la cuenta
-seleccionada y los candidatos autorizados antes de entregarlo para normalización.
-El servidor valida las citas del mensaje y las claves de candidatos. Las referencias
-separan entidades concretas (`kind=entity`) de conjuntos (`kind=collection`):
-listar o contar oportunidades de la cuenta no exige seleccionar una oportunidad,
-pero tampoco permite heredar una oportunidad individual como objetivo. El
-verificador recibe los filtros del plan junto con las entidades; una colección
-no elimina referencias explícitas a cuentas o registros. Una referencia
-actual explícita no puede omitirse o sustituirse por el foco anterior ni ampliar
-el alcance. Otra cuenta, ambigüedad o desajuste producen aclaración sin lecturas;
-un error del verificador bloquea el plan. El dictamen no modifica la intención de
-B3 ni concede permisos. La evaluación de evidencia recibe el objetivo validado y
-la auditoría final exige aprobar por separado el respaldo factual y la
-correspondencia (`targetStatus=aligned`). Las reglas son obligatorias y visibles
-en Administración, categorías 3 y 8; sus resultados se conservan en diagnóstico.
-
 **Límites:** B6 no ejecuta consultas CRM, no observa resultados como si ya fueran evidencia, no autoriza herramientas, no cambia permisos ni reemplaza la decisión final del gateway. Tampoco redacta la respuesta conversacional final: después de las lecturas, B5 y los componentes de evidencia/answering determinan si la evidencia basta y qué respuesta se devuelve.
 
 :::

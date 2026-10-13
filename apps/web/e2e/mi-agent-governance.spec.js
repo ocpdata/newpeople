@@ -3908,18 +3908,6 @@ test.describe("Mi Coach governance and workspaces", () => {
     await section.locator(":scope > summary").click();
     await expect(section.getByText("Versión 0", { exact: true })).toBeVisible();
     await expect(section.locator(".mi-agent-server-rule-category")).toHaveCount(10);
-    for (const [category, title] of [
-      ["3. Validación del plan de B6", "Correspondencia del objetivo solicitado"],
-      ["8. Respuesta final", "Respuesta sobre la entidad solicitada"],
-    ]) {
-      await section.getByText(category, { exact: true }).click();
-      const rule = section.locator(".mi-agent-server-rule").filter({
-        has: page.getByText(title, { exact: true }),
-      });
-      await expect(rule).toBeVisible();
-      await expect(rule.getByText("Control protegido", { exact: false })).toBeVisible();
-      await expect(rule.locator("input, select, textarea")).toHaveCount(0);
-    }
     await section.getByText("4. Lectura de datos y evidencia", { exact: true }).click();
     const budget = section.getByLabel("Máximo de lecturas por turno");
     await expect(section.getByText("No es un límite de filas:", { exact: false })).toBeVisible();
