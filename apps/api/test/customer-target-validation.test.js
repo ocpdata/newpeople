@@ -4,6 +4,7 @@ import {
   customerTargetClarification,
 } from "../src/commercial-intelligence/customer-target-validation.js";
 import { normalizeChannelIntentPlan } from "../src/coach/channel-intents.js";
+import { buildStructuredResearchSchema } from "../src/structuredWebResearch.js";
 
 const candidates = [
   { candidateKey: "opportunity_1", entityType: "opportunity", name: "Vrf 2027" },
@@ -21,9 +22,105 @@ const base = {
   selectedAccount: { name: "Totalplay" }, candidates,
   conversationHistory: [{ role: "assistant", text: "Vrf 2027 tiene un monto de 2,000,000 USD." }],
 };
-const verdict = (status, references = []) => ({ status, references, reason: "test_verdict" });
+const verdict = (status, references = []) => ({
+  status, references: references.map((reference) => ({ kind: "entity", ...reference })),
+  reason: "test_verdict",
+});
 
 describe("Independent customer target validation", () => {
+  it.each([
+    ["que oportunidades hay abiertas?", "opportunity", "opportunity_query", { opportunityStatus: "open" }],
+    ["¿Cuánto suman las oportunidades abiertas?", "opportunity", "opportunity_query", { opportunityStatus: "open" }],
+    ["¿Cuántos contactos hay?", "contact", "contact_query", {}],
+    ["Lista los leads", "lead", "lead_query", {}],
+  ])("accepts a collection without requiring an individual reference: %s", async (question, entityType, query, filters) => {
+    const validateWithAI = vi.fn().mockResolvedValue(verdict("aligned", [
+      { text: question, kind: "collection", entityType, candidateKeys: [] },
+    ]));
+    const result = await validateCustomerPlanTarget({
+      ...base, question,
+      plan: { ...oldPlan, queries: [query], entities: { accountReference: "Totalplay" }, filters,
+        referenceResolution: { targetType: "account", cardinality: "single", source: "active_context", candidateKeys: [] } },
+      validateWithAI,
+    });
+    expect(result.status).toBe("aligned");
+    const request = validateWithAI.mock.calls[0][0];
+    expect(request.context.proposedPlan.filters).toEqual(filters);
+    expect(request.systemPrompt).toContain("No conviertas una pregunta completa");
+    expect(request.fields.find((field) => field.key === "references").items.fields)
+      .toContainEqual(expect.objectContaining({ key: "kind", enum: ["entity", "collection"] }));
+    const referenceSchema = buildStructuredResearchSchema(request.schemaName, request.fields)
+      .schema.properties.references.items;
+    expect(referenceSchema.required).toContain("kind");
+    expect(referenceSchema.properties.kind.enum).toEqual(["entity", "collection"]);
+  });
+
+  it("allows an explicitly named selected account while querying its opportunity collection", async () => {
+    const result = await validateCustomerPlanTarget({
+      ...base, question: "Lista oportunidades abiertas de Totalplay",
+      plan: { ...oldPlan, entities: { accountReference: "Totalplay" }, filters: { opportunityStatus: "open" },
+        referenceResolution: { targetType: "account", cardinality: "single", source: "message", candidateKeys: [] } },
+      validateWithAI: async () => verdict("aligned", [
+        { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: [] },
+        { text: "Totalplay", kind: "entity", entityType: "account", candidateKeys: [] },
+      ]),
+    });
+    expect(result.status).toBe("aligned");
+  });
+
+  it.each([
+    oldPlan,
+    { ...oldPlan, entities: { accountReference: "Totalplay" } },
+    { ...oldPlan, referenceResolution: { ...oldPlan.referenceResolution, candidateKeys: [] } },
+  ])("does not let collection classification approve an old individual target", async (plan) => {
+    const result = await validateCustomerPlanTarget({
+      ...base, question: "que oportunidades hay abiertas?", plan,
+      validateWithAI: async () => verdict("aligned", [
+        { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: [] },
+      ]),
+    });
+    expect(result).toMatchObject({ status: "mismatch", reason: "collection_target_narrowed" });
+    expect(customerTargetClarification(result)).not.toContain('"oportunidades"');
+  });
+
+  it("keeps explicit account correspondence mandatory in a collection request", async () => {
+    const result = await validateCustomerPlanTarget({
+      ...base, question: "Lista oportunidades de Grupo Nébula",
+      plan: { ...oldPlan, entities: { accountReference: "Totalplay" },
+        referenceResolution: { targetType: "account", cardinality: "single", source: "active_context", candidateKeys: [] } },
+      validateWithAI: async () => verdict("aligned", [
+        { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: [] },
+        { text: "Grupo Nébula", kind: "entity", entityType: "account", candidateKeys: [] },
+      ]),
+    });
+    expect(result.status).toBe("mismatch");
+    expect(customerTargetClarification(result)).toContain("Grupo Nébula");
+  });
+
+  it("rejects collection references with individual candidate keys", async () => {
+    await expect(validateCustomerPlanTarget({
+      ...base, question: "Lista oportunidades", plan: oldPlan,
+      validateWithAI: async () => verdict("aligned", [
+        { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: ["opportunity_1"] },
+      ]),
+    })).rejects.toMatchObject({
+      code: "target_collection_candidates_invalid",
+      targetValidationDetails: { references: [
+        { text: "oportunidades", kind: "collection", entityType: "opportunity", candidateKeys: ["opportunity_1"] },
+      ] },
+    });
+  });
+
+  it("rejects the old untyped extraction rather than assuming it identifies an entity", async () => {
+    await expect(validateCustomerPlanTarget({
+      ...base, question: "que oportunidades hay abiertas?", plan: oldPlan,
+      validateWithAI: async () => ({
+        status: "aligned", reason: "",
+        references: [{ text: "que oportunidades hay abiertas?", entityType: "opportunity", candidateKeys: [] }],
+      }),
+    })).rejects.toThrow();
+  });
+
   it.each(["other_account", "ambiguous", "mismatch"])(
     "detects the original Grupo Nébula reference even when B6 replaces it (%s)", async (status) => {
       const question = "Busca la oportunidad de Grupo Nébula y dime su monto.";
@@ -127,6 +224,11 @@ describe("Independent customer target validation", () => {
     await expect(validateCustomerPlanTarget({
       ...base, question: "Dime su monto", plan: oldPlan,
       validateWithAI: async () => ({ status: "aligned" }),
-    })).rejects.toThrow();
+    })).rejects.toMatchObject({
+      code: "target_verdict_invalid",
+      targetValidationDetails: { issues: expect.arrayContaining([
+        expect.objectContaining({ path: "references" }),
+      ]) },
+    });
   });
 });

@@ -284,7 +284,12 @@ En síntesis, B3 guarda el estado y el resultado del job; cuando B1 consulta el 
 **Correspondencia obligatoria en Cliente existente:** el adaptador verifica de
 forma semántica independiente el mensaje original frente al plan, la cuenta
 seleccionada y los candidatos autorizados antes de entregarlo para normalización.
-El servidor valida las citas del mensaje y las claves de candidatos. Una referencia
+El servidor valida las citas del mensaje y las claves de candidatos. Las referencias
+separan entidades concretas (`kind=entity`) de conjuntos (`kind=collection`):
+listar o contar oportunidades de la cuenta no exige seleccionar una oportunidad,
+pero tampoco permite heredar una oportunidad individual como objetivo. El
+verificador recibe los filtros del plan junto con las entidades; una colección
+no elimina referencias explícitas a cuentas o registros. Una referencia
 actual explícita no puede omitirse o sustituirse por el foco anterior ni ampliar
 el alcance. Otra cuenta, ambigüedad o desajuste producen aclaración sin lecturas;
 un error del verificador bloquea el plan. El dictamen no modifica la intención de

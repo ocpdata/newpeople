@@ -2635,8 +2635,13 @@ export function createCustomerAccountAdapter({
             },
           };
         } catch (error) {
+          const providerHttpStatus = String(error.message || "")
+            .match(/^OpenAI web search failed: (\d{3})\b/)?.[1];
           turnDiagnostics.targetValidation = {
-            status: "unavailable", reason: String(error.code || error.name || "target_validation_failed"),
+            status: "unavailable",
+            reason: providerHttpStatus ? `target_provider_http_${providerHttpStatus}`
+              : String(error.code || error.name || "target_validation_failed"),
+            ...error.targetValidationDetails,
           };
           turnDiagnostics.serverRules.decisions.push({
             ruleId: "plan-target-correspondence", outcome: "unavailable",
