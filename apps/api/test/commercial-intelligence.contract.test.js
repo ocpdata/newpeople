@@ -1,4 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("../src/coach/semantic-classifier-prompts.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    loadSemanticClassifierPrompt: vi.fn().mockResolvedValue({
+      channel: "customer_account",
+      instruction: actual.SEMANTIC_CLASSIFIER_DEFAULTS.customer_account,
+      version: 0,
+      source: "default",
+    }),
+  };
+});
+import {
+  loadSemanticClassifierPrompt,
+  SEMANTIC_CLASSIFIER_DEFAULTS,
+} from "../src/coach/semantic-classifier-prompts.js";
 import {
   classifyCustomerIntent,
   buildAccountHealth,
@@ -22,6 +38,113 @@ import {
 } from "../src/commercial-intelligence/contract.js";
 
 describe("customer intelligence contract", () => {
+  it.each([
+    ["¿Qué actividad pendiente tiene?", "account_activity_history"],
+    ["¿Y qué tiene pendiente?", "account_activity_history"],
+    ["¿Y en qué etapa está?", "opportunity_status"],
+    ["Agenda una llamada para esta oportunidad", "crm_operation"],
+  ])("supplies versioned instructions and the authorized conversational entity for %s", async (question, intent) => {
+    let classifierRequest;
+    const decision = await classifyCustomerIntent({
+      question,
+      selectedContext: { accountId: 22 },
+      conversationContext: { accountId: 22, opportunityId: 94, intents: ["opportunity_status"] },
+      snapshot: {
+        account: { id: 22, name: "Totalplay" },
+        opportunities: [{ id: 94, name: "Vrf 2027", internalNotes: "Not classifier input" }],
+        contacts: [{ id: 8, name: "Other contact" }],
+      },
+      conversationHistory: [
+        { role: "user", text: "¿Cuál es el monto de Vrf 2027?" },
+        { role: "assistant", text: "El monto es 2,000,000 USD." },
+        { role: "user", text: "¿Y en qué etapa está?" },
+        { role: "assistant", text: "Vrf 2027 está en Contacto Inicial." },
+      ],
+      intents: [
+        { code: "account_activity_history", enabled: true },
+        { code: "opportunity_status", enabled: true },
+        { code: "crm_operation", enabled: true },
+      ],
+      classifyWithAI: async (request) => {
+        classifierRequest = request;
+        return { intent, confidence: "high" };
+      },
+    });
+    expect(classifierRequest.context.validatedContinuation.entities).toEqual({
+      account: { id: 22, name: "Totalplay" },
+      opportunity: { id: 94, name: "Vrf 2027" },
+      contact: null,
+    });
+    expect(classifierRequest.context.recentConversation).toHaveLength(4);
+    expect(classifierRequest.context.selectedContext.opportunitySelected).toBe(false);
+    expect(classifierRequest.systemPrompt).toContain("La intención anterior puede cambiar");
+    expect(classifierRequest.systemPrompt).toContain("Límites técnicos no editables");
+    expect(decision).toMatchObject({
+      intent, requiresClarification: false,
+      source: { classifierPrompt: { channel: "customer_account", version: 0, source: "default" } },
+    });
+  });
+
+  it("uses the saved classifier version without changing the allowed output schema", async () => {
+    loadSemanticClassifierPrompt.mockResolvedValueOnce({
+      channel: "customer_account", version: 4, source: "custom",
+      instruction: "Distingue las consultas de seguimiento.",
+    });
+    let classifierRequest;
+    const decision = await classifyCustomerIntent({
+      question: "¿Qué actividad pendiente tiene?",
+      intents: [{ code: "account_activity_history", enabled: true }],
+      classifyWithAI: async (request) => {
+        classifierRequest = request;
+        return { intent: "account_activity_history", confidence: "high" };
+      },
+    });
+    expect(classifierRequest.systemPrompt).toContain("Distingue las consultas de seguimiento.");
+    expect(classifierRequest.fields.find((field) => field.key === "intent").enum)
+      .toEqual(["account_activity_history", "clarify_needed"]);
+    expect(decision.source.classifierPrompt.version).toBe(4);
+  });
+
+  it("does not expose unavailable conversational entities and preserves genuine clarification", async () => {
+    const decision = await classifyCustomerIntent({
+      question: "¿Y lo otro?",
+      selectedContext: { accountId: 22 },
+      conversationContext: { accountId: 22, opportunityId: 94, contactId: 99 },
+      snapshot: {
+        account: { id: 22, name: "Totalplay" },
+        opportunities: [{ id: 95, name: "Otra oportunidad" }],
+        contacts: [{ id: 8, name: "Otro contacto" }],
+      },
+      intents: [{ code: "account_activity_history", enabled: true }],
+      classifyWithAI: async (request) => {
+        expect(request.context.validatedContinuation.entities).toEqual({
+          account: { id: 22, name: "Totalplay" },
+          opportunity: null,
+          contact: null,
+        });
+        return {
+          intent: "clarify_needed",
+          confidence: "high",
+          clarificationQuestion: "¿Qué información quieres consultar?",
+        };
+      },
+    });
+    expect(decision).toMatchObject({
+      intent: "clarify_needed",
+      requiresClarification: true,
+      clarificationQuestion: "¿Qué información quieres consultar?",
+    });
+  });
+
+  it("surfaces configuration failures instead of silently using default instructions", async () => {
+    loadSemanticClassifierPrompt.mockRejectedValueOnce(new Error("Classifier configuration unavailable"));
+    await expect(classifyCustomerIntent({
+      question: "¿Qué actividad pendiente tiene?",
+      intents: [{ code: "account_activity_history" }],
+    })).rejects.toThrow("Classifier configuration unavailable");
+    expect(SEMANTIC_CLASSIFIER_DEFAULTS.customer_account.length).toBeLessThanOrEqual(8000);
+  });
+
   it("preclassifies draft, explicit operation, and mixed requests without treating a meeting mention as scheduling", () => {
     expect(
       classifyCustomerRequestB3(

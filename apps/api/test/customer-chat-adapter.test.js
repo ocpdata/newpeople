@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../src/commercial-intelligence/customer-target-validation.js", async (original) => ({
+  ...(await original()),
+  validateCustomerPlanTarget: vi.fn(),
+}));
+import { validateCustomerPlanTarget } from "../src/commercial-intelligence/customer-target-validation.js";
 vi.mock("../src/coach/quotation-read-service.js", () => ({
   getAuthorizedCoachQuotationContent: vi.fn(),
 }));
@@ -10,6 +15,18 @@ vi.mock("../src/coach/planner-prompts.js", async (importOriginal) => ({
   ...(await importOriginal()),
   loadPlannerPrompt: vi.fn(),
 }));
+vi.mock("../src/coach/semantic-classifier-prompts.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    loadSemanticClassifierPrompt: vi.fn().mockResolvedValue({
+      channel: "customer_account",
+      instruction: actual.SEMANTIC_CLASSIFIER_DEFAULTS.customer_account,
+      version: 0,
+      source: "default",
+    }),
+  };
+});
 
 import { getAuthorizedCoachQuotationContent } from "../src/coach/quotation-read-service.js";
 import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
@@ -42,10 +59,22 @@ import {
   getCustomerActivityHistoryRangeFromFilters,
 } from "../src/commercial-intelligence/activity-history.js";
 import { buildCustomerEvidenceFailureResponse } from "../src/commercial-intelligence/customer-chat-adapter.js";
+import { classifyCustomerIntent } from "../src/commercial-intelligence/service.js";
+import {
+  loadSemanticClassifierPrompt,
+  SEMANTIC_CLASSIFIER_DEFAULTS,
+} from "../src/coach/semantic-classifier-prompts.js";
 
 describe("Customer account chat adapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    validateCustomerPlanTarget.mockResolvedValue({ status: "aligned", reason: "", references: [] });
+    loadSemanticClassifierPrompt.mockResolvedValue({
+      channel: "customer_account",
+      instruction: SEMANTIC_CLASSIFIER_DEFAULTS.customer_account,
+      version: 0,
+      source: "default",
+    });
     loadPlannerPrompt.mockResolvedValue({
       channel: "customer_account",
       process: "default",
@@ -218,7 +247,7 @@ describe("Customer account chat adapter", () => {
         operations: [],
       })
       .mockResolvedValueOnce({
-        status: "supported",
+        status: "supported", targetStatus: "aligned",
         unsupportedClaims: [],
       });
 
@@ -477,7 +506,7 @@ describe("Customer account chat adapter", () => {
         recommendedActions: [],
         operations: [],
       })
-      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
 
     const adapter = createCustomerAccountAdapter({
       user: {
@@ -570,7 +599,7 @@ describe("Customer account chat adapter", () => {
         missingQueries: [],
         missingFacts: [],
       })
-      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
 
     const opportunity = {
       ...snapshot.opportunities[0],
@@ -704,7 +733,7 @@ describe("Customer account chat adapter", () => {
         missingQueries: [],
         missingFacts: [],
       })
-      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
 
     const adapter = createCustomerAccountAdapter({
       user: {
@@ -866,6 +895,7 @@ describe("Customer account chat adapter", () => {
           expect(request.context.proposedAnswer.operations).toEqual([draft]);
           return {
             status: auditStatus,
+            targetStatus: "aligned",
             unsupportedClaims:
               auditStatus === "unsupported" ? ["Vínculo no respaldado"] : [],
           };
@@ -990,7 +1020,7 @@ describe("Customer account chat adapter", () => {
           responseId: "resp_audit_test",
           model: "test-audit-model",
         });
-        return { status: "supported", unsupportedClaims: [] };
+        return { status: "supported", targetStatus: "aligned", unsupportedClaims: [] };
       });
 
     const opportunity = {
@@ -2378,7 +2408,8 @@ describe("Customer account chat adapter", () => {
     ]);
   });
 
-  it("synthesizes a scoped no-pending-activities answer from a verified empty read", async () => {
+  it("carries B3 factual follow-up classification through B6 into a scoped empty activity read", async () => {
+    runStructuredTextResearch.mockReset();
     loadPlannerPrompt.mockResolvedValue({
       channel: "customer_account",
       process: "default",
@@ -2441,7 +2472,7 @@ describe("Customer account chat adapter", () => {
         recommendedActions: [],
         operations: [],
       })
-      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
+      .mockResolvedValueOnce({ status: "supported", targetStatus: "aligned", unsupportedClaims: [] });
 
     const opportunity = {
       ...snapshot.opportunities[0],
@@ -2450,6 +2481,39 @@ describe("Customer account chat adapter", () => {
       lifecycle: "open",
       amountUsd: 2000000,
     };
+    const conversationContext = {
+      version: 1,
+      accountId: 7,
+      opportunityId: 11,
+      contactId: null,
+      leadId: null,
+      intents: ["opportunity_status"],
+      filters: {},
+    };
+    const history = [
+      { role: "user", text: "¿Cuál es el monto de Vrf 2027?" },
+      { role: "assistant", text: "El monto de Vrf 2027 es 2,000,000 USD." },
+      { role: "user", text: "¿Y en qué etapa está?" },
+      { role: "assistant", text: "Vrf 2027 está en Contacto Inicial." },
+    ];
+    const authoritativeIntent = await classifyCustomerIntent({
+      question: "¿Qué actividad pendiente tiene?",
+      conversationHistory: history,
+      selectedContext: { accountId: 7 },
+      conversationContext,
+      snapshot: {
+        ...snapshot,
+        account: { id: 7, name: "Totalplay" },
+        opportunities: [opportunity],
+      },
+      intents: getChannelIntentDefaults("customer_account"),
+      classifyWithAI: async (request) => {
+        expect(request.context.validatedContinuation.entities.opportunity)
+          .toEqual({ id: 11, name: "Vrf 2027" });
+        expect(request.systemPrompt).toContain("No exijas tipo de actividad, fecha u hora");
+        return { intent: "account_activity_history", confidence: "high" };
+      },
+    });
     const adapter = createCustomerAccountAdapter({
       user: {
         id: 31,
@@ -2467,15 +2531,8 @@ describe("Customer account chat adapter", () => {
         interactions: [],
         activities: [],
       },
-      conversationContext: {
-        version: 1,
-        accountId: 7,
-        opportunityId: 11,
-        contactId: null,
-        leadId: null,
-        intents: ["opportunity_status"],
-        filters: {},
-      },
+      conversationContext,
+      authoritativeIntent,
       agents: [],
       jobId: 906,
     });
@@ -2483,7 +2540,7 @@ describe("Customer account chat adapter", () => {
     const result = await adapter.runTurn({
       question: "¿Qué actividad pendiente tiene?",
       context: { accountId: 7 },
-      history: [],
+      history,
     });
 
     const synthesisContext = runStructuredTextResearch.mock.calls[2][0].context;

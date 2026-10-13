@@ -601,6 +601,39 @@ export function normalizeChannelIntentPlan({
 } = {}) {
   const catalog = CHANNEL_INTENTS[channel];
   if (!catalog || !plan || typeof plan !== "object") return null;
+  if (channel === "customer_account" && plan.serverTargetValidation &&
+    plan.serverTargetValidation.status !== "aligned") {
+    const validation = plan.serverTargetValidation;
+    return {
+      channel,
+      intent: "clarification",
+      intents: [],
+      label: "Objetivo pendiente de resolver",
+      source: "server_target_validation",
+      objective: plan.objective || "",
+      mode: "clarification",
+      requiresClarification: true,
+      allowedTools: [],
+      operationKind: "none",
+      entities: {},
+      serverResolvedEntityIds: {},
+      filters: {},
+      requiredContext: [],
+      missingContext: [],
+      confidence: 0,
+      ambiguity: {
+        reason: validation.status === "other_account" ? "other_account" : "ambiguous_entity",
+        requiresClarification: true,
+        clarificationQuestion: validation.clarificationQuestion,
+        missingContext: [],
+      },
+      validationDiagnostics: {
+        targetCorrespondence: validation.status,
+        targetReason: validation.reason,
+        clarificationRequested: true,
+      },
+    };
+  }
 
   const configurationByCode = new Map(
     (Array.isArray(configuration) ? configuration : []).map((item) => [

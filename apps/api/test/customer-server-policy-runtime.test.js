@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../src/commercial-intelligence/customer-target-validation.js", async (original) => ({
+  ...(await original()), validateCustomerPlanTarget: vi.fn(),
+}));
+import { validateCustomerPlanTarget } from "../src/commercial-intelligence/customer-target-validation.js";
 vi.mock("../src/structuredWebResearch.js", () => ({ runStructuredTextResearch: vi.fn() }));
 vi.mock("../src/coach/planner-prompts.js", async (original) => ({
   ...(await original()), loadPlannerPrompt: vi.fn(),
@@ -40,6 +44,7 @@ function amountResponse(question, extra = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  validateCustomerPlanTarget.mockResolvedValue({ status: "aligned", reason: "", references: [] });
   loadCoachBusinessRules.mockResolvedValue({
     ...getCoachBusinessRules({ channel: "customer_account" }), serverRulesVersion: 7,
   });
@@ -55,12 +60,121 @@ beforeEach(() => {
       ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
     };
     if (input.schemaName === "customer_account_evidence_assessment") return { status: "sufficient", missingQueries: [], missingFacts: [] };
-    if (input.schemaName === "customer_account_answer_audit") return { status: "supported", unsupportedClaims: [] };
+    if (input.schemaName === "customer_account_answer_audit") return { status: "supported", targetStatus: "aligned", unsupportedClaims: [] };
     throw new Error(`Unexpected AI call: ${input.schemaName}`);
   });
 });
 
 describe("Customer server policies at runtime", () => {
+  it("runs the independent verifier on the original request and blocks the incorrect B6 plan", async () => {
+    const actual = await vi.importActual("../src/commercial-intelligence/customer-target-validation.js");
+    validateCustomerPlanTarget.mockImplementationOnce(actual.validateCustomerPlanTarget);
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_query_plan") return {
+        queries: ["opportunity_query"], mode: "read_only", confidence: "high",
+        entities: { accountReference: "Totalplay" },
+        referenceResolution: { targetType: "account", cardinality: "single", source: "active_context", candidateKeys: [] },
+        ambiguity: { reason: "none", requiresClarification: "no" },
+      };
+      if (request.schemaName === "customer_account_target_validation") {
+        expect(request.context.question).toContain("Grupo Nébula");
+        expect(request.context.proposedPlan.entities.accountReference).toBe("Totalplay");
+        return {
+          status: "mismatch", reason: "B6 sustituyó Grupo Nébula por Totalplay",
+          references: [{ text: "Grupo Nébula", entityType: "account", candidateKeys: [] }],
+        };
+      }
+      throw new Error(`Unexpected schema: ${request.schemaName}`);
+    });
+    const result = await createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: permissions }, snapshot, agents: [], jobId: 364,
+    }).runTurn({
+      question: "Busca la oportunidad de Grupo Nébula y dime su monto.",
+      context: { accountId: 7 }, history: [{ role: "assistant", text: "Vrf 2027 tiene un monto de 2,000,000 USD." }],
+    });
+    expect(result.response.responseType).toBe("clarification");
+    expect(result.response.answer).toContain("Grupo Nébula");
+    expect(result.response.operations).toEqual([]);
+    expect(result.qualityTrace.toolMetrics).toEqual([]);
+    expect(result.qualityTrace.diagnostics.targetValidation.status).toBe("mismatch");
+    expect(runStructuredTextResearch.mock.calls.map(([request]) => request.schemaName))
+      .toEqual(["customer_account_query_plan", "customer_account_target_validation"]);
+  });
+
+  it.each(["other_account", "ambiguous", "mismatch"])(
+    "blocks Grupo Nébula before CRM reads even when B6 selects Totalplay (%s)", async (status) => {
+      validateCustomerPlanTarget.mockResolvedValueOnce({
+        status, reason: "explicit_target_replaced",
+        references: [{ text: "Grupo Nébula", entityType: "account", candidateKeys: [] }],
+      });
+      const result = await createCustomerAccountAdapter({
+        user: { id: 31, permissionSet: permissions }, snapshot, agents: [], jobId: 364,
+        authoritativeIntent: { intent: "opportunity_query", confidence: 0.95 },
+        conversationContext: { accountId: 7, opportunityId: 11, intents: ["opportunity_query"] },
+      }).runTurn({
+        question: "Busca la oportunidad de Grupo Nébula y dime su monto.",
+        context: { accountId: 7 },
+        history: [{ role: "assistant", text: "Vrf 2027 tiene un monto de 2,000,000 USD." }],
+      });
+      expect(result.response.responseType).toBe("clarification");
+      expect(result.response.operations).toEqual([]);
+      expect(result.response.answer).not.toContain("2,000,000");
+      expect(result.qualityTrace.toolMetrics).toEqual([]);
+      expect(result.qualityTrace.diagnostics.targetValidation.status).toBe(status);
+      expect(runStructuredTextResearch.mock.calls.map(([request]) => request.schemaName))
+        .toEqual(["customer_account_query_plan"]);
+      expect(result.qualityTrace.diagnostics.serverRules.decisions).toContainEqual({
+        ruleId: "plan-target-correspondence", outcome: status,
+      });
+    },
+  );
+
+  it("fails closed when independent target validation is unavailable", async () => {
+    validateCustomerPlanTarget.mockRejectedValueOnce(new Error("Target verifier unavailable"));
+    const result = await createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: permissions }, snapshot, agents: [], jobId: 365,
+    }).runTurn({ question: "Dime el monto de Vrf 2027", context: { accountId: 7 }, history: [] });
+    expect(result.response.answer).toContain("No consulté el CRM");
+    expect(result.response.operations).toEqual([]);
+    expect(result.qualityTrace.diagnostics.targetValidation.status).toBe("unavailable");
+    expect(result.qualityTrace.toolMetrics).toEqual([]);
+  });
+
+  it.each(["mismatch", "inconclusive", undefined])(
+    "blocks a factually supported answer whose target is not approved (%s)", async (targetStatus) => {
+      runStructuredTextResearch.mockImplementation(async (request) => {
+        if (request.schemaName === "customer_account_query_plan") return {
+          queries: ["opportunity_query"], mode: "read_only", confidence: "high",
+          entities: { opportunityReference: "DNS 2027" }, filters: {},
+          referenceResolution: { targetType: "opportunity", cardinality: "single", source: "message", candidateKeys: ["opportunity_1"] },
+          ambiguity: { reason: "none", requiresClarification: "no" },
+        };
+        if (request.schemaName === "customer_account_evidence_assessment") {
+          expect(request.context.validatedTarget.status).toBe("aligned");
+          return { status: "sufficient", missingQueries: [], missingFacts: [] };
+        }
+        if (request.schemaName === "account_contextual_chat") return {
+          answer: "Vrf 2027 tiene un monto de 2,000,000 USD.",
+          evidence: ["Vrf 2027: 2000000 USD"], confidence: "high", operations: [],
+        };
+        if (request.schemaName === "customer_account_answer_audit") {
+          expect(request.context.question).toBe("Dime el monto de DNS 2027");
+          expect(request.systemPrompt).toContain("Un dato verdadero sobre otra entidad");
+          return { status: "supported", targetStatus, unsupportedClaims: [] };
+        }
+        throw new Error(`Unexpected schema: ${request.schemaName}`);
+      });
+      const result = await createCustomerAccountAdapter({
+        user: { id: 31, permissionSet: permissions }, snapshot, agents: [], jobId: 366,
+      }).runTurn({ question: "Dime el monto de DNS 2027", context: { accountId: 7 }, history: [] });
+      expect(result.response.responseType).toBe("error");
+      expect(result.response.answer).not.toContain("2,000,000");
+      expect(result.response.operations).toEqual([]);
+      expect(result.qualityTrace.diagnostics.fallback.reasonCode)
+        .toBe(targetStatus === "mismatch" ? "answer_target_mismatch" : "answer_target_unverified");
+    },
+  );
+
   it.each(["Actualiza el monto de las oportunidades abiertas de Totalplay a 1000000",
     "Cambia el monto de ambas oportunidades a 1000000",
     "Actualiza el monto de oportunidades de Totalplay a 1000000"])(

@@ -31,6 +31,70 @@ npm run dev
 
 Web disponible en http://localhost:5173.
 
+## Cliente existente en Mi Coach
+
+Seleccionar una cuenta establece el contexto y habilita el chat, pero no ejecuta
+ni muestra el análisis comercial. La identificación básica permanece visible.
+
+**Analizar cuenta** reúne el resumen comercial, salud y señales, próximo paso,
+historial de oportunidades, mapa de relaciones, productos y renovaciones,
+hipótesis de expansión y hallazgos adicionales. Las tarjetas no repiten los
+hallazgos que ya están representados en esas secciones. La vista utiliza el
+snapshot autorizado devuelto por el análisis, con su fecha de captura.
+
+**Actualizar análisis** recalcula el resultado. Durante la actualización, o si
+esta falla, el último resultado se conserva identificado como anterior. Cambiar
+de cuenta limpia el resultado y descarta las respuestas tardías del análisis
+previo. El chat, el enriquecimiento público, el resumen ejecutivo y la
+preparación de llamada siguen disponibles sin exigir un análisis previo.
+
+### Recuperacion de respuestas del chat
+
+Cada turno muestra su estado junto al mensaje. La consulta del resultado
+reintenta hasta tres fallos transitorios consecutivos; nunca reenvia la pregunta.
+Si se interrumpe o se agota la espera, **Recuperar respuesta** consulta el mismo
+job. El identificador pendiente se conserva en la sesion del navegador por
+cuenta, incluso al recargar, y se elimina al recibir la respuesta o al iniciar
+una nueva conversacion. Un job fallido se muestra como error, no como pendiente.
+
+Mientras se carga el historial o se recupera un turno no se envian preguntas
+nuevas. Las respuestas tardias de otra cuenta o conversacion se descartan de la
+vista; al volver a la cuenta se puede recuperar su job pendiente sin duplicar
+mensajes ni respuestas ya guardadas en el historial. El hilo se desplaza al
+ultimo mensaje o estado recibido. Los errores al cargar el historial se muestran
+en el chat y permiten **Recargar conversacion** sin borrar la sesion guardada.
+
+## Organizacion de Administracion
+
+Las secciones se agrupan en este orden:
+
+- **Gobierno y alcance:** Configuracion de gobierno; Politicas del canal y contexto.
+- **Interpretacion y comportamiento:** Intenciones y enrutamiento; Clasificador
+  semantico · B3; Prompts del planificador · B6; Reglas conversacionales.
+- **Validacion y diagnostico:** Reglas del servidor; Observabilidad de la decision final.
+
+El orden facilita la administracion; no representa una secuencia estricta de
+ejecucion B1-B11. Las secciones conservan sus controles y permisos.
+En **Reglas del servidor**, las categorias 3 y 8 muestran las protecciones
+obligatorias de correspondencia del objetivo y de la respuesta. No son casillas
+editables: bloquean sustituciones de entidades o respuestas sobre otro objetivo,
+ademas de las comprobaciones de permisos y evidencia existentes.
+
+## Administracion del clasificador B3
+
+La seccion **Clasificador semantico · B3** permite editar, guardar, recargar y
+restaurar instrucciones versionadas para los tres canales. Muestra version,
+autor, fecha y estado de conexion, y conserva el borrador ante errores de
+guardado. Cargar el texto predeterminado no lo guarda automaticamente.
+Cada editor muestra el numero de caracteres del borrador y el limite de 8000,
+actualizados al escribir, recargar o restaurar instrucciones.
+
+Solo **Cliente existente** aplica las instrucciones guardadas a los turnos
+nuevos. Coach y Cuenta nueva aparecen como configuracion preparada sin efecto
+en ejecucion. Los prompts del planificador B6 son una seccion independiente.
+Ningun texto editable concede permisos ni modifica el esquema de respuesta,
+catalogo, umbrales o confirmaciones del servidor.
+
 ## Variables y despliegue
 
 Regla base: en entornos reales el frontend debe consumir la API por mismo origen usando rutas relativas como `/api/auth/login`.

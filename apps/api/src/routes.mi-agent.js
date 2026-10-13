@@ -86,6 +86,11 @@ import {
   listPlannerPrompts,
   savePlannerPrompt,
 } from "./coach/planner-prompts.js";
+import {
+  listSemanticClassifierPrompts,
+  saveSemanticClassifierPrompt,
+  restoreSemanticClassifierPrompt,
+} from "./coach/semantic-classifier-prompts.js";
 
 const router = express.Router();
 
@@ -5106,6 +5111,61 @@ router.get(
     });
     return res.json({ traces });
   },
+);
+
+router.get(
+  "/coach/admin/semantic-classifier-prompts",
+  requirePermission("mi_coach.admin"),
+  async (_req, res) => {
+    return res.json({ prompts: await listSemanticClassifierPrompts() });
+  },
+);
+
+async function saveClassifierPromptRoute(req, res, next) {
+  try {
+    const restoring = req.params.revisionVersion !== undefined;
+    const saved = restoring
+      ? await restoreSemanticClassifierPrompt({
+          channel: req.params.channel,
+          revisionVersion: Number(req.params.revisionVersion),
+          user: req.user,
+          input: req.body,
+        })
+      : await saveSemanticClassifierPrompt({
+          channel: req.params.channel,
+          user: req.user,
+          input: req.body,
+        });
+    await logAuditEvent({
+      req,
+      module: "mi_coach",
+      action: restoring
+        ? "mi_coach_semantic_classifier_prompt_restored"
+        : "mi_coach_semantic_classifier_prompt_updated",
+      entityType: "mi_coach_semantic_classifier_prompts",
+      entityId: null,
+      detail: `Clasificador B3 ${req.params.channel}, versión ${saved.after.version}`,
+      before: saved.before,
+      after: saved.after,
+    });
+    return res.json({ prompt: saved.after });
+  } catch (error) {
+    if ([400, 404, 409].includes(error.status)) {
+      return res.status(error.status).json({ message: error.message, code: error.code });
+    }
+    return next(error);
+  }
+}
+
+router.put(
+  "/coach/admin/semantic-classifier-prompts/:channel",
+  requirePermission("mi_coach.admin"),
+  saveClassifierPromptRoute,
+);
+router.post(
+  "/coach/admin/semantic-classifier-prompts/:channel/revisions/:revisionVersion/restore",
+  requirePermission("mi_coach.admin"),
+  saveClassifierPromptRoute,
 );
 
 router.get(

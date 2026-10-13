@@ -1714,6 +1714,8 @@ export async function runConversationEngine({
             : "missing",
       },
       plannerInput: adapterDiagnostics.plannerInput || null,
+      targetValidation: adapterDiagnostics.targetValidation || null,
+      serverRules: adapterDiagnostics.serverRules || null,
       channelIntentRouting: channelIntentRouting
         ? {
             intent: channelIntentRouting.intent,

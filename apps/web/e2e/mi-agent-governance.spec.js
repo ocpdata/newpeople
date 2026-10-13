@@ -140,6 +140,7 @@ async function mockMiCoachApi(
     source: "default",
     revisions: [],
   }));
+  const classifierPrompts = structuredClone(plannerPrompts);
   const closedCoachSessions = new Set();
   const initialServerRules = {
     scope: {
@@ -156,6 +157,7 @@ async function mockMiCoachApi(
     rules: structuredClone(initialServerRules), initialRules: initialServerRules,
     categories: CUSTOMER_SERVER_RULE_CATEGORIES, revisions: [],
   };
+  let customerSnapshot;
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const { pathname } = url;
@@ -188,6 +190,33 @@ async function mockMiCoachApi(
 
     if (pathname === "/api/mi-agent/coach/admin/planner-prompts" && method === "GET") {
       return json({ prompts: plannerPrompts });
+    }
+    if (pathname === "/api/mi-agent/coach/admin/semantic-classifier-prompts" && method === "GET") {
+      return json({ prompts: classifierPrompts });
+    }
+    if (pathname.startsWith("/api/mi-agent/coach/admin/semantic-classifier-prompts/") &&
+        ["PUT", "POST"].includes(method)) {
+      const parts = pathname.split("/");
+      const prompt = classifierPrompts.find((item) => item.channel === parts[6]);
+      const input = route.request().postDataJSON();
+      if (!prompt || prompt.version !== input.expectedVersion) {
+        return json({ message: "Las instrucciones cambiaron. Recarga antes de guardar." }, 409);
+      }
+      const revision = method === "POST"
+        ? prompt.revisions.find((item) => item.version === Number(parts[8])) : null;
+      if (method === "POST" && !revision) {
+        return json({ message: "Versión no encontrada" }, 404);
+      }
+      prompt.instruction = revision ? revision.instruction : input.instruction.trim();
+      prompt.version += 1;
+      prompt.source = "custom";
+      prompt.updatedAt = "2026-10-12T12:00:00.000Z";
+      prompt.updatedByUserId = 31;
+      prompt.revisions.unshift({
+        version: prompt.version, instruction: prompt.instruction,
+        createdAt: prompt.updatedAt, createdByUserId: 31,
+      });
+      return json({ prompt });
     }
     if (pathname.startsWith("/api/mi-agent/coach/admin/planner-prompts/") && method === "PUT") {
       const channel = pathname.split("/").pop();
@@ -1476,183 +1505,183 @@ async function mockMiCoachApi(
     if (
       pathname === "/api/commercial-intelligence/account-intelligence/snapshot"
     ) {
-      return json({
-        snapshot: {
-          snapshotVersion: "account-intelligence.v1",
-          capturedAt: "2026-09-23T12:00:00.000Z",
-          account: {
-            id: 160,
-            name: "Cuenta Demo",
-            website: "https://cuenta-demo.example",
-            city: "Monterrey",
-            stateRegion: "Nuevo León",
-            description: "Cliente de soluciones de seguridad empresarial.",
+      customerSnapshot = {
+        snapshotVersion: "account-intelligence.v1",
+        capturedAt: "2026-09-23T12:00:00.000Z",
+        account: {
+          id: 160,
+          name: "Cuenta Demo",
+          website: "https://cuenta-demo.example",
+          city: "Monterrey",
+          stateRegion: "Nuevo León",
+          description: "Cliente de soluciones de seguridad empresarial.",
+        },
+        contacts: [
+          {
+            id: 601,
+            name: "Ana Compras",
+            positionTitle: "Directora de compras",
+            department: "Compras",
+            purchaseParticipation: "decide_final",
+            hierarchyLevel: "directivo",
+            relationshipType: "fuerte",
+            influenceLevel: "decide",
+            managerContactId: null,
+            influencesContactId: null,
           },
-          contacts: [
-            {
-              id: 601,
-              name: "Ana Compras",
-              positionTitle: "Directora de compras",
-              department: "Compras",
-              purchaseParticipation: "decide_final",
-              hierarchyLevel: "directivo",
-              relationshipType: "fuerte",
-              influenceLevel: "decide",
-              managerContactId: null,
-              influencesContactId: null,
-            },
-          ],
-          opportunities: [
-            {
-              id: 300,
-              name: "Proyecto abierto",
-              amountUsd: 20000,
-              closeDate: "2026-10-30",
-              stageName: "Desarrollo",
-              commercialStatusCode: "en_proceso",
-              activationStatusCode: "activada",
-            },
-            {
-              id: 301,
-              name: "Renovación ganada",
-              amountUsd: 41560,
-              stageName: "Waiting",
-              commercialStatusCode: "ganada",
-              activationStatusCode: "activada",
-            },
-            {
-              id: 302,
-              name: "Proyecto perdido",
-              amountUsd: 12000,
-              stageName: "Negociación",
-              commercialStatusCode: "perdida",
-              activationStatusCode: "activada",
-            },
-            {
-              id: 303,
-              name: "Proyecto anulado",
-              amountUsd: 8000,
-              stageName: "Cotización",
-              commercialStatusCode: "anulada",
-              activationStatusCode: "activada",
-            },
-          ],
-          inactiveOpportunities: [
-            {
-              id: 304,
-              name: "Proyecto desactivado",
-              amountUsd: 9000,
-              stageName: "Desarrollo",
-              commercialStatusCode: "en_proceso",
-              activationStatusCode: "desactivada",
-            },
-          ],
-          interactions: [
-            {
-              id: 701,
-              title: "Revisión de renovación",
-              summary: "Validar alcance y fecha de renovación.",
-              updatedAt: "2026-09-26T14:00:00.000Z",
-            },
-          ],
-          activities: [],
-          renewals: [
-            {
-              id: 801,
-              opportunityId: 301,
-              providerId: 9,
-              providerName: "Proveedor Demo",
-              statusCode: "vigente",
-              expiresAt: "2026-11-15",
-              renewalCount: 1,
-            },
-          ],
-          products: [
-            {
-              quotationId: 901,
-              quotationVersionId: 902,
-              opportunityId: 301,
-              providerName: "Proveedor Demo",
-              itemType: "servicio",
-              description: "Servicio WAAP",
-              quantity: 1,
-              currencyCode: "USD",
-              commercialStatus: "won",
-              fulfillmentStatus: "not_verified",
-            },
-            {
-              quotationId: 903,
-              quotationVersionId: 904,
-              opportunityId: 300,
-              providerName: "Proveedor Alterno",
-              itemType: "producto",
-              description: "Firewall Perimetral",
-              quantity: 2,
-              currencyCode: "USD",
-              commercialStatus: "accepted",
-              fulfillmentStatus: "not_verified",
-            },
-          ],
-          permissions: {
-            canReadAccounts: true,
-            canReadContacts: true,
-            canReadOpportunities: true,
-            canReadInteractions: true,
+        ],
+        opportunities: [
+          {
+            id: 300,
+            name: "Proyecto abierto",
+            lifecycle: "open",
+            amountUsd: 20000,
+            closeDate: "2026-10-30",
+            stageName: "Desarrollo",
+            commercialStatusCode: "en_proceso",
+            activationStatusCode: "activada",
           },
-          expansionHypotheses: [
+          {
+            id: 301,
+            name: "Renovación ganada",
+            amountUsd: 41560,
+            stageName: "Waiting",
+            commercialStatusCode: "ganada",
+            activationStatusCode: "activada",
+          },
+          {
+            id: 302,
+            name: "Proyecto perdido",
+            amountUsd: 12000,
+            stageName: "Negociación",
+            commercialStatusCode: "perdida",
+            activationStatusCode: "activada",
+          },
+          {
+            id: 303,
+            name: "Proyecto anulado",
+            amountUsd: 8000,
+            stageName: "Cotización",
+            commercialStatusCode: "anulada",
+            activationStatusCode: "activada",
+          },
+        ],
+        inactiveOpportunities: [
+          {
+            id: 304,
+            name: "Proyecto desactivado",
+            amountUsd: 9000,
+            stageName: "Desarrollo",
+            commercialStatusCode: "en_proceso",
+            activationStatusCode: "desactivada",
+          },
+        ],
+        interactions: [
+          {
+            id: 701,
+            title: "Revisión de renovación",
+            summary: "Validar alcance y fecha de renovación.",
+            updatedAt: "2026-09-26T14:00:00.000Z",
+          },
+        ],
+        activities: [],
+        renewals: [
+          {
+            id: 801,
+            opportunityId: 301,
+            providerId: 9,
+            providerName: "Proveedor Demo",
+            statusCode: "vigente",
+            expiresAt: "2026-11-15",
+            renewalCount: 1,
+          },
+        ],
+        products: [
+          {
+            quotationId: 901,
+            quotationVersionId: 902,
+            opportunityId: 301,
+            providerName: "Proveedor Demo",
+            itemType: "servicio",
+            description: "Servicio WAAP",
+            quantity: 1,
+            currencyCode: "USD",
+            commercialStatus: "won",
+            fulfillmentStatus: "not_verified",
+          },
+          {
+            quotationId: 903,
+            quotationVersionId: 904,
+            opportunityId: 300,
+            providerName: "Proveedor Alterno",
+            itemType: "producto",
+            description: "Firewall Perimetral",
+            quantity: 2,
+            currencyCode: "USD",
+            commercialStatus: "accepted",
+            fulfillmentStatus: "not_verified",
+          },
+        ],
+        permissions: {
+          canReadAccounts: true,
+          canReadContacts: true,
+          canReadOpportunities: true,
+          canReadInteractions: true,
+        },
+        expansionHypotheses: [
+          {
+            type: "renewal",
+            title: "Preparar renovación de Proveedor Demo",
+            summary: "Validar continuidad antes del vencimiento.",
+            evidence: "Vencimiento: 2026-11-15.",
+            confidence: "high",
+            opportunityId: 301,
+            requiresConfirmation: true,
+          },
+          {
+            type: "cross_sell",
+            title: "Explorar solución complementaria: Seguridad",
+            summary: "Hipótesis",
+            evidence: "Producto actual: Servicio WAAP.",
+            confidence: "low",
+            opportunityId: 22,
+            requiresConfirmation: true,
+          },
+        ],
+        supportCases: [],
+        dataAvailability: { products: true, supportCases: false },
+        accountHealth: {
+          status: "at_risk",
+          score: 55,
+          signals: [
             {
-              type: "renewal",
-              title: "Preparar renovación de Proveedor Demo",
-              summary: "Validar continuidad antes del vencimiento.",
-              evidence: "Vencimiento: 2026-11-15.",
-              confidence: "high",
-              opportunityId: 301,
-              requiresConfirmation: true,
+              code: "stale_account_activity",
+              severity: "high",
+              title: "Actividad comercial atrasada",
+              summary:
+                "La cuenta no tiene una interacción reciente accesible.",
+              evidence: "Última interacción hace 30 días.",
             },
             {
-              type: "cross_sell",
-              title: "Explorar solución complementaria: Seguridad",
-              summary: "Hipótesis",
-              evidence: "Producto actual: Servicio WAAP.",
-              confidence: "low",
-              opportunityId: 22,
-              requiresConfirmation: true,
+              code: "relationship_map_incomplete",
+              severity: "medium",
+              title: "Mapa de relación incompleto",
+              summary: "Faltan relaciones de contactos.",
+              evidence: "Ana Compras",
             },
           ],
-          supportCases: [],
-          dataAvailability: { products: true, supportCases: false },
-          accountHealth: {
-            status: "at_risk",
-            score: 55,
-            signals: [
-              {
-                code: "stale_account_activity",
-                severity: "high",
-                title: "Actividad comercial atrasada",
-                summary:
-                  "La cuenta no tiene una interacción reciente accesible.",
-                evidence: "Última interacción hace 30 días.",
-              },
-              {
-                code: "relationship_map_incomplete",
-                severity: "medium",
-                title: "Mapa de relación incompleto",
-                summary: "Faltan relaciones de contactos.",
-                evidence: "Ana Compras",
-              },
-            ],
-            metrics: {
-              contactCount: 1,
-              opportunityCount: 4,
-              riskyOpportunityCount: 1,
-              interactionCount: 1,
-              daysSinceLastInteraction: 30,
-              renewalCount: 0,
-              productCount: 2,
-            },
+          metrics: {
+            contactCount: 1,
+            opportunityCount: 4,
+            riskyOpportunityCount: 1,
+            interactionCount: 1,
+            daysSinceLastInteraction: 30,
+            renewalCount: 0,
+            productCount: 2,
           },
         },
-      });
+      };
+      return json({ snapshot: customerSnapshot });
     }
     if (
       pathname ===
@@ -1671,6 +1700,8 @@ async function mockMiCoachApi(
           result: {
             sourceDomain: "crm_internal",
             summary: "Análisis interno listo.",
+            snapshot: customerSnapshot,
+            generatedAt: "2026-09-23T12:00:00.000Z",
             writesPerformed: false,
           },
           findings: withCustomerHealth
@@ -1680,7 +1711,18 @@ async function mockMiCoachApi(
                   title: "Hallazgo interno redundante",
                   summary: "Este detalle no debe mostrarse como tarjeta.",
                   category: "need",
+                  sourceReference: "account:160:description",
                   status: "suggested",
+                  accountId: 160,
+                },
+                {
+                  id: 705,
+                  title: "Información adicional por validar",
+                  summary: "Validar presupuesto antes de avanzar.",
+                  category: "missing_information",
+                  certainty: "confirmed",
+                  status: "suggested",
+                  sourceReference: "account:160:budget",
                   accountId: 160,
                 },
               ]
@@ -1918,6 +1960,341 @@ async function openMiCoach(page, { workspace = "coach" } = {}) {
   if (workspace === "customer")
     await page.getByRole("button", { name: "Cliente existente" }).click();
 }
+
+async function mockCustomerChatRecovery(page) {
+  await mockMiCoachApi(page, { withCustomerHealth: true });
+  const answer = "La oportunidad Vrf 2027 tiene un monto de 2,000,000 USD.";
+  const state = {
+    submissions: 0,
+    polls: 0,
+    failuresRemaining: 0,
+    failureStatus: 503,
+    pendingPolls: 0,
+    emptyResult: false,
+    failed: false,
+    historySaved: false,
+    wrongAccount: false,
+    holdPoll: null,
+    holdSubmission: null,
+  };
+  const history = [
+    { role: "user", text: "¿Cuál es el monto de la oportunidad?" },
+    { role: "assistant", text: "¿A qué oportunidad te refieres?" },
+  ];
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("mi-agent-customer-chat-session:160", "920");
+  });
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        session: {
+          id: 920, accountId: 160,
+          history: state.historySaved ? [
+            ...history,
+            { role: "user", text: "Vrf 2027." },
+            { role: "assistant", text: answer, turnDebug: { currentTurn: { jobId: 921 } } },
+          ] : history,
+        },
+      }),
+    }),
+  );
+  await page.route("**/api/commercial-intelligence/account-chat/jobs", async (route) => {
+    state.submissions += 1;
+    if (state.holdSubmission) await state.holdSubmission;
+    return route.fulfill({
+      status: 202, contentType: "application/json",
+      body: JSON.stringify({ job: { id: 921, status: "pending" } }),
+    });
+  });
+  await page.route("**/api/commercial-intelligence/account-chat/jobs/921", async (route) => {
+    state.polls += 1;
+    if (state.holdPoll) await state.holdPoll;
+    if (state.failuresRemaining > 0) {
+      state.failuresRemaining -= 1;
+      return route.fulfill({
+        status: state.failureStatus, contentType: "application/json",
+        body: JSON.stringify({ message: "No se pudo consultar el resultado" }),
+      });
+    }
+    if (state.pendingPolls > 0) {
+      state.pendingPolls -= 1;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ job: { id: 921, accountId: 160, status: "running" } }),
+      });
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        job: {
+          id: 921, accountId: state.wrongAccount ? 161 : 160,
+          status: state.failed ? "failed" : "completed",
+          errorMessage: state.failed ? "No fue posible responder" : null,
+          result: state.emptyResult ? null : {
+            answer, responseType: "informational", sourceDomain: "crm_internal",
+          },
+        },
+      }),
+    });
+  });
+  await openMiCoach(page, { workspace: "customer" });
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  const chat = page.getByRole("region", { name: "Chat de cuenta" });
+  await expect(chat.getByText("¿A qué oportunidad te refieres?", { exact: true })).toBeVisible();
+  const send = async () => {
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Vrf 2027.");
+    await chat.getByRole("button", { name: "Preguntar", exact: true }).click();
+  };
+  return { state, chat, answer, send };
+}
+
+test("Cliente existente reintenta lecturas transitorias y muestra el estado hasta recibir la respuesta", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.failuresRemaining = 1;
+  state.pendingPolls = 2;
+  await send();
+  await expect(chat.getByRole("status")).toContainText("Reintentando");
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeDisabled();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(chat.getByRole("status")).toHaveCount(0);
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeEnabled();
+  expect(state.submissions).toBe(1);
+  expect(state.polls).toBe(4);
+});
+
+test("Cliente existente recupera el mismo job tras agotar reintentos sin duplicar la pregunta", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.failuresRemaining = 3;
+  await send();
+  const recover = chat.getByRole("button", { name: "Recuperar respuesta", exact: true });
+  await expect(recover).toBeVisible();
+  expect(state.polls).toBe(3);
+  await expect(chat.getByRole("alert")).toContainText("No se pudo consultar el resultado");
+  await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Otra pregunta");
+  await expect(chat.getByRole("button", { name: "Preguntar", exact: true })).toBeDisabled();
+  await recover.click();
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  await expect(chat.getByText("Vrf 2027.", { exact: true })).toHaveCount(1);
+  await expect(recover).toHaveCount(0);
+  await expect(chat.getByRole("button", { name: "Preguntar", exact: true })).toBeEnabled();
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente conserva un job interrumpido al recargar y no duplica la respuesta guardada", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.failuresRemaining = 1;
+  state.failureStatus = 403;
+  await send();
+  await expect(chat.getByRole("button", { name: "Recuperar respuesta" })).toBeVisible();
+  expect(state.polls).toBe(1);
+  state.historySaved = true;
+  await page.reload();
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  await chat.getByRole("button", { name: "Recuperar respuesta" }).click();
+  await expect(chat.getByRole("button", { name: "Recuperar respuesta" })).toHaveCount(0);
+  await expect(chat.getByRole("status")).toHaveCount(0);
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  await expect(chat.getByText("Vrf 2027.", { exact: true })).toHaveCount(1);
+  expect(state.submissions).toBe(1);
+  expect(await page.evaluate(() =>
+    sessionStorage.getItem("mi-agent-customer-chat-pending:160"),
+  )).toBeNull();
+});
+
+test("Cliente existente descarta respuestas tardías tras cambiar de cuenta y permite recuperar al volver", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  let release;
+  state.holdPoll = new Promise((resolve) => { release = resolve; });
+  await send();
+  await expect.poll(() => state.polls).toBe(1);
+  await page.getByLabel("Cuenta existente").selectOption("");
+  release();
+  state.holdPoll = null;
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await chat.getByRole("button", { name: "Recuperar respuesta" }).click();
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente no deja vacío un turno completado sin resultado y distingue un job fallido", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.emptyResult = true;
+  await send();
+  await expect(chat.getByRole("alert")).toContainText("no se recibió una respuesta válida");
+  state.emptyResult = false;
+  await chat.getByRole("button", { name: "Recuperar respuesta" }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await chat.getByRole("button", { name: "Nueva conversación" }).click();
+  state.failed = true;
+  await send();
+  await expect(chat.getByRole("alert")).toContainText("No fue posible responder");
+  await expect(chat.getByRole("button", { name: "Recuperar respuesta" })).toHaveCount(0);
+  await expect(chat.getByRole("button", { name: "Nueva conversación" })).toBeEnabled();
+});
+
+test("Cliente existente conserva el job cuando se agota la espera y recupera sin reenviar", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  await page.clock.install();
+  state.pendingPolls = 1000;
+  await send();
+  await expect.poll(() => state.polls).toBeGreaterThan(0);
+  await page.clock.runFor(1000);
+  await page.clock.fastForward(61000);
+  const recover = chat.getByRole("button", { name: "Recuperar respuesta" });
+  await expect(recover).toBeVisible();
+  await expect(chat.getByRole("alert")).toContainText("La respuesta sigue pendiente");
+  state.pendingPolls = 0;
+  await recover.click();
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente espera el historial antes de enviar y no permite que borre un turno nuevo", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  let release;
+  const heldHistory = new Promise((resolve) => { release = resolve; });
+  let historyRequested = false;
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", async (route) => {
+    historyRequested = true;
+    await heldHistory;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        session: { id: 920, accountId: 160, history: [
+          { role: "user", text: "¿Cuál es el monto de la oportunidad?" },
+          { role: "assistant", text: "¿A qué oportunidad te refieres?" },
+        ] },
+      }),
+    });
+  });
+  await page.getByLabel("Cuenta existente").selectOption("");
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await expect.poll(() => historyRequested).toBe(true);
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeDisabled();
+  await expect(chat.getByRole("button", { name: "Expansión", exact: true })).toBeDisabled();
+  expect(state.submissions).toBe(0);
+  release();
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeEnabled();
+  await send();
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  await expect(chat.getByText("Vrf 2027.", { exact: true })).toHaveCount(1);
+});
+
+test("Cliente existente desplaza el hilo para que la respuesta nueva quede visible", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        session: { id: 920, accountId: 160, history: Array.from({ length: 20 }, (_, index) => ({
+          role: index % 2 ? "assistant" : "user",
+          text: `Mensaje anterior ${index}`,
+        })) },
+      }),
+    }),
+  );
+  await page.getByLabel("Cuenta existente").selectOption("");
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await expect(chat.getByText("Mensaje anterior 19", { exact: true })).toBeVisible();
+  let release;
+  state.holdPoll = new Promise((resolve) => { release = resolve; });
+  await send();
+  await expect.poll(() => state.polls).toBe(1);
+  const thread = chat.locator(".mi-agent-coach-thread");
+  await thread.evaluate((element) => { element.scrollTop = 0; });
+  release();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect.poll(() => thread.evaluate((element) =>
+    Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop),
+  )).toBeLessThanOrEqual(2);
+});
+
+test("Cliente existente conserva un job aceptado después de cambiar de cuenta", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  let release;
+  state.holdSubmission = new Promise((resolve) => { release = resolve; });
+  await send();
+  await expect.poll(() => state.submissions).toBe(1);
+  await page.getByLabel("Cuenta existente").selectOption("");
+  release();
+  await expect.poll(() => page.evaluate(() =>
+    sessionStorage.getItem("mi-agent-customer-chat-pending:160"),
+  )).not.toBeNull();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await chat.getByRole("button", { name: "Recuperar respuesta" }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente rechaza resultados de otra cuenta y permite recuperar el resultado correcto", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.wrongAccount = true;
+  await send();
+  await expect(chat.getByRole("alert")).toContainText("resultado de chat inválido");
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
+  state.wrongAccount = false;
+  await chat.getByRole("button", { name: "Recuperar respuesta" }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente no revive un job antiguo si se inició otra conversación antes de recibir su aceptación", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  let release;
+  state.holdSubmission = new Promise((resolve) => { release = resolve; });
+  await send();
+  await expect.poll(() => state.submissions).toBe(1);
+  await page.getByLabel("Cuenta existente").selectOption("");
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await expect(chat.getByRole("button", { name: "Nueva conversación" })).toBeEnabled();
+  await chat.getByRole("button", { name: "Nueva conversación" }).click();
+  const accepted = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/api/commercial-intelligence/account-chat/jobs" &&
+    response.request().method() === "POST",
+  );
+  release();
+  await accepted;
+  await expect(chat.getByText(answer, { exact: true })).toHaveCount(0);
+  await expect(chat.getByRole("button", { name: "Recuperar respuesta" })).toHaveCount(0);
+  expect(await page.evaluate(() =>
+    sessionStorage.getItem("mi-agent-customer-chat-pending:160"),
+  )).toBeNull();
+  expect(state.polls).toBe(0);
+});
+
+test("Cliente existente muestra errores de historial sin borrar la sesión y permite recargarla", async ({ page }) => {
+  const { chat } = await mockCustomerChatRecovery(page);
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+    route.fulfill({
+      status: 503, contentType: "application/json",
+      body: JSON.stringify({ message: "No se pudo cargar el historial" }),
+    }),
+  );
+  await page.getByLabel("Cuenta existente").selectOption("");
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await expect(chat.getByRole("alert")).toContainText("No se pudo cargar el historial");
+  expect(await page.evaluate(() =>
+    sessionStorage.getItem("mi-agent-customer-chat-session:160"),
+  )).toBe("920");
+  await page.unroute("**/api/commercial-intelligence/account-chat/sessions/920");
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        session: { id: 920, accountId: 160, history: [
+          { role: "assistant", text: "Historial recuperado" },
+        ] },
+      }),
+    }),
+  );
+  await chat.getByRole("button", { name: "Recargar conversación" }).click();
+  await expect(chat.getByText("Historial recuperado", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("alert")).toHaveCount(0);
+});
 
 test("Cliente existente permite confirmar actividad persistida y abrir Calendario", async ({
   page,
@@ -3531,6 +3908,18 @@ test.describe("Mi Coach governance and workspaces", () => {
     await section.locator(":scope > summary").click();
     await expect(section.getByText("Versión 0", { exact: true })).toBeVisible();
     await expect(section.locator(".mi-agent-server-rule-category")).toHaveCount(10);
+    for (const [category, title] of [
+      ["3. Validación del plan de B6", "Correspondencia del objetivo solicitado"],
+      ["8. Respuesta final", "Respuesta sobre la entidad solicitada"],
+    ]) {
+      await section.getByText(category, { exact: true }).click();
+      const rule = section.locator(".mi-agent-server-rule").filter({
+        has: page.getByText(title, { exact: true }),
+      });
+      await expect(rule).toBeVisible();
+      await expect(rule.getByText("Control protegido", { exact: false })).toBeVisible();
+      await expect(rule.locator("input, select, textarea")).toHaveCount(0);
+    }
     await section.getByText("4. Lectura de datos y evidencia", { exact: true }).click();
     const budget = section.getByLabel("Máximo de lecturas por turno");
     await expect(section.getByText("No es un límite de filas:", { exact: false })).toBeVisible();
@@ -3640,6 +4029,140 @@ test.describe("Mi Coach governance and workspaces", () => {
     page.once("dialog", (dialog) => dialog.accept());
     await section.getByRole("button", { name: "Recargar reglas guardadas" }).click();
     await expect(budget).toHaveValue("8");
+    await expect(section.getByRole("alert")).toHaveCount(0);
+  });
+
+  test("agrupa administración y ordena sus secciones en el DOM", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const groups = page.locator(".mi-agent-administration-groups");
+    await expect(groups.locator(":scope > section > h3")).toHaveText([
+      "Gobierno y alcance",
+      "Interpretación y comportamiento",
+      "Validación y diagnóstico",
+    ]);
+    const expectedGroups = [
+      ["Gobierno y alcance", [
+        "Configuración de gobierno",
+        "Políticas del canal y contexto",
+      ]],
+      ["Interpretación y comportamiento", [
+        "Intenciones y enrutamiento",
+        "Clasificador semántico · B3",
+        "Prompts del planificador · B6",
+        "Reglas conversacionales",
+      ]],
+      ["Validación y diagnóstico", [
+        "Reglas del servidor",
+        "Observabilidad de la decisión final",
+      ]],
+    ];
+    for (const [name, sections] of expectedGroups) {
+      const group = page.getByRole("region", { name, exact: true });
+      await expect(group).toBeVisible();
+      await expect(group.locator(":scope > details > summary > strong"))
+        .toHaveText(sections);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const [name] of expectedGroups) {
+      await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
+    }
+    expect(await page.evaluate(() =>
+      document.documentElement.scrollWidth <= window.innerWidth,
+    )).toBe(true);
+  });
+
+  test("administra el clasificador B3 por canal y restaura versiones sin conectar otros canales", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-semantic-classifier-prompts");
+    await section.locator(":scope > summary").click();
+    await expect(section.getByText("Conectado a B3.", { exact: false })).toHaveCount(1);
+    await expect(section.getByText("Configuración preparada", { exact: false })).toHaveCount(2);
+    const input = section.getByLabel("Instrucciones del clasificador B3 de Cliente existente");
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+    const characterCount = section.locator("#b3-instruction-count-customer_account");
+    await expect(characterCount).toHaveText(
+      `${"Instrucción inicial de customer_account".length} / 8000 caracteres`,
+    );
+    await expect(input).toHaveAttribute("maxlength", "8000");
+    await input.fill("a".repeat(8000));
+    await expect(characterCount).toHaveText("8000 / 8000 caracteres");
+    await input.press("End");
+    await input.press("b");
+    await expect(input).toHaveValue("a".repeat(8000));
+    const save = section.getByRole("button", { name: "Guardar instrucciones de Cliente existente" });
+    for (const instruction of ["Conserva referencias de oportunidad.", "Consultar actividades pendientes es lectura."]) {
+      await input.fill(instruction);
+      await expect(characterCount).toHaveText(`${instruction.length} / 8000 caracteres`);
+      await save.click();
+      await expect(section.getByRole("status")).toContainText("nuevos turnos de Cliente existente");
+    }
+    await section.getByText("Historial del clasificador de Cliente existente", { exact: true }).click();
+    const restoreRequest = page.waitForRequest((request) =>
+      request.url().endsWith("/semantic-classifier-prompts/customer_account/revisions/1/restore"),
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await section.getByRole("button", { name: "Restaurar versión 1 de Cliente existente" }).click();
+    expect((await restoreRequest).postDataJSON()).toEqual({ expectedVersion: 2 });
+    await expect(input).toHaveValue("Conserva referencias de oportunidad.");
+    await expect(characterCount).toHaveText(
+      `${"Conserva referencias de oportunidad.".length} / 8000 caracteres`,
+    );
+    await expect(section.getByRole("heading", { name: "Versión 3", exact: true })).toBeVisible();
+    await expect(section.getByRole("heading", { name: "Versión 1", exact: true })).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await section.getByRole("button", { name: "Cargar instrucciones predeterminadas de Cliente existente" }).click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+    await save.click();
+    await expect(section.getByRole("heading", { name: "Versión 4", exact: true })).toBeVisible();
+    for (const label of ["Coach", "Cuenta nueva"]) {
+      const editor = section.getByLabel(`Instrucciones del clasificador B3 de ${label}`);
+      await editor.fill(`Instrucciones preparadas de ${label}`);
+      await section.getByRole("button", { name: `Guardar instrucciones de ${label}`, exact: true }).click();
+      await expect(section.getByRole("status")).toContainText("guardada sin conexión");
+    }
+    await section.getByRole("button", { name: "Recargar instrucciones de B3" }).click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+    await expect(section.getByLabel("Instrucciones del clasificador B3 de Coach"))
+      .toHaveValue("Instrucciones preparadas de Coach");
+    await expect(section.getByLabel("Instrucciones del clasificador B3 de Cuenta nueva"))
+      .toHaveValue("Instrucciones preparadas de Cuenta nueva");
+    await expect(section.getByText("Configuración preparada", { exact: false })).toHaveCount(2);
+  });
+
+  test("el editor B3 muestra conflictos y fallos de carga sin perder el borrador", async ({ page }) => {
+    await mockMiCoachApi(page, { canAdmin: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Administración" }).click();
+    const section = page.locator("details.mi-agent-semantic-classifier-prompts");
+    await section.locator(":scope > summary").click();
+    const input = section.getByLabel("Instrucciones del clasificador B3 de Cliente existente");
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
+    await page.route("**/semantic-classifier-prompts/customer_account", (route) =>
+      route.fulfill({
+        status: 409, contentType: "application/json",
+        body: JSON.stringify({ message: "Las instrucciones cambiaron. Recarga antes de guardar." }),
+      }),
+    );
+    await input.fill("Borrador local");
+    await section.getByRole("button", { name: "Guardar instrucciones de Cliente existente" }).click();
+    await expect(section.getByRole("alert")).toContainText("Recarga antes de guardar");
+    await expect(input).toHaveValue("Borrador local");
+    await page.route("**/semantic-classifier-prompts", (route) =>
+      route.fulfill({
+        status: 500, contentType: "application/json",
+        body: JSON.stringify({ message: "Configuración no disponible" }),
+      }),
+    );
+    await section.getByRole("button", { name: "Recargar instrucciones de B3" }).click();
+    await expect(section.getByRole("alert")).toContainText("Configuración no disponible");
+    await expect(input).toHaveValue("Borrador local");
+    await page.unroute("**/semantic-classifier-prompts");
+    await section.getByRole("button", { name: "Recargar instrucciones de B3" }).click();
+    await expect(input).toHaveValue("Instrucción inicial de customer_account");
     await expect(section.getByRole("alert")).toHaveCount(0);
   });
 
@@ -4073,7 +4596,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
   });
 
-  test("muestra salud, señales y productos en Cliente existente", async ({
+  test("consolida salud, señales y productos solo al analizar Cliente existente", async ({
     page,
   }) => {
     await mockMiCoachApi(page, { withCustomerHealth: true });
@@ -4083,6 +4606,15 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
     await page.getByRole("button", { name: "Cliente existente" }).click();
     await expect(page.getByLabel("Cuenta existente")).toHaveValue("");
+    const analysisRequests = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith("/account-internal-analysis/jobs")
+      ) {
+        analysisRequests.push(request);
+      }
+    });
     await page.getByLabel("Cuenta existente").selectOption("160");
     await expect(page.getByLabel("Cuenta existente")).toHaveValue("160");
     await expect(
@@ -4091,6 +4623,45 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByRole("region", { name: "Chat de cuenta" }),
     ).toBeVisible();
+    const analysisSections = [
+      "Resumen comercial de cuenta",
+      "Salud de la cuenta",
+      "Próximo paso sugerido",
+      "Historial comercial de la cuenta",
+      "Mapa de relaciones de la cuenta",
+      "Productos y renovaciones",
+      "Hipótesis de expansión",
+      "Hallazgos y métricas",
+    ];
+    for (const name of analysisSections) {
+      await expect(page.getByRole("region", { name, exact: true })).toHaveCount(0);
+    }
+    await expect(page.getByText("https://cuenta-demo.example")).toHaveCount(0);
+    await expect(page.getByText("Revisión de renovación")).toHaveCount(0);
+    expect(analysisRequests).toHaveLength(0);
+    await page.getByRole("button", { name: "Analizar cuenta", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Actualizar análisis" })).toBeEnabled();
+    expect(analysisRequests).toHaveLength(1);
+    const consolidatedAnalysis = page.getByRole("region", {
+      name: "Analizar cuenta",
+      exact: true,
+    });
+    for (const name of analysisSections) {
+      await expect(consolidatedAnalysis.getByRole("region", {
+        name,
+        exact: true,
+      })).toHaveCount(1);
+    }
+    const pipeline = consolidatedAnalysis.getByRole("region", {
+      name: "Resumen comercial de cuenta",
+    }).locator("article").filter({ hasText: "Pipeline abierto" });
+    await expect(pipeline.locator("strong")).toHaveText(
+      new Intl.NumberFormat("es-MX", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      }).format(20000),
+    );
     await expect(page.getByText("https://cuenta-demo.example")).toBeVisible();
     await expect(page.getByText("Revisión de renovación")).toBeVisible();
 
@@ -4193,7 +4764,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
     await expect(page.getByText("Hipótesis · cross_sell")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Analizar cuenta" }),
+      page.getByRole("button", { name: "Actualizar análisis" }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Enriquecer con fuentes públicas" }),
@@ -4228,7 +4799,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     expect(analysisIntroBox).not.toBeNull();
     expect(analysisResultBox).not.toBeNull();
     const analysisButtonBox = await analysisOperation
-      .getByRole("button", { name: "Analizar cuenta" })
+      .getByRole("button", { name: "Actualizar análisis" })
       .boundingBox();
     expect(analysisButtonBox).not.toBeNull();
     expect(analysisIntroBox.x).toBeGreaterThan(
@@ -4238,7 +4809,7 @@ test.describe("Mi Coach governance and workspaces", () => {
       analysisOperationBox.width * 0.9,
     );
     await expect(
-      analysisOperation.getByRole("button", { name: "Analizar cuenta" }),
+      analysisOperation.getByRole("button", { name: "Actualizar análisis" }),
     ).toBeVisible();
     await expect(
       analysisOperation.getByRole("region", {
@@ -4261,7 +4832,6 @@ test.describe("Mi Coach governance and workspaces", () => {
       exact: true,
     });
     for (const result of [
-      analysisResult,
       agentsResult,
       executiveResult,
       callResult,
@@ -4269,14 +4839,15 @@ test.describe("Mi Coach governance and workspaces", () => {
       await expect(result).toHaveJSProperty("open", false);
     }
     for (const operation of [
-      analysisOperation,
       agentsOperation,
       executiveOperation,
       callOperation,
     ]) {
       await expect(operation).toContainText("Sin ejecutar");
     }
-    await page.getByRole("button", { name: "Analizar cuenta" }).click();
+    await expect(analysisOperation).toContainText("Listo");
+    await expect(analysisOperation).toContainText("Fecha del análisis:");
+    await page.getByRole("button", { name: "Actualizar análisis" }).click();
     const analysisSummary = analysisOperation.locator(
       ".mi-agent-customer-analysis-summary",
     );
@@ -4288,6 +4859,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toHaveCount(1);
     await expect(
       page.getByText("Hallazgo interno redundante", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      analysisResult.getByText("Información adicional por validar", { exact: true }),
     ).toBeVisible();
     await expect(
       analysisResult.getByRole("button", { name: "Confirmar" }),
@@ -4295,6 +4869,26 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       analysisResult.getByRole("button", { name: "Rechazar" }),
     ).toHaveCount(0);
+    for (const name of analysisSections) {
+      const panel = analysisOperation.getByRole("region", { name, exact: true });
+      const box = await panel.boundingBox();
+      expect(box.width).toBeGreaterThan(analysisOperationBox.width * 0.9);
+    }
+    const desktopViewport = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileAnalysisBox = await analysisOperation.boundingBox();
+    for (const name of analysisSections) {
+      const box = await analysisOperation.getByRole("region", {
+        name,
+        exact: true,
+      }).boundingBox();
+      expect(box.width).toBeGreaterThan(mobileAnalysisBox.width * 0.85);
+      expect(box.x + box.width).toBeLessThanOrEqual(390);
+    }
+    await analysisOperation.screenshot({
+      path: test.info().outputPath("account-analysis-mobile.png"),
+    });
+    await page.setViewportSize(desktopViewport);
     await analysisResult.locator(":scope > summary").click();
     await expect(analysisSummary).toBeVisible();
     await expect(
@@ -4367,6 +4961,165 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
   });
 
+  test("análisis de cuenta muestra errores y conserva el resultado anterior al fallar la actualización", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Cliente existente" }).click();
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const jobsUrl = "**/api/commercial-intelligence/account-internal-analysis/jobs";
+    await page.route(jobsUrl, (route) => route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Análisis temporalmente no disponible" }),
+    }));
+    const analysis = page.getByRole("region", { name: "Analizar cuenta", exact: true });
+    await analysis.getByRole("button", { name: "Analizar cuenta" }).click();
+    await expect(analysis).toContainText("Análisis temporalmente no disponible");
+    await expect(analysis.getByRole("region", { name: "Salud de la cuenta" })).toHaveCount(0);
+    await expect(analysis.getByRole("button", { name: "Analizar cuenta" })).toBeEnabled();
+    await page.unroute(jobsUrl);
+    await analysis.getByRole("button", { name: "Analizar cuenta" }).click();
+    await expect(analysis.getByRole("button", { name: "Actualizar análisis" })).toBeEnabled();
+    await page.route(jobsUrl, (route) => route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "No se pudo actualizar el análisis" }),
+    }));
+    await analysis.getByRole("button", { name: "Actualizar análisis" }).click();
+    await expect(analysis).toContainText("No se pudo actualizar el análisis");
+    await expect(analysis).toContainText("Resultado anterior; pendiente de actualización.");
+    await expect(analysis.getByRole("region", { name: "Salud de la cuenta" })).toContainText("55/100");
+    await expect(analysis.getByRole("button", { name: "Actualizar análisis" })).toBeEnabled();
+  });
+
+  test("análisis de cuenta descarta resultados tardíos después de cambiar la selección", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Cliente existente" }).click();
+    const snapshotResponse = page.waitForResponse((response) =>
+      response.url().includes("/account-intelligence/snapshot"),
+    );
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const { snapshot } = await (await snapshotResponse).json();
+    const nextSnapshot = {
+      ...snapshot,
+      account: { ...snapshot.account, id: 170, name: "Cuenta Alterna" },
+      contacts: [],
+      opportunities: [],
+      inactiveOpportunities: [],
+      interactions: [],
+      products: [],
+      renewals: [],
+      expansionHypotheses: [],
+    };
+    await page.route("**/api/commercial-intelligence/account-intelligence/snapshot?accountId=170", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ snapshot: nextSnapshot }),
+      }),
+    );
+    let releaseOldAnalysis;
+    const oldAnalysisReady = new Promise((resolve) => { releaseOldAnalysis = resolve; });
+    let jobCount = 0;
+    await page.route("**/api/commercial-intelligence/account-internal-analysis/jobs", (route) =>
+      route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({ job: { id: ++jobCount, status: "pending" } }),
+      }),
+    );
+    await page.route("**/api/commercial-intelligence/account-internal-analysis/jobs/*", async (route) => {
+      const oldJob = route.request().url().endsWith("/1");
+      if (oldJob) await oldAnalysisReady;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: {
+            id: oldJob ? 1 : 2,
+            status: "completed",
+            result: {
+              summary: oldJob ? "Análisis obsoleto" : "Análisis de la selección actual",
+              snapshot: oldJob ? snapshot : nextSnapshot,
+            },
+            findings: [],
+          },
+        }),
+      });
+    });
+    const firstPoll = page.waitForRequest("**/account-internal-analysis/jobs/1");
+    await page.getByRole("button", { name: "Analizar cuenta", exact: true }).click();
+    await firstPoll;
+    await page.getByLabel("Cuenta existente").selectOption("170");
+    await expect(page.getByRole("region", { name: "Salud de la cuenta" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Analizar cuenta", exact: true }).click();
+    const analysis = page.getByRole("region", { name: "Analizar cuenta", exact: true });
+    await expect(analysis).toContainText("Análisis de la selección actual");
+    await expect(page.getByRole("heading", { name: "Cuenta Alterna", exact: true })).toBeVisible();
+    const oldResponse = page.waitForResponse("**/account-internal-analysis/jobs/1");
+    releaseOldAnalysis();
+    await oldResponse;
+    await expect(analysis).not.toContainText("Análisis obsoleto");
+    await expect(analysis).toContainText("Análisis de la selección actual");
+    await expect(analysis.getByRole("button", { name: "Actualizar análisis" })).toBeEnabled();
+  });
+
+  test("análisis de cuenta respeta permisos y representa cuentas sin datos", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await openMiCoach(page);
+    await page.getByRole("button", { name: "Cliente existente" }).click();
+    const snapshotResponse = page.waitForResponse((response) =>
+      response.url().includes("/account-intelligence/snapshot"),
+    );
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const { snapshot } = await (await snapshotResponse).json();
+    const emptySnapshot = {
+      ...snapshot,
+      opportunities: [],
+      inactiveOpportunities: [],
+      contacts: [],
+      interactions: [],
+      products: [],
+      renewals: [],
+      expansionHypotheses: [],
+      permissions: { ...snapshot.permissions, canReadContacts: false },
+      accountHealth: {
+        status: "insufficient_data",
+        score: 0,
+        signals: [],
+        metrics: {
+          contactCount: 0,
+          opportunityCount: 0,
+          riskyOpportunityCount: 0,
+          daysSinceLastInteraction: null,
+        },
+      },
+    };
+    await page.route("**/api/commercial-intelligence/account-internal-analysis/jobs/703", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: {
+            id: 703,
+            status: "completed",
+            result: { summary: "Sin datos suficientes", snapshot: emptySnapshot },
+            findings: [],
+          },
+        }),
+      }),
+    );
+    await page.getByRole("button", { name: "Analizar cuenta", exact: true }).click();
+    const analysis = page.getByRole("region", { name: "Analizar cuenta", exact: true });
+    await expect(analysis).toContainText("Sin datos suficientes");
+    await expect(analysis.getByRole("region", { name: "Salud de la cuenta" })).toContainText("Información insuficiente");
+    await expect(analysis.getByRole("region", { name: "Mapa de relaciones de la cuenta" })).toHaveCount(0);
+    await expect(analysis.getByRole("region", { name: "Productos y renovaciones" })).toHaveCount(0);
+    await expect(analysis.getByRole("region", { name: "Hipótesis de expansión" })).toHaveCount(0);
+    const history = analysis.getByRole("region", { name: "Historial comercial de la cuenta" });
+    await history.locator(":scope > summary").click();
+    await expect(history.getByText("Sin registros accesibles")).toHaveCount(5);
+    await expect(analysis).toContainText("No hay hallazgos adicionales.");
+  });
+
   test("abre el contacto seleccionado en Mapeo de contactos para editarlo", async ({
     page,
   }) => {
@@ -4377,6 +5130,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await openMiCoach(page);
     await page.getByRole("button", { name: "Cliente existente" }).click();
     await page.getByLabel("Cuenta existente").selectOption("160");
+    await page.getByRole("button", { name: "Analizar cuenta", exact: true }).click();
     const relationshipMap = page.getByRole("region", {
       name: "Mapa de relaciones de la cuenta",
     });

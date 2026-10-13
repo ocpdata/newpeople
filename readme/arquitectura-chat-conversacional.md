@@ -137,6 +137,14 @@ El gateway `agent-gateway.js` implementa B3 y coordina el turno desde el job `pe
 
 2. **Clasificador semántico:** `classifyCustomerIntentSemantically` envía una solicitud estructurada con la pregunta (máximo 2.000 caracteres), hasta seis mensajes recientes, las selecciones de cuenta/oportunidad/contacto, la continuación validada y solo las intenciones habilitadas del catálogo `customer_account`. Devuelve una intención, confianza `high`/`medium`/`low`, motivo y pregunta aclaratoria opcional. El catálogo incluye `crm_operation`, `email_draft`, `quotation_query`, `contact_history`, `opportunity_status`, `opportunity_guidance`, `account_activity_history`, `contact_query`, `opportunity_query` y `account_overview`; las herramientas asociadas se restringen después en B5.
 
+  **Instrucciones administrables de B3:** la sección **Clasificador semántico · B3** utiliza `semantic-classifier-prompts.js`, separada de los prompts del planificador B6. Permite editar instrucciones de Coach, Cliente existente y Cuenta nueva con permiso `mi_coach.admin`, control de concurrencia por `expectedVersion`, auditoría e historial. Restaurar una revisión crea una nueva versión; cargar las instrucciones predeterminadas solo cambia el editor hasta guardar.
+
+  Solo **Cliente existente** consume esta configuración en los turnos nuevos. Coach continúa usando su clasificador actual; su texto inicial se ofrece como referencia. Cuenta nueva dispone de una propuesta para uso futuro, sin clasificador conectado a esta configuración. Guardar instrucciones no conecta ninguno de estos dos canales.
+
+  B3 carga las instrucciones efectivas antes de clasificar. Sin personalización utiliza el texto predeterminado; un fallo de almacenamiento se reporta como fallo de preparación, no como una personalización ignorada. La traza de clasificación registra canal, versión y origen (`default`/`custom`). El catálogo habilitado, esquema de respuesta, umbrales, permisos y confirmaciones permanecen bajo control del servidor.
+
+  La continuación validada incluye referencias mínimas (ID y nombre) de la cuenta y de la oportunidad/contacto que todavía aparecen en el snapshot autorizado. Esto permite cambiar el dato consultado conservando la entidad conversacional. Las instrucciones predeterminadas distinguen expresamente consultas factuales de seguimiento de operaciones: tras preguntar monto y etapa, “¿Qué actividad pendiente tiene?” consulta actividades existentes, sin pedir tipo, fecha u hora para crear otra. El historial se usa para interpretar referencias, no como evidencia CRM; una ambigüedad real sigue requiriendo aclaración.
+
   La confianza se normaliza a `0.95`, `0.75` y `0.35`, respectivamente. Una intención fuera del catálogo, confianza inferior a `0.68`, error o falta de respuesta se convierte en `clarify_needed`; no hay fallback a una operación inferida.
 
   **Intenciones habilitadas de Cliente existente:**
@@ -272,6 +280,18 @@ En síntesis, B3 guarda el estado y el resultado del job; cuando B1 consulta el 
 **Formato y calidad del plan:** las propuestas deben usar códigos del catálogo habilitado y filtros con tipos y valores permitidos. Una entidad se expresa como referencia/candidate key del conjunto autorizado, no como un ID inventado. Si hay varios objetivos plausibles, una referencia no resuelta, falta de contexto esencial o una solicitud fuera del alcance del canal, B6 debe marcar la ambigüedad o pedir aclaración, no escoger un registro a la fuerza ni ampliar la consulta.
 
 **Entrega a B5:** devuelve únicamente el plan estructurado y, cuando corresponda, los campos de aclaración. B5 valida esquema, catálogo, herramientas, filtros, permisos, política de operaciones, contexto y referencias confiables; elimina o rechaza elementos no permitidos. Solo un plan válido continúa a B7 para preparar lecturas y a B8 para ejecutarlas. Si el plan falla o requiere aclaración, B5 detiene las lecturas pertinentes.
+
+**Correspondencia obligatoria en Cliente existente:** el adaptador verifica de
+forma semántica independiente el mensaje original frente al plan, la cuenta
+seleccionada y los candidatos autorizados antes de entregarlo para normalización.
+El servidor valida las citas del mensaje y las claves de candidatos. Una referencia
+actual explícita no puede omitirse o sustituirse por el foco anterior ni ampliar
+el alcance. Otra cuenta, ambigüedad o desajuste producen aclaración sin lecturas;
+un error del verificador bloquea el plan. El dictamen no modifica la intención de
+B3 ni concede permisos. La evaluación de evidencia recibe el objetivo validado y
+la auditoría final exige aprobar por separado el respaldo factual y la
+correspondencia (`targetStatus=aligned`). Las reglas son obligatorias y visibles
+en Administración, categorías 3 y 8; sus resultados se conservan en diagnóstico.
 
 **Límites:** B6 no ejecuta consultas CRM, no observa resultados como si ya fueran evidencia, no autoriza herramientas, no cambia permisos ni reemplaza la decisión final del gateway. Tampoco redacta la respuesta conversacional final: después de las lecturas, B5 y los componentes de evidencia/answering determinan si la evidencia basta y qué respuesta se devuelve.
 

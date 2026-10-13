@@ -1,4 +1,8 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
+import {
+  validateCustomerPlanTarget,
+  customerTargetClarification,
+} from "./customer-target-validation.js";
 import { config } from "../config.js";
 import { buildCustomerActivityDraftResponse } from "./activity-draft.js";
 import { resolveCoachEntities } from "../coach/entity-resolver.js";
@@ -1603,7 +1607,9 @@ export function buildCustomerEvidenceFailureResponse({
       "No fue posible verificar si la evidencia disponible responde la solicitud. No presentaré una conclusión como confirmada.";
   } else if (status === "answer_generation_error") {
     responseType = "error";
-    answer =
+    answer = ["answer_target_mismatch", "answer_target_unverified"].includes(errorCode)
+      ? "No pude confirmar que la respuesta corresponda a la entidad que solicitaste. No presentaré datos de otra entidad como respuesta a tu pregunta."
+      :
       "La evidencia se verificó, pero no pude redactar una respuesta confiable. No presentaré una conclusión sin esa revisión.";
   } else {
     const missing = pendingItems.length
@@ -2552,6 +2558,7 @@ export function createCustomerAccountAdapter({
           (authoritativeIntent
             ? `Intención resuelta por B3: ${authoritativeIntent.intent} (confianza ${authoritativeIntent.confidence}). No la sustituyas por otra intención; si requiere aclaración, devuelve una aclaración sin proponer operaciones. `
             : "") +
+          "Una referencia explícita del mensaje actual prevalece sobre el foco anterior sin ampliar la cuenta autorizada. Conserva las menciones actuales en entities incluso si falta localizar el registro. No sustituyas una referencia por otra del historial. " +
           "Para preparar una actividad, llena activityDraft.action=prepare; para responder campos de pendingActivity usa continue; si el usuario la descarta usa discard; para consultas factuales usa none. Interpreta las respuestas breves con el borrador y el historial. Usa queries=[crm_operation,contact_query] para una actividad con contacto, no consultas de historial salvo que el usuario las solicite explícitamente. Conserva día/hora no proporcionados como vacíos: 'la próxima semana' es temporalPreference, no una cita. scheduledAt debe ser YYYY-MM-DDTHH:mm en la zona horaria del negocio; calcula fechas relativas con referenceDateTime y no inventes hora ni día. Los campos pendientes del borrador no son ambiguity ni evidencia CRM faltante; solo entidades ambiguas, inaccesibles o referencias no resueltas requieren aclaración. " +
           "Eres un planificador de consultas para el chat de Cliente existente. No respondas al vendedor ni inventes datos o IDs. Devuelve solo el plan estructurado. El alcance siempre es la cuenta seleccionada por el servidor: si la pregunta pide otra cuenta, responde con mode=clarification, ambiguity.reason=other_account y sin consultas. Para dominios fuera del catálogo, usa out_of_scope y no inventes consultas. Usa solo códigos de consulta del catálogo. Interpreta la pregunta junto con recentConversation, validatedContinuation y los candidatos autorizados; resuelve referencias conversacionales y no dependas de coincidencias literales en la pregunta actual. Distingue la intención consultada de la entidad a la que se refiere: si preguntas por las actividades, etapa, cotización o contactos que tiene una oportunidad ya identificada, targetType debe ser opportunity y debes devolver el candidateKey de esa oportunidad; no cambies targetType a account solo porque la consulta sea account_activity_history. Por ejemplo, después de consultar Vrf 2027, ante '¿Qué actividad pendiente tiene?' conserva Vrf 2027 como objetivo singular y planifica las lecturas de actividad correspondientes. Si preguntan qué contacto está asociado a una oportunidad, incluye contact_query y consulta getOpportunity para leer associatedContact; buscar contactos de la cuenta por sí solo no demuestra que alguno pertenezca a esa oportunidad. Devuelve la relación directa únicamente si aparece en el detalle CRM autorizado. Completa referenceResolution con targetType, cardinality y source. Cuando elijas un candidato, devuelve únicamente su candidateKey opaco; nunca inventes ni devuelvas IDs CRM. Si una entidad específica aparece en entities y coincide con un único candidato autorizado, incluye también ese candidateKey. Si el historial y el contexto validado señalan un único candidato coherente, úsalo aunque el mensaje no repita su nombre. Si quedan varios candidatos plausibles, selecciona varios solo si la pregunta pide una colección; de lo contrario pide aclaración. Usa cardinality=all para consultas explícitas de cartera y none cuando no haya entidad objetivo. Incluye varios códigos de consulta cuando la pregunta tenga partes independientes; devuelve menciones literales en entities y filtros solo cuando estén expresados o sean necesarios. Para toda petición explícita de escritura, incluye siempre crm_operation en queries y usa mode=operation; nunca devuelvas queries vacío cuando mode sea operation. Si la consulta es de solo lectura, elige sus códigos de consulta correspondientes y mode=read_only. Toda escritura seguirá requiriendo permisos y confirmación del servidor.",
         subject:
@@ -2600,6 +2607,41 @@ export function createCustomerAccountAdapter({
             ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
           };
           turnDiagnostics.serverRules.decisions.push({ ruleId: "amount-target", outcome: "continued" });
+        }
+      }
+      if (normalizedPlan) {
+        try {
+          const validation = await validateCustomerPlanTarget({
+            question,
+            conversationHistory,
+            selectedAccount: { name: snapshot.account?.name || "" },
+            candidates: entityCandidates.serverEntityCandidates.map(({ candidateKey, entityType, referenceText }) => ({
+              candidateKey, entityType, name: referenceText,
+            })),
+            plan: normalizedPlan,
+            aiUsageContext: plannerRequest.aiUsageContext,
+            signal: getDeadlineSignal(deadlineAt),
+          });
+          turnDiagnostics.targetValidation = validation;
+          turnDiagnostics.serverRules.decisions.push({
+            ruleId: "plan-target-correspondence", outcome: validation.status,
+          });
+          normalizedPlan = {
+            ...normalizedPlan,
+            serverTargetValidation: {
+              ...validation,
+              clarificationQuestion: validation.status === "aligned"
+                ? "" : customerTargetClarification(validation),
+            },
+          };
+        } catch (error) {
+          turnDiagnostics.targetValidation = {
+            status: "unavailable", reason: String(error.code || error.name || "target_validation_failed"),
+          };
+          turnDiagnostics.serverRules.decisions.push({
+            ruleId: "plan-target-correspondence", outcome: "unavailable",
+          });
+          throw error;
         }
       }
       return normalizedPlan
@@ -2796,10 +2838,12 @@ export function createCustomerAccountAdapter({
           const assessment = await runStructuredTextResearch({
             schemaName: "customer_account_evidence_assessment",
             systemPrompt:
+              "Comprueba que la evidencia corresponda al objetivo del mensaje actual y validatedTarget, no solo que contenga datos verdaderos. Los datos de una entidad anterior no cubren otra referencia explícita. " +
               "Evalúa si la evidencia autorizada responde todas las partes de la pregunta, incluyendo evidencia CRM y pública, junto con recentConversation y validatedContinuation. El historial sirve para resolver intención y referencias, nunca como prueba factual. No redactes la respuesta ni inventes datos. Usa queryCoverage para saber qué intenciones ya fueron consultadas y no devuelvas en missingQueries una intención fullyQueried cuya evidencia ya cubra la pregunta. Distingue consultas factuales de solicitudes para preparar propuestas editables: ante 'proponla' después de ofrecer una llamada, verifica la identidad y vínculos CRM de la cuenta, oportunidad y contacto referidos, pero no exijas preferencias de llamada, acuerdos confirmados, actividades previas ni detalles futuros que el vendedor no pidió consultar como hechos. La fecha/hora y otros datos no proporcionados de una propuesta son campos pendientes, no hechos CRM; no los inventes. Preparar una propuesta no ejecuta ni guarda la actividad y sigue sujeto a operationPolicy. Marca sufficient solo si cada parte está respaldada por resultados concretos y no faltan hechos. Marca no_results solo cuando las consultas necesarias terminaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Devuelve missingQueries solo para una fuente/intención autorizada con una consulta útil aún no ejecutada; si otra lectura no puede obtener un dato faltante, descríbelo en missingFacts. Solicita aclaración solo para ambigüedades reales, referencias insuficientes o periodos indispensables de una consulta factual. Devuelve missingFacts como etiquetas breves en español para el vendedor, no como códigos internos ni afirmaciones inventadas.",
             subject: "Verificación de evidencia CRM y pública",
             context: {
               question: payload.question,
+              validatedTarget: turnDiagnostics.targetValidation,
               recentConversation: conversationHistory.slice(-8),
               validatedContinuation: activeConversationContext || null,
               operationPolicy: payload.operationPolicy || {},
@@ -3044,6 +3088,7 @@ export function createCustomerAccountAdapter({
         }));
       const answerEvidenceContext = {
         question: payload.question,
+        validatedTarget: turnDiagnostics.targetValidation,
         conversationHistory,
         instruction: payload.instruction || "",
         selectedContext: payload.context?.selectedContext || {},
@@ -3295,11 +3340,13 @@ export function createCustomerAccountAdapter({
               answerAuditDiagnostics.model = model || null;
             },
             systemPrompt:
+              "Comprueba por separado la correspondencia del objetivo: compara el mensaje actual, validatedTarget, las entidades de la evidencia y la respuesta propuesta. Un dato verdadero sobre otra entidad no responde la solicitud. Una referencia explícita actual prevalece sobre el historial sin ampliar el alcance autorizado. Devuelve targetStatus=aligned solo si la respuesta cubre el objetivo solicitado o explica correctamente que no se encontró dentro del alcance verificado; mismatch si sustituye la entidad o ignora un objetivo explícito, e inconclusive si no puedes verificarlo. " +
               "Para una actividad futura solicitada por el vendedor, distingue el borrador propuesto de un hecho CRM: audita sus IDs, identidad y relaciones con authorizedEvidence, y su tipo/objetivo con la petición y conversationHistory. Una propuesta editable no demuestra que la llamada esté acordada o guardada; no exijas preferencias o acuerdos previos. La ausencia de fecha/hora debe quedar explícita como dato pendiente, nunca inventada; no permitas propuestas con entidades ambiguas o sin respaldo ni afirmaciones de ejecución. " +
               "Audita cada afirmación factual de la respuesta contra authorizedEvidence y verifiedEmptyResults. conversationHistory y la pregunta no son prueba de hechos CRM. Respeta sourceDomain: crm_internal es evidencia CRM y public_web solo evidencia pública, nunca un hecho CRM. Toda afirmación basada en fuentes públicas debe estar respaldada por un registro public_web con URL y referenciar esa evidencia; marca unsupported si la respuesta presenta una señal pública como dato CRM o si no hay fuente pública concreta. Un verifiedEmptyResult completado con resultCount=0 permite afirmar únicamente que esa consulta no encontró registros en la cuenta/entidad indicada; no permite afirmar una ausencia global ni cubre otros dominios. No infieras datos de una entidad a otra. En una operación crm_operation con proposalOrigin=server_deterministic, la operación estructurada fue preparada por el servidor y es evidencia válida del estado del flujo: puede afirmarse que la propuesta está preparada, requiere confirmación y aún no se ejecutó; no exijas que esos estados aparezcan en el CRM. El valor destino es la solicitud del usuario, no un hecho CRM: comprueba que coincide con la petición y con operations.value. Verifica con authorizedEvidence la identidad de la oportunidad y su valor actual. Para cualquier otro tipo de respuesta, no confíes en operaciones generadas por el modelo como prueba de que una propuesta exista. Marca supported si todas las afirmaciones están respaldadas y las afirmaciones de cero resultados están dentro del alcance de verifiedEmptyResults; marca unsupported si hay contradicción o exceso, e inconclusive si no puedes decidir. Para cada afirmación no respaldada, devuelve en findings la afirmación, el veredicto, el motivo concreto y las referencias a los toolName/registros de authorizedEvidence que revisaste; no inventes referencias. No redactes una respuesta nueva ni autorices operaciones.",
             subject: snapshot.account?.name || "cuenta",
             context: {
               question: payload.question,
+              validatedTarget: turnDiagnostics.targetValidation,
               channelIntentRouting: routing,
               conversationHistory,
               operationPolicy: payload.operationPolicy || {},
@@ -3328,6 +3375,12 @@ export function createCustomerAccountAdapter({
             },
             currentValues: {},
             fields: [
+              {
+                key: "targetStatus",
+                type: "enum",
+                enum: ["aligned", "mismatch", "inconclusive"],
+                example: "inconclusive",
+              },
               {
                 key: "status",
                 type: "enum",
@@ -3411,10 +3464,16 @@ export function createCustomerAccountAdapter({
                 : [],
             }))
           : [];
-        if (answerAudit?.status === "supported")
+        answerAuditDiagnostics.targetStatus = answerAudit?.targetStatus || "unavailable";
+        turnDiagnostics.serverRules.decisions.push({
+          ruleId: "answer-target-correspondence", outcome: answerAuditDiagnostics.targetStatus,
+        });
+        if (answerAudit?.status === "supported" && answerAudit?.targetStatus === "aligned")
           return { ...aiResult, publicSources };
         const answerAuditFailureCode =
-          answerAudit?.status === "unsupported"
+          answerAudit?.status === "supported" && answerAudit?.targetStatus !== "aligned"
+            ? answerAudit?.targetStatus === "mismatch" ? "answer_target_mismatch" : "answer_target_unverified"
+            : answerAudit?.status === "unsupported"
             ? "answer_not_grounded"
             : answerAudit?.status === "inconclusive"
               ? "answer_audit_inconclusive"

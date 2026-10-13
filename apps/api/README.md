@@ -84,6 +84,46 @@ Coach y Cliente existente comparten el catalogo de herramientas CRM de solo lect
 
 La lectura conversacional de cotizaciones excluye costos internos, margenes y notas internas. La paridad de lectura no amplia las operaciones de escritura: Cliente existente solo puede proponer actividades confirmables.
 
+### Instrucciones del clasificador semantico B3
+
+Administracion ofrece instrucciones independientes para Coach, Cliente existente
+y Cuenta nueva mediante `GET /api/mi-agent/coach/admin/semantic-classifier-prompts`.
+Solo Cliente existente las consume; guardar los otros canales no los conecta.
+Las instrucciones de B3 clasifican el resultado solicitado, no planifican las
+consultas de B6 ni conceden permisos.
+
+- `PUT /api/mi-agent/coach/admin/semantic-classifier-prompts/:channel` recibe
+  `instruction` (1-8000 caracteres) y `expectedVersion`.
+- `POST /api/mi-agent/coach/admin/semantic-classifier-prompts/:channel/revisions/:version/restore`
+  recibe `expectedVersion` y crea una nueva version con el contenido historico.
+- Todos los endpoints requieren `mi_coach.admin`; escritura y restauracion
+  registran auditoria. Una edicion concurrente devuelve `409`.
+- La respuesta de lectura incluye version, autor, fecha, instrucciones iniciales,
+  estado de conexion e historial.
+- B3 registra canal/version/origen en su traza e incluye la entidad conversacional
+  validada para interpretar consultas de seguimiento. El esquema, catalogo,
+  umbrales y confirmaciones siguen impuestos por el servidor.
+- Un error al cargar la configuracion falla explicitamente; no reemplaza una
+  personalizacion guardada por un valor predeterminado silencioso.
+
+### Correspondencia obligatoria del objetivo
+
+Cliente existente verifica el mensaje original contra el plan de B6 mediante
+una evaluacion semantica independiente antes de preparar lecturas. El servidor
+comprueba las citas literales y las claves de candidatos autorizados; una entidad
+explicita no puede sustituirse por el historial ni ampliar la cuenta seleccionada.
+Un desajuste, otra cuenta o una referencia ambigua detienen el plan con aclaracion.
+Una evaluacion no disponible o invalida bloquea el flujo, sin aprobarlo por defecto.
+
+La verificacion de evidencia recibe ese objetivo. La auditoria final exige tanto
+respaldo factual como `targetStatus=aligned`; un dato verdadero sobre otra entidad,
+un dictamen inconcluso o un campo ausente bloquean respuesta y operaciones.
+Las reglas protegidas `plan-target-correspondence` y `answer-target-correspondence`
+aparecen en las categorias 3 y 8 de Administracion. Los dictamenes y motivos quedan
+en los diagnosticos del turno. No requieren activar una casilla ni modifican los
+prompts personalizados guardados. La evaluacion adicional comparte el plazo del
+turno y registra su uso de IA.
+
 Documentacion tecnica relacionada:
 
 - `../../readme/arquitectura-mi-coach.md`

@@ -31,6 +31,10 @@ import { ensureCommercialCalendarActivitiesSchema } from "./calendar-activities-
 import { ensureLandingSchema } from "../landing/schema.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
+import {
+  loadSemanticClassifierPrompt,
+  buildCustomerSemanticClassifierPrompt,
+} from "../coach/semantic-classifier-prompts.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
 import {
   classifyCustomerRequestB3,
@@ -187,6 +191,8 @@ async function classifyCustomerIntentSemantically({
   conversationHistory = [],
   selectedContext = {},
   conversationContext = null,
+  snapshot = null,
+  classifierPrompt,
   intents = [],
   user,
   jobId,
@@ -212,12 +218,20 @@ async function classifyCustomerIntentSemantically({
     return clarification("missing_question_or_intents");
   }
 
+  const reference = (entity) => entity ? { id: entity.id, name: entity.name } : null;
+  const conversationalOpportunity = [
+    ...(snapshot?.opportunities || []),
+    ...(snapshot?.inactiveOpportunities || []),
+    ...(snapshot?.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ].find((item) => Number(item.id) === Number(conversationContext?.opportunityId));
+  const conversationalContact = (snapshot?.contacts || []).find(
+    (item) => Number(item.id) === Number(conversationContext?.contactId),
+  );
   let plan;
   try {
     plan = await classifyWithAI({
       schemaName: "customer_account_request_intent",
-      systemPrompt:
-        "Clasifica el resultado principal que solicita el vendedor en el chat de Cliente existente; no planifiques consultas ni redactes la respuesta. Elige solo una intención de availableIntents o clarify_needed. Distingue entre preparar contenido y ejecutar una acción descrita dentro de ese contenido: pedir que se redacte un correo para solicitar una reunión no pide agendarla. crm_operation requiere una solicitud explícita de registrar, crear, actualizar, vincular o agendar algo en CRM/Calendario. Interpreta respuestas breves como 'sí', 'proponla' o 'continúa' usando recentConversation y validatedContinuation; usa crm_operation solo cuando remitan inequívocamente a una operación previa ofrecida o pendiente. Si se solicitan por separado contenido y una operación, no existe una continuación verificable o no puedes distinguir con confianza el resultado buscado, usa clarify_needed y formula una pregunta breve. No inventes permisos, IDs ni datos.",
+      systemPrompt: buildCustomerSemanticClassifierPrompt(classifierPrompt),
       subject: "Intención del vendedor en Cliente existente",
       context: {
         question: String(question).trim().slice(0, 2000),
@@ -235,6 +249,11 @@ async function classifyCustomerIntentSemantically({
               intents: Array.isArray(conversationContext.intents)
                 ? conversationContext.intents.slice(0, 8)
                 : [],
+              entities: {
+                account: reference(snapshot?.account),
+                opportunity: reference(conversationalOpportunity),
+                contact: reference(conversationalContact),
+              },
               hasPendingActivity: Boolean(conversationContext.pendingActivity),
               pendingActivity: conversationContext.pendingActivity
                 ? {
@@ -315,13 +334,29 @@ async function classifyCustomerIntentSemantically({
 }
 
 export async function classifyCustomerIntent(input = {}) {
+  const classifierPrompt = await loadSemanticClassifierPrompt({
+    channel: "customer_account",
+  });
   const preDecision = classifyCustomerRequestB3(input.question || "");
-  const semanticDecision = await classifyCustomerIntentSemantically(input);
-  return resolveCustomerIntentB3({
+  const semanticDecision = await classifyCustomerIntentSemantically({
+    ...input, classifierPrompt,
+  });
+  const decision = resolveCustomerIntentB3({
     preDecision,
     semanticDecision,
     availableIntents: input.intents,
   });
+  return {
+    ...decision,
+    source: {
+      ...decision.source,
+      classifierPrompt: {
+        channel: classifierPrompt.channel,
+        version: classifierPrompt.version,
+        source: classifierPrompt.source,
+      },
+    },
+  };
 }
 
 function sanitizeCustomerResponseEntities(response, snapshot, usedTools = []) {
@@ -3581,6 +3616,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
             conversationHistory,
             selectedContext,
             conversationContext,
+            snapshot,
             intents: channelIntentConfiguration,
             user,
             jobId,
@@ -3593,6 +3629,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           preclassifierBucket: value.source?.preclassifierBucket || "unknown",
           semanticIntent: value.source?.semanticIntent || null,
           resolver: value.source?.resolver || "unknown",
+          classifierPrompt: value.source?.classifierPrompt || null,
         }),
       ),
       executionTrace.span(
@@ -4462,12 +4499,24 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
               input: qualityTrace?.diagnostics?.plannerInput || null,
               output: {
                 diagnostics: plannerDiagnostics,
+                targetValidation: qualityTrace?.diagnostics?.targetValidation || null,
                 proposedPlan:
                   plannerReturnEvent?.output?.proposedRouting || null,
                 routingValidation: routingValidationEvent?.output || null,
                 normalizedPlan: response.channelIntentRouting || null,
               },
               checks: [
+                ...(qualityTrace?.diagnostics?.targetValidation ? [
+                  diagnosticCheck({
+                    field: "targetCorrespondence",
+                    state: qualityTrace.diagnostics.targetValidation.status === "aligned" ? "pass" : "warning",
+                    expected: "objetivo del plan correspondiente al mensaje actual",
+                    actual: qualityTrace.diagnostics.targetValidation,
+                    message: qualityTrace.diagnostics.targetValidation.status === "aligned"
+                      ? "La validación independiente aprobó el objetivo del plan."
+                      : "El objetivo no se aprobó. El servidor detuvo las lecturas para no sustituir la entidad solicitada.",
+                  }),
+                ] : []),
                 diagnosticCheck({
                   field: "normalizedPlan",
                   state: response.channelIntentRouting ? "pass" : "warning",
@@ -4692,7 +4741,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                         field: "answerAudit",
                         state:
                           qualityTrace.diagnostics.answerAudit.status ===
-                          "supported"
+                          "supported" &&
+                          qualityTrace.diagnostics.answerAudit.targetStatus === "aligned"
                             ? "pass"
                             : qualityTrace.diagnostics.answerAudit.status ===
                                 "unsupported"
@@ -4701,6 +4751,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                         expected: "auditoría de respuesta respaldada",
                         actual: {
                           status: qualityTrace.diagnostics.answerAudit.status,
+                          targetStatus: qualityTrace.diagnostics.answerAudit.targetStatus,
                           unsupportedClaimCount: Array.isArray(
                             qualityTrace.diagnostics.answerAudit
                               .unsupportedClaims,
@@ -4714,7 +4765,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
                         },
                         message:
                           qualityTrace.diagnostics.answerAudit.status ===
-                          "supported"
+                          "supported" &&
+                          qualityTrace.diagnostics.answerAudit.targetStatus === "aligned"
                             ? "La auditoría respaldó la respuesta propuesta."
                             : qualityTrace.diagnostics.answerAudit.status ===
                                 "unsupported"
