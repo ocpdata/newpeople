@@ -30,7 +30,12 @@ import {
 } from "./coach/channel-intent-governance.js";
 import express from "express";
 import { z } from "zod";
+import path from "node:path";
 import { requirePermission } from "./auth.js";
+import {
+  cleanupTempFiles,
+  parseMultipartFiles,
+} from "./opportunity-documents/service.js";
 import { logAuditEvent } from "./audit.js";
 import { ensureCommercialIntelligencePermissions } from "./commercial-intelligence/permissions.js";
 import { ensureCommercialIntelligenceSchema } from "./commercial-intelligence/schema.js";
@@ -719,23 +724,78 @@ router.post(
   "/account-chat/jobs",
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
+    let uploadedFiles = [];
+    let preserveUploadedFiles = false;
     try {
+      let payload = req.body || {};
+      let attachment = null;
+      if (req.is("multipart/form-data")) {
+        const multipart = await parseMultipartFiles(req);
+        uploadedFiles = multipart.files;
+        const rawPayload = Array.isArray(multipart.fields.payload)
+          ? multipart.fields.payload[0]
+          : multipart.fields.payload;
+        if (typeof rawPayload !== "string") {
+          return res.status(400).json({ message: "Payload invalido" });
+        }
+        try {
+          payload = JSON.parse(rawPayload);
+        } catch {
+          return res.status(400).json({ message: "Payload invalido" });
+        }
+        if (uploadedFiles.length !== 1) {
+          return res
+            .status(400)
+            .json({ message: "Adjunta un solo archivo de texto o audio" });
+        }
+        const file = uploadedFiles[0];
+        const extension = path
+          .extname(String(file.originalFilename || ""))
+          .toLowerCase();
+        const isText = [".txt", ".md"].includes(extension);
+        const isAudio = [".mp3", ".wav", ".m4a"].includes(extension);
+        const maxBytes = isText ? 2 * 1024 * 1024 : 50 * 1024 * 1024;
+        if ((!isText && !isAudio) || file.size <= 0 || file.size > maxBytes) {
+          return res.status(400).json({
+            message:
+              "Formato no admitido o archivo fuera del limite de tamaño",
+          });
+        }
+        const mimeType = String(file.mimetype || "application/octet-stream")
+          .toLowerCase()
+          .trim();
+        if (
+          (isText && !mimeType.startsWith("text/") && mimeType !== "application/octet-stream") ||
+          (isAudio && !mimeType.startsWith("audio/") && mimeType !== "application/octet-stream")
+        ) {
+          return res.status(400).json({ message: "El tipo del archivo no coincide" });
+        }
+        attachment = {
+          name: String(file.originalFilename || "adjunto").slice(0, 120),
+          filePath: file.filepath,
+          mimeType,
+          extension,
+          kind: isAudio ? "audio" : "text",
+        };
+      }
       const parsed = jobCreateSchema
         .extend({
           question: z.string().trim().min(1).max(2000),
           includePublicResearch: z.boolean().optional().default(false),
           chatSessionId: z.number().int().positive().optional(),
         })
-        .parse(req.body || {});
+        .parse(payload);
+      if (attachment) parsed.attachment = attachment;
       const { job } = await createCustomerAccountChatJob({
         user: req.user,
         payload: parsed,
       });
-      setImmediate(() =>
-        processCustomerAccountChatJob({ jobId: job.id, user: req.user }).catch(
-          () => undefined,
-        ),
-      );
+      preserveUploadedFiles = uploadedFiles.length > 0;
+      setImmediate(() => {
+        processCustomerAccountChatJob({ jobId: job.id, user: req.user })
+          .catch(() => undefined)
+          .finally(() => cleanupTempFiles(uploadedFiles));
+      });
       return res.status(202).json({ job });
     } catch (error) {
       if (error instanceof z.ZodError)
@@ -747,6 +807,8 @@ router.post(
         error,
         "No fue posible iniciar el chat de cuenta",
       );
+    } finally {
+      if (!preserveUploadedFiles) await cleanupTempFiles(uploadedFiles);
     }
   },
 );

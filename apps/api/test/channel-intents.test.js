@@ -221,6 +221,11 @@ describe("shared non-Coach channel intent routing", () => {
         .find((field) => field.key === "queries")
         .items.enum,
     ).toContain("opportunity_guidance");
+    expect(
+      getChannelIntentPlanFields("customer_account")
+        .find((field) => field.key === "activityDraft")
+        .fields.find((field) => field.key === "timing").enum,
+    ).toEqual(["completed", "scheduled", "unclear"]);
   });
 
   it("uses the validated selected opportunity when the planner reports stale missing context", () => {

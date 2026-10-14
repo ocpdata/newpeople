@@ -3293,6 +3293,7 @@ describe("API integration baseline", () => {
         authorizationToken = updateLogin.body.token,
         synthesizedResponse = null,
         answerAudit = { status: "supported", unsupportedClaims: [] },
+        attachment = null,
       } = {},
     ) => {
       const originalFetch = global.fetch;
@@ -3414,14 +3415,25 @@ describe("API integration baseline", () => {
         };
       });
       try {
-        const createResponse = await request(app)
+        const chatRequest = request(app)
           .post("/api/commercial-intelligence/account-chat/jobs")
-          .set("Authorization", `Bearer ${authorizationToken}`)
-          .send({
-            accountId: turnAccountId,
-            chatSessionId: turnSessionId,
-            question,
-          });
+          .set("Authorization", `Bearer ${authorizationToken}`);
+        const payload = {
+          accountId: turnAccountId,
+          chatSessionId: turnSessionId,
+          question,
+        };
+        if (attachment) {
+          chatRequest
+            .field("payload", JSON.stringify(payload))
+            .attach("attachment", Buffer.from(attachment.text), {
+              filename: attachment.name,
+              contentType: "text/plain",
+            });
+        } else {
+          chatRequest.send(payload);
+        }
+        const createResponse = await chatRequest;
         expect(createResponse.status).toBe(202);
         const jobId = Number(createResponse.body.job.id);
         let jobResponse;
@@ -3433,7 +3445,17 @@ describe("API integration baseline", () => {
             break;
           await new Promise((resolve) => setTimeout(resolve, 50));
         }
-        return { job: jobResponse.body.job, plannerContexts, schemaNames };
+        const sessionResponse = attachment
+          ? await request(app)
+              .get(`/api/commercial-intelligence/account-chat/sessions/${turnSessionId}`)
+              .set("Authorization", `Bearer ${authorizationToken}`)
+          : null;
+        return {
+          job: jobResponse.body.job,
+          plannerContexts,
+          schemaNames,
+          history: sessionResponse?.body.session?.history || null,
+        };
       } finally {
         global.fetch = originalFetch;
         config.openai.apiKey = originalApiKey;
@@ -3460,6 +3482,32 @@ describe("API integration baseline", () => {
     expect(firstChatTurn.schemaNames).not.toContain("account_contextual_chat");
     expect(firstChatTurn.schemaNames).not.toContain(
       "customer_account_answer_audit",
+    );
+    const attachmentSessionResponse = await request(app)
+      .post("/api/commercial-intelligence/account-chat/sessions")
+      .set("Authorization", `Bearer ${updateLogin.body.token}`)
+      .send({ accountId });
+    expect(attachmentSessionResponse.status).toBe(201);
+    const attachmentTurn = await runChatTurnWithMockedStructuredProvider(
+      "Resume el archivo adjunto",
+      {
+        turnSessionId: Number(attachmentSessionResponse.body.session.id),
+        attachment: {
+          name: "plan.md",
+          text: "Meta: ampliar la cobertura regional.",
+        },
+      },
+    );
+    expect(attachmentTurn.job.status).toBe("completed");
+    expect(attachmentTurn.history).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          text: "Resume el archivo adjunto",
+          attachmentName: "plan.md",
+          attachmentText: "Meta: ampliar la cobertura regional.",
+        }),
+      ]),
     );
     const crossUserJobDiagnosticsResponse = await request(app)
       .get(

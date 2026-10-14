@@ -199,6 +199,27 @@ function normalize(value) {
     .toLowerCase();
 }
 
+export function isCustomerActivityClarificationReply(
+  question,
+  pendingActivityIntent,
+) {
+  const normalized = normalize(question).trim();
+  if (
+    !pendingActivityIntent ||
+    !normalized ||
+    normalized.length > 240 ||
+    /\b(?:cancela|cancelar|descarta|descartar|olvida|olvidalo|otra pregunta|cambiando de tema)\b/.test(
+      normalized,
+    ) ||
+    /\b(?:consulta|consultar|muestra|mostrar|lista|listar|busca|buscar|resume|resumen|analiza|redacta|redactar|cuanto|quien|que actividades|que riesgos|que contiene)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function isExplicitCustomerActivityRequest(question) {
   return /\b(?:agenda|agendar|agendame|crear|crea|creame|programa|programar|prepara|preparar|coordina|coordinar|registra|registrar)\b/.test(
     normalize(question),
@@ -685,6 +706,7 @@ export function buildCustomerQueryPlannerContext({
     selectedAccountName: snapshot?.account?.name || "",
     referenceDateTime: new Date().toISOString(),
     businessTimezone: snapshot?.businessTimezone || config.app.businessTimezone,
+    pendingActivityIntent: conversationContext?.pendingActivityIntent || null,
     pendingActivity: conversationContext?.pendingActivity || null,
     pendingAmountSelection: conversationContext?.pendingAmountSelection ? {
       amount: conversationContext.pendingAmountSelection.amount,
@@ -713,6 +735,7 @@ export function buildCustomerQueryPlannerContext({
       "Para crear una oportunidad en la cuenta, elige operationKind=create_opportunity solo si allowedOperationKinds lo permite y deja que el formulario de Oportunidades seleccione el contacto requerido. La cuenta seleccionada es el alcance; el nombre de la nueva oportunidad no es opportunityReference ni candidateKey.",
       "Para cambiar el contacto asociado a una oportunidad existente, elige operationKind=link_contact_to_opportunity solo si está permitido. Usa IDs de oportunidad y contacto presentes en el snapshot autorizado, ambos de la cuenta seleccionada. No lo confundas con crear un mapeo jerárquico de contactos.",
       "Para preparar una actividad de calendario, usa operationKind=activity. No combines activityDraft.action=prepare con create_contact; al crear un contacto deja activityDraft.action=none.",
+      "Distingue activityDraft.timing: completed significa que la actividad ya ocurrió y requiere status=done con la fecha/hora real en scheduledAt; scheduled significa futura y requiere status=pending con la fecha programada; si el tiempo no está claro, usa unclear y pregunta antes de crear la operación. Interpreta «la llamada que ya tuve», «ya realicé la llamada» o «ayer hablé» como completed; «quiero programar/agendar una llamada» como scheduled. Conserva tipo, timing, título y notas desde pendingActivityIntent cuando el vendedor responde una aclaración; no cambies una llamada pasada a futura ni pierdas la intención al pedir la oportunidad.",
       "Para editar o consultar un contacto existente, conserva la resolución estricta de candidato autorizado y no la confundas con create_contact.",
       "Pide aclaración solo si falta una referencia, periodo o dato indispensable para fijar el alcance; no declares ambiguo un objetivo que ya está resuelto.",
       "Si el objetivo, referenceResolution y ambiguity se contradicen, corrige el plan antes de devolverlo.",
@@ -1956,6 +1979,14 @@ export function appendCustomerAccountChatHistory(
     .map((message) => ({
       role: message.role,
       text: String(message.text).trim().slice(0, 2000),
+      ...(message.role === "user" && message.attachmentName
+        ? {
+            attachmentName: String(message.attachmentName).trim().slice(0, 120),
+            attachmentText: String(message.attachmentText || "")
+              .trim()
+              .slice(0, 12000),
+          }
+        : {}),
       ...(message.role === "assistant" && message.activityHistory
         ? { activityHistory: message.activityHistory }
         : {}),
@@ -1969,7 +2000,20 @@ export function appendCustomerAccountChatHistory(
   return [
     ...normalizedHistory,
     question
-      ? { role: "user", text: String(question).trim().slice(0, 2000) }
+      ? {
+          role: "user",
+          text: String(question).trim().slice(0, 2000),
+          ...(assistantMetadata.attachment?.name
+            ? {
+                attachmentName: String(assistantMetadata.attachment.name)
+                  .trim()
+                  .slice(0, 120),
+                attachmentText: String(assistantMetadata.attachment.text || "")
+                  .trim()
+                  .slice(0, 12000),
+              }
+            : {}),
+        }
       : null,
     answer
       ? {
@@ -2498,6 +2542,19 @@ export function createCustomerAccountAdapter({
         context,
         permittedTools,
       );
+      const pendingActivityIntent = conversationContext?.pendingActivityIntent;
+      const continuesPendingActivity = isCustomerActivityClarificationReply(
+        question,
+        pendingActivityIntent,
+      );
+      const planAuthoritativeIntent = continuesPendingActivity
+        ? {
+            ...(authoritativeIntent || {}),
+            intent: "crm_operation",
+            confidence: 1,
+            requiresClarification: false,
+          }
+        : authoritativeIntent;
       turnDiagnostics.plannerInput = {
         plannerPrompt: {
           channel: plannerPrompt.channel,
@@ -2539,18 +2596,21 @@ export function createCustomerAccountAdapter({
         entityCandidates,
         researchAgents: agents,
       });
-      plannerContext.authoritativeIntent = authoritativeIntent
+      plannerContext.authoritativeIntent = planAuthoritativeIntent
         ? {
-            intent: authoritativeIntent.intent,
-            confidence: authoritativeIntent.confidence,
-            requiresClarification: authoritativeIntent.requiresClarification,
+            intent: planAuthoritativeIntent.intent,
+            confidence: planAuthoritativeIntent.confidence,
+            requiresClarification: planAuthoritativeIntent.requiresClarification,
           }
         : null;
       const plannerRequest = {
         schemaName: "customer_account_query_plan",
         systemPrompt:
-          (authoritativeIntent
-            ? `Intención resuelta por B3: ${authoritativeIntent.intent} (confianza ${authoritativeIntent.confidence}). No la sustituyas por otra intención; si requiere aclaración, devuelve una aclaración sin proponer operaciones. `
+          (planAuthoritativeIntent
+            ? `Intención resuelta por B3: ${planAuthoritativeIntent.intent} (confianza ${planAuthoritativeIntent.confidence}). No la sustituyas por otra intención; si requiere aclaración, devuelve una aclaración sin proponer operaciones. `
+            : "") +
+          (continuesPendingActivity
+            ? "El vendedor está respondiendo una aclaración de actividad pendiente. Continúa esa operación como activityDraft.action=continue; conserva el timing, tipo, título y notas recordados. No cambies a una consulta nueva solo porque el mensaje breve nombre una oportunidad o una fecha. "
             : "") +
           "Una referencia explícita del mensaje actual prevalece sobre el foco anterior sin ampliar la cuenta autorizada. Conserva las menciones actuales en entities incluso si falta localizar el registro. No sustituyas una referencia por otra del historial. " +
           "Para preparar una actividad, llena activityDraft.action=prepare; para responder campos de pendingActivity usa continue; si el usuario la descarta usa discard; para consultas factuales usa none. Interpreta las respuestas breves con el borrador y el historial. Usa queries=[crm_operation,contact_query] para una actividad con contacto, no consultas de historial salvo que el usuario las solicite explícitamente. Conserva día/hora no proporcionados como vacíos: 'la próxima semana' es temporalPreference, no una cita. scheduledAt debe ser YYYY-MM-DDTHH:mm en la zona horaria del negocio; calcula fechas relativas con referenceDateTime y no inventes hora ni día. Los campos pendientes del borrador no son ambiguity ni evidencia CRM faltante; solo entidades ambiguas, inaccesibles o referencias no resueltas requieren aclaración. " +
@@ -2571,12 +2631,31 @@ export function createCustomerAccountAdapter({
         },
         signal: getDeadlineSignal(deadlineAt),
       };
-      const plan = await runStructuredTextResearch({
+      const providerPlan = await runStructuredTextResearch({
         ...plannerRequest,
         systemPrompt:
           plannerRequest.systemPrompt +
           buildCustomerPlannerPromptSupplement(plannerPrompt),
       });
+      const plan = continuesPendingActivity
+        ? {
+            ...providerPlan,
+            queries: [
+              "crm_operation",
+              ...(Array.isArray(providerPlan?.queries) &&
+              providerPlan.queries.includes("contact_query")
+                ? ["contact_query"]
+                : []),
+            ],
+            mode: providerPlan?.mode === "clarification" ? "clarification" : "operation",
+            operationKind: "activity",
+            activityDraft: {
+              ...providerPlan?.activityDraft,
+              ...pendingActivityIntent,
+              action: "continue",
+            },
+          }
+        : providerPlan;
       let normalizedPlan = normalizeCustomerActivityQueryPlan(question, plan);
       const pending = conversationContext?.pendingAmountSelection;
       if (normalizedPlan && isPendingAmountSelectionReply(snapshot, question, pending)) {
@@ -2695,6 +2774,8 @@ export function createCustomerAccountAdapter({
         snapshot,
         permissions,
         pendingActivity: activeConversationContext?.pendingActivity,
+        pendingActivityIntent:
+          activeConversationContext?.pendingActivityIntent,
       });
       if (activityResponse) {
         recordAnswerGeneration(

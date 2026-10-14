@@ -43,6 +43,7 @@ const routing = {
   activityDraft: {
     action: "prepare",
     actionType: "call",
+    timing: "scheduled",
     title: "Llamar a Rene Negrete",
     scheduledAt: "",
     temporalPreference: "la próxima semana",
@@ -71,6 +72,104 @@ describe("Customer activity fields versus CRM evidence", () => {
     expect(response.answer).toContain("¿Qué día y a qué hora");
     expect(response.answer).toContain("próxima semana");
     expect(response.pendingItems).toEqual(["Fecha y hora"]);
+  });
+  it("records a past call as done and asks when it occurred", () => {
+    const response = build({
+      routing: {
+        ...routing,
+        activityDraft: { ...routing.activityDraft, timing: "completed" },
+      },
+    });
+
+    expect(response.operations[0]).toMatchObject({
+      kind: "activity",
+      status: "done",
+      scheduledAt: "",
+      missingFields: ["scheduledAt"],
+    });
+    expect(response.answer).toContain("¿Qué día y a qué hora ocurrió");
+    expect(response.answer).toContain("como realizada");
+  });
+  it("previews a dated past call as done without implying it was saved", () => {
+    const response = build({
+      routing: {
+        ...routing,
+        activityDraft: {
+          ...routing.activityDraft,
+          timing: "completed",
+          scheduledAt: "2026-10-12T16:30",
+          notes: "El cliente revisará la propuesta.",
+        },
+      },
+    });
+
+    expect(response.operations[0]).toMatchObject({
+      status: "done",
+      scheduledAt: "2026-10-12T16:30",
+      notes: "El cliente revisará la propuesta.",
+      missingFields: [],
+    });
+    expect(response.answer).toContain("como realizada");
+    expect(response.answer).toContain("No se ha guardado todavía");
+  });
+  it("retains a completed-call intent while asking for its opportunity", () => {
+    const pendingActivityIntent = {
+      actionType: "call",
+      timing: "completed",
+      title: "Resultado de llamada",
+      notes: "El cliente revisará la propuesta.",
+    };
+    const clarification = build({
+      pendingActivityIntent,
+      routing: {
+        ...routing,
+        serverResolvedEntityIds: {},
+        activityDraft: {
+          ...routing.activityDraft,
+          timing: "completed",
+          notes: "El cliente revisará la propuesta.",
+        },
+      },
+      readToolResults: [],
+    });
+
+    expect(clarification.responseType).toBe("clarification");
+    expect(clarification.operations).toEqual([]);
+    expect(clarification.activityIntent).toMatchObject(
+      pendingActivityIntent,
+    );
+
+    const continued = build({
+      pendingActivityIntent: clarification.activityIntent,
+      routing: {
+        ...routing,
+        activityDraft: {
+          ...routing.activityDraft,
+          action: "continue",
+          timing: "completed",
+          notes: "El cliente revisará la propuesta.",
+        },
+      },
+    });
+    expect(continued.operations[0]).toMatchObject({
+      status: "done",
+      notes: "El cliente revisará la propuesta.",
+      scheduledAt: "",
+      missingFields: ["scheduledAt"],
+    });
+    expect(continued.answer).toContain("como realizada");
+  });
+  it("asks whether an activity is past or future when timing is unclear", () => {
+    const response = build({
+      routing: {
+        ...routing,
+        activityDraft: { ...routing.activityDraft, timing: "unclear" },
+      },
+    });
+
+    expect(response.responseType).toBe("clarification");
+    expect(response.operations).toEqual([]);
+    expect(response.answer).toContain("¿La llamada ya ocurrió o quieres programarla?");
   });
   it("merges a continuation into the existing draft", () => {
     const response = build({
@@ -146,7 +245,30 @@ describe("Customer activity fields versus CRM evidence", () => {
       }),
     ).toBeNull();
     expect(
-      build({ routing: { ...routing, requiresClarification: true } }),
+      build({
+        routing: {
+          ...routing,
+          requiresClarification: true,
+          validationDiagnostics: { operationPolicyDenied: true },
+        },
+      }),
+    ).toBeNull();
+    const clarification = build({
+      routing: { ...routing, requiresClarification: true },
+    });
+    expect(clarification.responseType).toBe("clarification");
+    expect(clarification.operations).toEqual([]);
+    expect(clarification.activityIntent).toEqual(
+      expect.objectContaining({ timing: "scheduled" }),
+    );
+    expect(
+      build({
+        routing: {
+          ...routing,
+          requiresClarification: true,
+          ambiguity: { reason: "other_account" },
+        },
+      }),
     ).toBeNull();
     expect(build({ routing: { ...routing, mode: "query" } })).toBeNull();
   });

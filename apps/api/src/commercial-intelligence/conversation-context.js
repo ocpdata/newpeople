@@ -1,3 +1,5 @@
+import { COMMERCIAL_ACTIVITY_TYPES } from "../../../../shared/commercial-activity-types.js";
+
 const INTENT_CODES = new Set([
   "crm_operation",
   "email_draft",
@@ -18,6 +20,33 @@ const OPPORTUNITY_STATUSES = new Set([
   "all",
 ]);
 const MAX_FILTER_RANGE_DAYS = 366 * 5;
+const ACTIVITY_TYPES = new Set(
+  COMMERCIAL_ACTIVITY_TYPES.map((item) => item.value),
+);
+
+function validatedPendingActivityIntent(value) {
+  if (!value || typeof value !== "object") return null;
+  const actionType = String(value.actionType || "");
+  const timing = String(value.timing || "");
+  if (
+    !ACTIVITY_TYPES.has(actionType) ||
+    !["completed", "scheduled", "unclear"].includes(timing)
+  ) {
+    return null;
+  }
+  return {
+    actionType,
+    timing,
+    title: String(value.title || "").trim().slice(0, 1200),
+    notes: String(value.notes || "").trim().slice(0, 4000),
+    successCriteria: String(value.successCriteria || "")
+      .trim()
+      .slice(0, 1200),
+    temporalPreference: String(value.temporalPreference || "")
+      .trim()
+      .slice(0, 1200),
+  };
+}
 
 function positiveId(value) {
   const id = Number(value || 0);
@@ -169,6 +198,13 @@ export function validateCustomerConversationContext(
           },
         }
       : {}),
+    ...(validatedPendingActivityIntent(context.pendingActivityIntent)
+      ? {
+          pendingActivityIntent: validatedPendingActivityIntent(
+            context.pendingActivityIntent,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -176,6 +212,7 @@ export function buildCustomerConversationContext({
   accountId,
   effectiveContext = {},
   routing = null,
+  pendingActivityIntent = null,
 } = {}) {
   const safeAccountId = positiveId(accountId);
   if (!safeAccountId) return null;
@@ -193,5 +230,8 @@ export function buildCustomerConversationContext({
         ? [routing.intent]
         : [],
     filters: validatedFilters(routing?.filters),
+    ...(validatedPendingActivityIntent(pendingActivityIntent)
+      ? { pendingActivityIntent: validatedPendingActivityIntent(pendingActivityIntent) }
+      : {}),
   };
 }

@@ -7,15 +7,24 @@ export function buildCustomerActivityDraftResponse({
   snapshot,
   permissions,
   pendingActivity = null,
+  pendingActivityIntent = null,
 }) {
   const draft = routing?.activityDraft;
+  const hasActivityDraftIntent =
+    draft &&
+    ["prepare", "continue", "discard"].includes(draft.action) &&
+    !["other_account", "out_of_scope"].includes(routing.ambiguity?.reason) &&
+    routing.validationDiagnostics?.operationPolicyDenied !== true &&
+    (!routing.operationKind || ["none", "activity"].includes(routing.operationKind)) &&
+    (!routing.intents?.length ||
+      routing.intents.every((intent) => ["crm_operation", "contact_query"].includes(intent)));
   if (
     !draft ||
     (routing.operationKind &&
       !["none", "activity"].includes(routing.operationKind)) ||
     !["prepare", "continue", "discard"].includes(draft.action) ||
     routing.mode !== "operation" ||
-    routing.requiresClarification ||
+    (routing.requiresClarification && !hasActivityDraftIntent) ||
     routing.intents?.some(
       (intent) => !["crm_operation", "contact_query"].includes(intent),
     )
@@ -46,6 +55,61 @@ export function buildCustomerActivityDraftResponse({
       activityDraftDiscarded: true,
     };
   }
+  const prior = pendingActivity?.operation || null;
+  const timing = ["completed", "scheduled"].includes(draft.timing)
+    ? draft.timing
+    : ["completed", "scheduled"].includes(pendingActivityIntent?.timing)
+      ? pendingActivityIntent.timing
+    : prior?.status === "done"
+      ? "completed"
+      : prior?.status === "pending"
+        ? "scheduled"
+        : "unclear";
+  const activityIntent = {
+    actionType: draft.actionType || pendingActivityIntent?.actionType || "call",
+    timing,
+    title: String(pendingActivityIntent?.title || draft.title || "")
+      .trim()
+      .slice(0, 1200),
+    notes: String(draft.notes || pendingActivityIntent?.notes || "")
+      .trim()
+      .slice(0, 4000),
+    successCriteria: String(
+      draft.successCriteria || pendingActivityIntent?.successCriteria || "",
+    )
+      .trim()
+      .slice(0, 1200),
+    temporalPreference: String(
+      draft.temporalPreference || pendingActivityIntent?.temporalPreference || "",
+    )
+      .trim()
+      .slice(0, 1200),
+  };
+  if (routing.requiresClarification) {
+    return {
+      answer:
+        routing.ambiguity?.clarificationQuestion ||
+        "Necesito identificar la oportunidad autorizada antes de preparar esta actividad.",
+      responseType: "clarification",
+      operations: [],
+      evidence: [],
+      pendingItems: routing.ambiguity?.missingContext || ["Oportunidad"],
+      confidence: "low",
+      activityIntent,
+    };
+  }
+  if (timing === "unclear") {
+    return {
+      answer:
+        "¿La llamada ya ocurrió o quieres programarla? Necesito confirmarlo antes de preparar la actividad.",
+      responseType: "clarification",
+      operations: [],
+      evidence: [],
+      pendingItems: ["Cuándo se realizará la llamada"],
+      confidence: "medium",
+      activityIntent,
+    };
+  }
   const opportunityId = Number(
     routing.serverResolvedEntityIds?.opportunityId || 0,
   );
@@ -74,6 +138,7 @@ export function buildCustomerActivityDraftResponse({
       evidence: [],
       pendingItems: ["Oportunidad"],
       confidence: "low",
+      activityIntent,
     };
   }
   if (!allowed("oportunidades.update")) {
@@ -87,7 +152,6 @@ export function buildCustomerActivityDraftResponse({
       confidence: "high",
     };
   }
-  const prior = pendingActivity?.operation || null;
   if (prior && Number(prior.opportunityId) !== opportunityId) {
     return {
       answer:
@@ -118,6 +182,7 @@ export function buildCustomerActivityDraftResponse({
       evidence: [],
       pendingItems: ["Contacto"],
       confidence: "low",
+      activityIntent,
     };
   }
   const scheduledAt = draft.scheduledAt || prior?.scheduledAt || "";
@@ -130,13 +195,19 @@ export function buildCustomerActivityDraftResponse({
     {
       ...prior,
       title:
+        pendingActivityIntent?.title ||
         draft.title ||
         prior?.title ||
         `${getCommercialActivityTypeLabel(draft.actionType)} con ${opportunity.associatedContact.name}`,
       actionType: draft.actionType,
+      status: timing === "completed" ? "done" : "pending",
       scheduledAt: validScheduledAt ? scheduledAt : "",
-      notes: draft.notes || prior?.notes || "",
-      successCriteria: draft.successCriteria || prior?.successCriteria || "",
+      notes: draft.notes || pendingActivityIntent?.notes || prior?.notes || "",
+      successCriteria:
+        draft.successCriteria ||
+        pendingActivityIntent?.successCriteria ||
+        prior?.successCriteria ||
+        "",
       evidence: [
         {
           sourceType: "opportunity",
@@ -149,10 +220,15 @@ export function buildCustomerActivityDraftResponse({
     { opportunityId, accountId: snapshot.account.id, contactId },
   );
   operation.missingFields = validScheduledAt ? [] : ["scheduledAt"];
+  const activityLabel = getCommercialActivityTypeLabel(operation.actionType)
+    .toLowerCase();
+  const timingLabel = timing === "completed" ? "realizada" : "programada";
   return {
     answer: validScheduledAt
-      ? `El borrador de ${getCommercialActivityTypeLabel(operation.actionType).toLowerCase()} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name} está listo para revisar en Calendario (${scheduledAt.replace("T", " ")}). No se ha guardado ni confirmado con el contacto.`
-      : `¿Qué día y a qué hora${draft.temporalPreference && !draft.temporalPreference.includes("_") ? ` (${draft.temporalPreference})` : ""} quieres realizar la ${getCommercialActivityTypeLabel(operation.actionType).toLowerCase()} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador no se ha guardado en Calendario.`,
+      ? `Voy a registrar la ${activityLabel} como ${timingLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name} (${scheduledAt.replace("T", " ")}). No se ha guardado todavía; revisa y confirma el borrador para guardarlo en Calendario.`
+      : timing === "completed"
+        ? `¿Qué día y a qué hora ocurrió la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como realizada y aún no se ha guardado en Calendario.`
+        : `¿Qué día y a qué hora${draft.temporalPreference && !draft.temporalPreference.includes("_") ? ` (${draft.temporalPreference})` : ""} quieres realizar la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como programada y aún no se ha guardado en Calendario.`,
     responseType: "operation",
     entities: { opportunityId, contactId },
     operations: [operation],
@@ -165,6 +241,8 @@ export function buildCustomerActivityDraftResponse({
     confidence: "high",
     activityDraft: {
       operation,
+      timing,
+      activityIntent,
       temporalPreference:
         draft.temporalPreference || pendingActivity?.temporalPreference || "",
       action: prior ? "continue" : draft.action,

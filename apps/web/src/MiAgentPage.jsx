@@ -2462,6 +2462,7 @@ export default function MiAgentPage({
   const [customerAgentsJob, setCustomerAgentsJob] = useState(null);
   const [customerAgentsLoading, setCustomerAgentsLoading] = useState(false);
   const [customerChatQuestion, setCustomerChatQuestion] = useState("");
+  const [customerChatAttachment, setCustomerChatAttachment] = useState(null);
   const [customerChatMessages, setCustomerChatMessages] = useState([]);
   const [customerChatLoading, setCustomerChatLoading] = useState(false);
   const [customerChatTurn, setCustomerChatTurn] = useState(null);
@@ -3126,7 +3127,11 @@ export default function MiAgentPage({
           (Array.isArray(session.history) ? session.history : []).map(
             (message) =>
               message.role === "user"
-                ? { role: "seller", text: message.text }
+                ? {
+                    role: "seller",
+                    text: message.text,
+                    attachmentName: message.attachmentName || null,
+                  }
                 : {
                     role: "assistant",
                     answer: message.text,
@@ -3207,6 +3212,7 @@ export default function MiAgentPage({
     setCustomerAgentsJob(null);
     setCustomerAgentsLoading(false);
     setCustomerChatQuestion("");
+    setCustomerChatAttachment(null);
     setCustomerChatMessages([]);
     setCustomerChatLoading(false);
     setCustomerChatSessionId(null);
@@ -3542,6 +3548,7 @@ export default function MiAgentPage({
 
   async function askCustomerChat(question = customerChatQuestion, recovery = null) {
     const normalizedQuestion = String(question || "").trim();
+    const selectedAttachment = recovery ? null : customerChatAttachment;
     if (
       !normalizedQuestion || !hasCustomerContext ||
       customerChatRequestRef.current || customerChatSessionLoading ||
@@ -3611,9 +3618,16 @@ export default function MiAgentPage({
     if (!recovery) {
       setCustomerChatMessages((current) => [
         ...current,
-        { role: "seller", text: normalizedQuestion },
+        {
+          role: "seller",
+          text: normalizedQuestion,
+          ...(selectedAttachment
+            ? { attachmentName: selectedAttachment.name }
+            : {}),
+        },
       ]);
       setCustomerChatQuestion("");
+      setCustomerChatAttachment(null);
     }
     try {
       if (!activeChatSessionId) {
@@ -3652,20 +3666,35 @@ export default function MiAgentPage({
         });
       }
       if (!recovery) {
+        const jobPayload = {
+          ...buildCustomerIntelligencePayload(),
+          chatSessionId: activeChatSessionId,
+          question: normalizedQuestion,
+          includePublicResearch: customerChatPublicResearch,
+        };
+        let requestBody = jobPayload;
+        const requestSummary = { ...jobPayload };
+        if (selectedAttachment) {
+          const formData = new FormData();
+          formData.append("payload", JSON.stringify(jobPayload));
+          formData.append("attachment", selectedAttachment);
+          requestBody = formData;
+          requestSummary.attachment = {
+            name: selectedAttachment.name,
+            size: selectedAttachment.size,
+            type: selectedAttachment.type,
+          };
+        }
         const submitExchange = beginExchange(
           "Iniciar pregunta",
           "POST",
           "/api/commercial-intelligence/account-chat/jobs",
-          {
-            ...buildCustomerIntelligencePayload(),
-            chatSessionId: activeChatSessionId,
-            question: normalizedQuestion,
-            includePublicResearch: customerChatPublicResearch,
-          },
+          requestSummary,
         );
         const response = await api.post(
           "/api/commercial-intelligence/account-chat/jobs",
-          submitExchange.requestSummary,
+          requestBody,
+          selectedAttachment ? { timeout: 120000 } : undefined,
         );
         const jobId = Number(response.data?.job?.id || 0);
         activeChatJobId = jobId || null;
@@ -3708,7 +3737,7 @@ export default function MiAgentPage({
       );
       let finalPollJob = null;
       let consecutiveFailures = 0;
-      const deadline = Date.now() + 60000;
+      const deadline = Date.now() + (selectedAttachment ? 180000 : 60000);
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if (!isCurrent()) return;
         if (Date.now() >= deadline) break;
@@ -3886,6 +3915,7 @@ export default function MiAgentPage({
     setCustomerChatSessionId(null);
     setCustomerChatMessages([]);
     setCustomerChatQuestion("");
+    setCustomerChatAttachment(null);
     setCustomerIntelligenceError("");
     setCustomerChatTransportError(null);
     setCustomerChatFailureIds(null);
@@ -8476,6 +8506,34 @@ export default function MiAgentPage({
                 askCustomerChat();
               }}
             >
+              <label className="mi-agent-customer-chat-file-picker">
+                <span>Adjuntar</span>
+                <input
+                  type="file"
+                  accept=".txt,.md,.mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4"
+                  aria-label="Adjuntar archivo de texto o audio"
+                  onChange={(event) => {
+                    setCustomerChatAttachment(event.target.files?.[0] || null);
+                    event.target.value = "";
+                  }}
+                  disabled={customerChatLoading || customerChatSessionLoading || !hasCustomerContext}
+                />
+              </label>
+              {customerChatAttachment ? (
+                <div className="mi-agent-customer-chat-file-name">
+                  <span title={customerChatAttachment.name}>
+                    {customerChatAttachment.name}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Quitar archivo adjunto"
+                    onClick={() => setCustomerChatAttachment(null)}
+                    disabled={customerChatLoading}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              ) : null}
               <input
                 value={customerChatQuestion}
                 onChange={(event) =>
@@ -8508,6 +8566,9 @@ export default function MiAgentPage({
                     >
                       <span>Vendedor</span>
                       <p>{message.text}</p>
+                      {message.attachmentName ? (
+                        <small>Adjunto: {message.attachmentName}</small>
+                      ) : null}
                     </div>
                   ) : (
                     <div
@@ -8960,9 +9021,27 @@ export default function MiAgentPage({
                                 key={`${operation.kind}-${operation.title}-${operationIndex}`}
                               >
                                 <span>
-                                  {operation.title || operation.kind} · requiere
-                                  revisión y confirmación
+                                  {operation.title || operation.kind}
+                                  {operation.kind === "activity"
+                                    ? operation.status === "done"
+                                      ? " · Realizada"
+                                      : operation.status === "pending"
+                                        ? " · Programada"
+                                        : ""
+                                    : ""}
+                                  {operation.kind === "activity" &&
+                                  operation.scheduledAt
+                                    ? operation.status === "done"
+                                      ? ` · Ocurrió: ${operation.scheduledAt}`
+                                      : ` · Programada para: ${operation.scheduledAt}`
+                                    : ""}
+                                  {" · requiere revisión y confirmación"}
                                 </span>
+                                {operation.kind === "activity" && operation.notes ? (
+                                  <p>
+                                    Resultado propuesto: {operation.notes}
+                                  </p>
+                                ) : null}
                                 {canReviewCustomerOperation(operation) ? (
                                   <button
                                     type="button"

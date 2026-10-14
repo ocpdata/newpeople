@@ -42,6 +42,7 @@ import {
   buildCustomerIntentResponse,
   buildCustomerQueryPlannerContext,
   createCustomerAccountAdapter,
+  isCustomerActivityClarificationReply,
   normalizeCustomerOperations,
   normalizeCustomerResponse,
 } from "../src/commercial-intelligence/customer-chat-adapter.js";
@@ -3165,6 +3166,32 @@ describe("Customer account chat adapter", () => {
     expect(continued[3]).not.toHaveProperty("activityHistory");
   });
 
+  it("conserva nombre y texto del adjunto para los seguimientos del chat", () => {
+    const history = appendCustomerAccountChatHistory(
+      [],
+      "Resume el archivo",
+      "El archivo describe el plan comercial.",
+      {
+        attachment: {
+          name: "plan.txt",
+          text: "Meta: ampliar la cobertura regional.",
+        },
+      },
+    );
+    const continued = appendCustomerAccountChatHistory(
+      history,
+      "¿Cuál es la meta?",
+      "Ampliar la cobertura regional.",
+    );
+
+    expect(continued[0]).toEqual({
+      role: "user",
+      text: "Resume el archivo",
+      attachmentName: "plan.txt",
+      attachmentText: "Meta: ampliar la cobertura regional.",
+    });
+  });
+
   it("builds a minimal planner context without candidate IDs or contact details", () => {
     const planningContext = buildCustomerQueryPlannerContext({
       question: "¿Qué ocurrió con Proyecto abierto y Ana Torres?",
@@ -3178,6 +3205,12 @@ describe("Customer account chat adapter", () => {
         leadId: null,
         intents: ["contact_query"],
         filters: { periodMonths: 3 },
+        pendingActivityIntent: {
+          actionType: "call",
+          timing: "completed",
+          title: "Registrar llamada realizada",
+          notes: "El cliente revisará la propuesta.",
+        },
       },
       availableTools: [
         { name: "searchOpportunities" },
@@ -3252,9 +3285,16 @@ describe("Customer account chat adapter", () => {
         },
       ],
     });
+    expect(planningContext.pendingActivityIntent).toEqual({
+      actionType: "call",
+      timing: "completed",
+      title: "Registrar llamada realizada",
+      notes: "El cliente revisará la propuesta.",
+    });
     expect(planningContext.plannerGuidance).toEqual(
       expect.arrayContaining([
         expect.stringContaining("no pidas seleccionar un registro hijo"),
+        expect.stringContaining("Interpreta «la llamada que ya tuve»"),
       ]),
     );
     expect(planningContext.validatedContinuation).toEqual({
@@ -3275,6 +3315,35 @@ describe("Customer account chat adapter", () => {
     expect(JSON.stringify(planningContext)).not.toContain('"id"');
     expect(JSON.stringify(planningContext)).not.toContain("ana@example.test");
     expect(JSON.stringify(planningContext)).not.toContain("amountUsd");
+  });
+
+  it("continues an activity clarification for short slot replies, but not pivots", () => {
+    const pendingActivityIntent = {
+      actionType: "call",
+      timing: "completed",
+      title: "Registrar llamada realizada",
+    };
+    expect(
+      isCustomerActivityClarificationReply(
+        "La Propuesta de Seguridad Correo",
+        pendingActivityIntent,
+      ),
+    ).toBe(true);
+    expect(
+      isCustomerActivityClarificationReply(
+        "Fue el martes a las cuatro",
+        pendingActivityIntent,
+      ),
+    ).toBe(true);
+    expect(
+      isCustomerActivityClarificationReply(
+        "¿Qué actividades tiene esta oportunidad?",
+        pendingActivityIntent,
+      ),
+    ).toBe(false);
+    expect(
+      isCustomerActivityClarificationReply("Cancela ese borrador", pendingActivityIntent),
+    ).toBe(false);
   });
 
   it("does not require opportunity-only activity reads for account-wide history", () => {

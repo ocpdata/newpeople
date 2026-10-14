@@ -319,6 +319,68 @@
   order: 12;
   margin-top: 12px;
 }
+.mi-agent-customer-chat-file-picker {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid #b8cbd1;
+  border-radius: 6px;
+  color: #28556a;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mi-agent-customer-chat-file-picker:focus-within {
+  outline: 2px solid #176b87;
+  outline-offset: 2px;
+}
+.mi-agent-customer-chat-file-picker input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.mi-agent-customer-chat-file-name {
+  display: inline-flex;
+  flex: 0 1 180px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #435d68;
+  font-size: 12px;
+}
+.mi-agent-customer-chat-file-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mi-agent-customer-chat-file-name button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: #176b87;
+  font: inherit;
+  cursor: pointer;
+}
+@media (max-width: 640px) {
+  .mi-agent-customer-chat .mi-agent-coach-form {
+    flex-wrap: wrap;
+  }
+  .mi-agent-customer-chat .mi-agent-coach-form > input {
+    flex: 1 1 100%;
+  }
+  .mi-agent-customer-chat-file-name {
+    flex: 1 1 120px;
+  }
+}
 .mi-agent-coach-panel > .mi-agent-coach-undo-button,
 .mi-agent-coach-panel > .mi-agent-coach-action {
   order: 11;
@@ -387,6 +449,12 @@
 .mi-agent-coach-message.is-seller > span,
 .mi-agent-coach-message.is-seller p {
   color: #fff;
+}
+.mi-agent-coach-message.is-seller small {
+  display: block;
+  margin-top: 6px;
+  color: #d7eef4;
+  overflow-wrap: anywhere;
 }
 .mi-agent-coach-message.is-coach {
   align-self: flex-start;

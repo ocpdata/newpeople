@@ -113,4 +113,47 @@ describe("Customer conversation context memory", () => {
       filters: { stageCode: "negociacion", periodMonths: 12 },
     });
   });
+
+  it("retains only a bounded pending activity intent inside the selected account", () => {
+    const pendingActivityIntent = {
+      actionType: "call",
+      timing: "completed",
+      title: "Registrar llamada",
+      notes: "Resultado de la conversación",
+      successCriteria: "",
+      temporalPreference: "",
+      opportunityId: 999,
+    };
+    const result = validateCustomerConversationContext(
+      { accountId: 41, pendingActivityIntent },
+      snapshot,
+      41,
+    );
+
+    expect(result.pendingActivityIntent).toEqual({
+      actionType: "call",
+      timing: "completed",
+      title: "Registrar llamada",
+      notes: "Resultado de la conversación",
+      successCriteria: "",
+      temporalPreference: "",
+    });
+    expect(
+      validateCustomerConversationContext(
+        { accountId: 42, pendingActivityIntent },
+        snapshot,
+        41,
+      ),
+    ).toBeNull();
+    expect(
+      validateCustomerConversationContext(
+        {
+          accountId: 41,
+          pendingActivityIntent: { ...pendingActivityIntent, timing: "invented" },
+        },
+        snapshot,
+        41,
+      ).pendingActivityIntent,
+    ).toBeUndefined();
+  });
 });

@@ -33,6 +33,7 @@ const FILE_LIMITS = {
   ".xls": { maxBytes: 10 * 1024 * 1024, kind: "spreadsheet" },
   ".csv": { maxBytes: 5 * 1024 * 1024, kind: "spreadsheet" },
   ".txt": { maxBytes: 2 * 1024 * 1024, kind: "text" },
+  ".md": { maxBytes: 2 * 1024 * 1024, kind: "text" },
   ".eml": { maxBytes: 10 * 1024 * 1024, kind: "text" },
   ".png": { maxBytes: 10 * 1024 * 1024, kind: "image" },
   ".jpg": { maxBytes: 10 * 1024 * 1024, kind: "image" },
@@ -637,10 +638,12 @@ export async function transcribeAudio(
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: randomUUID(),
       userId: aiUsageUserId,
-      featureCode: "opportunities.documents.transcription",
+      featureCode:
+        aiUsageContext?.featureCode || "opportunities.documents.transcription",
       model: String(config.openai.transcriptionModel || "").trim(),
       openAiResponse: data,
-      jobType: "opportunity_document_transcription",
+      jobType:
+        aiUsageContext?.jobType || "opportunity_document_transcription",
       jobId: aiUsageContext?.jobId || null,
       startedAt,
     });
@@ -669,7 +672,7 @@ export async function extractContentFromBuffer({
   const detectedFormat =
     resolvedExtension.replace(/^\./, "") || mimeType || "unknown";
 
-  if (resolvedExtension === ".txt") {
+  if (resolvedExtension === ".txt" || resolvedExtension === ".md") {
     const text = buffer.toString("utf8");
     return {
       extractionStatus: "completed",

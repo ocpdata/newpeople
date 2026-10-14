@@ -362,6 +362,12 @@ export function getChannelIntentPlanFields(channel, enabledIntentCodes = null) {
                 enum: COMMERCIAL_ACTIVITY_TYPES.map((item) => item.value),
                 example: "call",
               },
+              {
+                key: "timing",
+                type: "enum",
+                enum: ["completed", "scheduled", "unclear"],
+                example: "unclear",
+              },
               { key: "title", type: "string", example: "" },
               { key: "scheduledAt", type: "string", example: "" },
               { key: "temporalPreference", type: "string", example: "" },
@@ -1096,6 +1102,11 @@ export function normalizeChannelIntentPlan({
             )
               ? plan.activityDraft.actionType
               : "other",
+            timing: ["completed", "scheduled", "unclear"].includes(
+              plan.activityDraft.timing,
+            )
+              ? plan.activityDraft.timing
+              : "unclear",
             ...Object.fromEntries(
               [
                 "title",
