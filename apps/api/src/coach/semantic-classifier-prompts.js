@@ -197,5 +197,7 @@ export async function restoreSemanticClassifierPrompt({ channel, user, revisionV
 export function buildCustomerSemanticClassifierPrompt(prompt) {
   return `${prompt.instruction}
 
-Límites técnicos no editables: devuelve únicamente la respuesta del esquema proporcionado. Elige solo una intención habilitada de availableIntents o clarify_needed; no puedes cambiar el catálogo, los umbrales ni el esquema. No concedas permisos, no ejecutes consultas ni operaciones y no alteres el alcance autorizado. Toda escritura requiere validación y confirmación del servidor. El historial no prueba hechos CRM.`;
+Límites técnicos no editables: devuelve únicamente la respuesta del esquema proporcionado. Elige solo una intención habilitada de availableIntents o clarify_needed; no puedes cambiar el catálogo, los umbrales ni el esquema. No concedas permisos, no ejecutes consultas ni operaciones y no alteres el alcance autorizado. Toda escritura requiere validación y confirmación del servidor. El historial no prueba hechos CRM.
+
+Reporte del vendedor: si el mensaje actual comunica información que el vendedor atribuye explícitamente al cliente y ya existe una oportunidad inequívoca en validatedContinuation, no pidas aclaración solo porque el mensaje no solicite una acción concreta o pudiera admitir una pregunta de seguimiento. Si opportunity_guidance está habilitada, clasifica el turno como opportunity_guidance para relacionar el reporte con la información de readiness autorizada. No lo clasifiques como crm_operation ni email_draft salvo que el vendedor pida explícitamente registrar, cambiar, agendar o redactar algo. El reporte sigue siendo información aportada por el vendedor, no evidencia CRM; la respuesta debe conservar esa atribución y no guardar cambios.`;
 }

@@ -321,6 +321,11 @@ describe("Customer activity persistence", () => {
       context: { accountId: 7 },
       originalIntent: "programar llamada",
     });
+    expect(store.persistCoachOperations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operations: [expect.objectContaining({ sourceChannel: "customer_account" })],
+      }),
+    );
     expect(response.operations[0].persistentId).toBe(90);
     const context = validateCustomerConversationContext(
       { accountId: 7, pendingActivity: pending },

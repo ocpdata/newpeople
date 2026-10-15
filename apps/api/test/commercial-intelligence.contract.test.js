@@ -105,6 +105,45 @@ describe("customer intelligence contract", () => {
     expect(decision.source.classifierPrompt.version).toBe(4);
   });
 
+  it("keeps seller-reported stage information in read-only guidance under custom classifier prompts", async () => {
+    loadSemanticClassifierPrompt.mockResolvedValueOnce({
+      channel: "customer_account",
+      version: 2,
+      source: "custom",
+      instruction: "Usa clarify_needed ante mensajes que no indiquen una acción.",
+    });
+    let classifierRequest;
+    const decision = await classifyCustomerIntent({
+      question:
+        "El cliente me dijo que su motivación es evitar que envíen información confidencial por correo.",
+      selectedContext: { accountId: 22, opportunityId: 94 },
+      conversationContext: { accountId: 22, opportunityId: 94 },
+      snapshot: {
+        account: { id: 22, name: "Totalplay" },
+        opportunities: [{ id: 94, name: "Vrf 2027" }],
+      },
+      intents: [
+        { code: "opportunity_guidance", enabled: true },
+        { code: "crm_operation", enabled: true },
+      ],
+      classifyWithAI: async (request) => {
+        classifierRequest = request;
+        return { intent: "opportunity_guidance", confidence: "high" };
+      },
+    });
+
+    expect(classifierRequest.systemPrompt).toContain(
+      "Reporte del vendedor: si el mensaje actual comunica información",
+    );
+    expect(classifierRequest.systemPrompt).toContain(
+      "No lo clasifiques como crm_operation ni email_draft",
+    );
+    expect(decision).toMatchObject({
+      intent: "opportunity_guidance",
+      requiresClarification: false,
+    });
+  });
+
   it("does not expose unavailable conversational entities and preserves genuine clarification", async () => {
     const decision = await classifyCustomerIntent({
       question: "¿Y lo otro?",

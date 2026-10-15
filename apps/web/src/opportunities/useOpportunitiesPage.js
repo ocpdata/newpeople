@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import { usePersistedStatusFilter } from "../appFilters";
+import {
+  appendStageAnswerPrefillText,
+  stageAnswerPrefillStorageKey,
+} from "../../../../shared/stage-answer-prefill.js";
 
 const PROPOSE_ANSWERS_TIMEOUT_MS = 240000;
 const PROPOSE_ANSWERS_JOB_POLL_INTERVAL_MS = 3000;
@@ -328,6 +332,8 @@ export function useOpportunitiesPage({
   const [editingOpportunityId, setEditingOpportunityId] = useState(null);
   const [editOpportunityAudit, setEditOpportunityAudit] = useState(null);
   const [commercialContext, setCommercialContext] = useState(null);
+  const [stageAnswerPrefillQuestionIds, setStageAnswerPrefillQuestionIds] =
+    useState([]);
   const [commercialStageViewsById, setCommercialStageViewsById] = useState({});
   const [draftStageAction, setDraftStageAction] = useState(null);
   const [selectedCommercialStageId, setSelectedCommercialStageId] =
@@ -453,7 +459,7 @@ export function useOpportunitiesPage({
     currentUserHasSellerCapability,
     explicitOpportunityPermissions,
   ]);
-  const openEditOpportunityModalRef = useRef(null);
+  const handledEditQueryRef = useRef("");
   const commercialSuggestionPollingTokenRef = useRef(0);
   const commercialSuggestionRetryNoticeRef = useRef("");
   const stageValidationPollingTokenRef = useRef(0);
@@ -1697,7 +1703,7 @@ export function useOpportunitiesPage({
   }
 
   const hydrateOpportunityModal = useCallback(
-    async (opportunityId) => {
+    async (opportunityId, stageAnswerPrefill = null) => {
       const [{ data }, { data: commercialData }] = await Promise.all([
         api.get(`/api/opportunities/${opportunityId}`),
         api.get(`/api/opportunities/${opportunityId}/commercial-context`),
@@ -1730,8 +1736,55 @@ export function useOpportunitiesPage({
         activationStatus: data.activation_status || "",
         commercialStatus: data.commercial_status || "",
       });
-      const normalizedCommercialContext =
+      let normalizedCommercialContext =
         normalizeCommercialContext(commercialData);
+      const prefillOpportunityMatches =
+        Number(stageAnswerPrefill?.opportunityId || 0) ===
+        Number(opportunityId);
+      const requestedQuestionIds = new Set(
+        (Array.isArray(stageAnswerPrefill?.questionIds)
+          ? stageAnswerPrefill.questionIds
+          : []
+        )
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      );
+      const prefillAppendText = String(
+        stageAnswerPrefill?.appendText || "",
+      ).trim();
+      const matchedPrefillQuestionIds = [];
+      if (
+        prefillOpportunityMatches &&
+        requestedQuestionIds.size &&
+        prefillAppendText &&
+        normalizedCommercialContext?.isSelectedStageCurrent
+      ) {
+        normalizedCommercialContext = {
+          ...normalizedCommercialContext,
+          answers: normalizedCommercialContext.answers.map((answer) => {
+            const questionId = Number(answer.question_id);
+            if (!requestedQuestionIds.has(questionId)) return answer;
+            matchedPrefillQuestionIds.push(questionId);
+            return {
+              ...answer,
+              answer_value: appendStageAnswerPrefillText(
+                answer.answer_value,
+                prefillAppendText,
+              ),
+            };
+          }),
+        };
+      }
+      setStageAnswerPrefillQuestionIds(matchedPrefillQuestionIds);
+      if (
+        prefillOpportunityMatches &&
+        requestedQuestionIds.size &&
+        !matchedPrefillQuestionIds.length
+      ) {
+        setError(
+          "No encontré la pregunta de etapa en la oportunidad actual. No se modificó ninguna respuesta.",
+        );
+      }
       setCommercialContext(normalizedCommercialContext);
       setDraftStageAction(null);
       setCommercialAnswerSuggestionsByStageId({});
@@ -1760,16 +1813,25 @@ export function useOpportunitiesPage({
       setCommercialSuggestionFeedback(null);
       setEditingOpportunityId(Number(opportunityId));
       setShowOpportunityModal(true);
+      if (matchedPrefillQuestionIds.length) {
+        window.requestAnimationFrame(() => {
+          const field = document.getElementById(
+            `opportunity-stage-answer-${matchedPrefillQuestionIds[0]}`,
+          );
+          field?.scrollIntoView({ behavior: "smooth", block: "center" });
+          field?.focus({ preventScroll: true });
+        });
+      }
     },
     [formatOpportunityAmountInput, normalizeCommercialContext],
   );
 
   const openEditOpportunityModal = useCallback(
-    async (opportunityId) => {
+    async (opportunityId, stageAnswerPrefill = null) => {
       setError("");
       setSuccess("");
       try {
-        await hydrateOpportunityModal(opportunityId);
+        await hydrateOpportunityModal(opportunityId, stageAnswerPrefill);
       } catch (err) {
         setError(
           getApiErrorMessage(err, "No fue posible cargar la oportunidad"),
@@ -1778,10 +1840,6 @@ export function useOpportunitiesPage({
     },
     [hydrateOpportunityModal],
   );
-
-  useEffect(() => {
-    openEditOpportunityModalRef.current = openEditOpportunityModal;
-  }, [openEditOpportunityModal]);
 
   useEffect(() => {
     if (opportunitiesPendingEnabled || opportunityStatusFilter !== "pending") {
@@ -3239,21 +3297,34 @@ export function useOpportunitiesPage({
 
   useEffect(() => {
     const editId = searchParams.get("edit");
-    if (!editId) return;
-    let cancelled = false;
-
-    async function syncEditParam() {
-      setSearchParams({}, { replace: true });
-      if (cancelled) return;
-      await openEditOpportunityModalRef.current?.(Number(editId));
+    if (!editId) {
+      handledEditQueryRef.current = "";
+      return;
     }
-
-    void syncEditParam();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [searchParams, setSearchParams]);
+    const prefillToken = searchParams.get("stageAnswerPrefill");
+    const editQueryKey = `${editId}:${prefillToken || ""}`;
+    if (handledEditQueryRef.current === editQueryKey) return;
+    let stageAnswerPrefill = null;
+    if (prefillToken) {
+      const storageKey = stageAnswerPrefillStorageKey(prefillToken);
+      const storedPrefill = window.sessionStorage.getItem(storageKey);
+      window.sessionStorage.removeItem(storageKey);
+      try {
+        stageAnswerPrefill = storedPrefill
+          ? JSON.parse(storedPrefill)
+          : null;
+      } catch {
+        stageAnswerPrefill = null;
+      }
+    }
+    const openingOpportunity = openEditOpportunityModal(
+      Number(editId),
+      stageAnswerPrefill,
+    );
+    handledEditQueryRef.current = editQueryKey;
+    setSearchParams({}, { replace: true });
+    void openingOpportunity;
+  }, [searchParams, setSearchParams, openEditOpportunityModal]);
 
   useEffect(() => {
     if (!showOpportunityModal || editingOpportunityId) {
@@ -3308,6 +3379,7 @@ export function useOpportunitiesPage({
     setOpportunitiesPage,
     showOpportunityModal,
     editingOpportunityId,
+    stageAnswerPrefillQuestionIds,
     editOpportunityAudit,
     selectedCommercialStageId,
     loadingCommercialStageView,

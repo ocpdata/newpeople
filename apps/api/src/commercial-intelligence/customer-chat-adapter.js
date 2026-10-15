@@ -364,6 +364,85 @@ function buildCustomerOpportunityStatusResponse(snapshot, question) {
   };
 }
 
+export function buildCustomerStageReadinessResponse({
+  question,
+  readToolResults = [],
+  reportedCriterionTitles = [],
+} = {}) {
+  const isPreparationQuestion = isStagePreparationQuestion(question);
+  const readinessRead = readToolResults.find(
+    (item) => item?.toolName === "getOpportunityReadiness",
+  );
+  const readiness = readinessRead?.error ? null : readinessRead?.result;
+  const stageName = String(readiness?.currentStage?.name || "").trim();
+  if (!stageName || !Array.isArray(readiness?.pendingItems)) return null;
+
+  const pendingItems = readiness.pendingItems.filter(
+    (item) => String(item?.title || "").trim(),
+  );
+  if (!isPreparationQuestion) {
+    const pendingByTitle = new Map(
+      pendingItems.map((item) => [normalize(item.title).trim(), item]),
+    );
+    const reportedItems = [
+      ...new Set(
+        reportedCriterionTitles
+          .map((title) => pendingByTitle.get(normalize(title).trim()))
+          .filter(Boolean),
+      ),
+    ];
+    if (!reportedItems.length) return null;
+    const reportedText = String(question).trim().replace(/\s+/g, " ");
+    const reportedTitles = reportedItems.map((item) =>
+      String(item.title).trim(),
+    );
+    return {
+      answer: `Según lo que reportas, el cliente indicó: "${reportedText}". Esto corresponde al criterio ${reportedTitles.map((title) => `"${title}"`).join(", ")}. No está verificado ni registrado en CRM; estos criterios seguirán pendientes hasta que confirmes su registro. Si quieres, puedo preparar las respuestas para que las revises; no se guardarán sin tu confirmación.`,
+      evidence: [
+        ...reportedTitles.map(
+          (title) => `Información reportada por el vendedor para el criterio "${title}".`,
+        ),
+      ],
+      inferences: [],
+      confidence: "medium",
+      pendingItems: pendingItems.map((item) => String(item.title).trim()),
+      recommendedActions: [],
+      operations: [],
+      responseType: "informational",
+      source: "account_intelligence",
+    };
+  }
+  const pendingTitles = pendingItems.map((item) =>
+    String(item.title).trim(),
+  );
+  const rationale = String(readiness.rationale || "").trim();
+  const recommendation = {
+    remain: "La recomendación es permanecer en esta etapa.",
+    advance: "La oportunidad cumple los criterios para avanzar.",
+    advance_with_caution: "La recomendación es avanzar con cautela.",
+  }[readiness.recommendation] || "";
+  const answer = pendingTitles.length
+    ? `Para completar la etapa "${stageName}", readiness registra estos criterios como pendientes: ${pendingTitles.join("; ")}.${recommendation ? ` ${recommendation}` : ""}${rationale ? ` ${rationale}` : ""}`
+    : `Readiness no registra criterios pendientes para la etapa "${stageName}".${recommendation ? ` ${recommendation}` : ""}${rationale ? ` ${rationale}` : ""}`;
+
+  return {
+    answer,
+    evidence: [
+      `Lectura de readiness CRM para la etapa "${stageName}".`,
+      ...pendingItems.map((item) =>
+        `Criterio pendiente: ${String(item.title).trim()}${item.detail ? `: ${String(item.detail).trim()}` : ""}`,
+      ),
+    ],
+    inferences: [],
+    confidence: "high",
+    pendingItems: pendingTitles,
+    recommendedActions: [],
+    operations: [],
+    responseType: "informational",
+    source: "account_intelligence",
+  };
+}
+
 function accountRecord(snapshot) {
   return snapshot.account
     ? [{ ...snapshot.account, accountId: snapshot.account.id }]
@@ -2375,6 +2454,42 @@ export function normalizeCustomerResponse(
         .filter(Boolean)
         .slice(0, 24)
     : [];
+  const rawStageAnswerPrefill = normalized.stageAnswerPrefill;
+  const stageAnswerOpportunityId = Number(
+    rawStageAnswerPrefill?.opportunityId || 0,
+  );
+  const stageAnswerQuestionIds = [
+    ...new Set(
+      (Array.isArray(rawStageAnswerPrefill?.questionIds)
+        ? rawStageAnswerPrefill.questionIds
+        : []
+      )
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ].slice(0, 8);
+  const stageAnswerOpportunityIsInScope = opportunityRecords(snapshot).some(
+    (opportunity) =>
+      Number(opportunity.id) === stageAnswerOpportunityId &&
+      Number(opportunity.accountId || snapshot.account?.id) ===
+        Number(snapshot.account?.id),
+  );
+  const stageAnswerPrefill =
+    stageAnswerOpportunityIsInScope &&
+    stageAnswerQuestionIds.length &&
+    String(rawStageAnswerPrefill?.appendText || "").trim()
+      ? {
+          opportunityId: stageAnswerOpportunityId,
+          questionIds: stageAnswerQuestionIds,
+          questionPrompts: Array.isArray(rawStageAnswerPrefill.questionPrompts)
+            ? rawStageAnswerPrefill.questionPrompts
+                .map((prompt) => String(prompt || "").trim().slice(0, 500))
+                .filter(Boolean)
+                .slice(0, 8)
+            : [],
+          appendText: String(rawStageAnswerPrefill.appendText).trim().slice(0, 4000),
+        }
+      : null;
   for (const operation of operations) {
     if (operation.kind !== "activity") continue;
     if (
@@ -2442,6 +2557,7 @@ export function normalizeCustomerResponse(
     ...(normalized.activityDraftDiscarded
       ? { activityDraftDiscarded: true }
       : {}),
+    ...(stageAnswerPrefill ? { stageAnswerPrefill } : {}),
     source: "account_intelligence",
     entities: {
       accountId: context.accountId || null,
@@ -2482,6 +2598,10 @@ export function createCustomerAccountAdapter({
   };
   let activeBusinessRules = null;
   let activeConversationContext = conversationContext;
+  let sellerReportedCriterionTitles = [];
+  let sellerReportedStageAnswerQuestionIds = [];
+  let sellerReportedStageAnswerCandidates = [];
+  let allowOperationsForTurn = false;
   const availableTools = [
     ...COACH_READ_TOOL_CATALOG,
     {
@@ -2758,6 +2878,11 @@ export function createCustomerAccountAdapter({
       };
       const intentCodes =
         routing?.intents || (routing?.intent ? [routing.intent] : []);
+      allowOperationsForTurn =
+        routing?.mode === "operation" || intentCodes.includes("crm_operation");
+      sellerReportedCriterionTitles = [];
+      sellerReportedStageAnswerQuestionIds = [];
+      sellerReportedStageAnswerCandidates = [];
       const initialReadToolResults = Array.isArray(
         payload.context?.readToolResults,
       )
@@ -2875,9 +3000,52 @@ export function createCustomerAccountAdapter({
           hasQueryErrors,
         }) => {
           const queryCoverage = buildQueryCoverage(readToolResults);
+          const readinessResult = readToolResults.find(
+            (item) =>
+              item?.toolName === "getOpportunityReadiness" && !item.error,
+          )?.result;
+          const pendingReadinessCriteria = Array.isArray(
+            readinessResult?.pendingItems,
+          )
+            ? readinessResult.pendingItems
+                .map((item) => String(item?.title || "").trim())
+                .filter(Boolean)
+            : [];
+          const stageAnswerCandidatesById = new Map();
+          for (const item of [
+            ...(Array.isArray(readinessResult?.confirmedProgress)
+              ? readinessResult.confirmedProgress
+              : []),
+            ...(Array.isArray(readinessResult?.pendingItems)
+              ? readinessResult.pendingItems
+              : []),
+          ]) {
+            for (const evidenceItem of Array.isArray(item?.evidence)
+              ? item.evidence
+              : []) {
+              const questionId = Number(evidenceItem?.sourceId || 0);
+              if (
+                evidenceItem?.sourceType !== "stage_answer" ||
+                !Number.isInteger(questionId) ||
+                questionId <= 0
+              )
+                continue;
+              stageAnswerCandidatesById.set(questionId, {
+                questionId,
+                prompt: String(evidenceItem.label || item.title || "")
+                  .trim()
+                  .slice(0, 500),
+              });
+            }
+          }
+          const stageAnswerCandidates = [
+            ...stageAnswerCandidatesById.values(),
+          ];
+          sellerReportedStageAnswerCandidates = stageAnswerCandidates;
           const assessment = await runStructuredTextResearch({
             schemaName: "customer_account_evidence_assessment",
             systemPrompt:
+              "Si la pregunta actual reporta información que el vendedor atribuye al cliente, distingue ese reporte de la evidencia CRM. Cuando el reporte agregue información a una de las preguntas de etapa listadas en stageAnswerCandidates, devuelve su questionId en sellerReportedStageAnswerQuestionIds. Usa únicamente IDs de esa lista, y devuelve [] si no hay correspondencia clara. El reporte puede reconocerse con atribución aunque no esté guardado en CRM; no lo incluyas en missingFacts solo por esa ausencia. No clasifiques preguntas, hipótesis ni solicitudes explícitas de escritura como reportes. No propongas ni autorices operaciones. " +
               "Evalúa si la evidencia autorizada responde todas las partes de la pregunta, incluyendo evidencia CRM y pública, junto con recentConversation y validatedContinuation. El historial sirve para resolver intención y referencias, nunca como prueba factual. No redactes la respuesta ni inventes datos. Usa queryCoverage para saber qué intenciones ya fueron consultadas y no devuelvas en missingQueries una intención fullyQueried cuya evidencia ya cubra la pregunta. Distingue consultas factuales de solicitudes para preparar propuestas editables: ante 'proponla' después de ofrecer una llamada, verifica la identidad y vínculos CRM de la cuenta, oportunidad y contacto referidos, pero no exijas preferencias de llamada, acuerdos confirmados, actividades previas ni detalles futuros que el vendedor no pidió consultar como hechos. La fecha/hora y otros datos no proporcionados de una propuesta son campos pendientes, no hechos CRM; no los inventes. Preparar una propuesta no ejecuta ni guarda la actividad y sigue sujeto a operationPolicy. Marca sufficient solo si cada parte está respaldada por resultados concretos y no faltan hechos. Marca no_results solo cuando las consultas necesarias terminaron sin errores y no encontraron coincidencias. Un error de herramienta nunca significa que no haya registros. Devuelve missingQueries solo para una fuente/intención autorizada con una consulta útil aún no ejecutada; si otra lectura no puede obtener un dato faltante, descríbelo en missingFacts. Solicita aclaración solo para ambigüedades reales, referencias insuficientes o periodos indispensables de una consulta factual. Devuelve missingFacts como etiquetas breves en español para el vendedor, no como códigos internos ni afirmaciones inventadas.",
             subject: "Verificación de evidencia CRM y pública",
             context: {
@@ -2899,6 +3067,8 @@ export function createCustomerAccountAdapter({
                 result: item.result,
                 queryFailed: Boolean(item.error),
               })),
+              pendingReadinessCriteria,
+              stageAnswerCandidates,
               publicEvidence,
               queryCoverage,
               round,
@@ -2907,7 +3077,24 @@ export function createCustomerAccountAdapter({
               unqueriedAuthorizedTools,
             },
             currentValues: {},
-            fields: getCustomerEvidenceAssessmentFields(enabledIntentCodes),
+            fields: [
+              ...getCustomerEvidenceAssessmentFields(enabledIntentCodes),
+              {
+                key: "sellerReportedCriteria",
+                type: "array",
+                example: [],
+                items: {
+                  type: "string",
+                  example: "Motivación de negocio",
+                },
+              },
+              {
+                key: "sellerReportedStageAnswerQuestionIds",
+                type: "array",
+                example: [],
+                items: { type: "number", example: 3 },
+              },
+            ],
             aiUsageContext: {
               userId: Number(user.id),
               featureCode: "commercial_intelligence.account_chat",
@@ -2916,13 +3103,50 @@ export function createCustomerAccountAdapter({
             },
             signal: getDeadlineSignal(Date.now() + remainingMs),
           });
-          return normalizeCustomerEvidenceAssessment({
+          const normalizedAssessment = normalizeCustomerEvidenceAssessment({
             assessment,
             queryCoverage,
             readToolResults,
             hasQueryErrors,
             unqueriedAuthorizedTools,
           });
+          const pendingTitles = new Map(
+            pendingReadinessCriteria.map((title) => [normalize(title).trim(), title]),
+          );
+          sellerReportedCriterionTitles = allowOperationsForTurn
+            ? []
+            : [
+                ...new Set(
+                  (Array.isArray(assessment?.sellerReportedCriteria)
+                    ? assessment.sellerReportedCriteria
+                    : []
+                  )
+                    .map((title) => pendingTitles.get(normalize(title).trim()))
+                    .filter(Boolean),
+                ),
+              ];
+          const allowedStageAnswerQuestionIds = new Set(
+            stageAnswerCandidates.map((candidate) => candidate.questionId),
+          );
+          sellerReportedStageAnswerQuestionIds = allowOperationsForTurn
+            ? []
+            : [
+                ...new Set(
+                  (Array.isArray(
+                    assessment?.sellerReportedStageAnswerQuestionIds,
+                  )
+                    ? assessment.sellerReportedStageAnswerQuestionIds
+                    : []
+                  )
+                    .map((id) => Number(id))
+                    .filter(
+                      (id) =>
+                        Number.isInteger(id) &&
+                        allowedStageAnswerQuestionIds.has(id),
+                    ),
+                ),
+              ];
+          return normalizedAssessment;
         },
         fetchAdditionalEvidence: async ({
           missingQueries,
@@ -3019,6 +3243,87 @@ export function createCustomerAccountAdapter({
       }, {
         ruleId: "turn-deadline", outcome: evidenceLoop.errorCode === "turn_timeout" ? "limited" : "applied",
       });
+      const selectedStageAnswerCandidates =
+        sellerReportedStageAnswerCandidates.filter((candidate) =>
+          sellerReportedStageAnswerQuestionIds.includes(candidate.questionId),
+        );
+      const opportunityRead = evidenceLoop.readToolResults.find(
+        (item) => item?.toolName === "getOpportunity" && !item.error,
+      )?.result;
+      const prefillOpportunityId = Number(
+        opportunityRead?.id || snapshot.selectedOpportunity?.id || 0,
+      );
+      const prefillOpportunity = opportunityRecords(snapshot).find(
+        (item) => Number(item.id) === prefillOpportunityId,
+      );
+      if (
+        !allowOperationsForTurn &&
+        selectedStageAnswerCandidates.length &&
+        prefillOpportunity
+      ) {
+        const appendText = `Reporte del vendedor: ${String(payload.question || "")
+          .trim()
+          .replace(/\s+/g, " ")}`.slice(0, 4000);
+        const questionPrompts = selectedStageAnswerCandidates.map(
+          (candidate) => candidate.prompt,
+        );
+        const stageAnswerPrefillResponse = {
+          answer: `Preparé un borrador para agregar tu reporte a ${questionPrompts.length === 1 ? `la pregunta "${questionPrompts[0]}"` : `las preguntas ${questionPrompts.map((prompt) => `"${prompt}"`).join(", ")}`} de la oportunidad "${prefillOpportunity.name}". Se conservarán las respuestas actuales y no se guardará nada hasta que revises y pulses Guardar cambios.`,
+          evidence: questionPrompts.map(
+            (prompt) => `Pregunta de etapa CRM: ${prompt}`,
+          ),
+          inferences: [],
+          confidence: "medium",
+          pendingItems: [],
+          recommendedActions: [],
+          operations: [],
+          responseType: "informational",
+          source: "account_intelligence",
+          entities: {
+            opportunityId: prefillOpportunityId,
+          },
+          stageAnswerPrefill: {
+            opportunityId: prefillOpportunityId,
+            questionIds: selectedStageAnswerCandidates.map(
+              (candidate) => candidate.questionId,
+            ),
+            questionPrompts,
+            appendText,
+          },
+        };
+        recordAnswerGeneration(
+          "seller_reported_stage_answer_prefill",
+          stageAnswerPrefillResponse,
+        );
+        return stageAnswerPrefillResponse;
+      }
+      if (sellerReportedCriterionTitles.length && !allowOperationsForTurn) {
+        const reportedResponse = buildCustomerStageReadinessResponse({
+          question: payload.question,
+          readToolResults: evidenceLoop.readToolResults,
+          reportedCriterionTitles: sellerReportedCriterionTitles,
+        });
+        if (reportedResponse) {
+          turnDiagnostics.serverRules.decisions.push({
+            ruleId: "seller-reported-stage-criterion",
+            outcome: "acknowledged",
+            criteria: sellerReportedCriterionTitles,
+          });
+          recordAnswerGeneration(
+            "seller_reported_stage_criterion",
+            reportedResponse,
+          );
+          return reportedResponse;
+        }
+      }
+      const readinessResponse = buildCustomerStageReadinessResponse({
+        question: payload.question,
+        readToolResults: evidenceLoop.readToolResults,
+      });
+      if (readinessResponse) {
+        recordAnswerGeneration("deterministic_stage_readiness", readinessResponse);
+        return readinessResponse;
+      }
       if (!new Set(["sufficient", "no_results"]).has(evidenceLoop.status)) {
         const evidenceFailure = buildCustomerEvidenceFailureResponse({
           ...evidenceLoop,
@@ -3539,6 +3844,14 @@ export function createCustomerAccountAdapter({
         context,
         permissions,
       );
+      if (!allowOperationsForTurn && response.operations.length) {
+        turnDiagnostics.serverRules.decisions.push({
+          ruleId: "explicit-operation-intent",
+          outcome: "rejected",
+          proposed: response.operations.length,
+        });
+        response = { ...response, operations: [] };
+      }
       const targetsByKind = new Map();
       for (const operation of response.operations) {
         const id = operation.kind === "account_field" ? operation.accountId :

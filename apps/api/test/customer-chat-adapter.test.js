@@ -39,6 +39,7 @@ import {
   buildCustomerQuotationResponse,
   buildCustomerReadModel,
   buildCustomerFallback,
+  buildCustomerStageReadinessResponse,
   buildCustomerIntentResponse,
   buildCustomerQueryPlannerContext,
   createCustomerAccountAdapter,
@@ -3440,6 +3441,227 @@ describe("Customer account chat adapter", () => {
     expect(adapterError.responseType).toBe("error");
     expect(adapterError.answer).toContain("error interno");
     expect(adapterError.answer).not.toContain("falló la consulta");
+  });
+
+  it("answers stage-preparation questions from successful readiness evidence", () => {
+    const response = buildCustomerStageReadinessResponse({
+      question: "¿Qué me falta para terminar la etapa de identificación?",
+      readToolResults: [
+        {
+          toolName: "getOpportunityReadiness",
+          result: {
+            currentStage: { name: "Identificación de la oportunidad" },
+            pendingItems: [
+              {
+                title: "Presupuesto",
+                detail: "No hay evaluación registrada para este criterio.",
+              },
+            ],
+            recommendation: "remain",
+            rationale: "Persisten criterios pendientes.",
+          },
+        },
+      ],
+    });
+
+    expect(response.responseType).toBe("informational");
+    expect(response.confidence).toBe("high");
+    expect(response.answer).toContain("Presupuesto");
+    expect(response.answer).toContain("permanecer en esta etapa");
+    expect(response.answer).not.toContain("No pude verificar");
+    expect(response.pendingItems).toEqual(["Presupuesto"]);
+    expect(
+      buildCustomerStageReadinessResponse({
+        question: "¿Qué me falta para terminar la etapa de identificación?",
+        readToolResults: [
+          {
+            toolName: "getOpportunityReadiness",
+            error: "read failed",
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("acknowledges seller-reported details for a uniquely matching pending stage criterion without saving them", () => {
+    const response = buildCustomerStageReadinessResponse({
+      question:
+        "El cliente me dijo que su motivación es que algunos empleados envían información confidencial a terceros por correo electrónico.",
+      reportedCriterionTitles: ["Motivación de negocio"],
+      readToolResults: [
+        {
+          toolName: "getOpportunityReadiness",
+          result: {
+            currentStage: { name: "Identificación de la oportunidad" },
+            pendingItems: [
+              { title: "Motivación de negocio" },
+              { title: "Presupuesto" },
+            ],
+            recommendation: "remain",
+          },
+        },
+      ],
+    });
+
+    expect(response.responseType).toBe("informational");
+    expect(response.confidence).toBe("medium");
+    expect(response.answer).toContain("Motivación de negocio");
+    expect(response.answer).toContain("Según lo que reportas");
+    expect(response.answer).toContain("No está verificado ni registrado en CRM");
+    expect(response.answer).toContain(
+      "no se guardarán sin tu confirmación",
+    );
+    expect(response.pendingItems).toEqual([
+      "Motivación de negocio",
+      "Presupuesto",
+    ]);
+    expect(response.operations).toEqual([]);
+  });
+
+  it("uses B9 to acknowledge seller-reported stage information on no-results without generating operations", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+
+    const selectedOpportunity = {
+      ...snapshot.opportunities[0],
+      salesStageId: 4,
+      stageCode: "identificacion_oportunidad",
+      stageName: "Identificación de la oportunidad",
+      currentStage: {
+        id: 4,
+        code: "identificacion_oportunidad",
+        name: "Identificación de la oportunidad",
+        criteria: [
+          {
+            code: "identificacion_motivacion_principal",
+            title: "Motivación de negocio",
+            required: true,
+          },
+        ],
+      },
+      stageQuestions: [
+        {
+          questionId: 33,
+          code: "identificacion_motivacion_principal",
+          prompt:
+            "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
+          answer: "Motivación previa registrada.",
+          required: true,
+        },
+      ],
+      workspace: { criteria: [], actions: [], weaknesses: [] },
+    };
+    runStructuredTextResearch.mockReset();
+    runStructuredTextResearch
+      .mockResolvedValueOnce({
+        objective: "Consultar orientación de la oportunidad",
+        queries: ["opportunity_guidance"],
+        entities: { opportunityReference: selectedOpportunity.name },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "current_message",
+          candidateKeys: ["opportunity_1"],
+        },
+        mode: "read_only",
+        confidence: "high",
+      })
+      .mockResolvedValueOnce({
+        status: "no_results",
+        missingQueries: [],
+        missingFacts: [
+          "Motivación específica relacionada con información confidencial por correo electrónico",
+        ],
+        sellerReportedCriteria: ["Motivación de negocio"],
+        sellerReportedStageAnswerQuestionIds: [33],
+      });
+
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "desarrollo_comercial.read",
+          "interacciones.read",
+        ]),
+      },
+      snapshot: {
+        ...snapshot,
+        opportunities: [selectedOpportunity],
+        selectedOpportunity,
+      },
+      authoritativeIntent: {
+        intent: "opportunity_guidance",
+        confidence: 0.9,
+        requiresClarification: false,
+      },
+      channelIntentConfiguration: getChannelIntentDefaults("customer_account"),
+      agents: [],
+      jobId: 918,
+    });
+    const question =
+      "El cliente me dijo que su motivación es que algunos empleados envían información confidencial a terceros por correo electrónico.";
+    const result = await adapter.runTurn({
+      question,
+      context: { accountId: 7, opportunityId: selectedOpportunity.id },
+      history: [],
+    });
+
+    const assessmentRequest = runStructuredTextResearch.mock.calls[1][0];
+    expect(assessmentRequest.schemaName).toBe(
+      "customer_account_evidence_assessment",
+    );
+    expect(assessmentRequest.context.pendingReadinessCriteria).toContain(
+      "Motivación de negocio",
+    );
+    expect(assessmentRequest.context.stageAnswerCandidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          questionId: 33,
+          prompt:
+            "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
+        }),
+      ]),
+    );
+    expect(assessmentRequest.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "sellerReportedCriteria" }),
+      ]),
+    );
+    expect(result.qualityTrace.diagnostics.evidence.status).toBe("no_results");
+    expect(result.response.answer).toContain("Preparé un borrador para agregar");
+    expect(result.response.answer).toContain("no se guardará nada");
+    expect(result.response.operations).toEqual([]);
+    expect(result.response.recommendedActions).toEqual([]);
+    expect(result.response.stageAnswerPrefill).toMatchObject({
+      opportunityId: 11,
+      questionIds: [33],
+      questionPrompts: [
+        "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
+      ],
+      appendText: `Reporte del vendedor: ${question}`,
+    });
+    expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe(
+      "seller_reported_stage_answer_prefill",
+    );
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(2);
   });
 
   it("uses a safe alternative when the final answer contains unsupported CRM claims", async () => {

@@ -50,6 +50,7 @@ function OpportunityFormModal({
   contactOptions,
   formatOpportunityAmountInput,
   commercialContext,
+  stageAnswerPrefillQuestionIds = [],
   selectedCommercialStageId,
   stageValidationResult,
   loadingCommercialStageView,
@@ -1009,6 +1010,7 @@ function OpportunityFormModal({
                                   ) : null}
                                 </label>
                                 <textarea
+                                  id={`opportunity-stage-answer-${answer.question_id}`}
                                   aria-label={`${answer.prompt}${
                                     answer.is_required ? " *" : ""
                                   }`}
@@ -1026,6 +1028,15 @@ function OpportunityFormModal({
                                     hasPendingStageChange
                                   }
                                 />
+                                {stageAnswerPrefillQuestionIds.includes(
+                                  Number(answer.question_id),
+                                ) ? (
+                                  <p className="field-hint">
+                                    Borrador agregado desde Cliente existente.
+                                    Revisa la respuesta y pulsa Guardar cambios
+                                    para registrarla.
+                                  </p>
+                                ) : null}
 
                                 {suggestion?.status === "proposed" ? (
                                   <div className="opportunity-answer-suggestion-card">

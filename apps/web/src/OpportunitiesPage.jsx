@@ -33,6 +33,7 @@ function OpportunitiesPage({ currentUser, can }) {
     setOpportunitiesPage,
     showOpportunityModal,
     editingOpportunityId,
+    stageAnswerPrefillQuestionIds,
     editOpportunityAudit,
     selectedCommercialStageId,
     loadingCommercialStageView,
@@ -413,6 +414,7 @@ function OpportunitiesPage({ currentUser, can }) {
         isOpen={showOpportunityModal}
         error={showOpportunityModal ? error : ""}
         editingOpportunityId={editingOpportunityId}
+        stageAnswerPrefillQuestionIds={stageAnswerPrefillQuestionIds}
         editOpportunityAudit={editOpportunityAudit}
         currentCommercialStage={currentCommercialStage}
         currentSalesStageName={currentSalesStageName}

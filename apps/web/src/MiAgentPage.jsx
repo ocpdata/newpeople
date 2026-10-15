@@ -25,6 +25,7 @@ import {
   COMMERCIAL_ACTIVITY_TYPES,
   normalizeCommercialActivityType,
 } from "../../../shared/commercial-activity-types.js";
+import { stageAnswerPrefillStorageKey } from "../../../shared/stage-answer-prefill.js";
 import { validateCustomerChatObservedFlow } from "./customer-chat-trace-validation";
 import "./mi-agent.css";
 import "./mi-agent-prospect.css";
@@ -3919,6 +3920,27 @@ export default function MiAgentPage({
     setCustomerIntelligenceError("");
     setCustomerChatTransportError(null);
     setCustomerChatFailureIds(null);
+  }
+
+  function openCustomerStageAnswerPrefill(prefill) {
+    if (!canCreateActions) return;
+    const opportunityId = Number(prefill?.opportunityId || 0);
+    const questionIds = Array.isArray(prefill?.questionIds)
+      ? prefill.questionIds
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    const appendText = String(prefill?.appendText || "").trim();
+    if (!opportunityId || !questionIds.length || !appendText) return;
+
+    const token = window.crypto.randomUUID();
+    window.sessionStorage.setItem(
+      stageAnswerPrefillStorageKey(token),
+      JSON.stringify({ opportunityId, questionIds, appendText }),
+    );
+    navigate(
+      `/opportunities?edit=${opportunityId}&stageAnswerPrefill=${encodeURIComponent(token)}`,
+    );
   }
 
   async function openDiscoveryActivity(nextStep) {
@@ -8601,6 +8623,35 @@ export default function MiAgentPage({
                           {message.answer}
                         </h4>
                       )}
+                      {message.stageAnswerPrefill ? (
+                        <div className="mi-agent-customer-chat-actions">
+                          <strong>Respuesta de etapa preparada para revisar</strong>
+                          {message.stageAnswerPrefill.questionPrompts?.map(
+                            (prompt) => <span key={prompt}>{prompt}</span>,
+                          )}
+                          <p>
+                            Se agregará a la respuesta actual. Revísala en la
+                            oportunidad y guarda los cambios cuando esté lista.
+                          </p>
+                          {canCreateActions ? (
+                            <button
+                              type="button"
+                              className="mi-agent-link-button"
+                              onClick={() =>
+                                openCustomerStageAnswerPrefill(
+                                  message.stageAnswerPrefill,
+                                )
+                              }
+                            >
+                              Abrir oportunidad para revisar
+                            </button>
+                          ) : (
+                            <small>
+                              No tienes permiso para actualizar oportunidades.
+                            </small>
+                          )}
+                        </div>
+                      ) : null}
                       {message.activityHistory ? (
                         message.activityHistory.mode === "contact_history" ? (
                           <div className="mi-agent-customer-history-results">

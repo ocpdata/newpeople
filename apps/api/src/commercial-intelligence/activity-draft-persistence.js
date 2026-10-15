@@ -58,7 +58,7 @@ export async function persistCustomerActivityDraft({
   const draft = response.activityDraft;
   const parsed = coachOperationSchema.safeParse({
     ...draft.operation,
-    sourceChannel: "coach",
+    sourceChannel: "customer_account",
   });
   if (!parsed.success)
     throw new Error(

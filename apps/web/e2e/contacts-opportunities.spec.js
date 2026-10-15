@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { COMMERCIAL_ACTIVITY_TYPES } from "../../../shared/commercial-activity-types.js";
+import { stageAnswerPrefillStorageKey } from "../../../shared/stage-answer-prefill.js";
 
 function bootstrapAuthenticatedSession(page, token = "jwt-token") {
   return page.addInitScript((value) => {
@@ -1455,6 +1456,67 @@ test.describe("contacts opportunities", () => {
       page.getByText("Anulada", { exact: true }).first(),
     ).toBeVisible();
     await expect(page.getByLabel(/Motivo de cierre comercial/i)).toBeDisabled();
+  });
+
+  test("abre la pregunta de etapa con el reporte agregado y no lo guarda hasta confirmar Guardar cambios", async ({
+    page,
+  }) => {
+    const fixture = createCommercialFlowFixture({
+      opportunityName: "Expansion con motivación reportada",
+    });
+    fixture.latestAnswersByStage.set("contacto_inicial", {
+      9001: "Respuesta previa sobre la necesidad del cliente.",
+    });
+    const token = "stage-answer-prefill-e2e";
+    const prefill = {
+      opportunityId: fixture.detail.id,
+      questionIds: [9001],
+      appendText:
+        "Reporte del vendedor: El cliente indicó que busca alta disponibilidad.",
+    };
+    const appendText =
+      "Reporte del vendedor: El cliente indicó que busca alta disponibilidad.";
+
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture, { canManageQuestions: true });
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await page.evaluate(
+      ({ key, value }) => {
+        window.sessionStorage.setItem(key, JSON.stringify(value));
+      },
+      {
+        key: stageAnswerPrefillStorageKey(token),
+        value: prefill,
+      },
+    );
+    await page.goto(
+      `http://127.0.0.1:4173/opportunities?edit=${fixture.detail.id}&stageAnswerPrefill=${token}`,
+    );
+
+    const answerField = page.getByLabel(
+      /qué necesidad, iniciativa, problema o interés concreto expresa el cliente/i,
+    );
+    await expect(answerField).toHaveValue(
+      `Respuesta previa sobre la necesidad del cliente.\n\n${appendText}`,
+    );
+    await expect(
+      page.getByText(/Borrador agregado desde Cliente existente/i),
+    ).toBeVisible();
+    expect(fixture.answerHistory).toEqual([]);
+
+    await page
+      .getByRole("button", { name: "Guardar cambios", exact: true })
+      .click();
+
+    await expect
+      .poll(() => fixture.answerHistory)
+      .toEqual([
+        {
+          stageCode: "contacto_inicial",
+          questionId: 9001,
+          answerValue: `Respuesta previa sobre la necesidad del cliente.\n\n${appendText}`,
+        },
+      ]);
   });
 
   test("refleja en oportunidades una pregunta nueva creada desde la administración comercial", async ({
