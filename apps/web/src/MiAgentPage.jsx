@@ -4097,6 +4097,22 @@ export default function MiAgentPage({
       const accountId = Number(customerAccountId || 0) || null;
       const opportunityId = Number(operation.opportunityId || 0) || null;
       const contactId = Number(operation.contactId || 0) || null;
+      const opportunityOptions = [
+        ...(customerSnapshot?.opportunities || []),
+        ...(customerSnapshot?.inactiveOpportunities || []),
+        ...(customerSnapshot?.selectedOpportunity
+          ? [customerSnapshot.selectedOpportunity]
+          : []),
+      ]
+        .filter(
+          (item) =>
+            Number(item.accountId || customerSnapshot?.account?.id) ===
+            Number(accountId),
+        )
+        .map((item) => ({
+          ...item,
+          accountName: customerSnapshot?.account?.name || "",
+        }));
       const coachOperation = {
         ...operation,
         sourceChannel: "coach",
@@ -4144,7 +4160,7 @@ export default function MiAgentPage({
         persistentId: persistedOperation.id,
         persistenceVersion: persistedOperation.version,
         persistenceStatus: persistedOperation.status,
-      });
+      }, { opportunityOptions });
     } catch (requestError) {
       setError(
         getApiErrorMessage(
