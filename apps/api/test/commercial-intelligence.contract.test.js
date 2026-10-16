@@ -404,6 +404,44 @@ describe("customer intelligence contract", () => {
     });
   });
 
+  it("does not offer provider catalog for a general opportunity question", async () => {
+    const classifyWithAI = vi.fn().mockResolvedValue({
+      domains: ["provider_catalog"],
+      confidence: "high",
+    });
+    const dataNeeds = await classifyCustomerSnapshotDataNeeds({
+      question: "¿Qué oportunidades tengo aquí?",
+      selectedContext: { accountId: 7, opportunityId: 11 },
+      user: { id: 5, permissionSet: new Set(["oportunidades.read"]) },
+      classifyWithAI,
+    });
+
+    expect(classifyWithAI).not.toHaveBeenCalled();
+    expect(dataNeeds.includeProviderCatalog).toBe(false);
+    expect(dataNeeds.domains).toEqual([]);
+  });
+
+  it("offers provider catalog for product follow-ups in recent user messages", async () => {
+    let plannerRequest;
+    const dataNeeds = await classifyCustomerSnapshotDataNeeds({
+      question: "¿Y sus precios?",
+      conversationHistory: [
+        { role: "user", text: "¿Qué productos complementarios tienen?" },
+        { role: "assistant", text: "Hay opciones disponibles." },
+      ],
+      selectedContext: { accountId: 7, opportunityId: 11 },
+      user: { id: 5, permissionSet: new Set(["oportunidades.read"]) },
+      classifyWithAI: async (request) => {
+        plannerRequest = request;
+        return { domains: ["provider_catalog"], confidence: "high" };
+      },
+    });
+
+    expect(plannerRequest.context.availableDataDomains.map((domain) => domain.code))
+      .toContain("provider_catalog");
+    expect(dataNeeds.includeProviderCatalog).toBe(true);
+  });
+
   it("does not preload optional data for a low-confidence classification but preserves authorized conversation continuity", async () => {
     const dataNeeds = await classifyCustomerSnapshotDataNeeds({
       question: "¿Y los demás?",

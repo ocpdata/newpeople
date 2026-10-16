@@ -12,207 +12,18 @@ La regla principal es que el modelo puede interpretar una pregunta y proponer qu
 
 Cada pregunta inicia un job asíncrono, pero el recorrido no es una cadena lineal B1→B11. B1 puede consultar el estado mientras B3 procesa el job; B3 resuelve la intención final de Coach y Cliente existente antes de delegar. Dentro de B5, B6 propone un plan compatible con esa intención, B5 lo valida y B7/B8 ejecutan lecturas; B9 decide si basta la evidencia o si hace falta otra ronda. B11 es una tarea de persistencia de B3, no un servicio por el que pase la respuesta antes de volver a empezar.
 
-### Contrato de Cliente existente: arquitectura vigente
+### Cliente existente: interpretación y evaluación
 
-Cliente existente utiliza un **contrato de turno v1**: B3 interpreta una sola vez
-el propósito y el movimiento conversacional; B6 planifica dentro de ese contrato,
-B9 verifica según la familia de solicitud y B10 presenta el resultado sin cambiar
-la intención. Este cambio no reemplaza los clasificadores de Coach ni el routing
-de Cuenta nueva. El diagrama general conserva las responsabilidades B1–B11; el
-siguiente esquema detalla la coordinación específica de Cliente existente:
+En la ruta vigente, B3 interpreta una sola vez el propósito y el movimiento del
+turno. B4 coordina los componentes resultantes; B6 planifica dentro del propósito
+sin cambiarlo, B9 verifica la evidencia y B10 presenta el resultado. La
+arquitectura detallada, las fuentes de B3 y los límites entre bloques se explican
+en [B3 · Servicio del canal](#b3--servicio-del-canal).
 
-```text
-B3: mensaje + historial + contexto revalidado + material aportado
-  -> contrato validado: movimiento + hasta cuatro componentes
-B4: coordinador del turno
-  -> disponibilidad, políticas, permisos, dependencias y presupuesto compartido
-  -> adaptador acotado por componente
-     B5 -> B6: plan compatible con el propósito de ese componente
-        -> B7/B8: lecturas autorizadas, misma cuenta y alcance
-        -> B9: verificación por familia, sin reclasificar el propósito
-        -> B10: resultado fiel, propuesta revisable o aclaración/error explícito
-B4: agrega resultados y estados de los componentes
-B3/B11: guarda resultado, historial, contexto, pendientes y trazas
-B2 -> B1: entrega y muestra el resultado persistido
-```
-
-El contrato reconoce **44 categorías** en cinco familias: `query` (consultar),
-`guidance` (orientar), `content` (redactar o transformar), `report` (aportar
-información) y `action` (solicitar una operación). Reconocer una categoría no
-significa que exista una herramienta para ejecutarla ni que el usuario tenga
-permiso. El [catálogo completo de capacidades](./chat-cliente-existente-alcance.md#catálogo-completo-y-capacidades)
-documenta qué está disponible, limitado o no implementado.
-
-Los **13 movimientos** son `new_request`, `answer_clarification`,
-`select_candidate`, `accept_proposal`, `confirm_execution`, `modify_draft`,
-`correct`, `reject`, `discard_draft`, `continue`, `change_focus`,
-`request_rationale` y `stop`. Movimiento y propósito son dimensiones distintas:
-responder una aclaración no convierte un reporte en una consulta ni una
-aceptación en una escritura.
-
-**Activación:** `CUSTOMER_TURN_CONTRACT_MODE=on` es el valor predeterminado del
-código y de las plantillas local/nube en todos los entornos. `off` conserva la ruta
-anterior; `pilot` limita la nueva ruta a `CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`.
-Las variables explícitas prevalecen sobre el valor predeterminado. Un servidor
-remoto necesita recibir esta versión, ajustar cualquier override y reiniciar su
-API; cambiar el repositorio no despliega ni reinicia otros entornos. El rollback
-es `off` más reinicio, sin migraciones ni cambios de permisos.
-
-### Las 44 categorías de propósito
-
-Este es el catálogo de interpretación de **Cliente existente**, no el catálogo
-de intenciones del canal Coach. Son 11 consultas, 8 orientaciones, 9 categorías
-de contenido, 6 reportes y 10 acciones. La capacidad indicada sigue sujeta a
-políticas, alcance, permisos y datos disponibles. Una acción reconocida nunca
-implica una escritura automática.
-
-| # | Categoría | Significado y capacidad actual |
-| --- | --- | --- |
-| 1 | `query.account_summary` | Consultar el resumen autorizado de la cuenta. |
-| 2 | `query.record_detail` | Consultar detalle de entidades expuestas por las herramientas actuales; parcial. |
-| 3 | `query.field_value` | Consultar un campo disponible, como monto o etapa; parcial. |
-| 4 | `query.record_list` | Listar registros autorizados, con los límites vigentes; parcial. |
-| 5 | `query.record_search` | Buscar registros mediante filtros y entidades disponibles; parcial. |
-| 6 | `query.history` | Consultar interacciones e historial expuestos; parcial. |
-| 7 | `query.pending_items` | Consultar actividades y pendientes autorizados. |
-| 8 | `query.relationships` | Consultar relaciones CRM expuestas, no inferidas; parcial. |
-| 9 | `query.document_content` | Consultar cotizaciones autorizadas o texto extraído de un adjunto aportado; no hay lector genérico de documentos CRM. |
-| 10 | `query.stage_readiness` | Consultar requisitos y preparación de etapa. |
-| 11 | `query.system_help` | Solicitar ayuda del sistema; no disponible como herramienta de documentación. |
-| 12 | `guidance.situation_assessment` | Evaluar la situación con evidencia disponible. |
-| 13 | `guidance.risks_and_gaps` | Identificar riesgos y brechas, separados de hechos. |
-| 14 | `guidance.next_steps` | Recomendar siguientes pasos, sin crear actividades implícitas. |
-| 15 | `guidance.prioritization` | Priorizar oportunidades autorizadas; parcial. |
-| 16 | `guidance.comparison` | Comparar oportunidades con datos disponibles y comparables; parcial. |
-| 17 | `guidance.trend_analysis` | Analizar tendencias; no disponible por falta de una serie histórica comparable de ingresos. |
-| 18 | `guidance.scenario_analysis` | Analizar escenarios como hipótesis explícitas, no predicciones confirmadas; parcial. |
-| 19 | `guidance.strategy` | Proponer estrategia desde el contexto autorizado. |
-| 20 | `content.email_draft` | Redactar un correo, nunca enviarlo. |
-| 21 | `content.message_draft` | Redactar un mensaje breve, sin envío. |
-| 22 | `content.meeting_preparation` | Preparar agenda o guion, sin programar una reunión. |
-| 23 | `content.discovery_questions` | Preparar preguntas de descubrimiento. |
-| 24 | `content.summary` | Resumir material disponible. |
-| 25 | `content.explanation` | Explicar contenido o términos comerciales, no abrir una consulta externa libre. |
-| 26 | `content.rewrite` | Reescribir material aportado. |
-| 27 | `content.translation` | Traducir material aportado. |
-| 28 | `content.value_argument` | Elaborar un argumento de valor sin métricas inventadas. |
-| 29 | `report.client_statement` | Conservar información atribuida al cliente, incluidas sus sospechas. |
-| 30 | `report.seller_observation` | Conservar una observación atribuida al vendedor. |
-| 31 | `report.interaction_outcome` | Recibir un resultado reportado, sin registrar automáticamente una actividad. |
-| 32 | `report.commitment` | Recibir un compromiso informado, sin programar automáticamente una reunión. |
-| 33 | `report.document_evidence` | Recibir texto documental aportado, sin certificar su autenticidad; parcial. |
-| 34 | `report.hypothesis` | Conservar una hipótesis sin incorporarla como hecho en respuestas de etapa. |
-| 35 | `action.create_record` | Proponer contacto u oportunidad si su tipo está habilitado; no crear cuentas nuevas; parcial. |
-| 36 | `action.update_fields` | Proponer cambios en campos permitidos de cuenta/contacto/oportunidad; parcial. |
-| 37 | `action.update_stage_answer` | Proponer una respuesta de etapa para revisión y confirmación. |
-| 38 | `action.link_records` | Proponer vincular contacto a oportunidad con habilitación explícita; parcial. |
-| 39 | `action.schedule_activity` | Preparar un borrador de actividad; la fecha faltante queda pendiente. |
-| 40 | `action.reschedule_activity` | Solicitar reprogramación; no disponible como edición de actividad existente. |
-| 41 | `action.record_outcome` | Proponer resultado de llamada de un lead autorizado; parcial. |
-| 42 | `action.change_status` | Solicitar cambio de estado; no disponible en este contrato, corresponde al módulo respectivo. |
-| 43 | `action.remove_record` | Solicitar eliminación o cancelación; no disponible desde este flujo. |
-| 44 | `action.send_communication` | Solicitar envío de comunicaciones; no disponible, no se sustituye silenciosamente por redacción. |
-
-### Los 13 movimientos conversacionales
-
-El movimiento explica **qué hace este mensaje dentro del diálogo**, mientras que
-la categoría explica **qué quiere conseguir el usuario**. Los ejemplos requieren
-el historial y los pendientes adecuados; no son reglas de coincidencia textual.
-
-| # | Movimiento | Ejemplo | Comportamiento esperado |
-| --- | --- | --- | --- |
-| 1 | `new_request` | «Dame una lista de las oportunidades». | Iniciar una solicitud nueva sin reutilizar indebidamente el reporte anterior. |
-| 2 | `answer_clarification` | «Renovación Alfa», después de preguntar para qué oportunidad es el reporte. | Completar el contexto del componente pendiente conservando su texto original. |
-| 3 | `select_candidate` | «La primera pregunta», tras ofrecer Motivación y Presupuesto. | Seleccionar el candidato autorizado, sin reemplazar el reporte por esa frase. |
-| 4 | `accept_proposal` | «Sí, prepara el borrador de la reunión». | Aceptar la preparación de la propuesta, no ejecutar una escritura. |
-| 5 | `confirm_execution` | «Confirmo que se ejecute el cambio propuesto». | Remitir al control de confirmación existente; el mensaje no guarda cambios por sí mismo. |
-| 6 | `modify_draft` | «Haz más breve el borrador del correo». | Modificar el borrador dentro de su alcance, sin enviarlo. |
-| 7 | `correct` | «Corrijo: no es presupuesto, es falta de responsable». | Tratarlo como corrección del contexto o contenido pendiente. |
-| 8 | `reject` | «No quiero esa propuesta». | Rechazar la propuesta conversacional, sin eliminar registros CRM. |
-| 9 | `discard_draft` | «Descarta el borrador de la reunión». | Descartar el borrador mediante su flujo controlado, sin crear la actividad. |
-| 10 | `continue` | «Continúa con el análisis». | Retomar el trabajo validado; pedir aclaración si no existe un pendiente inequívoco. |
-| 11 | `change_focus` | «Dejemos ese reporte; ahora quiero ver contactos». | Cambiar el foco sin arrastrar el reporte anterior a la nueva solicitud. |
-| 12 | `request_rationale` | «¿Por qué recomiendas esa acción?». | Solicitar una justificación sin convertirla en aceptación o ejecución. |
-| 13 | `stop` | «Detente, no sigas con esta solicitud». | Detener la solicitud conversacional, sin cancelar registros CRM. |
-
-Reconocer el movimiento no implementa capacidades nuevas: su efecto concreto
-continúa sujeto a la memoria validada y a los flujos operativos disponibles.
-
-### Los nueve controles críticos de aceptación
-
-Son nueve **casos críticos del evaluador**, no nueve permisos ni una auditoría
-exhaustiva. Siete reutilizan casos del catálogo y dos añaden comprobaciones de
-composición y asociación. El resultado exigido es **9/9**, no un promedio.
-
-| # | Control | Entrada o escenario sintético | Comprobación |
-| --- | --- | --- | --- |
-| 1 | `report.client_statement` | El cliente atribuye su motivación a sospechas de envío de datos privados por correo. | Reconocer reporte del cliente y objeto correcto, no consejo ni orden de agendar. |
-| 2 | `query.field_value` | Preguntar la etapa de Renovación Alfa. | Reconocer consulta de campo y objeto correcto, no reporte o recomendación. |
-| 3 | `action.schedule_activity` | «Quiero programar una reunión». | Reconocer acción y objeto `activity`; no confundir con redactar una agenda. |
-| 4 | `guidance.next_steps` | «¿Qué me recomiendas para avanzar?». | Reconocer orientación y objeto correcto, no ejecución de la recomendación. |
-| 5 | `query.record_list` | Pedir la lista de oportunidades. | Reconocer consulta de colección y objeto correcto. |
-| 6 | `action.create_record` | Pedir una oportunidad nueva. | Reconocer creación y objeto correcto aunque después la política la deshabilite. |
-| 7 | `content.email_draft` | Pedir un ejemplo de correo sin enviarlo. | Reconocer contenido y objeto correcto, no envío ni creación de actividad. |
-| 8 | `compound` | Preguntar etapa y además pedir un correo para solicitar reunión, sin envío. | Obtener dos componentes en orden: `query.field_value` y `content.email_draft`. |
-| 9 | `report_destination` | Asociar el reporte del cliente a la oportunidad sintética autorizada. | Preparar el complemento para la pregunta de motivación `9201`, sin operaciones CRM. |
-
-Estos controles verifican interpretación y asociación. Las garantías de permisos,
-confirmaciones, persistencia y límites también tienen pruebas deterministas y de
-navegador; el 9/9 no significa que se hayan ejecutado escrituras reales.
-
-### Los siete recorridos completos con proveedor real
-
-Cada escenario usa B3 real y el adaptador con B6/B9/B10 y las ramas aplicables,
-snapshot sintético y políticas controladas. No todos recorren todas las etapas:
-una operación deshabilitada debe detenerse antes de planificarla. Todos comprueban
-una única interpretación `customer_account_turn_contract` y que no se invoque el
-antiguo clasificador `customer_account_seller_report`.
-
-| # | Recorrido | Mensaje sintético | Resultado comprobado |
-| --- | --- | --- | --- |
-| 1 | Reporte del cliente | «El cliente me dijo que su motivación en Renovación Alfa es que sospechan que envían datos privados por correo». | Categoría `report.client_statement`, estado `completed`, complemento para la pregunta `9201` y ninguna operación. |
-| 2 | Consulta de etapa | «¿En qué etapa está la oportunidad Renovación Alfa?». | Categoría `query.field_value`, estado `completed`, sin operaciones. |
-| 3 | Orientación | «¿Qué me recomiendas para avanzar en Renovación Alfa?». | Categoría `guidance.next_steps`, estado `completed`, sin crear operaciones implícitas. |
-| 4 | Lista de oportunidades | «Dame una lista de las oportunidades de esta cuenta». | Categoría `query.record_list`, estado `completed`, sin operaciones. |
-| 5 | Borrador de correo | «Dame un ejemplo de correo para pedir reunión sobre Renovación Alfa; no lo envíes». | Categoría `content.email_draft`, estado `completed`, sin envío ni operaciones. |
-| 6 | Propuesta de reunión | «Quiero programar una reunión sobre Renovación Alfa». | Categoría `action.schedule_activity`, estado `completed`, propuesta `activity` con `scheduledAt` vacío; no reunión guardada. |
-| 7 | Creación no habilitada | «Quiero crear una oportunidad nueva llamada Proyecto Gamma». | Categoría `action.create_record`, estado `disabled` por la política de la prueba y ninguna operación. |
-
-### Resultados, umbrales y reproducción
-
-La ejecución de referencia con `gpt-4.1-mini` obtuvo:
-
-| Evaluación | Resultado observado | Umbral exigido |
-| --- | --- | --- |
-| Categoría y objeto, 44 casos | 43/44 (97,7%) | Al menos 95% |
-| Movimiento, 13 casos | 12/13 (92,3%) | Al menos 90% |
-| Controles críticos | 9/9 | 100% |
-| Recorridos completos sintéticos | 7/7 | 100% |
-
-Quedaron dos discrepancias: en una consulta de cotización el objeto fue
-`opportunity` en lugar de `quotation`, aunque conserva el lector autorizado de
-cotizaciones; el cambio de foco fue `new_request` en lugar de `change_focus`,
-ambos sin reutilizar el reporte pendiente. Estos resultados no son garantía de
-interpretación perfecta ni certificación sobre datos reales.
-
-Fuentes de los casos y las comprobaciones:
-
-- [Corpus de las 44 categorías](../apps/api/test/fixtures/customer-turn-cases.js).
-- [Evaluador de catálogo, movimientos y controles críticos](../apps/api/scripts/evaluateCustomerTurnContract.js).
-- [Pruebas de integración y siete recorridos reales opt-in](../apps/api/test/customer-turn-pipeline.test.js).
-- [Ejecutor de evaluación del pipeline](../apps/api/scripts/evaluateCustomerTurnPipeline.js).
-- [Pruebas del contrato y continuidad](../apps/api/test/customer-turn-contract.test.js).
-- [Pruebas de activación por entorno](../apps/api/test/customer-turn-config.test.js).
-
-Desde la raíz del repositorio, las evaluaciones reales se reproducen con:
-
-```bash
-npm run test:customer-chat:contract:live --workspace=apps/api -- --output /ruta/contrato.json
-npm run test:customer-chat:pipeline:live --workspace=apps/api -- --output /ruta/pipeline.json
-```
-
-Son llamadas **opt-in con costo**, con datos exclusivamente sintéticos y sin
-escrituras CRM reales. No se vuelven a ejecutar por actualizar este documento.
+Las 44 categorías y los 13 movimientos se detallan dentro de B3. La evaluación
+determinista tiene su propia [guía sintética](./chat-cliente-existente-evaluacion-sintetica.md);
+los controles y recorridos opt-in con proveedor real se describen en la [guía
+de evaluación live](./evaluacion-live-chat-cliente-existente.md).
 
 ## Conceptos principales
 
@@ -297,50 +108,188 @@ Los bloques son responsabilidades del flujo, no necesariamente módulos independ
 
 **Hace (por canal):**
 
-:::details Coach · `agent-gateway.js`
+El diagrama muestra el flujo compartido de B3 y sus intercambios con B2, B4,
+B5–B10 y B11; las subsecciones siguientes detallan el comportamiento de cada
+canal.
 
-El gateway `agent-gateway.js` implementa B3 y coordina el turno desde el job `pending` hasta su resultado final. `b3-preclassifier.js` es solo un componente interno de ese servicio; no es el bloque B3 completo.
+![Diagrama de B3: preparación por canal, delegación a B4 y B5, y persistencia por B11](./arquitectura-chat-conversacional-b3.svg)
 
-**Decisión y autorización:** construye una instantánea de permisos del usuario. Primero `b3-preclassifier.js` analiza el texto con patrones fijos y devuelve un bucket/señales generales; después, `semantic-intent-classifier.js` llama a la IA con la pregunta, el historial y si hay entidades seleccionadas. Se ejecutan secuencialmente, no en paralelo: la IA no recibe el resultado del preclasificador (su bucket, señales o confianza). Cuando ambos resultados están disponibles, `resolve-final-intent.js` comprueba permisos para la intención semántica; si no está permitida, devuelve aclaración sin herramientas. También detecta un conflicto fuerte entre el bucket `coaching` del preclasificador y una intención de operación de la IA, y pide aclaración si la confianza semántica es menor que `0.7`. En los demás casos normalmente conserva la intención semántica, la mapea a `interactionMode` y `policyProcess`, y deriva las herramientas permitidas. El resultado del preclasificador es una señal de contraste; no tiene el mismo peso que la intención semántica ni autoriza acciones. B4/B5 reciben la decisión final y, si requiere aclaración, responden sin ejecutar lecturas.
+**Cliente existente · 1. Contexto y fuentes**
 
-**Intenciones permitidas al clasificador semántico:** esta es una lista cerrada distinta del catálogo editable de B6. La respuesta debe usar uno de estos códigos y tener confianza de al menos `0.68`; si no, el clasificador solicita aclaración.
+Este paso prepara la evidencia que Cliente existente podrá consultar durante
+el turno. B3 valida la cuenta y las entidades seleccionadas, aplica permisos y
+alcance, y construye un snapshot autorizado. El snapshot es una proyección
+temporal para este turno, no una copia completa del CRM. B3 determina y ejecuta
+las lecturas base; el clasificador opcional no elige cada fuente ni amplía el
+alcance autorizado.
 
-- `seller_coaching`: orientación para priorizar y mejorar el seguimiento del vendedor. El resolver asigna `coaching` / `seller_coaching`.
-- `account_performance`: análisis del desempeño, riesgos u oportunidades de mejora. Se enruta a `coaching` / `seller_coaching`.
-- `account_query`: consulta puntual del contexto o resumen de una cuenta. Se enruta a `brief_context` / `brief_context`.
-- `opportunity_query`: consulta puntual de oportunidades. Se enruta a `brief_context` / `brief_context`.
-- `create_opportunity`: solicitud de proponer la creación de una oportunidad por el flujo controlado. Se enruta a `operation` / `operation` y requiere permisos y confirmación.
-- `update_opportunity`: solicitud de proponer la actualización de una oportunidad existente. Se enruta a `operation` / `operation` y requiere permisos y confirmación.
-- `general_query`: consulta general que no encaja en las categorías específicas. Se enruta a `coaching` / `default`.
-- `clarify_needed`: solicitud ambigua, confianza insuficiente o clasificación inválida. Se enruta a `clarification` / `default` y no habilita herramientas.
+**1. Cargar las fuentes CRM base**
 
-  **Señales que busca el preclasificador:** analiza solo el texto del mensaje (no usa el parámetro de contexto), lo normaliza y prueba estos grupos en orden; el primer grupo que coincide determina el bucket:
-  - **Operación** (`operation`, confianza 0.82): `actualiza/actualizar`, `agendar`, `crear`, `cambiar`, `modificar`, `registra/registrar`, `vincula/vincular`, `envía/enviar`, `confirma/confirmar`, `asocia/asociar`.
-  - **Exploración detallada** (`deep_exploration`, 0.78): “historial completo”, “detalle completo”, “explora a fondo”, “resumen completo”, “todos los”, “todo el detalle”, “investiga a fondo”, “lista completa”.
-  - **Coaching/análisis** (`coaching`, 0.85): señales como `performance`, `mejorar`, `oportunidad`, `riesgo`, recomendaciones o priorización, y referencias a una cuenta grande.
-  - **Consulta puntual de cuenta** (`brief_context`, 0.74): `cuenta/cuentas`, “resumen de la cuenta”, “qué cuenta es” o “datos de la cuenta”.
-  - **Sin coincidencia:** devuelve `unknown` y marca que conviene aclarar; un mensaje vacío también devuelve `unknown`, con confianza menor.
+Estas lecturas no son opciones del clasificador: B3 las carga cuando el contexto
+las requiere y el usuario tiene el permiso correspondiente. Por tanto, “no
+opcional” no significa que se lean sin comprobar contexto o permisos.
 
-  **Límite de los patrones actuales:** el texto se normaliza quitando tildes, pero algunas expresiones configuradas conservan caracteres acentuados; además, fragmentos como `prioriz` o `recomend` están limitados por frontera de palabra y no detectan necesariamente sus formas conjugadas. Por eso estas señales son aproximadas y pueden omitir paráfrasis; la intención semántica con IA es la que interpreta la pregunta completa.
+| Fuente | Datos incluidos | Límite estándar |
+| --- | --- | --- |
+| Cuenta y entidades seleccionadas | Datos de la cuenta; oportunidad o contacto si se seleccionaron. | Según las entidades seleccionadas. |
+| `contacts` | Contactos activos de la cuenta. | 50 |
+| `opportunities_active` | Oportunidades activas de la cuenta. | 50 |
+| `opportunities_inactive` | Oportunidades inactivas de la cuenta. | 50 |
+| `interactions` | Interacciones de la cuenta y sus oportunidades. | 30 |
+| `renewals` | Renovaciones asociadas a las oportunidades de la cuenta. | 50 |
+| `quotation_products` | Productos de cotizaciones asociadas a las oportunidades. | 200 |
+| Contexto comercial de oportunidades | Preguntas y respuestas de etapa, acciones, debilidades, evaluaciones de criterios y playbook activo. | Para las oportunidades incluidas en el snapshot. |
 
-**Mejora propuesta para Administración del preclasificador de Coach (no implementada):** añadir una sección independiente para mantener las señales deterministas de B3 por categoría, con frases de ejemplo y una vista de prueba que muestre el bucket resultante antes de guardar. Los cambios deberían quedar validados y auditados; conviene administrar términos/frases controlados, no expresiones regulares libres. Esta configuración ajustaría solo la preclasificación de Coach: no modificaría los ejemplos del catálogo semántico usado por el planificador ni añadiría operaciones CRM. El clasificador semántico seguiría interpretando la intención en lenguaje natural y el resolver seguiría siendo responsable de permisos y confirmaciones.
+Los permisos por dominio y el alcance de la cuenta se aplican a cada lectura.
+Los límites son máximos estándar, no garantías de que haya esa cantidad de
+registros. Si una lectura se trunca, B3 conserva esa señal para esa fuente; no
+implica que las demás fuentes estén incompletas.
 
-:::details Cliente existente · contrato v1 en `turn-contract.js`
+**2. Ampliar el snapshot cuando la solicitud lo requiere**
 
-**Decisión única:** `service.js` selecciona la ruta mediante la configuración y
-llama a `interpretCustomerTurn`. La interpretación recibe mensaje, historial,
-contexto revalidado, material aportado y pistas de nombres/tipos de entidades
-autorizadas; no permite que el modelo seleccione IDs CRM. Las instrucciones
-administrables de B3 se conservan como guía subordinada al catálogo y al esquema
-del servidor, no como sustituto del contrato.
+Si el vendedor pregunta por un periodo, B3 puede cargar actividades de
+oportunidad con permisos `oportunidades` y `desarrollo_comercial`, y actividades
+del calendario comercial con `oportunidades` y `calendario_comercial`. Estas
+lecturas dependen del periodo solicitado y no forman parte de la carga estándar
+de cada turno.
 
-**Salida validada:** versión, confianza, resolución, pregunta aclaratoria,
-movimiento y hasta cuatro componentes. Cada componente conserva categoría,
-texto, objeto, tema, alcance, referencia, atribución, certeza, dependencias y
-`continuationOf`. Esta última referencia apunta a un componente anterior, no a un
-registro CRM. Los IDs de componente son únicos y las dependencias se validan en
-orden acíclico. Los controles conversacionales pueden no tener componentes.
-La marca de acción se deriva de la categoría en el servidor; no autoriza ejecutar.
+Antes de llamar al clasificador, B3 filtra los dominios que puede elegir según
+la pregunta actual y los mensajes recientes del usuario. En particular,
+`provider_catalog` solo se ofrece cuando el contexto señala productos,
+proveedores, catálogo, precios o venta cruzada; una consulta general de
+oportunidades no habilita esa fuente. `contact_history` se ofrece según el
+permiso y también puede añadirse por una intención previa de historial.
+
+El clasificador recibe la pregunta, hasta cuatro mensajes recientes, las
+intenciones previas y señales de si hay una cuenta, oportunidad o contacto
+seleccionado. Solo puede elegir entre los dominios que B3 ya consideró pertinentes
+y autorizados para el usuario:
+
+| Dominio | Permiso | Uso |
+| --- | --- | --- |
+| `contact_history` | `contactos` | Amplía contactos e interacciones para incluir contactos inactivos y superar los límites estándar de historial. |
+| `provider_catalog` | `oportunidades` | Carga productos y proveedores activos para consultas de catálogo, precios o venta cruzada. |
+
+Si el clasificador falla o devuelve confianza baja, no añade dominios por su
+cuenta; `contact_history` puede seguir incorporándose por una intención previa
+autorizada. La consulta de `provider_catalog` es global y está limitada a 1.000
+elementos; si se trunca, el aviso de resultados parciales se refiere al catálogo,
+no demuestra que la lectura de oportunidades esté incompleta.
+
+**3. Mantener aparte la investigación pública y el material aportado**
+
+La investigación pública no pertenece al selector de fuentes opcionales:
+Cliente existente solo la incorpora si la solicitud incluye explícitamente
+`includePublicResearch`. El material aportado por el usuario puede servir como
+contexto para interpretar el turno, pero no se convierte por ello en evidencia
+verificada del CRM.
+
+
+**Cliente existente · 2. Interpretación estructurada del turno**
+
+**Qué decide B3:** interpreta una sola vez el turno actual y entrega una
+descripción estructurada de la solicitud. B3 no decide si una lectura está
+autorizada, no elige IDs CRM y no ejecuta acciones; permisos, alcance y
+disponibilidad se validan en los pasos posteriores.
+
+**Qué información utiliza:** `service.js` selecciona esta ruta según la
+configuración y llama a `interpretCustomerTurn`. La interpretación considera el
+mensaje actual, el historial, el contexto conversacional ya revalidado, el
+material aportado y pistas de nombres/tipos tomadas de entidades autorizadas del
+snapshot. El modelo recibe nombres y tipos, no puede seleccionar IDs CRM. Las
+instrucciones administrables de B3 solo orientan la interpretación: están
+subordinadas al catálogo y al esquema del servidor y no los reemplazan.
+
+**Qué produce:** una salida validada con versión, confianza, resolución y
+pregunta aclaratoria cuando hace falta. Incluye un movimiento conversacional y
+hasta cuatro componentes. Cada componente describe su categoría, texto, objeto,
+tema, alcance, referencia, atribución, certeza, dependencias y
+`continuationOf`. Esta última referencia identifica un componente previo, no un
+registro CRM. Los IDs de componente son únicos y las dependencias forman un
+orden acíclico. Algunos movimientos de control pueden no incluir componentes.
+El servidor deriva la marca `explicitAction` de la categoría; esa marca no
+autoriza ni ejecuta una operación.
+
+**Categorías de propósito (44):** indican qué busca conseguir el usuario. El
+catálogo de Cliente existente agrupa consultas (`query`), orientaciones
+(`guidance`), contenido (`content`), reportes (`report`) y acciones (`action`).
+Son 11 consultas, 8 orientaciones, 9 categorías de contenido, 6 reportes y 10
+acciones. Reconocer una categoría no significa que exista una herramienta para
+ejecutarla, que el usuario tenga permiso ni que se vaya a escribir en el CRM. El
+[catálogo completo de capacidades](./chat-cliente-existente-alcance.md#catálogo-completo-y-capacidades)
+indica qué está disponible, limitado o no implementado.
+
+| # | Categoría | Significado y capacidad actual |
+| --- | --- | --- |
+| 1 | `query.account_summary` | Consultar el resumen autorizado de la cuenta. |
+| 2 | `query.record_detail` | Consultar detalle de entidades expuestas por las herramientas actuales; parcial. |
+| 3 | `query.field_value` | Consultar un campo disponible, como monto o etapa; parcial. |
+| 4 | `query.record_list` | Listar registros autorizados, con los límites vigentes; parcial. |
+| 5 | `query.record_search` | Buscar registros mediante filtros y entidades disponibles; parcial. |
+| 6 | `query.history` | Consultar interacciones e historial expuestos; parcial. |
+| 7 | `query.pending_items` | Consultar actividades y pendientes autorizados. |
+| 8 | `query.relationships` | Consultar relaciones CRM expuestas, no inferidas; parcial. |
+| 9 | `query.document_content` | Consultar cotizaciones autorizadas o texto extraído de un adjunto aportado; no hay lector genérico de documentos CRM. |
+| 10 | `query.stage_readiness` | Consultar requisitos y preparación de etapa. |
+| 11 | `query.system_help` | Solicitar ayuda del sistema; no disponible como herramienta de documentación. |
+| 12 | `guidance.situation_assessment` | Evaluar la situación con evidencia disponible. |
+| 13 | `guidance.risks_and_gaps` | Identificar riesgos y brechas, separados de hechos. |
+| 14 | `guidance.next_steps` | Recomendar siguientes pasos, sin crear actividades implícitas. |
+| 15 | `guidance.prioritization` | Priorizar oportunidades autorizadas; parcial. |
+| 16 | `guidance.comparison` | Comparar oportunidades con datos disponibles y comparables; parcial. |
+| 17 | `guidance.trend_analysis` | Analizar tendencias; no disponible por falta de una serie histórica comparable de ingresos. |
+| 18 | `guidance.scenario_analysis` | Analizar escenarios como hipótesis explícitas, no predicciones confirmadas; parcial. |
+| 19 | `guidance.strategy` | Proponer estrategia desde el contexto autorizado. |
+| 20 | `content.email_draft` | Redactar un correo, nunca enviarlo. |
+| 21 | `content.message_draft` | Redactar un mensaje breve, sin envío. |
+| 22 | `content.meeting_preparation` | Preparar agenda o guion, sin programar una reunión. |
+| 23 | `content.discovery_questions` | Preparar preguntas de descubrimiento. |
+| 24 | `content.summary` | Resumir material disponible. |
+| 25 | `content.explanation` | Explicar contenido o términos comerciales, no abrir una consulta externa libre. |
+| 26 | `content.rewrite` | Reescribir material aportado. |
+| 27 | `content.translation` | Traducir material aportado. |
+| 28 | `content.value_argument` | Elaborar un argumento de valor sin métricas inventadas. |
+| 29 | `report.client_statement` | Conservar información atribuida al cliente, incluidas sus sospechas. |
+| 30 | `report.seller_observation` | Conservar una observación atribuida al vendedor. |
+| 31 | `report.interaction_outcome` | Recibir un resultado reportado, sin registrar automáticamente una actividad. |
+| 32 | `report.commitment` | Recibir un compromiso informado, sin programar automáticamente una reunión. |
+| 33 | `report.document_evidence` | Recibir texto documental aportado, sin certificar su autenticidad; parcial. |
+| 34 | `report.hypothesis` | Conservar una hipótesis sin incorporarla como hecho en respuestas de etapa. |
+| 35 | `action.create_record` | Proponer contacto u oportunidad si su tipo está habilitado; no crear cuentas nuevas; parcial. |
+| 36 | `action.update_fields` | Proponer cambios en campos permitidos de cuenta/contacto/oportunidad; parcial. |
+| 37 | `action.update_stage_answer` | Proponer una respuesta de etapa para revisión y confirmación. |
+| 38 | `action.link_records` | Proponer vincular contacto a oportunidad con habilitación explícita; parcial. |
+| 39 | `action.schedule_activity` | Preparar un borrador de actividad futura o ya completada; la fecha/hora faltante queda pendiente. |
+| 40 | `action.reschedule_activity` | Solicitar reprogramación; no disponible como edición de actividad existente. |
+| 41 | `action.record_outcome` | Proponer resultado de llamada de un lead autorizado; parcial. |
+| 42 | `action.change_status` | Solicitar cambio de estado; no disponible en este contrato, corresponde al módulo respectivo. |
+| 43 | `action.remove_record` | Solicitar eliminación o cancelación; no disponible desde este flujo. |
+| 44 | `action.send_communication` | Solicitar envío de comunicaciones; no disponible, no se sustituye silenciosamente por redacción. |
+
+**Movimientos conversacionales (13):** describen qué hace el mensaje actual
+dentro de la conversación: iniciar una solicitud, responder una aclaración,
+cambiar de foco, detenerse, entre otros. No son propósitos. Por ejemplo,
+`answer_clarification` describe el movimiento de la respuesta, mientras que la
+categoría del componente conserva lo que el usuario intenta conseguir. La
+interpretación depende del historial y de los pendientes; no es una regla de
+coincidencia textual. Reconocer un movimiento tampoco habilita capacidades ni
+ejecuta operaciones.
+
+| # | Movimiento | Ejemplo | Comportamiento esperado |
+| --- | --- | --- | --- |
+| 1 | `new_request` | «Dame una lista de las oportunidades». | Iniciar una solicitud nueva sin reutilizar indebidamente el reporte anterior. |
+| 2 | `answer_clarification` | «Renovación Alfa», después de preguntar para qué oportunidad es el reporte. | Completar el contexto del componente pendiente conservando su texto original. |
+| 3 | `select_candidate` | «La primera pregunta», tras ofrecer Motivación y Presupuesto. | Seleccionar el candidato autorizado, sin reemplazar el reporte por esa frase. |
+| 4 | `accept_proposal` | «Sí, prepara el borrador de la reunión». | Aceptar la preparación de la propuesta, no ejecutar una escritura. |
+| 5 | `confirm_execution` | «Confirmo que se ejecute el cambio propuesto». | Remitir al control de confirmación existente; el mensaje no guarda cambios por sí mismo. |
+| 6 | `modify_draft` | «Haz más breve el borrador del correo». | Modificar el borrador dentro de su alcance, sin enviarlo. |
+| 7 | `correct` | «Corrijo: no es presupuesto, es falta de responsable». | Tratarlo como corrección del contexto o contenido pendiente. |
+| 8 | `reject` | «No quiero esa propuesta». | Rechazar la propuesta conversacional, sin eliminar registros CRM. |
+| 9 | `discard_draft` | «Descarta el borrador de la reunión». | Descartar el borrador mediante su flujo controlado, sin crear la actividad. |
+| 10 | `continue` | «Continúa con el análisis». | Retomar el trabajo validado; pedir aclaración si no existe un pendiente inequívoco. |
+| 11 | `change_focus` | «Dejemos ese reporte; ahora quiero ver contactos». | Cambiar el foco sin arrastrar el reporte anterior a la nueva solicitud. |
+| 12 | `request_rationale` | «¿Por qué recomiendas esa acción?». | Solicitar una justificación sin convertirla en aceptación o ejecución. |
+| 13 | `stop` | «Detente, no sigas con esta solicitud». | Detener la solicitud conversacional, sin cancelar registros CRM. |
 
 **Continuidad:** la memoria `turnMemory` se valida contra la cuenta y el contexto
 autorizado antes de reutilizar pendientes. Una respuesta a una aclaración puede
@@ -359,12 +308,36 @@ interpretación y restricciones) y `turn-contract-runtime.js` (continuidad,
 coordinación y verificadores de reporte/contenido), conectados por el servicio y
 `customer-chat-adapter.js`.
 
-:::
+**Activación:** `CUSTOMER_TURN_CONTRACT_MODE=on` es el valor predeterminado del
+código y de las plantillas local/nube en todos los entornos. `off` conserva la
+ruta anterior; `pilot` limita la nueva ruta a
+`CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`. Las variables explícitas prevalecen
+sobre el valor predeterminado. Un servidor remoto necesita recibir esta versión,
+ajustar cualquier override y reiniciar su API; cambiar el repositorio no despliega
+ni reinicia otros entornos. El rollback es `off` más reinicio, sin migraciones ni
+cambios de permisos.
 
-:::details Cliente existente · ruta anterior, solo con `off` o fuera del piloto
 
+**Cliente existente · 3. Ejecución del job**
+
+El worker del servicio comercial carga el job y valida que la sesión de chat
+corresponda al usuario y a la cuenta —y a la oportunidad/contacto seleccionados,
+si existen—. Reconstruye el snapshot autorizado de esa cuenta y valida el contexto
+conversacional, incluida cualquier operación pendiente y la memoria del turno.
+Por defecto, B3 interpreta el turno con la interpretación estructurada y entrega
+sus componentes como autoridad a B4/B5; con `off` conserva la clasificación
+anterior. Una aclaración no habilita una operación. Si la pregunta solicita
+investigación pública, esta se incorpora al mismo job; **Agentes especializados**
+y el endpoint dedicado de investigación externa usan jobs separados. El servicio
+guarda la respuesta, el historial/contexto actualizado, las trazas y el estado
+final del job.
+
+
+
+**Cliente existente · 4. Compatibilidad: ruta anterior (`off`)**
 **Decisión de intención:** después de validar la cuenta, reconstruir el snapshot y validar el contexto conversacional (incluida una actividad pendiente), B3 ejecuta tres etapas. La clasificación semántica corre en paralelo con la preparación de agentes; no cambia el alcance autorizado del snapshot.
 
+**Decisión de intención:** después de validar la cuenta, reconstruir el snapshot y validar el contexto conversacional (incluida una actividad pendiente), B3 ejecuta tres etapas. La clasificación semántica corre en paralelo con la preparación de agentes; no cambia el alcance autorizado del snapshot.
 1. **Preclasificador determinista:** normaliza el mensaje actual (minúsculas, sin tildes y puntuación separada) y emite una señal gruesa. No usa historial ni IDs. Los buckets y confianza son:
   - `content_draft` (`0.98`): combina verbos de redacción/preparación (`escribe`, `redacta`, `prepara`, `modelo de`, `borrador de`, entre otros) con un entregable como `correo`, `mensaje`, `documento`, `resumen`, `texto`, `guion` o `plantilla`. Incluye `contentKind=email` para correo.
   - `mixed_request` (`0.95`): detecta una petición de contenido y, además, una operación explícita unida por `y`, `también` o `además` (por ejemplo, “escribe un correo y agenda la reunión”).
@@ -406,23 +379,45 @@ coordinación y verificadores de reporte/contenido), conectados por el servicio 
 
   La salida registra el bucket, la intención semántica y el resolver que decidió. B4/B5 reciben esa intención como autoritativa: B6 no puede cambiarla. La decisión de B3 no otorga permisos, no autoriza herramientas y no escribe en CRM; B5 conserva las validaciones finales de operación, contexto, entidades y alcance.
 
-**Diferencia con Coach en esta ruta anterior:** ambos canales aplican preclasificador → clasificador semántico → resolver en B3, pero mantienen buckets, catálogo, contexto y reglas de conflicto propios. Coach mapea su intención a modos y procesos (`interactionMode`/`policyProcess`) y deriva herramientas; Cliente existente resuelve el objetivo de la conversación y entrega la intención a B5 para que B6 planifique dentro de ella. La ruta predeterminada de Cliente existente usa en cambio el contrato v1 descrito arriba.
+**Diferencia con Coach en esta ruta anterior:** ambos canales aplican preclasificador → clasificador semántico → resolver en B3, pero mantienen buckets, catálogo, contexto y reglas de conflicto propios. Coach mapea su intención a modos y procesos (`interactionMode`/`policyProcess`) y deriva herramientas; Cliente existente resuelve el objetivo de la conversación y entrega la intención a B5 para que B6 planifique dentro de ella. La ruta predeterminada de Cliente existente usa en cambio la interpretación estructurada del turno descrita arriba.
 
-:::
+
+
+**Coach · `agent-gateway.js`**
+
+El gateway `agent-gateway.js` implementa B3 y coordina el turno desde el job `pending` hasta su resultado final. `b3-preclassifier.js` es solo un componente interno de ese servicio; no es el bloque B3 completo.
+
+**Decisión y autorización:** construye una instantánea de permisos del usuario. Primero `b3-preclassifier.js` analiza el texto con patrones fijos y devuelve un bucket/señales generales; después, `semantic-intent-classifier.js` llama a la IA con la pregunta, el historial y si hay entidades seleccionadas. Se ejecutan secuencialmente, no en paralelo: la IA no recibe el resultado del preclasificador (su bucket, señales o confianza). Cuando ambos resultados están disponibles, `resolve-final-intent.js` comprueba permisos para la intención semántica; si no está permitida, devuelve aclaración sin herramientas. También detecta un conflicto fuerte entre el bucket `coaching` del preclasificador y una intención de operación de la IA, y pide aclaración si la confianza semántica es menor que `0.7`. En los demás casos normalmente conserva la intención semántica, la mapea a `interactionMode` y `policyProcess`, y deriva las herramientas permitidas. El resultado del preclasificador es una señal de contraste; no tiene el mismo peso que la intención semántica ni autoriza acciones. B4/B5 reciben la decisión final y, si requiere aclaración, responden sin ejecutar lecturas.
+
+**Intenciones permitidas al clasificador semántico:** esta es una lista cerrada distinta del catálogo editable de B6. La respuesta debe usar uno de estos códigos y tener confianza de al menos `0.68`; si no, el clasificador solicita aclaración.
+
+- `seller_coaching`: orientación para priorizar y mejorar el seguimiento del vendedor. El resolver asigna `coaching` / `seller_coaching`.
+- `account_performance`: análisis del desempeño, riesgos u oportunidades de mejora. Se enruta a `coaching` / `seller_coaching`.
+- `account_query`: consulta puntual del contexto o resumen de una cuenta. Se enruta a `brief_context` / `brief_context`.
+- `opportunity_query`: consulta puntual de oportunidades. Se enruta a `brief_context` / `brief_context`.
+- `create_opportunity`: solicitud de proponer la creación de una oportunidad por el flujo controlado. Se enruta a `operation` / `operation` y requiere permisos y confirmación.
+- `update_opportunity`: solicitud de proponer la actualización de una oportunidad existente. Se enruta a `operation` / `operation` y requiere permisos y confirmación.
+- `general_query`: consulta general que no encaja en las categorías específicas. Se enruta a `coaching` / `default`.
+- `clarify_needed`: solicitud ambigua, confianza insuficiente o clasificación inválida. Se enruta a `clarification` / `default` y no habilita herramientas.
+
+  **Señales que busca el preclasificador:** analiza solo el texto del mensaje (no usa el parámetro de contexto), lo normaliza y prueba estos grupos en orden; el primer grupo que coincide determina el bucket:
+  - **Operación** (`operation`, confianza 0.82): `actualiza/actualizar`, `agendar`, `crear`, `cambiar`, `modificar`, `registra/registrar`, `vincula/vincular`, `envía/enviar`, `confirma/confirmar`, `asocia/asociar`.
+  - **Exploración detallada** (`deep_exploration`, 0.78): “historial completo”, “detalle completo”, “explora a fondo”, “resumen completo”, “todos los”, “todo el detalle”, “investiga a fondo”, “lista completa”.
+  - **Coaching/análisis** (`coaching`, 0.85): señales como `performance`, `mejorar`, `oportunidad`, `riesgo`, recomendaciones o priorización, y referencias a una cuenta grande.
+  - **Consulta puntual de cuenta** (`brief_context`, 0.74): `cuenta/cuentas`, “resumen de la cuenta”, “qué cuenta es” o “datos de la cuenta”.
+  - **Sin coincidencia:** devuelve `unknown` y marca que conviene aclarar; un mensaje vacío también devuelve `unknown`, con confianza menor.
+
+  **Límite de los patrones actuales:** el texto se normaliza quitando tildes, pero algunas expresiones configuradas conservan caracteres acentuados; además, fragmentos como `prioriz` o `recomend` están limitados por frontera de palabra y no detectan necesariamente sus formas conjugadas. Por eso estas señales son aproximadas y pueden omitir paráfrasis; la intención semántica con IA es la que interpreta la pregunta completa.
+
+**Mejora propuesta para Administración del preclasificador de Coach (no implementada):** añadir una sección independiente para mantener las señales deterministas de B3 por categoría, con frases de ejemplo y una vista de prueba que muestre el bucket resultante antes de guardar. Los cambios deberían quedar validados y auditados; conviene administrar términos/frases controlados, no expresiones regulares libres. Esta configuración ajustaría solo la preclasificación de Coach: no modificaría los ejemplos del catálogo semántico usado por el planificador ni añadiría operaciones CRM. El clasificador semántico seguiría interpretando la intención en lenguaje natural y el resolver seguiría siendo responsable de permisos y confirmaciones.
+
+
 
 **Preparación y delegación:** marca el job como `running` y, en Coach, carga desde Administración las **Políticas del canal y contexto** correspondientes a `policyProcess` (usa las reglas predeterminadas del canal cuando no hay una configuración específica). Estas políticas delimitan el alcance de datos y las operaciones que se pueden proponer. B3 construye B4 con la política, el usuario, los permisos, el contexto y las herramientas resultantes; la política no sustituye la comprobación independiente de permisos del usuario. Después entrega pregunta, historial, contexto y `jobId` al adaptador, que invoca B5.
 
 **Cierre:** recibe respuesta, contexto activo, lecturas y trazas; registra la decisión y la calidad del turno; persiste las operaciones propuestas, limpia la pregunta pendiente y añade los mensajes del vendedor y de Coach a la sesión. Finalmente guarda el resultado y la observabilidad en el job y lo marca `completed`. Si la ejecución falla, registra la traza de error y marca el job `failed` para que B2 pueda informar a B1.
 
-:::
-
-:::details Cliente existente · procesamiento del chat
-
-El worker del servicio comercial carga el job y valida que la sesión de chat corresponda al usuario y a la cuenta —y a la oportunidad/contacto seleccionados, si existen—. Reconstruye el snapshot autorizado de esa cuenta y valida el contexto conversacional, incluida cualquier operación pendiente y la memoria del contrato. Por defecto, B3 interpreta el turno con el contrato v1 y entrega sus componentes como autoridad a B4/B5; con `off` conserva la clasificación anterior. Una aclaración no habilita una operación. Si la pregunta solicita investigación pública, esa investigación se incorpora al mismo job de chat; **Agentes especializados** y el endpoint dedicado de investigación externa usan jobs separados. El servicio guarda la respuesta, el historial/contexto actualizado, las trazas y el estado final del job.
-
-:::
-
-- **Cuenta nueva:** el worker de prospección carga la sesión y su historial, ejecuta el adaptador de prospectos y guarda la respuesta en el historial de chat y en el job. La investigación externa es otro trabajo del servicio: su runner consulta fuentes públicas, filtra/deduplica evidencia y persiste hallazgos, contactos e hipótesis en la sesión junto con el estado de ese run. Ninguna de estas operaciones crea por sí misma una cuenta CRM; la conversión requiere la acción explícita posterior.
+**Cuenta nueva:** el worker de prospección carga la sesión y su historial, ejecuta el adaptador de prospectos y guarda la respuesta en el historial de chat y en el job. La investigación externa es otro trabajo del servicio: su runner consulta fuentes públicas, filtra/deduplica evidencia y persiste hallazgos, contactos e hipótesis en la sesión junto con el estado de ese run. Ninguna de estas operaciones crea por sí misma una cuenta CRM; la conversión requiere la acción explícita posterior.
 
 **Entrega y ramas:** B3 no responde directamente a B1; guarda estado y resultado para que B2 los entregue en una consulta posterior.
 
@@ -523,13 +518,13 @@ y se pide seleccionar uno. Los estados de salida distinguen `completed`,
 
 **Hace por canal:**
 
-- **Coach:** interpreta la solicitud con el catálogo de intenciones y herramientas de Coach y propone una ruta (`intent`, `mode`, confianza) junto con lecturas (`toolName` y filtros como texto, etapa, estado o año). No devuelve IDs CRM: el servidor resuelve entidades y añade el contexto autorizado a las lecturas. Si el gateway ya determinó una intención/modo final, esa decisión es autoritativa; B6 solo puede proponer lecturas compatibles. Para `deep_exploration` no propone lecturas desde Coach porque corresponde derivar al espacio especializado.
+
 - **Cliente existente:** produce un plan compatible con la intención autoritativa de B3, no una respuesta para el vendedor ni una nueva clasificación de intención. Puede identificar dominios/intenciones consultados (`queries`), ruta, filtros, tipo y cardinalidad de la entidad objetivo, origen de la referencia, candidatos mediante claves opacas, herramientas propuestas y contexto faltante o ambiguo. Cuando la intención permite una operación, puede indicar `operationKind` y completar los campos de `activityDraft` pertinentes; no ejecuta ni confirma esa operación. No inventa datos ni IDs CRM. El servidor adjunta los candidatos autorizados y resuelve las claves a registros reales después de validar la propuesta.
 - **Cuenta nueva:** en el flujo actual no usa el plan estructurado de Cliente existente; B5 aplica el routing del canal y mantiene las herramientas restringidas a la sesión del prospecto.
 
 **Formato y calidad del plan:** las propuestas deben usar códigos del catálogo habilitado y filtros con tipos y valores permitidos. Una entidad se expresa como referencia/candidate key del conjunto autorizado, no como un ID inventado. Si hay varios objetivos plausibles, una referencia no resuelta, falta de contexto esencial o una solicitud fuera del alcance del canal, B6 debe marcar la ambigüedad o pedir aclaración, no escoger un registro a la fuerza ni ampliar la consulta.
 
-**Contrato v1 en Cliente existente:** B6 trabaja por componente y el servidor
+**Interpretación estructurada en Cliente existente:** B6 trabaja por componente y el servidor
 restringe el plan a su familia y tipo de operación. Puede añadir lecturas de apoyo
 autorizadas —por ejemplo, hechos de la oportunidad para redactar un correo—, pero
 no introducir `crm_operation` como lectura auxiliar ni convertir texto citado en
@@ -575,14 +570,12 @@ autorizados, no contra IDs elegidos por el modelo.
 
 **Recibe:** de B7 recibe el nombre de una herramienta permitida, sus argumentos/filtros ya acotados y el snapshot/contexto autorizado contra el que debe operar. Cada llamada corresponde a una lectura específica, por ejemplo buscar oportunidades con filtros o recuperar actividades de una oportunidad seleccionada.
 
-**Hace:**
 
 1. Comprueba que la herramienta solicitada exista para el canal y que no esté bloqueada por el alcance o las reglas aplicables. Rechaza una herramienta no soportada o no permitida.
 2. Ejecuta la función de lectura correspondiente sobre los datos autorizados que recibió: snapshot CRM de Coach/Cliente existente o snapshot de la sesión de Cuenta nueva. Aplica los argumentos y filtros permitidos; no busca registros fuera de ese conjunto ni acepta instrucciones del modelo como autorización.
 3. Devuelve el resultado asociado a la herramienta sin modificar CRM, historial, cuenta ni sesión. La ejecución es read-only; B8 no redacta la respuesta al usuario ni determina si la evidencia contesta suficientemente la pregunta.
 
 **Variación por canal:** en **Coach** y **Cliente existente**, las herramientas leen del snapshot CRM acotado por permisos, cuenta y contexto; en **Cuenta nueva**, las herramientas solo consultan los datos de la sesión de prospecto, como perfil, hallazgos, contactos o hipótesis. B8 no convierte un prospecto ni crea registros CRM.
-
 **Entrega y errores:** devuelve a B7 el nombre de la herramienta, el resultado y, cuando corresponda, error/código de error, timeout, truncamiento u otra métrica de calidad. Una lista vacía solo significa que una lectura terminó correctamente y no encontró coincidencias; si hubo error, timeout, truncamiento o la consulta se omitió por límites, esos estados se conservan y no se presentan como “sin resultados”.
 
 **Límites de seguridad:** el modelo no recibe credenciales SQL ni puede enviar SQL arbitrario. B8 solo ejecuta las herramientas conocidas del catálogo sobre el snapshot o servicio de lectura que le entrega el servidor; las operaciones de escritura y conversión pertenecen a otros flujos y requieren sus propias reglas/confirmaciones.
@@ -595,18 +588,16 @@ autorizados, no contra IDs elegidos por el modelo.
 
 **Verificación por familia en Cliente existente:** B9 recibe el propósito fijado
 por B3 y no vuelve a decidir si el mensaje era consulta, reporte o acción.
-
 | Familia | Responsabilidad de B9 |
 | --- | --- |
 | `query` | Verificar hechos y cobertura de lecturas CRM/públicas autorizadas; distinguir ausencia, error y límite. |
-| `guidance` | Verificar la base factual de la orientación. Una respuesta de etapa vacía es una brecha que puede recomendar resolver, no un requisito para poder orientar. |
 | `report` | Asociar el texto literal con un destino/pregunta de etapa autorizado, ya respondido o no. No exigir que la información nueva ya exista en CRM ni reclasificarla como solicitud de consejo. Conservar atribución y certeza; no incorporar hipótesis como hechos. |
 | `content` | Generar y auditar el contenido contra las fuentes disponibles. Una transformación de material aportado no necesita inventar evidencia CRM; tampoco puede presentar ese material como verificado en CRM. |
 | `action` | Mantener contrato operativo, permisos, vínculos autorizados, datos pendientes y confirmación existente. |
 
 El antiguo clasificador de reportes de B9 solo permanece en la ruta anterior.
-En el contrato v1, el matcher de reportes decide la asociación al destino, no el
-propósito. Si el complemento supera el límite del formulario, pide acortarlo en
+En la interpretación estructurada de Cliente existente, el matcher de reportes
+decide la asociación al destino, no el propósito. Si el complemento supera el límite del formulario, pide acortarlo en
 vez de truncar silenciosamente el reporte.
 
 El panel interpreta los estados según su verificador:
@@ -706,6 +697,24 @@ trazas de fallos de preparación y persistencia; no se reconstruyen turnos antig
 :::
 
 :::
+
+## Validación de Cliente existente
+
+Las pruebas no forman parte del flujo que ejecuta cada mensaje ni son bloques
+adicionales de B3. Hay dos evaluaciones separadas:
+
+- **Sintética y determinista:** usa fixtures y no llama a un proveedor de IA. Su
+  corpus, alcance y comando se describen en la
+  [guía de evaluación sintética](./chat-cliente-existente-evaluacion-sintetica.md).
+- **Live con proveedor real:** incluye los controles críticos y los recorridos
+  integrales de Cliente existente. Es opt-in, se ejecuta manualmente, puede
+  generar costo y usa snapshots/políticas sintéticos; no realiza escrituras CRM.
+  Los casos, comandos y resultados históricos están en la
+  [guía de evaluación live](./evaluacion-live-chat-cliente-existente.md).
+
+Las evaluaciones live no forman parte del CI configurado actualmente. Sus
+métricas documentadas son una referencia histórica y no deben interpretarse como
+medición del estado actual del código.
 
 :::details Ejemplo de recorrido con ramas
 

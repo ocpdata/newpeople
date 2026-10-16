@@ -88,6 +88,85 @@ describe("Customer turn contract", () => {
     await expect(interpretCustomerTurn({ question: "x", classifierPrompt: { instruction: "" }, classifyWithAI }))
       .rejects.toMatchObject({ code: "CUSTOMER_TURN_CONTRACT_INVALID" });
   });
+  it("routes a completed call for the selected opportunity to an activity, not a lead outcome", async () => {
+    const question = "Quiero registrar una llamada que tuve el viernes 9 de octubre a las 4 pm.";
+    const selectedOpportunity = snapshot.opportunities[0];
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("action.record_outcome", {
+        object: "activity",
+        text: question,
+        reference: "",
+        explicitAction: true,
+      }),
+    ]));
+
+    const interpreted = await interpretCustomerTurn({
+      question,
+      snapshot: { ...snapshot, selectedOpportunity },
+      classifierPrompt: { instruction: "" },
+      user: { id: 0 },
+      classifyWithAI,
+    });
+
+    const input = classifyWithAI.mock.calls[0][0];
+    expect(input.systemPrompt).toContain("llamada que tuve el viernes a las 4");
+    expect(input.systemPrompt).toMatch(/no un resultado\s+de llamada de lead/);
+    expect(input.context.selectedOpportunityName).toBe(selectedOpportunity.name);
+    expect(interpreted.components[0]).toMatchObject({
+      category: "action.schedule_activity",
+      object: "activity",
+      reference: selectedOpportunity.name,
+    });
+    expect(customerComponentCapability(interpreted.components[0])).toMatchObject({
+      available: true,
+      operationKind: "activity",
+    });
+    expect(customerComponentCapability(component("action.record_outcome", {
+      object: "lead",
+    })).operationKind).toBe("lead_call_outcome");
+  });
+  it("does not redirect a call outcome to an unselected opportunity", async () => {
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("action.record_outcome", { object: "activity" }),
+    ]));
+    const interpreted = await interpretCustomerTurn({
+      question: "Quiero registrar una llamada que tuve ayer.",
+      snapshot,
+      classifierPrompt: { instruction: "" },
+      user: { id: 0 },
+      classifyWithAI,
+    });
+
+    expect(interpreted.components[0]).toMatchObject({
+      category: "action.record_outcome",
+      object: "activity",
+    });
+    expect(customerComponentCapability(interpreted.components[0]).available).toBe(false);
+  });
+  it("keeps lead call outcomes on an explicitly named lead", async () => {
+    const question = "Registra en el lead de prueba el resultado de la llamada: no contestó.";
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("action.record_outcome", {
+        object: "lead",
+        text: question,
+        explicitAction: true,
+      }),
+    ]));
+    const interpreted = await interpretCustomerTurn({
+      question,
+      snapshot: { ...snapshot, selectedOpportunity: snapshot.opportunities[0] },
+      classifierPrompt: { instruction: "" },
+      user: { id: 0 },
+      classifyWithAI,
+    });
+
+    expect(interpreted.components[0]).toMatchObject({
+      category: "action.record_outcome",
+      object: "lead",
+    });
+    expect(customerComponentCapability(interpreted.components[0]).operationKind)
+      .toBe("lead_call_outcome");
+  });
   it("preserves a report through selection instead of replacing it with the clarification answer", () => {
     const memory = { contract: contract(), pendingComponentIds: ["c1"] };
     const next = resolveCustomerContinuation(contract([component("query.field_value", { text: "la primera", reference: "la primera" })], { movement: "select_candidate" }), memory);

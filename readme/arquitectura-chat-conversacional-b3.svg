@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1180" viewBox="0 0 1600 1180" role="img" aria-labelledby="title description">
+  <title id="title">Arquitectura de B3, servicio del canal</title>
+  <desc id="description">B2 despacha un job a B3. B3 valida usuario, sesión, permisos y alcance; prepara datos según el canal Cliente existente, Coach o Cuenta nueva; entrega contexto e interpretación a B4. B4 adapta el canal y B5 coordina planificación, lecturas, verificación y respuesta. El resultado vuelve a B3, que persiste con B11, y B2 lo entrega a B1.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#496579"/>
+    </marker>
+    <marker id="return-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#187b70"/>
+    </marker>
+    <marker id="loop-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0 L10 5 L0 10 z" fill="#ae7418"/>
+    </marker>
+    <style>
+      .canvas { fill: #f4f7f8; }
+      .title { fill: #173544; font: 700 32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #526b78; font: 400 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .zone { fill: #fff; stroke: #d5e0e4; stroke-width: 1.5; rx: 14; }
+      .b3-zone { fill: #eff7f8; stroke: #5f9bb0; stroke-width: 2; rx: 16; }
+      .zone-title { fill: #526b78; font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 1px; }
+      .node { stroke-width: 1.6; rx: 10; }
+      .node-title { fill: #173544; font: 700 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .node-copy { fill: #405b68; font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .node-small { fill: #526b78; font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .edge { fill: none; stroke: #496579; stroke-width: 2.2; marker-end: url(#arrow); }
+      .return { fill: none; stroke: #187b70; stroke-width: 2.5; marker-end: url(#return-arrow); }
+      .loop { fill: none; stroke: #ae7418; stroke-width: 2.2; stroke-dasharray: 7 5; marker-end: url(#loop-arrow); }
+      .edge-label { fill: #405b68; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label-bg { fill: #fff; stroke: #dce6e9; stroke-width: 1; rx: 5; }
+    </style>
+  </defs>
+
+  <rect class="canvas" width="1600" height="1180"/>
+  <text class="title" x="48" y="58">B3 · Servicio del canal</text>
+  <text class="subtitle" x="48" y="88">Valida el alcance, prepara contexto por canal, delega el procesamiento y persiste el resultado.</text>
+
+  <rect class="node" x="48" y="410" width="250" height="112" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="72" y="449">B2 · Rutas y jobs</text>
+  <text class="node-copy" x="72" y="478">
+    <tspan x="72" dy="0">Despacha el job a B3.</tspan>
+    <tspan x="72" dy="21">Entrega el resultado a B1.</tspan>
+  </text>
+
+  <rect class="b3-zone" x="330" y="120" width="900" height="790"/>
+  <text class="zone-title" x="358" y="153">B3 · SERVICIO DEL CANAL</text>
+
+  <rect class="node" x="370" y="177" width="820" height="90" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="397" y="213">Valida usuario, sesión, permisos y alcance</text>
+  <text class="node-copy" x="397" y="242">Comprueba propiedad del job y acceso a cuenta, oportunidad, contacto o sesión.</text>
+
+  <path class="edge" d="M298 466 H340 V222 H360"/>
+
+  <rect class="zone" x="370" y="294" width="400" height="340"/>
+  <text class="zone-title" x="392" y="324">CLIENTE EXISTENTE</text>
+  <text class="node-title" x="392" y="360">Prepara snapshot CRM</text>
+  <text class="node-copy" x="392" y="389">
+    <tspan x="392" dy="0">Lecturas estándar según contexto y permisos.</tspan>
+    <tspan x="392" dy="22">Historial completo y catálogo son opcionales.</tspan>
+  </text>
+  <rect class="node" x="392" y="432" width="356" height="76" fill="#fff8e8" stroke="#d5af62"/>
+  <text class="node-title" x="410" y="461">Fuentes opcionales</text>
+  <text class="node-copy" x="410" y="486">contact_history · provider_catalog</text>
+  <path class="edge" d="M570 508 V526"/>
+  <text class="node-title" x="392" y="555">Interpreta el turno</text>
+  <text class="node-copy" x="392" y="582">
+    <tspan x="392" dy="0">Propósito + movimiento + hasta 4 componentes.</tspan>
+    <tspan x="392" dy="22">La interpretación no concede permisos ni ejecuta acciones.</tspan>
+  </text>
+
+  <rect class="zone" x="790" y="294" width="190" height="340"/>
+  <text class="zone-title" x="810" y="324">COACH</text>
+  <text class="node-copy" x="810" y="365">
+    <tspan x="810" dy="0">Preclasificador</tspan>
+    <tspan x="810" dy="24">Clasificador</tspan>
+    <tspan x="810" dy="20">semántico</tspan>
+  </text>
+  <path class="edge" d="M895 415 V444"/>
+  <text class="node-title" x="810" y="474">Resolver</text>
+  <text class="node-copy" x="810" y="501">
+    <tspan x="810" dy="0">Intención final,</tspan>
+    <tspan x="810" dy="21">modo y permisos.</tspan>
+  </text>
+  <text class="node-small" x="810" y="575">
+    <tspan x="810" dy="0">Las señales ayudan;</tspan>
+    <tspan x="810" dy="18">no autorizan acciones.</tspan>
+  </text>
+
+  <rect class="zone" x="1000" y="294" width="190" height="340"/>
+  <text class="zone-title" x="1020" y="324">CUENTA NUEVA</text>
+  <text class="node-title" x="1020" y="366">Carga sesión</text>
+  <text class="node-copy" x="1020" y="393">
+    <tspan x="1020" dy="0">Perfil y contexto</tspan>
+    <tspan x="1020" dy="21">del prospecto.</tspan>
+  </text>
+  <path class="edge" d="M1095 433 V462"/>
+  <text class="node-title" x="1020" y="491">Investigación</text>
+  <text class="node-copy" x="1020" y="518">
+    <tspan x="1020" dy="0">Job separado.</tspan>
+    <tspan x="1020" dy="21">No crea una cuenta CRM.</tspan>
+  </text>
+
+  <path class="edge" d="M780 267 V280 H570 V294"/>
+  <path class="edge" d="M780 267 V280 H885 V294"/>
+  <path class="edge" d="M780 267 V280 H1095 V294"/>
+
+  <rect class="node" x="370" y="674" width="820" height="76" fill="#e3f2ec" stroke="#8ab7a6"/>
+  <text class="node-title" x="397" y="706">B3 entrega a B4</text>
+  <text class="node-copy" x="397" y="733">Contexto autorizado, intención del canal y referencias validadas.</text>
+  <path class="edge" d="M570 634 V664"/>
+  <path class="edge" d="M885 634 V650 H780 V664"/>
+  <path class="edge" d="M1095 634 V650 H780 V664"/>
+
+  <rect class="node" x="890" y="785" width="300" height="82" fill="#f5f7f8" stroke="#9aafbf" stroke-dasharray="6 4"/>
+  <text class="node-title" x="910" y="817">B11 · Persistencia</text>
+  <text class="node-copy" x="910" y="843">B3 guarda resultado, contexto e historial.</text>
+
+  <rect class="node" x="1300" y="190" width="250" height="82" fill="#eaf0f5" stroke="#9aafbf"/>
+  <text class="node-title" x="1320" y="223">B4 · Adaptador</text>
+  <text class="node-copy" x="1320" y="249">Coordina componentes del canal.</text>
+  <path class="edge" d="M1190 712 H1260 V231 H1290"/>
+
+  <rect class="zone" x="1300" y="315" width="250" height="520"/>
+  <text class="zone-title" x="1320" y="346">B5 · MOTOR</text>
+  <rect class="node" x="1320" y="365" width="210" height="62" fill="#fff1d8" stroke="#d7a84e"/>
+  <text class="node-title" x="1340" y="403">B6 · Planifica</text>
+  <path class="edge" d="M1425 427 V444"/>
+  <rect class="node" x="1320" y="444" width="210" height="62" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="1340" y="482">B7 · Read model</text>
+  <path class="edge" d="M1425 506 V523"/>
+  <rect class="node" x="1320" y="523" width="210" height="62" fill="#e8f4f5" stroke="#8dbbc4"/>
+  <text class="node-title" x="1340" y="561">B8 · Lee</text>
+  <path class="edge" d="M1425 585 V602"/>
+  <rect class="node" x="1320" y="602" width="210" height="62" fill="#fff8e8" stroke="#d5af62"/>
+  <text class="node-title" x="1340" y="640">B9 · Verifica</text>
+  <path class="edge" d="M1425 664 V681"/>
+  <rect class="node" x="1320" y="681" width="210" height="62" fill="#e3f2ec" stroke="#8ab7a6"/>
+  <text class="node-title" x="1340" y="719">B10 · Responde</text>
+  <path class="loop" d="M1530 633 H1558 V475 H1538"/>
+  <text class="node-small" x="1452" y="570">otra lectura</text>
+  <path class="edge" d="M1425 272 V305"/>
+  <path class="return" d="M1320 712 H1270 V285 H1550"/>
+  <path class="return" d="M1300 231 H1260 V826 H1200"/>
+  <path class="return" d="M890 826 H320 V466 H298"/>
+  <rect class="node" x="48" y="680" width="250" height="90" fill="#e3f2ec" stroke="#8ab7a6"/>
+  <text class="node-title" x="72" y="716">B1 · Interfaz</text>
+  <text class="node-copy" x="72" y="744">Muestra el resultado del job.</text>
+  <path class="return" d="M173 522 V670"/>
+</svg>

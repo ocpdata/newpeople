@@ -198,9 +198,10 @@ No pidas aclarar una referencia que el mensaje ya nombra solo porque no recibist
 Una función no implementada también es resolved si se entiende lo que solicita. No decidas su disponibilidad.
 object indica el objeto principal de cada componente, no el tipo de usuario ni si se ejecuta una acción:
 account para panorama/historial general de cuenta; opportunity para etapa, requisitos, reportes, orientación,
-comparación o priorización de oportunidades nombradas; activity para consultar pendientes o agendar/reprogramar
-una reunión; quotation para el contenido de una cotización; contact para enviar una comunicación; lead para
-resultado de llamada de lead. Vincular un contacto A una oportunidad usa object=opportunity.
+comparación o priorización de oportunidades nombradas; activity para consultar pendientes, registrar una llamada
+ya realizada como actividad de la oportunidad seleccionada, o preparar una actividad futura; quotation para el
+contenido de una cotización; contact para enviar una comunicación; lead para resultado de llamada de lead.
+Vincular un contacto A una oportunidad usa object=opportunity.
 En redacción sobre una oportunidad nombrada, object=opportunity, aun sin modificarla; un saludo general al
 cliente usa object=account; transformar un texto independiente usa general. La fuente documental de un reporte
 es attribution=document, no object=document si el contenido se aporta sobre una oportunidad nombrada.
@@ -220,6 +221,10 @@ no son hipótesis propias del vendedor. Una hipótesis propia es report.hypothes
 "El cliente me dijo que su motivación es evitar fugas" aporta información; no autoriza guardar.
 "Dame un correo para pedir reunión" prepara contenido; no agenda ni envía nada.
 "Quiero programar una reunión" es action.schedule_activity. Crear una oportunidad no requiere una oportunidad existente.
+"Quiero registrar una llamada que tuve el viernes a las 4" con una oportunidad seleccionada es
+action.schedule_activity con object=activity: es una actividad completada de esa oportunidad, no un resultado
+de llamada de lead. Conserva la oportunidad seleccionada como destino y la fecha/hora real; B6 preparará
+activityDraft.timing=completed. Usa action.record_outcome con object=lead solo cuando la llamada sea de un lead.
 No confundas consultas de actividades existentes con programarlas. Listar no requiere elegir un registro.
 Conserva cada solicitud explícita como componente c1..c4, en orden de dependencias; no inventes tareas implícitas.
 Pedir cinco preguntas, tres ejemplos o una lista de diez registros es UN componente con varios resultados,
@@ -364,7 +369,25 @@ export async function interpretCustomerTurn({
       code: "CUSTOMER_REPORT_TEXT_CHANGED",
     });
   }
-  return parsed.data;
+  const selectedOpportunity = snapshot?.selectedOpportunity ||
+    [...(snapshot?.opportunities || []), ...(snapshot?.inactiveOpportunities || [])]
+      .find((item) => Number(item.id) === Number(conversationContext?.opportunityId));
+  const explicitlyTargetsLead = /\b(?:lead|prospecto)\b/i.test(String(question || ""));
+  const normalizedComponents = parsed.data.components.map((item) =>
+    item.category === "action.record_outcome" &&
+    selectedOpportunity &&
+    !explicitlyTargetsLead
+      ? {
+          ...item,
+          category: "action.schedule_activity",
+          object: "activity",
+          reference: item.reference || selectedOpportunity.name || "",
+        }
+      : item,
+  );
+  return normalizedComponents.some((item, index) => item !== parsed.data.components[index])
+    ? { ...parsed.data, components: normalizedComponents }
+    : parsed.data;
 }
 
 export function customerComponentVerificationRules(component) {

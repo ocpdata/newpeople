@@ -78,6 +78,23 @@ const CUSTOMER_SNAPSHOT_DATA_DOMAINS = Object.freeze([
   },
 ]);
 
+function needsProviderCatalogForQuestion(question, conversationHistory) {
+  const recentUserContext = (Array.isArray(conversationHistory)
+    ? conversationHistory
+    : [])
+    .slice(-4)
+    .filter((message) => message?.role !== "assistant")
+    .map((message) => String(message?.text || ""))
+    .join(" ");
+  const searchableText = `${String(question || "")} ${recentUserContext}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es");
+  return /\b(productos?|proveedores?|catalogo|precios?|lista de precios|venta cruzada|cross[\s-]?sell|complementari\w*)\b/.test(
+    searchableText,
+  );
+}
+
 export function normalizeCustomerSnapshotDataNeeds(
   plan,
   persistedIntents = [],
@@ -117,8 +134,13 @@ export async function classifyCustomerSnapshotDataNeeds({
   jobId,
   classifyWithAI = runStructuredTextResearch,
 } = {}) {
+  const providerCatalogRequested = needsProviderCatalogForQuestion(
+    question,
+    conversationHistory,
+  );
   const availableDataDomains = CUSTOMER_SNAPSHOT_DATA_DOMAINS.filter((domain) =>
-    hasReadPermission(user, domain.permission),
+    hasReadPermission(user, domain.permission) &&
+    (domain.code !== "provider_catalog" || providerCatalogRequested),
   );
   if (!availableDataDomains.length) {
     return normalizeCustomerSnapshotDataNeeds(null, persistedIntents, []);
