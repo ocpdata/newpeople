@@ -14,6 +14,8 @@ async function mockMiCoachApi(
     withCustomerHealth = false,
     withCustomerChatAccess = withCustomerHealth,
     withCustomerChatTrace = false,
+    canDiagnoseCustomerChats = false,
+    withCustomerStageAnswerPrefill = false,
     withCustomerContactOperation = false,
     withCustomerOpportunityOperation = false,
     withCustomerContactOpportunityLink = false,
@@ -290,6 +292,16 @@ async function mockMiCoachApi(
             inferences: ["Validar continuidad operativa con el cliente."],
             confidence: "high",
             publicSources: ["https://public.example/evidence"],
+            ...(withCustomerStageAnswerPrefill
+              ? {
+                  stageAnswerPrefill: {
+                    opportunityId: 300,
+                    questionIds: [9001],
+                    questionPrompts: ["¿Cuál es el motivo de negocio?"],
+                    appendText: "Reporte del vendedor: Evitar fugas de información.",
+                  },
+                }
+              : {}),
             ...(withCustomerChatTrace
               ? {
                   debug: {
@@ -911,12 +923,13 @@ async function mockMiCoachApi(
           ...(withCustomerOpportunityOperation
             ? ["oportunidades.create", "contactos.read"]
             : []),
-          ...(withCustomerContactOpportunityLink
+          ...(withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill
             ? ["oportunidades.update"]
             : []),
           ...(withCustomerContactUpdate ? ["contactos.update"] : []),
           ...(withLeadRead ? ["interacciones.read"] : []),
           ...(canAdmin ? ["mi_coach.admin"] : []),
+          ...(canDiagnoseCustomerChats ? ["mi_coach.chat_diagnostics"] : []),
         ],
       });
     }
@@ -1361,7 +1374,8 @@ async function mockMiCoachApi(
       );
     if (
       (withCustomerOpportunityOperation ||
-        withCustomerContactOpportunityLink) &&
+        withCustomerContactOpportunityLink ||
+        withCustomerStageAnswerPrefill) &&
       pathname.startsWith("/api/catalogs/opportunity-")
     ) {
       const opportunityCatalogs = {
@@ -1432,7 +1446,7 @@ async function mockMiCoachApi(
               : [],
       );
     if (
-      withCustomerContactOpportunityLink &&
+      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill) &&
       pathname === "/api/opportunities/300"
     ) {
       return json({
@@ -1451,7 +1465,7 @@ async function mockMiCoachApi(
       });
     }
     if (
-      withCustomerContactOpportunityLink &&
+      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill) &&
       pathname === "/api/opportunities/300/commercial-context"
     ) {
       return json({
@@ -1462,10 +1476,24 @@ async function mockMiCoachApi(
           name: "Contacto Inicial",
         },
         commercialStatus: { code: "en_proceso" },
+        ...(withCustomerStageAnswerPrefill
+          ? {
+              isSelectedStageCurrent: true,
+              answers: [
+                {
+                  question_id: 9001,
+                  prompt: "¿Cuál es el motivo de negocio?",
+                  response_type: "long_text",
+                  answer_value: "Respuesta previa.",
+                  is_required: true,
+                },
+              ],
+            }
+          : {}),
       });
     }
     if (
-      withCustomerContactOpportunityLink &&
+      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill) &&
       pathname === "/api/opportunities/300/documents"
     ) {
       return json([]);
@@ -3117,6 +3145,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await mockMiCoachApi(page, {
       withCustomerHealth: true,
       withCustomerChatTrace: true,
+      canDiagnoseCustomerChats: true,
     });
     await openMiCoach(page, { workspace: "customer" });
     await page.getByLabel("Cuenta existente").selectOption("160");
@@ -3189,6 +3218,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await mockMiCoachApi(page, {
       withCustomerHealth: true,
       withCustomerChatTrace: true,
+      canDiagnoseCustomerChats: true,
       withProspect: true,
     });
     await openMiCoach(page, { workspace: "customer" });
@@ -3309,6 +3339,116 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
     await expect(contactModal.getByRole("combobox").first()).toHaveValue("160");
     expect(contactCreateRequests).toEqual([]);
+  });
+
+  test("Cliente existente oculta diagnostico sin permiso aunque la API lo entregue", async ({ page }) => {
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withCustomerChatTrace: true,
+      withCustomerStageAnswerPrefill: true,
+    });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByRole("button", { name: "Resumen para reunión" }).click();
+    await expect(chat.getByText("La cuenta requiere seguimiento comercial.")).toBeVisible();
+    await expect(chat.getByRole("button", { name: "Abrir oportunidad para revisar" })).toBeVisible();
+    await expect(chat.locator(".mi-agent-customer-chat-debug")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Diagnóstico de chats", exact: true })).toHaveCount(0);
+  });
+
+  test("Cliente existente abre el borrador de respuesta en otra pestaña sin guardar ni salir del chat", async ({
+    page,
+    context,
+  }) => {
+    const writes = [];
+    context.on("request", (request) => {
+      if (
+        ["POST", "PUT", "PATCH"].includes(request.method()) &&
+        new URL(request.url()).pathname.startsWith("/api/opportunities")
+      ) {
+        writes.push(request.url());
+      }
+    });
+    await mockMiCoachApi(context, {
+      withCustomerHealth: true,
+      withCustomerStageAnswerPrefill: true,
+    });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill(
+      "El cliente quiere evitar fugas de información",
+    );
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    const originalUrl = page.url();
+    const popupPromise = page.waitForEvent("popup");
+    await chat.getByRole("button", { name: "Abrir oportunidad para revisar" }).click();
+    const opportunityTab = await popupPromise;
+
+    await expect(opportunityTab.getByLabel("¿Cuál es el motivo de negocio?")).toHaveValue(
+      "Respuesta previa.\n\nReporte del vendedor: Evitar fugas de información.",
+    );
+    expect(await opportunityTab.evaluate(() => window.opener)).toBeNull();
+    await expect(page).toHaveURL(originalUrl);
+    await expect(chat.getByText("La cuenta requiere seguimiento comercial.")).toBeVisible();
+    expect(writes).toEqual([]);
+    await opportunityTab.close();
+  });
+
+  test("Cliente existente restaura las partes de la solicitud y el borrador de etapa sin guardar", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerStageAnswerPrefill: true });
+    await page.addInitScript(() => {
+      window.sessionStorage.setItem("mi-agent-customer-chat-session:160", "920");
+    });
+    await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            id: 920, accountId: 160,
+            history: [{
+              role: "assistant",
+              text: "Conservé tu reporte. La comunicación no se envió.",
+              components: [
+                { id: "c1", category: "report.client_statement", label: "Reporte del cliente", status: "completed" },
+                { id: "c2", category: "action.send_communication", label: "Enviar correo", status: "unavailable" },
+              ],
+              stageAnswerPrefill: {
+                opportunityId: 18, questionIds: [33], questionPrompts: ["Motivación"],
+                appendText: "Reporte sintético del cliente.",
+              },
+            }],
+          },
+        }),
+      }),
+    );
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await expect(chat.getByRole("list", { name: "Estado de solicitudes" })).toContainText("Atendida: Reporte del cliente");
+    await expect(chat.getByRole("list", { name: "Estado de solicitudes" })).toContainText("Capacidad no disponible: Enviar correo");
+    await expect(chat.getByRole("button", { name: "Abrir oportunidad para revisar" })).toBeVisible();
+  });
+
+  test("Cliente existente avisa si el navegador bloquea la pestaña de oportunidad", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withCustomerHealth: true,
+      withCustomerStageAnswerPrefill: true,
+    });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill(
+      "El cliente quiere evitar fugas de información",
+    );
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await page.evaluate(() => { window.open = () => null; });
+    await chat.getByRole("button", { name: "Abrir oportunidad para revisar" }).click();
+    await expect(page.getByText(/Permite las ventanas emergentes de este sitio/)).toBeVisible();
+    await expect(page).toHaveURL(/\/mi-agent$/);
   });
 
   test("Cliente existente revisa creación de oportunidad antes de continuar", async ({

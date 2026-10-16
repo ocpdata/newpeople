@@ -38,6 +38,12 @@ export const config = {
     },
   },
   features: {
+    customerTurnContractMode: String(
+      process.env.CUSTOMER_TURN_CONTRACT_MODE || "on",
+    ).trim().toLowerCase(),
+    customerTurnContractPilotUserIds: String(
+      process.env.CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS || "",
+    ).split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0),
     opportunityStageAnswerSuggestionsEnabled:
       String(
         process.env.OPPORTUNITY_STAGE_ANSWER_SUGGESTIONS_ENABLED || "true",

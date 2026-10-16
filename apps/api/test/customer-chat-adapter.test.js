@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/coach/quotation-read-service.js", () => ({
   getAuthorizedCoachQuotationContent: vi.fn(),
@@ -48,6 +48,7 @@ import {
   normalizeCustomerResponse,
 } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import { getCoachBusinessRules } from "../src/coach/business-rules.js";
+import { config } from "../src/config.js";
 import { normalizeActivityOperation } from "../src/coach/operation-contract.js";
 import { enforceCoachBusinessEvidence } from "../src/coach/conversation-engine.js";
 import {
@@ -58,12 +59,17 @@ import {
 import { buildCustomerEvidenceFailureResponse } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import { classifyCustomerIntent } from "../src/commercial-intelligence/service.js";
 import {
+  buildCustomerSemanticClassifierPrompt,
   loadSemanticClassifierPrompt,
   SEMANTIC_CLASSIFIER_DEFAULTS,
 } from "../src/coach/semantic-classifier-prompts.js";
 
 describe("Customer account chat adapter", () => {
+  let previousContractMode;
+
   beforeEach(() => {
+    previousContractMode = config.features.customerTurnContractMode;
+    config.features.customerTurnContractMode = "off";
     vi.clearAllMocks();
     loadSemanticClassifierPrompt.mockResolvedValue({
       channel: "customer_account",
@@ -78,6 +84,57 @@ describe("Customer account chat adapter", () => {
       version: 0,
       source: "default",
     });
+  });
+
+  afterEach(() => {
+    config.features.customerTurnContractMode = previousContractMode;
+  });
+
+  it.each(["default", "custom"])("preserves seller-report handling with a %s classifier prompt", (source) => {
+    const instruction = source === "custom"
+      ? "Clasifica las consultas usando las intenciones habilitadas."
+      : SEMANTIC_CLASSIFIER_DEFAULTS.customer_account;
+    const prompt = buildCustomerSemanticClassifierPrompt({
+      channel: "customer_account",
+      instruction,
+      version: source === "custom" ? 2 : 0,
+      source,
+    });
+
+    expect(prompt).toContain(instruction);
+    expect(prompt).toContain("no inventes esa intención implícita");
+    expect(prompt).toContain("incluidas las ya contestadas");
+    expect(prompt).toContain("Distingue esos reportes de preguntas");
+    expect(prompt).toContain("no guardar cambios");
+  });
+
+  it("uses the complete turn contract only for the configured pilot user", async () => {
+    const previousMode = config.features.customerTurnContractMode;
+    const previousUsers = config.features.customerTurnContractPilotUserIds;
+    try {
+      config.features.customerTurnContractMode = "pilot";
+      config.features.customerTurnContractPilotUserIds = [31];
+      runStructuredTextResearch.mockResolvedValueOnce({
+        version: 1, movement: "new_request", resolution: "resolved",
+        clarificationQuestion: "", confidence: "high",
+        components: [{
+          id: "c1", category: "query.record_list", text: "Lista las oportunidades.",
+          object: "opportunity", topic: "", scope: "collection", reference: "",
+          attribution: "none", certainty: "unspecified",
+          dependsOn: [], continuationOf: "none",
+        }],
+      });
+      const classified = await classifyCustomerIntent({
+        question: "Lista las oportunidades.", user: { id: 31 }, snapshot,
+        intents: getChannelIntentDefaults("customer_account"),
+      });
+      expect(classified.source.resolver).toBe("turn_contract_v1");
+      expect(classified.turnContract.components[0].category).toBe("query.record_list");
+      expect(runStructuredTextResearch.mock.calls[0][0].schemaName).toBe("customer_account_turn_contract");
+    } finally {
+      config.features.customerTurnContractMode = previousMode;
+      config.features.customerTurnContractPilotUserIds = previousUsers;
+    }
   });
 
   it("surfaces planner prompt storage errors without invoking B6 or proposing operations", async () => {
@@ -3518,7 +3575,55 @@ describe("Customer account chat adapter", () => {
     expect(response.operations).toEqual([]);
   });
 
-  it("uses B9 to acknowledge seller-reported stage information on no-results without generating operations", async () => {
+  it.each([
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true },
+    { currentAnswer: "Motivación previa registrada.", evidenceStatus: "sufficient", selectedInUi: false },
+    { currentAnswer: "", evidenceStatus: "no_results", selectedInUi: false },
+    { currentAnswer: "Motivación previa registrada.", evidenceStatus: "no_results", selectedInUi: true },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, messageKind: "question",
+      question: "¿Qué dijo el cliente sobre su motivación?", expectedOutcome: "not_a_report" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, messageKind: "hypothesis",
+      question: "Supongo que la motivación es evitar fugas de información.", expectedOutcome: "not_a_report" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, match: "ambiguous",
+      questionIds: [33, 34], expectedOutcome: "clarification" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, match: "none",
+      questionIds: [], expectedOutcome: "clarification" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      questionIds: [99999], expectedOutcome: "clarification" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      questionIds: [33, 34], expectedOutcome: "clarification" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      lifecycle: "historical", expectedOutcome: "clarification" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      canReadStage: false, expectedOutcome: "clarification" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      readError: true, expectedOutcome: "evidence_unavailable" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      question: "El cliente nos explicó que busca evitar la divulgación de datos por correo." },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      interpretationUnavailable: true, expectedOutcome: "interpretation_error" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      interpretationInvalid: true, expectedOutcome: "interpretation_error" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
+      intent: "opportunity_status",
+      question: 'en que etapa estoy en La oportunidad "Proyecto abierto"?',
+      expectedOutcome: "not_applicable" },
+  ])("prepares a seller report from actual stage questions: %j", async ({
+    currentAnswer,
+    evidenceStatus,
+    selectedInUi,
+    messageKind = "client_report",
+    match = "matched",
+    questionIds = [33],
+    expectedOutcome = "draft_prepared",
+    lifecycle = "open",
+    canReadStage = true,
+    readError = false,
+    interpretationUnavailable = false,
+    interpretationInvalid = false,
+    intent = "opportunity_guidance",
+    question = "el cliente me dijo que su motivación es que creen que algunos empleados están enviando información confidencial a terceros a través del correo electronico.",
+  }) => {
     vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
       getCoachBusinessRules({
         channel: "customer_account",
@@ -3533,6 +3638,7 @@ describe("Customer account chat adapter", () => {
 
     const selectedOpportunity = {
       ...snapshot.opportunities[0],
+      lifecycle,
       salesStageId: 4,
       stageCode: "identificacion_oportunidad",
       stageName: "Identificación de la oportunidad",
@@ -3554,8 +3660,15 @@ describe("Customer account chat adapter", () => {
           code: "identificacion_motivacion_principal",
           prompt:
             "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
-          answer: "Motivación previa registrada.",
+          answer: currentAnswer,
           required: true,
+        },
+        {
+          questionId: 34,
+          code: "identificacion_resultado_esperado",
+          prompt: "¿Qué resultado espera conseguir el cliente?",
+          answer: "",
+          required: false,
         },
       ],
       workspace: { criteria: [], actions: [], weaknesses: [] },
@@ -3564,7 +3677,7 @@ describe("Customer account chat adapter", () => {
     runStructuredTextResearch
       .mockResolvedValueOnce({
         objective: "Consultar orientación de la oportunidad",
-        queries: ["opportunity_guidance"],
+        queries: [intent],
         entities: { opportunityReference: selectedOpportunity.name },
         filters: {},
         ambiguity: {
@@ -3576,21 +3689,45 @@ describe("Customer account chat adapter", () => {
         referenceResolution: {
           targetType: "opportunity",
           cardinality: "single",
-          source: "current_message",
+          source: selectedInUi ? "current_message" : "conversation_history",
           candidateKeys: ["opportunity_1"],
         },
         mode: "read_only",
         confidence: "high",
       })
       .mockResolvedValueOnce({
-        status: "no_results",
+        status: evidenceStatus,
         missingQueries: [],
-        missingFacts: [
-          "Motivación específica relacionada con información confidencial por correo electrónico",
-        ],
-        sellerReportedCriteria: ["Motivación de negocio"],
-        sellerReportedStageAnswerQuestionIds: [33],
+        missingFacts: [],
+        messageKind: "question",
+        stageAnswerMatch: "none",
+        sellerReportReason: "El mensaje consulta información y no aporta una respuesta del cliente.",
+        sellerReportedStageAnswerQuestionIds: [],
       });
+    if (intent === "opportunity_guidance") {
+      runStructuredTextResearch.mockResolvedValueOnce(interpretationUnavailable ? null : {
+        messageKind: interpretationInvalid ? "unsupported_kind" : messageKind,
+        stageAnswerMatch: match,
+        sellerReportReason: "El reporte aporta el motivo de negocio del cliente.",
+        sellerReportedStageAnswerQuestionIds: questionIds,
+      });
+    }
+    if (["not_a_report", "not_applicable"].includes(expectedOutcome)) {
+      runStructuredTextResearch.mockResolvedValueOnce({
+        answer: "La oportunidad está en Identificación de la oportunidad.",
+        evidence: ["Etapa actual de la oportunidad en CRM."],
+        inferences: [],
+        confidence: "high",
+        operations: [],
+        recommendedActions: [],
+        pendingItems: [],
+      })
+      .mockResolvedValueOnce({
+        status: "supported",
+        unsupportedClaims: [],
+        findings: [],
+      });
+    }
 
     const adapter = createCustomerAccountAdapter({
       user: {
@@ -3598,58 +3735,140 @@ describe("Customer account chat adapter", () => {
         permissionSet: new Set([
           "cuentas.read",
           "oportunidades.read",
-          "desarrollo_comercial.read",
+          ...(canReadStage ? ["desarrollo_comercial.read"] : []),
           "interacciones.read",
         ]),
       },
       snapshot: {
         ...snapshot,
         opportunities: [selectedOpportunity],
-        selectedOpportunity,
+        selectedOpportunity: selectedInUi ? selectedOpportunity : null,
       },
       authoritativeIntent: {
-        intent: "opportunity_guidance",
+        intent,
         confidence: 0.9,
         requiresClarification: false,
       },
       channelIntentConfiguration: getChannelIntentDefaults("customer_account"),
       agents: [],
       jobId: 918,
+      conversationContext: selectedInUi ? null : { accountId: 7, opportunityId: selectedOpportunity.id },
+      snapshotQueryMetrics: readError ? [{ source: "opportunities_active", errorCode: "db_unavailable" }] : [],
     });
-    const question =
-      "El cliente me dijo que su motivación es que algunos empleados envían información confidencial a terceros por correo electrónico.";
     const result = await adapter.runTurn({
       question,
-      context: { accountId: 7, opportunityId: selectedOpportunity.id },
-      history: [],
+      context: { accountId: 7, opportunityId: selectedInUi ? selectedOpportunity.id : null },
+      history: [
+        { role: "user", text: `¿En qué etapa está ${selectedOpportunity.name}?` },
+        { role: "assistant", text: `La oportunidad ${selectedOpportunity.name} está en identificación.` },
+      ],
     });
 
     const assessmentRequest = runStructuredTextResearch.mock.calls[1][0];
     expect(assessmentRequest.schemaName).toBe(
       "customer_account_evidence_assessment",
     );
-    expect(assessmentRequest.context.pendingReadinessCriteria).toContain(
-      "Motivación de negocio",
-    );
-    expect(assessmentRequest.context.stageAnswerCandidates).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          questionId: 33,
-          prompt:
-            "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
-        }),
-      ]),
-    );
-    expect(assessmentRequest.fields).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: "sellerReportedCriteria" }),
-      ]),
-    );
-    expect(result.qualityTrace.diagnostics.evidence.status).toBe("no_results");
-    expect(result.response.answer).toContain("Preparé un borrador para agregar");
-    expect(result.response.answer).toContain("no se guardará nada");
+    if (canReadStage && intent === "opportunity_guidance") {
+      expect(assessmentRequest.context.pendingReadinessCriteria).toContain(
+        "Motivación de negocio",
+      );
+      if (!currentAnswer) {
+        const readiness = assessmentRequest.context.evidence.find(
+          (item) => item.toolName === "getOpportunityReadiness",
+        ).result;
+        expect(readiness.pendingItems).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            title: selectedOpportunity.stageQuestions[0].prompt,
+            evidence: [expect.objectContaining({ sourceType: "process_guide", sourceId: null })],
+          }),
+        ]));
+      }
+    }
+    if (lifecycle === "open" && canReadStage) {
+      expect(assessmentRequest.context.stageAnswerCandidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            questionId: 33,
+            opportunityId: selectedOpportunity.id,
+            currentAnswer,
+            prompt:
+              "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
+          }),
+          expect.objectContaining({ questionId: 34, currentAnswer: "" }),
+        ]),
+      );
+    } else {
+      expect(assessmentRequest.context.stageAnswerCandidates).toEqual([]);
+    }
+    if (expectedOutcome === "not_applicable") {
+      expect(runStructuredTextResearch.mock.calls.map(([request]) => request.schemaName))
+        .not.toContain("customer_account_seller_report");
+      expect(result.response.responseType).toBe("informational");
+      expect(result.response.answer).toContain("Identificación de la oportunidad");
+      expect(result.response.stageAnswerPrefill).toBeUndefined();
+      expect(result.qualityTrace.diagnostics.evidence.sellerReport).toMatchObject({
+        source: "not_applicable",
+        outcome: "not_a_report",
+      });
+      expect(runStructuredTextResearch).toHaveBeenCalledTimes(4);
+      return;
+    }
+    const reportRequest = runStructuredTextResearch.mock.calls[2][0];
+    expect(reportRequest.schemaName).toBe("customer_account_seller_report");
+    expect(reportRequest.context.latestMessage).toEqual({ role: "user", text: question });
+    expect(reportRequest.context.previousMessages[0].text).toContain("¿En qué etapa está");
+    expect(reportRequest.context).not.toHaveProperty("intentPlan");
+    expect(reportRequest.context).not.toHaveProperty("evidence");
+    expect(reportRequest.fields.find((field) => field.key === "sellerReportReason")).not.toHaveProperty("example");
+    if (expectedOutcome === "interpretation_error") {
+      expect(result.response.responseType).toBe("error");
+      expect(result.response.stageAnswerPrefill).toBeUndefined();
+      expect(result.response.operations).toEqual([]);
+      expect(result.response.recommendedActions).toEqual([]);
+      expect(result.qualityTrace.diagnostics.evidence.status).toBe("verification_error");
+      expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe("evidence_gate_failure");
+      expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
+      return;
+    }
+    expect(result.qualityTrace.diagnostics.evidence.status).toBe(readError ? "query_error" : evidenceStatus);
     expect(result.response.operations).toEqual([]);
     expect(result.response.recommendedActions).toEqual([]);
+    expect(selectedOpportunity.stageQuestions[0].answer).toBe(currentAnswer);
+    if (expectedOutcome !== "draft_prepared") {
+      expect(result.response.stageAnswerPrefill).toBeUndefined();
+      expect(result.qualityTrace.diagnostics.evidence.sellerReport.outcome).toBe(expectedOutcome);
+      if (expectedOutcome === "clarification") {
+        expect(result.response.responseType).toBe("clarification");
+        expect(result.response.answer).toContain("No se ha guardado ningún cambio");
+        expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
+      } else if (expectedOutcome === "evidence_unavailable") {
+        expect(result.response.responseType).toBe("error");
+        expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
+      } else {
+        expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe("structured_answer_model");
+        expect(runStructuredTextResearch).toHaveBeenCalledTimes(5);
+      }
+      if (questionIds.includes(99999)) {
+        expect(result.qualityTrace.diagnostics.evidence.sellerReport.rejectedQuestionIds).toContain(99999);
+      }
+      return;
+    }
+    expect(result.qualityTrace.diagnostics.evidence.sellerReport).toMatchObject({
+      messageKind: "client_report",
+      source: "dedicated_message_interpretation",
+      match: "matched",
+      selectedQuestionIds: [33],
+      rejectedQuestionIds: [],
+      outcome: "draft_prepared",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          questionId: 33,
+          hasCurrentAnswer: Boolean(currentAnswer),
+        }),
+      ]),
+    });
+    expect(result.response.answer).toContain("Preparé un borrador para agregar");
+    expect(result.response.answer).toContain("no se guardará nada");
     expect(result.response.stageAnswerPrefill).toMatchObject({
       opportunityId: 11,
       questionIds: [33],
@@ -3661,7 +3880,7 @@ describe("Customer account chat adapter", () => {
     expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe(
       "seller_reported_stage_answer_prefill",
     );
-    expect(runStructuredTextResearch).toHaveBeenCalledTimes(2);
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
   });
 
   it("uses a safe alternative when the final answer contains unsupported CRM claims", async () => {

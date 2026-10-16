@@ -264,6 +264,28 @@ describe("Customer Existing evidence loop", () => {
     expect(assessEvidence).not.toHaveBeenCalled();
   });
 
+  it("accepts the same tool with different arguments but deduplicates an identical query", async () => {
+    const events = [];
+    const result = await runCustomerEvidenceLoop({
+      traceIdPrefix: "c2-",
+      initialReadToolResults: [{
+        toolName: "getOpportunity", queryArgs: { opportunityId: 11, accountId: 7 }, result: { id: 11 },
+      }],
+      assessEvidence: vi.fn()
+        .mockResolvedValueOnce({ status: "incomplete", missingQueries: ["opportunity_query"] })
+        .mockResolvedValueOnce({ status: "sufficient" }),
+      fetchAdditionalEvidence: vi.fn().mockResolvedValue({ readToolResults: [
+        { toolName: "getOpportunity", queryArgs: { accountId: 7, opportunityId: 11 }, result: { id: 11 } },
+        { toolName: "getOpportunity", queryArgs: { opportunityId: 12, accountId: 7 }, result: { id: 12 } },
+      ] }),
+      onTraceEvent: (event) => events.push(event),
+    });
+    expect(result.status).toBe("sufficient");
+    expect(result.additionalReadQueries).toBe(1);
+    expect(result.readToolResults).toHaveLength(2);
+    expect(events.some((event) => event.spanId === "c2-evidence-check-1")).toBe(true);
+  });
+
   it("times out a verifier that does not resolve before the remaining deadline", async () => {
     const result = await runCustomerEvidenceLoop({
       deadlineAt: Date.now() + 5,

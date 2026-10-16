@@ -9,6 +9,10 @@ API:
 - Base local: `apps/api/.env.example`
 - Base nube/S3: `apps/api/.env.aws-s3.example`
 - Validacion runtime: `apps/api/src/validateConfig.js`
+- Chat de Cliente existente: `CUSTOMER_TURN_CONTRACT_MODE=on` por defecto en
+  todos los entornos, sin ampliar permisos ni omitir confirmaciones. Al actualizar
+  un despliegue existente, cambiar cualquier valor explicito `off` o `pilot` a
+  `on` y reiniciar la API. Para rollback, usar `off` y reiniciar.
 
 Web:
 

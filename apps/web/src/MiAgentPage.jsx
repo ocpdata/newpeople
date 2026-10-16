@@ -3138,6 +3138,9 @@ export default function MiAgentPage({
                     answer: message.text,
                     activityHistory: message.activityHistory || null,
                     operations: message.operations || [],
+                    stageAnswerPrefill: message.stageAnswerPrefill || null,
+                    components: message.components || [],
+                    contentSource: message.contentSource || null,
                     debug: message.turnDebug || null,
                     jobId: message.turnDebug?.currentTurn?.jobId || null,
                     sourceDomain: "crm_internal",
@@ -3933,14 +3936,34 @@ export default function MiAgentPage({
     const appendText = String(prefill?.appendText || "").trim();
     if (!opportunityId || !questionIds.length || !appendText) return;
 
-    const token = window.crypto.randomUUID();
-    window.sessionStorage.setItem(
-      stageAnswerPrefillStorageKey(token),
-      JSON.stringify({ opportunityId, questionIds, appendText }),
-    );
-    navigate(
-      `/opportunities?edit=${opportunityId}&stageAnswerPrefill=${encodeURIComponent(token)}`,
-    );
+    setCustomerIntelligenceError("");
+    const opportunityTab = window.open("about:blank", "_blank");
+    if (!opportunityTab) {
+      setCustomerIntelligenceError(
+        "No fue posible abrir la oportunidad. Permite las ventanas emergentes de este sitio y vuelve a intentarlo.",
+      );
+      return;
+    }
+    try {
+      // Detach the opener before navigating, and seed the new tab's own storage.
+      opportunityTab.opener = null;
+      const token = window.crypto.randomUUID();
+      opportunityTab.sessionStorage.setItem(
+        stageAnswerPrefillStorageKey(token),
+        JSON.stringify({ opportunityId, questionIds, appendText }),
+      );
+      opportunityTab.location.replace(
+        `/opportunities?edit=${opportunityId}&stageAnswerPrefill=${encodeURIComponent(token)}`,
+      );
+    } catch (err) {
+      opportunityTab.close();
+      setCustomerIntelligenceError(
+        getApiErrorMessage(
+          err,
+          "No fue posible abrir la oportunidad con el borrador. Vuelve a intentarlo.",
+        ),
+      );
+    }
   }
 
   async function openDiscoveryActivity(nextStep) {
@@ -8599,7 +8622,9 @@ export default function MiAgentPage({
                     >
                       <span>Cuenta</span>
                       <small className="mi-agent-customer-source-label">
-                        {message.sourceDomain === "mixed"
+                        {message.contentSource === "user_provided"
+                          ? "Material aportado; no verificado en CRM"
+                          : message.sourceDomain === "mixed"
                           ? "CRM + investigación pública"
                           : message.sourceDomain === "public_web"
                             ? "Investigación pública"
@@ -8623,6 +8648,22 @@ export default function MiAgentPage({
                           {message.answer}
                         </h4>
                       )}
+                      {message.components?.length > 1 ? (
+                        <ul aria-label="Estado de solicitudes">
+                          {message.components.map((component) => (
+                            <li key={component.id}>
+                              {({
+                                completed: "Atendida",
+                                clarification: "Requiere aclaración",
+                                error: "No se pudo completar",
+                                unavailable: "Capacidad no disponible",
+                                disabled: "Deshabilitada",
+                                permission_denied: "Sin permiso",
+                              })[component.status] || "Pendiente"}: {component.label || "Solicitud"}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                       {message.stageAnswerPrefill ? (
                         <div className="mi-agent-customer-chat-actions">
                           <strong>Respuesta de etapa preparada para revisar</strong>
@@ -8894,7 +8935,7 @@ export default function MiAgentPage({
                           </div>
                         )
                       ) : null}
-                      {message.debug ? (
+                      {canDiagnoseCustomerChats && message.debug ? (
                         <details
                           className={`mi-agent-customer-chat-debug is-${message.debug.issue?.severity || "info"}`}
                         >

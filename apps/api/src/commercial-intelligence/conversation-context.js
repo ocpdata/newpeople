@@ -1,4 +1,5 @@
 import { COMMERCIAL_ACTIVITY_TYPES } from "../../../../shared/commercial-activity-types.js";
+import { validateCustomerTurnMemory } from "./turn-contract-runtime.js";
 
 const INTENT_CODES = new Set([
   "crm_operation",
@@ -165,6 +166,9 @@ export function validateCustomerConversationContext(
     leadId: leadId && visibleLeadIds.has(leadId) ? leadId : null,
     intents,
     filters: validatedFilters(context.filters),
+    ...(validateCustomerTurnMemory(context.turnMemory)
+      ? { turnMemory: validateCustomerTurnMemory(context.turnMemory) }
+      : {}),
     ...(Number(context.pendingAmountSelection?.accountId) === accountId &&
     typeof context.pendingAmountSelection?.amount === "number" &&
     Number.isFinite(context.pendingAmountSelection.amount) &&

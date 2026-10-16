@@ -118,6 +118,7 @@ export async function runStructuredWebResearch({
   useWebSearchTool = true,
   onResponseMetadata = null,
   signal = null,
+  temperature = null,
 }) {
   if (
     !config.openai.apiKey ||
@@ -138,6 +139,7 @@ export async function runStructuredWebResearch({
 
   const payload = {
     model: config.openai.model,
+    ...(temperature === null ? {} : { temperature }),
     ...(useWebSearchTool ? { tools: [{ type: "web_search_preview" }] } : {}),
     text: {
       format: {

@@ -595,7 +595,10 @@ export async function runConversationEngine({
     configuredBusinessRules || getCoachBusinessRules({ channel });
   const turnDeadlineAt =
     channel === "customer_account"
-      ? turnStartedAt + getCustomerEvidenceLimits(businessRules).maxTurnMs
+      ? Math.min(
+          turnStartedAt + getCustomerEvidenceLimits(businessRules).maxTurnMs,
+          dependencies.turnDeadlineAt || Infinity,
+        )
       : null;
   const jobType = getConversationChannelJobType(channel);
   const channelHistory = normalizeChannelConversationHistory(history, channel);
@@ -1521,7 +1524,10 @@ export async function runConversationEngine({
     intentRouting?.intent === "process_information" &&
     intentRouting?.mode === "coaching";
   const mayAnswerFromCoachPolicy =
-    isProcessGuideCoaching || emailHelpQuestion || questionPhrasingHelp;
+    isProcessGuideCoaching || emailHelpQuestion || questionPhrasingHelp ||
+    (channel === "customer_account" &&
+      typeof dependencies.canAnswerWithoutBusinessEvidence === "function" &&
+      dependencies.canAnswerWithoutBusinessEvidence() === true);
   const modeLimitedResponse = applyCoachInteractionModeLimits(
     normalizedResponse,
     intentRouting?.mode,

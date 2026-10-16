@@ -648,12 +648,14 @@ export function normalizeChannelIntentPlan({
       ? (Array.isArray(plan.queries) ? plan.queries : []).filter(
           (code) => code === "contact_query",
         )
-      : [];
+      : (Array.isArray(authoritativeIntent.supportingIntents)
+          ? authoritativeIntent.supportingIntents.filter((code) =>
+              code !== authoritativeCode && code !== "crm_operation" && catalog.some((item) => item.code === code) &&
+              configurationByCode.get(code)?.enabled !== false)
+          : []);
     plan = {
       ...plan,
-      queries: authoritativeIsOperation
-        ? [authoritativeCode, ...compatibleSupportingIntents]
-        : [authoritativeCode],
+      queries: [authoritativeCode, ...compatibleSupportingIntents],
       mode:
         authoritativeIsOperation && plan.mode !== "clarification"
           ? "operation"

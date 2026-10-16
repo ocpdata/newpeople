@@ -4,6 +4,73 @@ export const CUSTOMER_CHAT_EVIDENCE_LIMITS = Object.freeze({
   maxTurnMs: 45000,
 });
 
+export function describeCustomerEvidenceStatus(status) {
+  if (!status) {
+    return {
+      state: "not_checked",
+      message: "El verificador no fue alcanzado; no se evalúa como fallo por sí solo.",
+    };
+  }
+  const reportStates = {
+    report_destination_validated: {
+      state: "pass",
+      severity: "success",
+      title: "Destino del reporte validado",
+      message: "El reporte se asoció a una pregunta autorizada. Esto no verifica su veracidad ni guarda cambios en CRM.",
+      nextAction: "Revisa el borrador antes de guardar los cambios manualmente.",
+    },
+    report_destination_clarification: {
+      state: "warning",
+      severity: "warning",
+      title: "El destino del reporte necesita una precisión",
+      message: "El reporte requiere una aclaración antes de preparar el complemento; no se guardó ningún cambio.",
+      nextAction: "Responde la aclaración del chat para identificar el destino del reporte.",
+    },
+    report_destination_failed: {
+      state: "error",
+      severity: "error",
+      title: "No se pudo validar el destino del reporte",
+      message: "La asociación del reporte no pudo completarse.",
+      nextAction: "Revisa el error de asociación y las lecturas autorizadas en B9.",
+    },
+    content_validated: {
+      state: "pass",
+      severity: "success",
+      title: "Contenido generado y auditado",
+      message: "El contenido pasó su auditoría contra las fuentes disponibles; el material aportado no se convierte en un hecho CRM verificado.",
+      nextAction: "Revisa el borrador; no se envió ninguna comunicación ni se ejecutaron cambios.",
+    },
+    content_failed: {
+      state: "error",
+      severity: "error",
+      title: "El contenido no pudo validarse",
+      message: "La generación o auditoría del contenido no pudo completarse.",
+      nextAction: "Revisa las fuentes y el error de generación o auditoría del contenido en B9.",
+    },
+  };
+  const description = Object.hasOwn(reportStates, status) ? reportStates[status] : null;
+  if (description) {
+    const { state, ...issue } = description;
+    return { state, message: description.message, issue: { ...issue, block: "B9" } };
+  }
+  if (["sufficient", "no_results", "clarification", "activity_entities_validated"].includes(status)) {
+    return { state: "pass", message: "La verificación terminó en un estado controlado." };
+  }
+  return { state: "error", message: `Revisar estado de evidencia: ${status}.` };
+}
+
+function stableQueryValue(value) {
+  if (Array.isArray(value)) return value.map(stableQueryValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableQueryValue(value[key])]));
+  }
+  return value;
+}
+
+export function customerReadQueryKey(item) {
+  return `${String(item?.toolName || "")}:${JSON.stringify(stableQueryValue(item?.queryArgs || {}))}`;
+}
+
 export function normalizeCustomerEvidenceAssessment({
   assessment,
   queryCoverage = [],
@@ -131,6 +198,7 @@ export async function runCustomerEvidenceLoop({
   fetchAdditionalEvidence,
   onTraceEvent,
   traceParentSpanId = null,
+  traceIdPrefix = "",
   deadlineAt = Date.now() + CUSTOMER_CHAT_EVIDENCE_LIMITS.maxTurnMs,
   limits = CUSTOMER_CHAT_EVIDENCE_LIMITS,
   now = Date.now,
@@ -193,7 +261,7 @@ export async function runCustomerEvidenceLoop({
 
     let assessment;
     const assessmentStartedAt = now();
-    const assessmentSpanId = `evidence-check-${rounds + 1}`;
+    const assessmentSpanId = `${traceIdPrefix}evidence-check-${rounds + 1}`;
     trace({
       spanId: assessmentSpanId,
       parentSpanId: traceParentSpanId,
@@ -350,10 +418,10 @@ export async function runCustomerEvidenceLoop({
       errorCode = "read_query_limit_reached";
       break;
     }
-    const queryNamesBefore = collectToolNames(readToolResults);
+    const queryNamesBefore = new Set(readToolResults.map(customerReadQueryKey));
     let additional;
     const additionalReadStartedAt = now();
-    const additionalReadSpanId = `additional-evidence-${rounds + 1}`;
+    const additionalReadSpanId = `${traceIdPrefix}additional-evidence-${rounds + 1}`;
     trace({
       spanId: additionalReadSpanId,
       parentSpanId: traceParentSpanId,
@@ -403,8 +471,9 @@ export async function runCustomerEvidenceLoop({
       : [];
     const unseenResults = newResults.filter((item) => {
       const toolName = String(item?.toolName || "").trim();
-      if (!toolName || queryNamesBefore.has(toolName)) return false;
-      queryNamesBefore.add(toolName);
+      const key = customerReadQueryKey(item);
+      if (!toolName || queryNamesBefore.has(key)) return false;
+      queryNamesBefore.add(key);
       return true;
     });
     if (!unseenResults.length) {

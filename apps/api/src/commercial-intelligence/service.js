@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { query, withTransaction } from "../db.js";
 import { config } from "../config.js";
+import { describeCustomerEvidenceStatus } from "./customer-chat-evidence.js";
+import {
+  customerTurnContractEnabled,
+  customerComponentCapability,
+  interpretCustomerTurn,
+} from "./turn-contract.js";
 import { extractContentFromBuffer } from "../opportunity-documents/service.js";
 import { getCommercialSettings } from "../settings.js";
 import {
@@ -339,6 +345,22 @@ export async function classifyCustomerIntent(input = {}) {
   const classifierPrompt = await loadSemanticClassifierPrompt({
     channel: "customer_account",
   });
+  if (customerTurnContractEnabled(config.features, input.user?.id)) {
+    const contract = await interpretCustomerTurn({ ...input, classifierPrompt });
+    const primary = contract.components[0] ? customerComponentCapability(contract.components[0]) : null;
+    return {
+      intent: primary?.intent || "clarify_needed",
+      confidence: contract.confidence === "high" ? 0.95 : contract.confidence === "medium" ? 0.75 : 0.35,
+      requiresClarification: contract.resolution === "clarification",
+      clarificationQuestion: contract.clarificationQuestion,
+      reason: "Contrato estructurado de B3",
+      turnContract: contract,
+      source: {
+        resolver: "turn_contract_v1",
+        classifierPrompt: { channel: classifierPrompt.channel, version: classifierPrompt.version, source: classifierPrompt.source },
+      },
+    };
+  }
   const preDecision = classifyCustomerRequestB3(input.question || "");
   const semanticDecision = await classifyCustomerIntentSemantically({
     ...input, classifierPrompt,
@@ -651,6 +673,13 @@ export async function assertExternalResearchGovernance(user) {
 
 function hasPermission(user, permission) {
   return Boolean(user?.permissionSet?.has(permission));
+}
+
+function customerChatDataForUser(value, user) {
+  if (!value || typeof value !== "object" ||
+      hasPermission(user, "mi_coach.chat_diagnostics")) return value;
+  const { debug, turnDebug, qualityTraceId, ...visible } = value;
+  return visible;
 }
 
 function hasReadPermission(user, moduleName) {
@@ -3130,7 +3159,9 @@ export async function getCustomerAccountChatSession({ user, sessionId }) {
     opportunityId:
       row.opportunity_id === null ? null : Number(row.opportunity_id),
     contactId: row.contact_id === null ? null : Number(row.contact_id),
-    history: Array.isArray(history) ? history.slice(-8) : [],
+    history: Array.isArray(history)
+      ? history.slice(-8).map((message) => customerChatDataForUser(message, user))
+      : [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -3652,6 +3683,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         () =>
           classifyCustomerIntent({
             question: request.question,
+            referenceMaterial: request.attachment || null,
             conversationHistory,
             selectedContext,
             conversationContext,
@@ -3669,6 +3701,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           semanticIntent: value.source?.semanticIntent || null,
           resolver: value.source?.resolver || "unknown",
           classifierPrompt: value.source?.classifierPrompt || null,
+          turnContract: value.turnContract || null,
         }),
       ),
       executionTrace.span(
@@ -3797,6 +3830,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
   }
   const adapter = createCustomerAccountAdapter({
     user,
+    referenceMaterial: request.attachment || null,
     authoritativeIntent,
     channelIntentConfiguration,
     snapshot: {
@@ -4076,6 +4110,15 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       }
       conversationContextUpdated = true;
     }
+    if (engineResult.turnMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        turnMemory: engineResult.turnMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
   } catch (error) {
     console.error("[account-chat] Adapter execution failed", {
       jobId: Number(jobId),
@@ -4258,6 +4301,9 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           attachment: request.attachment || null,
           activityHistory: response.activityHistory,
           operations: response.operations,
+          stageAnswerPrefill: response.stageAnswerPrefill,
+          components: response.components,
+          contentSource: response.contentSource,
         },
       );
       persistedHistoryForTrace = nextHistory;
@@ -4270,6 +4316,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           ? qualityTrace.toolsUsed
           : [];
         const evidenceStatus = evidenceDiagnostics?.status || null;
+        const evidenceDescription = describeCustomerEvidenceStatus(evidenceStatus);
         const fallbackUsed = Boolean(qualityTrace?.diagnostics?.fallback?.used);
         const plannerReturnEvent = executionTrace.events.find(
           (event) =>
@@ -4318,31 +4365,21 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         if (response.responseType === "error") {
           issue = {
             severity: "error",
-            title: "El turno no pudo completarse",
-            block: [
-              "query_error",
-              "query_limit_reached",
-              "insufficient_evidence",
-              "timeout",
-            ].includes(evidenceStatus)
+            title: evidenceDescription.issue?.severity === "error"
+              ? evidenceDescription.issue.title
+              : "El turno no pudo completarse",
+            block: evidenceDescription.state === "error"
               ? "B9"
               : "B10",
             message: response.answer,
             nextAction:
-              evidenceStatus && evidenceStatus !== "sufficient"
-                ? "Revisa el estado de evidencia, las consultas fallidas y los límites en el bloque B9."
+              evidenceDescription.state === "error"
+                ? evidenceDescription.issue?.nextAction ||
+                  "Revisa el estado de evidencia, las consultas fallidas y los límites en el bloque B9."
                 : "Revisa el error de generación o auditoría de respuesta en el bloque B10.",
           };
-        } else if (
-          evidenceStatus &&
-          ![
-            "sufficient",
-            "no_results",
-            "clarification",
-            "activity_entities_validated",
-          ].includes(evidenceStatus)
-        ) {
-          issue = {
+        } else if (evidenceDescription.state === "error") {
+          issue = evidenceDescription.issue || {
             severity: "error",
             title: "La evidencia no quedó verificada",
             block: "B9",
@@ -4350,6 +4387,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
             nextAction:
               "Revisa consultas fallidas, hechos pendientes, truncamientos y herramientas no ejecutadas.",
           };
+        } else if (evidenceDescription.issue?.severity === "warning") {
+          issue = evidenceDescription.issue;
         } else if (response.responseType === "clarification") {
           issue = {
             severity: "warning",
@@ -4387,6 +4426,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
             nextAction:
               "Revisa el plan, la intención elegida y el motivo del fallback en B6.",
           };
+        } else if (evidenceDescription.issue) {
+          issue = evidenceDescription.issue;
         } else {
           issue = {
             severity: "success",
@@ -4797,29 +4838,11 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
               checks: [
                 diagnosticCheck({
                   field: "evidenceStatus",
-                  state: !evidenceDiagnostics
-                    ? "not_checked"
-                    : ["sufficient", "no_results", "clarification"].includes(
-                          evidenceDiagnostics.status,
-                        )
-                      ? "pass"
-                      : [
-                            "query_error",
-                            "timeout",
-                            "verification_error",
-                          ].includes(evidenceDiagnostics.status)
-                        ? "error"
-                        : "warning",
+                  state: evidenceDescription.state,
                   expected:
-                    "sufficient, no_results o clarification; fallos identificados aparte",
+                    "Estado controlado del verificador factual, de entidades, de reporte o de contenido; fallos identificados aparte.",
                   actual: evidenceDiagnostics?.status || null,
-                  message: !evidenceDiagnostics
-                    ? "El verificador no fue alcanzado; no se evalúa como fallo por sí solo."
-                    : ["sufficient", "no_results", "clarification"].includes(
-                          evidenceDiagnostics.status,
-                        )
-                      ? "La verificación terminó en un estado controlado."
-                      : `Revisar estado de evidencia: ${evidenceDiagnostics.status}.`,
+                  message: evidenceDescription.message,
                 }),
               ],
             },
@@ -6148,7 +6171,13 @@ export async function getCustomerIntelligenceJob({ user, jobId }) {
      ORDER BY created_at ASC, id ASC`,
     [Number(job.id)],
   );
-  return { ...job, findings: findings.map(mapFindingRow) };
+  return {
+    ...job,
+    result: job.jobType === "account_chat"
+      ? customerChatDataForUser(job.result, user)
+      : job.result,
+    findings: findings.map(mapFindingRow),
+  };
 }
 
 export async function listCustomerIntelligenceFindings({ user, filters = {} }) {
