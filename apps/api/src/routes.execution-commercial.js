@@ -4607,6 +4607,7 @@ async function listLastActivityByOpportunity(opportunityIds) {
       `SELECT entity_id AS opportunity_id, MAX(created_at) AS last_activity_at
        FROM audit_log
        WHERE entity_type = 'opportunity'
+         AND action <> 'commercial_history_baseline'
          AND entity_id IN (${placeholders})
        GROUP BY entity_id`,
       opportunityIds,

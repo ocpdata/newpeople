@@ -10,7 +10,6 @@ import { ensureAccountInteractionsSchema } from "./account-interactions/schema.j
 import { ensureInteractionPermissions } from "./interactions/permissions.js";
 import { ensureInteractionAnalysisJobSchema } from "./interactions/analysis-jobs-schema.js";
 import { ensureInteractionSchema } from "./interactions/schema.js";
-import { startAuditRetentionJob } from "./audit.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
 import { ensureCommercialEnablementStarterData } from "./commercial-enablement/library-service.js";
 import { ensureCommercialEnablementPermissions } from "./commercial-enablement/permissions.js";
@@ -62,6 +61,8 @@ import { ensureCampaignEmailDispatchSchema } from "./campaign-emails/schema.js";
 import { isInitialRoleAssignmentRequired } from "./permissions-bootstrap.js";
 import { ensureSecurityTestSchema } from "./security-tests/schema.js";
 import { startSecurityTestWorker } from "./security-tests/async.js";
+import { startEvaluationWorker } from "./customer-chat-evaluations/async.js";
+import { ensureEvaluationAdministratorAccess } from "./customer-chat-evaluations/permissions.js";
 
 export async function startServer() {
   validateConfig();
@@ -80,6 +81,7 @@ export async function startServer() {
   await ensureCommercialIntelligencePermissions({ autoAssignRoles });
   await ensureProspectResearchPermissions({ autoAssignRoles });
   await migrateMiCoachPermissions();
+  await ensureEvaluationAdministratorAccess();
   await ensureCommercialEnablementPermissions({ autoAssignRoles });
   await ensureCommercialPlanningPermissions({ autoAssignRoles });
   await ensureManufacturerRegistrationPermissions({ autoAssignRoles });
@@ -110,7 +112,6 @@ export async function startServer() {
   await ensureCampaignsSchema();
   await ensureCampaignEmailDispatchSchema();
   await ensureSecurityTestSchema();
-  await startAuditRetentionJob();
   await startAccountDraftAnalysisWorker();
   await startCommercialNarrativeWorker();
   await startInteractionAnalysisWorker();
@@ -123,6 +124,7 @@ export async function startServer() {
   await startLandingWorker();
   await startCampaignEmailDispatchWorker();
   startSecurityTestWorker();
+  startEvaluationWorker();
   return server;
 }
 

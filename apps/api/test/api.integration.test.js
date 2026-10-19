@@ -15168,6 +15168,70 @@ describe("API integration baseline", () => {
     expect(String(row.scheduled_at)).toContain("2026-09-19 11:00:00");
   });
 
+  test("oportunidades.notes conserva reportes atribuidos y pagina por oportunidad", async () => {
+    const fixture = await createOwnedOpportunityFlowFixture(
+      `${TEST_PREFIX}_opportunity_notes`,
+    );
+    const reportedText =
+      "Kimberly dijo que quizá lo revisen el próximo mes; no lo confirmó";
+    const reportResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/notes`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({
+        noteText: reportedText,
+        sourceType: "chat_report",
+        attribution: "client",
+        certainty: "reported",
+      });
+
+    expect(reportResponse.status).toBe(201);
+    expect(reportResponse.body.id).toEqual(expect.any(Number));
+
+    const manualResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/notes`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ noteText: "Nota manual del vendedor." });
+    expect(manualResponse.status).toBe(201);
+
+    const newestPage = await request(app)
+      .get(`/api/opportunities/${fixture.opportunityId}/notes?limit=1`)
+      .set("Authorization", `Bearer ${fixture.token}`);
+    expect(newestPage.status).toBe(200);
+    expect(newestPage.body.items).toHaveLength(1);
+    expect(newestPage.body.items[0]).toMatchObject({
+      id: manualResponse.body.id,
+      noteText: "Nota manual del vendedor.",
+      sourceType: "manual",
+      attribution: "seller",
+      certainty: "unspecified",
+      authorName: expect.any(String),
+    });
+    expect(newestPage.body.nextBeforeId).toBe(manualResponse.body.id);
+
+    const reportPage = await request(app)
+      .get(
+        `/api/opportunities/${fixture.opportunityId}/notes?limit=1&beforeId=${newestPage.body.nextBeforeId}`,
+      )
+      .set("Authorization", `Bearer ${fixture.token}`);
+    expect(reportPage.status).toBe(200);
+    expect(reportPage.body.items).toEqual([
+      expect.objectContaining({
+        id: reportResponse.body.id,
+        noteText: reportedText,
+        sourceType: "chat_report",
+        attribution: "client",
+        certainty: "reported",
+      }),
+    ]);
+    expect(reportPage.body.nextBeforeId).toBeNull();
+
+    const invalidResponse = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/notes`)
+      .set("Authorization", `Bearer ${fixture.token}`)
+      .send({ noteText: "  " });
+    expect(invalidResponse.status).toBe(400);
+  });
+
   test("oportunidades.workspace solo muestra avance comercial cuando la etapa fue validada", async () => {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_workspace_progress_requires_validation`,

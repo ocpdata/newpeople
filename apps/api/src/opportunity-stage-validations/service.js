@@ -793,7 +793,7 @@ export async function executeOpportunityCurrentStageValidation({
     if (stageResolution.ok) {
       const targetStage = stageResolution.targetStage;
       const now = new Date();
-      await query(
+      await mutateAuditedOpportunity({ req, actor: user, opportunityId },
         `UPDATE opportunities
          SET sales_stage_id = ?, updated_by = ?, updated_at = ?
          WHERE id = ?`,
@@ -1009,3 +1009,4 @@ export async function processPendingOpportunityStageValidationJobs({
   }
   return processed;
 }
+import { mutateAuditedOpportunity } from "../opportunity-audit.js";

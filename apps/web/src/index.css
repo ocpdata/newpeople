@@ -22711,6 +22711,89 @@ td {
   padding: 0 12px;
 }
 
+.opportunity-note-composer {
+  display: grid;
+  gap: 6px;
+}
+
+.opportunity-note-composer label {
+  color: #315474;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.opportunity-note-composer textarea {
+  width: 100%;
+  min-height: 100px;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.opportunity-note-error {
+  margin: 0;
+  color: #a22d2d;
+  font-size: 12px;
+}
+
+.opportunity-note-success {
+  margin: 0;
+  color: #287b4d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.opportunity-notes-history {
+  margin-top: 8px;
+  scroll-margin-top: 16px;
+}
+
+.opportunity-notes-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.opportunity-note-item {
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid #e0eaf3;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.opportunity-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  color: #405c6c;
+  font-size: 11px;
+}
+
+.opportunity-note-meta strong {
+  color: #20486f;
+}
+
+.opportunity-note-item p {
+  margin: 0;
+  color: #263f52;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.opportunity-note-attribution {
+  color: #536977;
+  font-size: 11px;
+}
+
+.opportunity-notes-load-more {
+  justify-self: start;
+}
+
 .opportunity-operation-email-modal {
   max-width: 1520px;
   width: min(1520px, calc(100vw - 32px));

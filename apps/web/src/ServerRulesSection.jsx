@@ -8,6 +8,8 @@ const OPERATION_LABELS = {
   contact_field: "Campo de contacto", opportunity_field: "Campo de oportunidad",
   create_contact: "Crear contacto", create_opportunity: "Crear oportunidad",
   link_contact_to_opportunity: "Vincular contacto a oportunidad",
+  reschedule_activity: "Reprogramar actividad pendiente",
+  validate_stage: "Preparar validación de avance en Oportunidades",
 };
 const KIND_LABELS = {
   configurable: "Editable", protected: "Control protegido", model: "Evaluación de IA",

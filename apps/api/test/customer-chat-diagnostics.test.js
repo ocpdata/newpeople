@@ -20,6 +20,7 @@ vi.mock("../src/commercial-intelligence/customer-chat-adapter.js", async (origin
 
 import { query, withTransaction } from "../src/db.js";
 import { config } from "../src/config.js";
+import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
 import { createCustomerAccountAdapter } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import {
   getCustomerAccountChatSession,
@@ -128,12 +129,26 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
       ]),
     });
   });
+  it("persists explicit B3 timeout metadata without executing the business pipeline", async () => {
+    config.features.customerTurnContractMode = "on";
+    runStructuredTextResearch.mockRejectedValueOnce(Object.assign(new Error("Request aborted"), { name: "TimeoutError" }));
+    expect(await processCustomerAccountChatJob({ jobId: 1, user, deadlineAt: Date.now() + 2000 })).toBeNull();
+    const failureWrite = writes.find(({ sql }) => sql.includes("status = 'failed'"));
+    const result = JSON.parse(failureWrite.params[1]);
+    expect(result.errorCode).toBe("CUSTOMER_B3_TIMEOUT");
+    expect(result.debug.currentTurn.diagnostics.classificationFailure).toMatchObject({
+      code: "CUSTOMER_B3_TIMEOUT", contractVersion: "compact-v1", durationMs: expect.any(Number),
+    });
+    expect(result.debug.currentTurn.diagnostics.classificationFailure.timeoutMs).toBeLessThanOrEqual(2000);
+    expect(createCustomerAccountAdapter).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["report_destination_validated", "informational", "success", "pass", "Destino del reporte validado"],
     ["report_destination_clarification", "clarification", "warning", "warning", "El destino del reporte necesita una precisión"],
     ["report_destination_failed", "error", "error", "error", "No se pudo validar el destino del reporte"],
     ["content_validated", "informational", "success", "pass", "Contenido generado y auditado"],
+    ["verified_authorized_read", "informational", "success", "pass", "El turno terminó sin señales de error"],
     ["content_failed", "error", "error", "error", "El contenido no pudo validarse"],
     ["unknown_status", "informational", "error", "error", "La evidencia no quedó verificada"],
     ["query_error", "error", "error", "error", "El turno no pudo completarse"],
@@ -151,7 +166,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
     expect(job.status).toBe("completed");
     expect(job.result.debug.issue).toMatchObject({
       severity, title,
-      ...(status === "activity_entities_validated" ? {} : { block: "B9" }),
+      ...(["activity_entities_validated", "verified_authorized_read"].includes(status) ? {} : { block: "B9" }),
     });
     expect(job.result.debug.flow.find((item) => item.block === "B9").checks)
       .toEqual(expect.arrayContaining([

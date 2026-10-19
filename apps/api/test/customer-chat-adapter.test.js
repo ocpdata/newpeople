@@ -3,6 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/coach/quotation-read-service.js", () => ({
   getAuthorizedCoachQuotationContent: vi.fn(),
 }));
+vi.mock("../src/coach/customer-note-access.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  readCustomerOpportunityForNotes: vi.fn(),
+}));
+vi.mock("../src/opportunity-workspace/service.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  listOpportunityNotes: vi.fn(),
+}));
 vi.mock("../src/structuredWebResearch.js", () => ({
   runStructuredTextResearch: vi.fn(),
 }));
@@ -24,6 +32,8 @@ vi.mock("../src/coach/semantic-classifier-prompts.js", async (importOriginal) =>
 });
 
 import { getAuthorizedCoachQuotationContent } from "../src/coach/quotation-read-service.js";
+import { readCustomerOpportunityForNotes } from "../src/coach/customer-note-access.js";
+import { listOpportunityNotes } from "../src/opportunity-workspace/service.js";
 import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
 import { loadPlannerPrompt } from "../src/coach/planner-prompts.js";
 import * as coachBusinessRulesModule from "../src/coach/business-rules.js";
@@ -43,6 +53,7 @@ import {
   buildCustomerIntentResponse,
   buildCustomerQueryPlannerContext,
   createCustomerAccountAdapter,
+  extractCustomerNoteText,
   isCustomerActivityClarificationReply,
   normalizeCustomerOperations,
   normalizeCustomerResponse,
@@ -70,6 +81,7 @@ describe("Customer account chat adapter", () => {
   beforeEach(() => {
     previousContractMode = config.features.customerTurnContractMode;
     config.features.customerTurnContractMode = "off";
+    vi.restoreAllMocks();
     vi.clearAllMocks();
     loadSemanticClassifierPrompt.mockResolvedValue({
       channel: "customer_account",
@@ -88,6 +100,15 @@ describe("Customer account chat adapter", () => {
 
   afterEach(() => {
     config.features.customerTurnContractMode = previousContractMode;
+  });
+
+  it.each([
+    ["Guarda como nota en Hardware Refresh que el cliente quizá apruebe el alcance", "el cliente quizá apruebe el alcance"],
+    ["Registra como nota: Kimberly no confirmó la fecha", "Kimberly no confirmó la fecha"],
+    ["Guarda esta nota en la oportunidad", ""],
+    ["El cliente quizá apruebe el alcance", "El cliente quizá apruebe el alcance"],
+  ])("extracts only explicit note content from %s", (input, expected) => {
+    expect(extractCustomerNoteText(input)).toBe(expected);
   });
 
   it.each(["default", "custom"])("preserves seller-report handling with a %s classifier prompt", (source) => {
@@ -163,7 +184,10 @@ describe("Customer account chat adapter", () => {
     });
     expect(runStructuredTextResearch).not.toHaveBeenCalled();
     expect(result.response.operations).toEqual([]);
-    expect(result.response.answer).toContain("No consulté el CRM");
+    expect(result.response.answer).toContain("falló el planificador del chat");
+    expect(result.response.responseType).toBe("error");
+    expect(result.response.clarification).toBeNull();
+    expect(result.response.errorCode).toBe("PLANNER_ERROR");
     expect(result.qualityTrace.diagnostics.planner.reasonCode).toBe("planner_error");
   });
 
@@ -1445,6 +1469,8 @@ describe("Customer account chat adapter", () => {
         "opportunity_field",
         "create_opportunity",
         "link_contact_to_opportunity",
+        "reschedule_activity",
+        "opportunity_note",
       ],
       sourceChannel: "customer_account",
     });
@@ -1452,6 +1478,273 @@ describe("Customer account chat adapter", () => {
       ...getCoachReadToolCatalog().map((tool) => tool.name),
       "searchInteractions",
     ]);
+  });
+
+  it("prepara una nota literal en la oportunidad autorizada sin guardarla", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account"),
+    );
+    const noteText = "El cliente quizá lo confirme; no lo confirmó.";
+    const request = `Guarda como nota en Proyecto abierto que ${noteText}`;
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "oportunidades.update",
+          "mi_coach.execute",
+        ]),
+      },
+      snapshot,
+      authoritativeIntent: {
+        turnContract: {
+          version: 1,
+          movement: "new_request",
+          resolution: "resolved",
+          clarificationQuestion: "",
+          confidence: "high",
+          components: [{
+            id: "c1",
+            category: "action.record_note",
+            text: request,
+            object: "opportunity",
+            topic: "seguimiento",
+            scope: "single",
+            reference: "Proyecto abierto",
+            attribution: "client",
+            certainty: "suspected",
+            explicitAction: true,
+            dependsOn: [],
+            continuationOf: "none",
+          }],
+        },
+      },
+      agents: [],
+      jobId: 10,
+    });
+
+    const result = await adapter.runTurn({
+      question: request,
+      context: { accountId: 7 },
+    });
+
+    expect(result.response).toMatchObject({
+      responseType: "operation",
+      operations: [{
+        kind: "opportunity_note",
+        accountId: 7,
+        opportunityId: 11,
+        noteText,
+        sourceType: "chat_report",
+        attribution: "client",
+        certainty: "suspected",
+      }],
+    });
+    expect(result.response.answer).toContain("todavía no se ha registrado");
+  });
+
+  it("uses literal content from the seller request when the classifier omits it", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account"),
+    );
+    const noteText = "El cliente quizá lo confirme; no lo confirmó.";
+    const request = `Guarda como nota en Proyecto abierto que ${noteText}`;
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "oportunidades.update",
+          "mi_coach.execute",
+        ]),
+      },
+      snapshot,
+      authoritativeIntent: {
+        turnContract: {
+          version: 1,
+          movement: "new_request",
+          resolution: "resolved",
+          clarificationQuestion: "",
+          confidence: "high",
+          components: [{
+            id: "c1",
+            category: "action.record_note",
+            text: request,
+            object: "opportunity",
+            topic: "seguimiento",
+            scope: "single",
+            reference: "Proyecto abierto",
+            attribution: "client",
+            certainty: "suspected",
+            explicitAction: true,
+            dependsOn: [],
+            continuationOf: "none",
+          }],
+        },
+      },
+      agents: [],
+      jobId: 12,
+    });
+
+    const result = await adapter.runTurn({
+      question: request,
+      context: { accountId: 7 },
+    });
+
+    expect(result.response.operations).toEqual([
+      expect.objectContaining({ kind: "opportunity_note", noteText }),
+    ]);
+  });
+
+  it("pide texto y destino cuando una solicitud de nota no incluye contenido", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account"),
+    );
+    const request = "Guarda esta nota en la oportunidad";
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "oportunidades.update",
+          "mi_coach.execute",
+        ]),
+      },
+      snapshot,
+      authoritativeIntent: {
+        turnContract: {
+          version: 1,
+          movement: "new_request",
+          resolution: "resolved",
+          clarificationQuestion: "",
+          confidence: "high",
+          components: [{
+            id: "c1",
+            category: "action.record_note",
+            text: request,
+            object: "opportunity",
+            topic: "nota",
+            scope: "single",
+            reference: "",
+            attribution: "seller",
+            certainty: "reported",
+            explicitAction: true,
+            dependsOn: [],
+            continuationOf: "none",
+          }],
+        },
+      },
+      agents: [],
+      jobId: 11,
+    });
+
+    const result = await adapter.runTurn({
+      question: request,
+      context: { accountId: 7 },
+    });
+
+    expect(result.response).toMatchObject({
+      responseType: "clarification",
+      operations: [],
+    });
+    expect(result.response.answer).toContain("¿Qué texto exacto quieres registrar");
+    expect(result.response.answer).toContain("en cuál oportunidad");
+  });
+
+  it("lee únicamente las notas de la oportunidad autorizada y conserva su atribución", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account"),
+    );
+    readCustomerOpportunityForNotes.mockResolvedValue({
+      id: 11,
+      accountId: 7,
+      opportunityName: "Proyecto abierto",
+    });
+    listOpportunityNotes.mockResolvedValue({
+      id: 11,
+      accountId: 7,
+      opportunityName: "Proyecto abierto",
+      items: [{
+        id: 88,
+        createdAt: "2026-09-30T12:00:00.000Z",
+        noteText: "El cliente quizá lo confirme; no lo confirmó.",
+        attribution: "client",
+        certainty: "suspected",
+      }],
+      nextBeforeId: null,
+    });
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set(["cuentas.read", "oportunidades.read"]),
+      },
+      snapshot,
+      authoritativeIntent: {
+        turnContract: {
+          version: 1,
+          movement: "new_request",
+          resolution: "resolved",
+          clarificationQuestion: "",
+          confidence: "high",
+          components: [{
+            id: "c1",
+            category: "query.opportunity_notes",
+            text: "Lee las notas de Proyecto abierto.",
+            object: "opportunity",
+            topic: "notas",
+            scope: "single",
+            reference: "Proyecto abierto",
+            attribution: "none",
+            certainty: "unspecified",
+            explicitAction: false,
+            dependsOn: [],
+            continuationOf: "none",
+          }],
+        },
+      },
+      agents: [],
+      jobId: 11,
+    });
+
+    const result = await adapter.runTurn({
+      question: "Lee las notas de Proyecto abierto.",
+      context: { accountId: 7 },
+    });
+
+    expect(readCustomerOpportunityForNotes).toHaveBeenCalledWith({
+      user: expect.objectContaining({ id: 31 }),
+      accountId: 7,
+      opportunityId: 11,
+    });
+    expect(listOpportunityNotes).toHaveBeenCalledWith({
+      opportunityId: 11,
+      limit: 50,
+    });
+    expect(result.response).toMatchObject({
+      responseType: "informational",
+      operations: [],
+    });
+    expect(result.response.answer).toContain("El cliente quizá lo confirme; no lo confirmó.");
+    expect(result.response.answer).toContain("[client; suspected]");
   });
 
   it("normaliza operaciones controladas y descarta referencias fuera de la cuenta fija", () => {
@@ -1498,6 +1791,38 @@ describe("Customer account chat adapter", () => {
         (operation) => operation.sourceChannel === "customer_account",
       ),
     ).toBe(true);
+  });
+
+  it("normaliza notas literales solo para oportunidades de la cuenta y usuarios autorizados", () => {
+    const noteText = "El cliente quizá lo confirme; no lo confirmó.";
+    const permissions = new Set(["oportunidades.update", "mi_coach.execute"]);
+    const operations = normalizeCustomerOperations(
+      [
+        {
+          kind: "opportunity_note",
+          title: "Registrar nota",
+          accountId: snapshot.account.id,
+          opportunityId: snapshot.opportunities[0].id,
+          noteText,
+          attribution: "client",
+          certainty: "suspected",
+        },
+      ],
+      snapshot,
+      { accountId: snapshot.account.id },
+      permissions,
+    );
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({
+      kind: "opportunity_note",
+      accountId: snapshot.account.id,
+      opportunityId: snapshot.opportunities[0].id,
+      noteText,
+      sourceType: "chat_report",
+      attribution: "client",
+      certainty: "suspected",
+      requiresConfirmation: true,
+    });
   });
 
   it("prepara create_contact bajo la cuenta activa y descarta permisos o cuentas ajenas", () => {
@@ -2241,6 +2566,47 @@ describe("Customer account chat adapter", () => {
       contactId: null,
       leadId: null,
     });
+  });
+
+  it.each([
+    ["Envía un WhatsApp a Kimberly sobre Hardware Refresh", "No se envió ninguna comunicación"],
+    ["Cancela la actividad pendiente de Hardware Refresh", "No se canceló ni reprogramó ninguna actividad"],
+  ])("does not silently substitute another action for: %s", (question, expected) => {
+    const scopedSnapshot = {
+      account: { id: 7, name: "Totalplay" },
+      contacts: [],
+      opportunities: [{ id: 11, accountId: 7, name: "Hardware Refresh" }],
+      interactions: [],
+    };
+    const result = normalizeCustomerResponse({
+      answer: "Preparé el borrador.",
+      responseType: "operation",
+      operations: [{ kind: "activity", opportunityId: 11, title: "Enviar mensaje" }],
+      activityDraft: { operation: { kind: "activity" } },
+    }, scopedSnapshot, question, { accountId: 7 });
+    expect(result.answer).toContain(expected);
+    expect(result.operations).toEqual([]);
+    expect(result.activityDraft).toBeUndefined();
+  });
+
+  it("blocks an opportunity creation proposal when the seller asked for a contact", () => {
+    const scopedSnapshot = {
+      account: { id: 7, name: "Totalplay" },
+      contacts: [],
+      opportunities: [],
+      interactions: [],
+    };
+    const result = normalizeCustomerResponse({
+      answer: "No puedo preparar los campos de oportunidad.",
+      responseType: "clarification",
+      operations: [{
+        kind: "create_opportunity",
+        accountId: 7,
+        payload: { accountId: 7, name: "Alejandro Ruiz" },
+      }],
+    }, scopedSnapshot, "Crea un nuevo contacto llamado Alejandro Ruiz", { accountId: 7 });
+    expect(result.answer).toContain("Pediste crear un contacto");
+    expect(result.operations).toEqual([]);
   });
 
   it("loads guidance evidence for an anaphoric opportunity question without keyword triggers", async () => {

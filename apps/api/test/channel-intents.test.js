@@ -227,6 +227,36 @@ describe("shared non-Coach channel intent routing", () => {
         .fields.find((field) => field.key === "timing").enum,
     ).toEqual(["completed", "scheduled", "unclear"]);
   });
+  it("allows account-level discovery guidance when no opportunity is named", () => {
+    const plan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      context: { accountId: 22, opportunityId: null },
+      availableTools: customerTools.map((tool) => tool.name),
+      configuration: getChannelIntentDefaults("customer_account"),
+      question: "¿Qué debo negociar si todavía no sabemos la necesidad concreta?",
+      plan: {
+        objective: "Orientar sobre negociación sin necesidad concreta",
+        queries: ["opportunity_guidance"],
+        entities: { accountReference: "", opportunityReference: "", contactReference: "", leadReference: "" },
+        filters: {},
+        ambiguity: {
+          reason: "missing_context", requiresClarification: "yes",
+          missingContext: ["opportunity"], question: "",
+        },
+        referenceResolution: {
+          targetType: "account", cardinality: "single", source: "active_context", candidateKeys: [],
+        },
+        mode: "clarification", confidence: "high",
+      },
+    });
+    expect(plan).toMatchObject({
+      intent: "opportunity_guidance",
+      requiredContext: ["account"],
+      missingContext: [],
+      requiresClarification: false,
+      mode: "query",
+    });
+  });
 
   it("uses the validated selected opportunity when the planner reports stale missing context", () => {
     const configuration = getChannelIntentDefaults("customer_account");
@@ -1061,6 +1091,89 @@ describe("shared non-Coach channel intent routing", () => {
     expect(accountOverview.entities.accountReference).toBe("Comercial Lumen");
   });
 
+  it("allows authoritative content preparation without CRM reads despite a planner clarification", () => {
+    const plan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      authoritativeIntent: { intent: "content_preparation", confidence: 0.95 },
+      question: "Traduce al inglés: La cotización sigue pendiente de revisión",
+      context: { accountId: 7 },
+      availableTools: customerTools.map((tool) => tool.name),
+      configuration: getChannelIntentDefaults("customer_account"),
+      plan: {
+        objective: "Translate content",
+        queries: ["account_overview"],
+        entities: { opportunityReference: "Hardware Refresh" },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "current_message",
+          candidateKeys: [],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "out_of_scope",
+          requiresClarification: "yes",
+          missingContext: ["opportunity"],
+          question: "",
+        },
+        mode: "clarification",
+        confidence: "high",
+      },
+    });
+
+    expect(plan).toMatchObject({
+      intent: "content_preparation",
+      requiresClarification: false,
+      missingContext: [],
+      allowedTools: [],
+    });
+  });
+
+  it("routes opportunity value arguments through authorized quotation reads", () => {
+    const plan = normalizeChannelIntentPlan({
+      channel: "customer_account",
+      authoritativeIntent: { intent: "value_argument", confidence: 0.95 },
+      serverEntityCandidates: [{
+        candidateKey: "opportunity_1",
+        entityType: "opportunity",
+        recordId: 11,
+        accountId: 7,
+        referenceText: "Hardware Refresh",
+      }],
+      question: "Prepara un argumento de valor para Hardware Refresh con lo disponible",
+      context: { accountId: 7 },
+      availableTools: customerTools.map((tool) => tool.name),
+      configuration: getChannelIntentDefaults("customer_account"),
+      plan: {
+        objective: "Prepare an opportunity value argument",
+        queries: ["opportunity_guidance"],
+        entities: { opportunityReference: "Hardware Refresh" },
+        referenceResolution: {
+          targetType: "opportunity",
+          cardinality: "single",
+          source: "current_message",
+          candidateKeys: ["opportunity_1"],
+        },
+        filters: {},
+        ambiguity: {
+          reason: "none",
+          requiresClarification: "no",
+          missingContext: [],
+          question: "",
+        },
+        mode: "read_only",
+        confidence: "high",
+      },
+    });
+
+    expect(plan).toMatchObject({
+      intent: "value_argument",
+      requiresClarification: false,
+      serverResolvedEntityIds: { opportunityId: 11 },
+    });
+    expect(plan.allowedTools).toContain("getOpportunityQuotation");
+  });
+
   it("keeps only literal references, valid filters and tools authorized for the selected intents", () => {
     const availableTools = ["searchAccounts", "searchOpportunities"];
     const plan = normalizeChannelIntentPlan({
@@ -1706,9 +1819,10 @@ describe("shared non-Coach channel intent routing", () => {
     expect(preparedInput.availableTools).toEqual([]);
     expect(requestResponse).not.toHaveBeenCalled();
     expect(response.response).toMatchObject({
-      responseType: "clarification",
-      answer: expect.stringContaining("No pude interpretar la solicitud"),
-      clarification: expect.objectContaining({ missing: [] }),
+      responseType: "error",
+      answer: expect.stringContaining("falló el planificador del chat"),
+      clarification: null,
+      errorCode: "PLANNER_ERROR",
     });
     expect(response.qualityTrace.diagnostics.planner).toMatchObject({
       source: "not_applicable",
@@ -1787,6 +1901,7 @@ describe("shared non-Coach channel intent routing", () => {
 
     expect(preparedInput.availableTools).toEqual([]);
     expect(requestResponse).not.toHaveBeenCalled();
-    expect(response.response.responseType).toBe("clarification");
+    expect(response.response.responseType).toBe("error");
+    expect(response.response.errorCode).toBe("CUSTOMER_PLANNER_UNAVAILABLE");
   });
 });

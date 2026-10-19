@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { readOpportunityCommercialHistory, readOpportunityScenarioBasis } from "./opportunity-history-store.js";
 import { readFile } from "node:fs/promises";
 import { query, withTransaction } from "../db.js";
+import { buildCustomerHistoryReadFilter } from "./customer-history.js";
+import { buildCustomerPendingReadFilter } from "./customer-pending.js";
+import { buildCustomerExtractedMaterial } from "./customer-documents.js";
 import { config } from "../config.js";
 import { describeCustomerEvidenceStatus } from "./customer-chat-evidence.js";
 import {
   customerTurnContractEnabled,
   customerComponentCapability,
   interpretCustomerTurn,
+  CUSTOMER_TURN_PROVIDER_VERSION,
 } from "./turn-contract.js";
 import { extractContentFromBuffer } from "../opportunity-documents/service.js";
 import { getCommercialSettings } from "../settings.js";
@@ -379,6 +384,7 @@ export async function classifyCustomerIntent(input = {}) {
       turnContract: contract,
       source: {
         resolver: "turn_contract_v1",
+        providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION,
         classifierPrompt: { channel: classifierPrompt.channel, version: classifierPrompt.version, source: classifierPrompt.source },
       },
     };
@@ -918,25 +924,23 @@ function isOpenCustomerOpportunity(opportunity) {
   );
 }
 
+function isCustomerOpportunityHistoryStatusAllowed(item, settings) {
+  if (item.commercial_status_code === "ganada") {
+    return settings.includeWonOpportunities;
+  }
+  if (item.commercial_status_code === "perdida") {
+    return settings.includeLostOpportunities;
+  }
+  if (item.commercial_status_code === "anulada") {
+    return settings.includeCancelledOpportunities;
+  }
+  return true;
+}
+
 export function filterCustomerOpportunityHistory(opportunities, settings) {
-  return opportunities.filter((item) => {
-    if (
-      item.activation_status_code &&
-      item.activation_status_code !== "activada"
-    ) {
-      return false;
-    }
-    if (item.commercial_status_code === "ganada") {
-      return settings.includeWonOpportunities;
-    }
-    if (item.commercial_status_code === "perdida") {
-      return settings.includeLostOpportunities;
-    }
-    if (item.commercial_status_code === "anulada") {
-      return settings.includeCancelledOpportunities;
-    }
-    return true;
-  });
+  return opportunities.filter((item) =>
+    (!item.activation_status_code || item.activation_status_code === "activada") &&
+    isCustomerOpportunityHistoryStatusAllowed(item, settings));
 }
 
 export function filterCustomerOpportunityArtifacts(
@@ -1194,7 +1198,12 @@ export async function buildAuthorizedCustomerSnapshot({
   activityHistoryEndDate = null,
   includeContactHistory = false,
   includeProviderCatalog = true,
+  historySources = null,
+  historyRequest = null,
 }) {
+  const historyReadFilter = (source) => historyRequest
+    ? historyRequest.pending ? buildCustomerPendingReadFilter(source, historyRequest) :
+      buildCustomerHistoryReadFilter(source, historyRequest) : { sql: "", params: [] };
   const governanceSettings = await getMiCoachGovernanceSettings();
   const snapshotQueryMetrics = [];
   const loadSnapshotRows = async (
@@ -1212,6 +1221,9 @@ export async function buildAuthorizedCustomerSnapshot({
       snapshotQueryMetrics.push(captured.metric);
       return captured.rows;
     } catch (error) {
+      if (historySources) {
+        console.error("[account-chat] History source read failed", { source, errorCode: error?.code || error?.name || "Error" });
+      }
       snapshotQueryMetrics.push(
         captureSnapshotQueryFailure(source, resultLimit),
       );
@@ -1395,13 +1407,17 @@ export async function buildAuthorizedCustomerSnapshot({
         )
       : [];
 
+  const visibleRelatedInactiveOpportunities = relatedInactiveOpportunities.filter(
+    (item) => isCustomerOpportunityHistoryStatusAllowed(item, governanceSettings),
+  );
+
   if (resolvedAccountId && hasReadPermission(user, "interacciones")) {
     await ensureLandingSchema();
   }
   const interactionAccessScope = hasReadAllPermission(user, "interacciones")
     ? ""
     : "AND (i.seller_user_id = ? OR i.created_by = ? OR EXISTS (SELECT 1 FROM account_owners ao_interaction_scope WHERE ao_interaction_scope.account_id = COALESCE(i.account_id, (SELECT related_opportunity.account_id FROM opportunities related_opportunity WHERE related_opportunity.id = i.primary_opportunity_id)) AND ao_interaction_scope.user_id = ?) OR EXISTS (SELECT 1 FROM landing_submissions ls WHERE ls.id = i.landing_submission_id AND ls.sent_to_leads_by = ?) OR EXISTS (SELECT 1 FROM landing_submission_crm_links lscl INNER JOIN landing_submissions ls ON ls.id = lscl.submission_id WHERE lscl.lead_id = i.id AND ls.sent_to_leads_by = ?))";
-  const interactionHistoryFilter = activityHistoryStartDate
+  const interactionHistoryFilter = activityHistoryStartDate && !historySources
     ? "AND COALESCE(i.created_at, i.updated_at) >= ? AND COALESCE(i.created_at, i.updated_at) < DATE_ADD(?, INTERVAL 1 DAY)"
     : "";
   const interactionParams = hasReadAllPermission(user, "interacciones")
@@ -1415,16 +1431,17 @@ export async function buildAuthorizedCustomerSnapshot({
         Number(user.id),
         Number(user.id),
       ];
-  if (activityHistoryStartDate) {
+  if (activityHistoryStartDate && !historySources) {
     interactionParams.push(activityHistoryStartDate, activityHistoryEndDate);
   }
   const relatedInteractions =
-    resolvedAccountId && hasReadPermission(user, "interacciones")
+    resolvedAccountId && hasReadPermission(user, "interacciones") &&
+    (!historySources || historySources.includes("interactions"))
       ? await loadSnapshotRows(
           "interactions",
           () =>
             query(
-              `SELECT i.id, i.primary_opportunity_id, i.title, i.analysis_status, i.summary, i.source_notes,
+              `SELECT i.id, i.account_id, i.primary_opportunity_id, i.title, i.analysis_status, i.summary, i.source_notes,
                   i.lead_substatus_code, i.lead_reason_code, i.lead_required_action_code,
                   i.lead_next_action_due_at, i.updated_at, i.created_at
            FROM interactions i
@@ -1433,12 +1450,13 @@ export async function buildAuthorizedCustomerSnapshot({
            ))
              ${interactionAccessScope}
              ${interactionHistoryFilter}
+             ${historyReadFilter("interactions").sql}
            ORDER BY i.updated_at DESC, i.created_at DESC
-           ${activityHistoryStartDate || includeContactHistory ? "" : "LIMIT 31"}`,
-              interactionParams,
+           ${historySources ? "LIMIT 501" : activityHistoryStartDate || includeContactHistory ? "" : "LIMIT 31"}`,
+              [...interactionParams, ...historyReadFilter("interactions").params],
             ),
-          activityHistoryStartDate || includeContactHistory ? null : 30,
-          Boolean(activityHistoryStartDate || includeContactHistory),
+          historySources ? 500 : activityHistoryStartDate || includeContactHistory ? null : 30,
+          !historySources && Boolean(activityHistoryStartDate || includeContactHistory),
         )
       : [];
 
@@ -1454,7 +1472,7 @@ export async function buildAuthorizedCustomerSnapshot({
     const contactIds = relatedContacts.map((item) => Number(item.id));
     const interactionPlaceholders = interactionIds.map(() => "?").join(",");
     const contactPlaceholders = contactIds.map(() => "?").join(",");
-    const contactLinkRows = await query(
+    const contactLinkRows = await loadSnapshotRows("interaction_contact_links", () => query(
       `SELECT l.interaction_id, l.contact_id
        FROM interaction_contact_links l
        INNER JOIN contacts c ON c.id = l.contact_id
@@ -1462,9 +1480,7 @@ export async function buildAuthorizedCustomerSnapshot({
          AND l.contact_id IN (${contactPlaceholders})
          AND c.account_id = ?`,
       [...interactionIds, ...contactIds, resolvedAccountId],
-    ).catch((error) => {
-      throw error;
-    });
+    ), null, !historySources);
     contactIdsByInteraction = contactLinkRows.reduce((groups, row) => {
       const interactionId = Number(row.interaction_id);
       const linked = groups.get(interactionId) || [];
@@ -1564,7 +1580,7 @@ export async function buildAuthorizedCustomerSnapshot({
     ...new Set(
       [
         ...visibleRelatedOpportunities,
-        ...relatedInactiveOpportunities,
+        ...visibleRelatedInactiveOpportunities,
         ...(opportunity ? [opportunity] : []),
       ]
         .map((item) => Number(item.id))
@@ -1738,21 +1754,21 @@ export async function buildAuthorizedCustomerSnapshot({
   }
   if (
     resolvedAccountId &&
-    activityHistoryStartDate &&
+    (historySources ? historySources.includes("opportunityActivities") : activityHistoryStartDate) &&
     hasReadPermission(user, "oportunidades") &&
     hasReadPermission(user, "desarrollo_comercial")
   ) {
     const activityOpportunityScope = hasReadAllPermission(user, "oportunidades")
       ? ""
       : "AND (EXISTS (SELECT 1 FROM account_owners ao_activity_scope WHERE ao_activity_scope.account_id = o.account_id AND ao_activity_scope.user_id = ?) OR o.created_by = ? OR o.seller_user_id = ?)";
-    const activityDateScope = activityHistoryStartDate
+    const activityDateScope = activityHistoryStartDate && !historySources
       ? "AND COALESCE(a.due_date, a.created_at) >= ? AND COALESCE(a.due_date, a.created_at) < DATE_ADD(?, INTERVAL 1 DAY)"
       : "";
     const activityParams = [resolvedAccountId];
     if (!hasReadAllPermission(user, "oportunidades")) {
       activityParams.push(Number(user.id), Number(user.id), Number(user.id));
     }
-    if (activityHistoryStartDate) {
+    if (activityHistoryStartDate && !historySources) {
       activityParams.push(activityHistoryStartDate, activityHistoryEndDate);
     }
     const rows = await loadSnapshotRows(
@@ -1760,16 +1776,19 @@ export async function buildAuthorizedCustomerSnapshot({
       () =>
         query(
           `SELECT a.id, a.opportunity_id, a.title, a.action_type, a.status,
-              a.priority, a.due_date, a.success_criteria, a.notes,
+              a.priority, ${historySources ? "DATE_FORMAT(a.due_date, '%Y-%m-%d')" : "a.due_date"} AS due_date,
+              a.scheduled_at, a.success_criteria, a.notes,
               a.created_at, o.account_id, o.name AS opportunity_name
        FROM opportunity_workspace_actions a
        INNER JOIN opportunities o ON o.id = a.opportunity_id
        WHERE o.account_id = ? ${activityOpportunityScope} ${activityDateScope}
-       ORDER BY COALESCE(a.due_date, a.created_at) DESC, a.id DESC`,
-          activityParams,
+         ${historyReadFilter("opportunityActivities").sql}
+       ORDER BY ${historySources ? "COALESCE(a.scheduled_at, a.due_date, a.created_at)" : "COALESCE(a.due_date, a.created_at)"} DESC, a.id DESC
+       ${historySources ? "LIMIT 501" : ""}`,
+          [...activityParams, ...historyReadFilter("opportunityActivities").params],
         ),
-      null,
-      Boolean(activityHistoryStartDate),
+      historySources ? 500 : null,
+      !historySources && Boolean(activityHistoryStartDate),
     );
     relatedOpportunityActivities = rows.map((row) => ({
       id: Number(row.id),
@@ -1781,6 +1800,7 @@ export async function buildAuthorizedCustomerSnapshot({
       status: row.status || "pending",
       priority: row.priority || "medium",
       dueDate: row.due_date || null,
+      scheduledAt: historySources ? row.scheduled_at || null : null,
       notes: row.notes || "",
       successCriteria: row.success_criteria || "",
       createdAt: row.created_at || null,
@@ -1788,7 +1808,7 @@ export async function buildAuthorizedCustomerSnapshot({
   }
   if (
     resolvedAccountId &&
-    activityHistoryStartDate &&
+    (historySources ? historySources.includes("calendarActivities") : activityHistoryStartDate) &&
     hasReadPermission(user, "calendario_comercial") &&
     hasReadPermission(user, "oportunidades")
   ) {
@@ -1804,8 +1824,7 @@ export async function buildAuthorizedCustomerSnapshot({
       resolvedAccountId,
       resolvedAccountId,
       resolvedAccountId,
-      activityHistoryStartDate,
-      activityHistoryEndDate,
+      ...(!historySources ? [activityHistoryStartDate, activityHistoryEndDate] : []),
     ];
     if (!hasReadAllPermission(user, "calendario_comercial")) {
       calendarParams.push(Number(user.id), Number(user.id));
@@ -1815,11 +1834,12 @@ export async function buildAuthorizedCustomerSnapshot({
       () =>
         query(
           `SELECT cca.id, cca.kind, cca.activity_type, cca.status,
-              cca.scheduled_at, cca.due_date, cca.objective, cca.note,
-              cca.success_criteria, cca.opportunity_id, cca.interaction_id,
-              cca.account_id, cca.created_at, o.name AS opportunity_name
+              cca.scheduled_at, ${historySources ? "DATE_FORMAT(cca.due_date, '%Y-%m-%d')" : "cca.due_date"} AS due_date, cca.objective, cca.note,
+              cca.success_criteria, ${historySources ? "COALESCE(cca.opportunity_id, linked_i.primary_opportunity_id)" : "cca.opportunity_id"} AS opportunity_id, cca.interaction_id,
+              cca.account_id, cca.contact_id, cca.created_at, o.name AS opportunity_name
        FROM commercial_calendar_activities cca
-       LEFT JOIN opportunities o ON o.id = cca.opportunity_id
+       ${historySources ? "LEFT JOIN interactions linked_i ON linked_i.id = cca.interaction_id" : ""}
+       LEFT JOIN opportunities o ON o.id = ${historySources ? "COALESCE(cca.opportunity_id, linked_i.primary_opportunity_id)" : "cca.opportunity_id"}
        WHERE (
          cca.account_id = ? OR
          cca.opportunity_id IN (
@@ -1834,15 +1854,16 @@ export async function buildAuthorizedCustomerSnapshot({
            )
          )
        )
-         AND COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) >= ?
-         AND COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) < DATE_ADD(?, INTERVAL 1 DAY)
+         ${historySources ? "" : `AND COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) >= ?
+         AND COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) < DATE_ADD(?, INTERVAL 1 DAY)`}
          ${calendarAccessScope}
+         ${historyReadFilter("calendarActivities").sql}
        ORDER BY COALESCE(cca.scheduled_at, cca.due_date, cca.created_at) DESC,
-                cca.id DESC`,
-          calendarParams,
+                cca.id DESC ${historySources ? "LIMIT 501" : ""}`,
+          [...calendarParams, ...historyReadFilter("calendarActivities").params],
         ),
-      null,
-      true,
+      historySources ? 500 : null,
+      !historySources,
     );
     relatedCalendarActivities = calendarRows.map((row) => ({
       id: Number(row.id),
@@ -1850,6 +1871,7 @@ export async function buildAuthorizedCustomerSnapshot({
       opportunityId: Number(row.opportunity_id || 0) || null,
       opportunityName: row.opportunity_name || "",
       interactionId: Number(row.interaction_id || 0) || null,
+      contactId: Number(row.contact_id || 0) || null,
       activityType: row.activity_type || "",
       status: row.status || "pending",
       scheduledAt: row.scheduled_at || null,
@@ -1885,7 +1907,7 @@ export async function buildAuthorizedCustomerSnapshot({
           name: opportunity.name || "",
           accountId: Number(opportunity.account_id),
           contactId: Number(opportunity.contact_id || 0) || null,
-          amountUsd: Number(opportunity.amount_usd || 0),
+          amountUsd: opportunity.amount_usd == null ? null : Number(opportunity.amount_usd),
           closeDate: opportunity.close_date || null,
           updatedAt: opportunity.updated_at || null,
           stageCode: opportunity.stage_code || "",
@@ -1939,7 +1961,7 @@ export async function buildAuthorizedCustomerSnapshot({
       name: item.name || "",
       accountId: Number(item.account_id),
       contactId: Number(item.contact_id || 0) || null,
-      amountUsd: Number(item.amount_usd || 0),
+      amountUsd: item.amount_usd == null ? null : Number(item.amount_usd),
       closeDate: item.close_date || null,
       updatedAt: item.updated_at || null,
       stageCode: item.stage_code || "",
@@ -1952,13 +1974,13 @@ export async function buildAuthorizedCustomerSnapshot({
         ? "open"
         : "historical",
     })),
-    inactiveOpportunities: relatedInactiveOpportunities.map((item) => ({
+    inactiveOpportunities: visibleRelatedInactiveOpportunities.map((item) => ({
       ...coachContextFor(item),
       id: Number(item.id),
       name: item.name || "",
       accountId: Number(item.account_id),
       contactId: Number(item.contact_id || 0) || null,
-      amountUsd: Number(item.amount_usd || 0),
+      amountUsd: item.amount_usd == null ? null : Number(item.amount_usd),
       closeDate: item.close_date || null,
       updatedAt: item.updated_at || null,
       stageCode: item.stage_code || "",
@@ -1970,6 +1992,7 @@ export async function buildAuthorizedCustomerSnapshot({
     interactions: relatedInteractions.map((item) => ({
       id: Number(item.id),
       accountId: Number(resolvedAccountId),
+      ...(item.account_id !== undefined ? { directAccountId: Number(item.account_id || 0) || null } : {}),
       contactIds: contactIdsByInteraction.get(Number(item.id)) || [],
       opportunityId: Number(item.primary_opportunity_id || 0) || null,
       title: item.title || "",
@@ -2058,6 +2081,14 @@ export async function buildAuthorizedCustomerSnapshot({
     ...normalizedData,
     accountHealth: buildAccountHealth(normalizedData),
   });
+  normalizedSnapshot.collectionScopes = {
+    contacts: includeContactHistory ? "activados y no activados" : "solo activados",
+    opportunities: [
+      governanceSettings.includeWonOpportunities ? "incluye ganadas" : "excluye ganadas",
+      governanceSettings.includeLostOpportunities ? "incluye perdidas" : "excluye perdidas",
+      governanceSettings.includeCancelledOpportunities ? "incluye anuladas" : "excluye anuladas",
+    ].join(", "),
+  };
   CUSTOMER_SNAPSHOT_QUERY_METRICS.set(normalizedSnapshot, snapshotQueryMetrics);
   return normalizedSnapshot;
 }
@@ -3508,7 +3539,7 @@ export async function createCustomerAccountChatJob({ user, payload }) {
   };
 }
 
-export async function processCustomerAccountChatJob({ jobId, user }) {
+export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = null }) {
   const executionTrace = createTurnExecutionTrace({
     enabled: true,
   });
@@ -3564,16 +3595,9 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           jobType: "account_chat_attachment_transcription",
         },
       });
-      const text = String(extracted.normalizedText || "")
-        .trim()
-        .slice(0, 12000);
-      if (!text) {
-        throw createHttpError(400, "No se encontro texto util en el archivo");
-      }
       request.attachment = {
-        name: request.attachment.name,
         kind: request.attachment.kind,
-        text,
+        ...buildCustomerExtractedMaterial(extracted, request.attachment.name),
       };
       await query(
         `UPDATE customer_intelligence_jobs SET request_json = ?, updated_at = NOW(3)
@@ -3704,6 +3728,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         },
         () =>
           classifyCustomerIntent({
+            deadlineAt,
             question: request.question,
             referenceMaterial: request.attachment || null,
             conversationHistory,
@@ -3722,6 +3747,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           preclassifierBucket: value.source?.preclassifierBucket || "unknown",
           semanticIntent: value.source?.semanticIntent || null,
           resolver: value.source?.resolver || "unknown",
+          providerContractVersion: value.source?.providerContractVersion || null,
           classifierPrompt: value.source?.classifierPrompt || null,
           turnContract: value.turnContract || null,
         }),
@@ -3756,6 +3782,16 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     authoritativeIntent = classifiedIntent;
     agents = preparedAgents;
   } catch (error) {
+    const contractFailure = error?.code === "CUSTOMER_TURN_CONTRACT_INVALID" ? {
+      code: error.code, validationIssues: error.validationIssues, invalidStructure: error.invalidStructure,
+    } : null;
+    const classificationFailure = error?.code === "CUSTOMER_B3_TIMEOUT" ? {
+      code: error.code, durationMs: error.durationMs, timeoutMs: error.timeoutMs, contractVersion: error.contractVersion,
+    } : null;
+    console.error("[account-chat] Preparation failed", {
+      jobId, stage: preparationStage, code: error?.code || "chat_preparation_failed",
+      message: error?.message, ...(contractFailure || {}),
+    });
     await recordCoachTurnQualityTrace({
       channel: "customer_account",
       process: "default",
@@ -3788,6 +3824,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         diagnostics: {
           fallback: { used: false, reasonCode: null },
           failureStage: preparationStage,
+          ...(contractFailure ? { contractFailure } : {}),
+          ...(classificationFailure ? { classificationFailure } : {}),
           agentMetrics: [],
           snapshotMetrics: Array.isArray(error?.customerSnapshotQueryMetrics)
             ? error.customerSnapshotQueryMetrics
@@ -3796,7 +3834,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         operationsProposed: 0,
         operationsRejected: 0,
         latencyMs: Math.max(0, Date.now() - turnStartedAt),
-        errorCode: "chat_preparation_failed",
+        errorCode: error?.code || "chat_preparation_failed",
       },
     }).catch(() => undefined);
     executionTrace.record({
@@ -3833,7 +3871,8 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         chatSessionId: Number(request?.chatSessionId || 0) || null,
         accountId: Number(job.account_id || 0) || null,
         questionLength: String(request?.question || "").length,
-        diagnostics: { failureStage: preparationStage },
+        diagnostics: { failureStage: preparationStage, ...(contractFailure ? { contractFailure } : {}),
+          ...(classificationFailure ? { classificationFailure } : {}) },
       },
       nextTurn: null,
     };
@@ -3844,7 +3883,7 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
        WHERE id = ?`,
       [
         preparationError,
-        JSON.stringify({ debug: preparationDebug }),
+        JSON.stringify({ errorCode: error?.code || "CHAT_PREPARATION_FAILED", debug: preparationDebug }),
         Number(jobId),
       ],
     ).catch(() => undefined);
@@ -3877,6 +3916,38 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
     },
     conversationContext: continuationContext,
     snapshotQueryMetrics: getCustomerSnapshotQueryMetrics(snapshot),
+    loadHistorySnapshot: async ({ sources, request: historyRequest, signal }) => {
+      signal.throwIfAborted();
+      const historySnapshot = await buildAuthorizedCustomerSnapshot({
+        user, accountId: snapshot.account.id,
+        opportunityId: historyRequest.memory.object === "opportunity" && historyRequest.target.lifecycle !== "inactive"
+          ? historyRequest.memory.targetId : null,
+        contactId: historyRequest.memory.object === "contact" && historyRequest.target.activationStatusCode === "activado"
+          ? historyRequest.memory.targetId : null,
+        includeContactHistory: historyRequest.memory.object === "contact",
+        includeProviderCatalog: false, historySources: sources, historyRequest,
+      });
+      signal.throwIfAborted();
+      return { snapshot: historySnapshot, metrics: getCustomerSnapshotQueryMetrics(historySnapshot) };
+    },
+    loadTrendHistory: async ({ signal }) => {
+      signal.throwIfAborted();
+      await getAccessibleAccount({ user, accountId: snapshot.account.id });
+      const data = await readOpportunityCommercialHistory({
+        user, accountId: snapshot.account.id, governance: await getMiCoachGovernanceSettings(), signal,
+      });
+      signal.throwIfAborted();
+      return data;
+    },
+    loadScenarioBasis: async ({ signal }) => {
+      signal.throwIfAborted();
+      await getAccessibleAccount({ user, accountId: snapshot.account.id });
+      const data = await readOpportunityScenarioBasis({
+        user, accountId: snapshot.account.id, governance: await getMiCoachGovernanceSettings(), signal,
+      });
+      signal.throwIfAborted();
+      return data;
+    },
     agents,
     jobId,
     executionTrace,
@@ -4141,6 +4212,136 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
       }, snapshot, snapshot.account.id);
       conversationContextUpdated = true;
     }
+    if (Object.hasOwn(response, "recordList") || continuationContext?.recordList) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        recordList: Object.hasOwn(response, "recordList") ? response.recordList : continuationContext.recordList,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "historyMemory") || continuationContext?.historyMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        historyMemory: Object.hasOwn(response, "historyMemory") ? response.historyMemory : continuationContext.historyMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "pendingMemory") || continuationContext?.pendingMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        pendingMemory: Object.hasOwn(response, "pendingMemory") ? response.pendingMemory : continuationContext.pendingMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "relationshipMemory") || continuationContext?.relationshipMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        relationshipMemory: Object.hasOwn(response, "relationshipMemory")
+          ? response.relationshipMemory : continuationContext.relationshipMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "documentMemory") || continuationContext?.documentMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        documentMemory: Object.hasOwn(response, "documentMemory")
+          ? response.documentMemory : continuationContext.documentMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "stageMemory") || continuationContext?.stageMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        stageMemory: Object.hasOwn(response, "stageMemory") ? response.stageMemory : continuationContext.stageMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "outcomeMemory") || continuationContext?.outcomeMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        outcomeMemory: Object.hasOwn(response, "outcomeMemory") ? response.outcomeMemory : continuationContext.outcomeMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "rescheduleMemory") || continuationContext?.rescheduleMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        rescheduleMemory: Object.hasOwn(response, "rescheduleMemory") ? response.rescheduleMemory : continuationContext.rescheduleMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "linkMemory") || continuationContext?.linkMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        linkMemory: Object.hasOwn(response, "linkMemory") ? response.linkMemory : continuationContext.linkMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "updateMemory") || continuationContext?.updateMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        updateMemory: Object.hasOwn(response, "updateMemory") ? response.updateMemory : continuationContext.updateMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "creationMemory") || continuationContext?.creationMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        creationMemory: Object.hasOwn(response, "creationMemory")
+          ? response.creationMemory : continuationContext.creationMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "documentReportMemory") || continuationContext?.documentReportMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        documentReportMemory: Object.hasOwn(response, "documentReportMemory")
+          ? response.documentReportMemory : continuationContext.documentReportMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "scenarioMemory") || continuationContext?.scenarioMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        scenarioMemory: Object.hasOwn(response, "scenarioMemory") ? response.scenarioMemory : continuationContext.scenarioMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "trendMemory") || continuationContext?.trendMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+        trendMemory: Object.hasOwn(response, "trendMemory") ? response.trendMemory : continuationContext.trendMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "comparisonMemory") || continuationContext?.comparisonMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        comparisonMemory: Object.hasOwn(response, "comparisonMemory") ? response.comparisonMemory : continuationContext.comparisonMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
+    if (Object.hasOwn(response, "priorityMemory") || continuationContext?.priorityMemory) {
+      nextConversationContext = validateCustomerConversationContext({
+        ...(nextConversationContext || continuationContext || {
+          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
+        }),
+        priorityMemory: Object.hasOwn(response, "priorityMemory") ? response.priorityMemory : continuationContext.priorityMemory,
+      }, snapshot, snapshot.account.id);
+      conversationContextUpdated = true;
+    }
   } catch (error) {
     console.error("[account-chat] Adapter execution failed", {
       jobId: Number(jobId),
@@ -4223,11 +4424,37 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
         .filter(Boolean)
         .slice(0, 20)
     : [];
-  const partialResultSources = [
-    ...truncatedSnapshotSources,
-    ...unqueriedAuthorizedTools.map((toolName) => `consulta:${toolName}`),
-  ];
-  const partialResultsWarning = partialResultSources.length
+  const isSingleRecordList = response.components?.length === 1 &&
+    ["query.record_list", "query.record_search", "query.relationships"].includes(response.components[0].category) && response.listMetadata;
+  const isSingleDocumentQuery = response.components?.length === 1 &&
+    response.components[0].category === "query.document_content" && response.documentCoverage;
+  const documentPartialSources = response.documentCoverage?.partial
+    ? [`documento:${response.documentCoverage.source || "cobertura_parcial"}`] : [];
+  const isSinglePriority = response.components?.length === 1 &&
+    response.components[0].category === "guidance.prioritization" && response.priorityMetadata;
+  const isSingleComparison = response.components?.length === 1 &&
+    response.components[0].category === "guidance.comparison" && response.comparisonMetadata;
+  const isSingleTrend = response.components?.length === 1 &&
+    response.components[0].category === "guidance.trend_analysis" && response.trendMetadata;
+  const isSingleScenario = response.components?.length === 1 &&
+    response.components[0].category === "guidance.scenario_analysis" && response.scenarioMetadata;
+  const isSingleDocumentReport = response.components?.length === 1 &&
+    response.components[0].category === "report.document_evidence" && response.documentReportMetadata?.length;
+  const partialResultSources = isSingleRecordList
+    ? response.listMetadata.partialReasons
+    : isSingleDocumentQuery ? documentPartialSources
+    : isSinglePriority ? response.priorityMetadata.partial ? ["priorizacion:recuperacion_parcial"] : []
+    : isSingleComparison ? response.comparisonMetadata.partialReasons
+    : isSingleTrend ? response.trendMetadata.partial ? response.trendMetadata.reasons : []
+    : isSingleScenario ? response.scenarioMetadata.reasons
+    : isSingleDocumentReport ? response.documentReportMetadata.some((item) => item.partial)
+      ? ["reporte_documental:cobertura_parcial_o_fuente_no_disponible"] : []
+    : [
+        ...truncatedSnapshotSources,
+        ...unqueriedAuthorizedTools.map((toolName) => `consulta:${toolName}`),
+        ...documentPartialSources,
+      ];
+  const partialResultsWarning = !isSingleRecordList && !isSingleDocumentQuery && !isSinglePriority && !isSingleComparison && !isSingleTrend && !isSingleScenario && partialResultSources.length
     ? ` La verificación alcanzó límites de consulta (${partialResultSources.join(", ")}); los resultados pueden estar incompletos.`
     : "";
   response = {
@@ -4326,6 +4553,24 @@ export async function processCustomerAccountChatJob({ jobId, user }) {
           stageAnswerPrefill: response.stageAnswerPrefill,
           components: response.components,
           contentSource: response.contentSource,
+          documentCoverage: response.documentCoverage,
+          documentEvidence: response.documentCoverage ? response.documentEvidence || response.evidence : null,
+          priorityMetadata: response.priorityMetadata,
+          priorityEvidence: response.priorityEvidence,
+          comparisonMetadata: response.comparisonMetadata,
+          comparisonEvidence: response.comparisonEvidence,
+          trendMetadata: response.trendMetadata,
+          scenarioMetadata: response.scenarioMetadata,
+          scenarioEvidence: response.scenarioEvidence,
+          documentReportMetadata: response.documentReportMetadata,
+          creationMetadata: response.creationMetadata,
+          updateMetadata: response.updateMetadata,
+          linkMetadata: response.linkMetadata,
+          rescheduleMetadata: response.rescheduleMetadata,
+          outcomeMetadata: response.outcomeMetadata,
+          stageMetadata: response.stageMetadata,
+          documentReportEvidence: response.documentReportEvidence,
+          trendEvidence: response.trendEvidence,
         },
       );
       persistedHistoryForTrace = nextHistory;

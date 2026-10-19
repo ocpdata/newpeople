@@ -1,9 +1,6 @@
 import { query } from "./db.js";
 import { ensureAiUsageSchema } from "./ai-usage/service.js";
 
-const RETENTION_MONTHS = 12;
-const PURGE_INTERVAL_MS = 6 * 60 * 60 * 1000;
-let lastPurgeAt = 0;
 let ensureAuditAiUsageSchemaPromise;
 
 function stableStringify(value) {
@@ -128,26 +125,6 @@ export async function linkAuditEventAiUsage({ auditLogId, aiUsageRequestIds }) {
   }
 }
 
-async function purgeExpiredAuditLogs() {
-  await query(
-    `DELETE FROM audit_log
-     WHERE created_at < (NOW(3) - INTERVAL ? MONTH)`,
-    [RETENTION_MONTHS],
-  );
-}
-
-async function maybePurgeExpiredAuditLogs() {
-  const now = Date.now();
-  if (now - lastPurgeAt < PURGE_INTERVAL_MS) return;
-
-  lastPurgeAt = now;
-  try {
-    await purgeExpiredAuditLogs();
-  } catch (error) {
-    console.error("Audit retention purge error:", error?.message || error);
-  }
-}
-
 function resolveActor(req, fallbackActor) {
   const actor = fallbackActor || req?.user || null;
   return {
@@ -169,6 +146,8 @@ export async function logAuditEvent({
   after = null,
   status = "success",
   aiUsageRequestIds = [],
+  connection = null,
+  required = false,
 }) {
   if (!module || !action || !entityType) return null;
 
@@ -179,10 +158,9 @@ export async function logAuditEvent({
     : null;
   const safeStatus = status === "error" ? "error" : "success";
 
-  await maybePurgeExpiredAuditLogs();
-
   try {
-    const result = await query(
+    const execute = connection ? async (sql, params) => (await connection.query(sql, params))[0] : query;
+    const result = await execute(
       `INSERT INTO audit_log
          (module, action, entity_type, entity_id, status, detail, changed_fields,
           performed_by_user_id, performed_by_name, performed_by_email,
@@ -205,26 +183,12 @@ export async function logAuditEvent({
       ],
     );
     const auditLogId = Number(result?.insertId || 0) || null;
+    if (required && !auditLogId) throw new Error("No se pudo acreditar la escritura de auditoria.");
     await linkAuditEventAiUsage({ auditLogId, aiUsageRequestIds });
     return auditLogId;
   } catch (error) {
+    if (required) throw error;
     console.error("Audit log insert error:", error?.message || error);
     return null;
   }
-}
-
-export async function startAuditRetentionJob() {
-  try {
-    await purgeExpiredAuditLogs();
-  } catch (error) {
-    console.error("Initial audit purge error:", error?.message || error);
-  }
-
-  setInterval(async () => {
-    try {
-      await purgeExpiredAuditLogs();
-    } catch (error) {
-      console.error("Scheduled audit purge error:", error?.message || error);
-    }
-  }, PURGE_INTERVAL_MS);
 }

@@ -51,6 +51,16 @@ const CONTROLLED_OPERATION_POLICIES = Object.freeze({
     reversible: true,
     allowedFields: Object.freeze(["name", "amountUsd", "closeDate"]),
   }),
+  opportunity_note: Object.freeze({
+    domainPermission: "oportunidades.update",
+    domainReadPermissions: Object.freeze([
+      "oportunidades.read",
+      "oportunidades.read_all",
+    ]),
+    entityType: "opportunity",
+    entityIdField: "opportunityId",
+    reversible: false,
+  }),
   stage_answer: Object.freeze({
     domainPermission: "oportunidades.update",
     domainReadPermissions: Object.freeze([
@@ -75,6 +85,8 @@ const CONTROLLED_OPERATION_POLICIES = Object.freeze({
 
 const DELEGATED_OPERATION_POLICIES = Object.freeze({
   activity: "calendario_comercial.update",
+  reschedule_activity: "calendario_comercial.update",
+  validate_stage: "oportunidades.update",
   lead_resolve: "interacciones.resolve",
   create_lead: "interacciones.update",
   create_contact_mapping: "contactos.update",

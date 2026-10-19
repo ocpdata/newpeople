@@ -90,6 +90,20 @@ describe("Customer activity fields versus CRM evidence", () => {
     expect(response.answer).toContain("¿Qué día y a qué hora ocurrió");
     expect(response.answer).toContain("como realizada");
   });
+  it("surfaces the reported result of a completed call in the response", () => {
+    const response = build({
+      routing: {
+        ...routing,
+        activityDraft: {
+          ...routing.activityDraft,
+          timing: "completed",
+          notes: "El cliente no contestó.",
+        },
+      },
+    });
+    expect(response.answer).toContain("Nota: “El cliente no contestó.”");
+    expect(response.operations[0].notes).toBe("El cliente no contestó.");
+  });
   it("previews a dated past call as done without implying it was saved", () => {
     const response = build({
       routing: {

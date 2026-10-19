@@ -81,6 +81,9 @@ const ALLOWED_OPERATION_KINDS = new Set([
   "create_contact",
   "create_opportunity",
   "link_contact_to_opportunity",
+  "reschedule_activity",
+  "validate_stage",
+  "opportunity_note",
 ]);
 const RULE_CHANNELS = new Set(["coach", "customer_account", "prospect"]);
 let ensureCoachBusinessRulesSchemaPromise;
@@ -195,6 +198,7 @@ function getChannelBaseRules(channel) {
         allowedKinds: [
           ...COACH_BASE_RULES.operationPolicy.allowedKinds,
           "create_contact",
+          "opportunity_note",
         ],
       },
       channelRules: {
@@ -443,6 +447,8 @@ export function normalizeCoachBusinessRules({
   if (channel === "customer_account") {
     channelOperationKinds.add("create_opportunity");
     channelOperationKinds.add("link_contact_to_opportunity");
+    channelOperationKinds.add("reschedule_activity");
+    channelOperationKinds.add("validate_stage");
   }
   const requestedOperationKinds = normalizeStringList(
     overrides.operationPolicy?.allowedKinds,

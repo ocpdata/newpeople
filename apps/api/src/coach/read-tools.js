@@ -189,6 +189,12 @@ export function getCoachReadToolCatalog() {
       readOnly: true,
     },
     {
+      name: "getOpportunityNotes",
+      description: "Lee notas registradas de una oportunidad autorizada y singular.",
+      requiredPermission: "oportunidades.read",
+      readOnly: true,
+    },
+    {
       name: "getOpportunityActivities",
       description: "Obtiene actividades y siguientes pasos de una oportunidad.",
       requiredPermissions: ["oportunidades.read", "desarrollo_comercial.read"],

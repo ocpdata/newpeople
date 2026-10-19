@@ -1,5 +1,21 @@
 import { COMMERCIAL_ACTIVITY_TYPES } from "../../../../shared/commercial-activity-types.js";
 import { validateCustomerTurnMemory } from "./turn-contract-runtime.js";
+import { validateCustomerRecordList } from "./customer-record-list.js";
+import { validateCustomerHistoryMemory } from "./customer-history.js";
+import { validateCustomerPendingMemory } from "./customer-pending.js";
+import { validateCustomerRelationshipMemory } from "./customer-relationships.js";
+import { validateCustomerDocumentMemory } from "./customer-documents.js";
+import { validateCustomerPriorityMemory } from "./customer-prioritization.js";
+import { validateCustomerComparisonMemory } from "./customer-comparison.js";
+import { validateCustomerTrendMemory } from "./customer-trends.js";
+import { validateCustomerScenarioMemory } from "./customer-scenarios.js";
+import { validateCustomerDocumentReportMemory } from "./customer-document-reports.js";
+import { validateCustomerCreationMemory } from "./customer-creation.js";
+import { validateCustomerUpdateMemory } from "./customer-updates.js";
+import { validateCustomerLinkMemory } from "./customer-links.js";
+import { validateCustomerRescheduleMemory } from "./customer-reschedule.js";
+import { validateCustomerOutcomeMemory } from "./customer-outcomes.js";
+import { validateCustomerStageMemory } from "./customer-stage.js";
 
 const INTENT_CODES = new Set([
   "crm_operation",
@@ -166,6 +182,38 @@ export function validateCustomerConversationContext(
     leadId: leadId && visibleLeadIds.has(leadId) ? leadId : null,
     intents,
     filters: validatedFilters(context.filters),
+    ...(validateCustomerLinkMemory(context.linkMemory, snapshot)
+      ? { linkMemory: validateCustomerLinkMemory(context.linkMemory, snapshot) } : {}),
+    ...(validateCustomerRescheduleMemory(context.rescheduleMemory, snapshot)
+      ? { rescheduleMemory: validateCustomerRescheduleMemory(context.rescheduleMemory, snapshot) } : {}),
+    ...(validateCustomerOutcomeMemory(context.outcomeMemory, snapshot)
+      ? { outcomeMemory: validateCustomerOutcomeMemory(context.outcomeMemory, snapshot) } : {}),
+    ...(validateCustomerStageMemory(context.stageMemory, snapshot)
+      ? { stageMemory: validateCustomerStageMemory(context.stageMemory, snapshot) } : {}),
+    ...(validateCustomerUpdateMemory(context.updateMemory, snapshot)
+      ? { updateMemory: validateCustomerUpdateMemory(context.updateMemory, snapshot) } : {}),
+    ...(validateCustomerCreationMemory(context.creationMemory, snapshot)
+      ? { creationMemory: validateCustomerCreationMemory(context.creationMemory, snapshot) } : {}),
+    ...(validateCustomerDocumentReportMemory(context.documentReportMemory, snapshot)
+      ? { documentReportMemory: validateCustomerDocumentReportMemory(context.documentReportMemory, snapshot) } : {}),
+    ...(validateCustomerTrendMemory(context.trendMemory, snapshot)
+      ? { trendMemory: validateCustomerTrendMemory(context.trendMemory, snapshot) } : {}),
+    ...(validateCustomerScenarioMemory(context.scenarioMemory, snapshot)
+      ? { scenarioMemory: validateCustomerScenarioMemory(context.scenarioMemory, snapshot) } : {}),
+    ...(validateCustomerComparisonMemory(context.comparisonMemory, snapshot)
+      ? { comparisonMemory: validateCustomerComparisonMemory(context.comparisonMemory, snapshot) } : {}),
+    ...(validateCustomerPriorityMemory(context.priorityMemory, snapshot)
+      ? { priorityMemory: validateCustomerPriorityMemory(context.priorityMemory, snapshot) } : {}),
+    ...(validateCustomerDocumentMemory(context.documentMemory, snapshot)
+      ? { documentMemory: validateCustomerDocumentMemory(context.documentMemory, snapshot) } : {}),
+    ...(validateCustomerRelationshipMemory(context.relationshipMemory, snapshot)
+      ? { relationshipMemory: validateCustomerRelationshipMemory(context.relationshipMemory, snapshot) } : {}),
+    ...(validateCustomerHistoryMemory(context.historyMemory, snapshot)
+      ? { historyMemory: validateCustomerHistoryMemory(context.historyMemory, snapshot) } : {}),
+    ...(validateCustomerPendingMemory(context.pendingMemory, snapshot)
+      ? { pendingMemory: validateCustomerPendingMemory(context.pendingMemory, snapshot) } : {}),
+    ...(validateCustomerRecordList(context.recordList, snapshot, accountId)
+      ? { recordList: validateCustomerRecordList(context.recordList, snapshot, accountId) } : {}),
     ...(validateCustomerTurnMemory(context.turnMemory)
       ? { turnMemory: validateCustomerTurnMemory(context.turnMemory) }
       : {}),

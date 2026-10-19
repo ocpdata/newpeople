@@ -96,6 +96,8 @@ export function searchOpportunities(
     activeOnly = false,
     inactiveOnly = false,
     openOnly = false,
+    includeDetails = false,
+    includeRelationships = false,
   } = {},
 ) {
   const stages = new Set(stageCodes);
@@ -130,15 +132,35 @@ export function searchOpportunities(
       if (openOnly && lifecycle && lifecycle !== "open") return false;
       return true;
     })
-    .map(mapOpportunity);
+    .map((opportunity) => includeDetails ? {
+      ...mapOpportunity(opportunity),
+      amountUsd: opportunity.amountUsd == null ? null : Number(opportunity.amountUsd),
+      commercialStatusCode: opportunity.commercialStatusCode || "",
+      activationStatusCode: opportunity.activationStatusCode || "",
+      activationStatusName: opportunity.activationStatusName || "",
+      associatedContact: opportunity.associatedContact || null,
+      associatedContactStatus: opportunity.associatedContactStatus || "unavailable",
+      ...(includeRelationships ? { associatedContactId: opportunity.associatedContactStatus === "available"
+        ? Number(opportunity.contactId || 0) || null : null } : {}),
+    } : mapOpportunity(opportunity));
 }
 
-export function getOpportunity(snapshot, opportunityId) {
+export function getOpportunity(snapshot, opportunityId, { includeDetails = false, includeRelationships = false } = {}) {
   const opportunity = allOpportunities(snapshot).find(
     (item) => Number(item.id) === Number(opportunityId),
   );
   if (!opportunity) return null;
   const mapped = mapOpportunity(opportunity);
+  if (includeDetails) {
+    mapped.amountUsd = opportunity.amountUsd ?? null;
+    mapped.activationStatusCode = opportunity.activationStatusCode || "";
+    mapped.activationStatusName = opportunity.activationStatusName || "";
+    mapped.commercialStatusCode = opportunity.commercialStatusCode || "";
+    mapped.associatedContactStatus = opportunity.associatedContactStatus || "unavailable";
+    if (includeRelationships) mapped.associatedContactId = opportunity.associatedContactStatus === "available"
+      ? Number(opportunity.contactId || 0) || null : null;
+  }
+
   const associatedContact = opportunity.associatedContact;
   return associatedContact
     ? {
@@ -150,6 +172,18 @@ export function getOpportunity(snapshot, opportunityId) {
         },
       }
     : mapped;
+}
+
+export function getOpportunityNotes(snapshot, opportunityId, readNotes) {
+  const opportunity = getOpportunity(snapshot, opportunityId);
+  if (!opportunity) return null;
+  if (typeof readNotes !== "function") {
+    throw new Error("La lectura de notas requiere un servicio autorizado");
+  }
+  return readNotes({
+    opportunityId: Number(opportunity.id),
+    accountId: Number(opportunity.accountId),
+  });
 }
 
 export function getOpportunityActivities(snapshot, opportunityId) {
@@ -175,7 +209,9 @@ export function getOpportunityActivities(snapshot, opportunityId) {
   }));
 }
 
-export function searchContacts(snapshot, { text = "", accountId = null } = {}) {
+export function searchContacts(snapshot, {
+  text = "", accountId = null, contactId = null, includeDetails = false, includeRelationships = false,
+} = {}) {
   const contacts = dedupe(
     Array.isArray(snapshot?.contactMappings) ? snapshot.contactMappings : [],
   );
@@ -187,6 +223,7 @@ export function searchContacts(snapshot, { text = "", accountId = null } = {}) {
     .filter((contact) =>
       matchesText(contact, text, ["name", "email", "phone", "mobile"]),
     )
+    .filter((contact) => !contactId || Number(contact.id) === Number(contactId))
     .map((contact) => ({
       id: Number(contact.id),
       entityType: "contact",
@@ -195,6 +232,11 @@ export function searchContacts(snapshot, { text = "", accountId = null } = {}) {
       accountName: contact.accountName || "",
       email: contact.email || "",
       positionTitle: contact.positionTitle || contact.position_title || "",
+      ...(includeRelationships ? { activationStatusCode: contact.activationStatusCode || "" } : {}),
+      ...(includeDetails ? {
+        phone: contact.phone || "",
+        mobile: contact.mobile || "",
+      } : {}),
     }));
 }
 
@@ -244,12 +286,14 @@ export function executeCoachReadTool({
   snapshot,
   args = {},
   buildReadiness,
+  readOpportunityNotes,
   businessRules = {},
 }) {
   const scope = businessRules.scope || {};
   const opportunityTools = new Set([
     "searchOpportunities",
     "getOpportunity",
+    "getOpportunityNotes",
     "getOpportunityActivities",
     "getOpportunityQuotation",
     "getOpportunityReadiness",
@@ -279,17 +323,19 @@ export function executeCoachReadTool({
           ...args,
           activeOnly: args.inactiveOnly
             ? false
-            : args.activeOnly || businessRules.filters?.defaultActiveOnly,
+            : args.activeOnly || (args.applyDefaultFilters !== false && businessRules.filters?.defaultActiveOnly),
           inactiveOnly: args.activeOnly
             ? false
-            : args.inactiveOnly || businessRules.filters?.defaultInactiveOnly,
-          openOnly: args.openOnly || businessRules.filters?.defaultOpenOnly,
+            : args.inactiveOnly || (args.applyDefaultFilters !== false && businessRules.filters?.defaultInactiveOnly),
+          openOnly: args.openOnly || (args.applyDefaultFilters !== false && businessRules.filters?.defaultOpenOnly),
         }
       : args;
   const tools = {
     searchAccounts: () => searchAccounts(snapshot, effectiveArgs),
     searchOpportunities: () => searchOpportunities(snapshot, effectiveArgs),
-    getOpportunity: () => getOpportunity(snapshot, effectiveArgs.opportunityId),
+    getOpportunity: () => getOpportunity(snapshot, effectiveArgs.opportunityId, effectiveArgs),
+    getOpportunityNotes: () =>
+      getOpportunityNotes(snapshot, effectiveArgs.opportunityId, readOpportunityNotes),
     getOpportunityActivities: () =>
       getOpportunityActivities(snapshot, effectiveArgs.opportunityId),
     getOpportunityQuotation: () => {

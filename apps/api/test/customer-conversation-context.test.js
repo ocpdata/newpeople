@@ -15,6 +15,39 @@ const snapshot = {
 };
 
 describe("Customer conversation context memory", () => {
+  it("keeps an attributed R05 claim separate from CRM entities and drops foreign or revoked source memory", () => {
+    const documentReportMemory = {
+      accountId: 41, claim: "Según la cotización, incluyen cuatro equipos.", source: "quotation",
+      mode: "receive", questionReference: "", fingerprint: "a".repeat(64), observedAt: "2026-10-17T12:00:00.000Z",
+      documentMemory: { accountId: 41, source: "quotation", opportunityId: 72, quotationId: 18, versionId: 108, versionNumber: 8, candidates: [] },
+    };
+    const value = { accountId: 41, documentReportMemory };
+    expect(validateCustomerConversationContext(value, snapshot, 41)).toMatchObject({ documentReportMemory, opportunityId: null });
+    for (const bad of [
+      { ...documentReportMemory, accountId: 42 }, { ...documentReportMemory, claim: "" },
+      { ...documentReportMemory, documentMemory: { ...documentReportMemory.documentMemory, opportunityId: 999 } },
+    ]) expect(validateCustomerConversationContext({ ...value, documentReportMemory: bad }, snapshot, 41).documentReportMemory).toBeUndefined();
+    expect(validateCustomerConversationContext(value, { ...snapshot, permissions: { canReadOpportunities: false } }, 41).documentReportMemory).toBeUndefined();
+    expect(validateCustomerConversationContext({ ...value, documentReportMemory: null }, snapshot, 41).documentReportMemory).toBeUndefined();
+  });
+  it("keeps G07 criteria separate from real entities and rejects foreign or malformed scenario memory", () => {
+    const scenarioMemory = {
+      accountId: 41, ids: [999], fingerprint: "a".repeat(64), observedAt: "2026-10-17T12:00:00.000Z",
+      spec: { set: "named", references: ["Alfa"], mode: "analyze", alternatives: [{
+        name: "A", changes: [], assumptions: [{ kind: "approval", statement: "Supón aprobado", budgetUsd: -1 }],
+      }] },
+    };
+    const value = { accountId: 41, scenarioMemory, opportunityId: 999 };
+    const result = validateCustomerConversationContext(value, snapshot, 41);
+    expect(result.scenarioMemory).toEqual(scenarioMemory);
+    expect(result.opportunityId).toBeNull();
+    for (const bad of [
+      { ...scenarioMemory, accountId: 42 }, { ...scenarioMemory, ids: [999, 999] },
+      { ...scenarioMemory, fingerprint: "invalid" }, { ...scenarioMemory, observedAt: "invalid" },
+    ]) expect(validateCustomerConversationContext({ ...value, scenarioMemory: bad }, snapshot, 41).scenarioMemory).toBeUndefined();
+    expect(validateCustomerConversationContext(value, { ...snapshot, permissions: { canReadOpportunities: false } }, 41).scenarioMemory).toBeUndefined();
+    expect(validateCustomerConversationContext({ ...value, scenarioMemory: null }, snapshot, 41).scenarioMemory).toBeUndefined();
+  });
   it("retains a pending amount and filters only for currently authorized candidates in the same account", () => {
     const result = validateCustomerConversationContext({
       accountId: 41,

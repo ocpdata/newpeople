@@ -54,8 +54,27 @@ function renderInlineMarkdown(text = "", documentPath = "", assetUrls = {}) {
     return `<img src="${src}" alt="${alt}" loading="lazy" />`;
   });
   html = html.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noreferrer">$1</a>',
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]+|\.{1,2}\/[^\s)]+)\)/gi,
+    (_match, label, source) => {
+      if (source.startsWith("./") || source.startsWith("../")) {
+        const [relativePath, fragment] = source.split("#");
+        const assetUrl = resolveDocumentationAssetUrl(relativePath, documentPath);
+        const resolvedPath = new URLSearchParams(assetUrl.split("?")[1]).get("path");
+        const hash = fragment ? `#${fragment}` : "";
+        if (!/\.md$/i.test(relativePath)) {
+          const repositoryPath = resolvedPath.split("/").map(encodeURIComponent).join("/");
+          return `<a href="https://github.com/ocpdata/newpeople/blob/main/${repositoryPath}${hash}" target="_blank" rel="noreferrer">${label}</a>`;
+        }
+        const slug = resolvedPath
+          .trim()
+          .toLowerCase()
+          .replace(/\\/g, "/")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "documento";
+        return `<a href="/documentation/${slug}${hash}">${label}</a>`;
+      }
+      return `<a href="${source}" target="_blank" rel="noreferrer">${label}</a>`;
+    },
   );
   return html;
 }
@@ -137,13 +156,23 @@ function renderMarkdownToHtml(
       return `<div class="documentation-table-wrap"><table class="documentation-table"><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div>`;
     }
 
-    const isList = listLines.every((line) =>
-      /^([-*+]\s+|\d+\.\s+)/.test(line.trim()),
-    );
+    const listMarker = /^([-*+]\s+|\d+\.\s+)/;
+    const isList = listMarker.test(listLines[0].trim()) &&
+      listLines.every((line) =>
+        listMarker.test(line.trim()) || /^\s+\S/.test(line),
+      );
     if (isList) {
-      const ordered = listLines.every((line) => /^\d+\.\s+/.test(line.trim()));
+      const itemLines = [];
+      for (const line of listLines) {
+        if (listMarker.test(line.trim())) {
+          itemLines.push(line.trim());
+        } else {
+          itemLines[itemLines.length - 1] += ` ${line.trim()}`;
+        }
+      }
+      const ordered = itemLines.every((line) => /^\d+\.\s+/.test(line));
       const tag = ordered ? "ol" : "ul";
-      const items = listLines
+      const items = itemLines
         .map((line) => {
           const cleaned = line.trim();
           const text = cleaned.replace(/^([-*+]|\d+\.)\s+/, "");

@@ -169,10 +169,15 @@ const stageAnswerOperationSchema = z
   })
   .strict();
 
+const updateIdentity = {
+  updateDraftId: z.string().uuid().optional(), updateRevision: z.number().int().positive().optional(),
+  updateItemId: z.string().uuid().optional(), updateAccountId: positiveId.optional(),
+};
 const opportunityFieldOperationSchema = z
   .object({
     kind: z.literal("opportunity_field"),
     ...operationCommon,
+    ...updateIdentity,
     opportunityId: positiveId,
     field: z.enum(["name", "amountUsd", "closeDate"]),
     currentValue: z.union([z.string(), z.number(), z.null()]).optional(),
@@ -182,10 +187,24 @@ const opportunityFieldOperationSchema = z
   })
   .strict();
 
+const opportunityNoteOperationSchema = z.object({
+  kind: z.literal("opportunity_note"),
+  ...operationCommon,
+  accountId: positiveId,
+  opportunityId: positiveId,
+  noteText: text(4000),
+  sourceType: z.enum(["manual", "chat_report"]),
+  attribution: z.enum(["client", "seller", "document"]),
+  certainty: z.enum(["reported", "observed", "suspected", "hypothetical", "unspecified"]),
+  entityType: z.literal("opportunity").optional(),
+  source: sourceSchema("opportunity").optional(),
+}).strict();
+
 const accountFieldOperationSchema = z
   .object({
     kind: z.literal("account_field"),
     ...operationCommon,
+    ...updateIdentity,
     accountId: positiveId,
     field: z.enum([
       "name",
@@ -206,6 +225,7 @@ const contactFieldOperationSchema = z
   .object({
     kind: z.literal("contact_field"),
     ...operationCommon,
+    ...updateIdentity,
     contactId: positiveId,
     field: z.enum([
       "firstName",
@@ -234,6 +254,19 @@ const leadCallOutcomeOperationSchema = z
   .object({
     kind: z.literal("lead_call_outcome"),
     ...operationCommon,
+    accountId: nullablePositiveId,
+    outcomeDraftId: z.string().uuid().optional(), outcomeRevision: positiveId.optional(),
+    outcomeObservedVersion: z.string().max(12000).optional(), outcomeRule: text(4000).optional(),
+    outcomeSummary: z.object({
+      accountName: text(300), leadLabel: text(300), currentStatus: text(300), currentResult: text(300),
+      currentReason: text(300), currentAction: text(300), currentComment: z.string().max(4000),
+      currentDueDate: z.string().max(10).nullable(),
+      currentReferredContactName: z.string().max(255).optional(), currentReferredAreaName: z.string().max(255).optional(),
+      proposed: z.object({ result: text(300), reason: text(300), action: text(300), status: text(300) }).strict(),
+      timeZone: text(100),
+    }).strict().optional(),
+    currentValue: z.record(z.string(), z.unknown()).optional(),
+    referredContactName: optionalText(255), referredAreaName: optionalText(255),
     interactionId: positiveId,
     substatusCode: text(100),
     reasonCode: text(100),
@@ -250,6 +283,28 @@ function handoffSchema(kind, targetModule, entityType) {
     .object({
       kind: z.literal(kind),
       ...operationCommon,
+      ...(["create_contact", "create_opportunity"].includes(kind)
+        ? { creationDraftId: z.string().uuid().optional(), creationRevision: z.number().int().positive().optional() } : {}),
+      ...(kind === "link_contact_to_opportunity" ? {
+        linkDraftId: z.string().uuid().optional(), linkRevision: z.number().int().positive().optional(),
+        currentContactId: positiveId.nullable().optional(),
+        linkSummary: z.object({ accountName: text(300), opportunityName: text(300), contactName: text(300),
+          currentContactName: z.string().max(300).nullable(), effect: z.enum(["assign", "replace"]) }).strict().optional(),
+      } : {}),
+      ...(kind === "reschedule_activity" ? {
+        activityId: positiveId, rescheduleDraftId: z.string().uuid(), rescheduleRevision: positiveId,
+        observedVersion: text(2000), proposedAt: z.iso.datetime(), proposedDueDate: z.iso.date(),
+        scheduleSummary: z.object({
+          accountName: text(300), opportunityName: text(300), activityTitle: text(300),
+          before: z.string().max(30).nullable(), after: text(30), timeZone: text(100),
+        }).strict(),
+      } : {}),
+      ...(kind === "validate_stage" ? {
+        stageDraftId: z.string().uuid(), stageRevision: positiveId, stageObservedVersion: text(6000),
+        stageSummary: z.object({ accountName: text(300), opportunityName: text(300),
+          currentStageId: positiveId, currentStageName: text(300), targetStageId: positiveId,
+          targetStageName: text(300) }).strict(),
+      } : {}),
       targetModule: z.literal(targetModule).default(targetModule),
       payload: z.record(z.string(), z.unknown()),
       accountId: nullablePositiveId,
@@ -281,10 +336,13 @@ export const coachOperationSchema = z.discriminatedUnion("kind", [
   activityOperationSchema,
   stageAnswerOperationSchema,
   opportunityFieldOperationSchema,
+  opportunityNoteOperationSchema,
   accountFieldOperationSchema,
   contactFieldOperationSchema,
   leadCallOutcomeOperationSchema,
   handoffSchema("create_account", "accounts", "account"),
+  handoffSchema("reschedule_activity", "calendar", "opportunity"),
+  handoffSchema("validate_stage", "opportunities", "opportunity"),
   handoffSchema("create_contact", "contacts", "contact"),
   handoffSchema("create_opportunity", "opportunities", "opportunity"),
   handoffSchema(

@@ -23,7 +23,8 @@ export const customerServerPolicySchema = z.object({
 export const CUSTOMER_OPERATION_KINDS = [
   "activity", "stage_answer", "lead_call_outcome", "account_field",
   "contact_field", "opportunity_field", "create_contact",
-  "create_opportunity", "link_contact_to_opportunity",
+  "create_opportunity", "link_contact_to_opportunity", "reschedule_activity", "validate_stage",
+  "opportunity_note",
 ];
 const scopeSchema = z.object({
   accountSearchAllowed: z.boolean(),
@@ -41,7 +42,7 @@ export const customerServerRulesPatchSchema = z.object({
     defaultInactiveOnly: z.boolean(),
   }).partial().strict().optional(),
   operationPolicy: z.object({
-    allowedKinds: z.array(z.enum(CUSTOMER_OPERATION_KINDS)).max(9),
+    allowedKinds: z.array(z.enum(CUSTOMER_OPERATION_KINDS)).max(CUSTOMER_OPERATION_KINDS.length),
   }).strict().optional(),
   serverPolicy: customerServerPolicySchema.partial().optional(),
 }).strict().superRefine((rules, context) => {
@@ -87,7 +88,7 @@ export const CUSTOMER_SERVER_RULE_CATEGORIES = [
         ["leadSearchAllowed", "Leads", "Permite las consultas de leads disponibles en este canal, siempre sujetas al permiso de lectura y al alcance autorizado. No convierte todos los registros de interacción en leads ni concede acceso a los de otras cuentas."],
         ["quotationSearchAllowed", "Cotizaciones", "Permite consultar el contenido autorizado de las cotizaciones. Además de habilitar este dominio, hacen falta los permisos correspondientes y una oportunidad identificada. Por ejemplo, ante «¿qué contiene la cotización?» sin una oportunidad resuelta, el servidor puede pedir seleccionarla."],
       ].map(([field, label, description]) => configurable(field, `Consultar ${label.toLowerCase()}`, description, `scope.${field}`, "boolean")),
-      configurable("operation-kinds", "Operaciones permitidas", "Define qué tipos de propuesta acepta el canal: preparar una actividad, responder una etapa, registrar un resultado de llamada de lead, cambiar campos admitidos de cuenta/contacto/oportunidad, crear un contacto, crear una oportunidad o vincular un contacto a una oportunidad. Crear oportunidades y vincular contactos requieren habilitación explícita. El servidor intersecta esta lista con las capacidades del canal y valida cada propuesta. Activar un tipo no concede permisos ni ejecuta el cambio: todavía requiere las demás validaciones y confirmación.", "operationPolicy.allowedKinds", "operations", { values: CUSTOMER_OPERATION_KINDS }),
+      configurable("operation-kinds", "Operaciones permitidas", "Define qué tipos de propuesta acepta el canal. Crear oportunidades, vincular contactos, registrar notas y reprogramar una actividad pendiente de oportunidad requieren habilitación explícita. Las notas se guardan como registros individuales y requieren revisión y confirmación; reprogramar conserva la misma actividad y requiere confirmación en Calendario. El servidor intersecta esta lista con las capacidades del canal y valida cada propuesta. Activar un tipo no concede permisos ni ejecuta el cambio: todavía requiere las demás validaciones y confirmación.", "operationPolicy.allowedKinds", "operations", { values: CUSTOMER_OPERATION_KINDS }),
       protectedRule("tool-intersection", "Catálogo y permisos", "Una herramienta solo puede utilizarse si existe en el catálogo, está disponible en el canal, está permitida para la intención interpretada, la configuración administrativa no la bloquea y el usuario tiene los permisos necesarios. B6 no puede inventar una herramienta ni habilitarla por su cuenta.", "conversation-engine.js / channel-intents.js"),
     ],
   },

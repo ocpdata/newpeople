@@ -223,11 +223,12 @@ export function buildCustomerActivityDraftResponse({
   const activityLabel = getCommercialActivityTypeLabel(operation.actionType)
     .toLowerCase();
   const timingLabel = timing === "completed" ? "realizada" : "programada";
+  const notesLabel = operation.notes ? ` Nota: “${operation.notes}”.` : "";
   return {
     answer: validScheduledAt
-      ? `Voy a registrar la ${activityLabel} como ${timingLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name} (${scheduledAt.replace("T", " ")}). No se ha guardado todavía; revisa y confirma el borrador para guardarlo en Calendario.`
+      ? `Voy a registrar la ${activityLabel} como ${timingLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name} (${scheduledAt.replace("T", " ")}).${notesLabel} No se ha guardado todavía; revisa y confirma el borrador para guardarlo en Calendario.`
       : timing === "completed"
-        ? `¿Qué día y a qué hora ocurrió la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como realizada y aún no se ha guardado en Calendario.`
+        ? `¿Qué día y a qué hora ocurrió la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}?${notesLabel} El borrador se registrará como realizada y aún no se ha guardado en Calendario.`
         : `¿Qué día y a qué hora${draft.temporalPreference && !draft.temporalPreference.includes("_") ? ` (${draft.temporalPreference})` : ""} quieres realizar la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como programada y aún no se ha guardado en Calendario.`,
     responseType: "operation",
     entities: { opportunityId, contactId },

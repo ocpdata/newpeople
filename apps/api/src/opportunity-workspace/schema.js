@@ -112,6 +112,19 @@ const OPPORTUNITY_WORKSPACE_SCHEMA_STATEMENTS = [
     CONSTRAINT fk_opportunity_workspace_theme_entries_updated_by FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
     INDEX idx_opportunity_workspace_theme_entries_theme (opportunity_id, theme_code, status)
   )`,
+  `CREATE TABLE IF NOT EXISTS opportunity_notes (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    opportunity_id BIGINT UNSIGNED NOT NULL,
+    note_text TEXT NOT NULL,
+    source_type VARCHAR(40) NOT NULL DEFAULT 'manual',
+    attribution VARCHAR(20) NOT NULL DEFAULT 'seller',
+    certainty VARCHAR(20) NOT NULL DEFAULT 'unspecified',
+    created_by_user_id BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT fk_opportunity_notes_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
+    CONSTRAINT fk_opportunity_notes_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
+    INDEX idx_opportunity_notes_opportunity_created (opportunity_id, id)
+  )`,
   `CREATE TABLE IF NOT EXISTS opportunity_workspace_stakeholders (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     opportunity_id BIGINT UNSIGNED NOT NULL,

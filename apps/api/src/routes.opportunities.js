@@ -4,6 +4,9 @@ import { config } from "./config.js";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
+import { mutateAuditedOpportunity } from "./opportunity-audit.js";
+import { saveCustomerLinkHandoff } from "./coach/customer-link-save.js";
+import { saveCustomerReschedule } from "./coach/customer-reschedule-save.js";
 import {
   applyUploadSessionToDraft,
   createUploadSession,
@@ -33,6 +36,7 @@ import {
   getOpportunityStageValidationJob,
 } from "./opportunity-stage-validations/service.js";
 import { ensureOpportunityStageValidationJobSchema } from "./opportunity-stage-validations/schema.js";
+import { startCustomerStageValidation, readCustomerStageValidation } from "./coach/customer-stage-validation.js";
 import {
   isOpportunityStageAnswerSuggestionsEnabled,
   suggestOpportunityStageAnswers,
@@ -40,6 +44,7 @@ import {
 import {
   activateOpportunityWorkspacePlaybookVersion,
   buildOpportunityWorkspace,
+  createOpportunityNote,
   deleteOpportunityAction,
   deleteOpportunityCriterionAssessment,
   deleteOpportunityDeliverable,
@@ -47,6 +52,7 @@ import {
   deleteOpportunityThemeEntry,
   deleteOpportunityWeakness,
   getOpportunityWorkspacePlaybookVersionDetail,
+  listOpportunityNotes,
   listOpportunityWorkspacePlaybooks,
   saveOpportunityAction,
   saveOpportunityDeliverable,
@@ -61,6 +67,51 @@ import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema
 import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
+router.post("/:id/coach-stage-validation", requirePermission("oportunidades.update"), async (req, res) => {
+  const parsed = z.object({ token: z.string().uuid(), version: z.number().int().positive() }).strict().safeParse(req.body);
+  const opportunityId = Number(req.params.id);
+  if (!parsed.success || !Number.isSafeInteger(opportunityId) || opportunityId <= 0) return res.status(400).json({ message: "Solicitud de validación inválida" });
+  try {
+    return res.status(202).json(await startCustomerStageValidation({ user: req.user, opportunityId, ...parsed.data }));
+  } catch (error) {
+    if (error.code === "COACH_STAGE_CONFLICT" || error.body) return res.status(error.status || 500).json(error.body || { code: error.code, message: error.message });
+    throw error;
+  }
+});
+router.get("/:id/coach-stage-validation/:token", requirePermission("oportunidades.update"), async (req, res) => {
+  const parsed = z.object({ token: z.string().uuid(), opportunityId: z.coerce.number().int().positive() }).safeParse({
+    token: req.params.token, opportunityId: req.params.id,
+  });
+  if (!parsed.success) return res.status(400).json({ message: "Solicitud de validación inválida" });
+  try { return res.json(await readCustomerStageValidation({ user: req.user, ...parsed.data })); }
+  catch (error) {
+    if (error.code === "COACH_STAGE_CONFLICT") return res.status(error.status).json({ code: error.code, message: error.message });
+    throw error;
+  }
+});
+router.post("/:id/coach-reschedule", requirePermission("calendario_comercial.update"), async (req, res) => {
+  const parsed = z.object({ token: z.string().uuid(), version: z.number().int().positive() }).strict().safeParse(req.body);
+  const opportunityId = Number(req.params.id);
+  if (!parsed.success || !Number.isSafeInteger(opportunityId) || opportunityId <= 0) return res.status(400).json({ message: "Revisión de reprogramación inválida" });
+  try {
+    return res.json({ operation: await saveCustomerReschedule({ req, opportunityId, ...parsed.data }) });
+  } catch (error) {
+    if (error.code === "COACH_RESCHEDULE_CONFLICT") return res.status(error.status).json({ code: error.code, message: error.message });
+    throw error;
+  }
+});
+router.post("/:id/coach-contact", requirePermission("oportunidades.update"), async (req, res) => {
+  const parsed = z.object({ token: z.string().uuid(), version: z.number().int().positive() }).strict().safeParse(req.body);
+  const opportunityId = Number(req.params.id);
+  if (!parsed.success || !Number.isSafeInteger(opportunityId) || opportunityId <= 0) return res.status(400).json({ message: "Revisión de vínculo inválida" });
+  try {
+    const operation = await saveCustomerLinkHandoff({ req, opportunityId, ...parsed.data });
+    return res.json({ operation });
+  } catch (error) {
+    if (error.code === "COACH_LINK_CONFLICT") return res.status(error.status).json({ code: error.code, message: error.message });
+    throw error;
+  }
+});
 
 function normalizeText(value) {
   return String(value || "")
@@ -241,6 +292,18 @@ const opportunityWorkspaceThemeEntrySchema = z.object({
   sourceRefId: z.number().int().positive().optional().nullable(),
   evidenceExcerpt: z.string().trim().max(5000).optional().nullable(),
 });
+
+const opportunityNoteSchema = z.object({
+  noteText: z.string().trim().min(1).max(5000),
+  sourceType: z.enum(["manual", "chat_report"]).optional().default("manual"),
+  attribution: z.enum(["client", "seller", "document", "none"]).optional().default("seller"),
+  certainty: z.enum(["reported", "observed", "suspected", "hypothetical", "unspecified"]).optional().default("unspecified"),
+}).strict();
+
+const opportunityNoteListQuerySchema = z.object({
+  beforeId: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+}).strict();
 
 const opportunityWorkspaceStakeholderSchema = z.object({
   id: z.number().int().positive().optional(),
@@ -1990,6 +2053,79 @@ router.post(
 );
 
 router.post(
+  "/:id/notes",
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityNoteSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Payload invalido",
+        errors: parsed.error.flatten(),
+      });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    const noteId = await createOpportunityNote({
+      opportunityId: id,
+      ...parsed.data,
+      userId: Number(req.user.id),
+    });
+    await logOpportunityWorkspaceMutation({
+      req,
+      opportunityId: id,
+      action: "opportunity_note_created",
+      detail: `Nota de oportunidad creada: ${noteId}`,
+      after: { noteId, sourceType: parsed.data.sourceType },
+    });
+    return res.status(201).json({ id: noteId });
+  },
+);
+
+router.get(
+  "/:id/notes",
+  requirePermission("oportunidades.read"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    const parsed = opportunityNoteListQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Parametros invalidos",
+        errors: parsed.error.flatten(),
+      });
+    }
+    const opportunityAccess = await requireAccessibleOpportunityOr404({
+      user: req.user,
+      opportunityId: id,
+      message: "Oportunidad no encontrada",
+    });
+    if (!opportunityAccess.ok) {
+      return res
+        .status(opportunityAccess.response.status)
+        .json(opportunityAccess.response.body);
+    }
+    return res.json(await listOpportunityNotes({
+      opportunityId: id,
+      ...parsed.data,
+    }));
+  },
+);
+
+router.post(
   "/:id/workspace/themes",
   requirePermission("oportunidades.update"),
   async (req, res) => {
@@ -2292,7 +2428,7 @@ router.patch(
       }
       column = "close_date";
     }
-    await query(
+    await mutateAuditedOpportunity({ req, opportunityId: id },
       `UPDATE opportunities SET ${column} = ?, updated_at = NOW(3) WHERE id = ?`,
       [nextValue, id],
     );
@@ -3028,7 +3164,7 @@ router.post(
         await ensureOpportunityDocumentSchema();
       }
       const opportunityId = await withTransaction(async (conn) => {
-        const [insertResult] = await conn.query(
+        const insertResult = await mutateAuditedOpportunity({ connection: conn, req },
           `INSERT INTO opportunities
             (name, amount_usd, account_id, close_date, contact_id,
              sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
@@ -3320,7 +3456,7 @@ router.put(
     }
 
     const now = new Date();
-    await query(
+    await mutateAuditedOpportunity({ req, opportunityId: id },
       `UPDATE opportunities
        SET name = ?, amount_usd = ?, account_id = ?, close_date = ?, contact_id = ?,
            sales_stage_id = ?, business_line_id = ?, seller_user_id = ?,
@@ -3669,7 +3805,7 @@ router.post(
     targetStage = stageResolution.targetStage;
 
     const now = new Date();
-    await query(
+    await mutateAuditedOpportunity({ req, opportunityId: id },
       `UPDATE opportunities
        SET sales_stage_id = ?, updated_by = ?, updated_at = ?
        WHERE id = ?`,
@@ -3776,7 +3912,7 @@ router.post(
     }
 
     const now = new Date();
-    await query(
+    await mutateAuditedOpportunity({ req, opportunityId: id },
       `UPDATE opportunities
        SET commercial_status_id = ?, commercial_closed_at = ?,
            commercial_close_reason = ?, updated_by = ?, updated_at = ?
@@ -4014,7 +4150,7 @@ router.post(
 
     const targetStage = stageResolution.targetStage;
     const now = new Date();
-    await query(
+    await mutateAuditedOpportunity({ req, opportunityId: id },
       `UPDATE opportunities
        SET sales_stage_id = ?, updated_by = ?, updated_at = ?
        WHERE id = ?`,
@@ -4125,7 +4261,7 @@ router.patch(
     }
 
     const now = new Date();
-    await query(
+    await mutateAuditedOpportunity({ req, opportunityId: id },
       `UPDATE opportunities
        SET activation_status_id = ?, updated_by = ?, updated_at = ?
        WHERE id = ?`,

@@ -961,11 +961,13 @@ export async function runConversationEngine({
             reasonCode: proposedPlan ? "invalid_plan" : "planner_unavailable",
             queryCount: 0,
           };
-    } catch {
+    } catch (error) {
+      console.error("[coach] Channel planner failed", { channel, jobId, code: error?.code || "PLANNER_ERROR", message: error?.message });
       plannerDiagnostics = {
         source: "not_applicable",
         fallbackUsed: false,
         reasonCode: "planner_error",
+        errorCode: error?.code || "PLANNER_ERROR",
         queryCount: 0,
       };
     }
@@ -1304,11 +1306,14 @@ export async function runConversationEngine({
       ? {
           type: "missing_fields",
           message: !channelIntentRouting
-            ? plannerDiagnostics.reasonCode === "planner_error" ||
-              plannerDiagnostics.reasonCode === "invalid_plan" ||
-              plannerDiagnostics.reasonCode === "planner_unavailable"
-              ? "No pude interpretar la solicitud con el planificador nuevo. No consulté el CRM; reformula la pregunta o inténtalo más tarde."
-              : "El planificador nuevo no produjo una ruta válida. No consulté el CRM; reformula la pregunta o inténtalo más tarde."
+            && plannerDiagnostics.errorCode === "AI_BUDGET_EXCEEDED"
+            ? "No pude completar la solicitud porque se agotó el presupuesto de IA disponible. Revisa el crédito o los límites de IA antes de volver a intentar. No se ejecutó ningún cambio."
+            : !channelIntentRouting
+            ? plannerDiagnostics.reasonCode === "planner_error"
+              ? "No pude completar la solicitud porque falló el planificador del chat. Inténtalo más tarde o revisa el diagnóstico; no es necesario reformular la pregunta."
+              : plannerDiagnostics.reasonCode === "invalid_plan"
+                ? "El planificador del chat devolvió una respuesta inválida. Inténtalo más tarde o revisa el diagnóstico; no es necesario reformular la pregunta."
+                : "El planificador del chat no está disponible. Revisa la configuración o inténtalo más tarde; no es necesario reformular la pregunta."
             : channelIntentRouting.channel === "customer_account"
               ? channelPlanClarification?.reason === "other_account"
                 ? "No puedo consultar otra cuenta desde este chat. Cambia la cuenta seleccionada en la interfaz y vuelve a preguntar."
@@ -1336,6 +1341,9 @@ export async function runConversationEngine({
       : null;
   const effectiveClarification =
     serverClarification || clarification || routingClarification || channelRoutingClarification;
+  const channelPlannerFailed = channel === "customer_account" && !channelIntentRouting &&
+    effectiveClarification === channelRoutingClarification &&
+    ["planner_error", "invalid_plan", "planner_unavailable"].includes(plannerDiagnostics.reasonCode);
   const deterministicResult =
     effectiveClarification ||
     channel !== "coach" ||
@@ -1380,10 +1388,10 @@ export async function runConversationEngine({
     result = effectiveClarification
       ? {
           intent: "clarification",
-          responseType: "clarification",
+          responseType: channelPlannerFailed ? "error" : "clarification",
           answer: effectiveClarification.message,
           confidence: "high",
-          clarification: effectiveClarification,
+          clarification: channelPlannerFailed ? null : effectiveClarification,
           operations: [],
           ...(channel !== "coach"
             ? {
@@ -1570,6 +1578,10 @@ export async function runConversationEngine({
     businessRules,
     mayAnswerFromCoachPolicy,
   );
+  if (channelPlannerFailed) {
+    response.errorCode = plannerDiagnostics.errorCode ||
+      (plannerDiagnostics.reasonCode === "invalid_plan" ? "CUSTOMER_PLANNER_INVALID" : "CUSTOMER_PLANNER_UNAVAILABLE");
+  }
   if (intentRouting) {
     response.intentRouting = {
       intent: intentRouting.intent,

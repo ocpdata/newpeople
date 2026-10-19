@@ -36,6 +36,45 @@ const CHANNEL_INTENTS = Object.freeze({
       priority: 110,
     },
     {
+      code: "content_preparation",
+      label: "Preparación de contenido aportado",
+      description:
+        "Resume, reescribe, traduce o prepara preguntas a partir del material aportado por el vendedor, sin consultar ni modificar el CRM.",
+      tools: [],
+      context: ["account"],
+      examples: [
+        "Resume este texto en tres puntos",
+        "Traduce al inglés: La cotización sigue pendiente de revisión",
+        "Prepara preguntas para confirmar si el cliente sigue evaluando la cotización",
+      ],
+      patterns: [
+        /\b(?:resume|resumir|resumen|sintetiza|reescribe|reformula|traduce|traducir|preguntas?)\b/,
+      ],
+      priority: 105,
+    },
+    {
+      code: "value_argument",
+      label: "Argumento de valor",
+      description:
+        "Prepara un argumento de valor para una oportunidad usando su información y cotización autorizadas, sin inventar métricas ni resultados.",
+      tools: [
+        "searchAccounts",
+        "searchOpportunities",
+        "getOpportunity",
+        "getOpportunityQuotation",
+        "searchContacts",
+      ],
+      context: ["account", "opportunity"],
+      examples: [
+        "Prepara un argumento de valor para esta oportunidad con lo disponible",
+      ],
+      patterns: [
+        /\b(?:argumento|propuesta) de valor\b/,
+        /\bbeneficios?\b[\s\S]{0,60}\b(?:oportunidad|solucion|cotizacion)\b/,
+      ],
+      priority: 88,
+    },
+    {
       code: "quotation_query",
       label: "Contenido de cotización",
       description:
@@ -74,7 +113,7 @@ const CHANNEL_INTENTS = Object.freeze({
       label: "Estado de oportunidad",
       description:
         "Consulta estado, etapa y activación de una oportunidad de esta cuenta.",
-      tools: ["searchAccounts", "searchOpportunities", "getOpportunity"],
+      tools: ["searchAccounts", "searchOpportunities", "getOpportunity", "getOpportunityNotes"],
       context: ["account"],
       examples: ["¿Cuál es el estado actual de esta oportunidad?"],
       patterns: [
@@ -644,6 +683,7 @@ export function normalizeChannelIntentPlan({
     configurationByCode.get(authoritativeCode)?.enabled !== false
   ) {
     const authoritativeIsOperation = authoritativeCode === "crm_operation";
+    const authoritativeIsContentOnly = authoritativeCode === "content_preparation";
     const compatibleSupportingIntents = authoritativeIsOperation
       ? (Array.isArray(plan.queries) ? plan.queries : []).filter(
           (code) => code === "contact_query",
@@ -659,9 +699,22 @@ export function normalizeChannelIntentPlan({
       mode:
         authoritativeIsOperation && plan.mode !== "clarification"
           ? "operation"
+          : authoritativeIsContentOnly
+            ? "read_only"
           : plan.mode === "clarification"
             ? "clarification"
             : "read_only",
+      ...(authoritativeIsContentOnly
+        ? {
+            entities: {},
+            referenceResolution: {
+              targetType: "account",
+              cardinality: "single",
+              source: "active_context",
+              candidateKeys: [],
+            },
+          }
+        : {}),
       ...(authoritativeIsOperation
         ? {}
         : {
@@ -669,7 +722,7 @@ export function normalizeChannelIntentPlan({
             activityDraft: { ...plan.activityDraft, action: "none" },
           }),
       ambiguity:
-        plan.mode === "clarification"
+        plan.mode === "clarification" && !authoritativeIsContentOnly
           ? plan.ambiguity
           : {
               reason: "none",
@@ -902,6 +955,17 @@ export function normalizeChannelIntentPlan({
     "contact",
     "lead",
   ]);
+  const accountLevelDiscoveryGuidance =
+    channel === "customer_account" &&
+    Number(context.accountId || 0) > 0 &&
+    !Number(context.opportunityId || 0) &&
+    selectedIntents.some((intent) => intent.code === "opportunity_guidance") &&
+    targetType === "account" &&
+    cardinality === "single" &&
+    ["active_context", "account_scope"].includes(referenceSource) &&
+    !entityReferenceFields.some((reference) => reference.entityType === "opportunity") &&
+    /\b(?:negoci\w*|necesidad\w*|descubrir\w*|antes de (?:proponer|negociar)|sin saber|no sabemos)\b/i
+      .test(normalizeQuestion(question));
   const requiredContext = [
     ...new Set(
       selectedIntents.flatMap((intent) => {
@@ -911,7 +975,8 @@ export function normalizeChannelIntentPlan({
         return [
           ...intent.context,
           ...(Array.isArray(configuredContext) ? configuredContext : []),
-        ].filter((key) => allowedContextKeys.has(key));
+        ].filter((key) => allowedContextKeys.has(key) &&
+          !(accountLevelDiscoveryGuidance && key === "opportunity"));
       }),
     ),
   ];
@@ -944,7 +1009,7 @@ export function normalizeChannelIntentPlan({
           !(
             accountScopedOperation &&
             ["contact", "opportunity"].includes(key)
-          ),
+          ) && !(accountLevelDiscoveryGuidance && key === "opportunity"),
       ),
     ),
   ];

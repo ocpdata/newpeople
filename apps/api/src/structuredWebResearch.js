@@ -5,12 +5,27 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
 
-function buildFieldSchema(field) {
+function buildFieldSchema(field, definitions = null) {
+  if (field.nullable) {
+    return { anyOf: [buildFieldSchema({ ...field, nullable: false }, definitions), { type: "null" }] };
+  }
+  if (field.definition && definitions) {
+    if (!definitions[field.definition]) {
+      definitions[field.definition] = buildFieldSchema({ ...field, definition: undefined }, definitions);
+    }
+    return { $ref: `#/$defs/${field.definition}` };
+  }
+  if (field.type === "union") {
+    return { anyOf: field.variants.map((variant) => buildFieldSchema(variant, definitions)) };
+  }
   if (field.type === "string") {
     return { type: "string" };
   }
   if (field.type === "number") {
     return { type: "number" };
+  }
+  if (field.type === "boolean") {
+    return { type: "boolean" };
   }
 
   if (field.type === "enum") {
@@ -23,7 +38,9 @@ function buildFieldSchema(field) {
   if (field.type === "array") {
     return {
       type: "array",
-      items: buildFieldSchema(field.items),
+      items: buildFieldSchema(field.items, definitions),
+      ...(field.minItems !== undefined ? { minItems: field.minItems } : {}),
+      ...(field.maxItems !== undefined ? { maxItems: field.maxItems } : {}),
     };
   }
 
@@ -34,7 +51,7 @@ function buildFieldSchema(field) {
       properties: Object.fromEntries(
         field.fields.map((childField) => [
           childField.key,
-          buildFieldSchema(childField),
+          buildFieldSchema(childField, definitions),
         ]),
       ),
       required: field.fields
@@ -46,27 +63,33 @@ function buildFieldSchema(field) {
   throw new Error(`Unsupported structured research field type: ${field.type}`);
 }
 
-function buildExpectedValue(field) {
+function buildExpectedValue(field, schemaExample = false) {
+  if (field.example !== undefined) return field.example;
+  if (field.nullable) return null;
+  if (field.type === "union") return buildExpectedValue(field.variants[0], schemaExample);
   if (field.type === "string") {
     return field.example ?? "";
   }
   if (field.type === "number") {
     return field.example ?? 0;
   }
+  if (field.type === "boolean") {
+    return false;
+  }
 
   if (field.type === "enum") {
-    return field.example ?? field.enum.join("|");
+    return field.example ?? (schemaExample ? field.enum[0] : field.enum.join("|"));
   }
 
   if (field.type === "array") {
-    return field.example ?? [];
+    return field.example ?? Array.from({ length: field.minItems || 0 }, () => buildExpectedValue(field.items, schemaExample));
   }
 
   if (field.type === "object") {
     return Object.fromEntries(
       field.fields.map((childField) => [
         childField.key,
-        buildExpectedValue(childField),
+        buildExpectedValue(childField, schemaExample),
       ]),
     );
   }
@@ -119,6 +142,7 @@ export async function runStructuredWebResearch({
   onResponseMetadata = null,
   signal = null,
   temperature = null,
+  responseVariants = null,
 }) {
   if (
     !config.openai.apiKey ||
@@ -144,7 +168,7 @@ export async function runStructuredWebResearch({
     text: {
       format: {
         type: "json_schema",
-        ...buildStructuredResearchSchema(schemaName, fields),
+        ...buildStructuredResearchSchema(schemaName, fields, responseVariants),
         strict: true,
       },
     },
@@ -159,9 +183,9 @@ export async function runStructuredWebResearch({
           subject,
           context,
           currentValues,
-          expectedJsonShape: Object.fromEntries(
-            fields.map((field) => [field.key, buildExpectedValue(field)]),
-          ),
+          expectedJsonShape: responseVariants
+            ? { result: Object.fromEntries(responseVariants[0].map((field) => [field.key, buildExpectedValue(field, true)])) }
+            : Object.fromEntries(fields.map((field) => [field.key, buildExpectedValue(field)])),
         }),
       },
     ],
@@ -219,7 +243,15 @@ export async function runStructuredWebResearch({
     });
   }
 
-  return extractJsonObject(extractResponseOutputText(data));
+  const parsed = extractJsonObject(extractResponseOutputText(data));
+  if (!responseVariants) return parsed;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 1 || !parsed.result || typeof parsed.result !== "object" || Array.isArray(parsed.result)) {
+    throw Object.assign(new Error("La respuesta estructurada no contiene el resultado esperado"), {
+      code: "STRUCTURED_RESPONSE_INVALID_ENVELOPE",
+    });
+  }
+  return parsed.result;
 }
 
 export async function runStructuredTextResearch(args) {
@@ -241,7 +273,29 @@ export async function runProfiledStructuredWebResearch(profile, args) {
   });
 }
 
-export function buildStructuredResearchSchema(schemaName, fields) {
+export function buildStructuredResearchSchema(schemaName, fields, responseVariants = null) {
+  if (responseVariants) {
+    const sharedItems = responseVariants[0].filter((field) => field.type === "array" &&
+      responseVariants.every((variant) => JSON.stringify(variant.find((candidate) => candidate.key === field.key)?.items) === JSON.stringify(field.items)));
+    const definitions = {};
+    for (const field of sharedItems) {
+      definitions[`${field.key}Item`] = buildFieldSchema(field.items, definitions);
+    }
+    return {
+      name: schemaName,
+      schema: {
+        type: "object", additionalProperties: false, required: ["result"],
+        ...(sharedItems.length ? { $defs: definitions } : {}),
+        properties: { result: { anyOf: responseVariants.map((variant) => {
+          const schema = buildFieldSchema({ type: "object", fields: variant }, definitions);
+          for (const field of sharedItems) {
+            schema.properties[field.key].items = { $ref: `#/$defs/${field.key}Item` };
+          }
+          return schema;
+        }) } },
+      },
+    };
+  }
   return {
     name: schemaName,
     schema: {

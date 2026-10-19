@@ -19,6 +19,13 @@ async function mockMiCoachApi(
     withCustomerContactOperation = false,
     withCustomerOpportunityOperation = false,
     withCustomerContactOpportunityLink = false,
+    withVersionedCustomerLink = false,
+    withCustomerReschedule = false,
+    withCustomerOutcome = false,
+    withCustomerStage = false,
+    customerStageDecision = "ready_to_advance",
+    failCustomerOutcome = false,
+    incompleteCustomerOutcome = false,
     withCustomerContactUpdate = false,
     withLeadRead = false,
     withCoachInterface = false,
@@ -137,6 +144,7 @@ async function mockMiCoachApi(
   let customerChatJobCount = 0;
   let persistedCustomerContactOperation = null;
   let persistedCustomerOpportunityOperation = null;
+  let stageJobStarted = false;
   const plannerPrompts = ["coach", "customer_account", "prospect"].map((channel) => ({
     channel,
     process: "default",
@@ -384,10 +392,49 @@ async function mockMiCoachApi(
                       requiresConfirmation: true,
                     },
                   ]
+                : withCustomerStage
+                  ? [{
+                      kind: "validate_stage", sourceChannel: "customer_account", targetModule: "opportunities",
+                      title: "Validar avance de Proyecto abierto", accountId: 160, opportunityId: 300,
+                      stageDraftId: "77769f2d-6399-4e7e-9d4e-0601efc57f50", stageRevision: 1, stageObservedVersion: "observed",
+                      payload: { accountId: 160, opportunityId: 300 },
+                      stageSummary: { accountName: "Cuenta Demo", opportunityName: "Proyecto abierto", currentStageId: 1,
+                        currentStageName: "Inicial", targetStageId: 2, targetStageName: "Negociación" },
+                      evidence: [], missingFields: [], requiresConfirmation: true,
+                    }]
+                : withCustomerOutcome
+                  ? [{
+                      kind: "lead_call_outcome", sourceChannel: "customer_account", title: "Registrar llamada Lead 105",
+                      accountId: 160, interactionId: 105, outcomeDraftId: "77769f2d-6399-4e7e-9d4e-0601efc57f50", outcomeRevision: 1,
+                      outcomeObservedVersion: "observed", outcomeRule: "rule",
+                      substatusCode: "contact_attempt_pending", reasonCode: "needs_more_information", requiredActionCode: "collect_missing_context",
+                      comment: "", nextActionDueAt: null, referredContactName: "", referredAreaName: "",
+                      outcomeSummary: { accountName: "Cuenta Demo", leadLabel: "Lead 105 · Lead ficticio", currentStatus: "Creado",
+                        currentResult: "(sin dato)", currentReason: "(sin dato)", currentAction: "(sin dato)", currentComment: "", currentDueDate: null,
+                        proposed: { result: "Intento de contacto pendiente", reason: "Requiere más información",
+                          action: "Recopilar contexto faltante", status: "Creado" }, timeZone: "America/Mexico_City" },
+                      evidence: [], missingFields: [], requiresConfirmation: true,
+                    }]
+                : withCustomerReschedule
+                  ? [{
+                      kind: "reschedule_activity", sourceChannel: "customer_account", title: "Reprogramar reunión de Compras",
+                      accountId: 160, opportunityId: 300, activityId: 75, targetModule: "calendar",
+                      payload: { accountId: 160, activityId: 75 },
+                      rescheduleDraftId: "77769f2d-6399-4e7e-9d4e-0601efc57f50", rescheduleRevision: 1, observedVersion: "[300,75]",
+                      proposedAt: "2030-10-23T16:00:00.000Z", proposedDueDate: "2030-10-23",
+                      scheduleSummary: { accountName: "Cuenta Demo", opportunityName: "Proyecto abierto", activityTitle: "Reunión de Compras",
+                        before: "2030-10-20T10:00:00", after: "2030-10-23T10:00:00", timeZone: "America/Mexico_City" },
+                      evidence: [], missingFields: [], requiresConfirmation: true,
+                    }]
                 : withCustomerContactOpportunityLink
                   ? [
                       {
                         kind: "link_contact_to_opportunity",
+                        ...(withVersionedCustomerLink ? {
+                          linkDraftId: "77769f2d-6399-4e7e-9d4e-0601efc57f50", linkRevision: 1, currentContactId: 602,
+                          linkSummary: { accountName: "Cuenta Demo", opportunityName: "Proyecto abierto",
+                            contactName: "Ana Compras", currentContactName: "Contacto Anterior", effect: "replace" },
+                        } : {}),
                         title: "Vincular Ana Compras a Proyecto abierto",
                         accountId: 160,
                         opportunityId: 300,
@@ -435,7 +482,7 @@ async function mockMiCoachApi(
     }
     if (
       (withCustomerOpportunityOperation ||
-        withCustomerContactOpportunityLink) &&
+        withCustomerContactOpportunityLink || withCustomerReschedule || withCustomerOutcome || withCustomerStage) &&
       pathname === "/api/mi-agent/coach/operations" &&
       method === "POST"
     ) {
@@ -446,7 +493,7 @@ async function mockMiCoachApi(
         sessionId: 924,
         version: 1,
         status: "ready",
-        targetModule: "opportunities",
+        targetModule: withCustomerOutcome ? "interactions" : withCustomerReschedule ? "calendar" : "opportunities",
         pendingOperation: operation,
         missingFields: [],
       };
@@ -454,6 +501,35 @@ async function mockMiCoachApi(
         { sessionId: 924, operation: persistedCustomerOpportunityOperation },
         201,
       );
+    }
+    if (withCustomerStage && pathname === "/api/opportunities/300/coach-stage-validation" && method === "POST") {
+      stageJobStarted = true;
+      return json({ job: { id: "existing-stage-job", status: "pending", pollAfterMs: 10 } }, 202);
+    }
+    if (withCustomerStage && pathname === "/api/opportunities/300/coach-stage-validation/44a6bf85-cd5a-431e-9697-fd0b2da5e9f6") {
+      const advanced = customerStageDecision === "ready_to_advance";
+      return json({ operation: { ...persistedCustomerOpportunityOperation,
+        status: stageJobStarted ? "completed" : "handed_off",
+        result: stageJobStarted ? { validationJobId: "existing-stage-job", outcome: advanced ? "advanced" : "validated_without_advance" } : null },
+        validation: stageJobStarted ? { job: { id: "existing-stage-job", status: "completed" }, result: {
+          autoAdvanced: advanced, advancedSalesStage: advanced ? { id: 2, name: "Negociación" } : null,
+          message: advanced ? "La oportunidad avanzó a Negociación" : "La etapa no está lista para avanzar",
+          validation: { decision: customerStageDecision, summary: "Resultado del validador existente", reasons: ["Evidencia revisada"] },
+        } } : null });
+    }
+    if (withCustomerOutcome && persistedCustomerOpportunityOperation &&
+        pathname === `/api/mi-agent/coach/operations/${persistedCustomerOpportunityOperation.id}/review` && method === "POST") {
+      persistedCustomerOpportunityOperation = { ...persistedCustomerOpportunityOperation,
+        reviewedAt: "2030-10-17T12:00:00Z", version: persistedCustomerOpportunityOperation.version + 1 };
+      return json({ operation: persistedCustomerOpportunityOperation });
+    }
+    if (withCustomerOutcome && persistedCustomerOpportunityOperation &&
+        pathname === `/api/mi-agent/coach/operations/${persistedCustomerOpportunityOperation.id}/execute` && method === "POST") {
+      if (failCustomerOutcome) return json({ message: "El lead cambió. Actualiza y revisa nuevamente.", code: "COACH_OUTCOME_STALE" }, 409);
+      if (incompleteCustomerOutcome) return json({});
+      persistedCustomerOpportunityOperation = { ...persistedCustomerOpportunityOperation, status: "completed",
+        version: persistedCustomerOpportunityOperation.version + 1 };
+      return json({ operation: persistedCustomerOpportunityOperation });
     }
     if (
       persistedCustomerOpportunityOperation &&
@@ -476,7 +552,8 @@ async function mockMiCoachApi(
         `/api/mi-agent/coach/operations/${persistedCustomerOpportunityOperation.id}/handoff` &&
       method === "POST"
     ) {
-      const token = `customer-opportunity-${persistedCustomerOpportunityOperation.id}`;
+      const token = withVersionedCustomerLink || withCustomerReschedule || withCustomerStage ? "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6"
+        : `customer-opportunity-${persistedCustomerOpportunityOperation.id}`;
       return json({
         operation: {
           ...persistedCustomerOpportunityOperation,
@@ -484,8 +561,8 @@ async function mockMiCoachApi(
         },
         handoff: {
           token,
-          module: "opportunities",
-          url: `/opportunities?coachDraft=${token}`,
+          module: withCustomerReschedule ? "calendar" : "opportunities",
+          url: `/${withCustomerReschedule ? "calendar" : "opportunities"}?coachDraft=${token}`,
           expiresAt: "2027-10-09T12:00:00.000Z",
         },
       });
@@ -493,13 +570,13 @@ async function mockMiCoachApi(
     if (
       persistedCustomerOpportunityOperation &&
       pathname ===
-        `/api/mi-agent/coach/handoffs/customer-opportunity-${persistedCustomerOpportunityOperation.id}`
+        `/api/mi-agent/coach/handoffs/${withVersionedCustomerLink || withCustomerReschedule || withCustomerStage ? "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6" : `customer-opportunity-${persistedCustomerOpportunityOperation.id}`}`
     ) {
       return json({
         handoff: {
           operationId: persistedCustomerOpportunityOperation.id,
           kind: persistedCustomerOpportunityOperation.pendingOperation.kind,
-          module: "opportunities",
+          module: withCustomerReschedule ? "calendar" : "opportunities",
           payload: persistedCustomerOpportunityOperation.pendingOperation,
           entities: {},
           missingFields: [],
@@ -507,6 +584,15 @@ async function mockMiCoachApi(
           expiresAt: "2027-10-09T12:00:00.000Z",
         },
       });
+    }
+    if (withVersionedCustomerLink && pathname === "/api/opportunities/300/coach-contact" && method === "POST") {
+      return json({ operation: { ...persistedCustomerOpportunityOperation, status: "completed" } });
+    }
+    if (withCustomerReschedule && pathname === "/api/opportunities/300/coach-reschedule" && method === "POST") {
+      return json({ operation: { ...persistedCustomerOpportunityOperation, status: "completed" } });
+    }
+    if (withCustomerReschedule && pathname === "/api/commercial-development/calendar") {
+      return json({ days: [], sellers: [], alerts: {}, indicators: {} });
     }
     if (
       withCustomerContactOperation &&
@@ -923,11 +1009,12 @@ async function mockMiCoachApi(
           ...(withCustomerOpportunityOperation
             ? ["oportunidades.create", "contactos.read"]
             : []),
-          ...(withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill
+          ...(withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill || withCustomerReschedule || withCustomerStage
             ? ["oportunidades.update"]
             : []),
           ...(withCustomerContactUpdate ? ["contactos.update"] : []),
           ...(withLeadRead ? ["interacciones.read"] : []),
+          ...(withCustomerOutcome ? ["interacciones.read", "interacciones.update"] : []),
           ...(canAdmin ? ["mi_coach.admin"] : []),
           ...(canDiagnoseCustomerChats ? ["mi_coach.chat_diagnostics"] : []),
         ],
@@ -1375,6 +1462,7 @@ async function mockMiCoachApi(
     if (
       (withCustomerOpportunityOperation ||
         withCustomerContactOpportunityLink ||
+        withCustomerStage ||
         withCustomerStageAnswerPrefill) &&
       pathname.startsWith("/api/catalogs/opportunity-")
     ) {
@@ -1446,7 +1534,7 @@ async function mockMiCoachApi(
               : [],
       );
     if (
-      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill) &&
+      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill || withCustomerStage) &&
       pathname === "/api/opportunities/300"
     ) {
       return json({
@@ -1465,7 +1553,7 @@ async function mockMiCoachApi(
       });
     }
     if (
-      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill) &&
+      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill || withCustomerStage) &&
       pathname === "/api/opportunities/300/commercial-context"
     ) {
       return json({
@@ -1493,7 +1581,7 @@ async function mockMiCoachApi(
       });
     }
     if (
-      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill) &&
+      (withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill || withCustomerStage) &&
       pathname === "/api/opportunities/300/documents"
     ) {
       return json([]);
@@ -2082,6 +2170,7 @@ async function mockCustomerChatRecovery(page) {
           errorMessage: state.failed ? "No fue posible responder" : null,
           result: state.emptyResult ? null : {
             answer, responseType: "informational", sourceDomain: "crm_internal",
+            ...(state.activityHistory ? { activityHistory: state.activityHistory } : {}),
           },
         },
       }),
@@ -2199,6 +2288,27 @@ test("Cliente existente conserva el job cuando se agota la espera y recupera sin
   state.pendingPolls = 0;
   await recover.click();
   await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente muestra pendientes sin periodo y separa los registros sin fecha", async ({ page }) => {
+  const { state, chat, send } = await mockCustomerChatRecovery(page);
+  state.activityHistory = {
+    mode: "pending", timezone: "America/Mexico_City", metadata: { partial: false, shown: 1, matched: 1 },
+    sections: [
+      { key: "pending", title: "Pendientes con fecha", available: true, items: [] },
+      { key: "undated", title: "Sin fecha utilizable", available: true,
+        subtitle: "No se consideran vencidas.", items: [
+          { id: "opportunityActivities:67", recordId: 67, title: "Seguimiento sin fecha",
+            date: "", dateMeaning: "Sin fecha utilizable", overdue: null, sourceTitle: "Actividades de oportunidades" },
+        ] },
+    ],
+  };
+  await send();
+  await expect(chat.getByText("Sin límite temporal implícito", { exact: true })).toBeVisible();
+  await expect(chat.getByText("Seguimiento sin fecha", { exact: true })).toBeVisible();
+  await expect(chat.getByText("Registro 67", { exact: true })).toBeVisible();
+  await expect(chat.getByText("No se consideran vencidas.", { exact: true })).toBeVisible();
   expect(state.submissions).toBe(1);
 });
 
@@ -3557,6 +3667,164 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.locator(".opportunity-edit-modal select").nth(1),
     ).toHaveValue("601");
     expect(opportunityWrites).toEqual([]);
+  });
+
+  test("A04 versionado traslada desde chat y guarda solo la asociación desde Oportunidades", async ({ page }) => {
+    const writes = [];
+    page.on("request", (request) => {
+      if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/opportunities")) {
+        writes.push({ method: request.method(), path: new URL(request.url()).pathname, body: request.postDataJSON() });
+      }
+    });
+    await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerContactOpportunityLink: true, withVersionedCustomerLink: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Vincula a Ana Compras con Proyecto abierto");
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await chat.getByRole("button", { name: "Revisar operación" }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirmar vínculo de contacto a oportunidad" });
+    await expect(dialog).toContainText("Contacto actual: Contacto Anterior");
+    await expect(dialog).toContainText("no se conservarán ambos");
+    await dialog.getByRole("button", { name: "Continuar en el módulo" }).click();
+    const panel = page.getByRole("region", { name: "Revisar vínculo contacto-oportunidad" });
+    await expect(panel).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Editar oportunidad" })).toHaveCount(0);
+    expect(writes).toEqual([]);
+    await panel.getByRole("button", { name: "Confirmar y guardar vínculo" }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(page).not.toHaveURL(/coachDraft=/);
+    await expect(page.getByRole("status")).toContainText("Vínculo guardado y auditado correctamente");
+    expect(writes).toEqual([{ method: "POST", path: "/api/opportunities/300/coach-contact",
+      body: { token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 } }]);
+  });
+
+  for (const decision of ["ready_to_advance", "not_ready_to_advance"]) {
+    test(`A08 traslada sin ejecutar y conserva resultado existente ${decision}`, async ({ page }) => {
+      const starts = [], forbidden = [];
+      page.on("request", (request) => {
+        const path = new URL(request.url()).pathname;
+        if (request.method() === "POST" && path.endsWith("/coach-stage-validation")) starts.push(request.postDataJSON());
+        if (request.method() !== "GET" && /stage-transition|commercial-close|\/opportunities\/300$/.test(path)) forbidden.push(path);
+      });
+      await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerStage: true, customerStageDecision: decision });
+      await openMiCoach(page, { workspace: "customer" });
+      await page.getByLabel("Cuenta existente").selectOption("160");
+      const chat = page.getByRole("region", { name: "Chat de cuenta" });
+      await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Valida avanzar Proyecto abierto");
+      await chat.getByRole("button", { name: "Preguntar" }).click();
+      await chat.getByRole("button", { name: "Revisar operación" }).click();
+      const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+      await expect(dialog).toContainText("Siguiente etapa: Negociación");
+      await expect(dialog).toContainText("puede avanzar automáticamente");
+      expect(starts).toEqual([]);
+      await dialog.getByRole("button", { name: "Continuar en el módulo" }).click();
+      await expect(page).toHaveURL(/\/opportunities\?coachDraft=/);
+      const panel = page.getByRole("region", { name: "Validar avance desde Mi Coach" });
+      await expect(panel).toBeVisible();
+      expect(starts).toEqual([]);
+      await panel.getByRole("button", { name: "Solicitar validación con IA (puede avanzar)", exact: true }).click();
+      const result = panel.getByRole("region", { name: "Resultado de validación" });
+      await expect(result).toContainText(decision === "ready_to_advance" ? "Etapa avanzada" : "La etapa no está lista para avanzar");
+      await expect(result).toContainText("Resultado del validador existente");
+      expect(starts).toEqual([{ token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 }]);
+      expect(forbidden).toEqual([]);
+      await expect(panel.getByRole("button", { name: "Solicitar validación con IA (puede avanzar)", exact: true })).toHaveCount(0);
+      await page.reload();
+      await expect(page.getByRole("region", { name: "Resultado de validación" })).toContainText("Resultado del validador existente");
+      expect(starts).toHaveLength(1);
+    });
+  }
+
+  test("A07 revisa el resultado completo sin comentario obligatorio y guarda solo con confirmación", async ({ page }) => {
+    const writes = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() !== "GET" && path.includes("/coach/operations/") && path.endsWith("/execute")) writes.push(request.postDataJSON());
+    });
+    await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerOutcome: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Registra resultado de llamada del lead 105");
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await chat.getByRole("button", { name: "Revisar operación" }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+    await expect(dialog).toContainText("Lead 105 · Lead ficticio");
+    await expect(dialog).toContainText("Resultado propuesto");
+    await expect(dialog).toContainText("Recopilar contexto faltante");
+    await expect(dialog).toContainText("Estado resultante");
+    await expect(dialog.getByRole("textbox")).toHaveCount(1);
+    await expect(dialog.getByRole("textbox")).toBeDisabled();
+    expect(writes).toEqual([]);
+    const confirm = dialog.getByRole("button", { name: "Confirmar y guardar" });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("Resultado del lead guardado correctamente.").first()).toBeVisible();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toEqual({ version: 2, idempotencyKey: expect.any(String) });
+  });
+
+  test("A07 conflicto visible no acredita guardado ni permite editar un borrador versionado en el modal", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerOutcome: true, failCustomerOutcome: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Registra resultado de llamada del lead 105");
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await chat.getByRole("button", { name: "Revisar operación" }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+    await dialog.getByRole("button", { name: "Confirmar y guardar" }).click();
+    await expect(dialog).toContainText("El lead cambió");
+    await expect(dialog).toBeVisible();
+    await expect(page.getByText("Resultado del lead guardado correctamente.")).toHaveCount(0);
+  });
+
+  test("A07 una respuesta incompleta no acredita guardado", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerOutcome: true, incompleteCustomerOutcome: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Registra resultado del lead 105");
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await chat.getByRole("button", { name: "Revisar operación" }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+    await dialog.getByRole("button", { name: "Confirmar y guardar" }).click();
+    await expect(dialog).toContainText("No se acredita como guardado");
+    await expect(page.getByText("Resultado del lead guardado correctamente.")).toHaveCount(0);
+  });
+
+  test("A06 traslada del chat a Calendario sin crear una actividad y guarda solo al confirmar", async ({ page }) => {
+    const writes = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() !== "GET" && (path.startsWith("/api/opportunities") || path.startsWith("/api/commercial-development"))) {
+        writes.push({ method: request.method(), path, body: request.postDataJSON() });
+      }
+    });
+    await mockMiCoachApi(page, { withCustomerHealth: true, withCustomerReschedule: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Mueve la reunión de Compras al 2030-10-23");
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await chat.getByRole("button", { name: "Revisar operación" }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+    await expect(dialog).toContainText("Programación actual: 2030-10-20T10:00:00");
+    await expect(dialog).toContainText("Programación propuesta: 2030-10-23T10:00:00");
+    await dialog.getByRole("button", { name: "Continuar en el módulo" }).click();
+    await expect(page).toHaveURL(/\/calendar\?coachDraft=/);
+    const panel = page.getByRole("region", { name: "Revisar reprogramación" });
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText("ID 75");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(writes).toEqual([]);
+    await panel.getByRole("button", { name: "Confirmar y reprogramar" }).click();
+    await expect(panel).toHaveCount(0);
+    await expect(page.getByRole("status")).toContainText("Actividad reprogramada y auditada correctamente");
+    expect(writes).toEqual([{ method: "POST", path: "/api/opportunities/300/coach-reschedule",
+      body: { token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 } }]);
   });
 
   test("cambiar de espacio conserva contexto separado de Coach, Cliente existente y Cuenta nueva", async ({

@@ -221,6 +221,8 @@ const TARGET_MODULES = {
   create_contact: "contacts",
   create_opportunity: "opportunities",
   link_contact_to_opportunity: "opportunities",
+  reschedule_activity: "calendar",
+  validate_stage: "opportunities",
   create_quotation: "quotations",
   create_proposal: "proposals",
 };
@@ -239,6 +241,8 @@ const TARGET_ROUTES = {
   create_contact: "/contacts",
   create_opportunity: "/opportunities",
   link_contact_to_opportunity: "/opportunities",
+  reschedule_activity: "/calendar",
+  validate_stage: "/opportunities",
   create_quotation: "/quotations",
   create_proposal: "/proposals",
 };
@@ -329,6 +333,9 @@ export async function persistCoachOperations({
       const [rows] = await conn.query(sql, params);
       return rows;
     };
+    if (operations.some((operation) => operation.sourceChannel === "customer_account" && (operation.creationDraftId || operation.updateDraftId || operation.linkDraftId || operation.rescheduleDraftId || operation.outcomeDraftId || operation.stageDraftId))) {
+      await execute("SELECT id FROM users WHERE id = ? FOR UPDATE", [Number(userId)]);
+    }
     const sessions = await execute(
       `SELECT status FROM coach_conversation_sessions
        WHERE id = ? AND user_id = ? FOR UPDATE`,
@@ -343,6 +350,148 @@ export async function persistCoachOperations({
         ? operation.missingFields
         : [];
       const status = missingFields.length ? "collecting" : "ready";
+      if (operation.kind === "validate_stage" && operation.sourceChannel === "customer_account") {
+        const rows = await execute(`SELECT * FROM coach_session_operations WHERE user_id=?
+          AND JSON_UNQUOTE(JSON_EXTRACT(original_operation,'$.stageDraftId'))=? ORDER BY id LIMIT 1 FOR UPDATE`,
+        [Number(userId), operation.stageDraftId]);
+        if (rows[0]) {
+          const existing = mapCoachOperationRow(rows[0]);
+          if (operation.accountId === existing.pendingOperation.accountId && !existing.result?.validationJobId &&
+              ["ready", "collecting", "failed", "handed_off"].includes(existing.status) &&
+              operation.stageRevision > existing.pendingOperation.stageRevision) {
+            await execute(`UPDATE coach_session_operations SET pending_operation=?,collected_fields=?,missing_fields=?,
+              status=?,handoff_token=NULL,handoff_expires_at=NULL,handoff_consumed_at=NULL,reviewed_at=NULL,
+              error_detail=NULL,version=version+1,updated_at=NOW(3) WHERE id=?`,
+            [JSON.stringify(operation), JSON.stringify(operationFields(operation)), JSON.stringify(missingFields), status, existing.id]);
+            await insertCoachOperationEvent(execute, { operationId: existing.id, sessionId: existing.sessionId, userId,
+              eventType: "fields_collected", fromStatus: existing.status, toStatus: status, source: "user",
+              eventKey: `stage:${existing.version + 1}` });
+            persisted.push(mapCoachOperationRow((await execute("SELECT * FROM coach_session_operations WHERE id=?", [existing.id]))[0]));
+          } else persisted.push(existing);
+          continue;
+        }
+      }
+      if (operation.kind === "lead_call_outcome" && operation.sourceChannel === "customer_account" && operation.outcomeDraftId) {
+        const rows = await execute(`SELECT * FROM coach_session_operations WHERE user_id=?
+          AND JSON_UNQUOTE(JSON_EXTRACT(original_operation,'$.outcomeDraftId'))=? ORDER BY id LIMIT 1 FOR UPDATE`,
+        [Number(userId), operation.outcomeDraftId]);
+        if (rows[0]) {
+          const existing = mapCoachOperationRow(rows[0]);
+          if (operation.accountId === existing.pendingOperation.accountId &&
+              ["ready", "collecting", "failed"].includes(existing.status) &&
+              operation.outcomeRevision > existing.pendingOperation.outcomeRevision) {
+            await execute(`UPDATE coach_session_operations SET pending_operation=?,collected_fields=?,missing_fields=?,
+              status=?,reviewed_at=NULL,error_detail=NULL,version=version+1,updated_at=NOW(3) WHERE id=?`,
+            [JSON.stringify(operation), JSON.stringify(operationFields(operation)), JSON.stringify(missingFields), status, existing.id]);
+            await insertCoachOperationEvent(execute, { operationId: existing.id, sessionId: existing.sessionId, userId,
+              eventType: "fields_collected", fromStatus: existing.status, toStatus: status, source: "user",
+              eventKey: `outcome:${existing.version + 1}` });
+            persisted.push(mapCoachOperationRow((await execute("SELECT * FROM coach_session_operations WHERE id=?", [existing.id]))[0]));
+          } else persisted.push(existing);
+          continue;
+        }
+      }
+      if (operation.kind === "reschedule_activity" && operation.sourceChannel === "customer_account") {
+        const rows = await execute(`SELECT * FROM coach_session_operations WHERE user_id=?
+          AND JSON_UNQUOTE(JSON_EXTRACT(original_operation,'$.rescheduleDraftId'))=? ORDER BY id LIMIT 1 FOR UPDATE`,
+        [Number(userId), operation.rescheduleDraftId]);
+        if (rows[0]) {
+          const existing = mapCoachOperationRow(rows[0]);
+          if (operation.accountId === existing.pendingOperation.accountId &&
+              ["ready", "collecting", "failed", "handed_off"].includes(existing.status) &&
+              operation.rescheduleRevision > existing.pendingOperation.rescheduleRevision) {
+            await execute(`UPDATE coach_session_operations SET pending_operation=?,collected_fields=?,missing_fields=?,
+              status=?,handoff_token=NULL,handoff_expires_at=NULL,handoff_consumed_at=NULL,reviewed_at=NULL,
+              error_detail=NULL,version=version+1,updated_at=NOW(3) WHERE id=?`,
+            [JSON.stringify(operation), JSON.stringify(operationFields(operation)), JSON.stringify(missingFields), status, existing.id]);
+            await insertCoachOperationEvent(execute, { operationId: existing.id, sessionId: existing.sessionId, userId,
+              eventType: "fields_collected", fromStatus: existing.status, toStatus: status, source: "user",
+              eventKey: `reschedule:${existing.version + 1}` });
+            persisted.push(mapCoachOperationRow((await execute("SELECT * FROM coach_session_operations WHERE id=?", [existing.id]))[0]));
+          } else persisted.push(existing);
+          continue;
+        }
+      }
+      if (operation.sourceChannel === "customer_account" && operation.linkDraftId) {
+        const rows = await execute(
+          `SELECT * FROM coach_session_operations WHERE user_id=?
+           AND JSON_UNQUOTE(JSON_EXTRACT(original_operation,'$.linkDraftId'))=? ORDER BY id LIMIT 1 FOR UPDATE`,
+          [Number(userId), operation.linkDraftId]);
+        if (rows[0]) {
+          const existing = mapCoachOperationRow(rows[0]);
+          if (existing.kind === "link_contact_to_opportunity" && operation.accountId === existing.pendingOperation.accountId &&
+              ["ready", "collecting", "failed", "handed_off"].includes(existing.status) &&
+              operation.linkRevision > Number(existing.pendingOperation.linkRevision)) {
+            await execute(`UPDATE coach_session_operations SET pending_operation=?, collected_fields=?, missing_fields=?,
+              status=?, handoff_token=NULL, handoff_expires_at=NULL, handoff_consumed_at=NULL, reviewed_at=NULL,
+              error_detail=NULL, version=version+1, updated_at=NOW(3) WHERE id=?`,
+              [JSON.stringify(operation), JSON.stringify(operationFields(operation)), JSON.stringify(missingFields), status, existing.id]);
+            await insertCoachOperationEvent(execute, { operationId: existing.id, sessionId: existing.sessionId, userId,
+              eventType: "fields_collected", fromStatus: existing.status, toStatus: status, source: "user",
+              eventKey: `link:${existing.version + 1}` });
+            persisted.push(mapCoachOperationRow((await execute("SELECT * FROM coach_session_operations WHERE id=?", [existing.id]))[0]));
+          } else persisted.push(existing);
+          continue;
+        }
+      }
+      if (operation.sourceChannel === "customer_account" && operation.updateDraftId) {
+        const rows = await execute(
+          `SELECT * FROM coach_session_operations WHERE user_id = ?
+           AND JSON_UNQUOTE(JSON_EXTRACT(original_operation, '$.updateDraftId')) = ?
+           AND JSON_UNQUOTE(JSON_EXTRACT(original_operation, '$.updateItemId')) = ?
+           ORDER BY id LIMIT 1 FOR UPDATE`, [Number(userId), operation.updateDraftId, operation.updateItemId],
+        );
+        if (rows[0]) {
+          const existing = mapCoachOperationRow(rows[0]);
+          if (["kind", "updateAccountId", "updateItemId", "field", "accountId", "contactId", "opportunityId"].every(
+                (key) => operation[key] === existing.pendingOperation[key]) &&
+              ["ready", "collecting", "failed"].includes(existing.status) &&
+              Number(operation.updateRevision) > Number(existing.pendingOperation.updateRevision)) {
+            await execute(
+              `UPDATE coach_session_operations SET pending_operation = ?, collected_fields = ?, missing_fields = ?,
+               status = ?, reviewed_at = NULL, error_detail = NULL, version = version + 1, updated_at = NOW(3) WHERE id = ?`,
+              [JSON.stringify(operation), JSON.stringify(operationFields(operation)), JSON.stringify(missingFields), status, existing.id],
+            );
+            await insertCoachOperationEvent(execute, { operationId: existing.id, sessionId: existing.sessionId, userId,
+              eventType: "fields_collected", fromStatus: existing.status, toStatus: status, source: "user",
+              eventKey: `update:${existing.version + 1}` });
+            const refreshed = await execute("SELECT * FROM coach_session_operations WHERE id = ?", [existing.id]);
+            persisted.push(mapCoachOperationRow(refreshed[0]));
+          } else persisted.push(existing);
+          continue;
+        }
+      }
+      if (operation.sourceChannel === "customer_account" && operation.creationDraftId &&
+          ["create_contact", "create_opportunity"].includes(operation.kind)) {
+        const existingRows = await execute(
+          `SELECT * FROM coach_session_operations
+           WHERE user_id = ? AND operation_kind = ?
+             AND JSON_UNQUOTE(JSON_EXTRACT(original_operation, '$.creationDraftId')) = ?
+           ORDER BY id ASC LIMIT 1 FOR UPDATE`,
+          [Number(userId), operation.kind, operation.creationDraftId],
+        );
+        if (existingRows[0]) {
+          const existing = mapCoachOperationRow(existingRows[0]);
+          if (["ready", "collecting", "failed"].includes(existing.status) &&
+              Number(existing.pendingOperation.accountId) === Number(operation.accountId) &&
+              Number(operation.creationRevision || 0) >= Number(existing.pendingOperation.creationRevision || 0)) {
+            await execute(
+              `UPDATE coach_session_operations SET pending_operation = ?, collected_fields = ?,
+               missing_fields = ?, status = ?, version = version + 1, updated_at = NOW(3) WHERE id = ?`,
+              [JSON.stringify(operation), JSON.stringify(operationFields(operation)),
+                JSON.stringify(missingFields), status, existing.id],
+            );
+            await insertCoachOperationEvent(execute, {
+              operationId: existing.id, sessionId: existing.sessionId, userId,
+              eventType: "fields_collected", fromStatus: existing.status, toStatus: status,
+              source: "user", eventKey: `creation:${existing.version + 1}`,
+            });
+            const refreshed = await execute("SELECT * FROM coach_session_operations WHERE id = ?", [existing.id]);
+            persisted.push(mapCoachOperationRow(refreshed[0]));
+          } else persisted.push(existing);
+          continue;
+        }
+      }
       const insertResult = await execute(
         `INSERT INTO coach_session_operations
         (session_id, user_id, source_job_id, operation_index, operation_kind, status,
@@ -533,13 +682,13 @@ export async function getCoachHandoff(userId, token, expectedModule) {
   const rows = await query(
     `SELECT * FROM coach_session_operations
      WHERE handoff_token = ? AND user_id = ?
-       AND status IN ('handed_off', 'failed')
+       AND (status IN ('handed_off', 'failed') OR (operation_kind='validate_stage' AND status='completed'))
      LIMIT 1`,
     [String(token || ""), Number(userId)],
   );
   const operation = rows[0] ? mapCoachOperationRow(rows[0]) : null;
   if (!operation) return { outcome: "not_found", operation: null };
-  if (new Date(operation.handoffExpiresAt).getTime() <= Date.now()) {
+  if (new Date(operation.handoffExpiresAt).getTime() <= Date.now() && !(operation.kind === "validate_stage" && operation.result?.validationJobId)) {
     await transitionCoachOperation(userId, operation.id, {
       status: "cancelled",
       cancellationReason: "El handoff expiró",
@@ -572,6 +721,9 @@ export async function completeCoachHandoff(
 ) {
   const loaded = await getCoachHandoff(userId, token, expectedModule);
   if (loaded.outcome !== "ready") return loaded;
+  if (loaded.operation.pendingOperation.linkDraftId) return { outcome: "save_required", operation: loaded.operation };
+  if (loaded.operation.kind === "reschedule_activity") return { outcome: "save_required", operation: loaded.operation };
+  if (loaded.operation.kind === "validate_stage") return { outcome: "save_required", operation: loaded.operation };
   return transitionCoachOperation(userId, loaded.operation.id, {
     status: "completed",
     result,
@@ -622,6 +774,9 @@ export async function updateCoachOperation(
     if (!ACTIVE_OPERATION_STATUSES.includes(existing.status)) {
       return { outcome: "closed", operation: existing };
     }
+    if (existing.pendingOperation?.creationDraftId && existing.status === "handed_off") {
+      return { outcome: "closed", operation: existing };
+    }
     if (Number(version) !== existing.version) {
       return { outcome: "conflict", operation: existing };
     }
@@ -639,6 +794,12 @@ export async function updateCoachOperation(
       "quotationVersionId",
       "field",
       "questionId",
+      ...(existing.pendingOperation?.creationDraftId ? ["creationDraftId", "creationRevision", "sourceChannel"] : []),
+      ...(existing.pendingOperation?.updateDraftId ? ["updateDraftId", "updateRevision", "updateItemId", "updateAccountId", "sourceChannel", "value", "currentValue"] : []),
+      ...(existing.pendingOperation?.linkDraftId ? ["linkDraftId", "linkRevision", "currentContactId", "linkSummary", "payload", "sourceChannel", "targetModule"] : []),
+      ...(existing.pendingOperation?.outcomeDraftId ? ["outcomeDraftId", "outcomeRevision", "outcomeObservedVersion", "outcomeRule", "outcomeSummary", "sourceChannel", "substatusCode", "reasonCode", "requiredActionCode", "comment", "nextActionDueAt", "referredContactName", "referredAreaName"] : []),
+      ...(existing.kind === "validate_stage" ? ["stageDraftId", "stageRevision", "stageObservedVersion", "stageSummary", "payload", "sourceChannel", "targetModule"] : []),
+      ...(existing.kind === "reschedule_activity" ? ["rescheduleDraftId", "rescheduleRevision", "activityId", "observedVersion", "proposedAt", "proposedDueDate", "scheduleSummary", "payload", "sourceChannel", "targetModule"] : []),
     ];
     const identityChanged = immutableFields.some(
       (field) =>
@@ -667,9 +828,12 @@ export async function updateCoachOperation(
       ? missingFields
       : existing.missingFields;
     const status = nextMissingFields.length ? "collecting" : "ready";
+    const edited = ["value", "answerValue", "answerMode", "comment"].some((field) =>
+      JSON.stringify(nextPendingOperation[field]) !== JSON.stringify(existing.pendingOperation[field]));
     const updateResult = await execute(
       `UPDATE coach_session_operations
      SET pending_operation = ?, collected_fields = ?, missing_fields = ?, status = ?,
+         ${edited ? "reviewed_at = NULL," : ""}
          error_detail = NULL, version = version + 1, updated_at = NOW(3)
      WHERE id = ? AND user_id = ? AND version = ?`,
       [
@@ -747,6 +911,9 @@ export async function transitionCoachOperation(
       ? mapCoachOperationRow(existingRows[0])
       : null;
     if (!existing) return null;
+    if (existing.kind === "validate_stage" && existing.result?.validationJobId) {
+      return { outcome: "invalid_transition", operation: existing };
+    }
     if (!OPERATION_TRANSITIONS[existing.status]?.has(status)) {
       return { outcome: "invalid_transition", operation: existing };
     }

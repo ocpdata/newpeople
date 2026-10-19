@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CommercialCloseConfirmationModal,
@@ -17,11 +17,17 @@ import {
 } from "./coach/handoffForm";
 import { useCoachHandoff } from "./coach/useCoachHandoff";
 import { CoachHandoffNotice } from "./coach/CoachHandoffNotice";
+import { CustomerLinkReview } from "./coach/CustomerLinkReview";
+import { CustomerStageReview } from "./coach/CustomerStageReview";
 
 function OpportunitiesPage({ currentUser, can }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const coachHandoff = useCoachHandoff({ module: "opportunities" });
   const appliedCoachHandoffRef = useRef("");
+  const [linkNotice, setLinkNotice] = useState("");
+  useEffect(() => {
+    if (coachHandoff.token) setLinkNotice("");
+  }, [coachHandoff.token]);
   const {
     opportunityStatusFilter,
     setOpportunityStatusFilter,
@@ -118,6 +124,7 @@ function OpportunitiesPage({ currentUser, can }) {
     analyzeCommercialStageAnswers,
     applyCommercialAnswerSuggestion,
     refreshOpportunityCommercialView,
+    reloadOpportunities,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
     confirmValidatedStageAdvance,
@@ -152,6 +159,7 @@ function OpportunitiesPage({ currentUser, can }) {
     if (!operation || appliedCoachHandoffRef.current === coachHandoff.token) {
       return;
     }
+    if (operation.linkDraftId || operation.kind === "validate_stage") return;
     if (
       operation.kind === "create_opportunity" &&
       (!catalogs.stages.length ||
@@ -197,7 +205,7 @@ function OpportunitiesPage({ currentUser, can }) {
   async function saveOpportunityWithCoachHandoff(event) {
     const operation = getCoachHandoffOperation(coachHandoff.handoff);
     const data = await saveOpportunity(event);
-    if (!operation || !data) return data;
+    if (!operation || !data || operation.kind === "validate_stage") return data;
     const entityId =
       Number(data.id || 0) ||
       getCoachHandoffEntityId(coachHandoff.handoff, "opportunityId");
@@ -371,6 +379,29 @@ function OpportunitiesPage({ currentUser, can }) {
   return (
     <section className="panel">
       <CoachHandoffNotice {...coachHandoff} />
+      {linkNotice ? <p role="status">{linkNotice}</p> : null}
+      <CustomerLinkReview
+        handoff={coachHandoff.handoff}
+        token={coachHandoff.token}
+        canSave={can("oportunidades.update")}
+        onSaved={async () => {
+          coachHandoff.clearFromUrl();
+          setLinkNotice("Vínculo guardado y auditado correctamente.");
+          await reloadOpportunities();
+        }}
+      />
+      <CustomerStageReview
+        handoff={coachHandoff.handoff} token={coachHandoff.token}
+        canValidate={can("oportunidades.update")}
+        onOpenOpportunity={openEditOpportunityModal}
+        onFinished={async (result) => {
+          coachHandoff.clearFromUrl();
+          setLinkNotice(result.outcome === "advanced" ? "Validación completada: la oportunidad avanzó con el flujo existente."
+            : result.outcome === "stage_changed_after_validation" ? "La validación terminó y la etapa cambió posteriormente. Revisa el estado actual."
+              : "Validación completada sin avance automático. Revisa el resultado de la evaluación.");
+          await reloadOpportunities();
+        }}
+      />
       <OpportunitiesListSection
         canCreateOrRequestOpportunities={canCreateOrRequestOpportunities}
         opportunitiesPendingEnabled={opportunitiesPendingEnabled}

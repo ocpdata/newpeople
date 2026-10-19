@@ -10,6 +10,7 @@ import {
 } from "./business-timezone";
 import LeadCallOutcomeModal from "./interactions/LeadCallOutcomeModal";
 import { useCoachHandoff } from "./coach/useCoachHandoff";
+import { CustomerRescheduleReview } from "./coach/CustomerRescheduleReview";
 import {
   COMMERCIAL_ACTIVITY_TYPES,
   getCommercialActivityTypeLabel,
@@ -1264,6 +1265,10 @@ function CalendarDayActivitiesModal({
 
 export default function CalendarPage({ currentUser }) {
   const coachHandoff = useCoachHandoff({ module: "calendar" });
+  const [rescheduleNotice, setRescheduleNotice] = useState("");
+  useEffect(() => {
+    if (coachHandoff.token) setRescheduleNotice("");
+  }, [coachHandoff.token]);
   const permissionSet = useMemo(
     () => new Set(currentUser?.permissions || []),
     [currentUser],
@@ -1550,7 +1555,7 @@ export default function CalendarPage({ currentUser }) {
 
   useEffect(() => {
     const handoff = coachHandoff.handoff;
-    if (!handoff || coachHandoff.loading) return;
+    if (!handoff || coachHandoff.loading || handoff.kind === "reschedule_activity") return;
     const handoffKey = `${coachHandoff.token}:${handoff.operationId}`;
     if (coachHandoffHandledRef.current === handoffKey) return;
     coachHandoffHandledRef.current = handoffKey;
@@ -2230,6 +2235,18 @@ export default function CalendarPage({ currentUser }) {
 
   return (
     <div className="calendar-module-page">
+      {rescheduleNotice ? <p role="status">{rescheduleNotice}</p> : null}
+      <CustomerRescheduleReview
+        key={coachHandoff.token || "no-reschedule"}
+        handoff={coachHandoff.handoff}
+        token={coachHandoff.token}
+        canSave={canUpdateActivities}
+        onSaved={async () => {
+          coachHandoff.clearFromUrl();
+          setRescheduleNotice("Actividad reprogramada y auditada correctamente.");
+          await loadCalendarModule();
+        }}
+      />
       <header className="calendar-module-header">
         <div>
           <h2>Calendario</h2>

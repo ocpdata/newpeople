@@ -3463,6 +3463,7 @@ export function useOpportunitiesPage({
     analyzeCommercialStageAnswers,
     applyCommercialAnswerSuggestion,
     refreshOpportunityCommercialView,
+    reloadOpportunities: load,
     handleCommercialStageSelect,
     handleCurrentStageValidation,
     confirmValidatedStageAdvance,

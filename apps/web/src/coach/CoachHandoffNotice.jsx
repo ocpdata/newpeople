@@ -1,10 +1,11 @@
 import { useState } from "react";
 
-export function CoachHandoffNotice({ token, handoff, loading, error, cancel }) {
+export function CoachHandoffNotice({ token, handoff, loading, error, cancel, clearFromUrl }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState("");
 
   if (!token) return null;
+  const stageValidation = handoff?.kind === "validate_stage";
 
   async function handleDiscard() {
     if (
@@ -39,7 +40,9 @@ export function CoachHandoffNotice({ token, handoff, loading, error, cancel }) {
           : error ||
             cancelError ||
             (handoff
-              ? "Borrador del Coach cargado. Revisa y guarda en este módulo."
+              ? stageValidation
+                ? "Solicitud de validación cargada. Revisa las respuestas guardadas y solicita la validación existente. Cerrar esta vista no cancela un trabajo ya iniciado."
+                : "Borrador del Coach cargado. Revisa y guarda en este módulo."
               : "Borrador del Coach procesado.")}
       </span>
       {handoff ? (
@@ -47,9 +50,9 @@ export function CoachHandoffNotice({ token, handoff, loading, error, cancel }) {
           type="button"
           className="btn-secondary"
           disabled={cancelling}
-          onClick={handleDiscard}
+          onClick={stageValidation ? clearFromUrl : handleDiscard}
         >
-          {cancelling ? "Descartando..." : "Descartar borrador"}
+          {stageValidation ? "Cerrar vista de solicitud" : cancelling ? "Descartando..." : "Descartar borrador"}
         </button>
       ) : null}
     </div>

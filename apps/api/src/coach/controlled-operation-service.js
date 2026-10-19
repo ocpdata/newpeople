@@ -7,6 +7,13 @@ import {
   validateControlledCoachOperation,
 } from "./operation-policy.js";
 import { appendCoachOperationEvent, mapCoachOperationRow } from "./service.js";
+import { checkCustomerUpdateAccess } from "./customer-update-access.js";
+import { checkCustomerOutcomeAccess } from "./customer-outcome-access.js";
+import { comparableCustomerUpdateValue, normalizeCustomerUpdateValue, LEGACY_CUSTOMER_CONTACT_UPDATE_FIELDS } from "./customer-field-values.js";
+import { mutateAuditedOpportunity } from "../opportunity-audit.js";
+import { createOpportunityNote } from "../opportunity-workspace/service.js";
+import { ensureOpportunityWorkspaceSchema } from "../opportunity-workspace/schema.js";
+import { checkCustomerNoteAccess } from "./customer-note-access.js";
 
 const FIELD_DEFINITIONS = {
   account_field: {
@@ -49,13 +56,7 @@ const FIELD_DEFINITIONS = {
   },
 };
 
-const NUMERIC_CONTACT_FIELDS = new Set([
-  "hierarchyLevelId",
-  "relationshipTypeId",
-  "influenceLevelId",
-  "managerContactId",
-  "influencesContactId",
-]);
+const NUMERIC_CONTACT_FIELDS = new Set(LEGACY_CUSTOMER_CONTACT_UPDATE_FIELDS);
 
 export class CoachOperationError extends Error {
   constructor(status, code, message, details = {}) {
@@ -235,7 +236,8 @@ async function executeFieldUpdate(conn, { operation, policy, entityId, req }) {
       );
     }
   }
-  const currentValue = normalizeComparable(rows[0].value);
+  const currentValue = operation.updateDraftId
+    ? comparableCustomerUpdateValue(field, rows[0].value) : normalizeComparable(rows[0].value);
   if (!Object.prototype.hasOwnProperty.call(operation, "currentValue")) {
     throw new CoachOperationError(
       409,
@@ -252,15 +254,21 @@ async function executeFieldUpdate(conn, { operation, policy, entityId, req }) {
       { currentValue },
     );
   }
-  const nextValue = normalizeFieldValue(operation.kind, field, operation.value);
+  const nextValue = operation.updateDraftId
+    ? normalizeCustomerUpdateValue(policy.entityType, field, operation.value)
+    : normalizeFieldValue(operation.kind, field, operation.value);
+  if (operation.updateDraftId && currentValue === nextValue) {
+    throw new CoachOperationError(409, "COACH_NO_CHANGE", "El valor actual ya coincide; no hay cambio que guardar");
+  }
   const updatedBy =
     operation.kind === "opportunity_field" ? "" : ", updated_by = ?";
-  await conn.query(
-    `UPDATE ${definition.table} SET ${column} = ?${updatedBy}, updated_at = NOW(3) WHERE id = ?`,
-    operation.kind === "opportunity_field"
+  const statement = `UPDATE ${definition.table} SET ${column} = ?${updatedBy}, updated_at = NOW(3) WHERE id = ?`;
+  const params = operation.kind === "opportunity_field"
       ? [nextValue, entityId]
-      : [nextValue, Number(req.user.id), entityId],
-  );
+      : [nextValue, Number(req.user.id), entityId];
+  if (operation.updateDraftId && operation.kind === "opportunity_field") {
+    await mutateAuditedOpportunity({ connection: conn, opportunityId: entityId, req }, statement, params);
+  } else await conn.query(statement, params);
   const module =
     policy.entityType === "account"
       ? "cuentas"
@@ -395,7 +403,8 @@ async function executeLeadOutcome(
   const [rows] = await conn.query(
     `SELECT analysis_status, resolved_at, disqualification_reason,
           lead_substatus_code, lead_reason_code, lead_required_action_code,
-          lead_commercial_comment, lead_next_action_due_at
+          lead_commercial_comment, lead_next_action_due_at,
+          lead_referred_contact_name,lead_referred_area_name
      FROM interactions WHERE id = ? FOR UPDATE`,
     [entityId],
   );
@@ -470,18 +479,11 @@ async function executeLeadOutcome(
       entityId,
     ],
   );
-  const after = {
-    analysis_status: rule.resultStatusCode,
-    disqualification_reason:
-      rule.resultStatusCode === "lead_disqualified"
-        ? comment || "Lead descalificado"
-        : null,
-    lead_substatus_code: operation.substatusCode,
-    lead_reason_code: operation.reasonCode,
-    lead_required_action_code: operation.requiredActionCode,
-    lead_commercial_comment: comment || null,
-    lead_next_action_due_at: nextActionDueAt || null,
-  };
+  const [afterRows] = await conn.query(`SELECT analysis_status,resolved_at,disqualification_reason,
+    lead_substatus_code,lead_reason_code,lead_required_action_code,lead_commercial_comment,lead_next_action_due_at,
+    lead_referred_contact_name,lead_referred_area_name FROM interactions WHERE id=?`, [entityId]);
+  const after = afterRows[0];
+  if (!after) throw new CoachOperationError(404, "COACH_ENTITY_NOT_FOUND", "El lead ya no existe");
   const auditId = await insertAudit(conn, {
     req,
     module: "interacciones",
@@ -503,6 +505,7 @@ async function executeLeadOutcome(
 }
 
 async function readControlledCurrentValue(conn, operation, entityId) {
+  if (operation.kind === "opportunity_note") return {};
   if (operation.kind.endsWith("_field")) {
     const definition = FIELD_DEFINITIONS[operation.kind];
     const column = definition?.columns[String(operation.field || "")];
@@ -524,7 +527,8 @@ async function readControlledCurrentValue(conn, operation, entityId) {
         "El registro ya no existe",
       );
     }
-    return { currentValue: normalizeComparable(rows[0].value) };
+    return { currentValue: operation.updateDraftId
+      ? comparableCustomerUpdateValue(operation.field, rows[0].value) : normalizeComparable(rows[0].value) };
   }
   if (operation.kind === "stage_answer") {
     const [rows] = await conn.query(
@@ -556,6 +560,7 @@ export async function reviewControlledCoachOperation({
   operationId,
   version,
 }) {
+  await ensureOpportunityWorkspaceSchema();
   return withTransaction(async (conn) => {
     const [rows] = await conn.query(
       `SELECT * FROM coach_session_operations
@@ -596,6 +601,18 @@ export async function reviewControlledCoachOperation({
         "La operación controlada no es válida",
       );
     }
+    const accessError = await checkCustomerUpdateAccess(user, persisted.pendingOperation, {
+      execute: async (...args) => (await conn.query(...args))[0], lock: true,
+    });
+    if (accessError) throw new CoachOperationError(accessError.status, "COACH_UPDATE_STALE", accessError.message);
+    const outcomeError = await checkCustomerOutcomeAccess(user, persisted.pendingOperation, {
+      execute: async (...args) => (await conn.query(...args))[0], lock: true,
+    });
+    if (outcomeError) throw new CoachOperationError(outcomeError.status, "COACH_OUTCOME_STALE", outcomeError.message);
+    const noteAccessError = await checkCustomerNoteAccess(user, persisted.pendingOperation, {
+      execute: async (...args) => (await conn.query(...args))[0], lock: true,
+    });
+    if (noteAccessError) throw new CoachOperationError(noteAccessError.status, "COACH_NOTE_STALE", noteAccessError.message);
     if (!hasAnyPermission(user, validation.policy.domainReadPermissions)) {
       throw new CoachOperationError(
         403,
@@ -639,6 +656,7 @@ export async function executeControlledCoachOperation({
   idempotencyKey,
   validateLeadOutcome,
 }) {
+  await ensureOpportunityWorkspaceSchema();
   const safeKey = String(idempotencyKey || "").trim();
   if (!safeKey || safeKey.length > 100)
     throw new CoachOperationError(
@@ -703,6 +721,18 @@ export async function executeControlledCoachOperation({
       );
     }
     await requireEntityAccess(conn, req.user, policy, validation.entityId);
+    const accessError = await checkCustomerUpdateAccess(req.user, operation, {
+      execute: async (...args) => (await conn.query(...args))[0], lock: true,
+    });
+    if (accessError) throw new CoachOperationError(accessError.status, "COACH_UPDATE_STALE", accessError.message);
+    const outcomeError = await checkCustomerOutcomeAccess(req.user, operation, {
+      execute: async (...args) => (await conn.query(...args))[0], lock: true,
+    });
+    if (outcomeError) throw new CoachOperationError(outcomeError.status, "COACH_OUTCOME_STALE", outcomeError.message);
+    const noteAccessError = await checkCustomerNoteAccess(req.user, operation, {
+      execute: async (...args) => (await conn.query(...args))[0], lock: true,
+    });
+    if (noteAccessError) throw new CoachOperationError(noteAccessError.status, "COACH_NOTE_STALE", noteAccessError.message);
     await conn.query(
       `UPDATE coach_session_operations SET status = 'executing', execution_key = ?,
        approved_at = NOW(3), executing_at = NOW(3), error_detail = NULL,
@@ -734,7 +764,13 @@ export async function executeControlledCoachOperation({
       idempotencyKey: safeKey,
     });
     const operationReq = { ...req, coachOperationId: persisted.id };
-    const result = operation.kind.endsWith("_field")
+    const result = operation.kind === "opportunity_note"
+      ? await executeOpportunityNote(conn, {
+          operation,
+          entityId: validation.entityId,
+          req: operationReq,
+        })
+      : operation.kind.endsWith("_field")
       ? await executeFieldUpdate(conn, {
           operation,
           policy,
@@ -780,6 +816,34 @@ export async function executeControlledCoachOperation({
     );
     return mapCoachOperationRow(completedRows[0]);
   });
+}
+
+async function executeOpportunityNote(conn, { operation, entityId, req }) {
+  const noteId = await createOpportunityNote({
+    opportunityId: entityId,
+    noteText: operation.noteText,
+    sourceType: operation.sourceType,
+    attribution: operation.attribution,
+    certainty: operation.certainty,
+    userId: Number(req.user.id),
+    connection: conn,
+  });
+  const auditId = await insertAudit(conn, {
+    req,
+    module: "oportunidades",
+    action: "opportunity_note_created",
+    entityType: "opportunity_note",
+    entityId: noteId,
+    detail: "Nota comercial registrada desde Cliente existente",
+    before: {},
+    after: {
+      opportunityId: entityId,
+      sourceType: operation.sourceType,
+      attribution: operation.attribution,
+      certainty: operation.certainty,
+    },
+  });
+  return { auditId, entityId, noteId };
 }
 
 async function revertFieldUpdate(conn, { operation, persisted, req, policy }) {
@@ -897,7 +961,9 @@ async function revertLeadOutcome(conn, { persisted, req }) {
     `SELECT analysis_status, resolved_at, disqualification_reason,
           lead_substatus_code, lead_reason_code,
             lead_required_action_code, lead_commercial_comment,
-            lead_next_action_due_at
+            lead_next_action_due_at,lead_referred_contact_name,lead_referred_area_name,
+            (SELECT MAX(e.id) FROM interaction_lead_outcome_events e WHERE e.interaction_id=interactions.id
+             AND e.invalidated_at IS NULL) AS latest_event_id
      FROM interactions WHERE id = ? FOR UPDATE`,
     [entityId],
   );
@@ -905,8 +971,11 @@ async function revertLeadOutcome(conn, { persisted, req }) {
   const expected = persisted.result?.after || {};
   if (
     !current ||
+    (persisted.pendingOperation?.outcomeDraftId && Number(current.latest_event_id) !== Number(persisted.result?.eventId)) ||
     Object.entries(expected).some(
-      ([key, value]) => !valuesEqual(current[key], value),
+      ([key, value]) => ["resolved_at", "lead_next_action_due_at"].includes(key) && current[key] && value
+        ? new Date(current[key]).getTime() !== new Date(value).getTime()
+        : !valuesEqual(current[key], value),
     )
   ) {
     throw new CoachOperationError(
@@ -921,16 +990,19 @@ async function revertLeadOutcome(conn, { persisted, req }) {
        disqualification_reason = ?, lead_substatus_code = ?,
        lead_reason_code = ?, lead_required_action_code = ?,
        lead_commercial_comment = ?, lead_next_action_due_at = ?,
+       lead_referred_contact_name = ?,lead_referred_area_name = ?,
        updated_by = ?, updated_at = NOW(3) WHERE id = ?`,
     [
       before.analysis_status,
-      before.resolved_at,
+      before.resolved_at ? new Date(before.resolved_at) : null,
       before.disqualification_reason,
       before.lead_substatus_code,
       before.lead_reason_code,
       before.lead_required_action_code,
       before.lead_commercial_comment,
-      before.lead_next_action_due_at,
+      before.lead_next_action_due_at ? new Date(before.lead_next_action_due_at) : null,
+      Object.hasOwn(before, "lead_referred_contact_name") ? before.lead_referred_contact_name : current.lead_referred_contact_name,
+      Object.hasOwn(before, "lead_referred_area_name") ? before.lead_referred_area_name : current.lead_referred_area_name,
       Number(req.user.id),
       entityId,
     ],

@@ -9,6 +9,13 @@ import {
 } from "./ai-usage/service.js";
 import { config } from "./config.js";
 import { query } from "./db.js";
+import { checkCustomerCreationAccess } from "./coach/customer-creation-access.js";
+import { checkCustomerLinkAccess } from "./coach/customer-link-access.js";
+import { checkCustomerRescheduleAccess } from "./coach/customer-reschedule-access.js";
+import { checkCustomerOutcomeAccess } from "./coach/customer-outcome-access.js";
+import { checkCustomerStageAccess } from "./coach/customer-stage-access.js";
+import { checkCustomerUpdateAccess } from "./coach/customer-update-access.js";
+import { checkCustomerNoteAccess } from "./coach/customer-note-access.js";
 import { getExchangeRate } from "./exchange-rates.js";
 import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema.js";
 import { logAuditEvent, parseAuditChangedFields } from "./audit.js";
@@ -59,7 +66,7 @@ import {
 } from "./coach/operation-policy.js";
 import { prepareCoachTurn, runCoachJob } from "./coach/agent-gateway.js";
 import { compareCoachExecutions } from "./coach/coach-adapter.js";
-import { validateLeadCallOutcomeForCoach } from "./routes.interactions.js";
+import { validateLeadCallOutcomeForCoach } from "./lead-call-outcomes.js";
 import { getCoachMetrics } from "./coach/metrics.js";
 import { classifyCoachIntent } from "./coach/phase-one-engine.js";
 import {
@@ -4620,6 +4627,20 @@ router.post(
       return res.status(400).json({ message: "Canal de origen no valido" });
     }
     const coachOperation = { ...parsed.data, sourceChannel: originChannel };
+    const stageAccessError = await checkCustomerStageAccess(req.user, coachOperation);
+    if (stageAccessError) return res.status(stageAccessError.status).json({ message: stageAccessError.message });
+    const outcomeAccessError = await checkCustomerOutcomeAccess(req.user, coachOperation);
+    if (outcomeAccessError) return res.status(outcomeAccessError.status).json({ message: outcomeAccessError.message });
+    const creationAccessError = await checkCustomerCreationAccess(req.user, coachOperation);
+    if (creationAccessError) return res.status(creationAccessError.status).json({ message: creationAccessError.message });
+    const updateAccessError = await checkCustomerUpdateAccess(req.user, coachOperation);
+    if (updateAccessError) return res.status(updateAccessError.status).json({ message: updateAccessError.message });
+    const noteAccessError = await checkCustomerNoteAccess(req.user, coachOperation);
+    if (noteAccessError) return res.status(noteAccessError.status).json({ message: noteAccessError.message });
+    const linkAccessError = await checkCustomerLinkAccess(req.user, coachOperation);
+    if (linkAccessError) return res.status(linkAccessError.status).json({ message: linkAccessError.message });
+    const rescheduleAccessError = await checkCustomerRescheduleAccess(req.user, coachOperation);
+    if (rescheduleAccessError) return res.status(rescheduleAccessError.status).json({ message: rescheduleAccessError.message });
     if (originChannel === "customer_account") {
       const accountId = Number(req.body?.context?.accountId || 0);
       if (!accountId || Number(req.body?.sessionId || 0)) {
@@ -4715,6 +4736,12 @@ router.post(
             accountId,
           ],
         );
+      } else if (coachOperation.kind === "validate_stage") {
+        if (coachOperation.accountId !== accountId) return res.status(403).json({ message: "La validación debe limitarse a la cuenta fija" });
+        relationRows = await query("SELECT id FROM opportunities WHERE id=? AND account_id=? LIMIT 1", [coachOperation.opportunityId, accountId]);
+      } else if (coachOperation.kind === "reschedule_activity") {
+        if (coachOperation.accountId !== accountId) return res.status(403).json({ message: "La reprogramación debe limitarse a la cuenta fija" });
+        relationRows = await query("SELECT id FROM opportunities WHERE id=? AND account_id=? LIMIT 1", [coachOperation.opportunityId, accountId]);
       } else if (coachOperation.kind === "contact_field") {
         relationRows = await query(
           "SELECT id FROM contacts WHERE id = ? AND account_id = ? LIMIT 1",
@@ -4730,6 +4757,9 @@ router.post(
           [Number(coachOperation.opportunityId || 0), accountId],
         );
       } else if (coachOperation.kind === "lead_call_outcome") {
+        if (coachOperation.outcomeDraftId && coachOperation.accountId !== accountId) {
+          return res.status(403).json({ message: "El resultado debe limitarse a la cuenta fija" });
+        }
         relationRows = await query(
           "SELECT id FROM interactions WHERE id = ? AND account_id = ? LIMIT 1",
           [Number(coachOperation.interactionId || 0), accountId],
@@ -4752,6 +4782,12 @@ router.post(
       ) {
         return res.status(404).json({
           message: "El registro relacionado no pertenece a la cuenta fija",
+        });
+      }
+    } else if (coachOperation.kind === "opportunity_note") {
+      if (Number(coachOperation.accountId) !== accountId) {
+        return res.status(403).json({
+          message: "La nota debe guardarse dentro de la cuenta fija",
         });
       }
     }
@@ -4808,7 +4844,41 @@ router.post(
       entities: req.body?.context || session.context,
       operations: [coachOperation],
     });
-    return res.status(201).json({ sessionId: session.id, operation });
+    if (coachOperation.stageDraftId && operation &&
+        (!["ready", "collecting", "failed", "handed_off"].includes(operation.status) ||
+          operation.result?.validationJobId || operation.pendingOperation.stageRevision !== coachOperation.stageRevision)) {
+      return res.status(409).json({ message: "La solicitud cambió o ya inició su validación. Revisa su resultado; no se reiniciará desde el historial.", operation });
+    }
+    if (coachOperation.outcomeDraftId && operation &&
+        (!["ready", "collecting", "failed"].includes(operation.status) ||
+          operation.pendingOperation.outcomeRevision !== coachOperation.outcomeRevision)) {
+      return res.status(409).json({ message: "El resultado cambió o ya fue atendido. Retoma la propuesta vigente o inicia una nueva llamada explícita.", operation });
+    }
+    if (coachOperation.creationDraftId && operation &&
+        (!["ready", "collecting", "failed"].includes(operation.status) ||
+          Number(operation.pendingOperation.accountId) !== Number(coachOperation.accountId) ||
+          Number(coachOperation.creationRevision || 0) < Number(operation.pendingOperation.creationRevision || 0))) {
+      return res.status(409).json({
+        message: "Este borrador cambió, ya fue enviado al módulo o cerrado. Retoma la propuesta vigente o inicia expresamente otro borrador.",
+        operation,
+      });
+    }
+    if (coachOperation.updateDraftId && operation &&
+        (!["ready", "collecting", "failed"].includes(operation.status) ||
+          Number(operation.pendingOperation.updateRevision) > Number(coachOperation.updateRevision))) {
+      return res.status(409).json({ message: "Esta propuesta cambió o ya fue atendida. Retoma el borrador vigente.", operation });
+    }
+    if (coachOperation.linkDraftId && operation &&
+        (!["ready", "collecting", "failed", "handed_off"].includes(operation.status) ||
+          Number(operation.pendingOperation.linkRevision) !== Number(coachOperation.linkRevision))) {
+      return res.status(409).json({ message: "El vínculo cambió o ya fue atendido. Retoma el borrador vigente.", operation });
+    }
+    if (coachOperation.kind === "reschedule_activity" && operation &&
+        (!["ready", "collecting", "failed", "handed_off"].includes(operation.status) ||
+          operation.pendingOperation.rescheduleRevision !== coachOperation.rescheduleRevision)) {
+      return res.status(409).json({ message: "La reprogramación cambió o ya fue atendida. Retoma el borrador vigente.", operation });
+    }
+    return res.status(201).json({ sessionId: operation?.sessionId || session.id, operation });
   },
 );
 
@@ -4869,6 +4939,14 @@ router.post(
     const existing = await getCoachOperation(req.user.id, operationId);
     if (!existing)
       return res.status(404).json({ message: "Operación no encontrada" });
+    const creationAccessError = await checkCustomerCreationAccess(req.user, existing.pendingOperation);
+    if (creationAccessError) return res.status(creationAccessError.status).json({ message: creationAccessError.message });
+    const linkAccessError = await checkCustomerLinkAccess(req.user, existing.pendingOperation);
+    if (linkAccessError) return res.status(linkAccessError.status).json({ message: linkAccessError.message });
+    const rescheduleAccessError = await checkCustomerRescheduleAccess(req.user, existing.pendingOperation);
+    const stageAccessError = await checkCustomerStageAccess(req.user, existing.pendingOperation, { compareCurrent: !existing.result?.validationJobId });
+    if (stageAccessError) return res.status(stageAccessError.status).json({ message: stageAccessError.message });
+    if (rescheduleAccessError) return res.status(rescheduleAccessError.status).json({ message: rescheduleAccessError.message });
     const delegatedPermissions = getDelegatedCoachOperationPermissions(
       existing.kind,
     );
@@ -5037,6 +5115,14 @@ router.get(
         .status(404)
         .json({ message: "El borrador no existe o expiró" });
     const operation = result.operation;
+    const creationAccessError = await checkCustomerCreationAccess(req.user, operation.pendingOperation);
+    if (creationAccessError) return res.status(creationAccessError.status).json({ message: creationAccessError.message });
+    const linkAccessError = await checkCustomerLinkAccess(req.user, operation.pendingOperation);
+    if (linkAccessError) return res.status(linkAccessError.status).json({ message: linkAccessError.message });
+    const rescheduleAccessError = await checkCustomerRescheduleAccess(req.user, operation.pendingOperation);
+    const stageAccessError = await checkCustomerStageAccess(req.user, operation.pendingOperation, { compareCurrent: !operation.result?.validationJobId });
+    if (stageAccessError) return res.status(stageAccessError.status).json({ message: stageAccessError.message });
+    if (rescheduleAccessError) return res.status(rescheduleAccessError.status).json({ message: rescheduleAccessError.message });
     return res.json({
       handoff: {
         operationId: operation.id,
@@ -5077,6 +5163,7 @@ router.post(
       return res
         .status(409)
         .json({ message: "El borrador pertenece a otro módulo" });
+    if (result.outcome === "save_required") return res.status(409).json({ message: "El vínculo solo se completa al guardarlo en Oportunidades" });
     if (result.outcome !== "updated")
       return res
         .status(404)

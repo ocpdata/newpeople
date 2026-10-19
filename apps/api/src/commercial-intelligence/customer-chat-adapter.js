@@ -1,11 +1,50 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
+import { buildCustomerCreationResponse } from "./customer-creation.js";
+import { buildCustomerUpdateResponse, validateCustomerUpdateMemory } from "./customer-updates.js";
+import { buildCustomerLinkResponse } from "./customer-links.js";
+import { buildCustomerRescheduleResponse } from "./customer-reschedule.js";
+import { buildCustomerOutcomeResponse } from "./customer-outcomes.js";
+import { buildCustomerStageResponse } from "./customer-stage.js";
+import { readCustomerStages } from "../coach/customer-stage-access.js";
+import { readCustomerOutcomes } from "../coach/customer-outcome-access.js";
+import { readCustomerSchedule } from "../coach/customer-reschedule-access.js";
+import { loadRescheduleTimezone } from "../coach/customer-reschedule-time.js";
+import { readCustomerLinkPair } from "../coach/customer-link-access.js";
+import { readCustomerUpdateRecord, loadCustomerUpdateStates } from "../coach/customer-update-access.js";
+import { readCustomerOpportunityForNotes } from "../coach/customer-note-access.js";
+import { listOpportunityNotes } from "../opportunity-workspace/service.js";
+import { LEGACY_CUSTOMER_CONTACT_UPDATE_FIELDS } from "../coach/customer-field-values.js";
 import { config } from "../config.js";
-import { constrainCustomerComponentPlan, customerComponentCapability, customerComponentVerificationRules } from "./turn-contract.js";
+import { buildCustomerTrendResponse, resolveCustomerTrendRequest, validateCustomerTrendMemory } from "./customer-trends.js";
+import { buildCustomerScenarioResponse, resolveCustomerScenarioRequest, validateCustomerScenarioMemory } from "./customer-scenarios.js";
+import { customerScenarioSpecPatch } from "./turn-contract.js";
+import { buildCustomerComparisonResponse, resolveCustomerComparisonRequest, validateCustomerComparisonMemory } from "./customer-comparison.js";
+import {
+  buildCustomerPriorityResponse, resolveCustomerPriorityRequest, validateCustomerPriorityMemory,
+} from "./customer-prioritization.js";
+import {
+  answerCustomerDocument, resolveCustomerDocumentRequest, selectCustomerQuotation, validateCustomerDocumentMemory,
+} from "./customer-documents.js";
+import { contrastCustomerDocumentReport, resolveCustomerDocumentReport, validateCustomerDocumentReportMemory } from "./customer-document-reports.js";
+import {
+  buildCustomerRelationshipResponse, resolveCustomerRelationshipRequest, validateCustomerRelationshipMemory,
+} from "./customer-relationships.js";
+import {
+  buildCustomerHistoryResponse, getCustomerHistorySourceAccess, resolveCustomerHistoryRequest,
+  validateCustomerHistoryMemory,
+} from "./customer-history.js";
+import { buildCustomerPendingResponse, resolveCustomerPendingRequest, validateCustomerPendingMemory } from "./customer-pending.js";
+import { CUSTOMER_RECORD_FIELDS, constrainCustomerComponentPlan, customerComparisonSpecPatch, customerComponentAnswerRules, customerComponentCapability, customerComponentVerificationRules, customerPrioritySpecPatch, customerTrendSpecPatch } from "./turn-contract.js";
+import {
+  buildCustomerRecordListResponse, formatCustomerRecordFields, normalizeCustomerSearchText,
+  resolveCustomerListSpec, validateCustomerRecordList,
+} from "./customer-record-list.js";
 import {
   associateCustomerReport,
   generateCustomerContent,
   runCustomerContractTurn,
 } from "./turn-contract-runtime.js";
+import { CUSTOMER_FRIENDLY_STYLE_INSTRUCTIONS } from "./customer-presentation.js";
 import { buildCustomerActivityDraftResponse } from "./activity-draft.js";
 import { resolveCoachEntities } from "../coach/entity-resolver.js";
 import { executeCoachReadTool } from "../coach/crm-read-tools.js";
@@ -34,12 +73,26 @@ import {
 } from "../coach/planner-prompts.js";
 import { summarizeCoachToolResults } from "../coach/observability.js";
 import { matchCoachQueryCase } from "../coach/case-catalog.js";
+
+const CUSTOMER_NOTE_COMMAND_PREFIX =
+  /^\s*(?:por favor\s+)?(?:guarda|guardar|registra|registrar|anota|anotar|agrega|agregar|añade|anade|pon|poner)(?:me)?\s+(?:como\s+)?(?:(?:esta|la|una)\s+)?nota\b/i;
+const CUSTOMER_NOTE_WITH_CONTENT =
+  /^\s*(?:por favor\s+)?(?:guarda|guardar|registra|registrar|anota|anotar|agrega|agregar|añade|anade|pon|poner)(?:me)?\s+(?:como\s+)?(?:(?:esta|la|una)\s+)?nota(?:\s+(?:en|para)\s+[\s\S]*?)?\s*(?:que|:)\s+([\s\S]+?)\s*$/i;
+
+export function extractCustomerNoteText(value) {
+  const text = String(value || "").trim();
+  const content = text.match(CUSTOMER_NOTE_WITH_CONTENT)?.[1]?.trim();
+  if (content) return content.replace(/^["'“”‘’]|["'“”‘’]$/g, "").trim();
+  return CUSTOMER_NOTE_COMMAND_PREFIX.test(text) ? "" : text;
+}
 import {
   getChannelIntentPlanFields,
   getCustomerEvidenceAssessmentFields,
   normalizeChannelIntentPlan,
 } from "../coach/channel-intents.js";
-import { getAuthorizedCoachQuotationContent } from "../coach/quotation-read-service.js";
+import {
+  getAuthorizedCoachQuotationContent, hasQuotationReadAccess, listAuthorizedCoachQuotations,
+} from "../coach/quotation-read-service.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
 import {
   buildCustomerContactHistoryResponse,
@@ -315,6 +368,52 @@ export function buildCustomerQuotationResponse(snapshot, question) {
   };
 }
 
+export function buildCustomerRecordDetailResponse({ object, context = {}, readToolResults = [], requestedFields = null }) {
+  const toolName = object === "opportunity" ? "getOpportunity" : "searchContacts";
+  const id = Number(object === "opportunity" ? context.opportunityId : context.contactId);
+  const response = (answer, responseType, evidence = []) => ({
+    answer, responseType, evidence, inferences: [], operations: [],
+    recommendedActions: [], pendingItems: [], confidence: evidence.length ? "high" : "medium",
+    source: "account_intelligence",
+  });
+  if (!id) {
+    return response(
+      `Indica el nombre o selecciona ${object === "opportunity" ? "la oportunidad" : "el contacto"} de esta cuenta que quieres consultar. No pude identificar un registro autorizado de forma inequívoca.`,
+      "clarification",
+    );
+  }
+  const reads = readToolResults.filter((item) => item.toolName === toolName);
+  if (!reads.length || reads.some((item) => item.error || item.queryFailed)) {
+    return response(
+      "No pude verificar el detalle del registro con las lecturas autorizadas disponibles. Revisa los permisos y la disponibilidad de la consulta antes de reintentar; esto no significa que el registro esté vacío o no exista.",
+      "error",
+    );
+  }
+  const records = reads.flatMap((item) => Array.isArray(item.result) ? item.result : item.result ? [item.result] : []);
+  const record = records.find((item) => Number(item.id) === id &&
+    Number(item.accountId) === Number(context.accountId));
+  if (!record) {
+    return response(
+      "La consulta autorizada no devolvió el registro solicitado para esta cuenta. No puedo mostrar su detalle; verifica la selección y el acceso.",
+      "informational",
+    );
+  }
+  const fields = formatCustomerRecordFields(object, record);
+  const lines = requestedFields === null ? Object.values(fields)
+    : [...new Set(requestedFields)].map((field) => CUSTOMER_RECORD_FIELDS[object]?.includes(field)
+      ? fields[field] : `Campo no soportado en esta consulta: ${field}.`);
+  const includesAccountName = requestedFields === null || requestedFields.includes("accountName");
+  const heading = object === "contact" && record.name
+    ? `Encontré a ${record.name}${includesAccountName && record.accountName ? ` en ${record.accountName}` : ""}.`
+    : requestedFields === null ? "" : `${record.name || "No informado"}`;
+  const detailLines = object === "contact" && record.name
+    ? lines.filter((line) => !line.startsWith("Nombre:")) : lines;
+  const answer = [heading, ...detailLines.map((line) => `- ${line}`)].filter(Boolean).join("\n");
+  return response(answer, "informational", [
+    `Detalle CRM autorizado: ${toolName}, registro ${id}.`,
+  ]);
+}
+
 function buildCustomerOpportunityStatusResponse(snapshot, question) {
   const normalizedQuestion = normalize(question)
     .replace(/[^a-z0-9]+/g, " ")
@@ -533,7 +632,8 @@ function buildCustomerCoachSnapshot(snapshot, quotation) {
   const accountId = Number(account?.id || 0) || null;
   const accountName = account?.name || "";
   const contactsById = new Map(
-    (snapshot.contacts || []).map((contact) => [Number(contact.id), contact]),
+    [...(snapshot.contacts || []), ...(snapshot.selectedContact ? [snapshot.selectedContact] : [])]
+      .map((contact) => [Number(contact.id), contact]),
   );
   const activities = snapshot.activities || snapshot.interactions || [];
   const opportunities = opportunityRecords(snapshot).map((opportunity) => ({
@@ -555,6 +655,17 @@ function buildCustomerCoachSnapshot(snapshot, quotation) {
               : null;
           })()
         : null,
+    associatedContactStatus:
+      snapshot.permissions?.canReadContacts !== true
+        ? "restricted"
+        : !Object.hasOwn(opportunity, "contactId")
+          ? "unavailable"
+        : !opportunity.contactId
+          ? "not_recorded"
+          : contactsById.get(Number(opportunity.contactId))?.activationStatusCode === "activado" &&
+            Number(contactsById.get(Number(opportunity.contactId))?.accountId) === accountId
+            ? "available"
+            : "unavailable",
     activities: activities.filter(
       (activity) =>
         Number(activity.opportunityId || 0) === Number(opportunity.id),
@@ -582,7 +693,10 @@ function buildCustomerCoachSnapshot(snapshot, quotation) {
     lostOpportunities: [],
     cancelledOpportunities: [],
     inactivePipelineOpportunities: [],
-    contactMappings: snapshot.contacts || [],
+    contactMappings: (snapshot.contacts || []).map((contact) => ({
+      ...contact,
+      accountName,
+    })),
     leads,
     selectedOpportunityQuotation: quotation,
   };
@@ -695,13 +809,35 @@ function buildCustomerPlanEntityCandidates(
     }
     return [...records.slice(0, 7), entity];
   };
-  const opportunityCandidates = addContinuationCandidate(
-    addContinuationCandidate(
-      opportunityReadAllowed ? resolution.candidates.opportunities : [],
-      opportunityReadAllowed ? continuation.opportunity : null,
-    ),
-    opportunityReadAllowed ? activeSelection.opportunity : null,
-  );
+  const normalizeReference = (value) => normalizeCustomerSearchText(value)
+    .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const normalizedQuestion = ` ${normalizeReference(question)} `;
+  const literalOpportunityMatches = opportunityReadAllowed
+    ? opportunityRecords(snapshot).filter((record) => {
+        const name = normalizeReference(record.name);
+        return name && normalizedQuestion.includes(` ${name} `);
+      })
+    : [];
+  const explicitOpportunityMatches = literalOpportunityMatches.filter((record) => {
+    const name = normalizeReference(record.name);
+    const nameOccurrences = normalizedQuestion.split(` ${name} `).length - 1;
+    return !literalOpportunityMatches.some((other) => {
+      const otherName = normalizeReference(other.name);
+      return Number(other.id) !== Number(record.id) &&
+        otherName.startsWith(`${name} `) &&
+        normalizedQuestion.includes(` ${otherName} `) &&
+        nameOccurrences === 1;
+    });
+  });
+  const opportunityCandidates = explicitOpportunityMatches.length
+    ? explicitOpportunityMatches
+    : addContinuationCandidate(
+        addContinuationCandidate(
+          opportunityReadAllowed ? resolution.candidates.opportunities : [],
+          opportunityReadAllowed ? continuation.opportunity : null,
+        ),
+        opportunityReadAllowed ? activeSelection.opportunity : null,
+      );
   const contactRecords = addContinuationCandidate(
     addContinuationCandidate(
       contactReadAllowed ? resolution.candidates.contacts : [],
@@ -981,6 +1117,7 @@ function executeCustomerReadTool({
   args = {},
   businessRules = {},
   buildReadiness,
+  readOpportunityNotes,
 }) {
   if (COACH_READ_TOOL_NAMES.has(toolName)) {
     return executeCoachReadTool({
@@ -989,6 +1126,7 @@ function executeCustomerReadTool({
       args,
       businessRules,
       buildReadiness,
+      readOpportunityNotes,
     });
   }
   const scope = businessRules.scope || {};
@@ -1054,6 +1192,7 @@ export async function buildCustomerReadModel({
   traceParentSpanId = null,
   readQueryBudget = null,
   previouslyQueried = [],
+  recordDetail = null,
 }) {
   snapshot = scopeCustomerSnapshot(snapshot || {}); // Ensure snapshot is scoped correctly
   const evidenceLimits = getCustomerEvidenceLimits(businessRules);
@@ -1181,7 +1320,15 @@ export async function buildCustomerReadModel({
         })
       : null;
   const coachSnapshot = buildCustomerCoachSnapshot(
-    snapshot,
+    recordDetail ? {
+      ...snapshot,
+      permissions: {
+        ...snapshot.permissions,
+        canReadContacts: snapshot.permissions?.canReadContacts === true &&
+          scope.contactSearchAllowed !== false &&
+          permissionGranted(user?.permissionSet, "contactos.read"),
+      },
+    } : snapshot,
     selectedOpportunityQuotation,
   );
   const normalizedQuestion = normalize(question);
@@ -1266,8 +1413,9 @@ export async function buildCustomerReadModel({
       : execute();
     readToolResults.push({ ...result, queryArgs: args });
   };
-  if (routeAllows("searchAccounts")) pushTool("searchAccounts");
+  if (!recordDetail && routeAllows("searchAccounts")) pushTool("searchAccounts");
   if (
+    !recordDetail &&
     routeAllows(
       "searchOpportunities",
       /\b(oportunidad|oportunidades|pipeline|etapa|waiting|negociacion)\b/.test(
@@ -1291,9 +1439,16 @@ export async function buildCustomerReadModel({
       ),
     )
   ) {
-    pushTool("searchContacts");
+    if (!recordDetail || (recordDetail.object === "contact" && selectedContact)) {
+      pushTool("searchContacts", recordDetail ? {
+        accountId: snapshot.account?.id,
+        contactId: selectedContact?.id || null,
+        includeDetails: true,
+      } : {});
+    }
   }
   if (
+    !recordDetail &&
     routeAllows(
       "searchInteractions",
       opportunityGuidanceRequested ||
@@ -1317,9 +1472,13 @@ export async function buildCustomerReadModel({
         ),
     )
   ) {
-    pushTool("getOpportunity", { opportunityId: selectedOpportunity.id });
+    pushTool("getOpportunity", {
+      opportunityId: selectedOpportunity.id,
+      ...(recordDetail ? { includeDetails: true } : {}),
+    });
   }
   if (
+    !recordDetail &&
     selectedOpportunity &&
     routeAllows(
       "getOpportunityActivities",
@@ -1334,6 +1493,7 @@ export async function buildCustomerReadModel({
     });
   }
   if (
+    !recordDetail &&
     selectedOpportunity &&
     routeAllows(
       "getOpportunityReadiness",
@@ -1346,6 +1506,7 @@ export async function buildCustomerReadModel({
     });
   }
   if (
+    !recordDetail &&
     routeAllows(
       "getSellerPipeline",
       /\b(pipeline|cobertura|riesgo|riesgos|prioridades)\b/.test(
@@ -1356,6 +1517,7 @@ export async function buildCustomerReadModel({
     pushTool("getSellerPipeline");
   }
   if (
+    !recordDetail &&
     routeAllows(
       "searchLeads",
       /\b(lead|leads|prospecto|prospectos)\b/.test(normalizedQuestion),
@@ -2067,7 +2229,11 @@ export function appendCustomerAccountChatHistory(
     )
     .map((message) => ({
       role: message.role,
-      text: String(message.text).trim().slice(0, 2000),
+      text: String(message.text).trim().slice(0, message.role === "assistant" && (message.comparisonMetadata || message.trendMetadata || message.scenarioMetadata || message.documentReportMetadata) ? 256000 :
+        message.role === "assistant" && (message.rescheduleMetadata || message.outcomeMetadata || message.stageMetadata) ? 64000 :
+        message.role === "assistant" && (message.creationMetadata || message.updateMetadata) ? 16000 :
+        message.role === "assistant" && message.priorityMetadata ? 64000 :
+        message.role === "assistant" && message.documentCoverage ? 16000 : 2000),
       ...(message.role === "user" && message.attachmentName
         ? {
             attachmentName: String(message.attachmentName).trim().slice(0, 120),
@@ -2089,8 +2255,27 @@ export function appendCustomerAccountChatHistory(
         ? { stageAnswerPrefill: message.stageAnswerPrefill } : {}),
       ...(message.role === "assistant" && Array.isArray(message.components)
         ? { components: message.components } : {}),
-      ...(message.role === "assistant" && message.contentSource === "user_provided"
-        ? { contentSource: "user_provided" } : {}),
+      ...(message.role === "assistant" && ["user_provided", "mixed_document"].includes(message.contentSource)
+        ? { contentSource: message.contentSource } : {}),
+      ...(message.role === "assistant" && message.documentCoverage
+        ? { documentCoverage: message.documentCoverage, documentEvidence: message.documentEvidence || [] } : {}),
+      ...(message.role === "assistant" && message.priorityMetadata
+        ? { priorityMetadata: message.priorityMetadata, priorityEvidence: message.priorityEvidence || [] } : {}),
+      ...(message.role === "assistant" && message.comparisonMetadata
+        ? { comparisonMetadata: message.comparisonMetadata, comparisonEvidence: message.comparisonEvidence || [] } : {}),
+      ...(message.role === "assistant" && message.trendMetadata
+        ? { trendMetadata: message.trendMetadata, trendEvidence: message.trendEvidence || [] } : {}),
+      ...(message.role === "assistant" && message.scenarioMetadata
+        ? { scenarioMetadata: message.scenarioMetadata, scenarioEvidence: message.scenarioEvidence || [] } : {}),
+      ...(message.role === "assistant" && message.documentReportMetadata
+        ? { documentReportMetadata: message.documentReportMetadata, documentReportEvidence: message.documentReportEvidence || [] } : {}),
+      ...(message.role === "assistant" && message.creationMetadata
+        ? { creationMetadata: message.creationMetadata } : {}),
+      ...(message.role === "assistant" && message.updateMetadata ? { updateMetadata: message.updateMetadata } : {}),
+      ...(message.role === "assistant" && message.linkMetadata ? { linkMetadata: message.linkMetadata } : {}),
+      ...(message.role === "assistant" && message.rescheduleMetadata ? { rescheduleMetadata: message.rescheduleMetadata } : {}),
+      ...(message.role === "assistant" && message.outcomeMetadata ? { outcomeMetadata: message.outcomeMetadata } : {}),
+      ...(message.role === "assistant" && message.stageMetadata ? { stageMetadata: message.stageMetadata } : {}),
     }));
   return [
     ...normalizedHistory,
@@ -2113,7 +2298,7 @@ export function appendCustomerAccountChatHistory(
     answer
       ? {
           role: "assistant",
-          text: String(answer).trim().slice(0, 2000),
+          text: String(answer).trim().slice(0, assistantMetadata.comparisonMetadata || assistantMetadata.trendMetadata || assistantMetadata.scenarioMetadata || assistantMetadata.documentReportMetadata ? 256000 : assistantMetadata.priorityMetadata || assistantMetadata.rescheduleMetadata || assistantMetadata.outcomeMetadata || assistantMetadata.stageMetadata ? 64000 : assistantMetadata.documentCoverage || assistantMetadata.creationMetadata || assistantMetadata.updateMetadata ? 16000 : 2000),
           ...(assistantMetadata.activityHistory
             ? { activityHistory: assistantMetadata.activityHistory }
             : {}),
@@ -2127,8 +2312,27 @@ export function appendCustomerAccountChatHistory(
             ? { stageAnswerPrefill: assistantMetadata.stageAnswerPrefill } : {}),
           ...(Array.isArray(assistantMetadata.components)
             ? { components: assistantMetadata.components } : {}),
-          ...(assistantMetadata.contentSource === "user_provided"
-            ? { contentSource: "user_provided" } : {}),
+          ...(["user_provided", "mixed_document"].includes(assistantMetadata.contentSource)
+            ? { contentSource: assistantMetadata.contentSource } : {}),
+          ...(assistantMetadata.documentCoverage
+            ? { documentCoverage: assistantMetadata.documentCoverage, documentEvidence: assistantMetadata.documentEvidence || [] } : {}),
+          ...(assistantMetadata.priorityMetadata
+            ? { priorityMetadata: assistantMetadata.priorityMetadata, priorityEvidence: assistantMetadata.priorityEvidence || [] } : {}),
+          ...(assistantMetadata.comparisonMetadata
+            ? { comparisonMetadata: assistantMetadata.comparisonMetadata, comparisonEvidence: assistantMetadata.comparisonEvidence || [] } : {}),
+          ...(assistantMetadata.trendMetadata
+            ? { trendMetadata: assistantMetadata.trendMetadata, trendEvidence: assistantMetadata.trendEvidence || [] } : {}),
+          ...(assistantMetadata.scenarioMetadata
+            ? { scenarioMetadata: assistantMetadata.scenarioMetadata, scenarioEvidence: assistantMetadata.scenarioEvidence || [] } : {}),
+          ...(assistantMetadata.documentReportMetadata
+            ? { documentReportMetadata: assistantMetadata.documentReportMetadata, documentReportEvidence: assistantMetadata.documentReportEvidence || [] } : {}),
+          ...(assistantMetadata.creationMetadata
+            ? { creationMetadata: assistantMetadata.creationMetadata } : {}),
+          ...(assistantMetadata.updateMetadata ? { updateMetadata: assistantMetadata.updateMetadata } : {}),
+          ...(assistantMetadata.linkMetadata ? { linkMetadata: assistantMetadata.linkMetadata } : {}),
+          ...(assistantMetadata.rescheduleMetadata ? { rescheduleMetadata: assistantMetadata.rescheduleMetadata } : {}),
+          ...(assistantMetadata.outcomeMetadata ? { outcomeMetadata: assistantMetadata.outcomeMetadata } : {}),
+          ...(assistantMetadata.stageMetadata ? { stageMetadata: assistantMetadata.stageMetadata } : {}),
         }
       : null,
   ]
@@ -2315,6 +2519,35 @@ export function normalizeCustomerOperations(
           source: { type: "opportunity", id: opportunityId },
         };
       }
+      if (operation.kind === "opportunity_note") {
+        const opportunityId = Number(operation.opportunityId || 0) || null;
+        const noteText = String(operation.noteText || "").trim().slice(0, 4000);
+        if (
+          !opportunityIds.has(opportunityId) ||
+          Number(operation.accountId || accountId) !== accountId ||
+          !noteText
+        ) {
+          return null;
+        }
+        return {
+          kind: "opportunity_note",
+          title: String(operation.title || "Registrar nota en oportunidad")
+            .trim()
+            .slice(0, 300),
+          evidence: [],
+          missingFields: [],
+          requiresConfirmation: true,
+          sourceChannel: "customer_account",
+          accountId,
+          opportunityId,
+          noteText,
+          sourceType: "chat_report",
+          attribution: operation.attribution,
+          certainty: operation.certainty,
+          entityType: "opportunity",
+          source: { type: "opportunity", id: opportunityId },
+        };
+      }
       if (operation.kind === "create_contact") {
         const proposedAccountId = Number(
           operation.accountId || operation.payload?.accountId || 0,
@@ -2420,6 +2653,13 @@ export function normalizeCustomerOperations(
         canReadContact
       );
     }
+    if (operation.kind === "opportunity_note")
+      return (
+        Number(operation.accountId) === accountId &&
+        opportunityIds.has(Number(operation.opportunityId)) &&
+        permissionGranted(permissions, "oportunidades.update") &&
+        permissionGranted(permissions, "mi_coach.execute")
+      );
     if (
       ["activity", "stage_answer", "opportunity_field"].includes(operation.kind)
     )
@@ -2433,11 +2673,54 @@ export function normalizeCustomerOperations(
 export function normalizeCustomerResponse(
   result,
   snapshot,
-  _question,
+  question,
   context,
   permissions = new Set(),
 ) {
-  const normalized = result || {};
+  const original = result || {};
+  const normalizedQuestion = String(question || "").normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es");
+  const sendsExternalCommunication =
+    /\b(?:envia|enviale|mand(a|ale)|mandame)\b[\s\S]{0,120}\b(?:correo|email|whats?app|mensaje|sms)\b/i
+      .test(normalizedQuestion) ||
+    /\b(?:correo|email|whats?app|mensaje|sms)\b[\s\S]{0,80}\b(?:envia|manda)\b/i
+      .test(normalizedQuestion);
+  const cancelsActivity =
+    /\b(?:cancela(?:r)?|anula(?:r)?|elimina(?:r)?|borra(?:r)?)\b[\s\S]{0,80}\b(?:actividad|llamada|reunion|cita|evento)\b/i
+      .test(normalizedQuestion);
+  const requestsContactCreation =
+    /\b(?:crear?|crea|agrega|anade|registra|dar de alta)\s+(?:un|una|el|la)?\s*(?:nuevo|nueva)?\s*contacto\b/i
+      .test(normalizedQuestion) ||
+    /\bcontacto\s+nuevo\b/i.test(normalizedQuestion) &&
+      /\b(?:crear?|crea|agrega|anade|registra|dar de alta)\b/i.test(normalizedQuestion);
+  const requestsOpportunityCreation =
+    /\b(?:crear?|crea|agrega|anade|registra|dar de alta)\s+(?:un|una|la)?\s*(?:nuevo|nueva)?\s*(?:oportunidad|negocio)\b/i
+      .test(normalizedQuestion) ||
+    /\b(?:oportunidad|negocio)\s+nuev[oa]\b/i.test(normalizedQuestion) &&
+      /\b(?:crear?|crea|agrega|anade|registra|dar de alta)\b/i.test(normalizedQuestion);
+  const mismatchedCreation =
+    !(requestsContactCreation && requestsOpportunityCreation) &&
+    ((requestsContactCreation && (original.operations || []).some((operation) => operation?.kind === "create_opportunity")) ||
+      (requestsOpportunityCreation && (original.operations || []).some((operation) => operation?.kind === "create_contact")));
+  const blockedAnswer = sendsExternalCommunication
+    ? "No puedo enviar correos ni mensajes desde este chat. No se envió ninguna comunicación. Si quieres, puedo preparar un borrador para que lo revises y lo envíes por tu canal habitual."
+    : cancelsActivity
+      ? "No puedo cancelar actividades desde este chat. No se canceló ni reprogramó ninguna actividad."
+      : mismatchedCreation
+        ? `Pediste crear ${requestsContactCreation ? "un contacto" : "una oportunidad"}, pero la respuesta intentaba crear ${requestsContactCreation ? "una oportunidad" : "un contacto"}. No preparé ningún registro. Confirma los datos del registro solicitado para continuar.`
+        : null;
+  const normalized = blockedAnswer
+    ? {
+        ...original,
+        answer: blockedAnswer,
+        responseType: "informational",
+        operations: [],
+        recommendedActions: [],
+        activityDraft: null,
+        activityDraftDiscarded: false,
+        stageAnswerPrefill: null,
+      }
+    : original;
   const recommendedActions = Array.isArray(normalized.recommendedActions)
     ? normalized.recommendedActions
         .map((action) => ({
@@ -2581,6 +2864,9 @@ export function normalizeCustomerResponse(
       ? { activityDraftDiscarded: true }
       : {}),
     ...(stageAnswerPrefill ? { stageAnswerPrefill } : {}),
+    ...(Array.isArray(normalized.documentReportCandidates) && normalized.documentReportCandidates.length <= 100 &&
+      normalized.documentReportCandidates.every((id) => Number.isSafeInteger(id) && id > 0)
+      ? { documentReportCandidates: [...new Set(normalized.documentReportCandidates)] } : {}),
     source: "account_intelligence",
     entities: {
       accountId: context.accountId || null,
@@ -2608,9 +2894,20 @@ export function createCustomerAccountAdapter({
   dependencyResults = [],
   turnBudget = null,
   referenceMaterial = null,
+  documentReportEvidence = null,
   channelIntentConfiguration = null,
   conversationContext = null,
   snapshotQueryMetrics = [],
+  loadHistorySnapshot = null,
+  loadTrendHistory = null,
+  loadScenarioBasis = null,
+  loadUpdateRecord = null,
+  loadUpdateStates = null,
+  loadLinkPair = null,
+  loadSchedule = readCustomerSchedule,
+  loadScheduleTimezone = loadRescheduleTimezone,
+  loadOutcomes = readCustomerOutcomes,
+  loadStages = readCustomerStages,
   agents,
   jobId,
   executionTrace = null,
@@ -2626,6 +2923,7 @@ export function createCustomerAccountAdapter({
   };
   let activeBusinessRules = null;
   let activeConversationContext = conversationContext;
+  let activeOriginalQuestion = "";
   let sellerReportedStageAnswerQuestionIds = [];
   let sellerReportedStageAnswerCandidates = [];
   let sellerReportAssessment = null;
@@ -2643,7 +2941,8 @@ export function createCustomerAccountAdapter({
     turnDeadlineAt: turnBudget?.deadlineAt,
     canAnswerWithoutBusinessEvidence: () =>
       contractComponent?.category.startsWith("content.") &&
-      turnDiagnostics.evidence?.status === "content_validated",
+      turnDiagnostics.evidence?.status === "content_validated" ||
+      !allowOperationsForTurn && sellerReportAssessment?.messageKind === "client_report",
     validateServerRequest: ({ question, routing, businessRules, operationPolicy }) => {
       if (contractComponent && !contractComponent.category.startsWith("action.")) return null;
       if (["other_account", "out_of_scope"].includes(routing?.ambiguity?.reason)) return null;
@@ -2842,7 +3141,7 @@ export function createCustomerAccountAdapter({
           turnDiagnostics.serverRules.decisions.push({ ruleId: "amount-target", outcome: "continued" });
         }
       }
-      if (contractComponent) normalizedPlan = constrainCustomerComponentPlan(normalizedPlan, contractComponent);
+      if (contractComponent) normalizedPlan = constrainCustomerComponentPlan(normalizedPlan, contractComponent, snapshot);
       return normalizedPlan
         ? {
             ...normalizedPlan,
@@ -2881,6 +3180,9 @@ export function createCustomerAccountAdapter({
         channelIntentCatalog,
         executionTrace,
         traceParentSpanId: readModelTraceParentId,
+        recordDetail: ["query.record_detail", "query.field_value"].includes(contractComponent?.category) &&
+          ["opportunity", "contact"].includes(contractComponent.object)
+          ? contractComponent : null,
       });
       if (turnBudget) turnBudget.remainingReadQueries -= model.readToolResults?.length || 0;
       return model;
@@ -2942,6 +3244,7 @@ export function createCustomerAccountAdapter({
           selection: contractComponent.reference,
           queryErrors: snapshotQueryMetrics.filter((metric) => metric.errorCode),
           unqueriedTools: payload.context?.skippedAuthorizedTools || [],
+          documentReportEvidence,
         });
         turnDiagnostics.evidence = {
           status: result.responseType === "clarification" ? "report_destination_clarification" :
@@ -2955,7 +3258,7 @@ export function createCustomerAccountAdapter({
         const result = await generateCustomerContent({
           component: contractComponent, readToolResults: initialReadToolResults,
           history: payload.conversationHistory || [], dependencyResults,
-          referenceMaterial,
+          referenceMaterial, question: activeOriginalQuestion || payload.question,
           user, jobId, signal: getDeadlineSignal(deadlineAt),
           queryErrors: snapshotQueryMetrics.filter((metric) => metric.errorCode),
           unqueriedTools: payload.context?.skippedAuthorizedTools || [],
@@ -3135,6 +3438,22 @@ export function createCustomerAccountAdapter({
               status: "sufficient", missingQueries: [], missingFacts: [],
               clarificationQuestion: "",
             };
+          }
+          if (["query.record_detail", "query.field_value"].includes(contractComponent?.category) &&
+              ["opportunity", "contact"].includes(contractComponent.object)) {
+            const recordDetail = buildCustomerRecordDetailResponse({
+              object: contractComponent.object,
+              context: payload.selectedContext || {},
+              readToolResults,
+              requestedFields: contractComponent.category === "query.field_value"
+                ? contractComponent.requestedFields || [] : null,
+            });
+            if (recordDetail.responseType === "informational" && recordDetail.evidence.length) {
+              return {
+                status: "sufficient", missingQueries: [], missingFacts: [],
+                clarificationQuestion: "",
+              };
+            }
           }
           const assessment = await runStructuredTextResearch({
             schemaName: "customer_account_evidence_assessment",
@@ -3345,6 +3664,9 @@ export function createCustomerAccountAdapter({
           for (const code of followUpRouting.intents) followUpIntents.add(code);
           const followUpReadModel = await buildCustomerReadModel({
             previouslyQueried: readToolResults,
+            recordDetail: ["query.record_detail", "query.field_value"].includes(contractComponent?.category) &&
+              ["opportunity", "contact"].includes(contractComponent.object)
+              ? contractComponent : null,
             readQueryBudget: remainingReadQueries,
             user,
             question: payload.question,
@@ -3459,33 +3781,21 @@ export function createCustomerAccountAdapter({
         );
         return stageAnswerPrefillResponse;
       }
-      if (
-        reportEvidenceAvailable &&
-        !allowOperationsForTurn &&
-        sellerReportAssessment?.messageKind === "client_report"
-      ) {
-        sellerReportAssessment.outcome = "clarification";
-        const prompts = selectedStageAnswerCandidates.length
-          ? selectedStageAnswerCandidates
-          : sellerReportedStageAnswerCandidates;
-        const answer = prompts.length
-          ? `Recibí la información que atribuyes al cliente, pero no pude relacionarla con una única pregunta de etapa. Repite el reporte indicando a cuál pregunta quieres agregarlo: ${prompts.map((item) => `"${item.prompt}"`).join("; ")}. No se ha guardado ningún cambio.`
-          : "Recibí la información que atribuyes al cliente, pero no pude identificar una pregunta de etapa editable en una oportunidad autorizada. Repite el reporte indicando la oportunidad y la pregunta donde quieres revisarlo. No se ha guardado ningún cambio.";
+      if (!allowOperationsForTurn && sellerReportAssessment?.messageKind === "client_report") {
+        const reportedText = String(payload.question || "").trim().replace(/\s+/g, " ").slice(0, 4000);
+        const answer = `Conservo el reporte atribuido al cliente: “${reportedText}”. Queda en el historial de este chat, no registrado en el CRM. No lo he verificado de forma independiente ni he guardado cambios. Si quieres incorporarlo a una respuesta de etapa, indica la pregunta correspondiente y prepararé un borrador revisable.`;
         const response = {
           answer,
           evidence: [],
           inferences: [],
           confidence: "medium",
-          responseType: "clarification",
+          responseType: "informational",
           operations: [],
           recommendedActions: [],
           pendingItems: [],
-          clarification: {
-            type: "missing_fields",
-            message: answer,
-          },
+          source: "account_intelligence",
         };
-        recordAnswerGeneration("seller_reported_stage_answer_clarification", response);
+        recordAnswerGeneration("seller_reported_statement_acknowledgement", response);
         return response;
       }
       const readinessResponse = buildCustomerStageReadinessResponse({
@@ -3503,6 +3813,19 @@ export function createCustomerAccountAdapter({
         });
         recordAnswerGeneration("evidence_gate_failure", evidenceFailure);
         return evidenceFailure;
+      }
+      if (["query.record_detail", "query.field_value"].includes(contractComponent?.category) &&
+          ["opportunity", "contact"].includes(contractComponent.object)) {
+        const detail = buildCustomerRecordDetailResponse({
+          object: contractComponent.object,
+          context: payload.selectedContext || {},
+          readToolResults: evidenceLoop.readToolResults,
+          requestedFields: contractComponent.category === "query.field_value"
+            ? contractComponent.requestedFields || [] : null,
+        });
+        recordAnswerGeneration(contractComponent.category === "query.field_value"
+          ? "deterministic_field_value" : "deterministic_record_detail", detail);
+        return detail;
       }
       payload = {
         ...payload,
@@ -3629,9 +3952,10 @@ export function createCustomerAccountAdapter({
           schemaName: "account_contextual_chat",
           systemPrompt:
             (contractComponent
-              ? `Conserva el propósito de turnComponent (${contractComponent.category}). Responde únicamente ese componente. Una consulta no pide recomendaciones ni escritura; una recomendación no autoriza operaciones. No cambies la categoría ni agregues tareas implícitas. `
+              ? `Conserva el propósito de turnComponent (${contractComponent.category}). Responde únicamente ese componente. Una consulta no pide recomendaciones ni escritura; una recomendación no autoriza operaciones. No cambies la categoría ni agregues tareas implícitas. ${customerComponentAnswerRules(contractComponent)}`
               : "") +
-            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. La información aportada en question o conversationHistory no está registrada ni verificada en CRM por el hecho de mencionarse: conserva su atribución al vendedor o cliente y no afirmes que ya se documentó. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Para toda afirmación basada en public_web, incluye en evidence el título o URL de la fuente pública autorizada que la respalda y no generalices más allá del hallazgo. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos. Si el vendedor acepta preparar una actividad ofrecida en el turno anterior, por ejemplo con 'proponla', devuelve el borrador estructurado en operations cuando activity esté permitido y sus vínculos estén verificados; no repitas la oferta ni exijas preferencias del contacto o acuerdos que el usuario no pidió consultar. Los detalles futuros son propuestas, no hechos CRM. Si falta fecha/hora, deja scheduledAt vacío, añade scheduledAt a missingFields y pide completarlo para abrir Calendario; nunca inventes una cita ni afirmes que está coordinada, aceptada, guardada o ejecutada.",
+            "Responde usando exclusivamente authorizedEvidence y verifiedEmptyResults. La información aportada en question o conversationHistory no está registrada ni verificada en CRM por el hecho de mencionarse: conserva su atribución al vendedor o cliente y no afirmes que ya se documentó. conversationHistory solo sirve para resolver referencias conversacionales, nunca como prueba factual. Cada afirmación debe estar respaldada por un resultado con la fuente correcta; no traslades métricas de cuenta a una oportunidad ni viceversa. Distingue fuentes CRM (crm_internal) de fuentes públicas (public_web), y no presentes estas últimas como hechos CRM. Para toda afirmación basada en public_web, incluye en evidence el título o URL de la fuente pública autorizada que la respalda y no generalices más allá del hallazgo. Si evidenceVerification es no_results, usa verifiedEmptyResults para explicar qué consulta autorizada terminó sin filas dentro de qué cuenta o entidad; comunica únicamente que no se encontraron registros en ese alcance, no que nunca existan. Un cero verificado es un resultado, no evidencia faltante. Nunca afirmes ausencia si una consulta falló, quedó truncada o no se ejecutó. Omite datos no consultados o colócalos en pendingItems. Cuando identifiques una oportunidad como foco, devuelve su ID en entities.opportunityId solo si aparece en evidencia CRM autorizada y es inequívoca; no inventes IDs. Las operaciones son propuestas que requieren revisión y confirmación; no ejecutes operaciones ni envíes correos. Si el vendedor acepta preparar una actividad ofrecida en el turno anterior, por ejemplo con 'proponla', devuelve el borrador estructurado en operations cuando activity esté permitido y sus vínculos estén verificados; no repitas la oferta ni exijas preferencias del contacto o acuerdos que el usuario no pidió consultar. Los detalles futuros son propuestas, no hechos CRM. Si falta fecha/hora, deja scheduledAt vacío, añade scheduledAt a missingFields y pide completarlo para abrir Calendario; nunca inventes una cita ni afirmes que está coordinada, aceptada, guardada o ejecutada. " +
+            CUSTOMER_FRIENDLY_STYLE_INSTRUCTIONS,
           subject: snapshot.account?.name || "cuenta",
           context: answerEvidenceContext,
           currentValues: {},
@@ -4102,73 +4426,1396 @@ export function createCustomerAccountAdapter({
         "opportunity_field",
         "create_opportunity",
         "link_contact_to_opportunity",
+        "reschedule_activity",
+        "opportunity_note",
       ],
       sourceChannel: "customer_account",
     },
     async runTurn({
       question,
+      originalQuestion = "",
       context = {},
       history = [],
       conversationContext: turnConversationContext = null,
       traceParentSpanId: turnTraceParentSpanId = traceParentSpanId,
     }) {
+      activeOriginalQuestion = String(originalQuestion || question || "");
       if (authoritativeIntent?.turnContract && !contractComponent) {
         const contractRules = await loadCoachBusinessRules({ channel: "customer_account", process: "default" });
         const contractIntents = channelIntentConfiguration ||
           await loadChannelIntentConfigurations({ channel: "customer_account" });
         const limits = getCustomerEvidenceLimits(contractRules);
+        const turnNow = new Date();
         const budget = {
           deadlineAt: Date.now() + limits.maxTurnMs,
           remainingReadQueries: limits.maxReadQueries,
           remainingRounds: limits.maxRounds,
         };
+        const updateContinuation = validateCustomerUpdateMemory(
+          (turnConversationContext || conversationContext)?.updateMemory, snapshot,
+        );
+        const turnContract = updateContinuation ? { ...authoritativeIntent.turnContract,
+          components: authoritativeIntent.turnContract.components.map((component) =>
+            component.category === "action.update_fields" && component.object === "general" &&
+            component.updateSpec && component.updateSpec.mode !== "start"
+              ? { ...component, object: updateContinuation.object } : component),
+        } : authoritativeIntent.turnContract;
         return runCustomerContractTurn({
-          contract: authoritativeIntent.turnContract, question,
+          contract: turnContract, question,
           referenceMaterial,
           conversationContext: turnConversationContext || conversationContext, context,
-          executeComponent: ({ component, capability, contract, question: componentQuestion, context: componentContext, referenceMaterial: componentReferenceMaterial, dependencyResults: dependencies }) => {
+          executeComponent: async ({ component, capability, contract, question: componentQuestion, originalQuestion, context: componentContext, referenceMaterial: componentReferenceMaterial, dependencyResults: dependencies }) => {
             const writePermission = {
               activity: "calendario_comercial.update", stage_answer: "oportunidades.update",
               lead_call_outcome: "interacciones.update", account_field: "cuentas.update",
-              contact_field: "contactos.update", create_contact: "contactos.update",
-              opportunity_field: "oportunidades.update", create_opportunity: "oportunidades.update",
+              contact_field: "contactos.update",
+              opportunity_field: "oportunidades.update",
+              opportunity_note: "oportunidades.update",
               link_contact_to_opportunity: "oportunidades.update",
+              reschedule_activity: "calendario_comercial.update",
             }[capability.operationKind];
-            const disabled = contractIntents.some((intent) => intent.code === capability.intent && intent.enabled === false) ||
+            const disabled = (!["query.document_content", "report.document_evidence"].includes(component.category) &&
+              contractIntents.some((intent) => intent.code === capability.intent && intent.enabled === false)) ||
               (capability.operationKind && !contractRules.operationPolicy.allowedKinds.includes(capability.operationKind));
-            const denied = writePermission && (!permissions.has(writePermission) ||
+            const detailDomain = ["query.record_detail", "query.field_value", "query.record_list", "query.record_search"].includes(component.category)
+              ? { opportunity: "oportunidades", contact: "contactos" }[component.object]
+              : null;
+            const readDenied = detailDomain &&
+              (!permissionGranted(permissions, `${detailDomain}.read`) ||
+                snapshot.permissions?.[component.object === "contact" ? "canReadContacts" : "canReadOpportunities"] === false);
+            const creationPermissions = {
+              create_contact: ["contactos.create", "contactos.request"],
+              create_opportunity: ["oportunidades.create", "oportunidades.request"],
+            }[capability.operationKind];
+            const denied = readDenied || (creationPermissions &&
+              (!creationPermissions.some((permission) => permissionGranted(permissions, permission)) ||
+                !permissionGranted(permissions, "mi_coach.execute"))) || (writePermission && (!permissions.has(writePermission) ||
               !permissions.has("mi_coach.execute") ||
-              (capability.operationKind === "activity" && !permissions.has("oportunidades.update")));
+              (capability.operationKind === "activity" && !permissions.has("oportunidades.update"))));
             if (disabled || denied) {
               const status = disabled ? "disabled" : "permission_denied";
               return {
                 response: {
                   answer: disabled
-                    ? "Reconocí la solicitud, pero esta capacidad está deshabilitada por la configuración del canal. No se ejecutó ningún cambio."
-                    : "Reconocí la solicitud, pero tu perfil no tiene los permisos necesarios para preparar esta operación. No se ejecutó ningún cambio.",
+                    ? component.category === "action.record_note"
+                      ? "La configuración actual del canal no permite registrar notas en oportunidades. No se guardó ninguna nota."
+                      : "Reconocí la solicitud, pero esta capacidad está deshabilitada por la configuración del canal. No se ejecutó ningún cambio."
+                    : readDenied
+                      ? "Reconocí la solicitud, pero tu perfil no tiene los permisos necesarios para consultar este tipo de registro."
+                      : "Reconocí la solicitud, pero tu perfil no tiene los permisos necesarios para preparar esta operación. No se ejecutó ningún cambio.",
                   responseType: disabled ? "informational" : "error",
                   capabilityStatus: status, operations: [], recommendedActions: [], evidence: [], pendingItems: [],
+                  ...(component.category === "action.create_record" ? { creationMemory: null } : {}),
+                  ...(component.category === "action.update_fields" ? { updateMemory: null } : {}),
+                  ...(component.category === "action.link_records" ? { linkMemory: null } : {}),
+                  ...(component.category === "action.reschedule_activity" ? { rescheduleMemory: null } : {}),
+                  ...(component.category === "action.record_outcome" ? { outcomeMemory: null } : {}),
+                  ...(component.category === "action.change_status" ? { stageMemory: null } : {}),
                 },
                 qualityTrace: { toolsUsed: [], diagnostics: { capability: { status, category: component.category } } },
                 channelIntentRouting: null,
               };
             }
-            if (capability.providedDocument) {
-              return generateCustomerContent({
-                component, readToolResults: [], history, dependencyResults: dependencies,
-                referenceMaterial: componentReferenceMaterial, user, jobId,
-                signal: getDeadlineSignal(budget.deadlineAt),
-              }).then((response) => ({
-                response,
-                qualityTrace: {
-                  toolsUsed: [],
-                  diagnostics: { evidence: { status: response.responseType === "error" ? "content_failed" : "content_validated", source: "provided_document" } },
+            if (component.category === "action.change_status") {
+              const allowed = ["cuentas", "oportunidades"].every((domain) =>
+                permissionGranted(permissions, `${domain}.read`) || permissionGranted(permissions, `${domain}.read_all`)) &&
+                contractRules.scope?.opportunitySearchAllowed !== false &&
+                permissionGranted(permissions, "mi_coach.execute") && permissionGranted(permissions, "oportunidades.update");
+              if (!allowed) return { response: { answer: "No tienes acceso a las oportunidades o la lectura está deshabilitada.",
+                responseType: "error", capabilityStatus: "permission_denied", operations: [], stageMemory: null },
+                qualityTrace: { toolsUsed: [], diagnostics: {} }, channelIntentRouting: null };
+              if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 3) throw Object.assign(
+                new Error("Se alcanzó el presupuesto de validación"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+              budget.remainingReadQueries -= 3;
+              const response = await buildCustomerStageResponse({
+                component, movement: contract.movement, question, snapshot,
+                previous: (turnConversationContext || conversationContext)?.stageMemory,
+                readStages: async (accountId) => {
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(new Error("Límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  const data = await loadStages({ user, accountId });
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(new Error("Límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  return data;
                 },
+              });
+              return { response, qualityTrace: { toolsUsed: ["readCustomerStages"], diagnostics: {
+                stage: { status: response.stageMetadata?.status || response.responseType, validationStarted: false },
+              } }, channelIntentRouting: null };
+            }
+            if (component.category === "action.record_outcome") {
+              const allowed = ["cuentas", "interacciones"].every((domain) =>
+                permissionGranted(permissions, `${domain}.read`) || permissionGranted(permissions, `${domain}.read_all`)) &&
+                contractRules.scope?.leadSearchAllowed !== false;
+              if (!allowed) return { response: { answer: "No tienes acceso a los leads de esta cuenta o la lectura está deshabilitada.",
+                responseType: "error", capabilityStatus: "permission_denied", operations: [], outcomeMemory: null },
+                qualityTrace: { toolsUsed: [], diagnostics: {} }, channelIntentRouting: null };
+              if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 3) throw Object.assign(
+                new Error("Se alcanzó el presupuesto de resultados"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+              budget.remainingReadQueries -= 3;
+              const response = await buildCustomerOutcomeResponse({
+                component, movement: contract.movement, question, snapshot,
+                previous: (turnConversationContext || conversationContext)?.outcomeMemory,
+                timeZone: await loadScheduleTimezone(),
+                readOutcomes: async (accountId) => {
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(new Error("Se alcanzó el límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  const result = await loadOutcomes({ user, accountId });
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(new Error("Se alcanzó el límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  return result;
+                },
+              });
+              return { response, qualityTrace: { toolsUsed: ["readCustomerOutcomes"], diagnostics: {
+                outcome: { status: response.outcomeMetadata?.status || response.responseType, persisted: false },
+              } }, channelIntentRouting: null };
+            }
+            if (component.category === "action.reschedule_activity") {
+              const allowed = ["cuentas", "oportunidades", "calendario_comercial"].every((domain) =>
+                permissionGranted(permissions, `${domain}.read`) || permissionGranted(permissions, `${domain}.read_all`)) &&
+                ["oportunidades.update", "desarrollo_comercial.update"].every((permission) => permissions.has(permission)) &&
+                contractRules.scope?.opportunitySearchAllowed !== false && snapshot.permissions?.canReadOpportunities !== false;
+              if (!allowed) return { response: { answer: "No tienes acceso o permisos para reprogramar esta actividad.",
+                responseType: "error", capabilityStatus: "permission_denied", operations: [], rescheduleMemory: null },
+                qualityTrace: { toolsUsed: [], diagnostics: {} }, channelIntentRouting: null };
+              if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 4) throw Object.assign(
+                new Error("Se alcanzó el presupuesto de reprogramación"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+              budget.remainingReadQueries -= 4;
+              const response = await buildCustomerRescheduleResponse({
+                component, movement: contract.movement, question, snapshot,
+                previous: (turnConversationContext || conversationContext)?.rescheduleMemory,
+                timeZone: await loadScheduleTimezone(),
+                readSchedule: async (accountId) => {
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(
+                    new Error("Se alcanzó el presupuesto de reprogramación"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  const data = await loadSchedule({ user, accountId });
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(new Error("Se alcanzó el límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  return data;
+                },
+              });
+              return { response, qualityTrace: { toolsUsed: ["readCustomerSchedule"], diagnostics: {
+                reschedule: { status: response.rescheduleMetadata?.status || response.responseType, persisted: false },
+              } }, channelIntentRouting: null };
+            }
+            if (component.category === "action.link_records") {
+              const allowed = ["cuentas", "contactos", "oportunidades"].every((domain) =>
+                permissionGranted(permissions, `${domain}.read`) || permissionGranted(permissions, `${domain}.read_all`)) &&
+                contractRules.scope?.contactSearchAllowed !== false && contractRules.scope?.opportunitySearchAllowed !== false &&
+                snapshot.permissions?.canReadContacts !== false && snapshot.permissions?.canReadOpportunities !== false;
+              if (!allowed) return { response: { answer: "No tienes acceso a ambos extremos del vínculo o están deshabilitados por política.",
+                responseType: "error", capabilityStatus: "permission_denied", operations: [], linkMemory: null },
+                qualityTrace: { toolsUsed: [], diagnostics: {} }, channelIntentRouting: null };
+              const response = await buildCustomerLinkResponse({
+                component, movement: contract.movement, question, snapshot: scopeCustomerSnapshot(snapshot),
+                previous: (turnConversationContext || conversationContext)?.linkMemory, metrics: snapshotQueryMetrics,
+                readPair: async (ids) => {
+                  if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 4) {
+                    throw Object.assign(new Error("Se alcanzó el límite de verificación del vínculo"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  }
+                  budget.remainingReadQueries -= 4;
+                  const pair = await (loadLinkPair || readCustomerLinkPair)({ user, ...ids });
+                  if (Date.now() >= budget.deadlineAt) throw Object.assign(new Error("Se alcanzó el límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  return pair;
+                },
+              });
+              return { response, qualityTrace: { toolsUsed: ["readCustomerLinkPair"], diagnostics: {
+                link: { status: response.linkMetadata?.status || response.responseType, persisted: false },
+              } }, channelIntentRouting: null };
+            }
+            const legacyContactUpdate = component.object === "contact" && component.updateSpec?.changes.length === 0 &&
+              component.updateSpec.unsupported?.length > 0 &&
+              component.updateSpec.unsupported.every((field) => LEGACY_CUSTOMER_CONTACT_UPDATE_FIELDS.includes(field));
+            if (component.category === "action.update_fields" && component.updateSpec && !legacyContactUpdate) {
+              const domain = { account: "cuentas", contact: "contactos", opportunity: "oportunidades" }[component.object];
+              const allowed = domain && (permissionGranted(permissions, `${domain}.read`) || permissionGranted(permissions, `${domain}.read_all`)) &&
+                contractRules.scope?.[`${component.object}SearchAllowed`] !== false &&
+                (component.object === "account" || snapshot.permissions?.[component.object === "contact" ? "canReadContacts" : "canReadOpportunities"] !== false);
+              if (!allowed) return {
+                response: { answer: "No tienes acceso a la lectura del valor actual o está deshabilitada por política. No preparé el cambio.",
+                  responseType: "error", capabilityStatus: "permission_denied", operations: [], updateMemory: null },
+                qualityTrace: { toolsUsed: [], diagnostics: {} }, channelIntentRouting: null,
+              };
+              const read = async (work) => {
+                if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 1) throw Object.assign(
+                  new Error("Se alcanzó el límite de verificación del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                budget.remainingReadQueries -= 1;
+                const result = await work();
+                if (Date.now() >= budget.deadlineAt) throw Object.assign(
+                  new Error("Se alcanzó el límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                return result;
+              };
+              const response = await buildCustomerUpdateResponse({
+                component, movement: contract.movement, question, snapshot: scopeCustomerSnapshot(snapshot),
+                previous: (turnConversationContext || conversationContext)?.updateMemory, metrics: snapshotQueryMetrics,
+                readRecord: (object, targetId) => read(() => (loadUpdateRecord || readCustomerUpdateRecord)({
+                  user, object, accountId: Number(snapshot.account.id), targetId,
+                })),
+                loadStates: (draftId) => read(() => (loadUpdateStates || loadCustomerUpdateStates)({ user, draftId })),
+              });
+              return { response, qualityTrace: { toolsUsed: ["readCustomerUpdateRecord"], diagnostics: {
+                update: { status: response.updateMetadata?.status || response.responseType, persisted: false },
+              } }, channelIntentRouting: null };
+            }
+            if (component.category === "action.create_record") {
+              if (Date.now() >= budget.deadlineAt) throw Object.assign(
+                new Error("Se alcanzó el límite del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+              const response = buildCustomerCreationResponse({
+                component, movement: contract.movement, question,
+                snapshot: scopeCustomerSnapshot(snapshot),
+                previous: (turnConversationContext || conversationContext)?.creationMemory,
+                metrics: snapshotQueryMetrics,
+                contactsAllowed: (permissionGranted(permissions, "contactos.read") || permissionGranted(permissions, "contactos.read_all")) &&
+                  snapshot.permissions?.canReadContacts !== false && contractRules.scope?.contactSearchAllowed !== false,
+                opportunitiesAllowed: (permissionGranted(permissions, "oportunidades.read") || permissionGranted(permissions, "oportunidades.read_all")) &&
+                  snapshot.permissions?.canReadOpportunities !== false && contractRules.scope?.opportunitySearchAllowed !== false,
+              });
+              return {
+                response, qualityTrace: { toolsUsed: [], diagnostics: { creation: {
+                  status: response.creationMetadata?.status || "clarification",
+                  prepared: response.operations.length, persisted: false,
+                } } }, channelIntentRouting: null,
+              };
+            }
+            if (component.category === "query.field_value" &&
+                (!CUSTOMER_RECORD_FIELDS[component.object] || !component.requestedFields?.length ||
+                  !component.requestedFields.some((field) => CUSTOMER_RECORD_FIELDS[component.object].includes(field)))) {
+              const missingField = CUSTOMER_RECORD_FIELDS[component.object] && !component.requestedFields?.length;
+              return {
+                response: {
+                  answer: missingField
+                    ? "¿Qué dato específico quieres consultar? Indica el campo; no voy a asumir que etapa, estado comercial y activación significan lo mismo."
+                    : "La consulta de campos específicos solo admite los campos definidos de oportunidades y contactos. El dato solicitado no está soportado; no lo sustituí por otro ni consulté fuentes externas.",
+                  responseType: missingField ? "clarification" : "informational",
+                  ...(!missingField ? { capabilityStatus: "unavailable" } : {}),
+                  operations: [], evidence: [], recommendedActions: [], pendingItems: [],
+                },
+                qualityTrace: { toolsUsed: [], diagnostics: { fieldValue: { status: missingField ? "clarification" : "unsupported" } } },
                 channelIntentRouting: null,
+              };
+            }
+            if (["query.document_content", "report.document_evidence"].includes(component.category)) {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const isReport = component.category === "report.document_evidence";
+              const documentDependencies = dependencies.filter((item) => item.documentMemory);
+              const dependencyMemory = documentDependencies.length === 1
+                ? validateCustomerDocumentMemory(documentDependencies[0].documentMemory, scoped) : null;
+              const reportMemory = validateCustomerDocumentReportMemory(
+                (turnConversationContext || conversationContext)?.documentReportMemory, scoped);
+              const report = isReport ? resolveCustomerDocumentReport({
+                component, movement: contract.movement, previous: reportMemory, snapshot: scoped,
+                referenceMaterial: componentReferenceMaterial, sourceMemory: dependencyMemory,
+              }) : null;
+              const used = [];
+              let documentSource = null;
+              const finish = async (response) => {
+                let result = response;
+                if (isReport && report?.mode === "prepare" && response.documentReportMetadata &&
+                    response.responseType === "informational") {
+                  if (!contractRules.operationPolicy.allowedKinds.includes("stage_answer")) {
+                    result = { ...response, answer: `${response.answer}\nLa preparación de respuestas de etapa está deshabilitada en este canal.`,
+                      capabilityStatus: "disabled" };
+                  } else if (!permissions.has("oportunidades.update") || !permissions.has("mi_coach.execute")) {
+                    result = { ...response, answer: `${response.answer}\nTu perfil no permite preparar respuestas de etapa.`,
+                      responseType: "error", capabilityStatus: "permission_denied" };
+                  } else {
+                    const prepared = await createCustomerAccountAdapter({
+                      user, snapshot, authoritativeIntent: {
+                        intent: "opportunity_guidance", confidence: 0.95, requiresClarification: false,
+                      },
+                      contractComponent: { ...component, text: report.claim,
+                        reference: response.documentReportMetadata.opportunityName ||
+                          report.documentSpec.opportunityReference || component.reference,
+                        documentReportSpec: { questionReference: report.memory.questionReference } },
+                      contractMovement: contract.movement, documentReportEvidence: {
+                        ...response.documentReportMetadata, questionCandidates: report.memory.questionCandidates || [],
+                      },
+                      turnBudget: budget, channelIntentConfiguration: contractIntents,
+                      snapshotQueryMetrics, agents, jobId, executionTrace, traceParentSpanId: turnTraceParentSpanId,
+                      conversationContext: turnConversationContext || conversationContext,
+                    }).runTurn({
+                      question: report.claim, history, context: {
+                        ...componentContext, opportunityId: response.documentReportMemory?.documentMemory?.opportunityId ||
+                          componentContext.opportunityId,
+                      },
+                      conversationContext: turnConversationContext || conversationContext,
+                    });
+                    assertTime();
+                    result = { ...response, ...prepared.response,
+                      answer: `${response.answer}\n${prepared.response.answer}`,
+                      evidence: [...response.evidence, ...(prepared.response.evidence || [])],
+                      ...(prepared.response.documentReportCandidates ? {
+                        documentReportMemory: { ...response.documentReportMemory, questionCandidates: prepared.response.documentReportCandidates },
+                      } : {}),
+                    };
+                    used.push(...(prepared.qualityTrace?.toolsUsed || []));
+                  }
+                }
+                return {
+                  response: { ...result, ...(isReport && !Object.hasOwn(result, "documentReportMemory") ? {
+                    documentReportMemory: report?.memory || null,
+                  } : {}), ...(documentSource === "provided_document" ? { contentSource: "user_provided" } : {}) },
+                  qualityTrace: { toolsUsed: used, diagnostics: {
+                    answerGeneration: { source: isReport ? "document_report" : "document_query" },
+                    documentCoverage: result.documentCoverage || null,
+                    ...(isReport ? { documentReport: result.documentReportMetadata || null } : {}),
+                  } }, channelIntentRouting: null,
+                };
+              };
+              const stop = (answer, responseType = "error") => finish({
+                answer, responseType, operations: [], evidence: [], inferences: [], pendingItems: [], recommendedActions: [],
+              });
+              if (isReport && documentDependencies.length > 1) return stop("Hay varias fuentes documentales de origen. Indica cuál deseas contrastar.", "clarification");
+              if (report?.error) return stop(report.error, report.responseType);
+              if (isReport && !reportMemory && (turnConversationContext || conversationContext)?.documentReportMemory &&
+                  !["new_request", "change_focus"].includes(contract.movement) &&
+                  !component.documentReportSpec?.claim && !component.documentSpec?.opportunityReference) {
+                return stop("El reporte anterior ya no es verificable con los permisos y referencias actuales. Indica una fuente autorizada y la afirmación; no reutilizaré un contraste revocado.", "clarification");
+              }
+              const assertTime = () => {
+                if (Date.now() >= budget.deadlineAt) throw Object.assign(
+                  new Error("La consulta documental excedió el tiempo permitido"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" },
+                );
+              };
+              assertTime();
+              if (isReport && (Number(componentContext.accountId) !== Number(scoped.account.id) ||
+                  !permissionGranted(permissions, "cuentas.read"))) return stop("No hay una cuenta autorizada para recibir el reporte.");
+              if (isReport && report.source === "unavailable") {
+                if (!contractIntents.some((item) => item.code === "account_overview" && item.enabled !== false)) return stop("La recepción de reportes está deshabilitada en este canal.");
+                return finish(await contrastCustomerDocumentReport({
+                  report, user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
+                }));
+              }
+              const previous = validateCustomerDocumentMemory(
+                isReport ? report.memory.documentMemory || dependencyMemory :
+                  dependencyMemory || (turnConversationContext || conversationContext)?.documentMemory, scoped);
+              const documentComponent = isReport ? {
+                ...component, object: report.source === "quotation" ? component.object : "document",
+                documentSpec: { ...report.documentSpec,
+                  source: report.source === "quotation" ? "quotation" : "provided_document" },
+              } : component;
+              const request = resolveCustomerDocumentRequest({
+                component: documentComponent, movement: dependencyMemory || (isReport && contract.movement === "request_rationale") ? "continue" : contract.movement,
+                previous, snapshot: scoped,
+                context: componentContext, referenceMaterial: componentReferenceMaterial, businessRules: contractRules,
+              });
+              if (request.error) return stop(request.error, request.responseType);
+              documentSource = request.source;
+              const intent = contractIntents.find((item) =>
+                item.code === (request.source === "provided_document" ? "account_overview" : "quotation_query"));
+              if (!intent || intent.enabled === false) return finish({
+                answer: "Reconocí la consulta documental, pero esta fuente está deshabilitada por la configuración del canal.",
+                responseType: "informational", capabilityStatus: "disabled",
+                operations: [], evidence: [], inferences: [], pendingItems: [], recommendedActions: [],
+              });
+              request.question = component.text;
+              assertTime();
+              if (request.source === "provided_document") {
+                const response = await (isReport ? contrastCustomerDocumentReport : answerCustomerDocument)({
+                  request, report, user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
+                });
+                assertTime();
+                return finish(response);
+              }
+              if (!permissionGranted(permissions, "oportunidades.read") || !hasQuotationReadAccess(user) ||
+                  scoped.permissions?.canReadOpportunities === false ||
+                  contractRules.scope?.opportunitySearchAllowed === false || contractRules.scope?.quotationSearchAllowed === false ||
+                  !intent?.allowedTools.includes("getOpportunityQuotation") || !intent.allowedTools.includes("searchOpportunities")) {
+                return stop("Tu perfil o la configuración del canal no permiten leer esta cotización comercial.");
+              }
+              if (snapshotQueryMetrics.some((metric) =>
+                ["opportunities_active", "opportunities_inactive"].includes(metric.source) && metric.errorCode)) {
+                return stop("Falló una lectura necesaria para verificar la oportunidad. No se interpreta como ausencia de cotizaciones.");
+              }
+              const read = async (label, cost, execute) => {
+                assertTime();
+                if (budget.remainingReadQueries < cost) throw Object.assign(
+                  new Error("No hay presupuesto suficiente para la lectura documental"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" },
+                );
+                budget.remainingReadQueries -= cost;
+                used.push("getOpportunityQuotation");
+                const result = executionTrace ? await executionTrace.span({
+                  from: "B7", to: "B8", label, parentSpanId: turnTraceParentSpanId,
+                  input: { opportunityId: request.opportunity.id, source: "authorized_quotation" },
+                }, execute, () => ({ completed: true })) : await execute();
+                assertTime();
+                return result;
+              };
+              const listing = await read("Resolver cotizaciones autorizadas", 1, () => listAuthorizedCoachQuotations({
+                user, accountId: scoped.account.id, opportunityId: request.opportunity.id,
+                quotationReference: component.listPosition > 0 ? "" :
+                  request.quotationReference || (request.previous?.quotationId ? String(request.previous.quotationId) : ""),
               }));
+              const selection = selectCustomerQuotation({ request, listing, listPosition: component.listPosition });
+              if (selection.response) return finish(isReport ? {
+                ...selection.response, documentMemory: undefined,
+                documentReportMemory: { ...report.memory, documentMemory: selection.response.documentMemory },
+              } : selection.response);
+              request.selectedQuotationId = selection.selected.quotationId;
+              if (!request.versionNumber) request.expectedLatestVersionId = selection.selected.versionId;
+              const quotation = await read("Leer versión comercial autorizada", 3, () => getAuthorizedCoachQuotationContent({
+                user, accountId: scoped.account.id, opportunityId: request.opportunity.id,
+                quotationId: selection.selected.quotationId, versionNumber: request.versionNumber, commercialOnly: true,
+              }));
+              const response = await (isReport ? contrastCustomerDocumentReport : answerCustomerDocument)({
+                request, report, quotation, user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
+              });
+              assertTime();
+              return finish({
+                ...response,
+                ...(response.documentMemory ? { entities: {
+                  accountId: scoped.account.id, opportunityId: request.opportunity.id,
+                } } : {}),
+              });
             }
             if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries <= 0) {
               throw Object.assign(new Error("Se alcanzó el límite de verificación del turno"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+            }
+            if (component.category === "guidance.scenario_analysis") {
+              const scoped = scopeCustomerSnapshot(snapshot), memory = turnConversationContext || conversationContext;
+              const previous = validateCustomerScenarioMemory(memory?.scenarioMemory, scoped);
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: "deterministic_scenario" }, scenarioMetadata: response.scenarioMetadata,
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification", extra = {}) => finish({
+                answer, responseType, operations: [], evidence: [], recommendedActions: [], inferences: [], pendingItems: [],
+                ...(responseType === "informational" ? { capabilityStatus: "unavailable" } : {}), ...extra,
+              });
+              const patch = customerScenarioSpecPatch(component.scenarioSpec);
+              const sourceLists = dependencies.filter((item) => item.recordList);
+              if (patch.set === "previous_list" && sourceLists.length > 1) return stop("Hay varios listados de origen. Indica uno o los nombres; no elegiré un conjunto arbitrario.");
+              if (component.explicitAction) return stop("Simular no autoriza cambios. Separa la solicitud de escritura y confírmala en el flujo autorizado.");
+              if (!previous && memory?.scenarioMemory && !["new_request", "change_focus"].includes(contract.movement) && !patch.set && !patch.references?.length && patch.mode !== "reset") {
+                return stop("El escenario anterior ya no es verificable. Indica un conjunto nuevo; no lo ampliaré por omisión.");
+              }
+              const request = resolveCustomerScenarioRequest({
+                component, movement: contract.movement, previous, previousList: sourceLists.length === 1 ? sourceLists[0].recordList : memory?.recordList,
+                snapshot: scoped, context: componentContext, now: turnNow,
+              });
+              if (request.error) return stop(request.error, request.responseType, request.previous ? { scenarioMemory: request.previous } : {});
+              if (request.reset) return stop("Se abandonó el escenario y se eliminaron sus supuestos del contexto activo. Los datos reales del CRM no cambiaron; la próxima consulta se verificará de nuevo.", "informational", { scenarioMemory: null, capabilityStatus: "supported" });
+              const intent = contractIntents.find((item) => item.code === "opportunity_query" && item.enabled !== false);
+              if (!permissionGranted(permissions, "oportunidades.read") || !permissionGranted(permissions, "cuentas.read") ||
+                  scoped.permissions?.canReadOpportunities === false || contractRules.scope?.opportunitySearchAllowed === false ||
+                  !intent?.allowedTools.includes("searchOpportunities")) return stop("No tienes permiso o alcance para simular oportunidades.", "error");
+              if (!loadScenarioBasis) return stop("La lectura autorizada de escenarios no está conectada.", "error");
+              if (budget.remainingReadQueries < 3) return stop("No hay presupuesto suficiente para verificar cuenta, gobierno y conjunto completo.", "error");
+              budget.remainingReadQueries -= 3;
+              const execute = () => loadScenarioBasis({ signal: AbortSignal.timeout(Math.max(1, budget.deadlineAt - Date.now())) });
+              const data = executionTrace ? await executionTrace.span({
+                from: "B7", to: "B8", label: "Leer base real autorizada para simulación", parentSpanId: turnTraceParentSpanId,
+                input: { set: request.spec.set },
+              }, execute, (data) => ({ opportunities: data.opportunities.length })) : await execute();
+              if (Date.now() >= budget.deadlineAt) return stop("La simulación excedió el tiempo permitido; no se presenta como completada.", "error");
+              const result = buildCustomerScenarioResponse({ request, data });
+              if (Date.now() >= budget.deadlineAt) return stop("La simulación excedió el tiempo permitido; no se presenta como completada.", "error");
+              return finish(result, ["readOpportunityScenarioBasis"]);
+            }
+            if (component.category === "guidance.trend_analysis") {
+              const scoped = scopeCustomerSnapshot(snapshot), memory = turnConversationContext || conversationContext;
+              const previous = validateCustomerTrendMemory(memory?.trendMemory, scoped);
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: "deterministic_trend" }, trendMetadata: response.trendMetadata,
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification") => finish({
+                answer, responseType, operations: [], evidence: [], recommendedActions: [], inferences: [], pendingItems: [],
+                ...(responseType === "informational" ? { capabilityStatus: "unavailable" } : {}),
+              });
+              if (!previous && memory?.trendMemory && !["new_request", "change_focus"].includes(contract.movement) &&
+                  !customerTrendSpecPatch(component.trendSpec).opportunityReference && !component.reference) {
+                return stop("El análisis anterior ya no es verificable. Indica una solicitud nueva; no ampliaré su conjunto por omisión.");
+              }
+              const request = resolveCustomerTrendRequest({
+                component, movement: contract.movement, previous, snapshot: scoped, context: componentContext,
+                now: turnNow, timezone: snapshot.businessTimezone || config.app.businessTimezone,
+              });
+              if (request.error) return stop(request.error, request.responseType);
+              if (component.listPosition > 0) return stop("Las posiciones de una serie temporal no identifican oportunidades. Indica el nombre para consultar su recorrido; no elegiré una por suposición.");
+              const intent = contractIntents.find((item) => item.code === "opportunity_query" && item.enabled !== false);
+              if (!permissionGranted(permissions, "oportunidades.read") || !permissionGranted(permissions, "cuentas.read") ||
+                  scoped.permissions?.canReadOpportunities === false || contractRules.scope?.opportunitySearchAllowed === false ||
+                  !intent?.allowedTools.includes("searchOpportunities")) return stop("No tienes permiso o alcance para analizar historia de oportunidades.", "error");
+              if (!loadTrendHistory) return stop("La fuente de historia comercial aún no está instalada o conectada.", "error");
+              if (budget.remainingReadQueries < 6) return stop("No hay presupuesto suficiente para verificar auditoría, estado base, catálogos y conjunto autorizado.", "error");
+              budget.remainingReadQueries -= 6;
+              const execute = () => loadTrendHistory({ request, signal: AbortSignal.timeout(Math.max(1, budget.deadlineAt - Date.now())) });
+              const data = executionTrace ? await executionTrace.span({
+                from: "B7", to: "B8", label: "Leer historia comercial autorizada", parentSpanId: turnTraceParentSpanId,
+                input: { metric: request.spec.metric, period: request.range },
+              }, execute, (data) => ({ opportunities: data.opportunities.length, events: data.events.length })) : await execute();
+              if (Date.now() >= budget.deadlineAt) return stop("El análisis histórico excedió el tiempo permitido; no se presenta como completado.", "error");
+              const result = buildCustomerTrendResponse({ request, data });
+              if (Date.now() >= budget.deadlineAt) return stop("El análisis histórico excedió el tiempo permitido; no se presenta como completado.", "error");
+              return finish(result, ["readOpportunityCommercialHistory"]);
+            }
+            if (component.category === "guidance.comparison") {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const memory = turnConversationContext || conversationContext;
+              const contactIntent = contractIntents.find((item) => item.code === "contact_query" && item.enabled !== false);
+              const contactsAllowed = permissionGranted(permissions, "contactos.read") &&
+                scoped.permissions?.canReadContacts === true && contractRules.scope?.contactSearchAllowed !== false &&
+                Boolean(contactIntent?.allowedTools.includes("searchContacts"));
+              const comparisonDependencies = dependencies.filter((item) => item.comparisonMemory);
+              const listDependencies = dependencies.filter((item) => item.recordList);
+              const previous = validateCustomerComparisonMemory(comparisonDependencies.length === 1
+                ? comparisonDependencies[0].comparisonMemory : memory?.comparisonMemory,
+              { ...scoped, permissions: { ...scoped.permissions, canReadContacts: contactsAllowed } });
+              const previousList = listDependencies.length === 1 ? listDependencies[0].recordList : memory?.recordList;
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: "deterministic_comparison" }, comparisonMetadata: response.comparisonMetadata,
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification", extra = {}) => finish({
+                answer, responseType, operations: [], evidence: [], recommendedActions: [], inferences: [], pendingItems: [],
+                ...(responseType === "informational" ? { capabilityStatus: "unavailable" } : {}), ...extra,
+              });
+              const intent = contractIntents.find((item) => item.code === "opportunity_query" && item.enabled !== false);
+              if (!permissionGranted(permissions, "oportunidades.read") || scoped.permissions?.canReadOpportunities === false ||
+                  contractRules.scope?.opportunitySearchAllowed === false || !intent?.allowedTools.includes("searchOpportunities")) {
+                return stop("Tu perfil o la configuración del canal no permiten consultar oportunidades para compararlas.", "error");
+              }
+              const patch = customerComparisonSpecPatch(component.comparisonSpec);
+              if ((comparisonDependencies.length > 1 || listDependencies.length > 1) && !patch.references?.length) {
+                return stop("Hay varios conjuntos en las solicitudes previas. Indica los nombres o una sola comparación de origen; no elegiré una arbitrariamente.");
+              }
+              if (!previous && memory?.comparisonMemory && !["new_request", "change_focus"].includes(contract.movement) &&
+                  !Object.hasOwn(patch, "set") && !Object.hasOwn(patch, "references") && !Object.hasOwn(patch, "positions")) {
+                return stop("La comparación anterior ya no es verificable. Indica un conjunto nuevo; no lo sustituiré por toda la cuenta.");
+              }
+              const request = resolveCustomerComparisonRequest({
+                component, movement: comparisonDependencies.length || listDependencies.length ? "continue" : contract.movement,
+                previous, previousList, snapshot: scoped, context: componentContext,
+              });
+              if (request.error) return stop(request.error, request.responseType, previous ? { comparisonMemory: previous } : {});
+              if (request.relationshipContactId && !contactsAllowed) {
+                return stop("No puedo revalidar el conjunto relacionado sin permiso y alcance de lectura de contactos.", "error");
+              }
+              const wantsContact = request.spec.dimensions.includes("associatedContact");
+              const specifications = [
+                { toolName: "searchOpportunities", args: { accountId: scoped.account.id, includeDetails: true,
+                  applyDefaultFilters: false, includeRelationships: wantsContact } },
+                ...(wantsContact && contactsAllowed ? [{ toolName: "searchContacts", args: {
+                  accountId: scoped.account.id, includeDetails: true, includeRelationships: true,
+                } }] : []),
+              ];
+              if (budget.remainingReadQueries < specifications.length) return stop("No hay presupuesto suficiente para completar la comparación. Divide la solicitud o reintenta.", "error");
+              const coachSnapshot = buildCustomerCoachSnapshot(scoped);
+              const reads = specifications.map(({ toolName, args }) => {
+                budget.remainingReadQueries -= 1;
+                const execute = () => executeCustomerReadTool({ toolName, args, snapshot: coachSnapshot, businessRules: contractRules });
+                return executionTrace ? executionTrace.spanSync({
+                  from: "B7", to: "B8", label: `Verificar comparación: ${toolName}`, parentSpanId: turnTraceParentSpanId,
+                  input: { toolName, args },
+                }, execute, (read) => ({ failed: Boolean(read.error) })) : execute();
+              });
+              const result = buildCustomerComparisonResponse({
+                request, snapshot: scoped, read: reads[0], contactsRead: reads[1], contactsAllowed, metrics: snapshotQueryMetrics,
+              });
+              if (Date.now() >= budget.deadlineAt) return stop("La comparación excedió el tiempo permitido. No se presenta como completada.", "error");
+              return finish(result, specifications.map((item) => item.toolName));
+            }
+            if (component.category === "guidance.prioritization") {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const memory = turnConversationContext || conversationContext;
+              const priorityDependencies = dependencies.filter((item) => item.priorityMemory);
+              const listDependencies = dependencies.filter((item) => item.recordList);
+              const previous = validateCustomerPriorityMemory(priorityDependencies.length === 1
+                ? priorityDependencies[0].priorityMemory : memory?.priorityMemory, scoped);
+              const previousList = listDependencies.length === 1 ? listDependencies[0].recordList : memory?.recordList;
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: "deterministic_prioritization" }, priorityMetadata: response.priorityMetadata,
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification") => finish({
+                answer, responseType, operations: [], evidence: [], recommendedActions: [], inferences: [], pendingItems: [],
+              });
+              const intent = contractIntents.find((item) => item.code === "opportunity_query" && item.enabled !== false);
+              if (!permissionGranted(permissions, "oportunidades.read") || scoped.permissions?.canReadOpportunities === false ||
+                  contractRules.scope?.opportunitySearchAllowed === false || !intent?.allowedTools.includes("searchOpportunities")) {
+                return stop("Tu perfil o la configuración del canal no permiten consultar oportunidades para priorizarlas.", "error");
+              }
+              const patch = customerPrioritySpecPatch(component.prioritySpec);
+              if ((priorityDependencies.length > 1 || listDependencies.length > 1) &&
+                  !patch.references?.length && !component.reference && patch.set !== "collection") {
+                return stop("Hay varios conjuntos previos. Indica un único listado o los nombres para priorizar; no elegiré uno arbitrariamente.");
+              }
+              if (!previous && memory?.priorityMemory &&
+                  !["new_request", "change_focus"].includes(contract.movement) &&
+                  !Object.hasOwn(patch, "set") && !Object.hasOwn(patch, "references") && !component.reference) {
+                return stop("El conjunto del ranking anterior ya no es verificable. Indica un conjunto nuevo o vuelve a listar; no lo ampliaré a toda la cuenta.");
+              }
+              const request = resolveCustomerPriorityRequest({
+                component, movement: priorityDependencies.length || listDependencies.length ? "continue" : contract.movement,
+                previous, previousList, snapshot: scoped, context: componentContext,
+              });
+              if (request.error) return stop(request.error, request.responseType);
+              if (request.sourceList?.relationshipContactId &&
+                  (!permissionGranted(permissions, "contactos.read") || contractRules.scope?.contactSearchAllowed === false)) {
+                return stop("No puedo revalidar el conjunto asociado sin permiso de lectura de contactos.", "error");
+              }
+              const args = { accountId: scoped.account.id, includeDetails: true, applyDefaultFilters: false };
+              budget.remainingReadQueries -= 1;
+              const execute = () => executeCustomerReadTool({
+                toolName: "searchOpportunities", args, snapshot: buildCustomerCoachSnapshot(scoped), businessRules: contractRules,
+              });
+              const read = executionTrace ? executionTrace.spanSync({
+                from: "B7", to: "B8", label: "Verificar conjunto para priorización", parentSpanId: turnTraceParentSpanId,
+                input: { toolName: "searchOpportunities", args },
+              }, execute, (result) => ({ failed: Boolean(result.error) })) : execute();
+              const response = buildCustomerPriorityResponse({
+                request, snapshot: scoped, read, metrics: snapshotQueryMetrics, now: turnNow,
+                timezone: snapshot.businessTimezone || config.app.businessTimezone,
+              });
+              if (Date.now() >= budget.deadlineAt) return stop("La priorización excedió el tiempo permitido. No se presenta como completada.", "error");
+              return finish(response, ["searchOpportunities"]);
+            }
+            if (component.category === "query.account_summary") {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: { answerGeneration: { source: "deterministic_account_summary" } } },
+                channelIntentRouting: null,
+              });
+              const stop = (answer) => finish({ answer, responseType: "error", operations: [], evidence: [] });
+              if (!scoped.account?.id || Number(componentContext.accountId) !== Number(scoped.account.id) ||
+                  !permissionGranted(permissions, "cuentas.read") || !permissionGranted(permissions, "oportunidades.read") ||
+                  scoped.permissions?.canReadOpportunities === false || contractRules.scope?.opportunitySearchAllowed === false) {
+                return stop("No puedo consultar el resumen comercial con el alcance y permisos actuales.");
+              }
+              const intent = contractIntents.find((item) => item.code === capability.intent && item.enabled !== false);
+              const tools = ["searchOpportunities"];
+              if (permissionGranted(permissions, "contactos.read") && scoped.permissions?.canReadContacts !== false &&
+                  contractRules.scope?.contactSearchAllowed !== false && intent?.allowedTools.includes("searchContacts")) tools.push("searchContacts");
+              if (!intent?.allowedTools.includes("searchOpportunities") || budget.remainingReadQueries < tools.length) {
+                return stop("No están disponibles las lecturas o el presupuesto necesarios para resumir la cuenta.");
+              }
+              const reads = tools.map((toolName) => {
+                budget.remainingReadQueries -= 1;
+                const args = { accountId: scoped.account.id, includeDetails: true, includeRelationships: true, applyDefaultFilters: false };
+                const execute = () => executeCustomerReadTool({
+                  toolName, args, snapshot: buildCustomerCoachSnapshot(scoped), businessRules: contractRules,
+                });
+                return executionTrace ? executionTrace.spanSync({
+                  from: "B7", to: "B8", label: `Resumir cuenta: ${toolName}`, parentSpanId: turnTraceParentSpanId,
+                  input: { toolName, args },
+                }, execute, (read) => ({ toolName, failed: Boolean(read.error) })) : execute();
+              });
+              if (reads.some((read) => read.error || !Array.isArray(read.result)) || Date.now() >= budget.deadlineAt) {
+                return stop("No pude completar las lecturas del resumen. No presentaré conteos vacíos como hechos de la cuenta.");
+              }
+              const opportunities = reads[0].result;
+              const contacts = reads.find((read) => read.toolName === "searchContacts")?.result;
+              const open = opportunities.filter((record) => record.commercialStatusCode === "en_proceso" &&
+                record.activationStatusCode === "activada" && record.lifecycle === "open");
+              const ranked = [...open].sort((a, b) => (b.amountUsd ?? -1) - (a.amountUsd ?? -1) || a.id - b.id);
+              const missingAmounts = open.filter((record) => record.amountUsd == null).length;
+              const pipeline = open.reduce((sum, record) => sum + (record.amountUsd ?? 0), 0);
+              const pendingAllowed = permissionGranted(permissions, "desarrollo_comercial.read") &&
+                scoped.permissions?.canReadOpportunityActivities !== false &&
+                contractIntents.some((item) => item.code === "account_activity_history" &&
+                  item.enabled !== false && item.allowedTools.includes("getOpportunityActivities"));
+              const pending = [];
+              let pendingComplete = false;
+              let pendingStatus = "no consultada";
+              if (pendingAllowed && budget.remainingReadQueries > 0 && Date.now() < budget.deadlineAt) {
+                const timezone = snapshot.businessTimezone || config.app.businessTimezone;
+                const request = resolveCustomerPendingRequest({
+                  component: { object: "account", reference: "", pendingSpec: {
+                    sources: ["opportunityActivities"], statuses: ["pending", "in_progress", "blocked"], limit: 50,
+                  } }, movement: "new_request", previous: null, snapshot: scoped,
+                  context: componentContext, now: turnNow, timezone, businessRules: contractRules,
+                });
+                if (request.error) return stop(request.error);
+                const historyIntent = contractIntents.find((item) => item.code === "account_activity_history" && item.enabled !== false);
+                const access = getCustomerHistorySourceAccess({ request, snapshot: scoped, permissions,
+                  intent: historyIntent, businessRules: contractRules });
+                if (access.every((item) => item.status === "available")) {
+                  budget.remainingReadQueries -= 1;
+                  const execute = () => loadHistorySnapshot
+                    ? loadHistorySnapshot({ sources: ["opportunityActivities"], request, signal: AbortSignal.timeout(Math.max(1, budget.deadlineAt - Date.now())) })
+                    : Promise.resolve({ snapshot: scoped, metrics: snapshotQueryMetrics });
+                  const loaded = executionTrace ? await executionTrace.span({
+                    from: "B7", to: "B8", label: "Consultar pendientes para resumen",
+                    parentSpanId: turnTraceParentSpanId, input: { sources: ["opportunityActivities"] },
+                  }, execute, (value) => ({ metrics: value.metrics })) : await execute();
+                  if (!validateCustomerPendingMemory(request.memory, loaded.snapshot)) {
+                    return stop("La cuenta o el alcance de pendientes ya no son verificables. Reintenta el resumen.");
+                  }
+                  const refreshedAccess = getCustomerHistorySourceAccess({ request, snapshot: loaded.snapshot, permissions,
+                    intent: historyIntent, businessRules: contractRules });
+                  const response = buildCustomerPendingResponse({
+                    request, snapshot: loaded.snapshot, metrics: loaded.metrics, access: refreshedAccess, timezone,
+                  });
+                  pendingComplete = response.responseType !== "error" && !response.activityHistory.metadata.partial;
+                  pendingStatus = response.responseType === "error" ? "falló la lectura de pendientes" :
+                    pendingComplete ? "lectura completa del alcance consultado" : "cobertura parcial o restringida";
+                  const ids = new Set(ranked.slice(0, 3).map((record) => record.id));
+                  for (const item of response.activityHistory.sections.flatMap((section) => section.items)) {
+                    if (ids.has(item.opportunityId)) pending.push({ name: item.opportunityName, title: item.title });
+                  }
+                  tools.push("getOpportunityActivities");
+                }
+              }
+              const associatedIds = new Set(ranked.slice(0, 3).map((record) => record.associatedContactId).filter(Boolean));
+              if (Date.now() >= budget.deadlineAt) return stop("La lectura del resumen excedió el tiempo permitido. No se presenta como completada.");
+              const relevantContacts = contacts ? [...contacts].sort((a, b) =>
+                Number(associatedIds.has(b.id)) - Number(associatedIds.has(a.id)) || a.id - b.id) : [];
+              const partial = snapshotQueryMetrics.some((metric) =>
+                ["opportunities_active", "opportunities_inactive", ...(contacts ? ["contacts"] : [])].includes(metric.source) &&
+                (metric.errorCode || metric.truncated !== false));
+              const callPreparation = /\b(?:antes de llamar|antes de la llamada|antes de mi llamada|prepararme para llamar|preparacion para la llamada)\b/.test(normalize(question));
+              const scopeItems = (scoped.collectionScopes?.opportunities || "").split(", ");
+              const includedStatuses = scopeItems.filter((item) => item.startsWith("incluye "))
+                .map((item) => item.replace("incluye ", ""));
+              const excludedStatuses = scopeItems.filter((item) => item.startsWith("excluye "))
+                .map((item) => item.replace("excluye ", ""));
+              const opportunityScope = [
+                includedStatuses.length ? `se incluyeron las oportunidades ${includedStatuses.join(" y ")}` : "",
+                excludedStatuses.length ? `se excluyeron las oportunidades ${excludedStatuses.join(" y ")}` : "",
+              ].filter(Boolean).join("; ");
+              const pendingSummary = pending.length
+                ? `Pendientes para revisar: ${pending.slice(0, 3).map((record) => `${record.name}: ${record.title}`).join("; ")}.`
+                : pendingComplete
+                  ? "No encontré actividades pendientes en las oportunidades revisadas."
+                  : "No pude confirmar si hay actividades pendientes porque la cobertura de esa consulta fue parcial.";
+              const points = [
+                `Cuenta: ${scoped.account.name}.${partial ? " La cobertura disponible es parcial." : ""}${opportunityScope ? ` En la consulta ${opportunityScope}.` : ""}`,
+                `Situación: ${open.length} oportunidades abiertas; el importe registrado suma ${formatUsd(pipeline)}${missingAmounts ? `. ${missingAmounts} no tienen importe informado` : ""}. No equivale a ventas realizadas.`,
+                `Oportunidades abiertas con mayor importe registrado: ${ranked.slice(0, 3).map((record) => `${record.name} (${record.amountUsd == null ? "importe no informado" : formatUsd(record.amountUsd)}; etapa ${record.stageName || "no informada"})`).join("; ") || "No encontré oportunidades abiertas en la consulta."}`,
+                contacts
+                  ? `${contacts.length} contactos visibles. Asociados a esas oportunidades: ${relevantContacts.slice(0, 3).map((record) => `${record.name}${record.positionTitle ? ` (${record.positionTitle})` : ""}`).join("; ") || "no se encontró un contacto asociado"}. La relación y el cargo no confirman quién puede firmar.`
+                  : "No pude consultar los contactos con las herramientas y permisos disponibles.",
+                pendingAllowed
+                  ? `${pendingSummary} Sugerencia: confirma el resultado y acuerda con el cliente el siguiente paso.`
+                  : "No pude consultar los pendientes. Antes de llamar, confirma el último resultado y el siguiente paso con el responsable.",
+              ];
+              if (callPreparation) {
+                const priority = ranked[0];
+                const priorityContact = contacts?.find((record) => Number(record.id) === Number(priority?.associatedContactId));
+                const followUp = pending.find((record) => record.name === priority?.name) || pending[0];
+                const brief = [
+                  `Antes de llamar a ${scoped.account.name}:`,
+                  `- Situación: ${open.length} oportunidades abiertas, con un importe registrado de ${formatUsd(pipeline)}${missingAmounts ? `; ${missingAmounts} no tienen importe informado` : ""}. No equivale a ventas realizadas.`,
+                  priority ? `- Mayor oportunidad por importe registrado: ${priority.name} (${formatUsd(priority.amountUsd)}; etapa ${priority.stageName || "no informada"}).` : "- No encontré oportunidades abiertas en la consulta.",
+                  followUp ? `- Pendiente: ${followUp.name}: ${followUp.title}.` : pendingComplete
+                    ? "- No encontré actividades pendientes en las oportunidades revisadas."
+                    : "- No pude confirmar los pendientes porque la cobertura de la consulta fue parcial.",
+                  priorityContact ? `- Contacto asociado: ${priorityContact.name}${priorityContact.positionTitle ? ` (${priorityContact.positionTitle})` : ""}. El registro no confirma quién puede firmar.` : "",
+                  "- Siguiente paso sugerido: confirma el resultado del pendiente y acuerda con el cliente qué hacer después.",
+                  partial || !pendingComplete ? "La cobertura de algunos datos es parcial." : "",
+                ].filter(Boolean).join("\n");
+                return finish({
+                  answer: brief, responseType: "informational", operations: [],
+                  recommendedActions: ["Confirma el resultado del pendiente y acuerda la próxima acción con el cliente."],
+                  pendingItems: pending.map((record) => `${record.name}: ${record.title}`), inferences: [],
+                  evidence: tools.map((tool) => `${tool}: lectura autorizada de la cuenta ${scoped.account.id}.`),
+                  accountSummary: { summaryMode: "call_brief", partial, pendingComplete, pendingStatus,
+                    openCount: open.length, knownPipelineUsd: pipeline },
+                  entities: { accountId: Number(scoped.account.id) },
+                }, tools);
+              }
+              return finish({
+                answer: points.map((point, index) => `${index + 1}. ${point}`).join("\n"), responseType: "informational",
+                operations: [], recommendedActions: [], pendingItems: [], inferences: [],
+                evidence: tools.map((tool) => `${tool}: lectura autorizada de la cuenta ${scoped.account.id}.`),
+                accountSummary: { summaryMode: "five_points", pointCount: 5, partial, pendingComplete, pendingStatus, openCount: open.length, knownPipelineUsd: pipeline },
+                entities: { accountId: Number(scoped.account.id) },
+              }, tools);
+            }
+            if (component.category === "query.stage_readiness") {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: "deterministic_stage_readiness" },
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "error") => finish({
+                answer, responseType, operations: [], evidence: [], pendingItems: [], recommendedActions: [], inferences: [],
+              });
+              if (component.stageReadinessSpec?.purpose === "quotation_need_principle") {
+                return finish({
+                  answer: "No. Una cotización documenta una propuesta comercial; no sustituye una respuesta respaldada sobre la necesidad, iniciativa, problema o interés concreto del cliente. Debe documentarse esa necesidad y su evidencia en la pregunta de etapa correspondiente. Esto explica la regla del proceso, no verifica una oportunidad concreta ni guarda respuestas o cambia su etapa.",
+                  responseType: "informational", operations: [], evidence: [], inferences: [], pendingItems: [], recommendedActions: [],
+                  stageReadinessPrinciple: "quotation_does_not_substitute_need",
+                });
+              }
+              if (!scoped.account?.id || Number(componentContext.accountId) !== Number(scoped.account.id)) {
+                return stop("Selecciona una cuenta autorizada para consultar los requisitos de etapa.", "clarification");
+              }
+              if (!permissionGranted(permissions, "cuentas.read") || !permissionGranted(permissions, "oportunidades.read") ||
+                  !permissionGranted(permissions, "desarrollo_comercial.read") ||
+                  scoped.permissions?.canReadOpportunities === false ||
+                  contractRules.scope?.opportunitySearchAllowed === false) {
+                return stop("Tu perfil o la configuración del canal no permiten consultar la preparación de esta oportunidad.");
+              }
+              const intent = contractIntents.find((item) => item.code === capability.intent && item.enabled !== false);
+              const tools = ["getOpportunity", "getOpportunityReadiness"];
+              if (!tools.every((tool) => intent?.allowedTools.includes(tool))) {
+                return stop("La configuración del canal no permite las lecturas necesarias para consultar los requisitos de etapa.");
+              }
+              const records = opportunityRecords(scoped).filter((record) =>
+                Number(record.accountId) === Number(scoped.account?.id));
+              const reference = normalizeCustomerSearchText(component.reference || "");
+              const matches = reference ? records.filter((record) =>
+                normalizeCustomerSearchText(record.name) === reference) : [];
+              const fallbackId = contractRules.serverPolicy?.selectedOpportunityFallback === "require_explicit" &&
+                ["new_request", "change_focus"].includes(contract.movement) ? null : componentContext.opportunityId;
+              const opportunity = reference ? (matches.length === 1 ? matches[0] : null) :
+                records.find((record) => Number(record.id) === Number(fallbackId));
+              if (!opportunity) return stop("Indica una única oportunidad autorizada para consultar sus requisitos de etapa.", "clarification");
+              if (!Array.isArray(opportunity.stageQuestions) || !Array.isArray(opportunity.currentStage?.criteria) ||
+                  !Array.isArray(opportunity.workspace?.criteria)) {
+                return stop("No se recuperaron las preguntas o evaluaciones de la etapa. No puedo afirmar qué requisitos están pendientes.");
+              }
+              if (budget.remainingReadQueries < tools.length || Date.now() >= budget.deadlineAt) {
+                return stop("No hay presupuesto suficiente para verificar la preparación de etapa. Reintenta o divide la solicitud.");
+              }
+              const coachSnapshot = buildCustomerCoachSnapshot(scoped);
+              const reads = tools.map((toolName) => {
+                budget.remainingReadQueries -= 1;
+                const args = { accountId: scoped.account.id, opportunityId: opportunity.id };
+                const execute = () => executeCustomerReadTool({
+                  toolName, args, snapshot: coachSnapshot, businessRules: contractRules,
+                  buildReadiness: (record) => buildStageReadiness(record, { currentUserId: Number(user?.id), now: turnNow }),
+                });
+                return executionTrace ? executionTrace.spanSync({
+                  from: "B7", to: "B8", label: `Consultar preparación: ${toolName}`,
+                  parentSpanId: turnTraceParentSpanId, input: { toolName, args },
+                }, execute, (read) => ({ toolName, failed: Boolean(read.error) })) : execute();
+              });
+              if (reads.some((read) => read.error || read.queryFailed || !read.result) || Date.now() >= budget.deadlineAt) {
+                return stop("No pude leer de forma completa la preparación de esta oportunidad. No significa que no tenga requisitos pendientes.");
+              }
+              const readiness = reads[1].result;
+              const questions = readiness.pendingItems.filter((item) => item.evidence.some((entry) =>
+                entry.label === "Pregunta definida por el proceso comercial"));
+              const criteria = readiness.pendingItems.filter((item) => !questions.includes(item));
+              const readinessSummary = {
+                remain: "El proceso todavía no recomienda avanzar.",
+                advance: "La información revisada respalda el avance.",
+                advance_with_caution: "Se puede avanzar, pero conviene atender los puntos de atención.",
+              }[readiness.recommendation] || "Revisa la recomendación de avance en Oportunidades.";
+              const lines = [`${opportunity.name} — etapa actual: ${readiness.currentStage.name}.`,
+                questions.length ? "Para avanzar, hace falta responder:" : "Preguntas:",
+                ...(questions.length ? questions.map((item) => `- ${item.title} — ${item.detail}`) : ["- No hay preguntas sin respuesta en la lectura actual."]),
+                criteria.length ? "También faltan estos requisitos del proceso:" : "Requisitos revisados:",
+                ...(criteria.length ? criteria.map((item) => `- ${item.title} — ${item.detail}`) : ["- No hay criterios pendientes en la lectura actual."]),
+                ...(readiness.confirmedProgress.length ? ["Lo que ya está anotado:", ...readiness.confirmedProgress.map((item) => `- ${item.title} — ${item.detail}`)] : []),
+                ...(readiness.risks.length ? ["Puntos de atención:", ...readiness.risks.map((item) => `- ${item.title} — ${item.detail}`)] : []),
+                readinessSummary,
+                "Confirma con el cliente qué harán después antes de darlo por acordado.",
+                "Esta consulta no guarda respuestas ni cambia la etapa."];
+              return finish({
+                answer: lines.join("\n"), responseType: "informational", operations: [], recommendedActions: [], inferences: [],
+                pendingItems: readiness.pendingItems.map((item) => item.title),
+                stageReadiness: { opportunityId: Number(opportunity.id), currentStage: readiness.currentStage,
+                  confirmedProgress: readiness.confirmedProgress, pendingItems: readiness.pendingItems,
+                  risks: readiness.risks, recommendation: readiness.recommendation, rationale: readiness.rationale,
+                  unansweredQuestions: questions, pendingCriteria: criteria },
+                evidence: [`getOpportunity ${opportunity.id} y getOpportunityReadiness consultados en la cuenta ${scoped.account.id}.`],
+                entities: { accountId: Number(scoped.account.id), opportunityId: Number(opportunity.id) },
+                confidence: "high",
+              }, tools);
+            }
+            if (component.category === "query.opportunity_notes" ||
+                component.category === "action.record_note") {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const noteRead = component.category === "query.opportunity_notes";
+              const finish = (response, toolsUsed = []) => ({
+                response,
+                qualityTrace: {
+                  toolsUsed,
+                  diagnostics: {
+                    opportunityNotes: {
+                      status: response.capabilityStatus || response.responseType,
+                      readOnly: noteRead,
+                    },
+                  },
+                },
+                channelIntentRouting: null,
+              });
+              const noteText = noteRead ? "" :
+                extractCustomerNoteText(originalQuestion) || extractCustomerNoteText(component.text);
+              if (!noteRead && !noteText) {
+                const reference = String(component.reference || "").trim().toLocaleLowerCase("es");
+                const normalizedRequest = String(originalQuestion || "").normalize("NFD")
+                  .replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es");
+                const normalizedReference = reference.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+                const hasDestination = reference &&
+                  !/^(?:(?:la|esta|una)\s+)?oportunidad(?:\s+(?:actual|seleccionada))?$/.test(reference) &&
+                  normalizedRequest.includes(normalizedReference);
+                return finish({
+                  answer: hasDestination
+                    ? "¿Qué texto exacto quieres registrar como nota? No he preparado ni guardado nada."
+                    : "¿Qué texto exacto quieres registrar y en cuál oportunidad? No he preparado ni guardado nada.",
+                  responseType: "clarification",
+                  operations: [],
+                  evidence: [],
+                  inferences: [],
+                  pendingItems: [],
+                  recommendedActions: [],
+                });
+              }
+              const candidates = [
+                ...(scoped.opportunities || []),
+                ...(scoped.inactiveOpportunities || []),
+                ...(scoped.selectedOpportunity ? [scoped.selectedOpportunity] : []),
+              ].filter(
+                (item) =>
+                  Number(item.accountId || scoped.account?.id) ===
+                  Number(scoped.account?.id),
+              );
+              const reference = String(
+                component.reference || "",
+              ).trim();
+              const resolved = resolveCustomerOpportunity(
+                scoped,
+                reference || componentQuestion,
+                snapshot.channelIntentRouting,
+                contractRules,
+                candidates,
+              );
+              const contextOpportunityId = Number(
+                componentContext?.opportunityId ||
+                  (turnConversationContext || conversationContext)?.opportunityId ||
+                  0,
+              );
+              const contextualOpportunity = !reference && contextOpportunityId
+                ? candidates.find((item) => Number(item.id) === contextOpportunityId)
+                : null;
+              const opportunity = (resolved &&
+                candidates.find((item) => Number(item.id) === Number(resolved.id))) ||
+                contextualOpportunity;
+              if (!opportunity) {
+                const names = [...new Set(candidates.map((item) => item.name).filter(Boolean))];
+                const answer = names.length
+                  ? `¿De cuál oportunidad quieres consultar o registrar la nota? ${names.join("; ")}.`
+                  : "Indica la oportunidad autorizada a la que corresponde la nota.";
+                return finish({
+                  answer,
+                  responseType: "clarification",
+                  operations: [],
+                  evidence: [],
+                  inferences: [],
+                  pendingItems: [],
+                  recommendedActions: [],
+                });
+              }
+              if (noteRead) {
+                if (
+                  !(
+                    permissionGranted(permissions, "oportunidades.read") ||
+                    permissionGranted(permissions, "oportunidades.read_all")
+                  ) ||
+                  !(
+                    permissionGranted(permissions, "cuentas.read") ||
+                    permissionGranted(permissions, "cuentas.read_all")
+                  ) ||
+                  scoped.permissions?.canReadOpportunities === false ||
+                  contractRules.scope?.opportunitySearchAllowed === false
+                ) {
+                  return finish({
+                    answer: "Tu perfil o la configuración del canal no permiten consultar las notas de esta oportunidad.",
+                    responseType: "error",
+                    capabilityStatus: "permission_denied",
+                    operations: [],
+                    evidence: [],
+                    inferences: [],
+                    pendingItems: [],
+                    recommendedActions: [],
+                  });
+                }
+                if (budget.remainingReadQueries < 1) {
+                  return finish({
+                    answer: "No queda presupuesto de lectura para consultar las notas. Reintenta o divide la solicitud.",
+                    responseType: "error",
+                    operations: [],
+                    evidence: [],
+                    inferences: [],
+                    pendingItems: [],
+                    recommendedActions: [],
+                  });
+                }
+                budget.remainingReadQueries -= 1;
+                const notesIntent = contractIntents.find(
+                  (intent) => intent.code === capability.intent && intent.enabled !== false,
+                );
+                if (!notesIntent?.allowedTools.includes("getOpportunityNotes")) {
+                  return finish({
+                    answer: "La configuración del canal no permite leer notas de oportunidades.",
+                    responseType: "error",
+                    capabilityStatus: "disabled",
+                    operations: [],
+                    evidence: [],
+                    inferences: [],
+                    pendingItems: [],
+                    recommendedActions: [],
+                  });
+                }
+                const executeNotesRead = async () => {
+                  const tool = executeCustomerReadTool({
+                    toolName: "getOpportunityNotes",
+                    snapshot: buildCustomerCoachSnapshot(scoped),
+                    args: {
+                      accountId: Number(scoped.account.id),
+                      opportunityId: Number(opportunity.id),
+                    },
+                    businessRules: contractRules,
+                    readOpportunityNotes: async ({ accountId, opportunityId }) => {
+                      const authorized = await readCustomerOpportunityForNotes({
+                        user,
+                        accountId,
+                        opportunityId,
+                      });
+                      const result = await listOpportunityNotes({
+                        opportunityId: Number(authorized.id),
+                        limit: 50,
+                      });
+                      return { ...authorized, ...result };
+                    },
+                  });
+                  if (tool.error) {
+                    throw Object.assign(new Error(tool.error), { code: "CUSTOMER_NOTES_READ_FAILED" });
+                  }
+                  return await tool.result;
+                };
+                let result;
+                try {
+                  result = executionTrace
+                    ? await executionTrace.span({
+                        from: "B7",
+                        to: "B8",
+                        label: "Consultar notas de oportunidad",
+                        parentSpanId: turnTraceParentSpanId,
+                        input: {
+                          toolName: "getOpportunityNotes",
+                          opportunityId: Number(opportunity.id),
+                        },
+                      }, executeNotesRead, (value) => ({
+                        toolName: "getOpportunityNotes",
+                        count: value?.items?.length || 0,
+                        hasMore: Boolean(value?.nextBeforeId),
+                      }))
+                    : await executeNotesRead();
+                } catch (error) {
+                  if (!error.status) throw error;
+                  return finish({
+                    answer: error.message,
+                    responseType: "error",
+                    capabilityStatus: "permission_denied",
+                    operations: [],
+                    evidence: [],
+                    inferences: [],
+                    pendingItems: [],
+                    recommendedActions: [],
+                  });
+                }
+                const lines = result.items.length
+                  ? result.items.map((note) =>
+                      `- ${note.createdAt}: ${note.noteText} [${note.attribution}; ${note.certainty}]`,
+                    )
+                  : ["No hay notas registradas en esta oportunidad."];
+                return finish({
+                  answer: `${result.opportunityName} — notas registradas:\n${lines.join("\n")}${result.nextBeforeId ? "\nHay notas anteriores; consulta el historial completo en Oportunidades." : ""}`,
+                  responseType: "informational",
+                  operations: [],
+                  evidence: [`Notas de la oportunidad ${result.id}, limitadas a la cuenta autorizada.`],
+                  inferences: [],
+                  pendingItems: [],
+                  recommendedActions: [],
+                  entities: {
+                    accountId: Number(result.accountId),
+                    opportunityId: Number(result.id),
+                  },
+                }, ["getOpportunityNotes"]);
+              }
+              if (
+                !permissionGranted(permissions, "oportunidades.update") ||
+                !permissionGranted(permissions, "mi_coach.execute")
+              ) {
+                return finish({
+                  answer: "No tienes permisos para preparar el registro de una nota. No se guardó ningún cambio.",
+                  responseType: "error",
+                  capabilityStatus: "permission_denied",
+                  operations: [],
+                  evidence: [],
+                  inferences: [],
+                  pendingItems: [],
+                  recommendedActions: [],
+                });
+              }
+              const operation = {
+                kind: "opportunity_note",
+                title: `Registrar nota en ${opportunity.name}`,
+                accountId: Number(scoped.account.id),
+                opportunityId: Number(opportunity.id),
+                noteText,
+                sourceType: "chat_report",
+                attribution: component.attribution,
+                certainty: component.certainty,
+              };
+              return finish({
+                answer: `Preparé una nota para ${opportunity.name}. Revísala y confirma la operación para guardarla; todavía no se ha registrado.`,
+                responseType: "operation",
+                operations: [operation],
+                evidence: [],
+                inferences: [],
+                pendingItems: [],
+                recommendedActions: [],
+              });
+            }
+            if (component.category === "query.relationships") {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: "deterministic_relationships" },
+                  relationship: { status: response.relationshipStatus || response.responseType },
+                  listMetadata: response.listMetadata,
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification") => finish({
+                answer, responseType, operations: [], evidence: [], inferences: [], pendingItems: [], recommendedActions: [],
+                ...(responseType === "informational" ? { capabilityStatus: "unavailable" } : {}),
+              });
+              if (!permissionGranted(permissions, "oportunidades.read") || !permissionGranted(permissions, "contactos.read") ||
+                  scoped.permissions?.canReadOpportunities === false || scoped.permissions?.canReadContacts !== true ||
+                  contractRules.scope?.opportunitySearchAllowed === false || contractRules.scope?.contactSearchAllowed === false) {
+                return stop("Tu perfil o la configuración del canal no permiten consultar ambos extremos de esta relación.", "error");
+              }
+              const previous = validateCustomerRelationshipMemory(
+                (turnConversationContext || conversationContext)?.relationshipMemory, scoped,
+              );
+              const request = resolveCustomerRelationshipRequest({
+                component, movement: contract.movement, previous, snapshot: scoped,
+                context: componentContext, businessRules: contractRules,
+              });
+              if (request.error) return stop(request.error, request.responseType);
+              const opportunityTool = request.operation === "contact_opportunities" ? "searchOpportunities" : "getOpportunity";
+              const contactIntent = contractIntents.find((item) => item.code === "contact_query" && item.enabled !== false);
+              const opportunityIntent = contractIntents.find((item) =>
+                item.code === (request.operation === "contact_opportunities" ? "contact_query" : "opportunity_status") &&
+                item.enabled !== false);
+              if (!contactIntent?.allowedTools.includes("searchContacts") ||
+                  !opportunityIntent?.allowedTools.includes(opportunityTool)) {
+                return stop("La configuración del canal no permite las lecturas necesarias para comprobar esta relación.", "error");
+              }
+              if (budget.remainingReadQueries < 2) return stop("No hay presupuesto suficiente para verificar ambos extremos de la relación. Reintenta o divide la solicitud.", "error");
+              const coachSnapshot = buildCustomerCoachSnapshot({
+                ...scoped, contacts: [...new Map([...(scoped.contacts || []),
+                  ...(scoped.selectedContact ? [scoped.selectedContact] : [])].map((item) => [Number(item.id), item])).values()],
+              });
+              const specifications = [
+                { toolName: "searchContacts", args: { accountId: scoped.account.id, includeDetails: true, includeRelationships: true,
+                  ...(request.operation === "contact_opportunities" ? { contactId: request.memory.contactId } : {}) } },
+                { toolName: opportunityTool, args: {
+                  accountId: scoped.account.id, includeDetails: true, includeRelationships: true,
+                  applyDefaultFilters: false,
+                  ...(request.opportunity ? { opportunityId: request.memory.opportunityId } : {}),
+                } },
+              ];
+              const reads = specifications.map(({ toolName, args }) => {
+                budget.remainingReadQueries -= 1;
+                const execute = () => executeCustomerReadTool({ toolName, snapshot: coachSnapshot, args, businessRules: contractRules });
+                return executionTrace ? executionTrace.spanSync({
+                  from: "B7", to: "B8", label: `Verificar relación: ${toolName}`,
+                  parentSpanId: turnTraceParentSpanId, input: { toolName, args },
+                }, execute, (read) => ({ toolName, failed: Boolean(read.error) })) : execute();
+              });
+              if (Date.now() >= budget.deadlineAt) return stop("La verificación de la relación excedió el tiempo permitido. No se presenta como completada.", "error");
+              return finish(buildCustomerRelationshipResponse({
+                request, account: scoped.account, reads, metrics: snapshotQueryMetrics,
+                collectionScopes: scoped.collectionScopes,
+              }), specifications.map((item) => item.toolName));
+            }
+            if (["query.history", "query.pending_items"].includes(component.category)) {
+              const pending = component.category === "query.pending_items";
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const finish = (response, toolsUsed = []) => ({
+                response, qualityTrace: { toolsUsed, diagnostics: {
+                  answerGeneration: { source: pending ? "deterministic_pending" : "deterministic_history" },
+                  ...(pending ? { pendingCriteria: response.pendingMemory?.spec || null } :
+                    { historyPurpose: component.historySpec?.purpose || "timeline" }),
+                  historyCoverage: response.activityHistory?.coverage || [],
+                } }, channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification") => finish({
+                answer, responseType, operations: [], evidence: [], inferences: [], pendingItems: [], recommendedActions: [],
+                ...(responseType === "informational" ? { capabilityStatus: "unavailable" } : {}),
+              });
+              const memory = (turnConversationContext || conversationContext)?.[pending ? "pendingMemory" : "historyMemory"];
+              const request = (pending ? resolveCustomerPendingRequest : resolveCustomerHistoryRequest)({
+                component, movement: contract.movement,
+                previous: (pending ? validateCustomerPendingMemory : validateCustomerHistoryMemory)(memory, scoped),
+                snapshot: scoped, context: componentContext, now: turnNow,
+                timezone: snapshot.businessTimezone || config.app.businessTimezone, businessRules: contractRules,
+              });
+              const object = request.memory?.object || component.object;
+              const domain = { account: "cuentas", contact: "contactos", opportunity: "oportunidades" }[object];
+              const permissionFlag = { account: "canReadAccounts", contact: "canReadContacts", opportunity: "canReadOpportunities" }[object];
+              const scopeKey = { account: "accountSearchAllowed", contact: "contactSearchAllowed", opportunity: "opportunitySearchAllowed" }[object];
+              const historyIntent = contractIntents.find((item) => item.code === capability.intent && item.enabled !== false);
+              const entityTool = { account: "searchAccounts", contact: "searchContacts", opportunity: "searchOpportunities" }[object];
+              if (domain && (!permissionGranted(permissions, `${domain}.read`) ||
+                  scoped.permissions?.[permissionFlag] === false ||
+                  contractRules.scope?.[scopeKey] === false)) {
+                return stop("Tu perfil o la configuración del canal no permiten consultar el historial de esta entidad.", "error");
+              }
+              if (entityTool && !historyIntent?.allowedTools.includes(entityTool)) {
+                return stop("La configuración del canal no permite verificar la entidad del historial.", "error");
+              }
+              if (request.error) return stop(request.error, request.responseType);
+              if (request.purpose === "absence_explanation") return finish(buildCustomerHistoryResponse({ request }));
+              const access = getCustomerHistorySourceAccess({
+                request, snapshot: scoped, permissions, businessRules: contractRules,
+                intent: historyIntent,
+                activityIntent: contractIntents.find((item) => item.code === "account_activity_history" && item.enabled !== false),
+              });
+              const sources = access.filter((item) => item.status === "available").map((item) => item.source);
+              if (sources.length + 1 > budget.remainingReadQueries) {
+                return stop("No hay presupuesto de lectura suficiente para consultar todas las fuentes solicitadas. Acota las fuentes o reintenta.", "error");
+              }
+              budget.remainingReadQueries -= sources.length + 1;
+              const execute = async () => loadHistorySnapshot && sources.length
+                ? loadHistorySnapshot({ sources, request, signal: getDeadlineSignal(budget.deadlineAt) })
+                : { snapshot: scoped, metrics: snapshotQueryMetrics };
+              const loaded = executionTrace ? await executionTrace.span({
+                from: "B7", to: "B8", label: "Consultar historial autorizado",
+                parentSpanId: turnTraceParentSpanId, input: { sources, range: request.range },
+              }, execute, (value) => ({ sources, metrics: value.metrics })) : await execute();
+              if (Date.now() >= budget.deadlineAt) {
+                return stop("La consulta del historial excedió el tiempo de verificación. No se presenta como una lectura completa; reintenta.", "error");
+              }
+              if (!(pending ? validateCustomerPendingMemory : validateCustomerHistoryMemory)(request.memory, loaded.snapshot)) {
+                return stop("La entidad del historial ya no está disponible en la lectura autorizada actual. Indica un registro visible o reintenta.", "error");
+              }
+              const refreshedAccess = getCustomerHistorySourceAccess({
+                request, snapshot: loaded.snapshot, permissions, businessRules: contractRules,
+                intent: historyIntent,
+                activityIntent: contractIntents.find((item) => item.code === "account_activity_history" && item.enabled !== false),
+              });
+              return finish((pending ? buildCustomerPendingResponse : buildCustomerHistoryResponse)({
+                request, access: access.map((item) => item.status === "available"
+                  ? refreshedAccess.find((current) => current.source === item.source) : item),
+                snapshot: loaded.snapshot, metrics: loaded.metrics,
+                timezone: snapshot.businessTimezone || config.app.businessTimezone,
+              }), sources.length ? [...new Set([entityTool, ...access.filter((item) => item.status === "available").map((item) => item.tool)])] : []);
+            }
+            if (["query.record_list", "query.record_search"].includes(component.category) ||
+                (component.listPosition > 0 && ["query.record_detail", "query.field_value"].includes(component.category))) {
+              const scopedSnapshot = scopeCustomerSnapshot(snapshot);
+              const dependencyLists = dependencies.filter((item) => item.recordList);
+              const previous = validateCustomerRecordList(
+                dependencyLists.length ? dependencyLists.length === 1 ? dependencyLists[0].recordList : null
+                  : (turnConversationContext || conversationContext)?.recordList,
+                scopedSnapshot, scopedSnapshot.account?.id,
+              );
+              const finish = (response, toolsUsed = []) => ({
+                response,
+                qualityTrace: {
+                  toolsUsed,
+                  diagnostics: {
+                    answerGeneration: { source: component.category === "query.record_search" ? "deterministic_record_search"
+                      : component.category === "query.record_list" ? "deterministic_record_list" : "deterministic_list_selection" },
+                    evidence: { status: response.responseType === "error" ? "failed"
+                      : toolsUsed.length && response.evidence.length ? "verified_authorized_read" : "not_verified" },
+                    listMetadata: response.listMetadata,
+                  },
+                },
+                channelIntentRouting: null,
+              });
+              const stop = (answer, responseType = "clarification") => finish({
+                answer, responseType, operations: [], evidence: [], recommendedActions: [], inferences: [], pendingItems: [],
+                ...(responseType === "informational" ? { capabilityStatus: "unavailable" } : {}),
+              });
+              if (!scopedSnapshot.account?.id || Number(componentContext.accountId) !== Number(scopedSnapshot.account.id)) {
+                return stop("Selecciona una cuenta autorizada antes de consultar el listado.");
+              }
+              const isList = ["query.record_list", "query.record_search"].includes(component.category);
+              if (isList && (previous?.comparisonBasis ||
+                  (turnConversationContext || conversationContext)?.recordList?.comparisonBasis) &&
+                  !["new_request", "change_focus"].includes(contract.movement)) {
+                return stop("El listado anterior es una comparación. Indica cómo modificar esa comparación o solicita un listado nuevo; no ampliaré su conjunto silenciosamente.");
+              }
+              if (isList && (previous?.priorityBasis ||
+                  (turnConversationContext || conversationContext)?.recordList?.priorityBasis) &&
+                  !["new_request", "change_focus"].includes(contract.movement)) {
+                return stop("El listado anterior es una priorización. Indica cómo deseas modificar ese ranking o solicita un listado nuevo; no ampliaré su conjunto silenciosamente.");
+              }
+              if (previous?.relationshipContactId && (!isList || !["new_request", "change_focus"].includes(contract.movement)) &&
+                  (!permissionGranted(permissions, "contactos.read") || contractRules.scope?.contactSearchAllowed === false)) {
+                return stop("No puedo revalidar la relación del listado sin permiso y alcance de lectura de contactos.", "error");
+              }
+              if (isList && previous?.relationshipContactId &&
+                  !["new_request", "change_focus"].includes(contract.movement)) {
+                return stop("El listado anterior está limitado a un contacto asociado. Indica que deseas modificar sus oportunidades asociadas o solicita un listado nuevo de la cuenta; no quitaré el vínculo silenciosamente.");
+              }
+              if (!CUSTOMER_RECORD_FIELDS[component.object]) {
+                return stop("Los listados y búsquedas solo admiten oportunidades y contactos.", "informational");
+              }
+              const specResult = isList
+                ? resolveCustomerListSpec(component, previous, contract.movement, scopedSnapshot.account) : null;
+              if (specResult?.error) return stop(specResult.error, specResult.responseType || "informational");
+              const targetId = !isList && previous?.object === component.object
+                ? previous.ids[component.listPosition - 1] : null;
+              if (!isList && !targetId) {
+                return stop("No hay un registro verificable en esa posición del último listado de esta cuenta. Indica su nombre o vuelve a listar los registros.");
+              }
+              const toolName = component.object === "contact" ? "searchContacts"
+                : isList ? "searchOpportunities" : "getOpportunity";
+              const intent = contractIntents.find((item) => item.code === capability.intent && item.enabled !== false);
+              const scopeKey = component.object === "contact" ? "contactSearchAllowed" : "opportunitySearchAllowed";
+              if (contractRules.scope?.[scopeKey] === false || !intent?.allowedTools.includes(toolName)) {
+                return stop("La configuración del canal no permite la lectura necesaria para esta consulta.", "error");
+              }
+              const coachSnapshot = buildCustomerCoachSnapshot({
+                ...scopedSnapshot,
+                permissions: {
+                  ...scopedSnapshot.permissions,
+                  canReadContacts: scopedSnapshot.permissions?.canReadContacts === true &&
+                    contractRules.scope?.contactSearchAllowed !== false &&
+                    permissionGranted(permissions, "contactos.read"),
+                },
+              });
+              const args = {
+                accountId: scopedSnapshot.account.id, includeDetails: true, applyDefaultFilters: false,
+                ...(!isList ? component.object === "contact" ? { contactId: targetId } : { opportunityId: targetId } : {}),
+              };
+              budget.remainingReadQueries -= 1;
+              const execute = () => executeCustomerReadTool({
+                toolName, snapshot: coachSnapshot, args, businessRules: contractRules,
+              });
+              const read = executionTrace ? executionTrace.spanSync({
+                from: "B7", to: "B8", label: `Ejecutar ${toolName}`,
+                parentSpanId: turnTraceParentSpanId, input: { toolName, args },
+              }, execute, (result) => ({ toolName, failed: Boolean(result.error) })) : execute();
+              if (isList) {
+                return finish(buildCustomerRecordListResponse({
+                  object: component.object, spec: specResult.spec, account: scopedSnapshot.account,
+                  readToolResults: [read], snapshotQueryMetrics,
+                  collectionScopes: scopedSnapshot.collectionScopes,
+                }), [toolName]);
+              }
+              const sources = component.object === "contact" ? ["contacts"] : ["opportunities_active", "opportunities_inactive"];
+              if (snapshotQueryMetrics.some((metric) => sources.includes(metric.source) && metric.errorCode)) {
+                return stop("No pude verificar el registro del listado porque falló la lectura autorizada.", "error");
+              }
+              const detail = buildCustomerRecordDetailResponse({
+                object: component.object,
+                context: {
+                  accountId: scopedSnapshot.account.id,
+                  ...(component.object === "contact" ? { contactId: targetId } : { opportunityId: targetId }),
+                },
+                readToolResults: [read],
+                requestedFields: component.category === "query.field_value" ? component.requestedFields : null,
+              });
+              return finish({
+                ...detail,
+                ...(detail.evidence.length ? { entities: {
+                  accountId: scopedSnapshot.account.id,
+                  opportunityId: component.object === "opportunity" ? targetId : null,
+                  contactId: component.object === "contact" ? targetId : null,
+                } } : {}),
+              }, [toolName]);
             }
             return createCustomerAccountAdapter({
               user, snapshot,
@@ -4184,7 +5831,7 @@ export function createCustomerAccountAdapter({
               conversationContext: turnConversationContext || conversationContext,
               snapshotQueryMetrics, agents, jobId, executionTrace, traceParentSpanId: turnTraceParentSpanId,
             }).runTurn({
-              question: componentQuestion, context: componentContext, history,
+              question: componentQuestion, originalQuestion, context: componentContext, history,
               conversationContext: turnConversationContext || conversationContext,
               traceParentSpanId: turnTraceParentSpanId,
             });

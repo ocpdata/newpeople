@@ -3281,7 +3281,7 @@ export async function convertProspectHypothesisToOpportunity({
     ? String(closeDate)
     : new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
   const now = new Date();
-  const result = await query(
+  const result = await mutateAuditedOpportunity({ actor: user },
     `INSERT INTO opportunities
       (name, amount_usd, account_id, close_date, contact_id, sales_stage_id,
        business_line_id, seller_user_id, presales_user_id, activation_status_id,
@@ -3314,3 +3314,4 @@ export async function convertProspectHypothesisToOpportunity({
     contactId: targetContactId,
   };
 }
+import { mutateAuditedOpportunity } from "../opportunity-audit.js";

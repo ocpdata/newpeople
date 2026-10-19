@@ -80,6 +80,24 @@ const CORE_PERMISSIONS = [
     description: "Revisar conversaciones de otros usuarios para soporte",
   },
   {
+    code: "mi_coach.evaluations_read",
+    module: "mi_coach",
+    action: "evaluations_read",
+    description: "Consultar catálogo y evaluaciones propias del chat",
+  },
+  {
+    code: "mi_coach.evaluations_execute",
+    module: "mi_coach",
+    action: "evaluations_execute",
+    description: "Ejecutar evaluaciones del chat con IA real en esta instancia",
+  },
+  {
+    code: "mi_coach.evaluations_write",
+    module: "mi_coach",
+    action: "evaluations_write",
+    description: "Confirmar acciones de evaluación sobre registros autorizados",
+  },
+  {
     code: "fuentes_externas.execute",
     module: "fuentes_externas",
     action: "execute",

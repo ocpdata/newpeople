@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 import {
   COMMERCIAL_ACTIVITY_TYPES,
@@ -777,6 +777,22 @@ export default function OpportunityDevelopmentPanel({
   const [isExecutionExpanded, setIsExecutionExpanded] = useState(false);
   const [isOperationEmailModalOpen, setIsOperationEmailModalOpen] =
     useState(false);
+  const [isOpportunityNoteComposerOpen, setIsOpportunityNoteComposerOpen] =
+    useState(false);
+  const [opportunityNoteDraft, setOpportunityNoteDraft] = useState("");
+  const [opportunityNotes, setOpportunityNotes] = useState([]);
+  const [opportunityNotesOpportunityId, setOpportunityNotesOpportunityId] =
+    useState(null);
+  const [opportunityNotesNextBeforeId, setOpportunityNotesNextBeforeId] =
+    useState(null);
+  const [loadingOpportunityNotes, setLoadingOpportunityNotes] = useState(false);
+  const [loadingMoreOpportunityNotes, setLoadingMoreOpportunityNotes] =
+    useState(false);
+  const [savingOpportunityNote, setSavingOpportunityNote] = useState(false);
+  const [opportunityNotesError, setOpportunityNotesError] = useState("");
+  const [opportunityNoteError, setOpportunityNoteError] = useState("");
+  const [opportunityNoteNotice, setOpportunityNoteNotice] = useState("");
+  const opportunityNotesSectionRef = useRef(null);
   const [sendingOperationEmail, setSendingOperationEmail] = useState(false);
   const [operationEmailError, setOperationEmailError] = useState("");
   const [operationEmailNotice, setOperationEmailNotice] = useState("");
@@ -1366,6 +1382,14 @@ export default function OpportunityDevelopmentPanel({
     dependencies: executionDependencies.length,
     operations: operationActions.length,
   };
+  const hasNotesForCurrentOpportunity =
+    Number(opportunityNotesOpportunityId) === Number(editingOpportunityId);
+  const currentOpportunityNotes = hasNotesForCurrentOpportunity
+    ? opportunityNotes
+    : [];
+  const currentOpportunityNotesNextBeforeId = hasNotesForCurrentOpportunity
+    ? opportunityNotesNextBeforeId
+    : null;
   const isExecutionItemReadOnly = isExecutionItemClosed(
     executionItemModal?.item?.status,
   );
@@ -1508,6 +1532,44 @@ export default function OpportunityDevelopmentPanel({
   }, [editingOpportunityId]);
 
   useEffect(() => {
+    let ignore = false;
+    if (!editingOpportunityId) return undefined;
+
+    Promise.resolve().then(async () => {
+      if (ignore) return;
+      setOpportunityNotes([]);
+      setOpportunityNotesNextBeforeId(null);
+      setOpportunityNotesError("");
+      setOpportunityNoteError("");
+      setOpportunityNoteNotice("");
+      setOpportunityNoteDraft("");
+      setIsOpportunityNoteComposerOpen(false);
+      setLoadingOpportunityNotes(true);
+      try {
+        const { data } = await api.get(
+          `/api/opportunities/${editingOpportunityId}/notes`,
+          { params: { limit: 50 } },
+        );
+        if (ignore) return;
+        setOpportunityNotes(Array.isArray(data?.items) ? data.items : []);
+        setOpportunityNotesNextBeforeId(data?.nextBeforeId ?? null);
+        setOpportunityNotesOpportunityId(Number(editingOpportunityId));
+      } catch (error) {
+        if (ignore) return;
+        setOpportunityNotesError(
+          getApiErrorMessage(error, "No fue posible cargar las notas"),
+        );
+      } finally {
+        if (!ignore) setLoadingOpportunityNotes(false);
+      }
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [editingOpportunityId]);
+
+  useEffect(() => {
     if (!isOperationEmailModalOpen || !editingOpportunityId) return;
 
     const timeoutId = window.setTimeout(() => {
@@ -1524,6 +1586,94 @@ export default function OpportunityDevelopmentPanel({
       await refreshCommercialContext();
     }
     setExecutionRefreshToken((current) => current + 1);
+  }
+
+  async function handleSaveOpportunityNote() {
+    const noteText = normalizeText(opportunityNoteDraft);
+    if (!editingOpportunityId || !noteText || savingOpportunityNote) return;
+
+    setSavingOpportunityNote(true);
+    setOpportunityNoteError("");
+    setOpportunityNoteNotice("");
+    setOpportunityNotesError("");
+    try {
+      await api.post(`/api/opportunities/${editingOpportunityId}/notes`, {
+        noteText,
+        sourceType: "manual",
+        attribution: "seller",
+        certainty: "unspecified",
+      });
+      setOpportunityNoteDraft("");
+      setIsOpportunityNoteComposerOpen(false);
+      setOpportunityNoteNotice("Nota guardada. Se agregó al historial.");
+    } catch (error) {
+      setOpportunityNoteError(
+        getApiErrorMessage(
+          error,
+          "No fue posible guardar la nota. Intenta nuevamente.",
+        ),
+      );
+      setSavingOpportunityNote(false);
+      return;
+    }
+
+    try {
+      const { data } = await api.get(
+        `/api/opportunities/${editingOpportunityId}/notes`,
+        { params: { limit: 50 } },
+      );
+      setOpportunityNotes(Array.isArray(data?.items) ? data.items : []);
+      setOpportunityNotesNextBeforeId(data?.nextBeforeId ?? null);
+      setOpportunityNotesOpportunityId(Number(editingOpportunityId));
+      window.requestAnimationFrame(() => {
+        opportunityNotesSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    } catch (error) {
+      setOpportunityNotesError(
+        getApiErrorMessage(
+          error,
+          "La nota se guardó, pero no fue posible actualizar la lista.",
+        ),
+      );
+    } finally {
+      setSavingOpportunityNote(false);
+    }
+  }
+
+  async function handleLoadMoreOpportunityNotes() {
+    if (
+      !editingOpportunityId ||
+      !currentOpportunityNotesNextBeforeId ||
+      loadingMoreOpportunityNotes
+    ) {
+      return;
+    }
+    setLoadingMoreOpportunityNotes(true);
+    setOpportunityNotesError("");
+    try {
+      const { data } = await api.get(
+        `/api/opportunities/${editingOpportunityId}/notes`,
+        {
+          params: {
+            limit: 50,
+            beforeId: currentOpportunityNotesNextBeforeId,
+          },
+        },
+      );
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setOpportunityNotes((current) => [...current, ...items]);
+      setOpportunityNotesNextBeforeId(data?.nextBeforeId ?? null);
+      setOpportunityNotesOpportunityId(Number(editingOpportunityId));
+    } catch (error) {
+      setOpportunityNotesError(
+        getApiErrorMessage(error, "No fue posible cargar más notas"),
+      );
+    } finally {
+      setLoadingMoreOpportunityNotes(false);
+    }
   }
 
   function openExecutionItemModal(itemType, item) {
@@ -4138,6 +4288,63 @@ export default function OpportunityDevelopmentPanel({
               >
                 Enviar correo al contacto
               </button>
+              <button
+                type="button"
+                className="btn-secondary opportunity-development-execution-submit"
+                onClick={() => {
+                  setOpportunityNoteError("");
+                  setIsOpportunityNoteComposerOpen((current) => !current);
+                }}
+                disabled={
+                  !editingOpportunityId ||
+                  !canExecuteOperations ||
+                  savingOpportunityNote
+                }
+              >
+                {isOpportunityNoteComposerOpen ? "Cancelar nota" : "Registrar nota"}
+              </button>
+              {isOpportunityNoteComposerOpen ? (
+                <div className="opportunity-note-composer">
+                  <label htmlFor="opportunity-note-text">Texto de la nota</label>
+                  <textarea
+                    id="opportunity-note-text"
+                    rows={5}
+                    maxLength={5000}
+                    value={opportunityNoteDraft}
+                    onChange={(event) =>
+                      setOpportunityNoteDraft(event.target.value)
+                    }
+                    placeholder="Registra información relevante de esta oportunidad."
+                    disabled={savingOpportunityNote}
+                    required
+                  />
+                  <span className="field-hint">
+                    {opportunityNoteDraft.length}/5000 · La nota guardada no se
+                    puede editar; agrega otra para aclararla.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary opportunity-development-execution-submit"
+                    onClick={() => void handleSaveOpportunityNote()}
+                    disabled={
+                      savingOpportunityNote ||
+                      !normalizeText(opportunityNoteDraft)
+                    }
+                  >
+                    {savingOpportunityNote ? "Guardando..." : "Guardar nota"}
+                  </button>
+                </div>
+              ) : null}
+              {opportunityNoteNotice ? (
+                <p className="opportunity-note-success" role="status">
+                  {opportunityNoteNotice}
+                </p>
+              ) : null}
+              {opportunityNoteError ? (
+                <p className="opportunity-note-error" role="alert">
+                  {opportunityNoteError}
+                </p>
+              ) : null}
               {!canOpenSendEmailOperation && !canExecuteOperations ? (
                 <p className="field-hint">
                   Completa y guarda la oportunidad para habilitar operaciones.
@@ -4305,6 +4512,92 @@ export default function OpportunityDevelopmentPanel({
               )}
             </div>
           </div>
+          <section
+            ref={opportunityNotesSectionRef}
+            className="opportunity-development-execution-history opportunity-notes-history"
+            aria-labelledby="opportunity-notes-heading"
+          >
+            <div className="opportunity-development-execution-history-header">
+              <h6 id="opportunity-notes-heading">Notas de la oportunidad</h6>
+              <span className="record-id-badge">
+                {currentOpportunityNotes.length}
+              </span>
+            </div>
+            {opportunityNotesError ? (
+              <p className="opportunity-note-error" role="alert">
+                {opportunityNotesError}
+              </p>
+            ) : null}
+            {loadingOpportunityNotes ||
+            (!hasNotesForCurrentOpportunity && !opportunityNotesError) ? (
+              <p className="field-hint">Cargando notas...</p>
+            ) : currentOpportunityNotes.length ? (
+              <ol className="opportunity-notes-list">
+                {currentOpportunityNotes.map((note) => (
+                  <li key={note.id} className="opportunity-note-item">
+                    <div className="opportunity-note-meta">
+                      <strong>
+                        {note.sourceType === "chat_report"
+                          ? "Reporte desde el chat"
+                          : "Nota del vendedor"}
+                      </strong>
+                      <span>
+                        {normalizeText(note.authorName) || "Usuario"} ·{" "}
+                        {formatNarrativeTimestamp(note.createdAt)}
+                      </span>
+                    </div>
+                    <p>{note.noteText}</p>
+                    {note.sourceType === "chat_report" ? (
+                      <span className="opportunity-note-attribution">
+                        Atribución:{" "}
+                        {
+                          {
+                            client: "cliente",
+                            seller: "vendedor",
+                            document: "documento",
+                            none: "sin atribución",
+                          }[note.attribution] || "sin especificar"
+                        }
+                        {note.certainty &&
+                        note.certainty !== "unspecified" ? (
+                          <>
+                            {" "}
+                            · Certeza:{" "}
+                            {
+                              {
+                                reported: "reportado",
+                                observed: "observado",
+                                suspected: "supuesto",
+                                hypothetical: "hipotético",
+                              }[note.certainty] || note.certainty
+                            }
+                          </>
+                        ) : null}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              !opportunityNotesError && (
+                <p className="field-hint">
+                  Aún no hay notas registradas en esta oportunidad.
+                </p>
+              )
+            )}
+            {currentOpportunityNotesNextBeforeId ? (
+              <button
+                type="button"
+                className="btn-secondary opportunity-development-execution-submit opportunity-notes-load-more"
+                onClick={handleLoadMoreOpportunityNotes}
+                disabled={loadingMoreOpportunityNotes}
+              >
+                {loadingMoreOpportunityNotes
+                  ? "Cargando..."
+                  : "Cargar notas anteriores"}
+              </button>
+            ) : null}
+          </section>
         </div>
       </article>
 

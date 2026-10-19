@@ -499,6 +499,9 @@ export default function AppShell({
                 }
                 canAccessCustomerChat={canAccessCustomerChat}
                 canManageCoach={can("mi_coach.admin")}
+                canReadEvaluations={can("mi_coach.evaluations_read")}
+                canExecuteEvaluations={can("mi_coach.evaluations_execute")}
+                canWriteEvaluations={can("mi_coach.evaluations_write")}
                 canDiagnoseCustomerChats={can(
                   "mi_coach.chat_diagnostics",
                 )}

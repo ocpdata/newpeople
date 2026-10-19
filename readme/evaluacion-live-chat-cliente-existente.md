@@ -71,7 +71,7 @@ Quedaron dos discrepancias: en una consulta de cotización el objeto fue `opport
 
 ## Fuentes y pruebas relacionadas
 
-- [Corpus de las 44 categorías](../apps/api/test/fixtures/customer-turn-cases.js).
+- [Corpus de las 46 categorías](../apps/api/test/fixtures/customer-turn-cases.js).
 - [Evaluador de catálogo, movimientos y controles críticos](../apps/api/scripts/evaluateCustomerTurnContract.js).
 - [Pruebas de integración y siete recorridos reales opt-in](../apps/api/test/customer-turn-pipeline.test.js).
 - [Ejecutor de evaluación del pipeline](../apps/api/scripts/evaluateCustomerTurnPipeline.js).

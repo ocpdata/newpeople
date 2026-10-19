@@ -86,7 +86,7 @@ if (!process.argv.includes("--live")) {
     const selected = results.filter((item) => item.group === group);
     return [group, { passed: selected.filter((item) => item.passed).length, total: selected.length }];
   }));
-  const passed = groups.catalog.passed / 44 >= 0.95 &&
+  const passed = groups.catalog.passed / 46 >= 0.95 &&
     groups.dialogue.passed / 13 >= 0.9 &&
     groups.critical.total === 9 && groups.critical.passed === 9;
   const report = { model: config.openai.model, syntheticOnly: true, passed, groups, results, evaluatedAt: new Date().toISOString() };

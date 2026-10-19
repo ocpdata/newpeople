@@ -2604,6 +2604,7 @@ async function getWorkspaceHistory(opportunityId) {
     `SELECT module, action, entity_type, entity_id, detail, changed_fields, created_at, performed_by_name
      FROM audit_log
      WHERE entity_type = 'opportunity' AND entity_id = ?
+       AND action NOT IN ('commercial_history_created','commercial_history_changed','commercial_history_deleted','commercial_history_baseline')
      ORDER BY created_at DESC
      LIMIT 30`,
     [opportunityId],
@@ -3173,6 +3174,65 @@ export async function saveOpportunityThemeEntry({
     ],
     createValues: [opportunityId, userId, userId],
   });
+}
+
+export async function createOpportunityNote({
+  opportunityId,
+  noteText,
+  sourceType,
+  attribution,
+  certainty,
+  userId,
+  connection = null,
+}) {
+  if (!connection) await ensureOpportunityWorkspaceSchema();
+  const sql = `INSERT INTO opportunity_notes
+       (opportunity_id, note_text, source_type, attribution, certainty, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?)`;
+  const params = [
+    opportunityId,
+    noteText,
+    sourceType,
+    attribution,
+    certainty,
+    userId,
+  ];
+  const result = connection
+    ? (await connection.query(sql, params))[0]
+    : await query(
+        sql,
+        params,
+      );
+  return Number(result.insertId);
+}
+
+export async function listOpportunityNotes({
+  opportunityId,
+  beforeId = null,
+  limit = 50,
+}) {
+  await ensureOpportunityWorkspaceSchema();
+  const rows = await query(
+    `SELECT n.id, n.note_text AS noteText, n.source_type AS sourceType,
+            n.attribution, n.certainty, n.created_by_user_id AS createdByUserId,
+            CAST(n.created_at AS CHAR) AS createdAt, u.full_name AS authorName
+     FROM opportunity_notes n
+     INNER JOIN users u ON u.id = n.created_by_user_id
+     WHERE n.opportunity_id = ? AND (? IS NULL OR n.id < ?)
+     ORDER BY n.id DESC
+     LIMIT ?`,
+    [opportunityId, beforeId, beforeId, limit + 1],
+  );
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit).map((row) => ({
+    ...row,
+    id: Number(row.id),
+    createdByUserId: Number(row.createdByUserId),
+  }));
+  return {
+    items,
+    nextBeforeId: hasMore ? items.at(-1)?.id || null : null,
+  };
 }
 
 export async function saveOpportunityStakeholder({

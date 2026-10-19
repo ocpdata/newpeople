@@ -19,6 +19,10 @@ import {
   X,
 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
+import { CustomerRescheduleSummary } from "./coach/CustomerRescheduleReview";
+import { CustomerOutcomeSummary } from "./coach/CustomerOutcomeSummary";
+import { CustomerStageSummary } from "./coach/CustomerStageReview";
+import { CustomerChatEvaluations } from "./coach/CustomerChatEvaluations";
 import ServerRulesSection from "./ServerRulesSection";
 import SemanticClassifierSection from "./SemanticClassifierSection";
 import {
@@ -1185,6 +1189,8 @@ const customerChatPendingKey = (accountId) =>
 
 const COACH_HANDOFF_OPERATION_KINDS = new Set([
   "activity",
+  "reschedule_activity",
+  "validate_stage",
   "create_account",
   "create_contact",
   "create_opportunity",
@@ -1304,6 +1310,8 @@ const COACH_OPERATION_OPTIONS = {
   ],
   customer_account: [
     ["activity", "Preparar borrador de actividad"],
+    ["reschedule_activity", "Reprogramar una actividad pendiente"],
+    ["validate_stage", "Preparar validación de avance en Oportunidades"],
     ["stage_answer", "Actualizar respuesta de etapa"],
     ["lead_call_outcome", "Registrar resultado de llamada de un lead"],
     ["account_field", "Actualizar datos de la cuenta"],
@@ -1324,6 +1332,8 @@ const COACH_OPERATION_OPTIONS = {
 };
 
 const COACH_OPERATION_DESCRIPTIONS = {
+  reschedule_activity: "Reprograma una actividad pendiente de oportunidad, conservando su identidad y confirmando en Calendario.",
+  validate_stage: "Prepara la validación existente en Oportunidades; puede avanzar automáticamente según su resultado.",
   activity:
     "Crea un borrador; las continuaciones completan el mismo borrador. No edita una actividad ya registrada.",
   stage_answer:
@@ -1373,6 +1383,7 @@ const COACH_OPERATION_LABELS = {
   activity: "Preparar borrador de actividad",
   stage_answer: "Actualizar respuesta de etapa",
   opportunity_field: "Actualizar datos de oportunidad",
+  opportunity_note: "Registrar nota en oportunidad",
   account_field: "Actualizar datos de cuenta",
   contact_field: "Actualizar datos de contacto",
   lead_call_outcome: "Registrar resultado del lead",
@@ -1381,6 +1392,8 @@ const COACH_OPERATION_LABELS = {
   create_contact: "Crear contacto",
   create_opportunity: "Crear oportunidad en esta cuenta",
   link_contact_to_opportunity: "Vincular contacto a oportunidad",
+  reschedule_activity: "Reprogramar actividad",
+  validate_stage: "Validar avance de etapa",
   create_lead: "Crear lead",
   create_contact_mapping: "Crear mapeo de contacto",
   create_quotation: "Crear cotización",
@@ -1846,7 +1859,7 @@ function buildCoachOperationDraft(operation, persistedOperation = null) {
   return {
     operation: operationWithMissingFields,
     opportunityId: pendingOperation.opportunityId || "",
-    value: pendingOperation.value || pendingOperation.answerValue || "",
+    value: pendingOperation.value ?? pendingOperation.answerValue ?? pendingOperation.comment ?? "",
     answerMode: pendingOperation.answerMode || "replace",
     payload: pendingOperation.payload || {},
     persistentId:
@@ -1923,6 +1936,7 @@ function unresolvedCoachFields(operation) {
               : []),
         ]
       : [];
+  if (operation?.kind === "opportunity_note") requiredFields.push("noteText");
   return [
     ...new Set([
       ...(operation?.missingFields || []).filter(
@@ -2195,6 +2209,9 @@ function formatCoachTargetModule(targetModule) {
 }
 
 function formatCoachOperationSummary(operation) {
+  if (operation?.kind === "opportunity_note")
+    return String(operation.noteText || "Nota pendiente de revisión");
+  if (operation?.kind === "reschedule_activity") return `${operation.scheduleSummary?.before || "Sin programación"} → ${operation.scheduleSummary?.after || "Fecha pendiente"}`;
   if (operation?.kind === "activity") {
     return `${operation.actionType || "Actividad"} · ${operation.scheduledAt || "Fecha pendiente"} · ${operation.priority || "Prioridad pendiente"}`;
   }
@@ -2312,9 +2329,13 @@ export default function MiAgentPage({
   canAccessCustomerChat = false,
   canManageCoach = false,
   canDiagnoseCustomerChats = false,
+  canReadEvaluations = false,
+  canExecuteEvaluations = false,
+  canWriteEvaluations = false,
 }) {
   const navigate = useNavigate();
   const [activeWorkspace, setActiveWorkspace] = useState(() => {
+    if (canReadEvaluations && new URLSearchParams(window.location.search).has("evaluationRun")) return "evaluations";
     if (canUseCoach) return "summary";
     if (canAccessCustomerChat && canReadCustomerIntelligence) return "customer";
     if (
@@ -2323,6 +2344,7 @@ export default function MiAgentPage({
     ) return "prospect";
     if (canManageCoach) return "admin";
     if (canDiagnoseCustomerChats) return "chat-diagnostics";
+    if (canReadEvaluations) return "evaluations";
     return "empty";
   });
   const [chatDiagnosticsQuery, setChatDiagnosticsQuery] = useState("");
@@ -3141,6 +3163,24 @@ export default function MiAgentPage({
                     stageAnswerPrefill: message.stageAnswerPrefill || null,
                     components: message.components || [],
                     contentSource: message.contentSource || null,
+                    documentCoverage: message.documentCoverage || null,
+                    documentEvidence: message.documentEvidence || [],
+                    priorityMetadata: message.priorityMetadata || null,
+                    priorityEvidence: message.priorityEvidence || [],
+                    comparisonMetadata: message.comparisonMetadata || null,
+                    comparisonEvidence: message.comparisonEvidence || [],
+                    trendMetadata: message.trendMetadata || null,
+                    scenarioMetadata: message.scenarioMetadata || null,
+                    scenarioEvidence: message.scenarioEvidence || [],
+                    documentReportMetadata: message.documentReportMetadata || [],
+                    creationMetadata: message.creationMetadata || null,
+                    updateMetadata: message.updateMetadata || null,
+                    linkMetadata: message.linkMetadata || null,
+                    rescheduleMetadata: message.rescheduleMetadata || null,
+                    outcomeMetadata: message.outcomeMetadata || null,
+                    stageMetadata: message.stageMetadata || null,
+                    documentReportEvidence: message.documentReportEvidence || [],
+                    trendEvidence: message.trendEvidence || [],
                     debug: message.turnDebug || null,
                     jobId: message.turnDebug?.currentTurn?.jobId || null,
                     sourceDomain: "crm_internal",
@@ -4073,12 +4113,16 @@ export default function MiAgentPage({
 
   function canReviewCustomerOperation(operation) {
     if (!canExecuteCoach) return false;
+    if (operation?.kind === "validate_stage") return canCreateActions;
+    if (operation?.kind === "reschedule_activity") return canUpdateCalendar && canCreateActions;
     if (operation?.kind === "activity") return canUpdateCalendar;
     if (operation?.kind === "lead_call_outcome") return canUpdateLeads;
     if (operation?.kind === "account_field") return canUpdateAccounts;
     if (operation?.kind === "contact_field") return canUpdateContacts;
     if (operation?.kind === "create_contact") return canCreateContacts;
     if (operation?.kind === "create_opportunity") return canCreateOpportunities;
+    if (operation?.kind === "opportunity_note")
+      return canCreateActions;
     if (operation?.kind === "link_contact_to_opportunity")
       return (
         canCreateActions &&
@@ -4160,7 +4204,7 @@ export default function MiAgentPage({
         persistentId: persistedOperation.id,
         persistenceVersion: persistedOperation.version,
         persistenceStatus: persistedOperation.status,
-      }, { opportunityOptions });
+      }, { opportunityOptions, persistedOperation });
     } catch (requestError) {
       setError(
         getApiErrorMessage(
@@ -6057,7 +6101,7 @@ export default function MiAgentPage({
 
   async function openCoachOperationConfirmation(
     operation,
-    { opportunityOptions = null } = {},
+    { opportunityOptions = null, persistedOperation: suppliedPersistedOperation = null } = {},
   ) {
     coachReturnFocusRef.current = document.activeElement;
     const canApplyOperation = !canExecuteCoach
@@ -6079,6 +6123,10 @@ export default function MiAgentPage({
                     : operation?.kind === "link_contact_to_opportunity"
                       ? canCreateActions &&
                         Boolean(customerSnapshot?.permissions?.canReadContacts)
+                      : operation?.kind === "reschedule_activity"
+                        ? canUpdateCalendar && canCreateActions
+                      : operation?.kind === "validate_stage"
+                        ? canCreateActions
                       : operation?.kind === "activity"
                         ? canUpdateCalendar
                         : operation?.kind === "create_lead"
@@ -6089,7 +6137,9 @@ export default function MiAgentPage({
                               ? canCreateQuotations
                               : operation?.kind === "create_proposal"
                                 ? canCreateProposals
-                                : [
+                                                        : operation?.kind === "opportunity_note"
+                                                          ? canCreateActions
+                                                        : [
                                       "stage_answer",
                                       "opportunity_field",
                                     ].includes(operation?.kind)
@@ -6114,7 +6164,7 @@ export default function MiAgentPage({
     )
       return;
     setCoachOperationOpportunityOptionsOverride(opportunityOptions);
-    const persistedOperation = coachPendingOperations.find(
+    const persistedOperation = suppliedPersistedOperation || coachPendingOperations.find(
       (candidate) => candidate.id === Number(operation.persistentId || 0),
     );
     let reviewedOperation = persistedOperation;
@@ -6161,6 +6211,7 @@ export default function MiAgentPage({
 
   async function persistCoachOperationDraft(draft) {
     if (!draft?.persistentId) return draft;
+    if (draft.operation.linkDraftId || draft.operation.rescheduleDraftId || draft.operation.outcomeDraftId || draft.operation.stageDraftId) return draft;
     const pendingOperation = serializeCoachOperationDraft(draft);
     const response = await api.patch(
       `/api/mi-agent/coach/operations/${draft.persistentId}`,
@@ -6300,6 +6351,9 @@ export default function MiAgentPage({
         },
       );
       const completedOperation = response.data?.operation;
+      if ((operation.updateDraftId || operation.outcomeDraftId || operation.kind === "opportunity_note") && completedOperation?.status !== "completed") {
+        throw new Error("El servidor no confirmó la ejecución del cambio. No se acredita como guardado.");
+      }
       if (!operation.successNotice) {
         operation.successNotice =
           operation.kind === "opportunity_field"
@@ -6312,9 +6366,11 @@ export default function MiAgentPage({
                   ? "Cambio del contacto guardado correctamente."
                   : operation.kind === "lead_call_outcome"
                     ? "Resultado del lead guardado correctamente."
+                    : operation.kind === "opportunity_note"
+                      ? "Nota registrada correctamente en la oportunidad."
                     : "Cambio guardado correctamente en el CRM.";
       }
-      if (completedOperation?.id)
+      if (completedOperation?.id && operation.kind !== "opportunity_note")
         setCoachUndoOperationId(completedOperation.id);
       if (completedOperation) {
         setCoachPendingOperations((current) =>
@@ -6729,6 +6785,11 @@ export default function MiAgentPage({
             </button>
           ) : null}
         </nav>
+        {canReadEvaluations ? <nav className="mi-agent-workspace-admin" aria-label="Evaluación del chat">
+          <button type="button" className={activeWorkspace === "evaluations" ? "is-active" : ""}
+            aria-current={activeWorkspace === "evaluations" ? "page" : undefined}
+            onClick={() => setActiveWorkspace("evaluations")}>Pruebas del chat</button>
+        </nav> : null}
         {canManageCoach ? (
           <nav className="mi-agent-workspace-admin" aria-label="Administración">
             <button
@@ -6800,7 +6861,9 @@ export default function MiAgentPage({
         </nav>
       ) : null}
 
-      {activeWorkspace === "chat-diagnostics" && canDiagnoseCustomerChats ? (
+      {activeWorkspace === "evaluations" && canReadEvaluations ? (
+        <CustomerChatEvaluations canExecute={canExecuteEvaluations} canWrite={canWriteEvaluations} />
+      ) : activeWorkspace === "chat-diagnostics" && canDiagnoseCustomerChats ? (
         <section className="mi-agent-workspace-panel mi-agent-governance-panel">
           <div className="mi-agent-section-heading">
             <div>
@@ -8638,8 +8701,16 @@ export default function MiAgentPage({
                     >
                       <span>Cuenta</span>
                       <small className="mi-agent-customer-source-label">
-                        {message.contentSource === "user_provided"
+                        {message.linkMetadata
+                          ? "Vínculo propuesto · no acredita guardado"
+                          : message.updateMetadata
+                          ? "Cambio propuesto · no acredita guardado"
+                          : message.creationMetadata
+                          ? "Datos aportados · borrador no guardado"
+                          : message.contentSource === "user_provided"
                           ? "Material aportado; no verificado en CRM"
+                          : message.contentSource === "mixed_document"
+                          ? "CRM + material aportado; fuentes diferenciadas en la respuesta"
                           : message.sourceDomain === "mixed"
                           ? "CRM + investigación pública"
                           : message.sourceDomain === "public_web"
@@ -8649,9 +8720,222 @@ export default function MiAgentPage({
                           ? ` · confianza ${CUSTOMER_FINDING_CONFIDENCE_LABELS[message.confidence] || message.confidence}`
                           : ""}
                       </small>
+                      {message.documentCoverage ? (
+                        <small className="mi-agent-customer-source-label">
+                          {message.documentCoverage.partial
+                            ? "Cobertura documental parcial"
+                            : "Contenido comercial o texto extraído consultado"}
+                          {message.documentCoverage.availableLength != null
+                            ? ` · ${message.documentCoverage.availableLength} caracteres disponibles`
+                            : ""}
+                        </small>
+                      ) : null}
+                      {message.linkMetadata ? (
+                        <details aria-label="Propuesta de vínculo A04">
+                          <summary>Vínculo de {message.linkMetadata.opportunityName} · {message.linkMetadata.effect === "no_change" ? "ya existe" : "revisión necesaria"}</summary>
+                          <p>Cuenta: {message.linkMetadata.accountName}</p>
+                          <p>Contacto actual: {message.linkMetadata.currentContactName || "(sin contacto)"}</p>
+                          <p>Contacto propuesto: {message.linkMetadata.contactName}</p>
+                          <p>{message.linkMetadata.effect === "replace" ? "Sustituye la asociación actual; no conserva ambas." :
+                            message.linkMetadata.effect === "no_change" ? "Sin modificación." : "Asignación de contacto."}</p>
+                          <small>Resumen histórico, no confirmación de guardado. La relación vigente se revalida en Oportunidades.</small>
+                        </details>
+                      ) : null}
+                      {message.stageMetadata ? (
+                        <details><summary>Validación de avance · solicitud sin ejecutar</summary>
+                          <CustomerStageSummary summary={message.stageMetadata} />
+                        </details>
+                      ) : null}
+                      {message.outcomeMetadata ? (
+                        <details>
+                          <summary>Resultado de llamada · {message.outcomeMetadata.status === "prepared" ? "propuesta sin guardar" : "requiere aclaración"}</summary>
+                          <CustomerOutcomeSummary operation={{ ...message.outcomeMetadata, outcomeSummary: message.outcomeMetadata.proposed ? message.outcomeMetadata : null }} />
+                        </details>
+                      ) : null}
+                      {message.rescheduleMetadata ? (
+                        <details aria-label="Propuesta de reprogramación A06">
+                          <summary>Reprogramación · {message.rescheduleMetadata.status === "no_change" ? "sin cambio" : "revisión necesaria"}</summary>
+                          <CustomerRescheduleSummary summary={message.rescheduleMetadata} />
+                          <small>Resumen histórico, no confirmación de guardado. La actividad se revalida en Calendario.</small>
+                        </details>
+                      ) : null}
+                      {message.updateMetadata ? (
+                        <details aria-label="Propuesta de actualización A02">
+                          <summary>Cambio de {message.updateMetadata.targetName} · {message.updateMetadata.status === "finished" ? "sin pendientes" : "revisión necesaria"}</summary>
+                          <p>Cuenta: {message.updateMetadata.accountName}</p>
+                          {message.updateMetadata.field ? (
+                            <p>{message.updateMetadata.label}: {message.updateMetadata.currentValue ?? "(vacío)"} → {message.updateMetadata.proposedValue ?? "(vacío)"}</p>
+                          ) : null}
+                          <ul>{message.updateMetadata.changes.map((change) => (
+                            <li key={change.id}>
+                              {change.label}: {change.action === "pending" ? "valor pendiente" : change.action === "clear" ? "(vaciar)" : change.value}
+                              {" · "}{({ pending: "pendiente", completed: "guardado según operación", discarded: "retirado", no_change: "sin cambio" })[change.status]}
+                            </li>
+                          ))}</ul>
+                          <small>Resumen histórico, no confirmación de ejecución. Cada campo se revisa y confirma por separado; la vigencia se comprueba en el servidor.</small>
+                        </details>
+                      ) : null}
+                      {message.creationMetadata ? (
+                        <details aria-label="Borrador de alta A01">
+                          <summary>
+                            Borrador de {message.creationMetadata.object === "contact" ? "contacto" : "oportunidad"} · no guardado
+                          </summary>
+                          <p>Cuenta: {message.creationMetadata.accountName}</p>
+                          <ul>{message.creationMetadata.fields.map((field) => (
+                            <li key={field.field}>{field.label}: {field.value}</li>
+                          ))}</ul>
+                          <p>Pendientes de completar o revisar: {message.creationMetadata.pendingFields.join(", ")}</p>
+                          {message.creationMetadata.coincidences.map((item) => (
+                            <p key={item.id}>Posible coincidencia: {item.name} · {item.reason}</p>
+                          ))}
+                          {message.creationMetadata.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
+                          <small>Resumen histórico de la propuesta, no comprobante de alta. La vigencia se verifica al continuar al módulo.</small>
+                        </details>
+                      ) : null}
+                      {message.documentReportMetadata?.length ? (
+                        <div aria-label="Contraste del reporte documental">
+                          <small className="mi-agent-customer-source-label">
+                            Reporte documental · no confirma hechos CRM
+                          </small>
+                          {message.documentReportMetadata.map((report, index) => (
+                            <details key={index}>
+                              <summary>{report.statusLabel}{report.partial ? " · cobertura parcial" : ""}</summary>
+                              <p><strong>Lo reportado:</strong> {report.claim}</p>
+                              <p><strong>Fuente consultada:</strong> {report.sourceLabel}</p>
+                              <p>{report.reason}</p>
+                              {report.crmDiscrepancies?.map((item) => (
+                                <p key={item.questionId}>
+                                  <strong>Diferencia con {item.prompt}:</strong> {item.reason}
+                                  {item.partial ? " · Respuesta CRM registrada (fragmento recortado): " : " · Respuesta CRM registrada: "}{item.currentAnswer}
+                                  {" · No se reemplazó ni se eligió cuál fuente es correcta."}
+                                </p>
+                              ))}
+                              <ul>{report.citations.map((citation) => (
+                                <li key={citation.key}>[{citation.key}]: {citation.text}</li>
+                              ))}</ul>
+                              <small>No certifica autenticidad ni reemplaza datos CRM.</small>
+                              {report.crmCoverage?.partial ? <small> · Comparación CRM parcial: solo respuestas y fragmentos disponibles.</small> : null}
+                            </details>
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.scenarioMetadata ? (
+                        <small className="mi-agent-customer-source-label">
+                          Escenario hipotético · no modifica el CRM
+                          {message.scenarioMetadata.partial ? " · consultar cobertura" : ""}
+                        </small>
+                      ) : null}
+                      {message.scenarioEvidence?.length ? (
+                        <details>
+                          <summary>Base, metodología y límites del escenario</summary>
+                          <ul>{message.scenarioEvidence.map((item, index) => <li key={index}>{item}</li>)}</ul>
+                        </details>
+                      ) : null}
+                      {message.scenarioMetadata?.tables?.length ? (
+                        <div style={{ overflowX: "auto" }}>
+                          {message.scenarioMetadata.tables.map((table, index) => (
+                            <table key={index} aria-label={table.title}>
+                              <caption>{table.title}</caption>
+                              <thead><tr>{table.headers.map((header) => <th key={header} scope="col">{header}</th>)}</tr></thead>
+                              <tbody>{table.rows.map((row, rowIndex) => (
+                                <tr key={rowIndex}>{row.map((value, columnIndex) => <td key={columnIndex}>{value}</td>)}</tr>
+                              ))}</tbody>
+                            </table>
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.trendMetadata ? (
+                        <small className="mi-agent-customer-source-label">
+                          Evolución comercial registrada · {message.trendMetadata.metric}
+                          {message.trendMetadata.partial ? " · consultar cobertura y límites" : ""}
+                        </small>
+                      ) : null}
+                      {message.trendEvidence?.length ? (
+                        <details>
+                          <summary>Fundamento histórico</summary>
+                          <ul>{message.trendEvidence.map((item, index) => <li key={index}>{item}</li>)}</ul>
+                        </details>
+                      ) : null}
+                      {message.trendMetadata?.table || message.trendMetadata?.tables?.length ? (
+                        <div style={{ overflowX: "auto" }}>
+                          {(message.trendMetadata.tables || [message.trendMetadata.table]).map((table, index) => (
+                            <table key={index} aria-label={table.title || "Evolución comercial"}>
+                              {table.title ? <caption>{table.title}</caption> : null}
+                              <thead><tr>{table.headers.map((header) => <th key={header} scope="col">{header}</th>)}</tr></thead>
+                              <tbody>{table.rows.map((row, rowIndex) => (
+                                <tr key={rowIndex}>{row.map((value, columnIndex) => <td key={columnIndex}>{value}</td>)}</tr>
+                              ))}</tbody>
+                            </table>
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.comparisonMetadata ? (
+                        <small className="mi-agent-customer-source-label">
+                          Comparación por datos registrados
+                          {message.comparisonMetadata.partial ? " · cobertura parcial" : ""}
+                          {` · ${message.comparisonMetadata.count} oportunidades`}
+                        </small>
+                      ) : null}
+                      {message.comparisonEvidence?.length ? (
+                        <details>
+                          <summary>Fundamento de la comparación</summary>
+                          <ul>
+                            {message.comparisonEvidence.map((item, evidenceIndex) => (
+                              <li key={evidenceIndex}>{item}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {message.priorityMetadata ? (
+                        <small className="mi-agent-customer-source-label">
+                          Priorización por datos registrados
+                          {message.priorityMetadata.partial ? " · recuperación parcial" : ""}
+                          {` · ${message.priorityMetadata.shown} de ${message.priorityMetadata.eligible} elegibles recuperadas`}
+                        </small>
+                      ) : null}
+                      {message.priorityEvidence?.length ? (
+                        <details>
+                          <summary>Fundamento del ranking</summary>
+                          <ul>
+                            {message.priorityEvidence.map((item, evidenceIndex) => (
+                              <li key={evidenceIndex}>{item}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {message.documentEvidence?.length ? (
+                        <details>
+                          <summary>Respaldo documental</summary>
+                          <ul>
+                            {message.documentEvidence.map((item, evidenceIndex) => (
+                              <li key={evidenceIndex}>{item}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                      {message.comparisonMetadata?.table || message.comparisonMetadata?.tables?.length ? (
+                        <div style={{ overflowX: "auto" }}>
+                          {(message.comparisonMetadata.tables || [message.comparisonMetadata.table]).map((table, tableIndex) => (
+                            <table key={tableIndex} aria-label={table.title || "Comparación de oportunidades"}>
+                              {table.title ? <caption>{table.title}</caption> : null}
+                              <thead>
+                                <tr>{table.headers.map((header) => <th key={header} scope="col">{header}</th>)}</tr>
+                              </thead>
+                              <tbody>
+                                {table.rows.map((row, rowIndex) => (
+                                  <tr key={rowIndex}>{row.map((value, columnIndex) => <td key={columnIndex}>{value}</td>)}</tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ))}
+                        </div>
+                      ) : null}
                       {String(message.answer || "").includes("\n") ? (
                         <p className="mi-agent-coach-answer-text is-multiline">
-                          {message.answer}
+                          {message.comparisonMetadata?.table || message.comparisonMetadata?.tables?.length ||
+                            message.trendMetadata?.table || message.trendMetadata?.tables?.length || message.scenarioMetadata?.tables?.length
+                            ? String(message.answer || "").split("\n").filter((line) => !line.startsWith("|")).join("\n")
+                            : message.answer}
                         </p>
                       ) : (
                         <h4
@@ -8855,7 +9139,7 @@ export default function MiAgentPage({
                               </div>
                             ) : (
                               <div className="mi-agent-customer-history-period">
-                                <span>
+                                {message.activityHistory.range ? <span>
                                   {formatDate(
                                     message.activityHistory.range.startDate,
                                   )}
@@ -8863,12 +9147,16 @@ export default function MiAgentPage({
                                   {formatDate(
                                     message.activityHistory.range.endDate,
                                   )}
-                                </span>
-                                <span>
-                                  {message.activityHistory.range.months} meses
-                                </span>
+                                </span> : <span>Sin límite temporal implícito</span>}
+                                {message.activityHistory.range?.months ? (
+                                  <span>{message.activityHistory.range.months} meses</span>
+                                ) : null}
+                                {message.activityHistory.timezone ? <span>{message.activityHistory.timezone}</span> : null}
                               </div>
                             )}
+                            {message.activityHistory.warnings?.map((warning) => (
+                              <p key={warning} className="mi-agent-customer-history-empty">{warning}</p>
+                            ))}
                             {message.activityHistory.sections.map((section) => (
                               <section
                                 key={section.key}
@@ -8911,6 +9199,11 @@ export default function MiAgentPage({
                                             {item.title}
                                           </strong>
                                           <div className="mi-agent-customer-history-item-meta">
+                                            {item.sourceTitle ? <span>{item.sourceTitle}</span> : null}
+                                            {item.recordId ? <span>Registro {item.recordId}</span> : null}
+                                            {item.dateMeaning ? <span>{item.dateMeaning}</span> : null}
+                                            {item.accountLink ? <span>{item.accountLink}</span> : null}
+                                            {item.time ? <span>{item.time}</span> : null}
                                             {item.opportunityName ? (
                                               <span>
                                                 {item.opportunityName}
@@ -9149,6 +9442,9 @@ export default function MiAgentPage({
                                   <p>
                                     Resultado propuesto: {operation.notes}
                                   </p>
+                                ) : null}
+                                {operation.kind === "opportunity_note" && operation.noteText ? (
+                                  <p>{operation.noteText}</p>
                                 ) : null}
                                 {canReviewCustomerOperation(operation) ? (
                                   <button
@@ -14408,6 +14704,15 @@ export default function MiAgentPage({
               ) : coachOperationDraft.operation.kind ===
                 "link_contact_to_opportunity" ? (
                 <div className="mi-agent-coach-action-form">
+                  {coachOperationDraft.operation.linkSummary ? (
+                    <p>
+                      Contacto actual: {coachOperationDraft.operation.linkSummary.currentContactName || "(sin contacto)"}.
+                      {" "}{coachOperationDraft.operation.linkSummary.effect === "replace"
+                        ? "Se sustituirá la asociación; no se conservarán ambos contactos."
+                        : "Se asignará el contacto propuesto."}
+                      {" "}Propuesta no guardada; confirma el vínculo en Oportunidades.
+                    </p>
+                  ) : null}
                   <label>
                     Oportunidad
                     <input
@@ -14436,6 +14741,15 @@ export default function MiAgentPage({
                       disabled
                     />
                   </label>
+                </div>
+              ) : coachOperationDraft.operation.kind === "validate_stage" ? (
+                <CustomerStageSummary summary={coachOperationDraft.operation.stageSummary} />
+              ) : coachOperationDraft.operation.outcomeDraftId ? (
+                <CustomerOutcomeSummary operation={coachOperationDraft.operation} />
+              ) : coachOperationDraft.operation.kind === "reschedule_activity" ? (
+                <div>
+                  <CustomerRescheduleSummary summary={coachOperationDraft.operation.scheduleSummary} />
+                  <p>Actividad ID {coachOperationDraft.operation.activityId}. Propuesta no guardada. Revisa y confirma en Calendario; no se creará una sustituta.</p>
                 </div>
               ) : coachOperationDraft.operation.kind === "activity" ? (
                 <div
@@ -14625,6 +14939,43 @@ export default function MiAgentPage({
                     </label>
                   ))}
                 </div>
+              ) : coachOperationDraft.operation.kind === "opportunity_note" ? (
+                <div className="mi-agent-coach-action-form">
+                  <label>
+                    Oportunidad
+                    <input
+                      value={coachOperationDraft.operation.title || "Oportunidad seleccionada"}
+                      disabled
+                    />
+                  </label>
+                  <label>
+                    Texto de la nota
+                    <textarea
+                      rows={5}
+                      value={coachOperationDraft.operation.noteText || ""}
+                      aria-invalid={coachDraftMissingSet.has("noteText")}
+                      onChange={(event) =>
+                        setCoachOperationDraft((current) => ({
+                          ...current,
+                          operation: {
+                            ...current.operation,
+                            noteText: event.target.value,
+                          },
+                        }))
+                      }
+                    />
+                    {coachDraftMissingSet.has("noteText") ? (
+                      <small className="mi-agent-coach-field-error">
+                        El texto de la nota es obligatorio.
+                      </small>
+                    ) : null}
+                    <small>
+                      Fuente: {coachOperationDraft.operation.attribution || "sin atribución"} ·
+                      certeza: {coachOperationDraft.operation.certainty || "sin especificar"}.
+                      El guardado no se puede deshacer.
+                    </small>
+                  </label>
+                </div>
               ) : coachOperationDraft.operation.kind === "stage_answer" ||
                 coachOperationDraft.operation.kind === "lead_call_outcome" ? (
                 <label>
@@ -14685,6 +15036,7 @@ export default function MiAgentPage({
                     Nuevo valor
                     <input
                       value={coachOperationDraft.value}
+                      disabled={Boolean(coachOperationDraft.operation.updateDraftId)}
                       aria-invalid={coachDraftMissingSet.has("value")}
                       onChange={(event) =>
                         setCoachOperationDraft((current) => ({
@@ -14693,6 +15045,9 @@ export default function MiAgentPage({
                         }))
                       }
                     />
+                    {coachOperationDraft.operation.updateDraftId ? (
+                      <small>Para corregir el valor, vuelve al chat. Cada corrección requiere revisar la nueva propuesta antes de guardar.</small>
+                    ) : null}
                     {coachDraftMissingSet.has("value") ? (
                       <small className="mi-agent-coach-field-error">
                         Este campo es obligatorio para continuar.
@@ -14773,9 +15128,11 @@ export default function MiAgentPage({
                           "create_quotation",
                           "create_proposal",
                           "lead_resolve",
+                          "reschedule_activity",
+                          "validate_stage",
                         ].includes(coachOperationDraft.operation.kind)
                       ? !Object.keys(coachOperationDraft.payload || {}).length
-                      : !String(coachOperationDraft.value || "").trim())
+                      : !coachOperationDraft.operation.updateDraftId && !coachOperationDraft.operation.outcomeDraftId && !String(coachOperationDraft.value ?? "").trim())
                 }
               >
                 {savingCoachOperation

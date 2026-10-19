@@ -20,7 +20,7 @@ sin cambiarlo, B9 verifica la evidencia y B10 presenta el resultado. La
 arquitectura detallada, las fuentes de B3 y los límites entre bloques se explican
 en [B3 · Servicio del canal](#b3--servicio-del-canal).
 
-Las 44 categorías y los 13 movimientos se detallan dentro de B3. La evaluación
+Las 46 categorías y los 13 movimientos se detallan dentro de B3. La evaluación
 determinista tiene su propia [guía sintética](./chat-cliente-existente-evaluacion-sintetica.md);
 los controles y recorridos opt-in con proveedor real se describen en la [guía
 de evaluación live](./evaluacion-live-chat-cliente-existente.md).
@@ -50,7 +50,7 @@ Una sesión puede contener varios jobs. El snapshot se prepara para procesar un 
 | **B8 · Herramientas de lectura**  | Ejecuta consultas CRM de solo lectura sobre el snapshot autorizado y devuelve resultados acotados.                                                                                                                                                                        |
 | **B9 · Verificador de evidencia** | Comprueba si las lecturas responden la pregunta. Si falta información, puede solicitar lecturas adicionales sujetas a los mismos controles y límites.                                                                                                                     |
 | **B10 · Respuesta**               | Forma una respuesta a partir de evidencia verificada. Algunas respuestas se calculan de forma determinista; otras pasan por síntesis y auditoría.                                                                                                                         |
-| **B11 · Persistencia**            | Guarda el resultado del job, el historial y el contexto actualizado de la sesión, además de las trazas permitidas.                                                                                                                                                        |
+| **B11 · Persistencia**            | Guarda el resultado del job, el historial y el contexto actualizado de la sesión, además de las trazas permitidas. No persiste notas CRM; estas se insertan en `opportunity_notes` solo mediante la operación controlada confirmada. |
 
 :::
 
@@ -298,7 +298,7 @@ incertidumbre. Una nueva solicitud o cambio de foco no reutiliza ese reporte com
 si fuera una orden vigente. Los errores de interpretación se muestran
 explícitamente; no activan silenciosamente el clasificador anterior.
 
-**Disponibilidad y autorización:** B3 reconoce las 44 categorías sin ocultar las
+**Disponibilidad y autorización:** B3 reconoce las 46 categorías sin ocultar las
 no implementadas o deshabilitadas. Después, el coordinador separa capacidad
 inexistente, política deshabilitada y permiso denegado. El modelo no convierte
 «envía el correo» en «redacta un correo» solo porque no existe envío.
@@ -575,7 +575,13 @@ autorizados, no contra IDs elegidos por el modelo.
 2. Ejecuta la función de lectura correspondiente sobre los datos autorizados que recibió: snapshot CRM de Coach/Cliente existente o snapshot de la sesión de Cuenta nueva. Aplica los argumentos y filtros permitidos; no busca registros fuera de ese conjunto ni acepta instrucciones del modelo como autorización.
 3. Devuelve el resultado asociado a la herramienta sin modificar CRM, historial, cuenta ni sesión. La ejecución es read-only; B8 no redacta la respuesta al usuario ni determina si la evidencia contesta suficientemente la pregunta.
 
-**Variación por canal:** en **Coach** y **Cliente existente**, las herramientas leen del snapshot CRM acotado por permisos, cuenta y contexto; en **Cuenta nueva**, las herramientas solo consultan los datos de la sesión de prospecto, como perfil, hallazgos, contactos o hipótesis. B8 no convierte un prospecto ni crea registros CRM.
+**Variación por canal:** en **Coach** y **Cliente existente**, las herramientas leen del snapshot CRM acotado por permisos, cuenta y contexto; Cliente existente también dispone de una lectura de notas paginada y autorizada para una oportunidad única. En **Cuenta nueva**, las herramientas solo consultan los datos de la sesión de prospecto, como perfil, hallazgos, contactos o hipótesis. B8 no convierte un prospecto ni crea registros CRM.
+
+`getOpportunityNotes` es una lectura B8 de solo lectura. B4 entrega un único
+`opportunityId` resuelto dentro de la cuenta fija; el servicio vuelve a validar
+permisos, pertenencia de la oportunidad y estado de la cuenta antes de leer
+`opportunity_notes`. El historial vacío es un resultado explícito, y una página
+con notas anteriores informa que la lectura está limitada a las 50 más recientes.
 **Entrega y errores:** devuelve a B7 el nombre de la herramienta, el resultado y, cuando corresponda, error/código de error, timeout, truncamiento u otra métrica de calidad. Una lista vacía solo significa que una lectura terminó correctamente y no encontró coincidencias; si hubo error, timeout, truncamiento o la consulta se omitió por límites, esos estados se conservan y no se presentan como “sin resultados”.
 
 **Límites de seguridad:** el modelo no recibe credenciales SQL ni puede enviar SQL arbitrario. B8 solo ejecuta las herramientas conocidas del catálogo sobre el snapshot o servicio de lectura que le entrega el servidor; las operaciones de escritura y conversión pertenecen a otros flujos y requieren sus propias reglas/confirmaciones.
@@ -685,12 +691,13 @@ El filtrado se aplica al leer, también para jobs fallidos e historial antiguo, 
 borrar las trazas internas ni depender del entorno. También se conservan las
 trazas de fallos de preparación y persistencia; no se reconstruyen turnos antiguos.
 - **Coach:** puede guardar las operaciones propuestas como registros pendientes/editables asociados al job y a la sesión. Guardar una propuesta no significa ejecutarla ni escribir el cambio en CRM; eso requiere el flujo posterior de confirmación/operación.
+- **Cliente existente:** B11 puede persistir la propuesta pendiente `opportunity_note`, pero no la nota CRM. Solo después de que el vendedor revise y confirme, la operación controlada inserta atómicamente en `opportunity_notes` y registra una auditoría sin duplicar el texto comercial.
 
 **Variación por canal:** Coach actualiza el job y los turnos de la sesión, además de enlazar trazas y propuestas; Cliente existente guarda el resultado junto con el historial y contexto de la sesión de chat de la cuenta; Cuenta nueva guarda el resultado del job y añade los mensajes al historial de la sesión de prospecto. Cada canal persiste solo sus datos de sesión y alcance autorizados.
 
 **Cierre y entrega:** tras persistir, B3 devuelve el control al worker/job. B1 no recibe la respuesta desde B11: consulta a B2 con el `jobId`, y B2 lee el estado/resultado persistido y lo entrega. Si el job falla, B2 puede devolver ese estado/error en lugar de una respuesta comercial. No se reinicia el flujo B1–B10 ni se repiten lecturas por guardar el resultado.
 
-**Límites:** B11 no decide el contenido, no valida evidencia, no ejecuta lecturas ni modifica directamente cuentas/oportunidades CRM. Su trabajo es guardar de forma asociada y recuperable el resultado, la sesión y la observabilidad del turno.
+**Límites:** B11 no decide el contenido, no valida evidencia, no ejecuta lecturas ni modifica directamente cuentas/oportunidades CRM. Su trabajo es guardar de forma asociada y recuperable el resultado, la sesión, propuestas pendientes y la observabilidad del turno. Una propuesta persistida no equivale a guardar una nota; la escritura en CRM requiere ejecución controlada e idempotente después de confirmación explícita.
 
 :::
 

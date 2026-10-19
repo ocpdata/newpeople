@@ -238,7 +238,7 @@ router.post("/operation-drafts/:draftId/approve", async (req, res) => {
   try {
     let result;
     if (isOpportunityAmount) {
-      const updateResult = await query(
+      const updateResult = await mutateAuditedOpportunity({ req, opportunityId: Number(operation.target.id) },
         `UPDATE opportunities
          SET amount_usd = ?, updated_at = NOW(3), updated_by = ?
          WHERE id = ?`,
@@ -397,3 +397,4 @@ router.get("/usage/me", async (req, res) => {
 
 export { queueChatbotProcessing, processPendingChatbotJobs, startChatbotWorker };
 export default router;
+import { mutateAuditedOpportunity } from "./opportunity-audit.js";

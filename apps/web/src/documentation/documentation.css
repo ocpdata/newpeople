@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0;
 }
 
 .documentation-header {
@@ -193,6 +194,7 @@
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.78);
+  min-width: 0;
 }
 
 .documentation-article-meta {
@@ -203,6 +205,9 @@
 }
 
 .documentation-content {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin: 0;
   padding: 1rem 1.1rem;
   border-radius: 12px;
@@ -211,6 +216,12 @@
   color: #1f2937;
   line-height: 1.7;
   font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.documentation-content img {
+  max-width: 100%;
+  height: auto;
 }
 
 .documentation-content > *:first-child {
@@ -268,39 +279,41 @@
 .documentation-content a {
   color: #1d4ed8;
   text-decoration: underline;
+}
 
-  .documentation-table-wrap {
-    width: 100%;
-    overflow-x: auto;
-    margin: 1rem 0;
-  }
+.documentation-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
 
-  .documentation-table {
-    width: 100%;
-    min-width: 680px;
-    border-collapse: collapse;
-    background: #ffffff;
-    font-size: 0.88rem;
-    line-height: 1.45;
-  }
+.documentation-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
 
-  .documentation-table th,
-  .documentation-table td {
-    padding: 0.7rem 0.8rem;
-    border: 1px solid #dbe3ea;
-    text-align: left;
-    vertical-align: top;
-  }
+.documentation-table th,
+.documentation-table td {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #dbe3ea;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
-  .documentation-table th {
-    background: #eaf2f5;
-    color: #173b52;
-    font-weight: 800;
-  }
+.documentation-table th {
+  background: #eaf2f5;
+  color: #173b52;
+  font-weight: 800;
+}
 
-  .documentation-table tr:nth-child(even) td {
-    background: #f8fafb;
-  }
+.documentation-table tr:nth-child(even) td {
+  background: #f8fafb;
 }
 
 .documentation-content blockquote {
@@ -348,6 +361,8 @@
   background: #0f172a;
   color: #e2e8f0;
   overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .documentation-content code {

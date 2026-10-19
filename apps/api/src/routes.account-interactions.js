@@ -1257,7 +1257,7 @@ router.post(
       await ensureOpportunityDocumentSchema();
       const now = new Date();
       const opportunityId = await withTransaction(async (conn) => {
-        const [insertResult] = await conn.query(
+        const insertResult = await mutateAuditedOpportunity({ connection: conn, req },
           `INSERT INTO opportunities
            (name, amount_usd, account_id, close_date, contact_id,
             sales_stage_id, business_line_id, seller_user_id, presales_user_id, activation_status_id,
@@ -1330,3 +1330,4 @@ router.post(
 );
 
 export default router;
+import { mutateAuditedOpportunity } from "./opportunity-audit.js";

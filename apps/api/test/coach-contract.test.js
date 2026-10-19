@@ -75,6 +75,33 @@ describe("Coach strict contracts", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("accepts an individually attributed opportunity note operation", () => {
+    const parsed = coachOperationSchema.safeParse({
+      kind: "opportunity_note",
+      ...operationCommon,
+      accountId: 2,
+      opportunityId: 4,
+      noteText: "El cliente quizá lo confirme; no lo confirmó.",
+      sourceType: "chat_report",
+      attribution: "client",
+      certainty: "suspected",
+      sourceChannel: "customer_account",
+    });
+    expect(parsed.success).toBe(true);
+    expect(
+      coachOperationSchema.safeParse({
+        kind: "opportunity_note",
+        ...operationCommon,
+        accountId: 2,
+        opportunityId: 4,
+        noteText: "",
+        sourceType: "chat_report",
+        attribution: "client",
+        certainty: "suspected",
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects fields from another operation variant", () => {
     const parsed = coachOperationSchema.safeParse({
       kind: "opportunity_field",

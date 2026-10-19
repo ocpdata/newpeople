@@ -99,8 +99,31 @@ Campos funcionales clave:
 - Alcance: auditoria de todo el sistema (no solo usuarios).
 - Exportacion CSV: no habilitada.
 - Cambios almacenados: solo delta (before/after de campos cambiados).
-- Retencion: 12 meses.
-- Limpieza: purga automatica periodica de registros vencidos.
+- Retencion: indefinida, sin vencimiento por antiguedad.
+- No se purgan registros de auditoria al iniciar la API, al registrar eventos ni mediante tareas periodicas.
+- Esta politica conserva los registros existentes y nuevos; no recupera registros eliminados previamente. Requiere supervision de almacenamiento y respaldos.
+
+### Historia comercial de oportunidades
+
+G06 reutiliza `audit_log`; no utiliza triggers ni exige cambios de parametros
+RDS. Los escritores de oportunidades guardan una captura completa anterior y
+posterior en `changed_fields.commercial_history.after`, junto con version,
+tipo y fecha UTC. Las acciones `commercial_history_created`,
+`commercial_history_changed`, `commercial_history_deleted` y
+`commercial_history_baseline` distinguen estas capturas de los eventos
+operativos existentes, evitando duplicar movimientos en las metricas.
+
+La captura se inserta con la misma conexion y transaccion que el cambio;
+un fallo de auditoria impide confirmar el cambio. El actor sigue siendo el
+usuario del CRM, no la cuenta tecnica de conexion a MySQL.
+El baseline no representa actividad comercial nueva ni certifica el pasado.
+Se omite del calculo de ultima actividad comercial. Las capturas tecnicas
+no duplican la lista de historial operativo del workspace.
+
+El comando `npm run history:install --workspace=api -- --apply` registra los
+estados base de forma idempotente sin modificar oportunidades. Desplegar
+primero los escritores auditados. Operaciones directas por SQL o herramientas
+externas que no usen esos escritores no se capturan automaticamente.
 
 ## Semantica de campos importantes
 

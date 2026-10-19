@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="1240" viewBox="0 0 840 1240" role="img" aria-labelledby="title description">
+  <title id="title">Recorrido de un turno de Cliente existente</title>
+  <desc id="description">B1 envía la solicitud a B2 y consulta su estado en paralelo. B3 prepara el contexto autorizado e interpreta el turno. B4 adapta el canal y coordina sus componentes. B5 organiza el procesamiento de B6 a B10: planificación, lecturas, evidencia y respuesta. B6 propone lecturas y B7/B8 consultan los datos autorizados. B9 verifica la evidencia y puede pedir lecturas adicionales. B10 prepara la respuesta, borrador o propuesta. B3 guarda el resultado mediante B11 y B1 lo muestra. Los bloques son responsabilidades: no todas las solicitudes necesitan recorrer todas las lecturas. Una propuesta no equivale a una operación ejecutada.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#496579"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .heading { fill: #173544; font-size: 25px; font-weight: 700; }
+      .label { fill: #173544; font-size: 19px; font-weight: 700; }
+      .detail { fill: #405b68; font-size: 16px; }
+      .node { fill: #fff; stroke: #9aafbf; stroke-width: 1.5; }
+      .interface { fill: #e8f4f5; stroke: #8dbbc4; }
+      .control { fill: #eaf0f5; stroke: #9aafbf; }
+      .evidence { fill: #fff5e5; stroke: #c59a50; }
+      .result { fill: #eaf5ed; stroke: #8bb497; }
+      .edge { fill: none; stroke: #496579; stroke-width: 2; marker-end: url(#arrow); }
+      .loop { stroke-dasharray: 6 5; }
+    </style>
+  </defs>
+  <rect width="840" height="1240" rx="18" fill="#f4f7f8"/>
+  <text class="heading" x="40" y="46">Cliente existente: flujo de un turno</text>
+  <text class="detail" x="40" y="74">De la pregunta del vendedor a una respuesta con evidencia.</text>
+
+  <g class="edge">
+    <path d="M360 166 V192"/>
+    <path d="M360 262 V288"/>
+    <path d="M360 358 V384"/>
+    <path d="M360 454 V480"/>
+    <path d="M360 550 V576"/>
+  </g>
+
+  <rect class="node interface" x="60" y="100" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="127">B1 · Interfaz</text>
+  <text class="detail" x="84" y="150">El vendedor envía su pregunta.</text>
+
+  <rect class="node interface" x="60" y="196" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="223">B2 · Ruta y job asíncrono</text>
+  <text class="detail" x="84" y="246">Recibe la solicitud y permite consultar su estado.</text>
+
+  <rect class="node control" x="60" y="292" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="319">B3 · Contexto e interpretación</text>
+  <text class="detail" x="84" y="342">Prepara datos autorizados y entiende la solicitud.</text>
+
+  <rect class="node control" x="60" y="388" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="415">B4 · Adaptador de Cliente existente</text>
+  <text class="detail" x="84" y="438">Adapta el canal y coordina sus tareas y límites.</text>
+
+  <rect class="node control" x="60" y="484" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="511">B5 · Motor conversacional</text>
+  <text class="detail" x="84" y="534">Coordina y valida el procesamiento de B6 a B10.</text>
+
+  <g transform="translate(0 96)">
+  <g class="edge">
+    <path d="M360 550 V576"/>
+    <path d="M360 646 V672"/>
+    <path d="M360 742 V768"/>
+    <path d="M360 838 V864"/>
+    <path d="M360 934 V960"/>
+  </g>
+  <rect class="node" x="60" y="484" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="511">B6 · Plan de lecturas</text>
+  <text class="detail" x="84" y="534">Determina qué información consultar.</text>
+
+  <rect class="node" x="60" y="580" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="607">B7/B8 · Consulta del CRM</text>
+  <text class="detail" x="84" y="630">Read model y herramientas autorizadas de solo lectura.</text>
+
+  <rect class="node evidence" x="60" y="676" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="703">B9 · Verificación de evidencia</text>
+  <text class="detail" x="84" y="726">Comprueba si la información responde la solicitud.</text>
+  <path class="edge loop" d="M660 709 H710 V613 H664"/>
+  <text class="detail" x="686" y="758">
+    <tspan x="686">Lecturas extra</tspan>
+    <tspan x="686" dy="21">si procede,</tspan>
+    <tspan x="686" dy="21">dentro del</tspan>
+    <tspan x="686" dy="21">presupuesto.</tspan>
+  </text>
+
+  <rect class="node result" x="60" y="772" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="799">B10 · Respuesta, borrador o propuesta</text>
+  <text class="detail" x="84" y="822">Redacta el resultado a partir de la evidencia validada.</text>
+
+  <rect class="node result" x="60" y="868" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="895">B11 · Persistencia a cargo de B3</text>
+  <text class="detail" x="84" y="918">Guarda resultado, historial y contexto de continuidad.</text>
+
+  <rect class="node interface" x="60" y="964" width="600" height="66" rx="10"/>
+  <text class="label" x="84" y="991">B1 · Presentación del resultado</text>
+  <text class="detail" x="84" y="1014">Consulta el job y muestra la respuesta disponible.</text>
+
+  <text class="detail" x="60" y="1064">La interfaz consulta el estado mientras se procesa el turno.</text>
+  <text class="detail" x="60" y="1088">Una propuesta preparada no equivale a una operación ejecutada.</text>
+  <text class="detail" x="60" y="1112">Vista simplificada: no toda solicitud requiere todas las lecturas.</text>
+  </g>
+</svg>

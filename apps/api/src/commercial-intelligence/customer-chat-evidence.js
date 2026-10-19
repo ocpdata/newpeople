@@ -53,7 +53,7 @@ export function describeCustomerEvidenceStatus(status) {
     const { state, ...issue } = description;
     return { state, message: description.message, issue: { ...issue, block: "B9" } };
   }
-  if (["sufficient", "no_results", "clarification", "activity_entities_validated"].includes(status)) {
+  if (["sufficient", "no_results", "clarification", "activity_entities_validated", "verified_authorized_read"].includes(status)) {
     return { state: "pass", message: "La verificación terminó en un estado controlado." };
   }
   return { state: "error", message: `Revisar estado de evidencia: ${status}.` };
