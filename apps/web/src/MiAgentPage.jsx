@@ -6277,6 +6277,7 @@ export default function MiAgentPage({
     const delegatesToModule = COACH_HANDOFF_OPERATION_KINDS.has(
       operation?.kind,
     );
+    let handoffTab = null;
     if (
       !delegatesToModule &&
       !(
@@ -6288,6 +6289,22 @@ export default function MiAgentPage({
       )
     )
       return;
+    if (delegatesToModule) {
+      handoffTab = window.open("about:blank", "_blank");
+      if (!handoffTab) {
+        setCoachOperationDraft((current) =>
+          current
+            ? {
+                ...current,
+                error:
+                  "No fue posible abrir el módulo. Permite las ventanas emergentes de este sitio y vuelve a intentarlo.",
+              }
+            : current,
+        );
+        return;
+      }
+      handoffTab.opener = null;
+    }
     setError("");
     setSavingCoachOperation(true);
     try {
@@ -6319,8 +6336,9 @@ export default function MiAgentPage({
             ),
           );
         }
+        handoffTab.location.replace(handoff.url);
+        handoffTab = null;
         closeCoachOperationDraft();
-        navigate(handoff.url);
         return;
       }
       if (!draft.reviewedAt) {
@@ -6427,6 +6445,7 @@ export default function MiAgentPage({
       await loadDashboard();
       if (operation.successNotice) setCoachNotice(operation.successNotice);
     } catch (requestError) {
+      handoffTab?.close();
       const responseData = requestError?.response?.data;
       const errorCode = responseData?.code;
       setCoachOperationDraft((current) =>

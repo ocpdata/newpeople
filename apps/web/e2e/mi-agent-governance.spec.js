@@ -172,7 +172,7 @@ async function mockMiCoachApi(
     categories: CUSTOMER_SERVER_RULE_CATEGORIES, revisions: [],
   };
   let customerSnapshot;
-  await page.route("**/api/**", async (route) => {
+  await page.context().route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const { pathname } = url;
     const method = route.request().method();
@@ -2488,7 +2488,17 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
   };
   const requests = [];
   const draftUpdates = [];
-  await page.route("**/api/**", async (route) => {
+  const popupRequests = [];
+  page.context().on("request", (request) => {
+    const requestPage = request.frame().page();
+    if (requestPage !== page) {
+      popupRequests.push({
+        path: new URL(request.url()).pathname,
+        method: request.method(),
+      });
+    }
+  });
+  await page.context().route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
     const json = (body) =>
@@ -2582,17 +2592,24 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
     "Los cambios se guardarán al continuar en el módulo.",
   );
   expect(draftUpdates).toEqual([]);
+  const calendarPagePromise = page.waitForEvent("popup");
   await confirmation
     .getByRole("button", { name: "Continuar en el módulo" })
     .click();
+  const calendarPage = await calendarPagePromise;
   await expect.poll(() => draftUpdates).toEqual([
     expect.objectContaining({
       notes: "Revisar avances y presupuesto",
       successCriteria: "Acordar siguiente paso y fecha",
     }),
   ]);
-  await expect(page).toHaveURL(/\/calendar\?coachDraft=activity-70/);
-  const calendar = page.getByRole("dialog", {
+  await expect(page).not.toHaveURL(/\/calendar\?coachDraft=activity-70/);
+  await expect(calendarPage).toHaveURL(/\/calendar\?coachDraft=activity-70/);
+  await expect.poll(() => popupRequests).toContainEqual({
+    path: "/api/mi-agent/coach/handoffs/activity-70",
+    method: "GET",
+  });
+  const calendar = calendarPage.getByRole("dialog", {
     name: "Nueva actividad",
     exact: true,
   });
