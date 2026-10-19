@@ -41,6 +41,7 @@ import {
 } from "./customer-record-list.js";
 import {
   associateCustomerReport,
+  customerEmailPurposeClarification,
   generateCustomerContent,
   runCustomerContractTurn,
 } from "./turn-contract-runtime.js";
@@ -2942,6 +2943,8 @@ export function createCustomerAccountAdapter({
     canAnswerWithoutBusinessEvidence: () =>
       contractComponent?.category.startsWith("content.") &&
       turnDiagnostics.evidence?.status === "content_validated" ||
+      contractComponent?.category === "report.client_statement" &&
+      turnDiagnostics.evidence?.status === "report_destination_validated" ||
       !allowOperationsForTurn && sellerReportAssessment?.messageKind === "client_report",
     validateServerRequest: ({ question, routing, businessRules, operationPolicy }) => {
       if (contractComponent && !contractComponent.category.startsWith("action.")) return null;
@@ -4513,6 +4516,96 @@ export function createCustomerAccountAdapter({
                   ...(component.category === "action.change_status" ? { stageMemory: null } : {}),
                 },
                 qualityTrace: { toolsUsed: [], diagnostics: { capability: { status, category: component.category } } },
+                channelIntentRouting: null,
+              };
+            }
+            const emailClarification = customerEmailPurposeClarification(component, originalQuestion);
+            if (emailClarification) return {
+              response: emailClarification,
+              qualityTrace: { toolsUsed: [], diagnostics: { answerGeneration: { source: "content_purpose_clarification" } } },
+              channelIntentRouting: null,
+            };
+            if (component.category === "content.meeting_preparation" && component.object === "opportunity" &&
+                /\bagenda\b/i.test(component.text)) {
+              const stop = (answer, responseType = "error") => ({
+                response: { answer, responseType, operations: [], evidence: [], pendingItems: [], recommendedActions: [] },
+                qualityTrace: { toolsUsed: [], diagnostics: {} }, channelIntentRouting: null,
+              });
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const intent = contractIntents.find((item) => item.code === capability.intent && item.enabled !== false);
+              if (!permissionGranted(permissions, "oportunidades.read") || scoped.permissions?.canReadOpportunities === false ||
+                  contractRules.scope?.opportunitySearchAllowed === false || !intent?.allowedTools.includes("getOpportunity")) {
+                return stop("Tu perfil o la configuración del canal no permiten verificar la oportunidad para preparar la agenda.");
+              }
+              if (Number(componentContext.accountId) !== Number(scoped.account?.id)) {
+                return stop("Selecciona una cuenta autorizada para preparar la agenda.", "clarification");
+              }
+              const records = [...new Map([...(scoped.opportunities || []), ...(scoped.inactiveOpportunities || []),
+                ...(scoped.selectedOpportunity ? [scoped.selectedOpportunity] : [])]
+                .filter((item) => Number(item.accountId) === Number(scoped.account.id))
+                .map((item) => [Number(item.id), item])).values()];
+              const targets = records.filter((item) => component.reference &&
+                normalizeCustomerSearchText(item.name) === normalizeCustomerSearchText(component.reference));
+              if (targets.length !== 1) return stop("Indica el nombre de una única oportunidad autorizada para preparar su agenda.", "clarification");
+              if (snapshotQueryMetrics.some((metric) =>
+                ["opportunities_active", "opportunities_inactive"].includes(metric.source) && metric.errorCode)) {
+                return stop("Falló la lectura necesaria para verificar la oportunidad. No preparé una agenda con datos incompletos.");
+              }
+              if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 1) throw Object.assign(
+                new Error("No hay presupuesto para verificar la agenda"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+              budget.remainingReadQueries -= 1;
+              const execute = () => executeCustomerReadTool({
+                toolName: "getOpportunity", snapshot: buildCustomerCoachSnapshot({
+                  ...scoped, permissions: {
+                    ...scoped.permissions,
+                    canReadContacts: scoped.permissions?.canReadContacts === true &&
+                      contractRules.scope?.contactSearchAllowed !== false &&
+                      permissionGranted(permissions, "contactos.read"),
+                  },
+                }),
+                args: { accountId: scoped.account.id, opportunityId: targets[0].id, includeDetails: true },
+                businessRules: contractRules,
+              });
+              const read = executionTrace ? executionTrace.spanSync({
+                from: "B7", to: "B8", label: "Verificar oportunidad para agenda",
+                parentSpanId: turnTraceParentSpanId,
+                input: { toolName: "getOpportunity", opportunityId: targets[0].id },
+              }, execute, (value) => ({ toolName: "getOpportunity", failed: Boolean(value.error) })) : execute();
+              if (read.error || Number(read.result?.id) !== Number(targets[0].id)) {
+                return stop("No pude verificar la oportunidad para preparar la agenda. No se creó ninguna actividad.");
+              }
+              const response = await generateCustomerContent({
+                component, readToolResults: [read], history, dependencyResults: dependencies,
+                user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
+                referenceMaterial: componentReferenceMaterial, question: originalQuestion,
+              });
+              return { response, qualityTrace: { toolsUsed: ["getOpportunity"], diagnostics: {
+                answerGeneration: { source: "contract_content" },
+                evidence: { status: response.responseType === "error" ? "content_failed" : "content_validated", verifier: "content", rounds: 0 },
+              } }, channelIntentRouting: null };
+            }
+            if (["content.rewrite", "content.translation"].includes(component.category) &&
+                component.object === "general") {
+              const previousDraft = [...history].reverse().find((message) =>
+                message.role === "assistant" && message.components?.some((part) =>
+                  part.category?.startsWith("content.") && part.status === "completed"));
+              const continuesDraft = /\b(?:mas breve|mas corto|sin mencionar|traducelo|reescribelo|hazlo)\b/i
+                .test(String(originalQuestion).normalize("NFD").replace(/\p{Diacritic}/gu, ""));
+              const source = componentReferenceMaterial || (continuesDraft && previousDraft ? {
+                name: "Último borrador del chat",
+                text: previousDraft.text, coverage: "complete", truncated: false,
+              } : null);
+              const response = await generateCustomerContent({
+                component, readToolResults: [], history, dependencyResults: dependencies,
+                user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
+                referenceMaterial: source, question: originalQuestion,
+              });
+              return {
+                response,
+                qualityTrace: { toolsUsed: [], diagnostics: {
+                  evidence: { status: response.responseType === "error" ? "content_failed" : "content_validated", verifier: "content", rounds: 0 },
+                  answerGeneration: { source: "contract_content" },
+                } },
                 channelIntentRouting: null,
               };
             }

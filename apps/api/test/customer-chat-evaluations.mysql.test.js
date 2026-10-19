@@ -164,6 +164,42 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     expect(item.result.steps).toHaveLength(4);
     expect(new Set(item.result.steps.map((step) => step.sessionId))).toEqual(new Set([200]));
   });
+  it("runs all SEQ04 turns when the activity draft is complete without executing a business action", async () => {
+    const draft = {
+      kind: "activity", accountId: 22, opportunityId: 37, contactId: 13,
+      title: "Llamada", actionType: "call", scheduledAt: "2026-10-20T10:00",
+      successCriteria: "Confirmar el siguiente paso", missingFields: [],
+    };
+    state.result
+      .mockResolvedValueOnce({ status: "completed", result: { answer: "Borrador preparado", responseType: "operation", operations: [draft] } })
+      .mockResolvedValueOnce({ status: "completed", result: {
+        answer: "Borrador a las 11:00", responseType: "operation",
+        operations: [{ ...draft, scheduledAt: "2026-10-20T11:00" }],
+      } })
+      .mockResolvedValueOnce({ status: "completed", result: { answer: "Borrador descartado", responseType: "informational", operations: [] } });
+    const { id } = await launch({ caseIds: ["SEQ04"] });
+    await processPendingEvaluations();
+    const item = await getEvaluationCase(user, id, (await caseRows(id))[0].id);
+    expect(item.status).toBe("human_review");
+    expect(item.result.steps).toHaveLength(3);
+    expect(item.result.steps[1].question).toBe("Mejor a las 11:00, conserva el resto");
+    expect(state.chat).toHaveBeenCalledTimes(3);
+    expect(await sql("SELECT * FROM customer_chat_evaluation_actions")).toHaveLength(0);
+  });
+  it("retains the first SEQ04 answer as inconclusive when no complete draft exists", async () => {
+    state.result.mockResolvedValue({ status: "completed", result: {
+      answer: "¿A qué hora?", responseType: "clarification", operations: [],
+    } });
+    const { id } = await launch({ caseIds: ["SEQ04"] });
+    await processPendingEvaluations();
+    const item = await getEvaluationCase(user, id, (await caseRows(id))[0].id);
+    expect(item.status).toBe("inconclusive");
+    expect(item.result.reason).toContain("Precondición incumplida");
+    expect(item.result.steps).toHaveLength(1);
+    expect(item.result.steps[0].answer).toBe("¿A qué hora?");
+    expect(state.chat).toHaveBeenCalledTimes(1);
+    expect(await sql("SELECT * FROM customer_chat_evaluation_actions")).toHaveLength(0);
+  });
   it("persists structured history in case detail and exports without creating business actions", async () => {
     const activityHistory = { mode: "timeline", metadata: { shown: 1, matched: 1, partial: false },
       sections: [{ key: "timeline", title: "Cronología registrada", available: true, items: [

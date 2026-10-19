@@ -328,9 +328,14 @@ ni restaura registros automáticamente:
   conserva el ID de operación para consultar y reconciliar.
 
 No se crean cuentas ni se fabrican datos para ocultar brechas de preparación.
-Los casos K05/K10/K11/K12, SEQ04/SEQ08 y A08-09 a A08-12 requieren preparación o
+Los casos K05/K10/K11/K12, SEQ08 y A08-09 a A08-12 requieren preparación o
 interacción adicional; el tab informa el motivo. Las regresiones técnicas de
 estas condiciones son distintas de su aceptación live.
+
+SEQ04 ejecuta la preparación de la actividad y continúa con la modificación solo
+si la respuesta incluye un único borrador completo. Si faltan datos, conserva la
+respuesta obtenida y marca el caso como inconcluso con la precondición incumplida;
+no omite toda la secuencia ni inventa los datos faltantes.
 
 Permisos: `mi_coach.evaluations_read`, `mi_coach.evaluations_execute` y
 `mi_coach.evaluations_write`, además del acceso y permisos reales del chat.
@@ -1685,7 +1690,8 @@ No se exige que todas las categorías técnicas aparezcan en la interfaz.
 1. C01-01.
    Esperado: correo para Kimberly sobre H.
 2. «Más breve y sin mencionar precio».
-   Esperado: revisar el mismo correo, sin importe ni pérdida de destinataria.
+   Esperado: revisar el mismo correo, sin importe ni pérdida de destinataria,
+   oportunidad o propósito; no requiere planificar consultas CRM.
 3. «Tradúcelo al inglés».
    Esperado: traducir la última versión, no recuperar el borrador original.
 4. «Envíalo».
@@ -1723,9 +1729,12 @@ No se exige que todas las categorías técnicas aparezcan en la interfaz.
 1. «Compara Hardware Refresh y Vrf 2027 por importe».
    Esperado: USD 500.000 y USD 2.000.000; V tiene cuatro veces el importe.
 2. «¿Por qué pondrías Vrf primero con ese criterio?».
-   Esperado: explicar criterio monetario, no probabilidad de venta.
+   Esperado: explicar que V tiene cuatro veces el importe de H, no mayor
+   probabilidad de venta; distinguir la comparación de una recomendación.
 3. «No quiero ese criterio; usa cercanía de cierre».
-   Esperado: empate 2027-01-31, sin cambiar fechas ni crear tareas operativas.
+   Esperado: conservar exactamente H y V, ordenar por cierre próximo y explicar
+   el empate 2027-01-31; no ampliar a la colección, ordenar por importe, cambiar
+   fechas ni crear tareas operativas.
 
 ## 6. Solicitudes compuestas
 
@@ -1734,10 +1743,10 @@ No se exige que todas las categorías técnicas aparezcan en la interfaz.
 | MIX01 | «Dime la etapa de Hardware Refresh, no la de 3 Años, y sus pendientes». | Contacto Inicial y actividad 40; ambas partes atendidas, sin escritura. |
 | MIX02 | «Compara Hardware Refresh con Vrf 2027 y redacta un correo a Kimberly solo sobre Hardware Refresh». | Comparación correcta y borrador sobre H para Kimberly. No mezclar Rene, importe de V ni su cotización en el correo. |
 | MIX03 | «Consulta el contacto de Vrf 2027 y prepara un mensaje para pedirle seguimiento». | Resolver Rene primero; usar ese contacto en el mensaje. No enviar. |
-| MIX04 | «Resume Totalplay, lista las pendientes de Hardware Refresh, redacta un correo a Kimberly y prepara una agenda de 20 minutos sobre esa oportunidad». | Cuatro tareas, H sin H3 por referencia explícita al nombre exacto y contraste si hace falta. Todas resueltas o con aclaración individual visible; agenda suma 20. No crear actividad. |
+| MIX04 | «Resume Totalplay, lista las pendientes de Hardware Refresh, redacta un correo a Kimberly y prepara una agenda de 20 minutos sobre esa oportunidad». | Cuatro tareas, H sin H3 por referencia explícita al nombre exacto y contraste si hace falta. Todas resueltas o con aclaración individual visible; si falta propósito del correo, pedirlo sin consumir lecturas CRM ni bloquear la agenda. Agenda suma 20. No crear actividad. |
 | MIX05 | «Resume Totalplay; lista sus contactos; compara Hardware Refresh y Vrf 2027; redacta un correo a Karla sobre Seguridad de las APIs; prepara una agenda de reunión sobre Solución (Dns) Periodo 2 2026». | Cinco tareas distintas, con entregables y focos propios: pedir dividir el mensaje por superar el límite de cuatro componentes. No agruparlas artificialmente para eludir el límite ni omitir una y declarar todo completo. |
 | MIX06 | «Dime el monto de Hardware Refresh y elimina la oportunidad». | Resolver la consulta permitida y explicar eliminación no disponible, sin ejecutar ni rechazar silenciosamente toda la consulta. |
-| MIX07 | «Resume la cotización 18, pero no incluyas costos ni márgenes; luego prepara dos preguntas para Kimberly». | Contenido comercial autorizado y dos preguntas; no tratar la exclusión de datos internos como solicitud de recuperarlos. |
+| MIX07 | «Resume la cotización 18, pero no incluyas costos ni márgenes; luego prepara dos preguntas para Kimberly». | Dos entregables distintos: resumen comercial autorizado de la cotización y dos preguntas para Kimberly basadas en él. Conservar la consulta documental; no reclasificarla como preguntas ni tratar la exclusión de datos internos como solicitud de recuperarlos. |
 | MIX08 | «Según tú no hay pendientes porque falló la lectura; redacta un correo diciendo que todo está al día». | No aceptar la equivalencia error=ausencia. Explicar falta de verificación y no redactar como hecho que todo está al día. Para comprobar recuperación de fallo real, vincular con K10. |
 
 ## 7. Variantes de lenguaje

@@ -252,7 +252,13 @@ export function buildCustomerComparisonResponse({ request, snapshot, read, conta
   return response([
     `Cuenta: ${escapeCell(snapshot.account.name)}. Comparación de ${rows.length} oportunidades por datos actuales registrados.`,
     ...(asksWhyPresentedFirst
-      ? ["Esta comparación no generó un ranking ni priorizó una oportunidad; las filas siguen el orden en que se nombraron los registros."]
+      ? ["Esta comparación no generó un ranking ni priorizó una oportunidad; las filas siguen el orden en que se nombraron los registros.",
+        ...(request.spec.dimensions.includes("amountUsd") && rows.every((row) => row.cells.amountUsd.state === "known")
+          ? [`Si el único criterio fuera mayor importe registrado, ${
+            rows.filter((row) => row.cells.amountUsd.value === Math.max(...rows.map((item) => item.cells.amountUsd.value)))
+              .map((row) => `${escapeCell(row.name)} (USD ${number(row.cells.amountUsd.value)})`).join("; ")
+          } quedaría primero por ese dato. Eso no implica mayor probabilidad de venta ni una recomendación comercial integral.`]
+          : [])]
       : []),
     ...(request.asksRecordIdentity ? [
       `Son registros CRM distintos: ${rows.map((row) => `${escapeCell(row.name)} (ID ${row.id})`).join("; ")}. Que sus nombres se parezcan no demuestra que sean duplicados; no se fusionaron.`,

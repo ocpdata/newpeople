@@ -68,6 +68,46 @@ function adapter(components, extra = {}) {
 }
 
 describe("Customer contract B6/B9/B10 integration", () => {
+  it("does not generate an agenda without opportunity read permission", async () => {
+    const result = await adapter([makeComponent("content.meeting_preparation", "opportunity", {
+      text: "Prepara una agenda de 20 minutos sobre Renovación Alfa",
+    })], { user: { id: 0, permissionSet: new Set(["cuentas.read"]) } }).runTurn({
+      question: "Prepara una agenda de 20 minutos sobre Renovación Alfa", context: { accountId: snapshot.account.id },
+    });
+    expect(result.response.responseType).toBe("error");
+    expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    expect(result.response.operations).toEqual([]);
+  });
+  it("does not substitute a longer opportunity name when the agenda target is ambiguous", async () => {
+    const result = await adapter([makeComponent("content.meeting_preparation", "opportunity", {
+      text: "Prepara una agenda de 20 minutos sobre Renovación", reference: "Renovación",
+    })]).runTurn({
+      question: "Prepara una agenda de 20 minutos sobre Renovación", context: { accountId: snapshot.account.id },
+    });
+    expect(result.response.responseType).toBe("clarification");
+    expect(runStructuredTextResearch).not.toHaveBeenCalled();
+  });
+  it("completes a meeting agenda after summary, pending items and an email clarification", async () => {
+    const result = await adapter([
+      makeComponent("query.account_summary", "account", { text: "Resume la cuenta" }),
+      makeComponent("query.pending_items", "opportunity", { id: "c2", text: "Lista las pendientes" }),
+      makeComponent("content.email_draft", "contact", { id: "c3", text: "Redacta un correo a Elena", reference: "Elena Muestra" }),
+      makeComponent("content.meeting_preparation", "opportunity", { id: "c4", text: "Prepara una agenda de 20 minutos sobre Renovación Alfa" }),
+    ]).runTurn({
+      question: "Resume la cuenta, lista las pendientes de Renovación Alfa, redacta un correo a Elena y prepara una agenda de 20 minutos sobre esa oportunidad",
+      context: { accountId: snapshot.account.id },
+    });
+    expect(result.response.components.find((part) => part.id === "c3").status).toBe("clarification");
+    expect(result.response.components.find((part) => part.id === "c4").status).toBe("completed");
+    expect(result.response.operations).toEqual([]);
+    const plans = runStructuredTextResearch.mock.calls.map(([request]) => request)
+      .filter((request) => request.schemaName === "customer_account_query_plan");
+    expect(plans).toHaveLength(0);
+    const agenda = runStructuredTextResearch.mock.calls.map(([request]) => request)
+      .find((request) => request.schemaName === "customer_account_content");
+    expect(agenda.context.evidence.map((read) => read.toolName)).toEqual(["getOpportunity"]);
+    expect(agenda.context.evidence[0].result.name).toBe("Renovación Alfa");
+  });
   beforeEach(() => {
     getAuthorizedCoachQuotationContent.mockReset();
     listAuthorizedCoachQuotations.mockReset();
@@ -105,6 +145,11 @@ describe("Customer contract B6/B9/B10 integration", () => {
         return { match: "matched", questionIds: [9201], reason: "Motivación del cliente" };
       }
       if (request.schemaName === "customer_account_content") return {
+        ...(request.context.component.category === "content.meeting_preparation" ? { blocks: [
+          { title: "Revisar contexto", durationMinutes: 5, description: "Validar la situación de la oportunidad." },
+          { title: "Revisar necesidades", durationMinutes: 10, description: "Preguntar por necesidades y restricciones." },
+          { title: "Próximos pasos", durationMinutes: 5, description: "Proponer responsables y fechas por acordar." },
+        ] } : {}),
         answer: request.context.component.category === "content.translation"
           ? "The quotation is pending review, not approved."
           : "Estimada Elena: propongo conversar sobre Renovación Alfa. [Fecha por completar].",
@@ -129,7 +174,7 @@ describe("Customer contract B6/B9/B10 integration", () => {
   it("surfaces an exhausted AI budget as an error rather than asking the seller to clarify", async () => {
       runStructuredTextResearch.mockRejectedValue(Object.assign(new Error("Budget exhausted"), { code: "AI_BUDGET_EXCEEDED" }));
       const result = await adapter([makeComponent("content.email_draft")]).runTurn({
-        question: "Redacta un correo", context: { accountId: snapshot.account.id },
+        question: "Redacta un correo para confirmar el siguiente paso", context: { accountId: snapshot.account.id },
       });
       expect(result.response.responseType).toBe("error");
       expect(result.response.answer).toContain("presupuesto de IA");
@@ -2090,6 +2135,38 @@ describe("Customer contract B6/B9/B10 integration", () => {
         expect(runStructuredTextResearch).not.toHaveBeenCalled();
         expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe("document_query");
       });
+      it("keeps a commercial summary and two dependent questions as distinct audited deliverables", async () => {
+        const originalGeneration = runStructuredTextResearch.getMockImplementation();
+        runStructuredTextResearch.mockImplementation(async (request) => {
+          if (request.schemaName === "customer_account_document_answer") return {
+            answer: "La cotización incluye cuatro BAM 8500.", citations: ["item-1-1"],
+          };
+          if (request.schemaName.endsWith("_audit")) return { approved: "yes" };
+          if (request.schemaName === "customer_account_content") return {
+            answer: "¿Los cuatro equipos cubren sus necesidades? ¿Qué fecha de entrega necesitan?",
+          };
+          return originalGeneration(request);
+        });
+        const result = await adapter([
+          part({ quotationReference: "18", aspect: "summary" }, {
+            text: "Resume la cotización 18, pero no incluyas costos ni márgenes",
+          }),
+          makeComponent("content.discovery_questions", "general", {
+            id: "c2", text: "Prepara dos preguntas para Kimberly", reference: "", dependsOn: ["c1"],
+          }),
+        ], { user: { id: 19, permissionSet: quotePermissions } }).runTurn({
+          question: "Resume la cotización 18, pero no incluyas costos ni márgenes; luego prepara dos preguntas para Kimberly",
+          context: { accountId: 9001 },
+        });
+        expect(result.response.components.map((component) => component.status)).toEqual(["completed", "completed"]);
+        expect(getAuthorizedCoachQuotationContent).toHaveBeenCalledWith(expect.objectContaining({ quotationId: 18, commercialOnly: true }));
+        const calls = runStructuredTextResearch.mock.calls.map(([request]) => request);
+        const draft = calls.find((request) => request.schemaName === "customer_account_content");
+        const audit = calls.find((request) => request.schemaName === "customer_account_content_audit");
+        expect(draft.context.dependencyResults[0]).toMatchObject({ category: "query.document_content" });
+        expect(audit.context.dependencyResults).toEqual(draft.context.dependencyResults);
+        expect(result.response.operations).toEqual([]);
+      });
       it("asks for selection between two independent quotations without reading arbitrary content (Q09-02)", async () => {
         listAuthorizedCoachQuotations.mockResolvedValue({ candidates, truncated: false });
         const result = await run(make());
@@ -3019,7 +3096,7 @@ describe("Customer contract B6/B9/B10 integration", () => {
         expect(result.response.answer).not.toContain("Importe (USD):");
         expect(result.response.answer).toContain("importe mayor o igual que USD 500,000");
       });
-      it("limits a hardware opportunity search to the matching records", async () => {
+      it("asks which hardware opportunity to review instead of listing the account", async () => {
         const question = "Quiero revisar la oportunidad de hardware";
         const interpreted = await interpretCustomerTurn({
           question,
@@ -3035,7 +3112,9 @@ describe("Customer contract B6/B9/B10 integration", () => {
           snapshot: searchSnapshot, snapshotQueryMetrics,
           authoritativeIntent: { turnContract: interpreted },
         }).runTurn({ question, context: { accountId: 9001 } });
-        expect(result.response.recordList.ids).toEqual([9101, 9102]);
+        expect(result.response.responseType).toBe("clarification");
+        expect(result.response.answer).toContain("Hardware Refresh; Hardware Refresh3 Años");
+        expect(result.qualityTrace.toolsUsed).toEqual([]);
         expect(result.response.answer).not.toContain("Vrf2027");
         expect(result.response.answer).not.toContain("Otro mes");
       });
@@ -3696,6 +3775,94 @@ describe("Customer contract B6/B9/B10 integration", () => {
     expect(runStructuredTextResearch.mock.calls.map(([request]) => request.schemaName))
       .toEqual(["customer_account_query_plan", "customer_account_report_destination"]);
     expect(result.qualityTrace.diagnostics.components[0].diagnostics.evidence.verifier).toBe("report");
+  });
+  it("rewrites and translates the last successful email without a CRM planner", async () => {
+    const original = "Asunto: Seguimiento\nHola Kimberly,\nRetomemos Hardware Refresh. Su precio es USD 500,000.\nSaludos.";
+    const brief = "Asunto: Seguimiento\nHola Kimberly,\n¿Confirmamos el siguiente paso de Hardware Refresh?\nSaludos.";
+    const english = "Subject: Follow-up\nHi Kimberly,\nCan we confirm the next step for Hardware Refresh?\nRegards.";
+    let history = appendCustomerAccountChatHistory([], "Redacta un correo", original, {
+      components: [{ id: "c1", category: "content.email_draft", status: "completed" }],
+    });
+    const sourceTexts = [];
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_content_audit") return { approved: "yes" };
+      if (request.schemaName === "customer_account_content") {
+        sourceTexts.push(request.context.referenceMaterial.text);
+        return { answer: request.context.component.category === "content.rewrite" ? brief : english };
+      }
+      throw new Error(`Unexpected AI schema ${request.schemaName}`);
+    });
+    for (const [category, question, expected] of [
+      ["content.rewrite", "Más breve y sin mencionar precio", brief],
+      ["content.translation", "Tradúcelo al inglés", english],
+    ]) {
+      const result = await adapter([makeComponent(category, "general", { reference: "", text: question })])
+        .runTurn({ question, context: { accountId: 9001 }, history });
+      expect(result.response.responseType).toBe("informational");
+      expect(result.response.answer).toBe(expected);
+      expect(result.response.operations).toEqual([]);
+      expect(result.qualityTrace.toolsUsed).toEqual([]);
+      history = appendCustomerAccountChatHistory(history, question, result.response.answer, {
+        components: result.response.components,
+      });
+    }
+    expect(sourceTexts).toEqual([original, brief]);
+    expect(runStructuredTextResearch.mock.calls.map(([request]) => request.schemaName))
+      .toEqual(["customer_account_content", "customer_account_content_audit", "customer_account_content", "customer_account_content_audit"]);
+  });
+  it("preserves a report and its speaker correction when business evidence is required", async () => {
+    const rules = getCoachBusinessRules({ channel: "customer_account" });
+    const strictRules = {
+      ...rules,
+      validation: { ...rules.validation, requireEvidence: true },
+      scope: { ...rules.scope, requireBusinessEvidence: true },
+    };
+    const question = "Sobre Hardware Refresh: Kimberly me dijo que está pendiente de revisión";
+    const reportSnapshot = {
+      ...snapshot,
+      opportunities: [{ ...snapshot.opportunities[0], name: "Hardware Refresh" }],
+    };
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_query_plan") return {
+        objective: question, queries: ["opportunity_guidance"], mode: "read_only",
+        operationKind: "none", entities: { opportunityReference: "Hardware Refresh" },
+        filters: {}, ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
+        referenceResolution: { targetType: "opportunity", cardinality: "single", source: "current_message", candidateKeys: ["opportunity_1"] },
+        confidence: "high",
+      };
+      if (request.schemaName === "customer_account_report_destination") {
+        return { match: "none", questionIds: [], reason: "No corresponde a una respuesta de etapa" };
+      }
+      throw new Error(`Unexpected AI schema ${request.schemaName}`);
+    });
+    await loadCoachBusinessRules.withImplementation(async () => strictRules, async () => {
+      const first = await adapter([makeComponent("report.client_statement", "opportunity", {
+        text: question, reference: "Hardware Refresh", attribution: "client", certainty: "reported",
+      })], { snapshot: reportSnapshot }).runTurn({ question, context: { accountId: 9001 } });
+      expect(first.response.responseType).toBe("informational");
+      expect(first.response.answer).toContain("pendiente de revisión");
+      expect(first.response.answer).toContain("no registrado en el CRM");
+      expect(first.qualityTrace.validationStatus).toBe("valid");
+      expect(first.response.stageAnswerPrefill).toBeUndefined();
+
+      const correction = "Corrijo: lo dijo Karla, no Kimberly";
+      const second = await adapter([], { snapshot: reportSnapshot, authoritativeIntent: {
+        turnContract: makeContract([makeComponent("report.client_statement", "contact", {
+          text: correction, reference: "Karla Lobato Bonilla",
+        })]),
+      } }).runTurn({
+        question: correction, context: { accountId: 9001 },
+        conversationContext: { accountId: 9001, turnMemory: first.turnMemory },
+      });
+      expect(second.response.responseType).toBe("informational");
+      expect(second.response.answer).toContain("Karla me dijo que está pendiente de revisión");
+      expect(second.response.answer).not.toContain("Kimberly me dijo");
+      expect(second.response.operations).toEqual([]);
+      expect(second.turnMemory.contract.components[0]).toMatchObject({
+        object: "opportunity", reference: "Hardware Refresh",
+      });
+      expect(second.qualityTrace.validationStatus).toBe("valid");
+    });
   });
   it("offers only the literally named opportunity when the message excludes a similar one", async () => {
     const namedOpportunities = [

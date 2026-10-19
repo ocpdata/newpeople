@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { CATEGORIES, getEvaluationCatalog, parseCatalog } from "../src/customer-chat-evaluations/catalog.js";
-import { evaluateResponse, safeEvidence, summarizeCases } from "../src/customer-chat-evaluations/checks.js";
+import { evaluateResponse, evaluationStepBlockReason, safeEvidence, summarizeCases } from "../src/customer-chat-evaluations/checks.js";
 import { businessImpactForCase } from "../src/customer-chat-evaluations/business-impact.js";
 
 describe("Customer chat evaluation catalog", () => {
@@ -32,9 +32,19 @@ describe("Customer chat evaluation catalog", () => {
   });
   it("reports preparation gaps rather than pretending fault injection or UI was exercised", async () => {
     const { cases } = await getEvaluationCatalog();
-    for (const id of ["K10", "K11", "K12", "SEQ04", "SEQ08", "A08-09"]) {
+    for (const id of ["K10", "K11", "K12", "SEQ08", "A08-09"]) {
       expect(cases.find((item) => item.id === id).blockedReason).toBeTruthy();
     }
+  });
+  it("runs SEQ04 with a conditional activity draft check instead of omitting its first turn", async () => {
+    const { cases } = await getEvaluationCatalog();
+    const sequence = cases.find((item) => item.id === "SEQ04");
+    expect(sequence.blockedReason).toBeFalsy();
+    expect(sequence.steps).toHaveLength(3);
+    expect(sequence.steps[0].question).toBe(cases.find((item) => item.id === "A05-01").steps[0].question);
+    expect(sequence.steps[1]).toMatchObject({
+      question: "Mejor a las 11:00, conserva el resto", requiresCompleteActivityDraft: true,
+    });
   });
   it("includes supplied material and all literal alternatives as independent variants", async () => {
     const { cases } = await getEvaluationCatalog();
@@ -67,6 +77,55 @@ describe("Customer chat evaluation catalog", () => {
   });
 });
 describe("Customer chat evaluation checks", () => {
+  it("requires a verified quotation summary as well as completed questions for MIX07", () => {
+    const result = {
+      answer: "Resumen y preguntas", responseType: "informational", operations: [],
+      components: [{ category: "query.document_content", status: "completed" },
+        { category: "content.discovery_questions", status: "completed" }],
+    };
+    const check = (value) => evaluateResponse({ definition: { id: "MIX07" }, accountId: 22, result: value })
+      .checks.find((item) => item.name === "Resumen y preguntas como entregables separados");
+    expect(check(result).passed).toBe(false);
+    expect(check({ ...result, documentMemory: { quotationId: 18 } }).passed).toBe(true);
+  });
+  it("fails a mixed answer with a component error even when its global type is clarification", () => {
+    const evaluated = evaluateResponse({
+      definition: { id: "MIX04" }, accountId: 22,
+      result: { answer: "Resumen y aclaración; la agenda falló.", responseType: "clarification", operations: [],
+        components: [{ category: "query.account_summary", status: "completed" },
+          { category: "content.email_draft", status: "clarification" },
+          { category: "content.meeting_preparation", status: "error" }] },
+    });
+    expect(evaluated.checks.find((check) => check.name === "Sin error de chat").passed).toBe(false);
+  });
+  const conditionalStep = { requiresCompleteActivityDraft: true };
+  const completeDraft = {
+    responseType: "operation", evaluationOutcome: "human_review",
+    operations: [{
+      kind: "activity", accountId: 22, opportunityId: 37, contactId: 13,
+      title: "Llamada", actionType: "call", successCriteria: "Confirmar el siguiente paso",
+      scheduledAt: "2026-10-20T10:00", missingFields: [],
+    }],
+  };
+  it("allows modification only after a complete activity draft", () => {
+    expect(evaluationStepBlockReason(conditionalStep, completeDraft, 22)).toBeNull();
+    expect(evaluationStepBlockReason({}, undefined, 22)).toBeNull();
+  });
+  it.each([
+    undefined,
+    { responseType: "clarification", operations: [] },
+    { ...completeDraft, evaluationOutcome: "failed" },
+    { ...completeDraft, evaluationOutcome: "inconclusive" },
+    { ...completeDraft, operations: [] },
+    { ...completeDraft, operations: [...completeDraft.operations, ...completeDraft.operations] },
+    ...[
+      { accountId: 65 }, { scheduledAt: "" }, { scheduledAt: "2026-02-30T10:00" },
+      { missingFields: ["scheduledAt"] }, { contactId: null }, { opportunityId: null },
+      { successCriteria: "" },
+    ].map((patch) => ({ ...completeDraft, operations: [{ ...completeDraft.operations[0], ...patch }] })),
+  ])("reports an unmet draft precondition instead of sending a fabricated continuation: %j", (previous) => {
+    expect(evaluationStepBlockReason(conditionalStep, previous, 22)).toContain("Precondición incumplida");
+  });
   const check = (result, patch = {}) => evaluateResponse({ definition: { id: "Q01-03", category: "Q01" }, result, accountId: 22, ...patch });
   it("never approves merely because the model returned text", () => {
     expect(check({ answer: "Una respuesta", operations: [] }).outcome).toBe("human_review");

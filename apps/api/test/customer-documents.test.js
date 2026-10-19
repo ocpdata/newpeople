@@ -38,6 +38,47 @@ const answer = (spec = {}, extra = {}) => answerCustomerDocument({
 });
 
 describe("Q09 document resolution and memory", () => {
+  it("allows explicitly excluding internal fields without requesting them", () => {
+    const result = resolve({ quotationReference: "18", aspect: "summary" }, {
+      component: component({ quotationReference: "18", aspect: "summary" }, {
+        text: "Resume la cotización 18, pero no incluyas costos ni márgenes",
+      }),
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.opportunity.id).toBe(10);
+  });
+  it("reconciles unsupported fields only when they are explicitly excluded, retaining other restrictions", () => {
+    const excluded = { quotationReference: "18", aspect: "summary", unsupported: ["costos", "márgenes"] };
+    expect(resolve({}, { component: component(excluded, {
+      text: "Resume la cotización 18, pero no incluyas costos ni márgenes",
+    }) }).error).toBeUndefined();
+    expect(resolve({}, { component: component({ ...excluded, unsupported: [...excluded.unsupported, "PDF interno"] }, {
+      text: "Resume la cotización 18, pero no incluyas costos ni márgenes",
+    }) }).error).toContain("no expone");
+    expect(resolve({}, { component: component(excluded, { text: "Resume la cotización 18" }) }).error).toContain("no expone");
+  });
+  it("still rejects a positive internal-field request after an exclusion", () => {
+    expect(resolve({}, { component: component({}, {
+      text: "Resume sin costos; muestra los márgenes",
+    }) }).error).toContain("no expone");
+  });
+  it("resolves a numeric quotation from its authorized snapshot relationship, then requires revalidation", () => {
+    const result = resolve({ quotationReference: "18", aspect: "summary" }, {
+      context: { accountId: 1 },
+      snapshot: { ...snapshot, products: [{ quotationId: 18, opportunityId: 10 }] },
+    });
+    expect(result.opportunity.id).toBe(10);
+    expect(result.quotationReference).toBe("18");
+    expect(result.selectedQuotationId).toBeUndefined();
+  });
+  it.each([
+    { products: [{ quotationId: 18, opportunityId: 12 }] },
+    { products: [{ quotationId: 18, opportunityId: 10 }, { quotationId: 18, opportunityId: 11 }] },
+  ])("does not infer a quotation opportunity from foreign or conflicting relationships", ({ products }) => {
+    expect(resolve({ quotationReference: "18" }, {
+      context: { accountId: 1 }, snapshot: { ...snapshot, products },
+    }).error).toContain("única oportunidad");
+  });
   it("recovers job 535's exact opportunity reference independently from quotation 18", () => {
     const result = resolve({}, { context: { accountId: 1 }, component: component({
       source: "quotation", quotationReference: "18", aspect: "items",

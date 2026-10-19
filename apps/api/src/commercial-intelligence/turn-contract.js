@@ -973,6 +973,8 @@ Cambiar de lead o resultado obliga a revisar requisitos. Ninguna acción requeri
 unsupported bloquea masivos, resolver/materializar lead, comunicaciones y cambios fuera de resultado de llamada.
 A06 action.reschedule_activity usa object=activity y rescheduleSpec para UNA actividad GUARDADA pendiente de oportunidad.
 No confundir con A05: cambiar fecha de un borrador AUN NO GUARDADO sigue siendo action.schedule_activity.
+Al preparar una actividad, mencionar oportunidad y contacto aporta sus vínculos; no crea una consulta
+query.relationships independiente. El flujo de actividad verifica esos vínculos internamente.
 Referencias, dateText y timeText son fragmentos LITERALES del mensaje actual, nunca valores inventados ni fechas calculadas.
 dateText acepta ISO YYYY-MM-DD, DD/MM/YYYY, "20 de octubre de 2026", hoy, mañana, pasado mañana o día semanal.
 timeText acepta HH:mm en 24 horas, o "cinco de la tarde"/"5 pm". "a las cinco" sin periodo requiere aclaración.
@@ -1698,7 +1700,19 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
     /\bmoneda\b/i.test(`${priorContract.data.clarificationQuestion} ${pending[0].listSpec?.clarification || ""}`) &&
     /^\s*(?:en\s+)?(?:USD|d[oó]lares(?:\s+(?:estadounidenses|americanos))?)\s*[.!]?\s*$/i.test(String(question)) &&
     Number(snapshot?.account?.id) > 0 && Number(snapshot.account.id) === Number(conversationContext?.accountId);
-  const movement = result?.movement === "new_request" && currencyAnswer ? "answer_clarification"
+  const previousActivity = priorContract.success && priorContract.data.components.length === 1 &&
+    priorContract.data.components[0].category === "action.schedule_activity"
+    ? priorContract.data.components[0] : null;
+  const modifiesPendingActivity = previousActivity && currentList?.category === "action.reschedule_activity" &&
+    conversationContext?.pendingActivity?.operation?.kind === "activity" &&
+    Number(conversationContext.accountId) === Number(snapshot?.account?.id) &&
+    Number(conversationContext.pendingActivity.operation.accountId) === Number(snapshot?.account?.id) &&
+    !currentList.rescheduleSpec?.activityReference && !currentList.rescheduleSpec?.position &&
+    (currentList.continuationOf === previousActivity.id ||
+      ["modify_draft", "continue"].includes(result?.movement) ||
+      /\b(?:borrador|conserva el resto|mant[eé]n el resto|mant[eé]n lo dem[aá]s)\b/i.test(String(question)));
+  const movement = modifiesPendingActivity ? "modify_draft"
+    : result?.movement === "new_request" && currencyAnswer ? "answer_clarification"
     : result?.movement === "new_request" && referencedListContinuation ? "continue"
     : result?.movement === "new_request" && namedContinuation ? "answer_clarification" : result?.movement;
   if (referencedListContinuation && result?.movement === "new_request") {
@@ -1721,7 +1735,12 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
         reference: String(question).slice(0, 300),
         text: ["correct", "modify_draft"].includes(movement) ? String(question) : pending[0].text,
       }]
-    : result?.components;
+    : modifiesPendingActivity
+      ? result.components.map(({ rescheduleSpec: _rescheduleSpec, ...item }) => ({
+          ...item, category: "action.schedule_activity", object: "activity",
+          reference: previousActivity.reference, continuationOf: previousActivity.id,
+        }))
+      : result?.components;
   const opportunitySearchTerm = String(question || "").normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .match(/\boportunidad(?:es)?\s+(?:de|sobre)\s+([^?!.;,]{1,100})/i)?.[1]
@@ -1900,6 +1919,36 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
     }),
     { question },
   );
+  const scheduledActivity = parsed.data.components.find((item) => item.category === "action.schedule_activity");
+  if (scheduledActivity &&
+      !/\?|¿|\b(?:consulta|verifica|comprueba|dime|mu[eé]strame|qui[eé]n|cu[aá]les?)\b/i.test(String(question))) {
+    const auxiliaryRelationships = new Set(parsed.data.components.filter((item) =>
+      item.category === "query.relationships" &&
+      item.relationshipSpec?.opportunityReference === scheduledActivity.reference &&
+      item.relationshipSpec?.contactReference &&
+      String(question).toLocaleLowerCase("es").includes(item.relationshipSpec.contactReference.toLocaleLowerCase("es")))
+      .map((item) => item.id));
+    parsed.data.components = parsed.data.components
+      .filter((item) => !auxiliaryRelationships.has(item.id))
+      .map((item) => ({ ...item, dependsOn: item.dependsOn.filter((id) => !auxiliaryRelationships.has(id)) }));
+  }
+  if (opportunitySearchTerm && /\bla oportunidad\s+(?:de|sobre)\s+/i.test(String(question)) &&
+      ["new_request", "change_focus"].includes(parsed.data.movement) &&
+      parsed.data.components.length === 1 &&
+      parsed.data.components[0].category === "query.record_search" &&
+      parsed.data.components[0].object === "opportunity") {
+    const normalize = (value) => String(value || "").normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es");
+    const candidates = [...new Map([...(snapshot?.opportunities || []), ...(snapshot?.inactiveOpportunities || [])]
+      .filter((record) => Number(record.accountId) === Number(snapshot?.account?.id) &&
+        normalize(record.name).includes(normalize(opportunitySearchTerm)))
+      .map((record) => [Number(record.id), record])).values()];
+    if (candidates.length > 1 && !conversationContext?.opportunityId && !snapshot?.selectedOpportunity?.id) {
+      parsed.data.resolution = "clarification";
+      parsed.data.clarificationQuestion = `Hay varias oportunidades que coinciden con la referencia escrita: ${
+        candidates.slice(0, 10).map((record) => record.name).join("; ")}. ¿Cuál deseas consultar?`;
+    }
+  }
   if (["new_request", "change_focus"].includes(parsed.data.movement)) {
     const normalize = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -2065,7 +2114,10 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
   const hasRecommendationAntecedent = previousContract.success && previousContract.data.components.some((item) =>
     ["guidance.next_steps", "guidance.strategy", "guidance.situation_assessment"].includes(item.category));
   const normalizedComponents = parsed.data.components.map((item) => {
-    if (asksForDiscoveryQuestions) {
+    const componentText = normalizeIntentText(item.text);
+    const componentRequestsQuestions = /\b(?:preguntas?|cuestiones)\b/.test(componentText);
+    if (asksForDiscoveryQuestions &&
+        (parsed.data.components.length === 1 || componentRequestsQuestions)) {
       return {
         ...item, category: "content.discovery_questions", object: "general",
         reference: "", explicitAction: false,

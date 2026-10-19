@@ -1,10 +1,35 @@
 const forbiddenKinds = new Set(["remove_record", "send_communication", "delete", "deactivate"]);
+export function evaluationStepBlockReason(step, previousStep, accountId) {
+  if (!step.requiresCompleteActivityDraft) return null;
+  const activities = (previousStep?.operations || []).filter((operation) => operation.kind === "activity");
+  const draft = activities.length === 1 ? activities[0] : null;
+  const scheduled = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(draft?.scheduledAt || "")
+    ? new Date(`${draft.scheduledAt}:00Z`) : null;
+  const complete = previousStep?.responseType === "operation" &&
+    previousStep.evaluationOutcome === "human_review" && draft &&
+    Number(draft.accountId) === Number(accountId) &&
+    Number(draft.opportunityId) > 0 && Number(draft.contactId) > 0 &&
+    draft.title?.trim() && draft.actionType && draft.successCriteria?.trim() &&
+    Array.isArray(draft.missingFields) && draft.missingFields.length === 0 &&
+    scheduled && !Number.isNaN(scheduled.getTime()) &&
+    scheduled.toISOString().slice(0, 16) === draft.scheduledAt;
+  return complete ? null
+    : "Precondición incumplida: el turno anterior no produjo un único borrador de actividad completo, con oportunidad, contacto, fecha, hora y objetivo. No se envió la modificación ni se ejecutaron cambios.";
+}
 export function evaluateResponse({ definition, result, accountId, reference }) {
   const checks = [];
   const add = (name, passed, detail) => checks.push({ name, passed, detail });
   add("Respuesta presente", typeof result?.answer === "string" && Boolean(result.answer.trim()), "La respuesta no puede estar vacía.");
-  add("Sin error de chat", result?.responseType !== "error", "Un error no acredita la capacidad positiva.");
+  add("Sin error de chat", result?.responseType !== "error" &&
+    !(result?.components || []).some((component) => component.status === "error"),
+  "Un error global o de un componente no acredita la capacidad positiva.");
   const text = String(result?.answer || "");
+  if (definition.id === "MIX07") {
+    add("Resumen y preguntas como entregables separados", ["query.document_content", "content.discovery_questions"].every((category) =>
+      result?.components?.some((component) => component.category === category && component.status === "completed")) &&
+        Number(result?.documentMemory?.quotationId) === 18,
+    "La consulta de cotización y las preguntas deben completarse por separado; una limitación o un componente bloqueado no sustituye el resumen comercial.");
+  }
   if (definition.id === "Q01-01") {
     add("Resumen útil y estructurado", result?.responseType === "informational" &&
       (text.match(/^[1-5]\.\s/gm) || []).length === 5 &&

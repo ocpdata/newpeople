@@ -35,6 +35,67 @@ const reportArgs = () => ({
 });
 
 describe("Customer turn contract", () => {
+  it("retries a 19-minute agenda requested as 20 minutes and renders only validated block durations", async () => {
+    const generateWithAI = vi.fn()
+      .mockResolvedValueOnce({ blocks: [{ title: "Revisión", durationMinutes: 19, description: "Validar necesidades." }] })
+      .mockResolvedValueOnce({ blocks: [
+        { title: "Revisión", durationMinutes: 15, description: "Validar necesidades." },
+        { title: "Cierre", durationMinutes: 5, description: "Acordar próximos pasos." },
+      ] })
+      .mockResolvedValueOnce({ approved: "yes" });
+    const result = await generateCustomerContent({
+      component: component("content.meeting_preparation", { text: "Prepara una agenda de 20 minutos" }),
+      question: "Prepara una agenda de 20 minutos", readToolResults: [], history: [], user: { id: 1 }, jobId: 0, generateWithAI,
+    });
+    expect(result.answer).toContain("Revisión (15 minutos)");
+    expect(result.answer).toContain("Cierre (5 minutos)");
+    expect(result.answer).not.toContain("19 minutos");
+    expect(generateWithAI).toHaveBeenCalledTimes(3);
+  });
+  it("does not approve an agenda that still violates the requested total after a bounded retry", async () => {
+    const generateWithAI = vi.fn().mockResolvedValue({
+      blocks: [{ title: "Revisión", durationMinutes: 19, description: "Validar necesidades." }],
+    });
+    await expect(generateCustomerContent({
+      component: component("content.meeting_preparation", { text: "Prepara una agenda de 20 minutos" }),
+      question: "Prepara una agenda de 20 minutos", readToolResults: [], history: [], user: { id: 1 }, jobId: 0, generateWithAI,
+    })).rejects.toMatchObject({ code: "CUSTOMER_AGENDA_DURATION_INVALID" });
+    expect(generateWithAI).toHaveBeenCalledTimes(2);
+  });
+  it("audits discovery questions against the same prior deliverable used to draft them", async () => {
+    const dependencyResults = [{ category: "query.document_content", answer: "Cotización 18: cuatro servidores, entrega en 45 días." }];
+    const generateWithAI = vi.fn().mockResolvedValueOnce({
+      answer: "¿Los cuatro servidores cubren sus necesidades? ¿El plazo de 45 días es adecuado?",
+    }).mockResolvedValueOnce({ approved: "yes" });
+    const result = await generateCustomerContent({
+      component: component("content.discovery_questions", { object: "general", text: "Prepara dos preguntas para Kimberly" }),
+      question: "Resume la cotización 18; luego prepara dos preguntas para Kimberly",
+      readToolResults: [], history: [], dependencyResults, user: { id: 1 }, jobId: 0, generateWithAI,
+    });
+    expect(result.responseType).toBe("informational");
+    expect(generateWithAI.mock.calls[0][0].context.dependencyResults).toEqual(dependencyResults);
+    expect(generateWithAI.mock.calls[1][0].context.dependencyResults).toEqual(dependencyResults);
+  });
+  it("keeps a quotation summary separate from discovery questions in a mixed request", async () => {
+    const result = await interpretCustomerTurn({
+      question: "Resume la cotización 18, pero no incluyas costos ni márgenes; luego prepara dos preguntas para Kimberly",
+      classifierPrompt: { instruction: "" }, snapshot,
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.document_content", {
+          text: "Resume la cotización 18, pero no incluyas costos ni márgenes", object: "quotation", reference: "",
+          documentSpec: { source: "quotation", aspect: "summary", quotationReference: "18" },
+        }),
+        component("content.discovery_questions", {
+          id: "c2", text: "Prepara dos preguntas para Kimberly", object: "general", reference: "", dependsOn: ["c1"],
+        }),
+      ])),
+    });
+    expect(result.components[0]).toMatchObject({
+      category: "query.document_content", object: "quotation",
+      documentSpec: { source: "quotation", quotationReference: "18" },
+    });
+    expect(result.components[1]).toMatchObject({ category: "content.discovery_questions", dependsOn: ["c1"] });
+  });
   it("does not expand an ambiguous opportunity word into one full candidate name", async () => {
     const result = await interpretCustomerTurn({
       question: "Dame el detalle de la oportunidad de hardware", classifierPrompt: { instruction: "" },
@@ -909,6 +970,76 @@ describe("Customer turn contract", () => {
       category: "guidance.comparison", comparisonSpec: { references: ["Alfa", "Beta"], mode: "explain" },
     });
   });
+  it("asks which hardware opportunity to review even when the provider omits name from its change mask", async () => {
+      const question = "Quiero revisar la oportunidad de hardware";
+      const result = await interpretCustomerTurn({
+        question, classifierPrompt: { instruction: "" },
+        snapshot: {
+          ...snapshot,
+          opportunities: [
+            { id: 9101, accountId: snapshot.account.id, name: "Hardware Refresh" },
+            { id: 9102, accountId: snapshot.account.id, name: "Hardware Refresh 3 Años" },
+            { id: 9103, accountId: snapshot.account.id, name: "Vrf 2027" },
+          ],
+        },
+        classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.record_search", {
+          text: "Revisar la oportunidad de hardware", reference: "", scope: "collection",
+          listSpec: { changed: [], accountReference: snapshot.account.name, textFilters: [] },
+        })])),
+      });
+      expect(result.resolution).toBe("clarification");
+      expect(result.clarificationQuestion).toContain("Hardware Refresh; Hardware Refresh 3 Años");
+      expect(result.clarificationQuestion).not.toContain("Vrf 2027");
+      expect(result.components[0].listSpec.textFilters).toEqual([
+        { field: "name", operator: "contains", value: "hardware" },
+      ]);
+  });
+  it.each([
+    ["Prepara una llamada sobre Vrf 2027 con Rene Negrete para el 20 de octubre de 2026 a las 10:00, para confirmar el siguiente paso. No guardes", 1],
+    ["Prepara una llamada sobre Vrf 2027 con Rene Negrete y verifica su asociación", 2],
+  ])("does not mistake activity links for independent relationship requests: %s", async (question, count) => {
+    const result = await interpretCustomerTurn({
+      question, classifierPrompt: { instruction: "" }, snapshot,
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("action.schedule_activity", { object: "activity", reference: "Vrf 2027", text: question }),
+        component("query.relationships", {
+          id: "c2", object: "contact", text: "Consulta contacto Rene Negrete para la llamada sobre Vrf 2027",
+          reference: "Rene Negrete",
+          relationshipSpec: { operation: "contact_opportunities", opportunityReference: "Vrf 2027", contactReference: "Rene Negrete" },
+        }),
+      ])),
+    });
+    expect(result.components).toHaveLength(count);
+    expect(result.components[0].category).toBe("action.schedule_activity");
+  });
+  it.each([
+    ["draft", "", 9001, "action.schedule_activity", "modify_draft"],
+    ["saved activity explicitly selected", "75", 9001, "action.reschedule_activity", "new_request"],
+    ["another account", "", 65, "action.reschedule_activity", "new_request"],
+  ])("distinguishes a pending activity draft from a saved activity: %s", async (_, activityReference, accountId, category, movement) => {
+    const previous = contract([component("action.schedule_activity", {
+      object: "activity", reference: "Vrf 2027", text: "Prepara una llamada sobre Vrf 2027",
+    })]);
+    const result = await interpretCustomerTurn({
+      question: "Mejor a las 11:00, conserva el resto",
+      classifierPrompt: { instruction: "" }, snapshot: { ...snapshot, account: { id: 9001, name: "Cuenta" } },
+      conversationContext: {
+        accountId, turnMemory: { contract: previous, pendingComponentIds: [] },
+        pendingActivity: { operation: { kind: "activity", accountId, scheduledAt: "2026-10-20T10:00" } },
+      },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("action.reschedule_activity", {
+        object: "activity", continuationOf: "c1", reference: "Vrf 2027",
+        rescheduleSpec: {
+          mode: "start", dateText: "2026-10-20", timeText: "11:00",
+          opportunityReference: "Vrf 2027", activityReference, position: 0,
+          selectionTarget: "none", evidence: "Mejor a las 11:00, conserva el resto",
+        },
+      })])),
+    });
+    expect(result.movement).toBe(movement);
+    expect(result.components[0].category).toBe(category);
+    if (category === "action.schedule_activity") expect(result.components[0].rescheduleSpec).toBeUndefined();
+  });
   it("converts a requested nearest-close ranking to the exact prior comparison set", () => {
     const previous = contract([component("guidance.comparison", { reference: "", comparisonSpec: {
       references: ["Hardware Refresh", "Vrf 2027"], dimensions: ["amountUsd"],
@@ -928,6 +1059,33 @@ describe("Customer turn contract", () => {
       }],
     });
   });
+  it("uses the actual nearest-close request instead of stale provider text and a new collection", () => {
+    const previous = contract([component("guidance.prioritization", {
+      reference: "", prioritySpec: { set: "named", references: ["Hardware Refresh", "Vrf 2027"], criterion: "amountUsd", direction: "desc" },
+    })]);
+    const result = resolveCustomerContinuation(contract([component("guidance.prioritization", {
+      text: "¿Por qué pondrías Vrf primero con ese criterio?", reference: "",
+      prioritySpec: { criterion: "amountUsd", direction: "asc" },
+    })]), { contract: previous, pendingComponentIds: [] }, "No quiero ese criterio; usa cercanía de cierre");
+    expect(result.movement).toBe("continue");
+    expect(result.components[0]).toMatchObject({
+      text: "No quiero ese criterio; usa cercanía de cierre",
+      prioritySpec: { set: "named", references: ["Hardware Refresh", "Vrf 2027"], criterion: "closeDate", direction: "nearest" },
+    });
+  });
+  it("recognizes a comparison rationale despite a new-request classification", () => {
+    const previous = contract([component("guidance.comparison", {
+      reference: "", comparisonSpec: { references: ["Hardware Refresh", "Vrf 2027"], dimensions: ["amountUsd"] },
+    })]);
+    const result = resolveCustomerContinuation(contract([component("guidance.prioritization", {
+      reference: "", prioritySpec: { criterion: "amountUsd", direction: "desc" },
+    })]), { contract: previous, pendingComponentIds: [] }, "¿Por qué pondrías Vrf primero con ese criterio?");
+    expect(result.movement).toBe("request_rationale");
+    expect(result.components[0]).toMatchObject({
+      category: "guidance.comparison",
+      comparisonSpec: { references: ["Hardware Refresh", "Vrf 2027"], dimensions: ["amountUsd"], mode: "explain" },
+    });
+  });
   it("applies a seller correction to the earlier report without losing its context", () => {
     const previous = contract([component("report.client_statement", {
       text: "Sobre Hardware Refresh: Kimberly me dijo que está pendiente de revisión",
@@ -940,7 +1098,7 @@ describe("Customer turn contract", () => {
       movement: "correct", resolution: "resolved",
       components: [{
         category: "report.client_statement", reference: "Hardware Refresh",
-        text: "Sobre Hardware Refresh: Kimberly me dijo que está pendiente de revisión Corrección de atribución: Corrijo: lo dijo Karla, no Kimberly",
+        text: "Sobre Hardware Refresh: Karla me dijo que está pendiente de revisión Corrección de atribución: Corrijo: lo dijo Karla, no Kimberly",
       }],
     });
   });

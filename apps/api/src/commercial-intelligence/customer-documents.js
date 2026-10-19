@@ -10,6 +10,11 @@ const fields = {
   warranty: "Garantía", paymentTerms: "Condiciones de pago",
 };
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
+const internalFieldKey = (value) => {
+  const text = normalize(value);
+  return /^(?:costos?|costes?)(?: internos)?$/.test(text) ? "cost" :
+    /^margen(?:es)?$/.test(text) ? "margin" : /^notas internas$/.test(text) ? "internal_notes" : null;
+};
 const base = (answer, responseType = "informational", extra = {}) => ({
   answer, responseType, operations: [], recommendedActions: [], pendingItems: [], inferences: [],
   evidence: [], confidence: "medium", source: "account_intelligence", ...extra,
@@ -80,7 +85,18 @@ export function resolveCustomerDocumentRequest({ component, movement, previous, 
   if (!parsed.success) return fail("Los criterios documentales no son válidos. Precisa la fuente y la consulta.");
   const spec = customerDocumentSpecPatch(parsed.data);
   if (spec.clarification) return fail(spec.clarification);
-  if (spec.unsupported?.length || /\b(costos?|costes?|margen(?:es)?|notas internas)\b/.test(normalize(`${component.text} ${spec.target || ""}`))) {
+  const excludedFields = new Set();
+  const requestedText = normalize(component.text).replace(
+    /\b(?:no (?:incluyas|incluya|incluyan|muestres|muestre)|sin|excluye|omite)\s+(?:los?\s+|las?\s+)?(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas)(?:\s+(?:ni|y)\s+(?:los?\s+|las?\s+)?(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas))*/g,
+    (exclusion) => {
+      for (const match of exclusion.matchAll(/\b(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas)\b/g)) {
+        excludedFields.add(internalFieldKey(match[0]));
+      }
+      return "";
+    },
+  );
+  const unsupported = spec.unsupported?.filter((item) => !excludedFields.has(internalFieldKey(item)));
+  if (unsupported?.length || /\b(costos?|costes?|margen(?:es)?|notas internas)\b/.test(`${requestedText} ${normalize(spec.target || "")}`)) {
     return fail("Este canal no expone costos internos, márgenes ni notas internas, ni abre documentos CRM arbitrarios. No sustituí la fuente solicitada. Si buscas un precio comercial, indícalo explícitamente.", "informational");
   }
   if (spec.accountReference && normalize(spec.accountReference) !== normalize(snapshot.account.name)) {
@@ -105,7 +121,13 @@ export function resolveCustomerDocumentRequest({ component, movement, previous, 
   const reference = spec.opportunityReference ||
     (component.object === "opportunity" ? component.reference : independentReference) || "";
   const matches = reference ? records.filter((item) => normalize(item.name) === normalize(reference)) : [];
-  const fallbackId = continuation && previous?.source === "quotation" ? previous.opportunityId :
+  const quotationOpportunityIds = /^\d+$/.test(spec.quotationReference || "")
+    ? [...new Set((snapshot.products || []).filter((item) =>
+      Number(item.quotationId) === Number(spec.quotationReference) &&
+      records.some((record) => Number(record.id) === Number(item.opportunityId)))
+      .map((item) => Number(item.opportunityId)))] : [];
+  const fallbackId = quotationOpportunityIds.length === 1 ? quotationOpportunityIds[0] :
+    continuation && previous?.source === "quotation" ? previous.opportunityId :
     businessRules.serverPolicy?.selectedOpportunityFallback === "require_explicit" ? null :
       context.opportunityId || snapshot.selectedOpportunity?.id;
   const opportunity = reference ? (matches.length === 1 ? matches[0] : null) :

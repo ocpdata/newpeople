@@ -29,10 +29,14 @@ export function parseCatalog(markdown) {
     if (step) {
       const quoted = step[1].match(/«([^»]+)»/);
       const reference = step[1].match(/\b([QGCRA]\d{2}-\d{2})\b/);
-      if (quoted) sequence.steps.push({ question: quoted[1], expected: "" });
+      const requiresCompleteActivityDraft = /^Si qued[oó] un borrador completo:/i.test(step[1]);
+      if (quoted) sequence.steps.push({
+        question: quoted[1], expected: "",
+        ...(requiresCompleteActivityDraft ? { requiresCompleteActivityDraft: true } : {}),
+      });
       else if (reference) sequence.steps.push({ reference: reference[1], expected: "" });
       else sequence.blockedReason = "La secuencia requiere interacción de interfaz o preparación condicional descrita en el documento.";
-      if (/^Si /.test(step[1])) sequence.blockedReason = "La secuencia requiere comprobar y completar un borrador antes de elegir su continuación.";
+      if (/^Si /.test(step[1]) && !requiresCompleteActivityDraft) sequence.blockedReason = "La secuencia requiere comprobar y completar un borrador antes de elegir su continuación.";
       continue;
     }
     if (sequence && /^\s+Esperado:/.test(line) && sequence.steps.length) {

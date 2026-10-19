@@ -6,7 +6,7 @@ import { getUserAuthContext } from "../auth.js";
 import { getEvaluationCatalog, SMOKE_CASE_IDS } from "./catalog.js";
 import { businessImpactForCase } from "./business-impact.js";
 import { ensureEvaluationSchema } from "./schema.js";
-import { evaluateResponse, safeEvidence, summarizeCases } from "./checks.js";
+import { evaluateResponse, evaluationStepBlockReason, safeEvidence, summarizeCases } from "./checks.js";
 import {
   buildAuthorizedCustomerSnapshot, createCustomerAccountChatJob,
   processCustomerAccountChatJob, getCustomerIntelligenceJob,
@@ -296,6 +296,8 @@ export async function processEvaluationRun(run, workerId) {
       await query("UPDATE customer_chat_evaluation_cases SET status='running',started_at=NOW(3) WHERE id=?", [row.id]);
       let sessionId;
       for (const step of definition.steps) {
+        const blockedReason = evaluationStepBlockReason(step, evidence.steps.at(-1), definition.accountId);
+        if (blockedReason) throw evaluationError(409, blockedReason);
         const stepStartedAt = Date.now();
         const [freshRun] = await query("SELECT cancel_requested,worker_id,status FROM customer_chat_evaluation_runs WHERE id=?", [run.id]);
         if (freshRun.worker_id !== workerId || freshRun.status !== "running") throw evaluationError(409, "Se perdió la titularidad del trabajo.");
