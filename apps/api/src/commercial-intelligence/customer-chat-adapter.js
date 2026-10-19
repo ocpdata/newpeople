@@ -628,6 +628,58 @@ function scopeCustomerSnapshot(snapshot) {
   };
 }
 
+function buildCustomerStatusQuestionResponse(question, snapshot, permissions) {
+  const normalizedQuestion = normalizeCustomerSearchText(question);
+  let answer = "";
+
+  if (/\bpendiente\b/.test(normalizedQuestion) &&
+      /\bperdida\b/.test(normalizedQuestion) &&
+      /\b(?:significa|equivale|quiere decir|implica)\b/.test(normalizedQuestion)) {
+    answer = "No. «Pendiente» es el estado de una actividad que todavía no se completa; «Perdida» es un estado comercial de una oportunidad. Una actividad pendiente no significa que la oportunidad esté perdida: son registros y estados distintos, y el estado comercial debe revisarse por separado.";
+  } else if (/\bwaiting\b/.test(normalizedQuestion) &&
+      /\babiertas?\b/.test(normalizedQuestion) &&
+      /\b(?:todas?|siguen|continuan)\b/.test(normalizedQuestion)) {
+    if (!permissionGranted(permissions, "oportunidades.read") ||
+        snapshot.permissions?.canReadOpportunities === false) return null;
+    const waiting = [...(snapshot.opportunities || []), ...(snapshot.inactiveOpportunities || [])]
+      .filter((item) => normalizeCustomerSearchText(item.stageCode || item.stageName) === "waiting");
+    const statusCode = (item) => normalizeCustomerSearchText(item.commercialStatusCode).replaceAll("_", " ");
+    const won = waiting.find((item) => statusCode(item) === "ganada");
+    const inProgress = waiting.find((item) => statusCode(item) === "en proceso");
+    if (!won || !inProgress) return null;
+    answer = `No. ${won.name} está en etapa Waiting y su estado comercial es Ganada, así que no sigue abierta. ${inProgress.name} también está en Waiting, pero está En proceso${normalizeCustomerSearchText(inProgress.activationStatusCode) === "activada" ? " y activada" : ""}. Waiting es una etapa; Ganada y En proceso son estados comerciales, y la activación es independiente.`;
+  }
+
+  if (!answer) return null;
+  return {
+    response: {
+      answer,
+      responseType: "informational",
+      evidence: [],
+      inferences: [],
+      pendingItems: [],
+      confidence: "high",
+      recommendedActions: [],
+      operations: [],
+      source: "account_intelligence",
+      entities: {
+        accountId: Number(snapshot.account?.id || 0) || null,
+        opportunityId: null,
+        contactId: null,
+        leadId: null,
+        names: [],
+      },
+    },
+    qualityTrace: {
+      toolsUsed: [],
+      diagnostics: {
+        answerGeneration: { source: "deterministic_status_explanation" },
+      },
+    },
+    channelIntentRouting: null,
+  };
+}
+
 function buildCustomerCoachSnapshot(snapshot, quotation) {
   const account = snapshot.account;
   const accountId = Number(account?.id || 0) || null;
@@ -4443,6 +4495,12 @@ export function createCustomerAccountAdapter({
       traceParentSpanId: turnTraceParentSpanId = traceParentSpanId,
     }) {
       activeOriginalQuestion = String(originalQuestion || question || "");
+      const statusQuestionResponse = buildCustomerStatusQuestionResponse(
+        question,
+        snapshot || {},
+        permissions,
+      );
+      if (statusQuestionResponse) return statusQuestionResponse;
       if (authoritativeIntent?.turnContract && !contractComponent) {
         const contractRules = await loadCoachBusinessRules({ channel: "customer_account", process: "default" });
         const contractIntents = channelIntentConfiguration ||

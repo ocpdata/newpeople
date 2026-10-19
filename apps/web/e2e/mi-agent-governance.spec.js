@@ -2487,6 +2487,7 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
     missingFields: [],
   };
   const requests = [];
+  const draftUpdates = [];
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
@@ -2521,6 +2522,7 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
     if (path === "/api/mi-agent/coach/operations/70") {
       if (method === "PATCH") {
         const body = route.request().postDataJSON();
+        draftUpdates.push(body.pendingOperation);
         operation = {
           ...operation,
           version: 3,
@@ -2543,7 +2545,7 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
           operationId: 70,
           kind: "activity",
           module: "calendar",
-          payload: pendingOperation,
+          payload: operation.pendingOperation,
         },
       });
     if (path === "/api/commercial-development/calendar")
@@ -2567,9 +2569,28 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
   await expect(
     confirmation.locator('input[type="datetime-local"]'),
   ).toHaveValue("2026-10-13T10:00");
+  await expect(confirmation.getByLabel("Fecha límite")).toHaveCount(0);
+  const notes = confirmation.getByLabel("Notas");
+  await notes.fill("");
+  await notes.pressSequentially("Revisar avances y presupuesto");
+  await expect(notes).toHaveValue("Revisar avances y presupuesto");
+  const successCriteria = confirmation.getByLabel("Criterio de éxito");
+  await successCriteria.fill("");
+  await successCriteria.pressSequentially("Acordar siguiente paso y fecha");
+  await expect(successCriteria).toHaveValue("Acordar siguiente paso y fecha");
+  await expect(confirmation).toContainText(
+    "Los cambios se guardarán al continuar en el módulo.",
+  );
+  expect(draftUpdates).toEqual([]);
   await confirmation
     .getByRole("button", { name: "Continuar en el módulo" })
     .click();
+  await expect.poll(() => draftUpdates).toEqual([
+    expect.objectContaining({
+      notes: "Revisar avances y presupuesto",
+      successCriteria: "Acordar siguiente paso y fecha",
+    }),
+  ]);
   await expect(page).toHaveURL(/\/calendar\?coachDraft=activity-70/);
   const calendar = page.getByRole("dialog", {
     name: "Nueva actividad",

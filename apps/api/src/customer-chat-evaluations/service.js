@@ -59,7 +59,9 @@ function reference(snapshot) {
     account: { id: snapshot.account?.id, name: snapshot.account?.name },
     opportunities: snapshot.opportunities?.map((item) => ({
       id: item.id, name: item.name, amountUsd: item.amountUsd, closeDate: item.closeDate,
-      stageName: item.stageName, commercialStatusCode: item.commercialStatusCode, contactId: item.contactId,
+      stageName: item.stageName, commercialStatusCode: item.commercialStatusCode,
+      activationStatusCode: item.activationStatusCode, lifecycle: item.lifecycle,
+      contactId: item.contactId,
     })),
     contacts: snapshot.contacts?.map((item) => ({ id: item.id, name: item.name, positionTitle: item.positionTitle })),
     activities: [...(snapshot.opportunityActivities || []), ...(snapshot.activities || [])].map((item) => ({

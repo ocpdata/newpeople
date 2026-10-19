@@ -2697,7 +2697,11 @@ export default function MiAgentPage({
   }, [canUseCoach, coachSessionId]);
 
   useEffect(() => {
-    if (!coachOperationDraft?.persistentId || savingCoachOperation)
+    if (
+      !coachOperationDraft?.persistentId ||
+      savingCoachOperation ||
+      coachOperationDraft.operation.kind === "activity"
+    )
       return undefined;
     const pendingOperation = serializeCoachOperationDraft(coachOperationDraft);
     const missingFields = unresolvedCoachFields(pendingOperation);
@@ -2763,9 +2767,15 @@ export default function MiAgentPage({
     return () => window.clearTimeout(timer);
   }, [coachOperationDraft, savingCoachOperation]);
 
+  const coachOperationFocusKey =
+    coachOperationDraft?.idempotencyKey ||
+    coachOperationDraft?.persistentId ||
+    coachOperationDraft?.operation?.kind ||
+    null;
+
   useEffect(() => {
-    if (coachOperationDraft) coachDialogRef.current?.focus();
-  }, [coachOperationDraft]);
+    if (coachOperationFocusKey) coachDialogRef.current?.focus();
+  }, [coachOperationFocusKey]);
 
   useEffect(() => {
     if (coachThreadRef.current) {
@@ -14465,7 +14475,7 @@ export default function MiAgentPage({
 
       {coachOperationDraft ? (
         <div
-          className="modal-overlay"
+          className="modal-overlay mi-agent-coach-action-overlay"
           role="dialog"
           aria-modal="true"
           aria-label={
@@ -14483,11 +14493,6 @@ export default function MiAgentPage({
             ref={coachDialogRef}
             tabIndex={-1}
             className="modal-dialog mi-agent-coach-action-dialog"
-            style={{
-              width: "min(820px, calc(100vw - 32px))",
-              maxWidth: 820,
-              padding: 20,
-            }}
           >
             <h3 className="modal-title">
               {coachOperationDraft.operation.kind === "create_contact"
@@ -14753,11 +14758,7 @@ export default function MiAgentPage({
                 </div>
               ) : coachOperationDraft.operation.kind === "activity" ? (
                 <div
-                  className="mi-agent-coach-action-form"
-                  style={{
-                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                    gap: 10,
-                  }}
+                  className="mi-agent-coach-action-form mi-agent-coach-activity-fields"
                 >
                   <label>
                     Origen
@@ -14842,7 +14843,6 @@ export default function MiAgentPage({
                     ["title", "Título"],
                     ["actionType", "Tipo"],
                     ["scheduledAt", "Fecha y hora"],
-                    ["dueDate", "Fecha límite"],
                     ["priority", "Prioridad"],
                     ["notes", "Notas"],
                     ["successCriteria", "Criterio de éxito"],
@@ -14914,9 +14914,7 @@ export default function MiAgentPage({
                           type={
                             field === "scheduledAt"
                               ? "datetime-local"
-                              : field === "dueDate"
-                                ? "date"
-                                : "text"
+                              : "text"
                           }
                           value={coachOperationDraft.operation[field] || ""}
                           aria-invalid={coachDraftMissingSet.has(field)}
@@ -15086,6 +15084,8 @@ export default function MiAgentPage({
                   ? "Guardando y validando la operación..."
                   : coachDraftMissingFields.length
                     ? "La operación permanecerá pendiente hasta completar los campos indicados."
+                    : coachOperationDraft.operation.kind === "activity"
+                      ? "Los cambios se guardarán al continuar en el módulo."
                     : coachOperationDraft.reviewedAt
                       ? "Valor actual revisado. Confirma para guardar."
                       : "Revisa el valor actual antes de confirmar."}

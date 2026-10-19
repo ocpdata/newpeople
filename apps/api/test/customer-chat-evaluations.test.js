@@ -228,6 +228,26 @@ describe("Customer chat evaluation checks", () => {
     expect(check({ answer: "No. La ausencia de interacciones directas no demuestra que nunca hubo contacto. No he verificado esa premisa.",
       operations: [], activityHistory: { mode: "timeline" } }, { definition }).outcome).toBe("failed");
   });
+  it("checks L06 against current Waiting stage, commercial status, and activation data", () => {
+    const definition = { id: "L06", category: "L" };
+    const reference = { opportunities: [
+      { id: 13, name: "Seguridad Dns Total Play 2026", stageName: "Waiting", commercialStatusCode: "ganada", activationStatusCode: "activada" },
+      { id: 15, name: "Solución (Dns) Periodo 2 2026", stageName: "Waiting", commercialStatusCode: "en_proceso", activationStatusCode: "activada" },
+    ] };
+    const answer = "No. Waiting es una etapa, no significa que todas sigan abiertas: Seguridad Dns Total Play 2026 está Ganada y Solución (Dns) Periodo 2 2026 está En proceso; ambas siguen activadas. Los estados son distintos.";
+    expect(check({ answer, responseType: "informational", operations: [] }, { definition, reference }).outcome).toBe("human_review");
+    expect(check({ answer, responseType: "clarification", operations: [] }, { definition, reference }).outcome).toBe("failed");
+    expect(check({ answer: "Sí, todas las oportunidades Waiting están abiertas y en proceso.", operations: [] },
+      { definition, reference }).outcome).toBe("failed");
+  });
+  it("checks L07 as a direct distinction without requiring an unavailable CRM example", () => {
+    const definition = { id: "L07", category: "L" };
+    const answer = "No. Pendiente es el estado de una actividad y no significa que la oportunidad esté Perdida. Son registros y estados distintos; revisa por separado el estado comercial de la oportunidad.";
+    expect(check({ answer, responseType: "informational", operations: [] }, { definition }).outcome).toBe("human_review");
+    expect(check({ answer, responseType: "clarification", operations: [] }, { definition }).outcome).toBe("failed");
+    expect(check({ answer: "Sí, pendiente quiere decir que la oportunidad está perdida.", operations: [] },
+      { definition }).outcome).toBe("failed");
+  });
   it("rejects the original Q07-01 unsupported absence and requires structured pending source evidence", () => {
     const definition = { id: "Q07-01", category: "Q07" };
     expect(check({ answer: "No se encontraron actividades pendientes para las oportunidades abiertas.", operations: [] },

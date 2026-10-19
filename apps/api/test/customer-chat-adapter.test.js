@@ -103,6 +103,41 @@ describe("Customer account chat adapter", () => {
   });
 
   it.each([
+    {
+      question: "¿Todas las de Waiting siguen abiertas?",
+      snapshot: {
+        account: { id: 22, name: "Totalplay" },
+        permissions: { canReadOpportunities: true },
+        opportunities: [
+          { id: 13, name: "Seguridad Dns Total Play 2026", stageCode: "waiting", stageName: "Waiting", commercialStatusCode: "ganada", activationStatusCode: "activada" },
+          { id: 15, name: "Solución (Dns) Periodo 2 2026", stageCode: "waiting", stageName: "Waiting", commercialStatusCode: "en_proceso", activationStatusCode: "activada" },
+        ],
+      },
+      permissions: ["oportunidades.read"],
+      expected: ["No.", "Waiting", "Ganada", "En proceso", "activada"],
+    },
+    {
+      question: "¿Pendiente significa perdida?",
+      snapshot: { account: { id: 22, name: "Totalplay" } },
+      permissions: [],
+      expected: ["No.", "Pendiente", "actividad", "Perdida", "oportunidad"],
+    },
+  ])("answers status questions directly without ambiguous planner fallback", async ({ question, snapshot, permissions, expected }) => {
+    const adapter = createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: new Set(permissions) },
+      snapshot,
+      agents: [],
+      jobId: 990,
+    });
+    const result = await adapter.runTurn({ question });
+    expect(result.response.responseType).toBe("informational");
+    expect(result.response.operations).toEqual([]);
+    for (const phrase of expected) expect(result.response.answer).toContain(phrase);
+    expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe("deterministic_status_explanation");
+    expect(runStructuredTextResearch).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["Guarda como nota en Hardware Refresh que el cliente quizá apruebe el alcance", "el cliente quizá apruebe el alcance"],
     ["Registra como nota: Kimberly no confirmó la fecha", "Kimberly no confirmó la fecha"],
     ["Guarda esta nota en la oportunidad", ""],

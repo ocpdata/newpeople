@@ -1,4 +1,5 @@
 const forbiddenKinds = new Set(["remove_record", "send_communication", "delete", "deactivate"]);
+const normalizeEvaluationStatus = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 export function evaluationStepBlockReason(step, previousStep, accountId) {
   if (!step.requiresCompleteActivityDraft) return null;
   const activities = (previousStep?.operations || []).filter((operation) => operation.kind === "activity");
@@ -152,6 +153,32 @@ export function evaluateResponse({ definition, result, accountId, reference }) {
       "La pregunta condicional requiere explicar el límite de inferencia, no sustituirlo por un conteo de eventos.");
     add("Sin cronología no solicitada", !result?.activityHistory && !/^\s*Historial de/im.test(text),
       "Q06-03 no solicita consultar ni construir una cronología. La exactitud de la explicación sigue requiriendo revisión humana.");
+  }
+  if (definition.id === "L06") {
+    const waiting = (reference?.opportunities || []).filter((item) => normalizeEvaluationStatus(item.stageName) === "waiting");
+    const waitingWon = waiting.filter((item) => normalizeEvaluationStatus(item.commercialStatusCode) === "ganada");
+    const waitingInProgress = waiting.filter((item) => normalizeEvaluationStatus(item.commercialStatusCode) === "en_proceso");
+    const allActivated = waiting.length > 0 && waiting.every((item) => normalizeEvaluationStatus(item.activationStatusCode) === "activada");
+    const citesCurrentExamples = waitingWon.some((item) => text.includes(item.name)) &&
+      waitingInProgress.some((item) => text.includes(item.name));
+    add("Referencia contiene ejemplos vigentes de Waiting Ganada y En proceso", waitingWon.length > 0 && waitingInProgress.length > 0 && allActivated,
+      "La referencia actual debe distinguir etapa, estado comercial y activación.");
+    add("Responde si todas las Waiting siguen abiertas sin mezclar estados", citesCurrentExamples &&
+      result?.responseType === "informational" &&
+      /\bno\b/i.test(text) && /waiting/i.test(text) && /ganad[ao]s?/i.test(text) && /en proceso/i.test(text) && /activad[ao]s?/i.test(text),
+      "Debe negar que todas sigan abiertas y respaldar con ejemplos vigentes; Waiting es etapa, Ganada/En proceso son estados y activada es otra dimensión.");
+    add("Consulta sin operación comercial", Array.isArray(result?.operations) && result.operations.length === 0,
+      "Consultar estados de oportunidades no autoriza una escritura comercial.");
+  }
+  if (definition.id === "L07") {
+    add("Distingue estado de actividad y estado comercial",
+      result?.responseType === "informational" &&
+      /no\s+(?:significa|equivale|quiere decir|implica|indica)/i.test(text) &&
+      /pendiente/i.test(text) && /perdid[ao]/i.test(text) &&
+      /actividad/i.test(text) && /oportunidad/i.test(text),
+      "Pendiente describe una actividad y Perdida es un estado comercial de oportunidad; no se exige un ejemplo CRM para responder esta definición.");
+    add("Consulta sin operación comercial", Array.isArray(result?.operations) && result.operations.length === 0,
+      "Una aclaración de estados no autoriza una escritura comercial.");
   }
   if (definition.category === "Q07") {
     const history = result?.activityHistory;

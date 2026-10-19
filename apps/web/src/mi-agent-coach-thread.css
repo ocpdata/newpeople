@@ -852,6 +852,106 @@
   border-color: #a33b3b;
   background: #fff4f2;
 }
+.mi-agent-coach-action-overlay {
+  background: rgba(17, 32, 48, 0.5);
+  backdrop-filter: blur(4px);
+}
+.modal-dialog.mi-agent-coach-action-dialog {
+  width: min(860px, calc(100vw - 32px));
+  max-width: 860px;
+  padding: 28px;
+  border: 1px solid #d9e2ec;
+  border-radius: 16px;
+  box-shadow: 0 26px 80px rgba(17, 32, 48, 0.28);
+}
+.mi-agent-coach-action-dialog .modal-title {
+  margin-bottom: 8px;
+  color: #142d43;
+  font-size: 22px;
+  font-weight: 700;
+}
+.mi-agent-coach-action-dialog .modal-message {
+  max-width: 68ch;
+  margin-bottom: 22px;
+  color: #52677c;
+  line-height: 1.55;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form {
+  gap: 14px;
+  margin: 18px 0;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-activity-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form label {
+  gap: 7px;
+  color: #263e53;
+  font-size: 12px;
+  font-weight: 650;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form input,
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form select,
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form textarea {
+  min-height: 42px;
+  padding: 10px 12px;
+  border-color: #cbd7e3;
+  border-radius: 8px;
+  background: #fff;
+  color: #18334b;
+  font-size: 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form textarea {
+  min-height: 82px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form input:focus,
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form select:focus,
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form textarea:focus {
+  border-color: #1763d1;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(23, 99, 209, 0.14);
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-action-form input:disabled {
+  background: #f4f7fa;
+  color: #40566c;
+}
+.mi-agent-coach-action-dialog .mi-agent-coach-save-state {
+  padding: 10px 12px;
+  border-left: 3px solid #14847d;
+  border-radius: 0 7px 7px 0;
+  background: #f2f8f7;
+  color: #4d6672;
+  font-size: 12px;
+}
+.mi-agent-coach-action-dialog .modal-buttons {
+  gap: 12px;
+  margin-top: 20px;
+}
+.mi-agent-coach-action-dialog .modal-buttons button {
+  min-height: 44px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+.mi-agent-coach-action-dialog .modal-buttons button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(17, 32, 48, 0.12);
+}
+@media (max-width: 640px) {
+  .modal-dialog.mi-agent-coach-action-dialog {
+    width: calc(100vw - 24px);
+    padding: 20px 16px;
+    border-radius: 12px;
+  }
+  .mi-agent-coach-action-dialog .mi-agent-coach-activity-fields,
+  .mi-agent-coach-action-dialog .modal-buttons {
+    grid-template-columns: 1fr;
+  }
+}
 @media (max-width: 980px) {
   .mi-agent-coach-panel > .mi-agent-coach-context-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1761,8 +1761,8 @@ siguientes equivalencias y no equivalencias en sesiones limpias.
 | L03 | «No cambies el monto de Hardware Refresh; solo dime cuánto tiene». | Consulta, no propuesta de actualización; USD 500.000 con resolución inequívoca de H. |
 | L04 | «No me hagas un resumen, dime únicamente cuándo cierra Seguridad de las APIs». | 2026-11-18, respuesta breve sin resumen de cuenta. |
 | L05 | «La de hardware de tres años, ¿quién la ve como contacto?». | H3, Kimberly; no H por coincidencia parcial. |
-| L06 | «¿Todas las de Waiting siguen abiertas?». | No: hay Waiting ganadas y D En proceso. Separar etapa, estado y activación. |
-| L07 | «¿Pendiente significa perdida?». | No; distinguir estado de actividad de estado comercial de oportunidad, con ejemplo si aporta claridad. |
+| L06 | «¿Todas las de Waiting siguen abiertas?». | No. Waiting es una etapa, no equivale a abierta/En proceso: en T hay 7 oportunidades en Waiting, 6 Ganadas y 1 En proceso (D). Las 7 figuran activadas; distinguir etapa, estado comercial y activación. |
+| L07 | «¿Pendiente significa perdida?». | No. «Pendiente» es estado de una actividad; «Perdida» es estado comercial de una oportunidad. Son registros y estados distintos. No se requiere una actividad concreta como ejemplo para explicar esta diferencia. |
 | L08 | «Dime diez ejemplos de asuntos de correo para retomar Hardware Refresh». | Diez ejemplos dentro de una tarea de contenido, no rechazo por exceder cuatro componentes. Sin promesas o hechos inventados. |
 
 ## 8. Cobertura que requiere preparación adicional
