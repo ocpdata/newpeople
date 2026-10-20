@@ -29,10 +29,16 @@ Gestion de cuentas comerciales:
 ### Estados y permisos
 
 - `cuentas.create` crea la cuenta activada.
-- `cuentas.request` crea la cuenta en `pendiente_activacion`.
+- `cuentas.request` solicita aprobación del alta registrando la cuenta en `pendiente_activacion`; requiere habilitar `accountsPendingEnabled`. Si también tiene `cuentas.create`, se crea activada.
 - `cuentas.update` permite editar datos sin implicar cambio de estado.
-- Solo `cuentas.create` habilita cambios de estado posteriores.
+- Cambiar el estado posteriormente requiere `cuentas.update` y `cuentas.create`; marcar pendiente requiere además habilitar ese flujo.
 - El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
+
+Las descripciones en Roles y permisos explican estas dependencias sin cambiar autorizaciones:
+
+- `cuentas.read` permite consultar cuentas propias, sin crearlas ni editarlas.
+- `cuentas.read_all` amplía el alcance a todas las cuentas; consultar requiere `cuentas.read` y editar requiere `cuentas.update`.
+- `cuentas.assign_owners_any` permite elegir propietarios al crear o editar, junto con el permiso de creación correspondiente o `cuentas.update`. Sin este permiso, se asigna la cuenta nueva al creador y al editar se conservan sus propietarios. No concede acceso a cuentas ajenas.
 
 ### Restricciones de estado
 

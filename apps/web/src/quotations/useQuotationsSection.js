@@ -2239,6 +2239,12 @@ export function useQuotationsSection({
     () => new Set(currentUser?.permissions || []),
     [currentUser],
   );
+  const quotationSaveBlockedReason =
+    ["aprobada", "enviada", "aceptada", "ganada"].includes(
+      selectedVersion?.statusCode,
+    ) && !quotationPermissions.has("cotizaciones.administracion")
+      ? "Para guardar cambios en este estado necesitas el permiso de administración de cotizaciones."
+      : "";
   const canCreateQuotation =
     quotationPermissions.has("cotizaciones.operacion") ||
     quotationPermissions.has("cotizaciones.administracion");
@@ -4946,6 +4952,10 @@ export function useQuotationsSection({
 
   const persistCurrentVersion = useCallback(
     async (options = {}) => {
+      if (quotationSaveBlockedReason) {
+        setError(quotationSaveBlockedReason);
+        return { ok: false, message: quotationSaveBlockedReason };
+      }
       if (!selectedVersionId) {
         return { ok: false, message: "Version no encontrada" };
       }
@@ -4978,6 +4988,7 @@ export function useQuotationsSection({
       catalogs.inclusionTypes,
       catalogs.providers,
       itemEdits,
+      quotationSaveBlockedReason,
       sectionEdits,
       selectedVersion,
       selectedVersionId,
@@ -7907,6 +7918,7 @@ export function useQuotationsSection({
         approvalRecommendations,
         dismissApprovalRecommendations,
         allowedActions,
+        quotationSaveBlockedReason,
         handleSaveVersion,
         handleSaveAsNewVersion,
         handleUploadQuotationDocuments,

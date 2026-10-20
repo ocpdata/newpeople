@@ -926,6 +926,7 @@ function QuotationEditorContent({
   catalogs,
   busyAction,
   allowedActions,
+  quotationSaveBlockedReason,
   handleSaveVersion,
   handleSaveAsNewVersion,
   handleUploadQuotationDocuments,
@@ -3393,6 +3394,7 @@ function QuotationEditorContent({
       <QuotationWorkflowPanel
         selectedVersion={selectedVersion}
         allowedActions={allowedActions}
+        quotationSaveBlockedReason={quotationSaveBlockedReason}
         busyAction={busyAction}
         handleAction={handleWorkflowAction}
         error={error}
@@ -5564,6 +5566,11 @@ function QuotationEditorContent({
       </section>
 
       <div className="quotation-edit-actions">
+        {quotationSaveBlockedReason ? (
+          <p className="field-hint" role="status">
+            {quotationSaveBlockedReason}
+          </p>
+        ) : null}
         {error || success ? (
           <div className="quotation-modal-feedback quotation-modal-feedback-inline">
             {error ? <div className="toast toast-error">{error}</div> : null}
@@ -5587,7 +5594,10 @@ function QuotationEditorContent({
             <button
               type="button"
               className="btn-secondary"
-              disabled={busyAction === "save-as-new-version"}
+              disabled={
+                Boolean(quotationSaveBlockedReason) ||
+                busyAction === "save-as-new-version"
+              }
               onClick={handleSaveAsNewVersionWithBundleState}
             >
               Guardar como nueva version
@@ -5604,6 +5614,7 @@ function QuotationEditorContent({
             type="button"
             className="btn-primary"
             disabled={
+              Boolean(quotationSaveBlockedReason) ||
               busyAction === "save-version" ||
               busyAction === "save-as-new-version"
             }

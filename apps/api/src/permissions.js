@@ -17,43 +17,50 @@ const CORE_PERMISSIONS = [
     code: "cuentas.request",
     module: "cuentas",
     action: "request",
-    description: "Solicitar creacion de cuentas",
+    description:
+      "Solicitar aprobación del alta de cuentas. Las registra como Pendientes de activación para revisión por un usuario autorizado. Requiere habilitar el flujo de cuentas pendientes; no permite activarlas. Con cuentas.create, se crean activadas.",
   },
   {
     code: "cuentas.assign_owners_any",
     module: "cuentas",
     action: "assign_owners_any",
-    description: "Asignar cualquier propietario en cuentas",
+    description:
+      "Elegir propietarios al crear o editar cuentas. Requiere permiso de creación o cuentas.update, respectivamente. Sin este permiso, la cuenta nueva se asigna al creador y la edición conserva los propietarios. No concede acceso a cuentas ajenas.",
   },
   {
     code: "contactos.request",
     module: "contactos",
     action: "request",
-    description: "Solicitar creacion de contactos",
+    description:
+      "Solicitar aprobación manual de nuevos contactos cuando no se use IA. Registra sus datos como Pendientes de activación para revisión y aprobación por un usuario autorizado. Requiere habilitar el flujo de pendientes; no permite activarlos por sí solo.",
   },
   {
     code: "oportunidades.request",
     module: "oportunidades",
     action: "request",
-    description: "Solicitar creacion de oportunidades",
+    description:
+      "Solicitar el alta de oportunidades como Pendientes de activación. Requiere habilitar el flujo de pendientes, salvo si tiene oportunidades.read_all. No permite activarlas; con oportunidades.create se crean activadas.",
   },
   {
     code: "oportunidades.update_won",
     module: "oportunidades",
     action: "update_won",
-    description: "Modificar campos de oportunidades ganadas",
+    description:
+      "Editar campos de oportunidades Ganadas junto con oportunidades.update. No reabre la oportunidad ni permite cambiar su etapa o estado comercial. Solo aplica a oportunidades a las que tenga acceso.",
   },
   {
     code: "oportunidades.bypass_stage_validation",
     module: "oportunidades",
     action: "bypass_stage_validation",
-    description: "Bypasear la validacion de etapa en el proceso comercial",
+    description:
+      "Avanzar manualmente a la siguiente etapa sin la validación normal, indicando un motivo que queda en auditoría. Solo en oportunidades accesibles y no cerradas. No concede edición general ni acceso global.",
   },
   {
     code: "oportunidades.bypass_demostracion_validation",
     module: "oportunidades",
     action: "bypass_demostracion_validation",
-    description: "Bypasear la validacion de etapa solo en Demostracion",
+    description:
+      "Avanzar manualmente sin la validación normal solo desde Demostración, indicando un motivo que queda en auditoría. Solo en oportunidades accesibles y no cerradas. No habilita excepciones en otras etapas ni concede edición general.",
   },
   {
     code: "mi_coach.access",
@@ -150,13 +157,15 @@ const CORE_PERMISSIONS = [
     code: "cotizaciones.aprobacion_humana",
     module: "cotizaciones",
     action: "aprobacion_humana",
-    description: "Aprobar cotizaciones sin IA",
+    description:
+      "Aprobar cotizaciones sin usar IA en los estados habilitados para aprobacion. La aprobacion sigue sujeta a las validaciones del sistema.",
   },
   {
     code: "cotizaciones.aprobacion_ia",
     module: "cotizaciones",
     action: "aprobacion_ia",
-    description: "Aprobar cotizaciones con IA",
+    description:
+      "Ejecutar la aprobacion de cotizaciones con IA en los estados habilitados. La aprobacion depende de las validaciones y del resultado del proceso.",
   },
   {
     code: "aceptar_pedido.procesamiento.read",
@@ -228,28 +237,129 @@ const CORE_PERMISSIONS = [
 
 const PERMISSION_DESCRIPTION_OVERRIDES = [
   {
+    code: "oportunidades.read",
+    description:
+      "Consultar el listado y los datos de oportunidades de cuentas de las que sea propietario. No concede creación ni edición. Para consultar oportunidades de todas las cuentas necesita además oportunidades.read_all.",
+  },
+  {
+    code: "oportunidades.read_all",
+    description:
+      "Acceder a oportunidades de todas las cuentas y a cuentas y contactos ajenos en catálogos relacionados. Consultar requiere oportunidades.read. Amplía el alcance de las operaciones autorizadas; no concede creación ni edición por sí solo.",
+  },
+  {
+    code: "oportunidades.request",
+    description:
+      "Solicitar el alta de oportunidades como Pendientes de activación. Requiere habilitar el flujo de pendientes, salvo si tiene oportunidades.read_all. No permite activarlas; con oportunidades.create se crean activadas.",
+  },
+  {
+    code: "oportunidades.create",
+    description:
+      "Crear oportunidades directamente Activadas, sujetas a las validaciones del sistema. Junto con oportunidades.update, habilita cambios de activación según las reglas del flujo. No permite editar oportunidades ganadas por sí solo.",
+  },
+  {
+    code: "oportunidades.update",
+    description:
+      "Editar oportunidades accesibles y operar su flujo comercial, sujeto a validaciones y reglas de cierre. Cambiar la activación requiere oportunidades.create; editar Ganadas requiere oportunidades.update_won. No permite cambiar etapas de cerradas.",
+  },
+  {
+    code: "oportunidades.update_won",
+    description:
+      "Editar campos de oportunidades Ganadas junto con oportunidades.update. No reabre la oportunidad ni permite cambiar su etapa o estado comercial. Solo aplica a oportunidades a las que tenga acceso.",
+  },
+  {
+    code: "oportunidades.bypass_stage_validation",
+    description:
+      "Avanzar manualmente a la siguiente etapa sin la validación normal, indicando un motivo que queda en auditoría. Solo en oportunidades accesibles y no cerradas. No concede edición general ni acceso global.",
+  },
+  {
+    code: "oportunidades.bypass_demostracion_validation",
+    description:
+      "Avanzar manualmente sin la validación normal solo desde Demostración, indicando un motivo que queda en auditoría. Solo en oportunidades accesibles y no cerradas. No habilita excepciones en otras etapas ni concede edición general.",
+  },
+  {
+    code: "cuentas.read",
+    description:
+      "Consultar el listado y los datos de las cuentas de las que el usuario es propietario. No permite crearlas ni editarlas. Para consultar todas las cuentas necesita además cuentas.read_all.",
+  },
+  {
+    code: "cuentas.read_all",
+    description:
+      "Acceder a todas las cuentas, aunque no sea propietario. La consulta requiere cuentas.read; combinado con cuentas.update, amplía la edición a todas las cuentas. No concede creación, edición ni asignación de propietarios por sí solo.",
+  },
+  {
+    code: "cuentas.request",
+    description:
+      "Solicitar aprobación del alta de cuentas. Las registra como Pendientes de activación para revisión por un usuario autorizado. Requiere habilitar el flujo de cuentas pendientes; no permite activarlas. Con cuentas.create, se crean activadas.",
+  },
+  {
+    code: "cuentas.create",
+    description:
+      "Crear cuentas directamente activadas, sin aprobación manual y sujetas a las validaciones del sistema. Junto con cuentas.update, permite activar, desactivar o marcar cuentas como pendientes cuando el flujo esté habilitado.",
+  },
+  {
+    code: "cuentas.update",
+    description:
+      "Editar los datos de cuentas a las que tenga acceso. No permite crearlas. Cambiar su activación requiere además cuentas.create; cambiar sus propietarios requiere cuentas.assign_owners_any.",
+  },
+  {
+    code: "cuentas.assign_owners_any",
+    description:
+      "Elegir propietarios al crear o editar cuentas. Requiere permiso de creación o cuentas.update, respectivamente. Sin este permiso, la cuenta nueva se asigna al creador y la edición conserva los propietarios. No concede acceso a cuentas ajenas.",
+  },
+  {
+    code: "contactos.request",
+    description:
+      "Solicitar aprobación manual de nuevos contactos cuando no se use IA. Registra sus datos como Pendientes de activación para revisión y aprobación por un usuario autorizado. Requiere habilitar el flujo de pendientes; no permite activarlos por sí solo.",
+  },
+  {
+    code: "contactos.read",
+    description:
+      "Consultar contactos de sus cuentas. Permite ver el listado y los datos de contactos asociados a cuentas de las que el usuario es propietario. No permite crearlos ni modificarlos.",
+  },
+  {
+    code: "contactos.read_all",
+    description:
+      "Acceder a contactos de todas las cuentas. Amplía el alcance más allá de las cuentas propias. Para consultarlos necesita también contactos.read; combinado con permisos de creación o edición, amplía también el alcance de esas operaciones.",
+  },
+  {
+    code: "contactos.create",
+    description:
+      "Crear contactos activos sin aprobación manual, sujetos a validaciones de datos y duplicados. Junto con contactos.update, permite activar, desactivar o marcar contactos como pendientes, según las reglas del sistema.",
+  },
+  {
+    code: "contactos.update",
+    description:
+      "Editar los datos de contactos a los que tenga acceso. No permite crear contactos ni cambiar su estado de activación por sí solo; para cambiar ese estado necesita además contactos.create.",
+  },
+  {
     code: "cotizaciones.operacion",
-    description: "Operar cotizaciones (crear, editar y gestionar en trabajo)",
+    description:
+      "Para vendedores. Permite crear y preparar cotizaciones, solicitar aprobacion, enviarlas y registrar su resultado comercial segun el estado. La aprobacion requiere un permiso adicional.",
   },
   {
     code: "cotizaciones.ingreso",
-    description: "Solicitar aprobacion de cotizaciones (sin aprobar)",
+    description:
+      "Para logistica. Permite aceptar cotizaciones ganadas o devolverlas a borrador. Tambien permite editar borradores, solicitar aprobacion y marcar cotizaciones aprobadas como ganadas.",
   },
   {
     code: "cotizaciones.revision",
-    description: "Revisar cotizaciones (validar informacion sin aprobar)",
+    description:
+      "Para responsables de aprobar cotizaciones. Permite revisar, corregir y rechazar cotizaciones en aprobacion. Para aprobarlas se necesita ademas el permiso de aprobacion humana o con IA.",
   },
   {
     code: "cotizaciones.aprobacion_humana",
-    description: "Aprobar cotizaciones sin IA",
+    description:
+      "Aprobar cotizaciones sin usar IA en los estados habilitados para aprobacion. La aprobacion sigue sujeta a las validaciones del sistema.",
   },
   {
     code: "cotizaciones.aprobacion_ia",
-    description: "Aprobar cotizaciones con IA",
+    description:
+      "Ejecutar la aprobacion de cotizaciones con IA en los estados habilitados. La aprobacion depende de las validaciones y del resultado del proceso.",
   },
   {
     code: "cotizaciones.administracion",
-    description: "Administrar cotizaciones (control total y excepciones)",
+    description:
+      "Administrar cotizaciones, acceder a versiones historicas y editar o crear versiones incluso en estados aprobada, enviada, ganada y aceptada. Habilita todas las acciones del modulo, sujetas a las validaciones de cada operacion.",
   },
   {
     code: "aceptar_pedido.procesamiento.read",
@@ -270,7 +380,7 @@ const PERMISSION_DESCRIPTION_OVERRIDES = [
   {
     code: "cotizaciones.externo",
     description:
-      "Acceso externo a cotizaciones (consulta o colaboracion limitada)",
+      "Para clientes que desean consultar sus cotizaciones. Permite ver las cotizaciones a las que tengan acceso en estado aprobada, enviada, ganada o aceptada, sin modificarlas ni cambiar su estado.",
   },
   {
     code: "propuestas.read",

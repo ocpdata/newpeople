@@ -12,6 +12,7 @@ function createQuotationsFixture({
   onUpdateQuotationVersion,
   quotationVersionOverrides,
   quotationOverrides,
+  permissions = ["cotizaciones.operacion"],
 } = {}) {
   function calculateMockItemSalePriceTotal(item) {
     const quantity = Number(item?.quantity || 0);
@@ -57,7 +58,7 @@ function createQuotationsFixture({
     id: 7,
     full_name: "Demo Seller",
     email: "seller@example.com",
-    permissions: ["cotizaciones.operacion"],
+    permissions,
   };
 
   const accounts = [{ id: 1, name: "Cuenta Demo" }];
@@ -1081,6 +1082,189 @@ async function hasQuotationSummaryRow(createModal, label) {
 }
 
 test.describe("quotations", () => {
+  for (const [actionLabel, targetStatus] of [
+    ["Marcar perdida", "Perdida"],
+    ["Marcar anulada", "Anulada"],
+  ]) {
+    test(`cotizacion aprobada permite ${actionLabel} en acciones de cierre`, async ({
+      page,
+    }) => {
+      await bootstrapAuthenticatedSession(page);
+      await page.route(
+        "**/api/**",
+        createQuotationsFixture({
+          quotationVersionOverrides: {
+            statusCode: "aprobada",
+            statusName: "Aprobada",
+            actions: [
+              { code: "enviar", name: "Enviar", allowed: true },
+              { code: "declarar_ganada", name: "Declarar ganada", allowed: true },
+              { code: "declarar_perdida", name: "Declarar perdida", allowed: true },
+              { code: "declarar_anulada", name: "Declarar anulada", allowed: true },
+            ],
+          },
+        }),
+      );
+      const editModal = await openEditQuotationModal(page);
+      await expect(
+        editModal.getByRole("button", { name: "Enviar", exact: true }),
+      ).toBeVisible();
+      await expect(
+        editModal.getByRole("button", { name: "Marcar ganada", exact: true }),
+      ).toBeVisible();
+      await editModal.locator("summary").filter({ hasText: "Mas opciones" }).click();
+      const closingActions = editModal
+        .locator(".quotation-workflow-overflow-group")
+        .filter({ hasText: "Acciones de cierre" });
+      await expect(
+        closingActions.getByRole("button", { name: "Marcar perdida", exact: true }),
+      ).toBeVisible();
+      await expect(
+        closingActions.getByRole("button", { name: "Marcar anulada", exact: true }),
+      ).toBeVisible();
+      const transitionRequest = page.waitForRequest(
+        (request) =>
+          new URL(request.url()).pathname ===
+            "/api/quotation-versions/1001/transition" &&
+          request.method() === "POST",
+      );
+      await closingActions.getByRole("button", { name: actionLabel, exact: true }).click();
+      expect((await transitionRequest).postDataJSON().actionCode).toBe(
+        targetStatus === "Perdida" ? "declarar_perdida" : "declarar_anulada",
+      );
+      await expect(page.getByLabel("Resumen de cotización")).toContainText(
+        `Estado: ${targetStatus}`,
+      );
+    });
+  }
+
+  for (const statusCode of ["aprobada", "enviada", "aceptada", "ganada"]) {
+    for (const isAdministrator of [false, true]) {
+      test(`guardado en ${statusCode} ${isAdministrator ? "con" : "sin"} administracion`, async ({
+        page,
+      }) => {
+        const saveRequests = [];
+        await bootstrapAuthenticatedSession(page);
+        await page.route(
+          "**/api/**",
+          createQuotationsFixture({
+            permissions: [
+              "cotizaciones.operacion",
+              ...(isAdministrator ? ["cotizaciones.administracion"] : []),
+            ],
+            quotationVersionOverrides: { statusCode, statusName: statusCode },
+          }),
+        );
+        page.on("request", (request) => {
+          if (
+            ["PUT", "POST"].includes(request.method()) &&
+            /\/api\/(quotation-versions\/\d+\/full|quotations\/\d+\/versions)$/.test(
+              new URL(request.url()).pathname,
+            )
+          ) {
+            saveRequests.push(request.url());
+          }
+        });
+
+        const editModal = await openEditQuotationModal(page);
+        const createVersionButton = editModal.getByRole("button", {
+          name: "Crear version",
+          exact: true,
+        });
+        if (isAdministrator) {
+          await expect(createVersionButton).toBeVisible();
+        } else {
+          await expect(createVersionButton).toHaveCount(0);
+        }
+        const explanation = editModal.locator("p[role='status']").getByText(
+          "Para guardar cambios en este estado necesitas el permiso de administración de cotizaciones.",
+          { exact: true },
+        );
+        await expect(explanation).toHaveCount(isAdministrator ? 0 : 1);
+        for (const name of [
+          "Guardar como version actual",
+          "Guardar como nueva version",
+        ]) {
+          const button = editModal.getByRole("button", { name, exact: true });
+          if (isAdministrator) {
+            await expect(button).toBeEnabled();
+          } else {
+            await expect(button).toBeDisabled();
+            await button.click({ force: true });
+            await expect(button).toBeDisabled();
+          }
+        }
+        expect(saveRequests).toEqual([]);
+        if (isAdministrator) {
+          await editModal
+            .getByRole("button", {
+              name: "Guardar como version actual",
+              exact: true,
+            })
+            .click();
+          await expect.poll(() => saveRequests.length).toBe(1);
+          await expect(
+            editModal.locator(".quotation-edit-actions .toast-success"),
+          ).toHaveText(
+            "Version actualizada",
+          );
+        }
+      });
+    }
+  }
+
+  test("recalcula el bloqueo al abrir otra version seleccionada", async ({
+    page,
+  }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.route(
+      "**/api/**",
+      createQuotationsFixture({
+        quotationVersionOverrides: {
+          statusCode: "aprobada",
+          statusName: "Aprobada",
+        },
+      }),
+    );
+    let editModal = await openEditQuotationModal(page);
+    await expect(
+      editModal.getByRole("button", { name: "Guardar como version actual" }),
+    ).toBeDisabled();
+    await editModal.getByRole("button", { name: "Cancelar", exact: true }).click();
+
+    editModal = await openEditQuotationModal(page, { versionId: 1000 });
+    await expect(
+      editModal.getByRole("button", { name: "Guardar como version actual" }),
+    ).toBeEnabled();
+    await expect(
+      editModal.getByRole("button", { name: "Guardar como nueva version" }),
+    ).toHaveCount(0);
+  });
+
+  for (const statusCode of ["borrador", "en_aprobacion", "rechazada"]) {
+    test(`conserva el guardado en ${statusCode} sin administracion`, async ({
+      page,
+    }) => {
+      await bootstrapAuthenticatedSession(page);
+      await page.route(
+        "**/api/**",
+        createQuotationsFixture({
+          quotationVersionOverrides: { statusCode, statusName: statusCode },
+        }),
+      );
+      const editModal = await openEditQuotationModal(page);
+      await expect(
+        editModal.getByRole("button", { name: "Crear version", exact: true }),
+      ).toBeVisible();
+      await expect(
+        editModal.getByRole("button", { name: "Guardar como version actual" }),
+      ).toBeEnabled();
+      await expect(
+        editModal.getByRole("button", { name: "Guardar como nueva version" }),
+      ).toBeEnabled();
+    });
+  }
+
   test("muestra estado y flujo con una accion principal en la edicion", async ({
     page,
   }) => {

@@ -21,6 +21,15 @@ const SHARED_COACH_PERMISSION_CODES = new Set([
   "mi_coach.chat_diagnostics",
   "fuentes_externas.execute",
 ]);
+const QUOTATION_PERMISSION_LABELS = {
+  "cotizaciones.administracion": "Administrar cotizaciones",
+  "cotizaciones.aprobacion_humana": "Aprobar sin IA",
+  "cotizaciones.aprobacion_ia": "Aprobar con IA",
+  "cotizaciones.externo": "Consultar cotizaciones como cliente",
+  "cotizaciones.ingreso": "Gestionar cotizaciones en logística",
+  "cotizaciones.operacion": "Gestionar cotizaciones como vendedor",
+  "cotizaciones.revision": "Revisar cotizaciones para aprobación",
+};
 const SHARED_COACH_PERMISSION_LABELS = {
   "mi_coach.access": {
     label: "Entrar al módulo Mi Coach",
@@ -149,6 +158,7 @@ export default function RolesWorkspaceSection({
             <span className="permission-label">
               <span className="permission-code">
                 {SHARED_COACH_PERMISSION_LABELS[permission.code]?.label ||
+                  QUOTATION_PERMISSION_LABELS[permission.code] ||
                   permission.action}
               </span>
               {(SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||

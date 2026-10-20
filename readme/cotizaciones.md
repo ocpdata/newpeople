@@ -49,8 +49,18 @@ El modulo usa permisos nuevos dentro de `permissions`:
 - `cotizaciones.ingreso`
 - `cotizaciones.administracion`
 - `cotizaciones.externo`
+- `cotizaciones.aprobacion_humana`
+- `cotizaciones.aprobacion_ia`
+
+Las descripciones de estos permisos explican su publico y alcance: operacion para vendedores, ingreso para logistica, revision para responsables de aprobar y externo para clientes que consultan sus cotizaciones. Revision permite corregir y rechazar; aprobar requiere el permiso especifico de aprobacion humana o con IA. Ingreso tambien permite editar borradores, solicitar aprobacion y marcar aprobadas como ganadas. Estos textos no cambian las autorizaciones existentes. Los permisos se acumulan y no sustituyen las restricciones de acceso a cada cotizacion.
+
+En Roles y permisos, cada permiso se presenta con un titulo legible y su descripcion debajo, junto a la casilla de seleccion. Los titulos visibles de cotizaciones no cambian sus codigos internos.
 
 `cotizaciones.administracion` puede modificar cualquier version en cualquier estado y es la unica via de administracion global del modulo.
+
+En el modal de edicion, los botones "Guardar como version actual" y "Guardar como nueva version" se desactivan en los estados aprobada, enviada, aceptada y ganada para usuarios sin `cotizaciones.administracion`. El modal muestra el motivo y bloquea ambas acciones antes de enviar solicitudes de guardado. Los usuarios con administracion conservan las reglas habituales de guardado; la visibilidad de nueva version y los bloqueos durante el guardado no cambian. Los campos siguen siendo editables.
+
+En esos mismos estados, la accion "Crear version" del panel Estado y flujo se oculta para usuarios sin `cotizaciones.administracion`, antes de distribuir las acciones principales, rapidas y de mas opciones. Con administracion mantiene su visibilidad habitual. En otros estados no cambia su comportamiento.
 
 ## Catalogos
 
@@ -62,6 +72,8 @@ El backend persiste y expone estos catalogos:
 - `quotation_section_inclusion_types`
 
 La matriz `estado + accion + permiso` se persiste en `quotation_action_permissions`.
+
+En estado aprobada, `cotizaciones.operacion` permite Enviar, Marcar ganada, Marcar perdida y Marcar anulada. Las dos ultimas aparecen en Mas opciones > Acciones de cierre. Para actualizar una base existente, ejecutar `apps/api/sql/enableApprovedQuotationClosing.sql` sobre esa base despues de cargar los catalogos y permisos; el ajuste es idempotente y no cambia las acciones de otros estados ni concede acceso a otros permisos.
 
 ## Modelo funcional
 
@@ -189,7 +201,7 @@ En esa persistencia completa, cada item guarda:
 | Vendedor (`cotizaciones.operacion`)           | `borrador`                                 | `modificar`, `guardar version`, `solicitar_aprobacion`, `crear_version` si aplica sobre la mayor, `declarar_perdida`, `declarar_anulada`                                         | Preparar la propuesta o cerrarla temprano si deja de tener sentido comercial                                         | Solicitar aprobacion o cerrar como perdida/anulada                          |
 | Vendedor (`cotizaciones.operacion`)           | `en_aprobacion`                            | `ver`                                                                                                                                                                            | Esperar decision del aprobador                                                                                       | Esperar aprobacion o rechazo                                                |
 | Vendedor (`cotizaciones.operacion`)           | `rechazada`                                | `ver`, `modificar`, `guardar version`, `solicitar_aprobacion`, `crear_version`, `declarar_perdida`, `declarar_anulada`                                                           | Corregir observaciones en la misma version o abrir una nueva version de retrabajo, o cerrar la oportunidad comercial | Reenviar a aprobacion, crear nueva version o cerrar                         |
-| Vendedor (`cotizaciones.operacion`)           | `aprobada`                                 | `ver`, `enviar`, `crear_version`, `declarar_ganada`, `declarar_perdida`, `declarar_anulada`                                                                                      | Enviar la propuesta ya aprobada o cerrarla directamente si el resultado comercial ya se conoce                       | Enviar al cliente, crear nueva version o cerrar como ganada/perdida/anulada |
+| Vendedor (`cotizaciones.operacion`)           | `aprobada`                                 | `ver`, `enviar`, `declarar_ganada`, `declarar_perdida`, `declarar_anulada`                                                                                                      | Enviar la propuesta ya aprobada o cerrarla directamente si el resultado comercial ya se conoce                       | Enviar al cliente o cerrar como ganada/perdida/anulada                      |
 | Vendedor (`cotizaciones.operacion`)           | `enviada`                                  | `ver`, `declarar_ganada`, `declarar_perdida`, `declarar_anulada`, `crear_version` segun politica                                                                                 | Cerrar el resultado comercial con el cliente                                                                         | Ganada, perdida, anulada o nueva version                                    |
 | Vendedor (`cotizaciones.operacion`)           | `ganada`                                   | `ver`                                                                                                                                                                            | Consulta historica                                                                                                   | Sin siguiente paso                                                          |
 | Vendedor (`cotizaciones.operacion`)           | `perdida`                                  | `ver`                                                                                                                                                                            | Consulta historica                                                                                                   | Sin siguiente paso                                                          |

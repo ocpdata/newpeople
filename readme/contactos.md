@@ -258,9 +258,21 @@ Ese modal permite:
 - `contactos.request` crea el contacto como `pendiente_activacion` cuando `contactsPendingEnabled` está activa.
 - Sin una combinación válida de permisos y temporal, la API responde `403`.
 
+### Descripciones de permisos
+
+Las descripciones en Roles y permisos explican el alcance de cada permiso:
+
+- `contactos.read`: consultar contactos de las cuentas propias, sin crearlos ni modificarlos.
+- `contactos.read_all`: ampliar el alcance a todas las cuentas; la consulta requiere además `contactos.read`. Combinado con creación o edición, también amplía el alcance de esas operaciones.
+- `contactos.request`: solicitar aprobación manual del alta, registrando el contacto como pendiente para revisión por un usuario autorizado. Conserva la alternativa manual cuando no se use IA, pero requiere habilitar `contactsPendingEnabled`; desactivar IA no habilita ese flujo automáticamente.
+- `contactos.create`: crear contactos activos, sujetos a validaciones de datos y duplicados; junto con `contactos.update`, permite cambiar su estado de activación.
+- `contactos.update`: editar contactos accesibles; no concede creación ni cambio de activación por sí solo.
+
+Los permisos se acumulan. Si el usuario tiene `contactos.create` y `contactos.request`, prevalece la creación directa como activo. Estas descripciones no cambian permisos ni configuración.
+
 ### Cambios de estado
 
-- Solo `contactos.create` permite cambiar estado posteriormente.
+- Cambiar estado posteriormente requiere `contactos.update` y `contactos.create`.
 - El cambio de estado se ejecuta desde el menú kebab de la tabla, no desde el formulario.
 - El badge del encabezado del modal es informativo; no es un control de edición.
 

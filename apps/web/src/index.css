@@ -15610,19 +15610,52 @@ td {
 
 .permission-label {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 4px;
+  flex: 1;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .permission-code {
-  font-weight: 500;
+  font-weight: 600;
+  line-height: 1.4;
   color: #1a2b4a;
 }
 
 .permission-description {
   font-size: 12px;
-  color: #7a8eaa;
+  line-height: 1.5;
+  color: #526782;
+}
+
+.permission-module-group .checkbox-grid {
+  gap: 4px;
+}
+
+.permission-module-group .checkbox-grid > label {
+  padding: 10px 8px;
+  border-radius: 6px;
+  gap: 10px;
+}
+
+.permission-module-group .checkbox-grid > label:hover {
+  background: #f4f7fc;
+}
+
+.permission-module-group .checkbox-grid > label:focus-within {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.permission-module-group .checkbox-grid > label + label {
+  border-top: 1px solid #e8eef8;
+}
+
+.permission-module-group .checkbox-grid input[type="checkbox"] {
+  margin-top: 1px;
 }
 
 .checkbox-grid input[type="checkbox"] {

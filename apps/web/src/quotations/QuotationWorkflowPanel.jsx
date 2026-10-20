@@ -204,9 +204,11 @@ function getRecommendedAction(actions, statusCode) {
   );
 }
 
-function classifyActions(actions, statusCode) {
+function classifyActions(actions, statusCode, quotationSaveBlockedReason) {
   const visibleActions = (actions || []).filter(
-    (action) => !["ver", "modificar", "crear_cotizacion"].includes(action.code),
+    (action) =>
+      !["ver", "modificar", "crear_cotizacion"].includes(action.code) &&
+      !(quotationSaveBlockedReason && action.code === "crear_version"),
   );
   const recommendedAction = getRecommendedAction(visibleActions, statusCode);
   const groupedActions = visibleActions.reduce(
@@ -259,6 +261,7 @@ function getNextStepMessage({ selectedVersion, primaryAction, quickActions }) {
 function QuotationWorkflowPanel({
   selectedVersion,
   allowedActions,
+  quotationSaveBlockedReason,
   busyAction,
   handleAction,
   error,
@@ -269,7 +272,7 @@ function QuotationWorkflowPanel({
   const statusCode = selectedVersion?.statusCode || "";
   const statusUiKey = selectedVersion?.statusUiKey || statusCode;
   const { primaryAction, quickActions, overflowActions, riskActions } =
-    classifyActions(allowedActions, statusCode);
+    classifyActions(allowedActions, statusCode, quotationSaveBlockedReason);
   const showWorkflowActions = Boolean(selectedVersion?.isLatestVersion);
   const nextStepMessage = getNextStepMessage({
     selectedVersion,

@@ -31,12 +31,19 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 ### Estados y permisos
 
 - `oportunidades.create` crea la oportunidad activada.
-- `oportunidades.request` crea la oportunidad en `pendiente_activacion`.
+- `oportunidades.request` crea la oportunidad en `pendiente_activacion` si está habilitado `opportunitiesPendingEnabled` o si tiene `oportunidades.read_all`. Si también tiene `oportunidades.create`, se crea activada.
 - `oportunidades.update` permite editar oportunidades que siguen `En proceso`.
 - `oportunidades.update_won` permite editar los campos de una oportunidad `Ganada`, además de `oportunidades.update`.
 - El permiso `oportunidades.update_won` no reabre la oportunidad ni permite cambiar su etapa o estado comercial.
-- Solo `oportunidades.create` habilita cambios de estado posteriores.
+- Cambiar la activación posteriormente requiere `oportunidades.update` y `oportunidades.create`, sujeto a las reglas del flujo; no equivale a cambiar el estado comercial.
 - El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
+
+Las descripciones en Roles y permisos también explican el alcance por cuentas y las excepciones de avance, sin cambiar autorizaciones:
+
+- `oportunidades.read` permite consultar oportunidades de cuentas propias; `oportunidades.read_all` amplía el alcance a todas las cuentas y habilita cuentas y contactos ajenos en catálogos relacionados, sin conceder creación ni edición por sí solo.
+- `oportunidades.bypass_stage_validation` permite avanzar a la siguiente etapa sin la validación normal, con motivo registrado en auditoría.
+- `oportunidades.bypass_demostracion_validation` limita esa excepción a la etapa actual Demostración.
+- Ambos permisos de excepción requieren acceso a la oportunidad y no permiten avanzar oportunidades cerradas ni conceden edición general.
 
 ### Flujo comercial
 
