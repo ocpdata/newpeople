@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readOpportunityCommercialHistory, readOpportunityScenarioBasis } from "./opportunity-history-store.js";
 import { readFile } from "node:fs/promises";
 import { query, withTransaction } from "../db.js";
+import { logAuditEvent } from "../audit.js";
 import { buildCustomerHistoryReadFilter } from "./customer-history.js";
 import { buildCustomerPendingReadFilter } from "./customer-pending.js";
 import { buildCustomerExtractedMaterial } from "./customer-documents.js";
@@ -3223,17 +3224,18 @@ export async function getCustomerAccountChatSession({ user, sessionId }) {
 export async function listCustomerAccountChatDiagnostics({
   queryText = "",
   status = "all",
+  reviewStatus = "all",
   accountId = null,
   dateFrom = "",
   dateTo = "",
   page = 1,
-  pageSize = 25,
+  pageSize = 10,
 }) {
   await ensureCommercialIntelligenceSchema();
   const safePage = Math.max(1, Math.trunc(Number(page) || 1));
   const safePageSize = Math.min(
     100,
-    Math.max(1, Math.trunc(Number(pageSize) || 25)),
+    Math.max(1, Math.trunc(Number(pageSize) || 10)),
   );
   const offset = (safePage - 1) * safePageSize;
   const search = String(queryText || "")
@@ -3288,6 +3290,8 @@ export async function listCustomerAccountChatDiagnostics({
        )`,
     );
   }
+  if (reviewStatus === "closed") filters.push("r.session_id IS NOT NULL AND r.closed_through_job_id = COALESCE(j.id, 0)");
+  if (reviewStatus === "pending") filters.push("(r.session_id IS NULL OR r.closed_through_job_id <> COALESCE(j.id, 0))");
   const whereSql = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
   const latestJobJoin = `LEFT JOIN customer_intelligence_jobs j
     ON j.id = (
@@ -3296,7 +3300,9 @@ export async function listCustomerAccountChatDiagnostics({
       WHERE j2.job_type = 'account_chat'
         AND j2.requested_by_user_id = s.requested_by_user_id
         AND CAST(JSON_UNQUOTE(JSON_EXTRACT(j2.request_json, '$.chatSessionId')) AS UNSIGNED) = s.id
-    )`;
+    )
+    LEFT JOIN customer_chat_diagnostic_reviews r ON r.session_id = s.id
+    LEFT JOIN users reviewer ON reviewer.id = r.closed_by_user_id`;
   const countRows = await query(
     `SELECT COUNT(*) AS total
      FROM customer_intelligence_chat_sessions s
@@ -3308,6 +3314,7 @@ export async function listCustomerAccountChatDiagnostics({
   );
   const rows = await query(
     `SELECT s.id AS session_id, s.public_id AS session_public_id,
+            r.closed_at, r.closed_through_job_id, reviewer.full_name AS reviewer_name,
             s.account_id, a.name AS account_name,
             s.requested_by_user_id AS user_id, u.full_name AS user_name,
             u.email AS user_email, s.created_at AS session_created_at,
@@ -3331,6 +3338,7 @@ export async function listCustomerAccountChatDiagnostics({
   return {
     page: safePage,
     pageSize: safePageSize,
+    businessTimezone: (await getCommercialSettings()).businessTimezone || config.app.businessTimezone,
     total: Number(countRows[0]?.total || 0),
     sessions: rows.map((row) => ({
       sessionId: Number(row.session_id),
@@ -3342,6 +3350,11 @@ export async function listCustomerAccountChatDiagnostics({
       userEmail: row.user_email || "",
       sessionCreatedAt: row.session_created_at,
       sessionUpdatedAt: row.session_updated_at,
+      diagnosticReview: {
+        status: row.closed_at && Number(row.closed_through_job_id) === Number(row.job_id || 0) ? "closed" : "pending",
+        closedAt: row.closed_at || null,
+        closedByName: row.reviewer_name || "",
+      },
       latestJob: row.job_id
         ? {
             jobId: Number(row.job_id),
@@ -3426,6 +3439,15 @@ export async function getCustomerAccountChatDiagnosticSession({
     ],
   );
   const history = parseJson(session.history_json, []);
+  const reviewRows = await query(
+    `SELECT r.closed_at, r.closed_through_job_id, u.full_name AS reviewer_name,
+      (SELECT COALESCE(MAX(j.id), 0) FROM customer_intelligence_jobs j
+       WHERE j.job_type = 'account_chat' AND j.requested_by_user_id = ?
+       AND CAST(JSON_UNQUOTE(JSON_EXTRACT(j.request_json, '$.chatSessionId')) AS UNSIGNED) = ?) AS latest_job_id
+     FROM customer_chat_diagnostic_reviews r LEFT JOIN users u ON u.id = r.closed_by_user_id
+     WHERE r.session_id = ?`, [Number(session.user_id), resolvedSessionId, resolvedSessionId],
+  );
+  const review = reviewRows[0];
   return {
     session: {
       id: Number(session.id),
@@ -3439,6 +3461,11 @@ export async function getCustomerAccountChatDiagnosticSession({
         session.contact_id === null ? null : Number(session.contact_id),
       createdAt: session.created_at,
       updatedAt: session.updated_at,
+      diagnosticReview: {
+        status: review && Number(review.closed_through_job_id) === Number(review.latest_job_id) ? "closed" : "pending",
+        closedAt: review?.closed_at || null,
+        closedByName: review?.reviewer_name || "",
+      },
       user: {
         id: Number(session.user_id),
         name: session.user_name || "",
@@ -3466,6 +3493,44 @@ export async function getCustomerAccountChatDiagnosticSession({
       selectedJobId: selectedJobId || null,
     },
   };
+}
+
+export async function closeCustomerChatDiagnostic({ user, sessionId, latestJobId, req }) {
+  if (!hasPermission(user, "mi_coach.chat_diagnostics")) throw createHttpError(403, "No autorizado");
+  await ensureCommercialIntelligenceSchema();
+  await withTransaction(async (connection) => {
+    const [sessions] = await connection.query(
+      "SELECT id, requested_by_user_id FROM customer_intelligence_chat_sessions WHERE id = ? FOR UPDATE", [sessionId],
+    );
+    if (!sessions.length) throw createHttpError(404, "Sesion de chat no encontrada");
+    const [jobs] = await connection.query(
+      `SELECT id, status FROM customer_intelligence_jobs WHERE job_type = 'account_chat'
+       AND requested_by_user_id = ?
+       AND CAST(JSON_UNQUOTE(JSON_EXTRACT(request_json, '$.chatSessionId')) AS UNSIGNED) = ?
+       ORDER BY id DESC`, [sessions[0].requested_by_user_id, sessionId],
+    );
+    const currentJobId = Number(jobs[0]?.id || 0);
+    if (currentJobId !== latestJobId) throw createHttpError(409, "La sesión tiene nuevos turnos. Actualiza y revísalos antes de cerrar el diagnóstico.");
+    if (jobs.some((job) => ["pending", "processing"].includes(job.status))) {
+      throw createHttpError(409, "Espera a que terminen los turnos en proceso antes de cerrar el diagnóstico.");
+    }
+    const [reviews] = await connection.query(
+      "SELECT closed_through_job_id FROM customer_chat_diagnostic_reviews WHERE session_id = ?", [sessionId],
+    );
+    if (reviews.length && Number(reviews[0].closed_through_job_id) === currentJobId) return;
+    await connection.query(
+      `INSERT INTO customer_chat_diagnostic_reviews (session_id, closed_through_job_id, closed_by_user_id, closed_at)
+       VALUES (?, ?, ?, NOW(3)) ON DUPLICATE KEY UPDATE
+       closed_through_job_id = VALUES(closed_through_job_id), closed_by_user_id = VALUES(closed_by_user_id), closed_at = NOW(3)`,
+      [sessionId, currentJobId, user.id],
+    );
+    await logAuditEvent({
+      req, actor: user, module: "mi_coach", action: "close_chat_diagnostic",
+      entityType: "customer_chat_session", entityId: sessionId,
+      after: { reviewStatus: "closed", closedThroughJobId: currentJobId },
+      connection, required: true,
+    });
+  });
 }
 
 export async function createCustomerAccountChatJob({ user, payload }) {

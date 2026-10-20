@@ -46,7 +46,7 @@ import {
   runCustomerContractTurn,
 } from "./turn-contract-runtime.js";
 import { CUSTOMER_FRIENDLY_STYLE_INSTRUCTIONS } from "./customer-presentation.js";
-import { buildCustomerActivityDraftResponse } from "./activity-draft.js";
+import { buildCustomerActivityDraftResponse, resolveCustomerActivityListOpportunity } from "./activity-draft.js";
 import { resolveCoachEntities } from "../coach/entity-resolver.js";
 import { executeCoachReadTool } from "../coach/crm-read-tools.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
@@ -1011,6 +1011,7 @@ export function buildCustomerQueryPlannerContext({
       "Para cambiar el contacto asociado a una oportunidad existente, elige operationKind=link_contact_to_opportunity solo si está permitido. Usa IDs de oportunidad y contacto presentes en el snapshot autorizado, ambos de la cuenta seleccionada. No lo confundas con crear un mapeo jerárquico de contactos.",
       "Para preparar una actividad de calendario, usa operationKind=activity. No combines activityDraft.action=prepare con create_contact; al crear un contacto deja activityDraft.action=none.",
       "Distingue activityDraft.timing: completed significa que la actividad ya ocurrió y requiere status=done con la fecha/hora real en scheduledAt; scheduled significa futura y requiere status=pending con la fecha programada; si el tiempo no está claro, usa unclear y pregunta antes de crear la operación. Interpreta «la llamada que ya tuve», «ya realicé la llamada» o «ayer hablé» como completed; «quiero programar/agendar una llamada» como scheduled. Conserva tipo, timing, título y notas desde pendingActivityIntent cuando el vendedor responde una aclaración; no cambies una llamada pasada a futura ni pierdas la intención al pedir la oportunidad.",
+      "«Registrar una llamada que hice hoy para agendar una reunión» pide registrar la llamada realizada (call, completed); agendar la reunión es su objetivo, no una segunda actividad autorizada. No inventes una hora cuando solo indica el día.",
       "Para editar o consultar un contacto existente, conserva la resolución estricta de candidato autorizado y no la confundas con create_contact.",
       "Pide aclaración solo si falta una referencia, periodo o dato indispensable para fijar el alcance; no declares ambiguo un objetivo que ya está resuelto.",
       "Si el objetivo, referenceResolution y ambiguity se contradicen, corrige el plan antes de devolverlo.",
@@ -6000,13 +6001,20 @@ export function createCustomerAccountAdapter({
       const currentScope = businessRules.scope || {};
       const storedContinuationContext =
         turnConversationContext || conversationContext;
+      const listOpportunityId = currentScope.opportunitySearchAllowed !== false &&
+        contractComponent && customerComponentCapability(contractComponent).operationKind === "activity" &&
+        !context.opportunityId
+        ? resolveCustomerActivityListOpportunity({
+            question: activeOriginalQuestion, conversationContext: storedContinuationContext, snapshot,
+          })
+        : null;
       const effectiveConversationContext = storedContinuationContext
         ? {
             ...storedContinuationContext,
             opportunityId:
               currentScope.opportunitySearchAllowed === false
                 ? null
-                : storedContinuationContext.opportunityId,
+                : listOpportunityId || storedContinuationContext.opportunityId,
             contactId:
               currentScope.contactSearchAllowed === false
                 ? null
@@ -6019,7 +6027,7 @@ export function createCustomerAccountAdapter({
         opportunityId:
           currentScope.opportunitySearchAllowed === false
             ? null
-            : context.opportunityId || null,
+            : context.opportunityId || listOpportunityId || null,
         contactId:
           currentScope.contactSearchAllowed === false
             ? null

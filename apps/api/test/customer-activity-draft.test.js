@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { buildCustomerActivityDraftResponse } from "../src/commercial-intelligence/activity-draft.js";
+import { buildCustomerActivityDraftResponse, resolveCustomerActivityListOpportunity } from "../src/commercial-intelligence/activity-draft.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 
 const store = vi.hoisted(() => ({
@@ -57,6 +57,61 @@ const build = (overrides = {}) =>
     permissions,
     ...overrides,
   });
+
+describe("Activity continuation from a single listed opportunity", () => {
+  const question = "De esta oportunidad necesito registrar una llamada que hice el dia de hoy para agendar una reunion";
+  const context = {
+    accountId: 7,
+    recordList: { accountId: 7, object: "opportunity", spec: {}, ids: [11] },
+    turnMemory: { contract: { components: [{ category: "query.record_list", object: "opportunity" }] } },
+  };
+  const resolve = (overrides = {}) => resolveCustomerActivityListOpportunity({
+    question, conversationContext: context, snapshot, ...overrides,
+  });
+  it("uses the only displayed opportunity, not an arbitrary opportunity in the account", () => {
+    expect(resolve({ snapshot: { ...snapshot, opportunities: [
+      ...snapshot.opportunities, { id: 12, accountId: 7, name: "Otro proyecto" },
+    ] } })).toBe(11);
+  });
+  it.each([
+    { recordList: { ...context.recordList, ids: [] } },
+    { recordList: { ...context.recordList, ids: [11, 12] } },
+    { recordList: { ...context.recordList, ids: [12] } },
+    { recordList: { ...context.recordList, accountId: 99 } },
+    { recordList: { ...context.recordList, object: "contact" } },
+    { accountId: 99 },
+    { opportunityId: 12 },
+    { turnMemory: null },
+    { turnMemory: { contract: { components: [{ category: "query.account_summary", object: "account" }] } } },
+    { turnMemory: { contract: { components: [{ id: "c1", category: "query.record_list", object: "opportunity" }] }, pendingComponentIds: ["c1"] } },
+  ])("does not reuse ambiguous, stale or conflicting context %j", (patch) => {
+    expect(resolve({ conversationContext: { ...context, ...patch } })).toBeNull();
+  });
+  it("does not infer a destination without an explicit conversational reference", () => {
+    expect(resolve({ question: "Necesito registrar una llamada" })).toBeNull();
+  });
+  it("revalidates account membership and read access", () => {
+    expect(resolve({ snapshot: { ...snapshot, opportunities: [{ ...snapshot.opportunities[0], accountId: 99 }] } })).toBeNull();
+    expect(resolve({ snapshot: { ...snapshot, permissions: { canReadOpportunities: false } } })).toBeNull();
+  });
+  it("does not override an explicit reference to another opportunity", () => {
+    expect(resolve({
+      question: `${question}, pero para Otro proyecto`,
+      snapshot: { ...snapshot, opportunities: [...snapshot.opportunities, { id: 12, accountId: 7, name: "Otro proyecto" }] },
+    })).toBeNull();
+  });
+  it("keeps the past call completed and its meeting objective without creating a second activity", () => {
+    const response = build({
+      routing: { ...routing, serverResolvedEntityIds: { opportunityId: resolve() },
+        activityDraft: { ...routing.activityDraft, timing: "completed", notes: "Llamada para agendar una reunión", scheduledAt: "" } },
+    });
+    expect(response.operations).toHaveLength(1);
+    expect(response.operations[0]).toMatchObject({
+      opportunityId: 11, actionType: "call", status: "done",
+      notes: "Llamada para agendar una reunión", scheduledAt: "", missingFields: ["scheduledAt"],
+    });
+  });
+});
 
 describe("Customer activity fields versus CRM evidence", () => {
   it("asks for day and time without requiring availability or history", () => {

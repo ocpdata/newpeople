@@ -1,5 +1,30 @@
 import { normalizeActivityOperation } from "../coach/operation-contract.js";
 import { getCommercialActivityTypeLabel } from "../../../../shared/commercial-activity-types.js";
+import { normalizeCustomerSearchText, validateCustomerRecordList } from "./customer-record-list.js";
+
+export function resolveCustomerActivityListOpportunity({ question, conversationContext, snapshot }) {
+  const text = normalizeCustomerSearchText(question);
+  if (!/\b(?:esta|esa|dicha) oportunidad\b/.test(text)) return null;
+  const previous = conversationContext?.turnMemory?.contract?.components;
+  if (!Array.isArray(previous) || previous.length !== 1 ||
+      !["query.record_list", "query.record_search"].includes(previous[0].category) ||
+      previous[0].object !== "opportunity" ||
+      conversationContext.turnMemory.pendingComponentIds?.includes(previous[0].id)) return null;
+  const list = validateCustomerRecordList(
+    conversationContext?.recordList, snapshot, snapshot?.account?.id,
+  );
+  if (!list || list.object !== "opportunity" || list.ids.length !== 1 ||
+      Number(conversationContext.accountId) !== Number(snapshot.account.id)) return null;
+  const id = list.ids[0];
+  if (conversationContext.opportunityId && Number(conversationContext.opportunityId) !== id) return null;
+  const records = [
+    ...(snapshot.opportunities || []), ...(snapshot.inactiveOpportunities || []),
+    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ];
+  if (records.some((record) => Number(record.id) !== id && record.name &&
+      ` ${text} `.includes(` ${normalizeCustomerSearchText(record.name)} `))) return null;
+  return id;
+}
 
 export function buildCustomerActivityDraftResponse({
   routing,

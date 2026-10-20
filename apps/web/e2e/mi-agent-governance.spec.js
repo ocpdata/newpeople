@@ -3506,6 +3506,83 @@ test.describe("Mi Coach governance and workspaces", () => {
     expect(contactCreateRequests).toEqual([]);
   });
 
+  test("Diagnosticos pagina diez sesiones, cierra de forma persistente y reabre con nuevos turnos", async ({ page }) => {
+    await mockMiCoachApi(page, { canDiagnoseCustomerChats: true });
+    let closed = false;
+    let newTurn = false;
+    let failClose = false;
+    const requests = [];
+    const session = (id) => ({
+      sessionId: id, userName: `Vendedor ${id}`, userEmail: `seller${id}@example.test`,
+      accountName: "Intraway", sessionCreatedAt: "2026-10-20T18:30:00.000Z",
+      latestJob: { jobId: id === 1 && newTurn ? 102 : 100 + id, status: "completed", question: "Hola" },
+      diagnosticReview: {
+        status: id === 1 && closed && !newTurn ? "closed" : "pending",
+        closedByName: "Soporte CRM", closedAt: "2026-10-20T19:00:00.000Z",
+      },
+    });
+    await page.route("**/api/commercial-intelligence/account-chat/diagnostics/sessions**", async (route) => {
+      const req = route.request();
+      const url = new URL(req.url());
+      if (req.method() === "POST") {
+        expect(req.postDataJSON()).toEqual({ latestJobId: 101 });
+        if (failClose) return route.fulfill({ status: 409, json: { message: "Hay nuevos turnos por revisar" } });
+        closed = true;
+        return route.fulfill({ json: { closed: true } });
+      }
+      requests.push(url);
+      const pageNumber = Number(url.searchParams.get("page"));
+      const filter = url.searchParams.get("reviewStatus");
+      const all = Array.from({ length: 11 }, (_, i) => session(i + 1))
+        .filter((item) => filter === "all" || item.diagnosticReview.status === filter);
+      return route.fulfill({ json: {
+        sessions: all.slice((pageNumber - 1) * 10, pageNumber * 10),
+        page: pageNumber, pageSize: 10, total: all.length, businessTimezone: "America/Mexico_City",
+      } });
+    });
+    await openMiCoach(page, { workspace: "none" });
+    await page.getByRole("button", { name: "Diagnóstico de chats", exact: true }).click();
+    const cards = page.locator(".mi-agent-chat-diagnostics-list article");
+    await expect(cards).toHaveCount(10);
+    await expect(cards.first()).toContainText("20 oct 2026, 12:30");
+    for (const width of [1280, 900]) {
+      await page.setViewportSize({ width, height: 900 });
+      const openBox = await cards.first().getByRole("button", { name: "Abrir diagnóstico" }).boundingBox();
+      const closeBox = await cards.first().getByRole("button", { name: "Cerrar diagnóstico" }).boundingBox();
+      expect(openBox).not.toBeNull();
+      expect(closeBox).not.toBeNull();
+      expect(Math.abs(openBox.y - closeBox.y)).toBeLessThan(1);
+      expect(closeBox.x).toBeGreaterThanOrEqual(openBox.x + openBox.width);
+    }
+    expect(requests.at(-1).searchParams.get("pageSize")).toBe("10");
+    await page.getByRole("button", { name: "Siguiente", exact: true }).click();
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText("Vendedor 11");
+    await page.getByRole("button", { name: "Anterior", exact: true }).click();
+    await expect(cards).toHaveCount(10);
+    failClose = true;
+    await cards.first().getByRole("button", { name: "Cerrar diagnóstico" }).click();
+    await expect(page.getByRole("alert")).toContainText("Hay nuevos turnos por revisar");
+    await expect(cards.first()).not.toHaveClass(/is-diagnostic-closed/);
+    failClose = false;
+    await cards.first().getByRole("button", { name: "Cerrar diagnóstico" }).click();
+    await expect(cards.first()).toHaveClass(/is-diagnostic-closed/);
+    await expect(cards.first()).toHaveCSS("background-color", "rgb(237, 249, 240)");
+    await expect(cards.first()).toContainText("Soporte CRM");
+    await expect(cards.first().getByRole("button", { name: "Cerrar diagnóstico" })).toBeDisabled();
+    await expect(cards.first().getByRole("button", { name: "Abrir diagnóstico" })).toBeEnabled();
+    await page.getByLabel("Estado del diagnóstico", { exact: true }).selectOption("closed");
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toHaveClass(/is-diagnostic-closed/);
+    await page.reload();
+    await page.getByRole("button", { name: "Diagnóstico de chats", exact: true }).click();
+    await expect(cards.first()).toHaveClass(/is-diagnostic-closed/);
+    newTurn = true;
+    await page.getByRole("button", { name: "Buscar", exact: true }).click();
+    await expect(cards.first()).not.toHaveClass(/is-diagnostic-closed/);
+    await expect(cards.first()).toContainText("Diagnóstico pendiente");
+  });
+
   test("Cliente existente oculta diagnostico sin permiso aunque la API lo entregue", async ({ page }) => {
     await mockMiCoachApi(page, {
       withCustomerHealth: true,

@@ -16,6 +16,87 @@ async function run(changes = [change()], options = {}) {
     readRecord, loadStates });
 }
 describe("A02 typed update drafts", () => {
+  const raloyQuestion = "La semana pasada hablé con Pedro y me comentó que estos servicios son necesarios por la premura de los cambios de los aplicativos actuales al entorno de F5 y deberían cerrarse en el siguiente mes, puedes actualizar la oportunidad?";
+  const raloySnapshot = {
+    account: { id: 1, name: "Raloy" },
+    opportunities: [
+      { id: 3, accountId: 1, name: "Migración F5" },
+      { id: 4, accountId: 1, name: "Servicios aplicativos" },
+      { id: 5, accountId: 99, name: "Cuenta ajena" },
+    ],
+  };
+  it.each(["", "la oportunidad", "estos servicios"])("clarifies Raloy's destination before a generated date, reference %j", async (reference) => {
+    const readRecord = vi.fn();
+    const first = await run([change("closeDate", "2026-11-30", "deberían cerrarse en el siguiente mes")], {
+      question: raloyQuestion, reference, snapshot: raloySnapshot, readRecord,
+    });
+    expect(first.answer).toContain("¿Qué oportunidad quieres actualizar?");
+    expect(first.answer).toContain("Migración F5");
+    expect(first.answer).toContain("Servicios aplicativos");
+    expect(first.answer).not.toContain("Cuenta ajena");
+    expect(first.answer).toContain("fecha exacta");
+    expect(first.answer).not.toContain("no es válido");
+    expect(first.operations).toEqual([]);
+    expect(first.updateMemory).toMatchObject({
+      targetId: 0, candidateIds: [3, 4], originalRequest: raloyQuestion,
+      items: [expect.objectContaining({ field: "closeDate", action: "pending", value: "" })],
+    });
+    expect(readRecord).not.toHaveBeenCalled();
+    const selected = await run([], {
+      reference: "Migración F5", mode: "continue", question: "Migración F5",
+      previous: first.updateMemory, snapshot: raloySnapshot, readRecord,
+    });
+    expect(selected.answer).toContain("fecha exacta");
+    expect(selected.operations).toEqual([]);
+    expect(selected.updateMemory.targetId).toBe(3);
+    expect(selected.updateMemory.originalRequest).toBe(raloyQuestion);
+    expect(readRecord).not.toHaveBeenCalled();
+    const dated = await run([change("closeDate", "2026-11-19", "2026-11-19")], {
+      reference: "", mode: "continue", question: "El cierre será el 2026-11-19",
+      previous: selected.updateMemory, snapshot: raloySnapshot,
+      readRecord: async () => ({ closeDate: "2026-10-31" }),
+    });
+    expect(dated.operations).toHaveLength(1);
+    expect(dated.operations[0]).toMatchObject({ opportunityId: 3, field: "closeDate", value: "2026-11-19" });
+  });
+  it("preserves the original report and asks what to update after choosing a destination", async () => {
+    const first = await run([], { reference: "", question: raloyQuestion, snapshot: raloySnapshot });
+    const selected = await run([], { reference: "Migración F5", mode: "continue",
+      previous: first.updateMemory, snapshot: raloySnapshot });
+    expect(selected.operations).toEqual([]);
+    expect(selected.answer).toContain("registrar lo comentado como nota");
+    expect(selected.answer).toContain("respuesta de etapa");
+    expect(selected.updateMemory.originalRequest).toBe(raloyQuestion);
+  });
+  it("does not select even the only opportunity when no destination was identified", async () => {
+    const result = await run([change()], { reference: "", snapshot: { ...snapshot, opportunities: [snapshot.opportunities[0]] } });
+    expect(result.operations).toEqual([]);
+    expect(result.updateMemory.targetId).toBe(0);
+    expect(result.updateMemory.items[0].value).toBe("550.000");
+  });
+  it("prioritizes target clarification without storing a fabricated value", async () => {
+    const result = await run([change("name", "Inventado", "Pedro")], {
+      reference: "estos servicios", question: raloyQuestion, snapshot: raloySnapshot,
+    });
+    expect(result.answer).toContain("¿Qué oportunidad quieres actualizar?");
+    expect(result.updateMemory.items).toEqual([]);
+    expect(result.updateMemory.originalRequest).toBe(raloyQuestion);
+  });
+  it("does not treat unavailable target data as an empty candidate list", async () => {
+    const result = await run([change("closeDate", "2026-11-30", "siguiente mes")], {
+      reference: "", question: raloyQuestion, metrics: [{ source: "opportunities_active", errorCode: "READ_FAILED" }],
+    });
+    expect(result.responseType).toBe("error");
+    expect(result.answer).toContain("Falló la lectura");
+    expect(result.operations).toEqual([]);
+  });
+  it("rejects stale ordinals from a list offered without a destination", async () => {
+    const first = await run([change()], { reference: "", snapshot: raloySnapshot });
+    const result = await run([], { reference: "", mode: "continue", previous: first.updateMemory,
+      component: { listPosition: 2 }, snapshot: { ...raloySnapshot, opportunities: [raloySnapshot.opportunities[1]] } });
+    expect(result.operations).toEqual([]);
+    expect(result.answer).toContain("cambiaron");
+  });
   it("prepares an exact before/after without writes or invented identifiers", async () => {
     const result = await run();
     expect(result.operations).toHaveLength(1);

@@ -1,5 +1,21 @@
 # Alcance funcional: Chat de Cliente existente
 
+## Revisión de diagnósticos de chat
+
+El tab **Diagnóstico de chats** de Mi Coach requiere `mi_coach.chat_diagnostics`.
+Muestra 10 sesiones por página y la fecha y hora de creación de cada sesión en
+la zona horaria comercial configurada. El filtro de diagnóstico
+(todos, pendientes o cerrados) es independiente del estado técnico del turno.
+
+**Cerrar diagnóstico** guarda el usuario, la fecha y el último turno revisado
+en `customer_chat_diagnostic_reviews`, con auditoría transaccional. La tarjeta
+se vuelve verde después de confirmar el servidor y sigue permitiendo abrir
+las trazas. No modifica mensajes, oportunidades ni estados comerciales.
+No se permite cerrar mientras haya turnos en proceso ni si llegaron turnos
+posteriores a los mostrados; se debe actualizar y revisarlos primero.
+Un nuevo turno deja automáticamente la revisión pendiente. Repetir el cierre
+del mismo último turno conserva el usuario y la fecha del cierre original.
+
 Este documento define el alcance, los permisos y el comportamiento esperado del chat de Cliente existente. Es el contrato funcional para mejorar su interpretación y recuperación de información; no autoriza cambios de permisos ni amplía el acceso del modelo al CRM.
 
 Describe las capacidades y restricciones del canal, no resultados de pruebas
@@ -970,6 +986,17 @@ Una instrucción explícita para cambiar el monto se trata como una operación a
 
 ### Recopilación conversacional de actividades
 
+Después de un listado o búsqueda de oportunidades que muestra un único resultado,
+«de esta oportunidad» puede continuar hacia el borrador de actividad sin volver
+a pedir el nombre. El servidor revalida el ID mostrado contra la cuenta y la
+lectura autorizada; no selecciona cualquier oportunidad por ser la única de la
+cuenta. Un listado ambiguo, fallido, no vigente o de otra cuenta no fija el destino.
+Una selección explícita vigente prevalece sobre el listado.
+
+«Registrar una llamada que hice hoy para agendar una reunión» solicita una llamada
+realizada; la reunión es su objetivo, no una segunda actividad automática.
+Si falta la hora real, permanece pendiente de completar antes de guardar.
+
 El planificador IA extrae `activityDraft`: acción (preparar, continuar o descartar), tipo, objetivo, fecha/hora, preferencia temporal, notas y resultado esperado. Recibe el borrador pendiente, el historial reciente, la fecha de referencia del servidor y la zona horaria del negocio. Las referencias CRM se resuelven con candidatos autorizados, no con IDs inventados por el modelo.
 
 Para una actividad de oportunidad con contacto, el servidor verifica el detalle de la oportunidad, la asociación directa del contacto, la cuenta y los permisos. La disponibilidad del contacto, sus preferencias o actividades previas no son requisitos para preparar una propuesta. Una consulta explícita sobre esos hechos sigue pasando por la verificación de evidencia habitual.
@@ -1153,6 +1180,20 @@ lecturas, evidencia y respuesta. **B3** coordina la persistencia mediante B11.
   conservando su texto, atribución e incertidumbre; Guardar cambios sigue siendo manual.
 
 ### Actualizaciones controladas de campos (A02)
+
+Si el vendedor pide actualizar una oportunidad sin identificarla, el chat
+solicita el destino y muestra únicamente candidatos autorizados de la cuenta.
+No elige automáticamente ni siquiera cuando solo hay una oportunidad.
+La selección se resuelve antes de comunicar errores de valores propuestos;
+una lectura fallida no se interpreta como ausencia de registros.
+
+El borrador conserva el relato original como contexto no confiable y los cambios
+válidos mientras se aclara el destino. Un plazo como «el siguiente mes» no se
+convierte en un día supuesto: el cierre previsto permanece pendiente hasta que
+el vendedor proporcione una fecha exacta AAAA-MM-DD. Si no indicó qué cambiar,
+se pregunta si desea registrar una nota, revisar una respuesta de etapa o cambiar
+un campo, sin ejecutar ninguna de esas alternativas por suposición.
+Seleccionar una oportunidad no confirma el cambio ni guarda datos en el CRM.
 
 **Existente dentro del alcance aprobado.** B3 interpreta una `updateSpec` tipada;
 el servidor valida la procedencia literal del valor y resuelve el destino dentro

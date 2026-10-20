@@ -46,6 +46,14 @@ const COMMERCIAL_INTELLIGENCE_SCHEMA_STATEMENTS = [
     INDEX idx_customer_intelligence_jobs_opportunity (opportunity_id, updated_at),
     INDEX idx_customer_intelligence_jobs_contact (contact_id, updated_at)
   )`,
+  `CREATE TABLE IF NOT EXISTS customer_chat_diagnostic_reviews (
+    session_id BIGINT UNSIGNED PRIMARY KEY,
+    closed_through_job_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    closed_by_user_id BIGINT UNSIGNED NULL,
+    closed_at DATETIME(3) NOT NULL,
+    CONSTRAINT fk_chat_diagnostic_review_session FOREIGN KEY (session_id) REFERENCES customer_intelligence_chat_sessions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chat_diagnostic_review_user FOREIGN KEY (closed_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS customer_intelligence_findings (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     public_id VARCHAR(64) NOT NULL,

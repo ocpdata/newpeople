@@ -64,6 +64,7 @@ import {
   getCustomerAccountChatSession,
   getCustomerAccountChatDiagnosticSession,
   listCustomerAccountChatDiagnostics,
+  closeCustomerChatDiagnostic,
   processCustomerAccountChatJob,
   updateCustomerIntelligenceFindingStatus,
   updateMiCoachGovernanceSettings,
@@ -132,6 +133,7 @@ const customerChatSessionSchema = jobCreateSchema.pick({
 const customerChatDiagnosticsQuerySchema = z.object({
   query: z.string().trim().max(160).optional().default(""),
   status: z.enum(["all", "errors", "active"]).optional().default("all"),
+  reviewStatus: z.enum(["all", "pending", "closed"]).optional().default("all"),
   accountId: z.coerce.number().int().positive().optional(),
   dateFrom: z
     .string()
@@ -142,7 +144,7 @@ const customerChatDiagnosticsQuerySchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   page: z.coerce.number().int().min(1).max(100000).optional().default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(10),
 });
 
 const governanceSettingsSchema = z.object({
@@ -665,7 +667,27 @@ router.get(
         issues: parsed.error.issues,
       });
     }
-    return res.json(await listCustomerAccountChatDiagnostics(parsed.data));
+    return res.json(await listCustomerAccountChatDiagnostics({
+      ...parsed.data, queryText: parsed.data.query,
+    }));
+  },
+);
+
+router.post(
+  "/account-chat/diagnostics/sessions/:sessionId/close",
+  requirePermission("mi_coach.chat_diagnostics"),
+  async (req, res) => {
+    const parsed = z.object({
+      sessionId: z.coerce.number().int().positive(),
+      latestJobId: z.number().int().nonnegative(),
+    }).safeParse({ sessionId: req.params.sessionId, latestJobId: req.body?.latestJobId });
+    if (!parsed.success) return res.status(400).json({ message: "Sesion o turno invalido" });
+    try {
+      await closeCustomerChatDiagnostic({ ...parsed.data, user: req.user, req });
+      return res.json({ closed: true });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cerrar el diagnóstico");
+    }
   },
 );
 

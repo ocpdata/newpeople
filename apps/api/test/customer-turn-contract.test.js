@@ -12,6 +12,7 @@ import {
 } from "../src/commercial-intelligence/turn-contract-runtime.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 import { customerReadQueryKey } from "../src/commercial-intelligence/customer-chat-evidence.js";
+import { buildCustomerUpdateResponse } from "../src/commercial-intelligence/customer-updates.js";
 import { CUSTOMER_TURN_CASES, SYNTHETIC_CUSTOMER_SNAPSHOT as snapshot } from "./fixtures/customer-turn-cases.js";
 
 function component(category = "report.client_statement", extra = {}) {
@@ -747,6 +748,51 @@ describe("Customer turn contract", () => {
     const fields = classifyWithAI.mock.calls[0][0].fields.find((field) => field.key === "components").items.fields;
     expect(fields.find((field) => field.key === "updateSpec").fields.map((field) => field.key)).toContain("changes");
     expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("A02 action.update_fields");
+  });
+  it("retains Raloy's report through destination selection and exact-date clarification", async () => {
+    const question = "La semana pasada hablé con Pedro y me comentó que estos servicios son necesarios por la premura de los cambios de los aplicativos actuales al entorno de F5 y deberían cerrarse en el siguiente mes, puedes actualizar la oportunidad?";
+    const accountSnapshot = {
+      account: { id: 1, name: "Raloy" },
+      opportunities: [{ id: 3, accountId: 1, name: "Migración F5" }, { id: 4, accountId: 1, name: "Servicios aplicativos" }],
+    };
+    const readRecord = vi.fn().mockResolvedValue({ closeDate: "2026-10-31" });
+    const loadStates = vi.fn().mockResolvedValue([]);
+    const execute = (text, context) => async ({ component: entry }) => ({
+      response: await buildCustomerUpdateResponse({
+        component: entry, question: text, snapshot: accountSnapshot,
+        movement: context ? "provide_data" : "new_request",
+        previous: context?.updateMemory, readRecord, loadStates,
+      }),
+      qualityTrace: { toolsUsed: [], diagnostics: {} },
+    });
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([component("action.update_fields", {
+      reference: "", updateSpec: { mode: "start", targetReference: "", changes: [{
+        field: "closeDate", action: "set", value: "2026-11-30", evidence: "deberían cerrarse en el siguiente mes",
+      }] },
+    })]));
+    const interpreted = await interpretCustomerTurn({
+      question, snapshot: accountSnapshot, classifyWithAI, classifierPrompt: { instruction: "" },
+    });
+    expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain('targetReference=""');
+    const first = await runCustomerContractTurn({
+      contract: interpreted, question, executeComponent: execute(question),
+    });
+    expect(first.response.answer).toContain("¿Qué oportunidad quieres actualizar?");
+    expect(first.response.operations).toEqual([]);
+    const context = validateCustomerConversationContext({
+      version: 1, accountId: 1, updateMemory: first.response.updateMemory, turnMemory: first.turnMemory,
+    }, accountSnapshot, 1);
+    expect(context.updateMemory.originalRequest).toBe(question);
+    const selected = await runCustomerContractTurn({
+      contract: contract([component("action.update_fields", {
+        reference: "", continuationOf: "c1", updateSpec: { mode: "continue", targetReference: "Migración F5", changes: [] },
+      })], { movement: "select_candidate" }),
+      question: "Migración F5", conversationContext: context, executeComponent: execute("Migración F5", context),
+    });
+    expect(selected.response.answer).toContain("fecha exacta");
+    expect(selected.response.operations).toEqual([]);
+    expect(selected.response.updateMemory).toMatchObject({ originalRequest: question, targetId: 3 });
+    expect(readRecord).not.toHaveBeenCalled();
   });
   it.each([{ mode: "execute" }, { targetId: 12 }, { changes: [{ field: "accountId", action: "set", value: "1", evidence: "1" }] },
     { changes: [{ field: "name", action: "set", value: "Nuevo", evidence: "" }] }])("rejects malformed A02 data %j", async (updateSpec) => {

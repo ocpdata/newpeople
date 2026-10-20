@@ -3776,6 +3776,63 @@ describe("Customer account chat adapter", () => {
     expect(JSON.stringify(planningContext)).not.toContain("amountUsd");
   });
 
+  it("continues Intraway's single listed opportunity into a completed call", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations")
+      .mockResolvedValue(getChannelIntentDefaults("customer_account"));
+    const question = "De esta oportunidad necesito registrar una llamada que hice el dia de hoy para agendar una reunion";
+    const conversationContext = {
+      accountId: 7, recordList: { accountId: 7, object: "opportunity", spec: {}, ids: [11] },
+      turnMemory: { contract: { components: [{ category: "query.record_list", object: "opportunity" }] } },
+    };
+    runStructuredTextResearch.mockReset().mockImplementation(async (request) => {
+      if (request.schemaName !== "customer_account_query_plan") throw new Error(`Unexpected AI call: ${request.schemaName}`);
+      expect(request.context.selectedContext.opportunitySelected).toBe(true);
+      expect(request.context.validatedContinuation.opportunityName).toBe("Implementación WAF y API");
+      const candidate = request.context.authorizedEntityCandidates.opportunities
+        .find((item) => item.name === "Implementación WAF y API");
+      expect(candidate).toBeTruthy();
+      return {
+        objective: "Registrar llamada realizada para agendar reunión",
+        queries: ["crm_operation", "contact_query"], mode: "operation", operationKind: "activity",
+        entities: {}, referenceResolution: {
+          targetType: "opportunity", cardinality: "single", source: "active_context",
+          candidateKeys: [candidate.candidateKey],
+        },
+        filters: {}, ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
+        activityDraft: { action: "prepare", actionType: "call", timing: "completed",
+          title: "Llamada para agendar reunión", notes: "Llamada realizada hoy para agendar una reunión",
+          scheduledAt: "", temporalPreference: "hoy" },
+        confidence: "high",
+      };
+    });
+    const adapter = createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: new Set([
+        "cuentas.read", "oportunidades.read", "oportunidades.update", "contactos.read",
+        "mi_coach.execute", "calendario_comercial.update",
+      ]) },
+      snapshot: { ...snapshot, account: { ...snapshot.account, name: "Intraway" },
+        permissions: { ...snapshot.permissions, canReadContacts: true, canReadOpportunities: true },
+        contacts: [{ id: 109, accountId: 7, name: "Contacto Intraway", activationStatusCode: "activado" }],
+        opportunities: [{ ...snapshot.opportunities[0], accountId: 7, name: "Implementación WAF y API", contactId: 109 }] },
+      authoritativeIntent: { intent: "crm_operation", confidence: 0.95, requiresClarification: false },
+      contractComponent: { category: "action.schedule_activity", object: "activity", scope: "single",
+        text: question, reference: "", explicitAction: true },
+      conversationContext, agents: [], jobId: 999,
+    });
+    const result = await adapter.runTurn({ question, context: { accountId: 7 }, conversationContext });
+    expect(result.response.operations, JSON.stringify(result)).toHaveLength(1);
+    expect(result.response.operations[0]).toMatchObject({
+      opportunityId: 11, actionType: "call", status: "done", scheduledAt: "", missingFields: ["scheduledAt"],
+    });
+    expect(result.response.answer).not.toContain("¿Para qué oportunidad");
+    expect(result.response.answer).toContain("ocurrió");
+    expect(runStructuredTextResearch).toHaveBeenCalledTimes(1);
+  });
+
   it("continues an activity clarification for short slot replies, but not pivots", () => {
     const pendingActivityIntent = {
       actionType: "call",

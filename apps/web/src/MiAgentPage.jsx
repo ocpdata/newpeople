@@ -1661,7 +1661,7 @@ function formatCoachRecommendation(recommendation) {
     : recommendation;
 }
 
-function formatCoachDateTime(value) {
+function formatCoachDateTime(value, timeZone) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime())
@@ -1669,6 +1669,7 @@ function formatCoachDateTime(value) {
     : new Intl.DateTimeFormat("es-MX", {
         dateStyle: "medium",
         timeStyle: "short",
+        ...(timeZone ? { timeZone } : {}),
       }).format(date);
 }
 
@@ -2350,6 +2351,8 @@ export default function MiAgentPage({
   });
   const [chatDiagnosticsQuery, setChatDiagnosticsQuery] = useState("");
   const [chatDiagnosticsStatus, setChatDiagnosticsStatus] = useState("all");
+  const [chatDiagnosticsReviewStatus, setChatDiagnosticsReviewStatus] = useState("all");
+  const [chatDiagnosticsClosingId, setChatDiagnosticsClosingId] = useState(null);
   const [chatDiagnosticsAccountId, setChatDiagnosticsAccountId] = useState("");
   const [chatDiagnosticsDateFrom, setChatDiagnosticsDateFrom] = useState("");
   const [chatDiagnosticsDateTo, setChatDiagnosticsDateTo] = useState("");
@@ -5175,6 +5178,7 @@ export default function MiAgentPage({
     page = chatDiagnosticsPage,
     query = chatDiagnosticsQuery,
     status = chatDiagnosticsStatus,
+    reviewStatus = chatDiagnosticsReviewStatus,
     accountId = chatDiagnosticsAccountId,
     dateFrom = chatDiagnosticsDateFrom,
     dateTo = chatDiagnosticsDateTo,
@@ -5188,9 +5192,10 @@ export default function MiAgentPage({
         {
           params: {
             page,
-            pageSize: 20,
+            pageSize: 10,
             query,
             status,
+            reviewStatus,
             accountId: accountId || undefined,
             dateFrom: dateFrom || undefined,
             dateTo: dateTo || undefined,
@@ -5230,6 +5235,30 @@ export default function MiAgentPage({
       setChatDiagnosticsSelected(null);
     } finally {
       setChatDiagnosticsLoading(false);
+    }
+
+  }
+
+  async function closeCustomerDiagnostic(session) {
+    setChatDiagnosticsClosingId(session.sessionId);
+    setChatDiagnosticsError("");
+    try {
+      await api.post(
+        `/api/commercial-intelligence/account-chat/diagnostics/sessions/${session.sessionId}/close`,
+        { latestJobId: session.latestJob?.jobId || 0 },
+      );
+      const page = chatDiagnosticsReviewStatus === "pending" &&
+        chatDiagnosticsResult?.sessions?.length === 1 && chatDiagnosticsPage > 1
+        ? chatDiagnosticsPage - 1 : chatDiagnosticsPage;
+      setChatDiagnosticsPage(page);
+      await loadCustomerChatDiagnostics({ page });
+      if (chatDiagnosticsSelected?.id === session.sessionId) {
+        await openCustomerChatDiagnostic({ sessionId: session.sessionId });
+      }
+    } catch (requestError) {
+      setChatDiagnosticsError(getApiErrorMessage(requestError, "No fue posible cerrar el diagnóstico"));
+    } finally {
+      setChatDiagnosticsClosingId(null);
     }
   }
 
@@ -6906,7 +6935,7 @@ export default function MiAgentPage({
                 traza.
               </p>
             </div>
-            <span>Solo lectura</span>
+            <span>Trazas de consulta · cierre de revisión</span>
           </div>
           <form
             className="mi-agent-chat-diagnostics-search"
@@ -6943,6 +6972,23 @@ export default function MiAgentPage({
                 <option value="all">Todas</option>
                 <option value="errors">Con error</option>
                 <option value="active">En proceso</option>
+              </select>
+            </label>
+            <label>
+              Diagnóstico
+              <select
+                aria-label="Estado del diagnóstico"
+                value={chatDiagnosticsReviewStatus}
+                onChange={(event) => {
+                  const reviewStatus = event.target.value;
+                  setChatDiagnosticsReviewStatus(reviewStatus);
+                  setChatDiagnosticsPage(1);
+                  void loadCustomerChatDiagnostics({ page: 1, reviewStatus });
+                }}
+              >
+                <option value="all">Todos</option>
+                <option value="pending">Pendientes</option>
+                <option value="closed">Cerrados</option>
               </select>
             </label>
             <label>
@@ -7008,7 +7054,7 @@ export default function MiAgentPage({
                   className="mi-agent-secondary-button"
                   disabled={
                     chatDiagnosticsLoading ||
-                    chatDiagnosticsPage * 20 >=
+                    chatDiagnosticsPage * 10 >=
                       (chatDiagnosticsResult?.total || 0)
                   }
                   onClick={() => {
@@ -7025,7 +7071,9 @@ export default function MiAgentPage({
               ) : null}
               <div className="mi-agent-chat-diagnostics-list">
                 {(chatDiagnosticsResult?.sessions || []).map((session) => (
-                  <article key={session.sessionId}>
+                  <article key={session.sessionId}
+                    className={session.diagnosticReview?.status === "closed" ? "is-diagnostic-closed" : ""}
+                  >
                     <div>
                       <strong>{session.userName || session.userEmail}</strong>
                       <span>{session.userEmail}</span>
@@ -7039,6 +7087,19 @@ export default function MiAgentPage({
                           ? ` · Job ${session.latestJob.jobId}`
                           : " · Sin jobs"}
                       </small>
+                      <small>
+                        Creada: {formatCoachDateTime(session.sessionCreatedAt, chatDiagnosticsResult?.businessTimezone) || "Fecha no disponible"}
+                        {chatDiagnosticsResult?.businessTimezone ? ` · ${chatDiagnosticsResult.businessTimezone}` : ""}
+                      </small>
+                      <strong>
+                        {session.diagnosticReview?.status === "closed" ? "Diagnóstico cerrado" : "Diagnóstico pendiente"}
+                      </strong>
+                      {session.diagnosticReview?.status === "closed" ? (
+                        <small>
+                          Cerrado por {session.diagnosticReview.closedByName || "Usuario no disponible"} ·{" "}
+                          {formatCoachDateTime(session.diagnosticReview.closedAt, chatDiagnosticsResult?.businessTimezone)}
+                        </small>
+                      ) : null}
                       {session.latestJob ? (
                         <small>
                           {session.latestJob.status} ·{" "}
@@ -7049,20 +7110,31 @@ export default function MiAgentPage({
                         </small>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
-                      className="mi-agent-secondary-button"
-                      onClick={() =>
-                        void openCustomerChatDiagnostic({
-                          ...(/^\d+$/.test(chatDiagnosticsQuery) &&
-                          Number(chatDiagnosticsQuery) !== session.sessionId
-                            ? { jobId: Number(chatDiagnosticsQuery) }
-                            : { sessionId: session.sessionId }),
-                        })
-                      }
-                    >
-                      Abrir diagnóstico
-                    </button>
+                    <div className="mi-agent-chat-diagnostics-actions">
+                      <button
+                        type="button"
+                        className="mi-agent-secondary-button"
+                        onClick={() =>
+                          void openCustomerChatDiagnostic({
+                            ...(/^\d+$/.test(chatDiagnosticsQuery) &&
+                            Number(chatDiagnosticsQuery) !== session.sessionId
+                              ? { jobId: Number(chatDiagnosticsQuery) }
+                              : { sessionId: session.sessionId }),
+                          })
+                        }
+                      >
+                        Abrir diagnóstico
+                      </button>
+                      <button
+                        type="button"
+                        className="mi-agent-secondary-button"
+                        disabled={session.diagnosticReview?.status === "closed" ||
+                          chatDiagnosticsClosingId !== null || chatDiagnosticsLoading}
+                        onClick={() => void closeCustomerDiagnostic(session)}
+                      >
+                        {chatDiagnosticsClosingId === session.sessionId ? "Cerrando..." : "Cerrar diagnóstico"}
+                      </button>
+                    </div>
                   </article>
                 ))}
                 {!chatDiagnosticsLoading &&

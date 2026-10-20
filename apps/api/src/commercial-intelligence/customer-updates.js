@@ -13,6 +13,7 @@ const memorySchema = z.object({
   draftId: z.string().uuid(), revision: z.number().int().positive(),
   targetId: z.number().int().nonnegative(), targetReference: z.string().max(300),
   candidateIds: z.array(z.number().int().positive()).max(100),
+  originalRequest: z.string().max(12000).optional(),
   items: z.array(itemSchema).max(12),
 }).strict();
 const literal = (text, value) => String(text).replace(/\s+/g, " ").includes(String(value).replace(/\s+/g, " "));
@@ -60,12 +61,9 @@ export async function buildCustomerUpdateResponse({
   const newDraft = !prior || spec.mode === "start";
   if (prior && spec.mode === "start" && !["new_request", "change_focus"].includes(movement)) return stop("Confirma si quieres sustituir el borrador e iniciar otro destino.");
   if (!newDraft && component.object !== prior.object) return stop("El borrador corresponde a otro tipo de registro. Indica explícitamente un nuevo destino.");
-  if (newDraft && component.object !== "account" && !spec.targetReference && !component.reference) {
-    return stop(`¿Qué ${component.object === "contact" ? "contacto" : "oportunidad"} quieres actualizar? Indica su nombre; no elegiré un registro por suposición.`);
-  }
   const memory = newDraft ? {
     accountId: Number(snapshot.account.id), object: component.object, draftId: randomUUID(), revision: 1,
-    targetId: 0, targetReference: "", candidateIds: [], items: [],
+    targetId: 0, targetReference: "", candidateIds: [], items: [], originalRequest: String(question).slice(0, 12000),
   } : structuredClone(prior);
   if (!CUSTOMER_UPDATE_FIELDS[memory.object]) return stop("Ese tipo de registro no admite cambios A02.");
   const before = JSON.stringify(memory);
@@ -90,14 +88,60 @@ export async function buildCustomerUpdateResponse({
     memory.targetReference = spec.targetReference;
   } else if (spec.targetReference) memory.targetReference = spec.targetReference;
   if (!memory.targetReference && component.reference && !/^\d+$/.test(component.reference)) memory.targetReference = component.reference;
+  const sources = memory.object === "contact" ? ["contacts"] : memory.object === "opportunity" ? ["opportunities_active", "opportunities_inactive"] : ["account"];
+  if (metrics.some((metric) => sources.includes(metric.source) && metric.errorCode)) {
+    return stop("Falló la lectura autorizada necesaria para identificar el destino. No se interpreta como ausencia de registros.", prior, "error");
+  }
+  const records = memory.object === "account" ? [snapshot.account] : memory.object === "contact" ? snapshot.contacts || [] :
+    [...(snapshot.opportunities || []), ...(snapshot.inactiveOpportunities || []), ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : [])];
+  const unique = [...new Map(records.filter((item) => Number(item.id) > 0 &&
+    (memory.object === "account" || Number(item.accountId) === memory.accountId)).map((item) => [Number(item.id), item])).values()];
+  if (memory.targetId && !unique.some((item) => Number(item.id) === memory.targetId)) {
+    memory.targetId = 0;
+    memory.candidateIds = [];
+    memory.revision += 1;
+    return stop("El destino anterior ya no está disponible en la cuenta. Inicia otro borrador con un destino autorizado antes de continuar.", memory);
+  }
+  let targetClarification = "";
+  if (!memory.targetId) {
+    const ref = normalizeCustomerSearchText(memory.targetReference);
+    const exact = unique.filter((record) => normalizeCustomerSearchText(record.name) === ref);
+    const matches = memory.object === "account" ? unique : exact.length ? exact :
+      ref && !/^\d+$/.test(ref) ? unique.filter((record) => normalizeCustomerSearchText(record.name).includes(ref)) : [];
+    const candidates = matches.length ? matches : unique;
+    const ids = candidates.map((record) => Number(record.id));
+    if (component.listPosition > 0) {
+      if (!prior || JSON.stringify(ids) !== JSON.stringify(prior.candidateIds) || !ids[component.listPosition - 1]) {
+        memory.candidateIds = ids.slice(0, 100);
+        return stop("Los candidatos cambiaron o la posición no es válida. Vuelve a seleccionar por nombre; no desplacé la selección.", memory);
+      }
+      memory.targetId = ids[component.listPosition - 1];
+    } else if (matches.length === 1) memory.targetId = Number(matches[0].id);
+    else {
+      memory.candidateIds = ids.slice(0, 100);
+      targetClarification = [
+        `¿Qué ${memory.object === "contact" ? "contacto" : "oportunidad"} quieres actualizar? Indica su nombre; no elegiré un registro por suposición.`,
+        candidates.length
+          ? `Registros disponibles en ${snapshot.account.name}: ${candidates.slice(0, 100).map((record, index) => `${index + 1}. ${record.name}`).join("; ")}.${candidates.length > 100 ? " Hay más de 100 coincidencias; reduce la referencia." : ""}`
+          : "No encontré un destino autorizado en esta cuenta.",
+      ].join("\n");
+    }
+  }
   const seen = new Set();
-  for (const change of spec.changes) {
+  for (const requestedChange of spec.changes) {
+    let change = requestedChange;
+    if (change.field === "closeDate" && change.action === "set" && literal(question, change.evidence)) {
+      let validDate = valueIsSupportedByEvidence(change);
+      try { normalizeCustomerUpdateValue(memory.object, change.field, change.value); }
+      catch { validDate = false; }
+      if (!validDate) change = { ...change, action: "pending", value: "" };
+    }
     if (seen.has(change.field) || !CUSTOMER_UPDATE_FIELDS[memory.object][change.field] ||
         !literal(question, change.evidence) || (change.action === "set" && (!change.value || !valueIsSupportedByEvidence(change))) ||
         (change.action !== "set" && change.value !== "")) {
-      return stop(`El cambio no es válido o no conserva los datos explícitos de tu mensaje.${prior
+      return stop(targetClarification || `El cambio no es válido o no conserva los datos explícitos de tu mensaje.${prior
         ? " Conservé el borrador anterior."
-        : " No preparé ningún cambio."}`);
+        : " No preparé ningún cambio."}`, targetClarification ? { ...memory, items: newDraft ? [] : prior.items } : prior);
     }
     seen.add(change.field);
     if (change.field === "amountUsd" && change.action === "set" && !/\b(?:USD|d[oó]lares|dollars)\b/i.test(change.evidence)) return stop("Confirma el importe en USD/dólares; no asumí ni convertí la moneda.");
@@ -119,41 +163,11 @@ export async function buildCustomerUpdateResponse({
     if (active) active.status = "discarded";
   }
   if (!newDraft && JSON.stringify(memory) !== before) memory.revision += 1;
+  const pendingDate = memory.items.some((item) => item.field === "closeDate" && item.action === "pending" && item.status === "pending");
+  const dateClarification = pendingDate ? "¿Qué fecha exacta de cierre previsto quieres proponer? Indícala como AAAA-MM-DD; no convertiré un plazo relativo en un día supuesto." : "";
+  if (targetClarification) return stop([targetClarification, dateClarification].filter(Boolean).join("\n"), memory);
   if (spec.clarification) return stop(spec.clarification, memory);
-  const sources = memory.object === "contact" ? ["contacts"] : memory.object === "opportunity" ? ["opportunities_active", "opportunities_inactive"] : ["account"];
-  if (metrics.some((metric) => sources.includes(metric.source) && metric.errorCode)) {
-    return stop("Falló la lectura autorizada necesaria para identificar el destino. No se interpreta como ausencia de registros.", memory, "error");
-  }
-  const records = memory.object === "account" ? [snapshot.account] : memory.object === "contact" ? snapshot.contacts || [] :
-    [...(snapshot.opportunities || []), ...(snapshot.inactiveOpportunities || []), ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : [])];
-  const unique = [...new Map(records.filter((item) => Number(item.id) > 0 &&
-    (memory.object === "account" || Number(item.accountId) === memory.accountId)).map((item) => [Number(item.id), item])).values()];
-  if (memory.targetId && !unique.some((item) => Number(item.id) === memory.targetId)) {
-    memory.targetId = 0;
-    memory.candidateIds = [];
-    memory.revision += 1;
-    return stop("El destino anterior ya no está disponible en la cuenta. Inicia otro borrador con un destino autorizado antes de continuar.", memory);
-  }
-  if (!memory.targetId) {
-    const ref = normalizeCustomerSearchText(memory.targetReference);
-    const exact = unique.filter((record) => normalizeCustomerSearchText(record.name) === ref);
-    const candidates = memory.object === "account" ? unique : exact.length ? exact :
-      ref && !/^\d+$/.test(ref) ? unique.filter((record) => normalizeCustomerSearchText(record.name).includes(ref)) : [];
-    const ids = candidates.map((record) => Number(record.id));
-    if (component.listPosition > 0) {
-      if (!prior || JSON.stringify(ids) !== JSON.stringify(prior.candidateIds) || !ids[component.listPosition - 1]) {
-        memory.candidateIds = ids.slice(0, 100);
-        return stop("Los candidatos cambiaron o la posición no es válida. Vuelve a seleccionar por nombre; no desplacé la selección.", memory);
-      }
-      memory.targetId = ids[component.listPosition - 1];
-    } else if (candidates.length === 1) memory.targetId = ids[0];
-    else {
-      memory.candidateIds = ids.slice(0, 100);
-      return stop(candidates.length
-        ? `Elige un registro por nombre antes de preparar: ${candidates.slice(0, 100).map((record, index) => `${index + 1}. ${record.name}`).join("; ")}.${candidates.length > 100 ? " Hay más de 100 coincidencias; reduce la referencia." : ""}`
-        : "Indica el nombre de un único registro autorizado de esta cuenta. No confío en IDs escritos en el mensaje.", memory);
-    }
-  }
+  if (!memory.items.length) return stop("¿Qué quieres actualizar: registrar lo comentado como nota, revisar una respuesta de etapa o cambiar un campo concreto? No preparé ningún cambio.", memory);
   const target = unique.find((record) => Number(record.id) === memory.targetId);
   if (memory.object === "opportunity" && ["ganada", "perdida", "anulada"].includes(target.commercialStatusCode)) return stop("No puedes modificar una oportunidad cerrada.", memory, "error");
   const active = memory.items.find((item) => item.status === "pending");
@@ -171,7 +185,7 @@ export async function buildCustomerUpdateResponse({
     metadata.status = "finished";
     return finish("No quedan cambios pendientes en este borrador. Los estados de guardado se comprobaron contra las operaciones persistidas; retirar una propuesta no modifica el CRM.");
   }
-  if (active.action === "pending") return finish(`Falta el valor propuesto de ${CUSTOMER_UPDATE_LABELS[active.field]}. No inventé un valor ni preparé la escritura.`, "clarification");
+  if (active.action === "pending") return finish(active.field === "closeDate" ? dateClarification : `Falta el valor propuesto de ${CUSTOMER_UPDATE_LABELS[active.field]}. No inventé un valor ni preparé la escritura.`, "clarification");
   let record;
   try { record = await readRecord(memory.object, memory.targetId); }
   catch (error) {
