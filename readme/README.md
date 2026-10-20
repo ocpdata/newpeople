@@ -11,7 +11,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Cuentas](./cuentas.md)
 - [Crear cuenta](./crear-cuenta.md)
 - [Leads](./leads.md)
-- [Calculos](./calculos.md)
+- [Calculos y Planeacion Comercial](./calculos.md)
 - [Dashboards](./dashboards.md)
 - [Campanas](./campanas.md)
 - [Landing](./landing.md)
@@ -28,7 +28,6 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Aceptar pedido - Especificacion de procesamiento](./aceptar-pedido-procesamiento-especificacion.md)
 - [Propuestas](./propuestas.md)
 - [Comisiones](./comisiones.md)
-- [Planeacion comercial](./planeacion-comercial.md)
 - [Seguimiento comercial](./seguimiento-comercial.md)
 - [Ritmo comercial](./ritmo-comercial.md)
 - [Desarrollo comercial](./desarrollo-comercial.md)
@@ -76,7 +75,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - Oportunidades: alta/edicion en modal, vendedor unico, preventa opcional,
   auditoria en edicion y acciones por fila;
   paginacion con selector 10 / 50 / 100 registros por pagina.
-- Calculos: documento nuevo con reglas de conversion, ticket promedio y respaldo desde configuracion de planeacion comercial.
+- Calculos y Planeacion Comercial: documento unificado con reglas operativas, endpoints anuales, permisos, conversiones, ticket promedio, metas por trimestre y formulas de cobertura de pipeline.
 - Contactos: alta/edicion en modal, badge de estado solo lectura en modal de
   edicion, filtro de desactivados, ayuda contextual en encabezado,
   apertura de edicion por clic en fila, bloqueo visual durante guardado y
@@ -98,7 +97,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
   Credito IA (alta manual, cierre de vigencia y sincronizacion con preview/aplicar).
 - Documentacion por modulo completada: se agregaron README dedicados para dashboards,
   propuestas, biblioteca comercial, desarrollo comercial, seguimiento comercial,
-  ritmo comercial, planeacion comercial, mapeo de contactos, herramientas,
+  ritmo comercial, mapeo de contactos, herramientas,
   registros de fabricantes, aceptar pedido, configuracion del proceso comercial,
   configuracion del sistema, cuenta de usuario y chatbot.
 - Landing: documento nuevo con flujo por evento, versionado/publicacion, submissions, permisos y endpoints clave.

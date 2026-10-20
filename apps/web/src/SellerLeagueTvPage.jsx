@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, getApiErrorMessage } from "./api";
+import { calculateOpportunityStageTimeFactor } from "../../../shared/seller-league-stage-time-factors.js";
 import "./seller-league-tv.css";
 
 function getUrlParams() {
@@ -534,16 +535,6 @@ function clamp(value, minValue, maxValue) {
   return Math.max(minValue, Math.min(maxValue, value));
 }
 
-const QUOTA_PROBABILITY_STAGE_TIME_FACTORS = {
-  contacto_inicial: 1,
-  identificacion_oportunidad: 0.8,
-  desarrollo: 0.6,
-  cotizacion: 0.4,
-  demostracion: 0.3,
-  negociacion: 0.2,
-  waiting: 0.1,
-};
-
 function getAverageLastWeeks(series, size = 4) {
   const values = Array.isArray(series)
     ? series
@@ -602,11 +593,11 @@ function buildCurrentQuarterAttainmentIndicator(seller, quarterContext) {
           return sum;
         }
 
-        const stageCode = String(stage.stageCode || "");
-        const stageFactor =
-          QUOTA_PROBABILITY_STAGE_TIME_FACTORS[stageCode] ?? 1;
-        const stageDays = Math.max(1, configuredBaseDays * stageFactor);
-        const stageTimeFactor = clamp(daysRemaining / stageDays, 0, 1);
+        const stageTimeFactor = calculateOpportunityStageTimeFactor({
+          stageCode: String(stage.stageCode || ""),
+          daysUntilClose: daysRemaining,
+          averageOpportunityToWinDays: configuredBaseDays,
+        });
         return sum + openAmountUsd * opportunityToWinRatio * stageTimeFactor;
       }, 0);
     } else {
@@ -723,8 +714,16 @@ function buildNextQuarterReadinessIndicator(seller, quarterContext) {
     leadsPerWeek * weeksRemaining * leadToOpportunityRatio * timeBuildFactor;
   const buildableFunnelUsd = buildableOpportunities * averageSaleTicketAmount;
   const existingNextQuarterFunnelUsd = hasRealNextQuarterTarget
-    ? Number(seller.nextQuarterOpenPipelineUsd || 0)
-    : Number(seller.funnelOpenAmountUsd || 0);
+    ? Number(
+        seller.nextQuarterTimeWeightedOpenPipelineUsd ??
+          seller.nextQuarterOpenPipelineUsd ??
+          0,
+      )
+    : Number(
+        seller.timeWeightedCurrentOpenPipelineUsd ??
+          seller.funnelOpenAmountUsd ??
+          0,
+      );
   const projectedAvailableFunnelUsd =
     existingNextQuarterFunnelUsd + buildableFunnelUsd;
   const requiredFunnelUsd =
@@ -785,12 +784,29 @@ function buildNextQuarterReadinessIndicator(seller, quarterContext) {
 
 function buildNextQuarterFunnelComparison(seller) {
   const openPipelineUsd = Number(
-    seller.nextQuarterOpenPipelineUsd || seller.funnelOpenAmountUsd || 0,
+    seller.nextQuarterTimeWeightedOpenPipelineUsd ??
+      seller.nextQuarterOpenPipelineUsd ??
+      seller.timeWeightedCurrentOpenPipelineUsd ??
+      seller.funnelOpenAmountUsd ??
+      0,
   );
-  const requiredFunnelAmountUsd = calculateRequiredFunnelAmountUsd(
-    seller.gapAmountUsd,
-    seller.opportunityToWinCurrentRatio,
+  const nextQuarterQuotaAmountUsd = Number(seller.nextQuarterQuotaAmountUsd || 0);
+  const hasRealNextQuarterTarget = nextQuarterQuotaAmountUsd > 0;
+  const quotaReferenceUsd = hasRealNextQuarterTarget
+    ? nextQuarterQuotaAmountUsd
+    : Number(seller.quotaAmountUsd || 0);
+  const opportunityToWinRatio = clamp(
+    Number(
+      seller.opportunityToWinEffectiveRatio ??
+        seller.opportunityToWinCurrentRatio ??
+        0,
+    ),
+    0,
+    1,
   );
+  const requiredFunnelAmountUsd = quotaReferenceUsd > 0
+    ? quotaReferenceUsd / Math.max(opportunityToWinRatio, 0.0001)
+    : null;
 
   return {
     openPipelineAmountUsd: openPipelineUsd,

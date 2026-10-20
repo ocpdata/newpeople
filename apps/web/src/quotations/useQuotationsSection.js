@@ -2758,7 +2758,8 @@ export function useQuotationsSection({
     initialSelectedQuotationId,
   ]);
 
-  const openQuotationPrintView = useCallback((printModel) => {
+  const openQuotationPrintView = useCallback((printModel, identifiers = {}) => {
+    const { quotationId, quotationVersionId } = identifiers;
     if (typeof window === "undefined" || !printModel) {
       setError("No fue posible preparar la vista previa PDF");
       return false;
@@ -2786,7 +2787,11 @@ export function useQuotationsSection({
       // Ignore window bootstrap failures and rely on the navigation below.
     }
 
-    const pdfPayload = normalizeQuotationPdfPayload(printModel);
+    const pdfPayload = {
+      ...normalizeQuotationPdfPayload(printModel),
+      quotationId: Number(quotationId),
+      quotationVersionId: Number(quotationVersionId),
+    };
     const requestUrl = new URL(
       "/api/quotations/render-pdf",
       api.defaults.baseURL || window.location.origin,

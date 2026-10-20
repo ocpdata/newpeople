@@ -32,6 +32,24 @@ describe("A04 current draft access", () => {
     expect(await checkCustomerLinkAccess(user, { kind: "link_contact_to_opportunity" })).toBeNull();
     expect(sql).not.toHaveBeenCalled();
   });
+  it("allows a won opportunity link only with oportunidades.update_won", async () => {
+    sql.mockImplementation(async (text) => {
+      if (text.includes("context_json")) return [{ context_json: { linkMemory: memory() } }];
+      if (text.includes("FROM opportunities")) {
+        return [{ id: 3, opportunityName: "Alfa", currentContactId: 6, commercialStatusCode: "ganada" }];
+      }
+      if (text.includes("contactName")) return [{ id: 2, contactName: "Elena" }];
+      if (text.includes("AS name FROM contacts")) return [{ name: "Anterior" }];
+      return [{ id: 1, accountName: "Cuenta" }];
+    });
+    expect(await checkCustomerLinkAccess(user, operation)).toMatchObject({ status: 422 });
+
+    const wonEditor = {
+      ...user,
+      permissionSet: new Set([...user.permissionSet, "oportunidades.update_won"]),
+    };
+    expect(await checkCustomerLinkAccess(wonEditor, operation)).toBeNull();
+  });
   it.each(["intent", "contactSearchAllowed", "opportunitySearchAllowed"])("blocks disabled %s", async (which) => {
     if (which === "intent") intents.mockResolvedValue([{ code: "crm_operation", enabled: false }]);
     else rules.mockResolvedValue({ operationPolicy: { allowedKinds: ["link_contact_to_opportunity"] }, scope: { [which]: false } });

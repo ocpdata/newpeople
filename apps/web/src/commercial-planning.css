@@ -680,6 +680,193 @@
   overflow-x: auto;
 }
 
+.commercial-planning-annual {
+  display: grid;
+  gap: 16px;
+}
+
+.commercial-planning-annual-header,
+.commercial-planning-annual-controls,
+.commercial-planning-quarter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.commercial-planning-annual-header h3,
+.commercial-planning-annual-header p {
+  margin: 0;
+}
+
+.commercial-planning-annual-header p {
+  margin-top: 4px;
+  color: #5a6c82;
+}
+
+.commercial-planning-annual-controls {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.commercial-planning-annual-controls label {
+  display: grid;
+  gap: 5px;
+  color: #324154;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.commercial-planning-annual-controls select {
+  min-width: 136px;
+  min-height: 40px;
+}
+
+.commercial-planning-quarter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.commercial-planning-quarter-grid.commercial-planning-commission-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.commercial-planning-quarter-panel {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.commercial-planning-quarter-header {
+  margin-bottom: 10px;
+}
+
+.commercial-planning-quarter-header h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.commercial-planning-table.commercial-planning-annual-target-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.commercial-planning-annual-target-table th:nth-child(1),
+.commercial-planning-annual-target-table td:nth-child(1) {
+  width: 30%;
+}
+
+.commercial-planning-annual-target-table th:nth-child(2),
+.commercial-planning-annual-target-table td:nth-child(2) {
+  width: 19%;
+}
+
+.commercial-planning-annual-target-table th:nth-child(3),
+.commercial-planning-annual-target-table td:nth-child(3) {
+  width: 21%;
+}
+
+.commercial-planning-annual-target-table th:nth-child(4),
+.commercial-planning-annual-target-table td:nth-child(4) {
+  width: 30%;
+}
+
+.commercial-planning-annual-target-table th:not(:first-child),
+.commercial-planning-annual-target-table td:not(:first-child) {
+  text-align: right;
+}
+
+.commercial-planning-annual-target-table input {
+  min-width: 105px;
+  width: 100%;
+  text-align: right;
+}
+
+.commercial-planning-annual-target-table tfoot td {
+  background: #f5f8fc;
+}
+
+.commercial-planning-annual-quota-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.commercial-planning-annual-quota-summary h4 {
+  margin: 0;
+}
+
+.commercial-planning-table.commercial-planning-annual-quota-summary-table {
+  width: 100%;
+  min-width: 880px;
+  table-layout: fixed;
+}
+
+.commercial-planning-annual-quota-summary-table th:first-child,
+.commercial-planning-annual-quota-summary-table td:first-child {
+  width: 22%;
+}
+
+.commercial-planning-annual-quota-summary-table th:nth-child(n + 2),
+.commercial-planning-annual-quota-summary-table td:nth-child(n + 2) {
+  width: 13%;
+  text-align: right;
+}
+
+.commercial-planning-annual-quota-summary-table th:last-child,
+.commercial-planning-annual-quota-summary-table td:last-child {
+  width: 18%;
+}
+
+.commercial-planning-annual-quota-summary-table tfoot td {
+  background: #f5f8fc;
+}
+
+.commercial-planning-table.commercial-planning-annual-commission-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.commercial-planning-annual-commission-table th:nth-child(1),
+.commercial-planning-annual-commission-table td:nth-child(1) {
+  width: 32%;
+}
+
+.commercial-planning-annual-commission-table th:nth-child(2),
+.commercial-planning-annual-commission-table td:nth-child(2) {
+  width: 14%;
+}
+
+.commercial-planning-annual-commission-table th:nth-child(n + 3),
+.commercial-planning-annual-commission-table td:nth-child(n + 3) {
+  width: 18%;
+  text-align: right;
+}
+
+.commercial-planning-annual-commission-table td.is-numeric,
+.commercial-planning-annual-commission-table input {
+  text-align: right;
+}
+
+.commercial-planning-annual-commission-table thead th {
+  white-space: nowrap;
+}
+
+.commercial-planning-annual-commission-table input {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 600px) {
+  .commercial-planning-table.commercial-planning-annual-commission-table {
+    min-width: 620px;
+  }
+}
+
 .commercial-planning-table {
   width: 100%;
   border-collapse: collapse;
@@ -769,8 +956,18 @@
 @media (max-width: 900px) {
   .commercial-planning-header,
   .commercial-planning-card-header,
+  .commercial-planning-annual-header,
   .commercial-planning-empty-state {
     flex-direction: column;
+  }
+
+  .commercial-planning-annual-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .commercial-planning-quarter-grid {
+    grid-template-columns: 1fr;
   }
 
   .commercial-planning-overview-grid,

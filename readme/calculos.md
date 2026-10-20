@@ -1,6 +1,47 @@
-# Calculos del CRM
+# Calculos y Planeacion Comercial del CRM
 
-Este documento resume las formulas que usa la aplicacion para mostrar tasas, promedios y objetivos operativos.
+Este documento reúne las reglas de Planeación Comercial y las formulas que usa la aplicacion para mostrar tasas, promedios y objetivos operativos.
+
+## Planeación comercial
+
+### Objetivo y alcance
+
+Planeación Comercial permite definir las metas de los cuatro trimestres de un año por vendedor y configurar las tasas de comisión. También muestra el seguimiento de cuota, ventas aceptadas y comisiones.
+
+La interfaz está en `/commercial-planning` y presenta estas secciones:
+
+- **Metas:** cuotas y margen esperado por vendedor para T1–T4, con moneda compartida por año.
+- **Comisiones · Configuración:** porcentajes de productos, servicios y renovaciones para los cuatro trimestres.
+- **Parámetros vendedor:** ticket promedio, conversiones y tiempos usados por las proyecciones.
+- **Comisiones · Seguimiento:** resultados por trimestre, año, vendedor y cotización aceptada.
+
+### Permisos
+
+- `planeacion_comercial.read`: consultar planeación y comisiones.
+- `planeacion_comercial.create`: guardar por primera vez metas o configuración anual.
+- `planeacion_comercial.update`: editar años que ya tienen períodos.
+- `planeacion_comercial.audit.read`: consultar auditoría mediante las herramientas de auditoría autorizadas.
+- `comercial.seller.eligible`: determinar qué vendedores pueden configurarse.
+
+No existe un estado ni una acción para cerrar períodos. Los cuatro trimestres permanecen editables.
+
+### Endpoints anuales
+
+- `GET /api/commercial-planning/years/:year`: devuelve T1–T4, moneda anual, vendedores elegibles y metas.
+- `PUT /api/commercial-planning/years/:year/targets`: guarda las metas de los cuatro trimestres.
+- `GET /api/commercial-planning/years/:year/commission-configs`: devuelve la configuración de comisiones de T1–T4.
+- `PUT /api/commercial-planning/years/:year/commission-configs`: guarda las tasas de comisión de los cuatro trimestres.
+- El guardado materializa los períodos faltantes. No hay endpoint de alta manual.
+
+### Reglas operativas
+
+- Metas y Configuración de comisiones tienen selectores de año propios, independientes entre sí y del seguimiento.
+- Cada vendedor tiene como máximo una meta por trimestre. Guardar las cuotas las hace vigentes de inmediato.
+- La moneda de Metas es compartida por los cuatro trimestres; cambiarla no convierte importes existentes.
+- Si los períodos heredados de un año contienen monedas distintas, la lectura y el guardado responden con conflicto; no se reinterpretan importes.
+- Las tasas de comisión siguen guardándose por período y vendedor. Al editar la configuración anual se conservan las notas históricas aunque no se presenten en esa tabla.
+- El cálculo de comisiones conserva sus reglas de cuota, margen mínimo y elegibilidad por ítem descritas en [comisiones.md](./comisiones.md).
+- Las metas se guardan directamente por trimestre, sin versiones, borradores ni publicación.
 
 ## Principios generales
 
@@ -85,36 +126,30 @@ Regla operativa:
 - se toman las ultimas 20 oportunidades ganadas del vendedor;
 - si tiene menos de 20, se usan todas las que tenga;
 - se considera solo oportunidades con estatus `activada` y comercial `ganada`;
-- para cada oportunidad:
-  - si tiene registro en `audit_log` de cuando entro a etapa "desarrollo": se calcula como `DATEDIFF(commercial_closed_at, fecha_entrada_desarrollo)`;
-  - si NO tiene registro en auditoría: se usa `120 días` como valor por defecto;
-- se calcula el promedio de todos los valores (reales + por defecto).
+- para cada oportunidad con auditoria de entrada a "desarrollo", se calcula `DATEDIFF(commercial_closed_at, fecha_entrada_desarrollo)`;
+- las oportunidades sin esa auditoria no se incluyen en el promedio histórico;
+- se promedian los días de las oportunidades auditables; la muestra puede ser menor que 20.
 
 Formula base:
 
-```text
-tiempo_promedio_O_V = promedio(días en desarrollo para cada oportunidad ganada)
+`tiempo_promedio_O_V = promedio(días en desarrollo para cada oportunidad ganada)`
 
 Donde:
-  - Si hay auditoría: días = DATEDIFF(commercial_closed_at, audit_log.created_at)
-  - Si NO hay auditoría: días = 120 (valor por defecto)
-```
+
+- Con auditoría: `días = DATEDIFF(commercial_closed_at, audit_log.created_at)`.
+- Sin auditoría: la oportunidad se excluye del promedio histórico; no se le asignan 120 días.
 
 Ejemplo práctico:
 
 - Vendedor A: 2 oportunidades ganadas
   - Opp 1: Entró en desarrollo 4/6, cerrada 2/7 = 28 días (con auditoría)
-  - Opp 2: Sin registro en auditoría = 120 días (por defecto)
-  - Promedio: (28 + 120) / 2 = **74 días**
+  - Opp 2: sin registro en auditoría, se excluye
+  - Promedio histórico: **28 días** (una oportunidad auditable)
 
 - Vendedor B: 3 oportunidades ganadas, todas sin auditoría
-  - Promedio: (120 + 120 + 120) / 3 = **120 días**
+  - No hay promedio histórico calculable; se usa el valor configurado si corresponde.
 
-Justificación del valor por defecto:
-
-- El valor de `120 días` representa aproximadamente 4 meses de ciclo de venta;
-- se usa como valor conservador cuando no hay datos auditables;
-- refleja un ciclo comercial típico en la industria de soluciones empresariales.
+Cuando se habilita el uso de histórico para probabilidad de cuota, el promedio histórico se usa si es mayor que cero; si no, se usa `average_opportunity_to_win_days` configurado. Si no existe un promedio efectivo mayor que cero, el pipeline siguiente Q usa un factor temporal neutro (`1`) para las oportunidades existentes; el cálculo de cumplimiento Q actual no atribuye pipeline cerrable por tiempo.
 
 ## Probabilidad de cumplir cuota (Seller League TV)
 
@@ -201,43 +236,111 @@ Resultado del ejemplo:
 - Probabilidad de cumplir cuota: `63%`
 - Brecha: `USD 371,101`
 
-## Probabilidad de cumplir funnel siguiente Q (Seller League TV)
+## Cobertura del pipeline siguiente Q (Seller League TV)
 
-Este indicador estima que tan factible es cubrir el funnel requerido para la cuota del siguiente trimestre.
+La tarjeta muestra que porcentaje del pipeline requerido para cubrir la cuota del siguiente trimestre esta disponible o podria construirse antes de terminar el trimestre actual. El porcentaje es una razon de cobertura redondeada, no una probabilidad estadistica de ganar una oportunidad.
 
-Formula base:
+### 1. Pipeline existente de oportunidades del siguiente Q
 
-```text
-weeksRemaining = max(0, (fin_trimestre_actual_23_59_59 - ahora) / (7 * 24 * 60 * 60 * 1000))
+`nextQuarterOpenPipelineUsd` conserva la suma bruta en USD de las oportunidades que cumplen todas estas condiciones:
 
-timeBuildFactor = clamp(daysRemaining / leadToOpportunityDays, 0, 1)
+- Su fecha de cierre (`close_date`) cae entre el inicio y el final del siguiente trimestre, ambos inclusive.
+- Estan activadas (`activation_status_code = 'activada'`).
+- Siguen en proceso (`commercial_status_code = 'en_proceso'`); no estan ganadas ni perdidas.
+- Pertenecen al vendedor y al alcance de lectura permitido para quien consulta el tablero.
 
-leadsPerWeek = promedio(ultimas 4 semanas de leadsPerWeekWeeklyCounts)
+Se incluyen oportunidades de cualquier etapa comercial. Su `close_date` se usa para decidir si pertenecen al siguiente Q. Una vez incluidas, todas se ponderan con el tiempo disponible desde ahora hasta el ultimo dia de ese trimestre; no se usa la fecha individual de cierre como horizonte del factor. No se asigna una tasa O→V distinta por etapa: la misma conversion promedio efectiva del vendedor se aplica despues, al calcular el pipeline requerido.
 
-buildableOpportunities = leadsPerWeek * weeksRemaining * leadToOpportunityRatio * timeBuildFactor
+Formula de este componente:
 
-buildableFunnelUsd = buildableOpportunities * averageSaleTicketAmount
+- **Pipeline existente:** `nextQuarterOpenPipelineUsd = sum(amountUsd)` para todas las oportunidades abiertas que cumplen los filtros anteriores.
+- **Dias disponibles hasta el fin del siguiente Q:** `daysUntilNextQuarterEnd = max(0, floor((endOfDay(fin_siguiente_Q) - ahora) / 86400000))`. Este plazo comun se aplica a todas las oportunidades incluidas.
+- **Duracion estimada en su etapa:** `stageDays_i = max(1, opportunityToWinEffectiveDays * stageTimeMultiplier_i)`.
+- **Factor temporal individual:** `stageTimeFactor_i = clamp(daysUntilNextQuarterEnd / stageDays_i, 0, 1)`.
+- **Importe ponderado individual:** `weightedAmountUsd_i = amountUsd_i * stageTimeFactor_i`.
+- **Pipeline existente ponderado:** `nextQuarterTimeWeightedOpenPipelineUsd = sum(weightedAmountUsd_i)` para todas las oportunidades del siguiente Q.
 
-projectedAvailableFunnelUsd = existingNextQuarterFunnelUsd + buildableFunnelUsd
+Los multiplicadores de etapa son los mismos que se utilizan en Cumplimiento Q actual:
 
-requiredFunnelUsd = nextQuarterQuotaAmountUsd / max(opportunityToWinRatio, 0.0001)
+| Etapa | Multiplicador |
+| --- | ---: |
+| Contacto inicial | 1.0 |
+| Identificación de oportunidad | 0.8 |
+| Desarrollo | 0.6 |
+| Cotización | 0.4 |
+| Demostración | 0.3 |
+| Negociación | 0.2 |
+| Waiting | 0.1 |
 
-readinessRatio = projectedAvailableFunnelUsd / requiredFunnelUsd
+#### Ejemplo 1: ponderacion por etapa
 
-probabilidad_pct = round(readinessRatio * 100)
+Supongamos que hoy faltan `60` dias para el ultimo dia del siguiente Q y el promedio O→V efectivo del vendedor es `180` dias. Las tres oportunidades tienen `close_date` dentro del siguiente Q. La fecha individual de cada una no cambia el plazo usado por el factor: las tres tienen los mismos `60` dias disponibles.
 
-funnelGapUsd = max(0, requiredFunnelUsd - projectedAvailableFunnelUsd)
-```
+| Oportunidad | Etapa | Importe | Multiplicador | `stageDays` | Factor (`min(1, 60 / stageDays)`) | Importe ponderado |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| A | Desarrollo | USD 100,000 | 0.6 | 108 dias | 0.5556 | USD 55,556 |
+| B | Cotizacion | USD 150,000 | 0.4 | 72 dias | 0.8333 | USD 125,000 |
+| C | Negociacion | USD 200,000 | 0.2 | 36 dias | 1.0000 | USD 200,000 |
 
-Notas operativas:
+Calculo de la oportunidad A: `stageDays = 180 * 0.6 = 108`; `factor = min(1, 60 / 108) = 0.5556`; `ponderado = 100,000 * 0.5556 = 55,556`.
 
-- Si existe cuota real de siguiente trimestre (`nextQuarterQuotaAmountUsd > 0`), se usa esa cuota y el funnel abierto de siguiente trimestre (`nextQuarterOpenPipelineUsd`).
-- Si no existe cuota real de siguiente trimestre, se usa como respaldo la cuota actual y el funnel actual.
-- `opportunityToWinRatio` usa la tasa efectiva del vendedor (`opportunityToWinEffectiveRatio`).
-- Si `leadToOpportunityDays` no existe para el vendedor, se usa fallback de `20` dias.
-- `weeksRemaining` se calcula con tiempo real desde `ahora` hasta el fin del trimestre actual (no solo con `daysRemaining/7`), por eso puede incluir decimales finos.
+El pipeline bruto suma `USD 450,000`; despues de ponderar por etapa, el pipeline existente aporta aproximadamente `USD 380,556`. La tasa O→V no se aplica aqui oportunidad por oportunidad; se usa una sola vez al calcular el pipeline requerido.
 
-### Ejemplo real (Jacob Hernandez, corte observado)
+`opportunityToWinEffectiveDays` es el promedio O→V efectivo del vendedor, histórico cuando está habilitado y disponible, o configurado como respaldo. Si no hay un promedio mayor que cero, el factor temporal es neutro (`1`) para no descontar pipeline por falta de datos. Si la etapa no tiene multiplicador explícito, se usa `1`.
+
+### 2. Pipeline que podria construirse desde leads
+
+El componente de pipeline nuevo es una estimacion agregada por vendedor; el factor de tiempo se calcula una vez para esa proyeccion, no por lead ni por oportunidad:
+
+- **Semanas restantes:** `weeksRemaining = max(0, (fin_trimestre_actual_23_59_59 - ahora) / (7 * 24 * 60 * 60 * 1000))`.
+- **Factor de tiempo:** `timeBuildFactor = clamp(daysRemaining / leadToOpportunityDays, 0, 1)`.
+- **Leads por semana:** promedio de las ultimas 4 semanas de `leadsPerWeekWeeklyCounts`.
+- **Oportunidades construibles:** `buildableOpportunities = leadsPerWeek * weeksRemaining * leadToOpportunityRatio * timeBuildFactor`.
+- **Pipeline construible:** `buildableFunnelUsd = buildableOpportunities * averageSaleTicketAmount`.
+
+`timeBuildFactor` representa que parte del ciclo promedio Lead→Oportunidad cabe en el tiempo restante. Por ejemplo, si quedan 10 dias y ese ciclo toma 20 dias, el factor es `0.5`; si quedan 20 dias o mas, es `1`; si no queda tiempo, es `0`. Si `leadToOpportunityDays` no esta disponible, el fallback es `20` dias, con un minimo efectivo de `1` dia.
+
+#### Ejemplo 2: pipeline construido desde leads
+
+Supongamos `60` dias restantes, un promedio de `3` leads por semana, conversion L→O de `10%`, `20` dias promedio para convertir un lead en oportunidad y ticket promedio de `USD 100,000`:
+
+- `weeksRemaining = 60 / 7 = 8.5714`.
+- `timeBuildFactor = clamp(60 / 20, 0, 1) = 1`.
+- `buildableOpportunities = 3 * 8.5714 * 0.10 * 1 = 2.5714` oportunidades esperadas.
+- `buildableFunnelUsd = 2.5714 * 100,000 = USD 257,142.86` aproximadamente.
+
+Las `2.571` oportunidades son una expectativa agregada, no una cantidad de registros que se creen en el CRM.
+
+### 3. Pipeline requerido y cobertura
+
+Cuando ya existe una cuota para el siguiente Q, se usan esa cuota y el pipeline abierto de oportunidades filtrado para ese Q. Si aun no hay una cuota del siguiente Q, se usan como respaldo la cuota y el pipeline abierto del Q actual.
+
+- **Cuota de referencia:** `quotaReferenceUsd = nextQuarterQuotaAmountUsd` si es mayor que `0`; de lo contrario, `quotaAmountUsd`.
+- **Pipeline existente usado:** `existingFunnelUsd = nextQuarterTimeWeightedOpenPipelineUsd` si hay cuota configurada para el siguiente Q; de lo contrario, se usa `timeWeightedCurrentOpenPipelineUsd` del Q actual.
+- **Conversión O→V efectiva:** `opportunityToWinRatio = clamp(opportunityToWinEffectiveRatio, 0, 1)`.
+- **Pipeline disponible proyectado:** `projectedAvailableFunnelUsd = existingFunnelUsd + buildableFunnelUsd`.
+- **Pipeline requerido:** `requiredFunnelUsd = quotaReferenceUsd / max(opportunityToWinRatio, 0.0001)`.
+- **Cobertura:** `readinessRatio = projectedAvailableFunnelUsd / requiredFunnelUsd`; `coveragePct = round(readinessRatio * 100)`.
+- **Brecha:** `funnelGapUsd = max(0, requiredFunnelUsd - projectedAvailableFunnelUsd)`.
+
+`opportunityToWinRatio` es una tasa efectiva agregada por vendedor: usa la conversion observada en sus ultimas 20 oportunidades cuando es mayor que `0`; si no, usa la tasa configurada (`opportunities_to_wins_ratio`). La misma tasa se aplica al pipeline completo; no cambia segun la etapa de cada oportunidad. Si el ratio es cero, el divisor minimo `0.0001` evita dividir entre cero y hace que el pipeline requerido sea muy alto.
+
+El resultado puede superar `100%` si el pipeline proyectado excede el requerido. En la UI se muestra redondeado; los estados de lectura usan `Listo` desde `100%` y `Justo` desde `80%` cuando existe cuota del siguiente Q.
+
+#### Ejemplo 3: cobertura completa
+
+Usando los resultados anteriores, supongamos una cuota del siguiente Q de `USD 1,000,000` y conversion O→V promedio de `20%`:
+
+- Pipeline existente ponderado por etapas: `USD 380,555.56`.
+- Pipeline construido desde leads: `USD 257,142.86`.
+- `projectedAvailableFunnelUsd = 380,555.56 + 257,142.86 = USD 637,698.42`.
+- `requiredFunnelUsd = 1,000,000 / 0.20 = USD 5,000,000`.
+- `coveragePct = round(637,698.42 / 5,000,000 * 100) = 13%`.
+- `funnelGapUsd = 5,000,000 - 637,698.42 = USD 4,362,301.58`.
+
+La conversion O→V promedio se aplica una sola vez, en `requiredFunnelUsd`. Aplicarla tambien a los importes ponderados reduciria dos veces la conversion esperada.
+
+### 4. Ejemplo real (Jacob Hernandez, corte observado)
 
 Valores de entrada:
 
@@ -249,7 +352,7 @@ Valores de entrada:
 - `leadToOpportunityDays`: `20`
 - `leadsPerWeekWeeklyCounts`: `[0, 0, 0, 1, 0, 2, 3, 7, 0, 0]`
 - `averageSaleTicketAmount`: `354,739.58`
-- `existingNextQuarterFunnelUsd`: `2,000`
+- `nextQuarterTimeWeightedOpenPipelineUsd`: `2,000`
 
 Paso 1: factor de construccion
 
@@ -264,61 +367,46 @@ ultimas4 = [3, 7, 0, 0]
 leadsPerWeek = (3 + 7 + 0 + 0) / 4 = 2.5
 ```
 
-Paso 3: oportunidades construibles
+Paso 3: oportunidades y pipeline construibles
 
 ```text
 buildableOpportunities = 2.5 * 11.4525408614 * 0.0769230769 * 1
                       = 2.2024117041
-```
 
-Paso 4: funnel construible (USD)
-
-```text
 buildableFunnelUsd = 2.2024117041 * 354,739.58
                    = 781,282.6029
 ```
 
-Paso 5: funnel total proyectado disponible
+Paso 4: pipeline disponible proyectado
 
 ```text
 projectedAvailableFunnelUsd = 2,000 + 781,282.6029
                             = 783,282.6029
 ```
 
-Paso 6: funnel requerido para cubrir siguiente Q
+Paso 5: pipeline requerido
 
 ```text
 requiredFunnelUsd = 500,000 / 0.3684210526
                   = 1,357,142.8571
 ```
 
-Paso 7: ratio de preparacion
+Paso 6: cobertura y brecha
 
 ```text
 readinessRatio = 783,282.6029 / 1,357,142.8571
                = 0.5771556021
-```
 
-Paso 8: probabilidad mostrada
+coveragePct = round(0.5771556021 * 100)
+            = round(57.71556021)
+            = 58%
 
-```text
-probabilidad_pct = round(0.5771556021 * 100)
-                = round(57.71556021)
-                = 58
-```
-
-Paso 9: brecha de funnel
-
-```text
 funnelGapUsd = 1,357,142.8571 - 783,282.6029
              = 573,860.2542
              = 573,860 (aprox)
 ```
 
-Resultado del ejemplo:
-
-- Probabilidad de cumplir funnel siguiente Q: `58%`
-- Brecha de funnel: `USD 573,860` (aprox)
+Interpretacion: la cobertura proyectada es `58%` y faltan aproximadamente `USD 573,860` de pipeline respecto al requerido. No significa que haya una probabilidad estadistica de `58%` de ganar la cuota.
 
 ## Objetivo de oportunidades creadas
 

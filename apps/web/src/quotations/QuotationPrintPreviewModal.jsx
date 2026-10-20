@@ -5,16 +5,11 @@ function QuotationPrintPreviewModal({
   isOpen,
   onClose,
   onOpenPdfPreview,
+  canOpenPdfPreview,
   model,
 }) {
   if (!isOpen) {
     return null;
-  }
-
-  function handlePrint() {
-    if (typeof window !== "undefined") {
-      window.print();
-    }
   }
 
   return (
@@ -29,20 +24,15 @@ function QuotationPrintPreviewModal({
         <div className="quotation-print-preview-header">
           <h3 className="modal-title">Impresion</h3>
           <div className="quotation-print-preview-actions">
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={onOpenPdfPreview}
-            >
-              Abrir PDF
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={handlePrint}
-            >
-              Imprimir
-            </button>
+            {canOpenPdfPreview ? (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={onOpenPdfPreview}
+              >
+                Abrir PDF
+              </button>
+            ) : null}
             <button type="button" className="btn-secondary" onClick={onClose}>
               Cerrar
             </button>

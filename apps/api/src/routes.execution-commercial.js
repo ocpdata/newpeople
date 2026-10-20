@@ -719,9 +719,9 @@ async function listDevelopmentPeriods() {
     `SELECT p.id, p.plan_year, p.plan_quarter, p.status,
             EXISTS(
               SELECT 1
-              FROM commercial_planning_versions v
-              WHERE v.period_id = p.id AND v.status = 'active'
-            ) AS has_active_version
+              FROM commercial_planning_period_targets t
+              WHERE t.period_id = p.id
+            ) AS has_targets
      FROM commercial_planning_periods p
      ORDER BY p.plan_year DESC, p.plan_quarter DESC, p.id DESC
      LIMIT 8`,
@@ -734,27 +734,16 @@ async function listDevelopmentPeriods() {
     quarter: Number(row.plan_quarter),
     label: getQuarterLabel(row.plan_year, row.plan_quarter),
     status: row.status,
-    hasActiveVersion: Boolean(row.has_active_version),
+    hasTargets: Boolean(row.has_targets),
   }));
 }
 
 async function loadPlanningSnapshot({ user, year, quarter, planningItems }) {
   const periodRows = await query(
-    `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status, p.notes,
-            v.id AS version_id, v.version_number, v.status AS version_status, v.label AS version_label
+    `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status, p.notes
      FROM commercial_planning_periods p
-     LEFT JOIN commercial_planning_versions v ON v.id = (
-       SELECT v2.id
-       FROM commercial_planning_versions v2
-       WHERE v2.period_id = p.id
-       ORDER BY CASE v2.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
-                v2.version_number DESC,
-                v2.id DESC
-       LIMIT 1
-     )
      WHERE p.plan_year = ? AND p.plan_quarter = ?
-     ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
-              p.id DESC
+     ORDER BY p.id DESC
      LIMIT 1`,
     [year, quarter],
   ).catch(() => []);
@@ -763,22 +752,22 @@ async function loadPlanningSnapshot({ user, year, quarter, planningItems }) {
   const hasGlobalScope = hasGlobalOpportunityScope(user);
   const targetParams = [];
   let targetScopeWhere = "";
-  if (periodRow?.version_id) {
-    targetParams.push(Number(periodRow.version_id));
+  if (periodRow?.id) {
+    targetParams.push(Number(periodRow.id));
     if (!hasGlobalScope) {
       targetScopeWhere = "AND t.seller_user_id = ?";
       targetParams.push(Number(user.id) || 0);
     }
   }
 
-  const targetRows = periodRow?.version_id
+  const targetRows = periodRow?.id
     ? await query(
         `SELECT t.seller_user_id, t.sales_quota_amount, t.currency_code,
                 t.expected_margin_percent, t.expected_contribution_amount,
                 t.status, u.full_name AS seller_user_name
-         FROM commercial_planning_targets t
+         FROM commercial_planning_period_targets t
          INNER JOIN users u ON u.id = t.seller_user_id
-         WHERE t.version_id = ?
+         WHERE t.period_id = ?
            AND t.status <> 'void'
            ${targetScopeWhere}
          ORDER BY u.full_name ASC`,
@@ -926,12 +915,6 @@ async function loadPlanningSnapshot({ user, year, quarter, planningItems }) {
         "USD",
       status: periodRow?.status || "unplanned",
       hasPlan: Boolean(periodRow),
-      hasPublishedVersion: periodRow?.version_status === "active",
-      versionId: periodRow?.version_id ? Number(periodRow.version_id) : null,
-      versionNumber: periodRow?.version_number
-        ? Number(periodRow.version_number)
-        : null,
-      versionLabel: periodRow?.version_label || null,
       notes: periodRow?.notes || "",
       startDate,
       endDate,

@@ -51,10 +51,38 @@ describe("A02 current draft and target authorization", () => {
     if (which === "scope") rules.mockResolvedValue({ operationPolicy: { allowedKinds: ["contact_field"] }, scope: { contactSearchAllowed: false } });
     expect(await checkCustomerUpdateAccess(user, operation)).toMatchObject({ status: 409 });
   });
-  it.each(["ganada", "perdida", "anulada"])("blocks an opportunity that is now %s", async (commercialStatusCode) => {
+  it.each(["perdida", "anulada"])("blocks an opportunity that is now %s", async (commercialStatusCode) => {
     sql.mockResolvedValue([{ id: 3, commercialStatusCode }]);
     await expect(readCustomerUpdateRecord({ user: { ...user, permissionSet: new Set(["cuentas.read", "oportunidades.read"]) },
       object: "opportunity", accountId: 1, targetId: 3 })).rejects.toMatchObject({ status: 422 });
+  });
+  it("requires oportunidades.update_won for an opportunity that is Ganada", async () => {
+    sql.mockResolvedValue([{ id: 3, commercialStatusCode: "ganada" }]);
+    const updateUser = {
+      ...user,
+      permissionSet: new Set([
+        "cuentas.read",
+        "oportunidades.read",
+        "oportunidades.update",
+      ]),
+    };
+    await expect(readCustomerUpdateRecord({
+      user: updateUser,
+      object: "opportunity",
+      accountId: 1,
+      targetId: 3,
+    })).rejects.toMatchObject({ status: 422 });
+
+    const wonEditor = {
+      ...updateUser,
+      permissionSet: new Set([...updateUser.permissionSet, "oportunidades.update_won"]),
+    };
+    await expect(readCustomerUpdateRecord({
+      user: wonEditor,
+      object: "opportunity",
+      accountId: 1,
+      targetId: 3,
+    })).resolves.toEqual(expect.objectContaining({ commercialStatusCode: "ganada" }));
   });
   it("uses locks on the current session and target when called transactionally", async () => {
     expect(await checkCustomerUpdateAccess(user, operation, { lock: true })).toBeNull();

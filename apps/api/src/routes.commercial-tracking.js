@@ -2,6 +2,7 @@ import express from "express";
 import { requireAnyPermission } from "./auth.js";
 import { query } from "./db.js";
 import { ensureCommercialPlanningSchema } from "./commercial-planning/schema.js";
+import { calculateOpportunityStageTimeFactor } from "../../../shared/seller-league-stage-time-factors.js";
 import {
   getCommercialSettings,
   STAGE_SLA_DEFAULTS,
@@ -314,6 +315,34 @@ function getDiffDays(fromDate, toDate = new Date()) {
   return Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
 }
 
+function calculateTimeWeightedOpenPipelineUsd(
+  items,
+  averageOpportunityToWinDays,
+  referenceDate = new Date(),
+  commonDeadline = null,
+) {
+  return toAmount((items || []).reduce((sum, item) => {
+    const closeDate = item.closeDate ? new Date(item.closeDate) : null;
+    const hasValidCloseDate = closeDate && !Number.isNaN(closeDate.getTime());
+    const deadline = commonDeadline
+      ? endOfDay(commonDeadline)
+      : hasValidCloseDate
+        ? endOfDay(closeDate)
+        : null;
+    const daysUntilClose = deadline
+      ? getDiffDays(referenceDate, deadline)
+      : 0;
+    const timeFactor = deadline
+      ? calculateOpportunityStageTimeFactor({
+          stageCode: item.stageCode,
+          daysUntilClose,
+          averageOpportunityToWinDays,
+        })
+      : 1;
+    return sum + Number(item.amountUsd || 0) * timeFactor;
+  }, 0));
+}
+
 function toAmount(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
@@ -459,37 +488,25 @@ async function loadQuarterTargetSummaryByQuarter({ user, year, sellerUserId }) {
 
   for (let quarter = 1; quarter <= 4; quarter += 1) {
     const periodRows = await query(
-      `SELECT p.id,
-              p.base_currency_code,
-             v.id AS version_id,
-             v.label AS version_label
+      `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status
        FROM commercial_planning_periods p
-       LEFT JOIN commercial_planning_versions v ON v.id = (
-         SELECT v2.id
-         FROM commercial_planning_versions v2
-         WHERE v2.period_id = p.id AND v2.published_at IS NOT NULL
-         ORDER BY v2.published_at DESC, v2.version_number DESC, v2.id DESC
-         LIMIT 1
-       )
-        WHERE p.plan_year = ? AND p.plan_quarter = ?
-       ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
-                p.id DESC
+       WHERE p.plan_year = ? AND p.plan_quarter = ?
+       ORDER BY p.id DESC
        LIMIT 1`,
       [year, quarter],
     ).catch(() => []);
 
     const periodRow = periodRows[0] || null;
-    if (!periodRow?.version_id) {
+    if (!periodRow?.id) {
       result.set(quarter, {
         quotaSalesAmountUsd: 0,
         quotaContributionAmountUsd: 0,
-        versionLabel: null,
       });
       continue;
     }
 
-    const params = [Number(periodRow.version_id)];
-    const where = ["t.version_id = ?", "t.status <> 'void'"];
+    const params = [Number(periodRow.id)];
+    const where = ["t.period_id = ?", "t.status <> 'void'"];
 
     if (!hasGlobalScope) {
       where.push("t.seller_user_id = ?");
@@ -503,7 +520,7 @@ async function loadQuarterTargetSummaryByQuarter({ user, year, sellerUserId }) {
     const targetRows = await query(
       `SELECT SUM(COALESCE(t.sales_quota_amount, 0)) AS sales_quota_amount,
               SUM(COALESCE(t.expected_contribution_amount, 0)) AS expected_contribution_amount
-       FROM commercial_planning_targets t
+       FROM commercial_planning_period_targets t
        WHERE ${where.join(" AND ")}`,
       params,
     ).catch(() => []);
@@ -514,7 +531,6 @@ async function loadQuarterTargetSummaryByQuarter({ user, year, sellerUserId }) {
       quotaContributionAmountUsd: toAmount(
         targetRow.expected_contribution_amount || 0,
       ),
-      versionLabel: periodRow.version_label || null,
     });
   }
 
@@ -1903,19 +1919,10 @@ async function buildQuarterQuotaSummary(
   const quarter = getQuarterSelection(referenceDate);
   const sellerFilter = toPositiveInt(sellerUserId);
   const periodRows = await query(
-    `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status,
-            v.id AS version_id, v.version_number, v.status AS version_status, v.label AS version_label
+    `SELECT p.id, p.plan_year, p.plan_quarter, p.base_currency_code, p.status
      FROM commercial_planning_periods p
-     LEFT JOIN commercial_planning_versions v ON v.id = (
-       SELECT v2.id
-       FROM commercial_planning_versions v2
-       WHERE v2.period_id = p.id AND v2.published_at IS NOT NULL
-       ORDER BY v2.published_at DESC, v2.version_number DESC, v2.id DESC
-       LIMIT 1
-     )
      WHERE p.plan_year = ? AND p.plan_quarter = ?
-     ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
-              p.id DESC
+     ORDER BY p.id DESC
      LIMIT 1`,
     [quarter.year, quarter.quarter],
   ).catch(() => []);
@@ -1924,8 +1931,8 @@ async function buildQuarterQuotaSummary(
   const targetParams = [];
   const targetWhere = [];
 
-  if (periodRow?.version_id) {
-    targetParams.push(Number(periodRow.version_id));
+  if (periodRow?.id) {
+    targetParams.push(Number(periodRow.id));
     if (!hasGlobalOpportunityScope(user)) {
       targetWhere.push("t.seller_user_id = ?");
       targetParams.push(Number(user.id) || 0);
@@ -1936,11 +1943,11 @@ async function buildQuarterQuotaSummary(
     }
   }
 
-  const targetRows = periodRow?.version_id
+  const targetRows = periodRow?.id
     ? await query(
         `SELECT t.seller_user_id, t.sales_quota_amount, t.currency_code
-         FROM commercial_planning_targets t
-         WHERE t.version_id = ?
+         FROM commercial_planning_period_targets t
+         WHERE t.period_id = ?
            AND t.status <> 'void'
            ${targetWhere.length ? `AND ${targetWhere.join(" AND ")}` : ""}`,
         targetParams,
@@ -1956,7 +1963,10 @@ async function buildQuarterQuotaSummary(
     isRealWonOpportunity(item),
   );
 
-  const quotaAmount = targetRows.length
+  const hasQuotaTarget =
+    targetRows[0]?.sales_quota_amount !== null &&
+    targetRows[0]?.sales_quota_amount !== undefined;
+  const quotaAmount = hasQuotaTarget
     ? toAmount(
         targetRows.reduce(
           (total, item) => total + Number(item.sales_quota_amount || 0),
@@ -1987,7 +1997,6 @@ async function buildQuarterQuotaSummary(
       businessLineIgnored: true,
     },
     hasPlan: Boolean(periodRow),
-    hasPublishedVersion: Boolean(periodRow?.version_id),
     currencyCode:
       targetRows[0]?.currency_code || periodRow?.base_currency_code || "USD",
     quotaAmount,
@@ -2521,7 +2530,6 @@ async function buildQuarterlyPerformancePayload(user, params = {}) {
       label: quarterRange.label,
       startDate: formatIsoDate(quarterRange.start),
       endDate: formatIsoDate(quarterRange.end),
-      versionLabel: (targetByQuarter.get(quarter) || {}).versionLabel || null,
       quotaSalesAmountUsd: toAmount(targetSummary.quotaSalesAmountUsd || 0),
       actualSalesAmountUsd,
       salesGapAmountUsd,
@@ -2572,39 +2580,26 @@ async function loadCurrentQuarterTargetsBySeller({ user, quarterSelection }) {
     `SELECT p.id,
             p.base_currency_code,
             p.plan_year,
-            p.plan_quarter,
-            v.id AS version_id,
-            v.label AS version_label
+            p.plan_quarter
      FROM commercial_planning_periods p
-     LEFT JOIN commercial_planning_versions v ON v.id = (
-       SELECT v2.id
-       FROM commercial_planning_versions v2
-       WHERE v2.period_id = p.id
-         AND v2.published_at IS NOT NULL
-       ORDER BY v2.published_at DESC, v2.version_number DESC, v2.id DESC
-       LIMIT 1
-     )
      WHERE p.plan_year = ?
        AND p.plan_quarter = ?
-     ORDER BY CASE p.status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
-              p.id DESC
+     ORDER BY p.id DESC
      LIMIT 1`,
     [quarterSelection.year, quarterSelection.quarter],
   ).catch(() => []);
 
   const periodRow = periodRows[0] || null;
-  if (!periodRow?.version_id) {
+  if (!periodRow?.id) {
     return {
-      hasPlan: Boolean(periodRow),
-      hasPublishedVersion: false,
-      versionLabel: null,
+      hasPlan: false,
       currencyCode: periodRow?.base_currency_code || "USD",
       targetBySellerId: new Map(),
     };
   }
 
-  const params = [Number(periodRow.version_id)];
-  const whereClauses = ["t.version_id = ?", "t.status <> 'void'"];
+  const params = [Number(periodRow.id)];
+  const whereClauses = ["t.period_id = ?", "t.status <> 'void'"];
   if (!hasGlobalOpportunityScope(user)) {
     whereClauses.push("t.seller_user_id = ?");
     params.push(Number(user.id) || 0);
@@ -2614,7 +2609,7 @@ async function loadCurrentQuarterTargetsBySeller({ user, quarterSelection }) {
     `SELECT t.seller_user_id,
             u.full_name AS seller_user_name,
             SUM(COALESCE(t.sales_quota_amount, 0)) AS sales_quota_amount
-     FROM commercial_planning_targets t
+    FROM commercial_planning_period_targets t
      LEFT JOIN users u ON u.id = t.seller_user_id
      WHERE ${whereClauses.join(" AND ")}
      GROUP BY t.seller_user_id, u.full_name`,
@@ -2636,8 +2631,6 @@ async function loadCurrentQuarterTargetsBySeller({ user, quarterSelection }) {
 
   return {
     hasPlan: true,
-    hasPublishedVersion: true,
-    versionLabel: periodRow.version_label || null,
     currencyCode: periodRow.base_currency_code || "USD",
     targetBySellerId,
   };
@@ -3319,6 +3312,8 @@ function buildSellerLeagueRow({
   sellerUserName,
   quarterWonItems,
   quarterOpenItems,
+  nextQuarterOpenItems = [],
+  nextQuarterDeadline = null,
   nextQuarterQuotaAmountUsd,
   nextQuarterOpenPipelineUsd,
   advancedOpportunityIds14d,
@@ -3510,6 +3505,18 @@ function buildSellerLeagueRow({
         ? historicalOpportunityToWinDays
         : configuredOpportunityToWinDays
       : configuredOpportunityToWinDays;
+  const timeWeightReferenceDate = new Date();
+  const timeWeightedCurrentOpenPipelineUsd = calculateTimeWeightedOpenPipelineUsd(
+    quarterOpenItems,
+    opportunityToWinEffectiveDays,
+    timeWeightReferenceDate,
+  );
+  const nextQuarterTimeWeightedOpenPipelineUsd = calculateTimeWeightedOpenPipelineUsd(
+    nextQuarterOpenItems,
+    opportunityToWinEffectiveDays,
+    timeWeightReferenceDate,
+    nextQuarterDeadline,
+  );
 
   const opportunityCreatedTargetCount =
     quotaAmountUsd &&
@@ -3719,7 +3726,9 @@ function buildSellerLeagueRow({
     blockedCriticalCount,
     blockedCriticalRate: toAmount(blockedCriticalRate * 100),
     funnelOpenAmountUsd,
+    timeWeightedCurrentOpenPipelineUsd,
     nextQuarterOpenPipelineUsd: toAmount(nextQuarterOpenPipelineUsd || 0),
+    nextQuarterTimeWeightedOpenPipelineUsd,
     funnelByStage,
     scoreClosing,
     scoreBuild,
@@ -4838,6 +4847,15 @@ router.get(
         sellerUserIds: Array.from(rowsBySeller.keys()),
       });
 
+    const nextQuarterOpenItemsBySeller = new Map();
+    for (const openItem of nextQuarterOpenItems) {
+      const sellerUserId = Number(openItem.sellerUserId || 0);
+      if (!sellerUserId || !visibleSellerIds.has(sellerUserId)) continue;
+      const sellerItems = nextQuarterOpenItemsBySeller.get(sellerUserId) || [];
+      sellerItems.push(openItem);
+      nextQuarterOpenItemsBySeller.set(sellerUserId, sellerItems);
+    }
+
     const nextQuarterOpenPipelineUsdBySeller = nextQuarterOpenItems.reduce(
       (accumulator, item) => {
         const sellerUserId = Number(item.sellerUserId || 0);
@@ -4870,6 +4888,9 @@ router.get(
         sellerUserName: item.sellerUserName,
         quarterWonItems: item.wonItems,
         quarterOpenItems: item.openItems,
+        nextQuarterOpenItems:
+          nextQuarterOpenItemsBySeller.get(item.sellerUserId) || [],
+        nextQuarterDeadline: nextQuarterSelection.end,
         nextQuarterQuotaAmountUsd: nextQuarterTarget?.quotaAmountUsd || null,
         nextQuarterOpenPipelineUsd:
           nextQuarterOpenPipelineUsdBySeller.get(item.sellerUserId) || 0,
@@ -5039,8 +5060,6 @@ router.get(
       },
       planning: {
         hasPlan: quarterTargets.hasPlan,
-        hasPublishedVersion: quarterTargets.hasPublishedVersion,
-        versionLabel: quarterTargets.versionLabel,
         currencyCode: quarterTargets.currencyCode,
       },
       permissions: {

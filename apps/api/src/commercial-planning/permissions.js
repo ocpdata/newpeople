@@ -21,7 +21,7 @@ const COMMERCIAL_PLANNING_PERMISSIONS = [
     code: "planeacion_comercial.create",
     module: "planeacion_comercial",
     action: "create",
-    description: "Crear periodos y versiones de planeacion comercial",
+    description: "Crear periodos de planeacion comercial",
   },
   {
     code: "planeacion_comercial.update",
@@ -30,29 +30,17 @@ const COMMERCIAL_PLANNING_PERMISSIONS = [
     description: "Editar metas trimestrales de planeacion comercial",
   },
   {
-    code: "planeacion_comercial.publish",
-    module: "planeacion_comercial",
-    action: "publish",
-    description: "Publicar versiones de planeacion comercial",
-  },
-  {
-    code: "planeacion_comercial.close",
-    module: "planeacion_comercial",
-    action: "close",
-    description: "Cerrar periodos de planeacion comercial",
-  },
-  {
     code: "planeacion_comercial.audit.read",
     module: "planeacion_comercial",
     action: "audit.read",
     description: "Consultar auditoria de planeacion comercial",
   },
-  {
-    code: "planeacion_comercial.override_validation",
-    module: "planeacion_comercial",
-    action: "override_validation",
-    description: "Publicar planeacion comercial con advertencias justificadas",
-  },
+];
+
+const REMOVED_COMMERCIAL_PLANNING_PERMISSIONS = [
+  "planeacion_comercial.close",
+  "planeacion_comercial.publish",
+  "planeacion_comercial.override_validation",
 ];
 
 async function assignPermissionsToRoles(conn, roleRows, permissionRows, now) {
@@ -76,6 +64,16 @@ export async function ensureCommercialPlanningPermissions(options = {}) {
   const autoAssignRoles = Boolean(options.autoAssignRoles);
   await withTransaction(async (conn) => {
     const now = new Date();
+
+    for (const code of REMOVED_COMMERCIAL_PLANNING_PERMISSIONS) {
+      await conn.query(
+        `DELETE rp FROM role_permissions rp
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE p.code = ?`,
+        [code],
+      );
+      await conn.query("DELETE FROM permissions WHERE code = ?", [code]);
+    }
 
     for (const permission of COMMERCIAL_PLANNING_PERMISSIONS) {
       await conn.query(

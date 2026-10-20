@@ -27,8 +27,17 @@ export async function readCustomerUpdateRecord({ user, object, accountId, target
     [targetId, accountId, hasAnyPermission(user, ["cuentas.read_all"]) ? 1 : 0, accountId, Number(user.id)],
   );
   if (!rows.length) throw Object.assign(new Error("El registro no está disponible dentro de la cuenta autorizada"), { status: 404 });
-  if (object === "opportunity" && ["ganada", "perdida", "anulada"].includes(rows[0].commercialStatusCode)) {
-    throw Object.assign(new Error("No puedes modificar una oportunidad cerrada"), { status: 422 });
+  if (object === "opportunity") {
+    const status = rows[0].commercialStatusCode;
+    const canUpdateWon = status === "ganada" &&
+      hasAnyPermission(user, ["oportunidades.update"]) &&
+      hasAnyPermission(user, ["oportunidades.update_won"]);
+    if (["perdida", "anulada"].includes(status) || (status === "ganada" && !canUpdateWon)) {
+      throw Object.assign(new Error("No puedes modificar esta oportunidad cerrada"), { status: 422 });
+    }
+    if (status !== "ganada" && !hasAnyPermission(user, ["oportunidades.update"])) {
+      throw Object.assign(new Error("No tienes permiso para modificar oportunidades"), { status: 403 });
+    }
   }
   return rows[0];
 }
@@ -51,8 +60,11 @@ export async function checkCustomerUpdateAccess(user, operation, { execute = que
   if (!rules.operationPolicy.allowedKinds.includes(operation.kind) ||
       intents.some((item) => item.code === "crm_operation" && item.enabled === false) ||
       (object !== "account" && rules.scope?.[`${object}SearchAllowed`] === false)) return fail(409, "Esta actualización está deshabilitada en el canal");
+  const hasDomainUpdate = hasAnyPermission(user, [`${domains[object]}.update`]);
+  const hasWonUpdate = object === "opportunity" &&
+    hasAnyPermission(user, ["oportunidades.update_won"]);
   if (!hasAnyPermission(user, ["mi_coach.execute"]) ||
-      !hasAnyPermission(user, [`${domains[object]}.update`])) return fail(403, "No tienes permisos para preparar o guardar este cambio");
+      (!hasDomainUpdate && !hasWonUpdate)) return fail(403, "No tienes permisos para preparar o guardar este cambio");
   const rows = await execute(
     `SELECT context_json FROM customer_intelligence_chat_sessions
      WHERE requested_by_user_id = ? AND account_id = ?

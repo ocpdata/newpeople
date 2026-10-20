@@ -435,9 +435,6 @@ function QuarterlyDualBarChart({ quarters }) {
         <article key={quarter.label} className="tracking-quarter-chart-card">
            <h4>
              {quarter.label}
-             {quarter.versionLabel && (
-               <span className="tracking-quarter-version-badge">{quarter.versionLabel}</span>
-             )}
            </h4>
           <div className="tracking-quarter-bar-row">
             <span>Cuota</span>
@@ -809,18 +806,17 @@ function SummaryCard({ label, value, helper, tone = "default", onClick }) {
 
 function QuarterQuotaCard({ summary }) {
   const periodLabel = summary?.period?.label || "Sin trimestre";
-  const hasPublishedQuota =
+  const hasConfiguredQuota =
     Boolean(summary?.hasPlan) &&
-    Boolean(summary?.hasPublishedVersion) &&
     summary?.quotaAmount !== null &&
     summary?.quotaAmount !== undefined;
 
-  if (!hasPublishedQuota) {
+  if (!hasConfiguredQuota) {
     return (
       <SummaryCard
         label="Cuota trimestral"
         value="Sin cuota"
-        helper={`${periodLabel} · Sin cuota publicada`}
+        helper={`${periodLabel} · Sin meta configurada`}
         tone="alert"
       />
     );

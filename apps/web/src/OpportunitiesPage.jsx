@@ -445,6 +445,9 @@ function OpportunitiesPage({ currentUser, can }) {
         isOpen={showOpportunityModal}
         error={showOpportunityModal ? error : ""}
         editingOpportunityId={editingOpportunityId}
+        canEditWonOpportunity={
+          can("oportunidades.update") && can("oportunidades.update_won")
+        }
         stageAnswerPrefillQuestionIds={stageAnswerPrefillQuestionIds}
         editOpportunityAudit={editOpportunityAudit}
         currentCommercialStage={currentCommercialStage}

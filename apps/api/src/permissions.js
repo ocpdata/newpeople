@@ -38,6 +38,12 @@ const CORE_PERMISSIONS = [
     description: "Solicitar creacion de oportunidades",
   },
   {
+    code: "oportunidades.update_won",
+    module: "oportunidades",
+    action: "update_won",
+    description: "Modificar campos de oportunidades ganadas",
+  },
+  {
     code: "oportunidades.bypass_stage_validation",
     module: "oportunidades",
     action: "bypass_stage_validation",

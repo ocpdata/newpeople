@@ -228,11 +228,16 @@ async function executeFieldUpdate(conn, { operation, policy, entityId, req }) {
       `SELECT ocs.code FROM opportunity_commercial_statuses ocs WHERE ocs.id = ? LIMIT 1`,
       [rows[0].commercial_status_id],
     );
-    if (["ganada", "perdida", "anulada"].includes(statusRows[0]?.code)) {
+    const commercialStatusCode = statusRows[0]?.code;
+    const canUpdateWon = commercialStatusCode === "ganada" &&
+      hasAnyPermission(req.user, ["oportunidades.update"]) &&
+      hasAnyPermission(req.user, ["oportunidades.update_won"]);
+    if (["perdida", "anulada"].includes(commercialStatusCode) ||
+        (commercialStatusCode === "ganada" && !canUpdateWon)) {
       throw new CoachOperationError(
         422,
         "COACH_ENTITY_CLOSED",
-        "No puedes modificar una oportunidad cerrada",
+        "No tienes permiso para modificar esta oportunidad cerrada",
       );
     }
   }

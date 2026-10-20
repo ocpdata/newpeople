@@ -491,17 +491,25 @@ export async function cleanupArtifacts({
 
   if (userIds.length) {
     await query(
-      `DELETE FROM commercial_planning_targets
+      `DELETE FROM commercial_planning_period_targets
+       WHERE seller_user_id IN (${placeholders(userIds.length)})`,
+      userIds,
+    );
+    await query(
+      `DELETE FROM commercial_planning_commission_configs
+       WHERE seller_user_id IN (${placeholders(userIds.length)})`,
+      userIds,
+    );
+    await query(
+      `DELETE FROM commercial_planning_seller_parameters
        WHERE seller_user_id IN (${placeholders(userIds.length)})`,
       userIds,
     );
     await query(
       `DELETE FROM commercial_planning_periods
        WHERE created_by_user_id IN (${placeholders(userIds.length)})
-          OR updated_by_user_id IN (${placeholders(userIds.length)})
-          OR published_by_user_id IN (${placeholders(userIds.length)})
-          OR closed_by_user_id IN (${placeholders(userIds.length)})`,
-      [...userIds, ...userIds, ...userIds, ...userIds],
+          OR updated_by_user_id IN (${placeholders(userIds.length)})`,
+      [...userIds, ...userIds],
     );
     await query(
       `DELETE FROM users WHERE id IN (${placeholders(userIds.length)})`,

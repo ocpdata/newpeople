@@ -249,7 +249,7 @@ function createCommercialFlowFixture({
 async function mockCommercialFlowApi(
   page,
   fixture,
-  { canManageQuestions = false } = {},
+  { canManageQuestions = false, canEditWonOpportunity = false } = {},
 ) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -274,9 +274,12 @@ async function mockCommercialFlowApi(
         email: "seller@example.com",
         status: "active",
         roles: [{ name: "Vendedor" }],
-        permissions: canManageQuestions
-          ? ["mi_coach.use", "oportunidades.read", "oportunidades.update"]
-          : ["mi_coach.use", "oportunidades.read"],
+        permissions: [
+          "mi_coach.use",
+          "oportunidades.read",
+          ...(canManageQuestions ? ["oportunidades.update"] : []),
+          ...(canEditWonOpportunity ? ["oportunidades.update_won"] : []),
+        ],
       });
     }
 
@@ -1226,6 +1229,39 @@ test.describe("contacts opportunities", () => {
     await expect(
       page.getByRole("button", { name: "Marcar ganada" }),
     ).toBeDisabled();
+  });
+
+  test("una oportunidad ganada queda en solo lectura sin update_won", async ({
+    page,
+  }) => {
+    const fixture = createCommercialFlowFixture();
+    fixture.setCloseStatus("ganada");
+
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture, { canManageQuestions: true });
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await openOpportunityEditor(page);
+
+    await expect(page.getByRole("button", { name: "Guardar cambios" })).toBeDisabled();
+    await expect(page.getByText(/necesitas `oportunidades.update_won`/i)).toBeVisible();
+    await expect(page.locator(".opportunity-main-data-section input").first()).toBeDisabled();
+  });
+
+  test("update_won habilita editar una oportunidad ganada", async ({ page }) => {
+    const fixture = createCommercialFlowFixture();
+    fixture.setCloseStatus("ganada");
+
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture, {
+      canManageQuestions: true,
+      canEditWonOpportunity: true,
+    });
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await openOpportunityEditor(page);
+
+    await expect(page.getByRole("button", { name: "Guardar cambios" })).toBeEnabled();
+    await expect(page.locator(".opportunity-main-data-section input").first()).toBeEnabled();
+    await expect(page.getByText(/necesitas `oportunidades.update_won`/i)).toHaveCount(0);
   });
 
   test("permite validar la etapa actual y bypasearla con motivo", async ({

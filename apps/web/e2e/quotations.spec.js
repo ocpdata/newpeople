@@ -893,6 +893,18 @@ async function openQuotationPdfPreview(page, editModal) {
   return { previewModal, printPage };
 }
 
+function createQuotationPdfFixture(options = {}) {
+  const versionOverrides = options.quotationVersionOverrides || {};
+  return createQuotationsFixture({
+    ...options,
+    quotationVersionOverrides: {
+      ...versionOverrides,
+      statusCode: versionOverrides.statusCode || "aprobada",
+      statusName: versionOverrides.statusName || "Aprobada",
+    },
+  });
+}
+
 async function getQuotationRowCodes(page) {
   return page
     .locator(".quotation-items-table tbody tr td:nth-child(3) input")
@@ -2116,6 +2128,45 @@ test.describe("quotations", () => {
     await expect(editModal).toBeVisible();
   });
 
+  for (const statusCode of ["aprobada", "ganada", "aceptada", "enviada"]) {
+    test(`permite abrir el PDF para la version ${statusCode}`, async ({
+      page,
+    }) => {
+      await bootstrapAuthenticatedSession(page);
+      await page.context().route(
+        "**/api/**",
+        createQuotationsFixture({
+          quotationVersionOverrides: {
+            statusCode,
+            statusName: statusCode,
+          },
+        }),
+      );
+
+      const editModal = await openEditQuotationModal(page);
+      await editModal.getByRole("button", { name: "Vista previa" }).click();
+
+      const previewModal = page.locator(".quotation-print-preview-modal");
+      await expect(previewModal.getByRole("button", { name: "Abrir PDF" })).toBeVisible();
+      await expect(previewModal.getByRole("button", { name: "Imprimir" })).toHaveCount(0);
+    });
+  }
+
+  test("no muestra acciones de PDF ni impresion para una version en borrador", async ({
+    page,
+  }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.context().route("**/api/**", createQuotationsFixture());
+
+    const editModal = await openEditQuotationModal(page);
+    await editModal.getByRole("button", { name: "Vista previa" }).click();
+
+    const previewModal = page.locator(".quotation-print-preview-modal");
+    await expect(previewModal).toBeVisible();
+    await expect(previewModal.getByRole("button", { name: "Abrir PDF" })).toHaveCount(0);
+    await expect(previewModal.getByRole("button", { name: "Imprimir" })).toHaveCount(0);
+  });
+
   test("en edicion abre una vista previa dedicada con cambios locales y conserva el estado", async ({
     page,
   }) => {
@@ -2124,7 +2175,7 @@ test.describe("quotations", () => {
     await bootstrapAuthenticatedSession(page);
     await page.context().route(
       "**/api/**",
-      createQuotationsFixture({
+      createQuotationPdfFixture({
         onRenderQuotationPdf(payload) {
           renderedPdfPayload = payload;
         },
@@ -2143,6 +2194,8 @@ test.describe("quotations", () => {
       .fill("Vista previa con notas locales.");
 
     const { printPage } = await openQuotationPdfPreview(page, editModal);
+    await expect.poll(() => renderedPdfPayload?.quotationId).toBe(901);
+    await expect.poll(() => renderedPdfPayload?.quotationVersionId).toBe(1001);
     await expect
       .poll(() => renderedPdfPayload?.notes || "")
       .toBe("Vista previa con notas locales.");
@@ -2203,7 +2256,7 @@ test.describe("quotations", () => {
     await bootstrapAuthenticatedSession(page);
     await page.context().route(
       "**/api/**",
-      createQuotationsFixture({
+      createQuotationPdfFixture({
         onRenderQuotationPdf(payload) {
           renderedPdfPayload = payload;
         },
@@ -2255,7 +2308,7 @@ test.describe("quotations", () => {
     await bootstrapAuthenticatedSession(page);
     await page.context().route(
       "**/api/**",
-      createQuotationsFixture({
+      createQuotationPdfFixture({
         quotationVersionOverrides: {
           sections: [
             {
@@ -2388,7 +2441,7 @@ test.describe("quotations", () => {
     await bootstrapAuthenticatedSession(page);
     await page.context().route(
       "**/api/**",
-      createQuotationsFixture({
+      createQuotationPdfFixture({
         onRenderQuotationPdf(payload) {
           renderedPdfPayload = payload;
         },
@@ -2445,7 +2498,7 @@ test.describe("quotations", () => {
     await bootstrapAuthenticatedSession(page);
     await page.context().route(
       "**/api/**",
-      createQuotationsFixture({
+      createQuotationPdfFixture({
         onRenderQuotationPdf(payload) {
           renderedPdfPayload = payload;
         },

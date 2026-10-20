@@ -705,11 +705,9 @@ async function getMiAgentContext(user) {
     query(
       `SELECT t.sales_quota_amount, t.currency_code
        FROM commercial_planning_periods p
-       INNER JOIN commercial_planning_versions v ON v.period_id = p.id AND v.status = 'active'
-       INNER JOIN commercial_planning_targets t ON t.version_id = v.id
+       INNER JOIN commercial_planning_period_targets t ON t.period_id = p.id
        WHERE p.plan_year = ? AND p.plan_quarter = ?
          AND t.seller_user_id = ? AND t.status <> 'void'
-       ORDER BY v.version_number DESC, v.id DESC
        LIMIT 1`,
       targetParams,
     ).catch((error) => {

@@ -22,7 +22,13 @@ export async function readCustomerLinkPair({ user, accountId, opportunityId, con
      WHERE o.id=? AND o.account_id=? LIMIT 1${lock ? " FOR UPDATE" : ""}`, [opportunityId, accountId],
   );
   if (!opportunities.length) throw denied(404, "La oportunidad no está disponible en la cuenta fija");
-  if (["ganada", "perdida", "anulada"].includes(opportunities[0].commercialStatusCode)) throw denied(422, "No puedes cambiar el contacto de una oportunidad cerrada");
+  const commercialStatusCode = opportunities[0].commercialStatusCode;
+  if (["perdida", "anulada"].includes(commercialStatusCode) ||
+      (commercialStatusCode === "ganada" &&
+        (!hasAnyPermission(user, ["oportunidades.update"]) ||
+          !hasAnyPermission(user, ["oportunidades.update_won"])))) {
+    throw denied(422, "No tienes permiso para modificar esta oportunidad cerrada");
+  }
   const contacts = await execute(
     `SELECT c.id, CONCAT_WS(' ',c.first_name,c.last_name) AS contactName FROM contacts c
      INNER JOIN contact_activation_statuses s ON s.id=c.activation_status_id

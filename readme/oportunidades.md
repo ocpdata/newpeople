@@ -32,7 +32,9 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 
 - `oportunidades.create` crea la oportunidad activada.
 - `oportunidades.request` crea la oportunidad en `pendiente_activacion`.
-- `oportunidades.update` permite editar datos sin cambiar estado de activacion.
+- `oportunidades.update` permite editar oportunidades que siguen `En proceso`.
+- `oportunidades.update_won` permite editar los campos de una oportunidad `Ganada`, además de `oportunidades.update`.
+- El permiso `oportunidades.update_won` no reabre la oportunidad ni permite cambiar su etapa o estado comercial.
 - Solo `oportunidades.create` habilita cambios de estado posteriores.
 - El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
 

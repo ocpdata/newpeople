@@ -81,6 +81,12 @@ const acceptOrderAccessPermissionCodes = Array.from(
 );
 
 const acceptOrderStatusCodes = new Set(["ganada", "aceptada"]);
+const quotationPdfAllowedStatusCodes = new Set([
+  "aprobada",
+  "ganada",
+  "aceptada",
+  "enviada",
+]);
 
 const proposalReadPermissionCodes = [
   "propuestas.read",
@@ -19385,6 +19391,30 @@ router.post(
   requireAnyPermission(quotationPermissionCodes),
   async (req, res) => {
     if (!assertQuotationPermission(req, res)) return;
+
+    const quotationId = Number(req.body?.quotationId);
+    const quotationVersionId = Number(req.body?.quotationVersionId);
+    if (
+      !Number.isInteger(quotationId) || quotationId <= 0 ||
+      !Number.isInteger(quotationVersionId) || quotationVersionId <= 0
+    ) {
+      return res.status(400).json({
+        message: "Debes identificar la cotización y versión para generar el PDF",
+      });
+    }
+    const quotationVersion = await getAccessibleQuotationVersion({
+      user: req.user,
+      versionId: quotationVersionId,
+    });
+    if (!quotationVersion || Number(quotationVersion.quotation_id) !== quotationId) {
+      return res.status(404).json({ message: "Cotización o versión no encontrada" });
+    }
+    if (!quotationPdfAllowedStatusCodes.has(String(quotationVersion.status_code || ""))) {
+      return res.status(409).json({
+        message: "Solo se puede abrir el PDF de cotizaciones aprobadas, enviadas, ganadas o aceptadas",
+        statusCode: quotationVersion.status_code || null,
+      });
+    }
 
     const parsed = quotationPdfRenderSchema.safeParse(req.body || {});
     if (!parsed.success) {

@@ -67,6 +67,43 @@ import { ensureOpportunityWorkspaceSchema } from "./opportunity-workspace/schema
 import { getTemporaryFeatureSettings } from "./settings.js";
 
 const router = express.Router();
+
+router.use("/:id", async (req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+    return next();
+  }
+  const opportunityId = Number(req.params.id);
+  if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+    return next();
+  }
+  const opportunityAccess = await requireAccessibleOpportunityOr404({
+    user: req.user,
+    opportunityId,
+    message: "Oportunidad no encontrada",
+  });
+  if (!opportunityAccess.ok) {
+    return res
+      .status(opportunityAccess.response.status)
+      .json(opportunityAccess.response.body);
+  }
+
+  try {
+    const opportunityState = await getOpportunityStateById(opportunityId);
+    if (
+      opportunityState?.commercial_status_code === "ganada" &&
+      !hasExplicitOpportunityPermission(req.user, "oportunidades.update_won")
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para modificar oportunidades ganadas",
+        requiredPermission: "oportunidades.update_won",
+      });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/:id/coach-stage-validation", requirePermission("oportunidades.update"), async (req, res) => {
   const parsed = z.object({ token: z.string().uuid(), version: z.number().int().positive() }).strict().safeParse(req.body);
   const opportunityId = Number(req.params.id);
@@ -2396,7 +2433,14 @@ router.patch(
     if (!current)
       return res.status(404).json({ message: "Oportunidad no encontrada" });
     const state = await getOpportunityStateById(id);
-    if (state && isClosedCommercialStatus(state.commercial_status_code)) {
+    if (
+      state &&
+      isClosedCommercialStatus(state.commercial_status_code) &&
+      !(
+        state.commercial_status_code === "ganada" &&
+        hasExplicitOpportunityPermission(req.user, "oportunidades.update_won")
+      )
+    ) {
       return res
         .status(400)
         .json({ message: "No puedes modificar una oportunidad cerrada" });
@@ -3275,6 +3319,29 @@ router.put(
       return res.status(404).json({ message: "Oportunidad no encontrada" });
     }
 
+    const previousCommercialStatusCode =
+      await getOpportunityCommercialStatusCodeById(
+        Number(beforeRows[0].commercial_status_id),
+      );
+    if (
+      previousCommercialStatusCode === "ganada" &&
+      !hasExplicitOpportunityPermission(req.user, "oportunidades.update_won")
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para modificar oportunidades ganadas",
+        requiredPermission: "oportunidades.update_won",
+      });
+    }
+    if (
+      previousCommercialStatusCode !== "ganada" &&
+      !hasExplicitOpportunityPermission(req.user, "oportunidades.update")
+    ) {
+      return res.status(403).json({
+        message: "No autorizado para modificar oportunidades en proceso",
+        requiredPermission: "oportunidades.update",
+      });
+    }
+
     const previousStatusCode = await getOpportunityActivationStatusCodeById(
       Number(beforeRows[0].activation_status_id),
     );
@@ -3313,10 +3380,6 @@ router.put(
       : Number(beforeRows[0].sales_stage_id);
     const previousSalesStageId = Number(beforeRows[0].sales_stage_id);
     const hasStageChange = requestedSalesStageId !== previousSalesStageId;
-    const previousCommercialStatusCode =
-      await getOpportunityCommercialStatusCodeById(
-        Number(beforeRows[0].commercial_status_id),
-      );
     const requestedCommercialStatusCode = body.commercialStatusCode
       ? String(body.commercialStatusCode)
       : previousCommercialStatusCode;

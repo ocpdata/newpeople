@@ -222,7 +222,7 @@ Cobertura automatizada:
 
 - Resumen transversal de reglas del negocio: [readme/logica-negocio.md](./readme/logica-negocio.md)
 - Indice de documentacion interna por modulo: [readme/README.md](./readme/README.md)
-- Calculos operativos del CRM: [readme/calculos.md](./readme/calculos.md)
+- Calculos y Planeacion Comercial: [readme/calculos.md](./readme/calculos.md)
 - Uso actual de IA en el proyecto: [readme/ia.md](./readme/ia.md)
 - Arquitectura del chat por canales: [readme/arquitectura-chat-conversacional.md](./readme/arquitectura-chat-conversacional.md)
 - Guía de preguntas y respuestas para probar el chat: [readme/pruebas-chat-conversacional.md](./readme/pruebas-chat-conversacional.md)

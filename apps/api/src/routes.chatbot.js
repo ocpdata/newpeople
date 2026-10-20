@@ -216,8 +216,9 @@ router.post("/operation-drafts/:draftId/approve", async (req, res) => {
   }
   const canUpdateAll = hasAnyPermission(req.user, ["oportunidades.read_all"]);
   const accessibleRows = await query(
-    `SELECT o.id
+    `SELECT o.id, ocs.code AS commercial_status_code
      FROM opportunities o
+     INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
      ${canUpdateAll ? "" : "LEFT JOIN account_owners ao ON ao.account_id = o.account_id AND ao.user_id = ?"}
      WHERE o.id = ?
        ${canUpdateAll ? "" : "AND (ao.user_id IS NOT NULL OR o.created_by = ? OR o.seller_user_id = ?)"}
@@ -228,6 +229,16 @@ router.post("/operation-drafts/:draftId/approve", async (req, res) => {
   );
   if (!accessibleRows.length) {
     return res.status(404).json({ message: "Oportunidad no encontrada o fuera de alcance" });
+  }
+  if (
+    isOpportunityAmount &&
+    accessibleRows[0].commercial_status_code === "ganada" &&
+    !hasAnyPermission(req.user, ["oportunidades.update_won"])
+  ) {
+    return res.status(403).json({
+      message: "No autorizado para modificar oportunidades ganadas",
+      requiredPermission: "oportunidades.update_won",
+    });
   }
   await query(
     `UPDATE chatbot_operation_drafts

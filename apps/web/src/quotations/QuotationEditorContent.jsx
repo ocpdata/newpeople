@@ -41,6 +41,12 @@ import ModalInlineHelp from "../help/ModalInlineHelp";
 
 const QUOTATION_EMAIL_ATTACHMENT_MAX_FILES = 10;
 const QUOTATION_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
+const QUOTATION_PDF_ALLOWED_STATUS_CODES = new Set([
+  "aprobada",
+  "ganada",
+  "aceptada",
+  "enviada",
+]);
 const WON_DOCUMENT_SOURCE_LABELS = {
   quotation: "Cotizacion",
   opportunity: "Oportunidad",
@@ -2068,11 +2074,23 @@ function QuotationEditorContent({
   }
 
   function handleOpenPdfPreview() {
-    const opened = openQuotationPrintView(printModel);
+    if (!canOpenPdfPreview) return;
+
+    const opened = openQuotationPrintView(printModel, {
+      quotationId: selectedQuotation?.id,
+      quotationVersionId: selectedVersion?.id,
+    });
     if (opened) {
       closePrintPreviewModal();
     }
   }
+
+  const canOpenPdfPreview =
+    Number(selectedQuotation?.id) > 0 &&
+    Number(selectedVersion?.id) > 0 &&
+    QUOTATION_PDF_ALLOWED_STATUS_CODES.has(
+      String(selectedVersion?.statusCode || ""),
+    );
 
   function handleOpenProviderImportWindow() {
     if (typeof closeEditQuotationModal === "function") {
@@ -5617,6 +5635,7 @@ function QuotationEditorContent({
         isOpen={isPrintPreviewModalOpen}
         onClose={closePrintPreviewModal}
         onOpenPdfPreview={handleOpenPdfPreview}
+        canOpenPdfPreview={canOpenPdfPreview}
         model={printModel}
       />
 

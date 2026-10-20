@@ -34,6 +34,7 @@ function OpportunityFormModal({
   isOpen,
   error,
   editingOpportunityId,
+  canEditWonOpportunity = false,
   editOpportunityAudit,
   currentCommercialStage,
   currentSalesStageName,
@@ -112,6 +113,12 @@ function OpportunityFormModal({
 
   const isDocumentUploadLocked =
     uploadingOpportunityDocuments || loadingDocumentSession;
+  const isWonOpportunity =
+    String(commercialContext?.commercialStatus?.code || "")
+      .trim()
+      .toLowerCase() === "ganada";
+  const isWonOpportunityReadOnly =
+    Boolean(editingOpportunityId && isWonOpportunity) && !canEditWonOpportunity;
   const stageValidationDecision = String(
     stageValidationResult?.validation?.decision || "",
   ).trim();
@@ -381,9 +388,19 @@ function OpportunityFormModal({
               </div>
             ) : null}
 
+            {isWonOpportunityReadOnly ? (
+              <p className="field-hint" role="note">
+                Esta oportunidad está ganada. Necesitas `oportunidades.update_won` para editar sus datos.
+              </p>
+            ) : null}
+
             <fieldset
               className="interaction-detail-lock-shell"
-              disabled={isModalLocked || isStageValidationBlocking}
+              disabled={
+                isModalLocked ||
+                isStageValidationBlocking ||
+                isWonOpportunityReadOnly
+              }
             >
               <form
                 className="account-create-form in-modal"
@@ -1190,7 +1207,8 @@ function OpportunityFormModal({
                     disabled={
                       savingOpportunity ||
                       isDocumentUploadLocked ||
-                      isCommercialSuggestionsInProgress
+                      isCommercialSuggestionsInProgress ||
+                      isWonOpportunityReadOnly
                     }
                   >
                     {savingOpportunity
