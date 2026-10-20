@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DOCUMENT_MIME_TYPES } from "../../../shared/document-formats.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envFileName =
@@ -134,28 +135,7 @@ export const config = {
       ),
       allowedMimeTypes: (
         process.env.DOCUMENT_ALLOWED_MIME_TYPES ||
-        [
-          "application/pdf",
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-          "application/vnd.ms-powerpoint",
-          "application/mspowerpoint",
-          "application/x-mspowerpoint",
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "application/vnd.ms-excel",
-          "text/csv",
-          "text/plain",
-          "message/rfc822",
-          "image/png",
-          "image/jpeg",
-          "audio/mpeg",
-          "audio/wav",
-          "audio/x-wav",
-          "audio/mp4",
-          "audio/x-m4a",
-          "video/mp4",
-          "application/mp4",
-        ].join(",")
+        DOCUMENT_MIME_TYPES.join(",")
       )
         .split(",")
         .map((value) => value.trim())

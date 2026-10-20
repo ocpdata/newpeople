@@ -18,31 +18,14 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "../ai-usage/service.js";
 import { createDocumentStorage } from "./storage.js";
+import { DOCUMENT_FORMATS, LEGACY_DOCUMENT_FORMATS } from "../../../../shared/document-formats.js";
 
 const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
 const storage = createDocumentStorage();
 const PIPELINE_VERSION = "v1";
 
-const FILE_LIMITS = {
-  ".pdf": { maxBytes: 20 * 1024 * 1024, kind: "pdf" },
-  ".docx": { maxBytes: 15 * 1024 * 1024, kind: "docx" },
-  ".ppt": { maxBytes: 20 * 1024 * 1024, kind: "presentation" },
-  ".pptx": { maxBytes: 20 * 1024 * 1024, kind: "presentation" },
-  ".xlsx": { maxBytes: 10 * 1024 * 1024, kind: "spreadsheet" },
-  ".xls": { maxBytes: 10 * 1024 * 1024, kind: "spreadsheet" },
-  ".csv": { maxBytes: 5 * 1024 * 1024, kind: "spreadsheet" },
-  ".txt": { maxBytes: 2 * 1024 * 1024, kind: "text" },
-  ".md": { maxBytes: 2 * 1024 * 1024, kind: "text" },
-  ".eml": { maxBytes: 10 * 1024 * 1024, kind: "text" },
-  ".png": { maxBytes: 10 * 1024 * 1024, kind: "image" },
-  ".jpg": { maxBytes: 10 * 1024 * 1024, kind: "image" },
-  ".jpeg": { maxBytes: 10 * 1024 * 1024, kind: "image" },
-  ".mp3": { maxBytes: 50 * 1024 * 1024, kind: "audio" },
-  ".wav": { maxBytes: 50 * 1024 * 1024, kind: "audio" },
-  ".m4a": { maxBytes: 50 * 1024 * 1024, kind: "audio" },
-  ".mp4": { maxBytes: 80 * 1024 * 1024, kind: "audio" },
-};
+const FILE_LIMITS = { ...DOCUMENT_FORMATS, ...LEGACY_DOCUMENT_FORMATS };
 
 function normalizeText(value) {
   return String(value || "")
@@ -1175,12 +1158,12 @@ function validateSessionQuota(existingDocuments, incomingFiles) {
   }
 }
 
-export function validateSingleFile(file) {
+export function validateSingleFile(file, { includeLegacyFormats = true } = {}) {
   const originalFileName = String(
     file.originalFilename || file.newFilename || "archivo",
   );
   const extension = detectExtension(originalFileName);
-  const fileConfig = FILE_LIMITS[extension];
+  const fileConfig = (includeLegacyFormats ? FILE_LIMITS : DOCUMENT_FORMATS)[extension];
   if (!fileConfig) {
     const error = new Error(
       `El tipo de archivo ${extension || "desconocido"} no esta soportado.`,
@@ -1189,7 +1172,12 @@ export function validateSingleFile(file) {
     throw error;
   }
 
-  if (Number(file.size || 0) > fileConfig.maxBytes) {
+  if (!Number.isFinite(Number(file.size)) || Number(file.size) <= 0) {
+    const error = new Error(`El archivo ${originalFileName} esta vacio o tiene un tamano invalido.`);
+    error.status = 400;
+    throw error;
+  }
+  if (Number(file.size) > fileConfig.maxBytes) {
     const error = new Error(
       `El archivo ${originalFileName} excede el tamano permitido para ${extension}.`,
     );
@@ -1200,6 +1188,11 @@ export function validateSingleFile(file) {
   const mimeType = String(file.mimetype || "")
     .trim()
     .toLowerCase();
+  if (mimeType && mimeType !== "application/octet-stream" && !fileConfig.mimeTypes.includes(mimeType)) {
+    const error = new Error(`El tipo MIME ${mimeType} no coincide con ${extension}.`);
+    error.status = 400;
+    throw error;
+  }
   if (
     mimeType &&
     !config.documents.storage.allowedMimeTypes.includes(mimeType)
@@ -1209,7 +1202,14 @@ export function validateSingleFile(file) {
     throw error;
   }
 
-  return { originalFileName, extension, mimeType, kind: fileConfig.kind };
+  return {
+    originalFileName,
+    extension,
+    mimeType: !mimeType || mimeType === "application/octet-stream"
+      ? fileConfig.mimeTypes[0]
+      : mimeType,
+    kind: fileConfig.kind,
+  };
 }
 
 async function extractAndAnalyzeDocument({

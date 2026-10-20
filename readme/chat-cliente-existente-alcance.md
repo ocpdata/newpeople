@@ -43,6 +43,40 @@ Las rutas de sesión y conversación de `account-chat` requieren:
 
 Los permisos `read_all` pueden habilitar el alcance de lectura administrativo previsto por el servidor, pero no cambian el contexto funcional del chat ni permiten que una respuesta mezcle silenciosamente otra cuenta con la seleccionada.
 
+## Archivos adjuntos
+
+Cliente existente y el repositorio documental de editar oportunidad comparten
+el catálogo de formatos, tipos MIME y límites por archivo:
+
+| Formatos | Máximo por archivo |
+| --- | ---: |
+| PDF | 20 MB |
+| DOCX | 15 MB |
+| XLSX, XLS | 10 MB |
+| CSV | 5 MB |
+| TXT, MD | 2 MB |
+| EML | 10 MB |
+| PNG, JPG, JPEG | 10 MB |
+| MP3, WAV, M4A | 50 MB |
+
+El chat admite un archivo por mensaje, acompañado de una pregunta o instrucción.
+El repositorio conserva la carga múltiple. Los archivos vacíos, tipos MIME
+incompatibles y tamaños superiores al límite se rechazan en el servidor.
+Los tipos MIME genéricos se normalizan según la extensión antes de la extracción.
+Una configuración administrativa de MIME puede restringir el catálogo.
+
+Ambos flujos reutilizan el extractor documental: texto de documentos y correos,
+datos de hojas de cálculo, OCR para imágenes y transcripción para audio.
+Imágenes y audio requieren proveedor IA configurado y sus controles de consumo.
+Un PDF sin texto extraíble no tiene OCR automático garantizado; no se presenta
+una extracción vacía o fallida como un análisis completado.
+
+Adjuntar en el chat no crea documentos en el repositorio de una oportunidad ni
+modifica el CRM. El contenido se utiliza como material de referencia no confiable
+de la conversación y los archivos temporales se limpian al terminar el proceso.
+PPT, PPTX y MP4 no se habilitan en el selector ni en los adjuntos del chat;
+se conserva su soporte interno previo en el servicio documental.
+
 ## Matriz de capacidades de lectura
 
 | Dominio                          | Consultas incluidas                                                  | Permisos mínimos de lectura                                                                            |

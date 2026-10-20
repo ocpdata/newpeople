@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { COMMERCIAL_ACTIVITY_TYPES } from "../../../shared/commercial-activity-types.js";
 import { stageAnswerPrefillStorageKey } from "../../../shared/stage-answer-prefill.js";
+import { DOCUMENT_FILE_ACCEPT } from "../../../shared/document-formats.js";
 
 function bootstrapAuthenticatedSession(page, token = "jwt-token") {
   return page.addInitScript((value) => {
@@ -720,6 +721,15 @@ async function openOpportunityEditor(page, opportunityName = "Expansion 2026") {
 }
 
 test.describe("contacts opportunities", () => {
+  test("repositorio documental comparte formatos con chat y conserva carga multiple", async ({ page }) => {
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, createCommercialFlowFixture());
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await openOpportunityEditor(page);
+    const picker = page.locator("#opportunity-documents-section-body input[type=file]").first();
+    await expect(picker).toHaveAttribute("accept", DOCUMENT_FILE_ACCEPT);
+    await expect(picker).toHaveAttribute("multiple");
+  });
   test("comparte los diez tipos de Calendario y conserva actividades históricas", async ({
     page,
   }) => {

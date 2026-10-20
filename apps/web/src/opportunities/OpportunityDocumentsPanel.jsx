@@ -1,8 +1,6 @@
 import { useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
-
-const OPPORTUNITY_DOCUMENT_FILE_ACCEPT =
-  ".pdf,.docx,.xlsx,.xls,.csv,.txt,.eml,.png,.jpg,.jpeg,.mp3,.wav,.m4a";
+import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../../shared/document-formats.js";
 
 function buildPastedTextFileName(label) {
   const normalizedLabel = String(label || "")
@@ -499,7 +497,7 @@ function OpportunityDocumentsPanel({
                       className="opportunity-documents-upload-input"
                       type="file"
                       multiple
-                      accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
+                      accept={DOCUMENT_FILE_ACCEPT}
                       onChange={handleUploadInputChange}
                       disabled={isUploadDisabled}
                     />
@@ -550,7 +548,7 @@ function OpportunityDocumentsPanel({
                       className="opportunity-documents-upload-input"
                       type="file"
                       multiple
-                      accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
+                      accept={DOCUMENT_FILE_ACCEPT}
                       onChange={handleUploadInputChange}
                       disabled={isUploadDisabled}
                     />
@@ -579,7 +577,7 @@ function OpportunityDocumentsPanel({
                 </div>
               ) : null}
               <span className="field-hint opportunity-documents-toolbar-formats">
-                Formatos: PDF, DOCX, XLSX, CSV, TXT, EML, imagen y audio.
+                Formatos: {DOCUMENT_FORMAT_HELP}
               </span>
               <p
                 className="opportunity-documents-a11y-status"

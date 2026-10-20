@@ -3579,7 +3579,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     request = parseJson(job.request_json, {});
     if (request.attachment?.filePath) {
       const buffer = await readFile(request.attachment.filePath);
-      if (request.attachment.kind === "text" && buffer.includes(0)) {
+      if ([".txt", ".md"].includes(request.attachment.extension) && buffer.includes(0)) {
         throw createHttpError(400, "El archivo de texto no es valido");
       }
       const extracted = await extractContentFromBuffer({

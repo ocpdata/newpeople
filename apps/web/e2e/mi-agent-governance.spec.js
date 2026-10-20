@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMATS } from "../../../shared/document-formats.js";
 import {
   CUSTOMER_SERVER_POLICY_DEFAULTS,
   CUSTOMER_SERVER_RULE_CATEGORIES,
@@ -3721,6 +3722,57 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.locator(".opportunity-edit-modal select").nth(1),
     ).toHaveValue("601");
     expect(opportunityWrites).toEqual([]);
+  });
+
+  test("Cliente existente ofrece y envia todos los formatos documentales sin escribir en oportunidades", async ({ page }) => {
+    const opportunityWrites = [];
+    page.on("request", (request) => {
+      if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/opportunities")) {
+        opportunityWrites.push(request.url());
+      }
+    });
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    const picker = chat.getByLabel("Adjuntar documento, imagen o audio");
+    await expect(picker).toHaveAttribute("accept", DOCUMENT_FILE_ACCEPT);
+    await expect(picker).not.toHaveAttribute("multiple");
+    await expect(chat).toContainText("Un archivo por mensaje.");
+    for (const [extension, format] of Object.entries(DOCUMENT_FORMATS)) {
+      const name = `referencia${extension}`;
+      await picker.setInputFiles({ name, mimeType: format.mimeTypes[0], buffer: Buffer.from("Contenido de referencia") });
+      await expect(chat.getByTitle(name, { exact: true })).toBeVisible();
+      await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill(`Resume ${name}`);
+      const upload = page.waitForRequest((request) =>
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/api/commercial-intelligence/account-chat/jobs",
+      );
+      await chat.getByRole("button", { name: "Preguntar" }).click();
+      const sent = await upload;
+      expect(sent.headers()["content-type"]).toContain("multipart/form-data");
+      expect(sent.postDataBuffer().toString()).toContain(`filename="${name}"`);
+      await expect(chat.getByRole("button", { name: "Preguntar" })).toHaveText("Preguntar");
+      await expect(chat.getByRole("button", { name: "Quitar archivo adjunto" })).toHaveCount(0);
+    }
+    expect(opportunityWrites).toEqual([]);
+  });
+
+  test("Cliente existente muestra los errores de validacion de adjuntos", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await page.route("**/api/commercial-intelligence/account-chat/jobs", (route) =>
+      route.fulfill({ status: 400, contentType: "application/json",
+        body: JSON.stringify({ message: "El archivo evidencia.pdf excede el tamano permitido para .pdf." }) }),
+    );
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByLabel("Adjuntar documento, imagen o audio").setInputFiles({
+      name: "evidencia.pdf", mimeType: "application/pdf", buffer: Buffer.from("fixture"),
+    });
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume el archivo");
+    await chat.getByRole("button", { name: "Preguntar" }).click();
+    await expect(chat.getByText("El archivo evidencia.pdf excede el tamano permitido para .pdf.", { exact: true })).toBeVisible();
   });
 
   for (const failure of ["", "proposal", "review"]) {

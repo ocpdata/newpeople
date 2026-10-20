@@ -30,11 +30,11 @@ import {
 } from "./coach/channel-intent-governance.js";
 import express from "express";
 import { z } from "zod";
-import path from "node:path";
 import { requirePermission } from "./auth.js";
 import {
   cleanupTempFiles,
   parseMultipartFiles,
+  validateSingleFile,
 } from "./opportunity-documents/service.js";
 import { logAuditEvent } from "./audit.js";
 import { ensureCommercialIntelligencePermissions } from "./commercial-intelligence/permissions.js";
@@ -313,7 +313,7 @@ const coachAdminRuleUpdateSchema = z
   .strict();
 
 function sendRouteError(res, error, fallbackMessage) {
-  const status = Number(error?.status || 500);
+  const status = Number(error?.status || error?.httpCode || 500);
   return res.status(status).json({
     message: error?.message || fallbackMessage,
     ...(error?.requiredPermission
@@ -746,36 +746,18 @@ router.post(
         if (uploadedFiles.length !== 1) {
           return res
             .status(400)
-            .json({ message: "Adjunta un solo archivo de texto o audio" });
+            .json({ message: "Adjunta un solo documento, imagen o audio" });
         }
         const file = uploadedFiles[0];
-        const extension = path
-          .extname(String(file.originalFilename || ""))
-          .toLowerCase();
-        const isText = [".txt", ".md"].includes(extension);
-        const isAudio = [".mp3", ".wav", ".m4a"].includes(extension);
-        const maxBytes = isText ? 2 * 1024 * 1024 : 50 * 1024 * 1024;
-        if ((!isText && !isAudio) || file.size <= 0 || file.size > maxBytes) {
-          return res.status(400).json({
-            message:
-              "Formato no admitido o archivo fuera del limite de tamaño",
-          });
-        }
-        const mimeType = String(file.mimetype || "application/octet-stream")
-          .toLowerCase()
-          .trim();
-        if (
-          (isText && !mimeType.startsWith("text/") && mimeType !== "application/octet-stream") ||
-          (isAudio && !mimeType.startsWith("audio/") && mimeType !== "application/octet-stream")
-        ) {
-          return res.status(400).json({ message: "El tipo del archivo no coincide" });
-        }
+        const { extension, mimeType, kind } = validateSingleFile(file, {
+          includeLegacyFormats: false,
+        });
         attachment = {
           name: String(file.originalFilename || "adjunto").slice(0, 120),
           filePath: file.filepath,
           mimeType,
           extension,
-          kind: isAudio ? "audio" : "text",
+          kind,
         };
       }
       const parsed = jobCreateSchema

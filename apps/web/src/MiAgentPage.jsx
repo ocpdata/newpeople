@@ -30,6 +30,7 @@ import {
   normalizeCommercialActivityType,
 } from "../../../shared/commercial-activity-types.js";
 import { stageAnswerPrefillStorageKey } from "../../../shared/stage-answer-prefill.js";
+import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../shared/document-formats.js";
 import { validateCustomerChatObservedFlow } from "./customer-chat-trace-validation";
 import "./mi-agent.css";
 import "./mi-agent-prospect.css";
@@ -8665,8 +8666,9 @@ export default function MiAgentPage({
                 <span>Adjuntar</span>
                 <input
                   type="file"
-                  accept=".txt,.md,.mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4"
-                  aria-label="Adjuntar archivo de texto o audio"
+                  accept={DOCUMENT_FILE_ACCEPT}
+                  aria-label="Adjuntar documento, imagen o audio"
+                  title={DOCUMENT_FORMAT_HELP}
                   onChange={(event) => {
                     setCustomerChatAttachment(event.target.files?.[0] || null);
                     event.target.value = "";
@@ -8711,6 +8713,7 @@ export default function MiAgentPage({
                 {customerChatLoading ? "Consultando..." : "Preguntar"}
               </button>
             </form>
+            <small className="field-hint">Un archivo por mensaje. {DOCUMENT_FORMAT_HELP}</small>
             {customerChatMessages.length || customerChatTurn ? (
               <div className="mi-agent-coach-thread" aria-live="polite" ref={customerChatThreadRef}>
                 {customerChatMessages.map((message, index) =>
