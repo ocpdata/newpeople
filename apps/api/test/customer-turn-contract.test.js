@@ -2481,6 +2481,45 @@ describe("Customer turn contract", () => {
     expect(result.response.operations).toEqual([]);
     expect(executeComponent).not.toHaveBeenCalled();
   });
+  it.each([
+    ["que oportunidades hay?", "opportunity"],
+    ["que oportunidades hay en esta cuenta?", "opportunity"],
+    ["¿Qué oportunidades tenemos en la cuenta?", "opportunity"],
+    ["¿Qué contactos tenemos?", "contact"],
+  ])("routes an explicit collection question misclassified as summary: %s", async (question, object) => {
+    const interpreted = await interpretCustomerTurn({
+      question, snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.account_summary", { object: "account" }),
+      ])),
+    });
+    expect(customerTurnContractSchema.safeParse(interpreted).success).toBe(true);
+    expect(interpreted.components[0]).toMatchObject({
+      category: "query.record_list", object, scope: "collection", reference: "", listSpec: {},
+      text: question, explicitAction: false,
+    });
+    const executeComponent = vi.fn().mockResolvedValue(engine("Listado autorizado"));
+    const result = await runCustomerContractTurn({
+      contract: interpreted, question, context: {}, executeComponent,
+    });
+    expect(executeComponent).toHaveBeenCalledTimes(1);
+    expect(result.response.answer).toContain("Listado autorizado");
+    expect(result.response.answer).not.toContain("no una pregunta o tarea concreta");
+  });
+  it.each([
+    "Qué oportunidades hay en otra cuenta?",
+    "Qué oportunidades hay ganadas?",
+    "El cliente pregunta: que oportunidades hay?",
+    "Resume las oportunidades de esta cuenta",
+  ])("does not turn other scopes, filters or supplied material into an unfiltered list: %s", async (question) => {
+    const interpreted = await interpretCustomerTurn({
+      question, snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.account_summary", { object: "account" }),
+      ])),
+    });
+    expect(interpreted.components[0].category).toBe("query.account_summary");
+  });
   it("runs an explicitly requested account summary and records a valid structured trace", async () => {
     const executeComponent = vi.fn().mockResolvedValue(engine("Resumen solicitado"));
     const result = await runCustomerContractTurn({

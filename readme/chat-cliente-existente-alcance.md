@@ -117,6 +117,13 @@ Q04 construye listas directamente desde las herramientas de lectura
 autorizadas, sin pedir al modelo que elija los registros o redacte sus
 valores. No requiere seleccionar un registro individual.
 
+Preguntas como "que oportunidades hay?" o "que oportunidades hay en esta cuenta?"
+solicitan el listado de oportunidades de la cuenta seleccionada, no un resumen
+general ni una aclaracion por datos pegados. Lo mismo aplica a preguntas
+equivalentes sobre contactos. Si el interprete confunde esa consulta simple con
+un resumen, el servidor reconcilia el proposito antes de ejecutar las lecturas,
+sin agregar filtros implicitos ni ampliar permisos o el alcance de la cuenta.
+
 | Elemento | Alcance implementado |
 | --- | --- |
 | Colecciones | Oportunidades y contactos de la cuenta seleccionada. |
@@ -895,6 +902,20 @@ MySQL aislada usa el esquema Coach real con datos ficticios para verificar
 concurrencia, revisiones, tokens y cierre sin crear registros CRM. La aceptación
 semántica con proveedor real y vendedores permanece pendiente; no se ejecuta
 IA real ni se crean contactos u oportunidades en producción durante las pruebas.
+
+### Revisión de notas de oportunidad
+
+Las propuestas `opportunity_note` de Cliente existente se preparan y revisan
+desde «Revisar operación», dentro de la cuenta seleccionada. El servidor
+comprueba que tanto la nota como la oportunidad correspondan a esa cuenta
+y mantiene las validaciones de permisos y gobierno de notas.
+La revisión abre el modal de confirmación; no guarda todavía la nota.
+El campo «Oportunidad» muestra el nombre del registro autorizado, no el título
+de la operación (o su identificador si el nombre no está disponible).
+«Confirmar y guardar» valida el texto de la nota: una nota vacía o compuesta
+solo por espacios no permite confirmar. No exige un valor de cambio de campo.
+Si falla la preparación o la revisión, el error se muestra en Cliente existente,
+sin obligar al vendedor a cambiar al espacio del Coach.
 
 ## Matriz de operaciones propuestas
 

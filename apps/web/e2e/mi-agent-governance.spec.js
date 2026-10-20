@@ -22,6 +22,8 @@ async function mockMiCoachApi(
     withVersionedCustomerLink = false,
     withCustomerReschedule = false,
     withCustomerOutcome = false,
+    withCustomerNote = false,
+    customerNoteFailure = "",
     withCustomerStage = false,
     customerStageDecision = "ready_to_advance",
     failCustomerOutcome = false,
@@ -402,6 +404,14 @@ async function mockMiCoachApi(
                         currentStageName: "Inicial", targetStageId: 2, targetStageName: "Negociación" },
                       evidence: [], missingFields: [], requiresConfirmation: true,
                     }]
+                : withCustomerNote
+                  ? [{
+                      kind: "opportunity_note", sourceChannel: "customer_account",
+                      title: "Registrar nota en Proyecto abierto", accountId: 160, opportunityId: 300,
+                      noteText: "El cliente solicita revisar el alcance.",
+                      sourceType: "chat_report", attribution: "seller", certainty: "reported",
+                      requiresConfirmation: true,
+                    }]
                 : withCustomerOutcome
                   ? [{
                       kind: "lead_call_outcome", sourceChannel: "customer_account", title: "Registrar llamada Lead 105",
@@ -482,11 +492,14 @@ async function mockMiCoachApi(
     }
     if (
       (withCustomerOpportunityOperation ||
-        withCustomerContactOpportunityLink || withCustomerReschedule || withCustomerOutcome || withCustomerStage) &&
+        withCustomerContactOpportunityLink || withCustomerReschedule || withCustomerOutcome || withCustomerStage || withCustomerNote) &&
       pathname === "/api/mi-agent/coach/operations" &&
       method === "POST"
     ) {
       const operation = route.request().postDataJSON()?.operation;
+      if (withCustomerNote && customerNoteFailure === "proposal") {
+        return json({ message: "No se pudo preparar la nota de esta cuenta." }, 403);
+      }
       const operationId = operation?.kind === "create_opportunity" ? 904 : 905;
       persistedCustomerOpportunityOperation = {
         id: operationId,
@@ -517,13 +530,16 @@ async function mockMiCoachApi(
           validation: { decision: customerStageDecision, summary: "Resultado del validador existente", reasons: ["Evidencia revisada"] },
         } } : null });
     }
-    if (withCustomerOutcome && persistedCustomerOpportunityOperation &&
+    if ((withCustomerOutcome || withCustomerNote) && persistedCustomerOpportunityOperation &&
         pathname === `/api/mi-agent/coach/operations/${persistedCustomerOpportunityOperation.id}/review` && method === "POST") {
+      if (withCustomerNote && customerNoteFailure === "review") {
+        return json({ message: "La nota ya no está disponible para revisión." }, 409);
+      }
       persistedCustomerOpportunityOperation = { ...persistedCustomerOpportunityOperation,
         reviewedAt: "2030-10-17T12:00:00Z", version: persistedCustomerOpportunityOperation.version + 1 };
       return json({ operation: persistedCustomerOpportunityOperation });
     }
-    if (withCustomerOutcome && persistedCustomerOpportunityOperation &&
+    if ((withCustomerOutcome || withCustomerNote) && persistedCustomerOpportunityOperation &&
         pathname === `/api/mi-agent/coach/operations/${persistedCustomerOpportunityOperation.id}/execute` && method === "POST") {
       if (failCustomerOutcome) return json({ message: "El lead cambió. Actualiza y revisa nuevamente.", code: "COACH_OUTCOME_STALE" }, 409);
       if (incompleteCustomerOutcome) return json({});
@@ -1009,7 +1025,7 @@ async function mockMiCoachApi(
           ...(withCustomerOpportunityOperation
             ? ["oportunidades.create", "contactos.read"]
             : []),
-          ...(withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill || withCustomerReschedule || withCustomerStage
+          ...(withCustomerContactOpportunityLink || withCustomerStageAnswerPrefill || withCustomerReschedule || withCustomerStage || withCustomerNote
             ? ["oportunidades.update"]
             : []),
           ...(withCustomerContactUpdate ? ["contactos.update"] : []),
@@ -3706,6 +3722,57 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toHaveValue("601");
     expect(opportunityWrites).toEqual([]);
   });
+
+  for (const failure of ["", "proposal", "review"]) {
+    test(`revisar nota de Cliente existente ${failure || "abre confirmacion sin guardar"}`, async ({ page }) => {
+      const writes = [];
+      page.on("request", (request) => {
+        if (request.method() !== "GET" && /\/execute$|\/opportunities\/\d+\/notes/.test(new URL(request.url()).pathname)) {
+          writes.push(request.url());
+        }
+      });
+      await mockMiCoachApi(page, {
+        withCustomerHealth: true, withCustomerNote: true, customerNoteFailure: failure,
+      });
+      await openMiCoach(page, { workspace: "customer" });
+      await page.getByLabel("Cuenta existente").selectOption("160");
+      const chat = page.getByRole("region", { name: "Chat de cuenta" });
+      await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Registra una nota para Proyecto abierto");
+      await chat.getByRole("button", { name: "Preguntar" }).click();
+      await chat.getByRole("button", { name: "Revisar operación" }).click();
+      const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+      if (failure) {
+        await expect(page.getByText(failure === "proposal"
+          ? "No se pudo preparar la nota de esta cuenta."
+          : "La nota ya no está disponible para revisión.", { exact: true })).toBeVisible();
+        await expect(dialog).toHaveCount(0);
+      } else {
+        await expect(dialog).toBeVisible();
+        await expect(dialog).toContainText("El cliente solicita revisar el alcance.");
+        await expect(dialog.getByLabel("Oportunidad", { exact: true })).toHaveValue("Proyecto abierto");
+        const confirm = dialog.getByRole("button", { name: "Confirmar y guardar", exact: true });
+        await expect(confirm).toBeEnabled();
+        const note = dialog.getByLabel("Texto de la nota");
+        await note.fill("   ");
+        await expect(confirm).toBeDisabled();
+        await note.fill("El cliente confirmó el alcance actualizado.");
+        await expect(confirm).toBeEnabled();
+        expect(writes).toEqual([]);
+        const savedDraft = page.waitForRequest((request) =>
+          request.method() === "PATCH" &&
+          new URL(request.url()).pathname === "/api/mi-agent/coach/operations/905" &&
+          request.postDataJSON()?.pendingOperation?.noteText === "El cliente confirmó el alcance actualizado.",
+        );
+        await confirm.click();
+        await savedDraft;
+        await expect(dialog).toHaveCount(0);
+        expect(writes).toHaveLength(1);
+        expect(new URL(writes[0]).pathname).toBe("/api/mi-agent/coach/operations/905/execute");
+      }
+      await expect(chat.getByRole("button", { name: "Revisar operación" })).toBeEnabled();
+      if (failure) expect(writes).toEqual([]);
+    });
+  }
 
   test("A04 versionado traslada desde chat y guarda solo la asociación desde Oportunidades", async ({ page }) => {
     const writes = [];

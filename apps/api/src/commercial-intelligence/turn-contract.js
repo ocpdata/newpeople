@@ -503,6 +503,7 @@ export function normalizeCustomerFieldQueryPurpose(contract, { question } = {}) 
   if (component.category === "query.field_value" && component.requestedFields?.length) {
     return contract;
   }
+
   const normalizedQuestion = String(question || "").normalize("NFD")
     .replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es");
   const fieldPatterns = {
@@ -534,6 +535,34 @@ export function normalizeCustomerFieldQueryPurpose(contract, { question } = {}) 
       ...component,
       category: "query.field_value",
       requestedFields,
+    }],
+  };
+}
+
+function normalizeCustomerCollectionPurpose(contract, { question } = {}) {
+  if (contract.resolution !== "resolved" ||
+      !["new_request", "change_focus"].includes(contract.movement) ||
+      contract.components.length !== 1 ||
+      contract.components[0].category !== "query.account_summary") return contract;
+  const text = String(question || "").normalize("NFD").replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("es").replace(/[¿?¡!.,]/g, "").trim().replace(/\s+/g, " ");
+  const match = text.match(
+    /^(?:que|cuales) (oportunidades|contactos) (?:hay|tenemos|existen)(?: (?:en|para|de) (?:esta|la) cuenta)?$/,
+  );
+  if (!match) return contract;
+  const component = contract.components[0];
+  console.warn("[customer-turn] Routing explicit collection question as record list", {
+    code: "CUSTOMER_COLLECTION_PURPOSE_RECONCILED", componentId: component.id,
+    object: match[1] === "oportunidades" ? "opportunity" : "contact",
+  });
+  return {
+    ...contract,
+    components: [{
+      id: component.id, category: "query.record_list", text: String(question).trim(),
+      object: match[1] === "oportunidades" ? "opportunity" : "contact",
+      topic: "record_list", scope: "collection", reference: "",
+      attribution: component.attribution, certainty: component.certainty,
+      explicitAction: false, dependsOn: [], continuationOf: "none", listSpec: {},
     }],
   };
 }
@@ -1279,6 +1308,9 @@ Consultar cargo, correo o teléfono de una persona usa object=contact, no accoun
 si coincide con un contacto visible de la cuenta; no busques oportunidades asociadas salvo que se pidan.
 Para las demás categorías usa requestedFields=[].
 Para query.record_list y query.record_search usa scope=collection y listSpec. La colección inicial admite opportunity y contact.
+"¿Qué oportunidades hay?", "que oportunidades hay en esta cuenta" y "¿qué contactos tenemos?"
+son query.record_list del objeto solicitado en la cuenta seleccionada, no query.account_summary
+ni datos pegados sin pregunta. No añadas filtros de estado o activación que no se hayan pedido.
 statusCodes filtra estado comercial (abiertas = en_proceso; históricas = ganada,perdida,anulada);
 stageCodes filtra códigos de etapa del catálogo de etapas autorizado; activation separa all/active/inactive.
 No confundas abiertas con activadas. "Incluye las ganadas" sobre un listado En proceso usa
@@ -1913,12 +1945,12 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
       ...item, category: "action.update_stage_answer", object: "opportunity", explicitAction: true,
     }));
   }
-  parsed.data = normalizeCustomerFieldQueryPurpose(
+  parsed.data = normalizeCustomerCollectionPurpose(normalizeCustomerFieldQueryPurpose(
     normalizeCustomerContactDetailPurpose(normalizeCustomerHistoryPurpose(parsed.data), {
       question, snapshot,
     }),
     { question },
-  );
+  ), { question });
   const scheduledActivity = parsed.data.components.find((item) => item.category === "action.schedule_activity");
   if (scheduledActivity &&
       !/\?|¿|\b(?:consulta|verifica|comprueba|dime|mu[eé]strame|qui[eé]n|cu[aá]les?)\b/i.test(String(question))) {

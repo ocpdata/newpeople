@@ -4147,6 +4147,7 @@ export default function MiAgentPage({
     if (!operation || !canReviewCustomerOperation(operation)) return;
     setSavingCoachOperation(true);
     setError("");
+    setCustomerIntelligenceError("");
     try {
       const accountId = Number(customerAccountId || 0) || null;
       const opportunityId = Number(operation.opportunityId || 0) || null;
@@ -4214,9 +4215,9 @@ export default function MiAgentPage({
         persistentId: persistedOperation.id,
         persistenceVersion: persistedOperation.version,
         persistenceStatus: persistedOperation.status,
-      }, { opportunityOptions, persistedOperation });
+      }, { opportunityOptions, persistedOperation, onReviewError: setCustomerIntelligenceError });
     } catch (requestError) {
-      setError(
+      setCustomerIntelligenceError(
         getApiErrorMessage(
           requestError,
           "No fue posible preparar la operación en el Coach",
@@ -6111,7 +6112,7 @@ export default function MiAgentPage({
 
   async function openCoachOperationConfirmation(
     operation,
-    { opportunityOptions = null, persistedOperation: suppliedPersistedOperation = null } = {},
+    { opportunityOptions = null, persistedOperation: suppliedPersistedOperation = null, onReviewError = null } = {},
   ) {
     coachReturnFocusRef.current = document.activeElement;
     const canApplyOperation = !canExecuteCoach
@@ -6204,6 +6205,7 @@ export default function MiAgentPage({
           state: "error",
           message,
         });
+        if (onReviewError) onReviewError(message);
         return;
       } finally {
         setSavingCoachOperation(false);
@@ -14961,7 +14963,15 @@ export default function MiAgentPage({
                   <label>
                     Oportunidad
                     <input
-                      value={coachOperationDraft.operation.title || "Oportunidad seleccionada"}
+                      value={
+                        (
+                          coachOperationOpportunityOptionsOverride ||
+                          snapshot.pipeline.opportunities
+                        ).find((item) =>
+                          Number(item.id) === Number(coachOperationDraft.operation.opportunityId),
+                        )?.name ||
+                        `Oportunidad #${coachOperationDraft.operation.opportunityId}`
+                      }
                       disabled
                     />
                   </label>
@@ -15137,6 +15147,8 @@ export default function MiAgentPage({
                       !String(
                         coachOperationDraft.operation.scheduledAt || "",
                       ).trim()
+                    : coachOperationDraft.operation.kind === "opportunity_note"
+                      ? !String(coachOperationDraft.operation.noteText || "").trim()
                     : [
                           "create_account",
                           "create_contact",

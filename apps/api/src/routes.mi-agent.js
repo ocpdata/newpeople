@@ -4746,10 +4746,16 @@ router.post(
           [Number(coachOperation.contactId || 0), accountId],
         );
       } else if (
-        ["activity", "stage_answer", "opportunity_field"].includes(
+        ["activity", "stage_answer", "opportunity_field", "opportunity_note"].includes(
           coachOperation.kind,
         )
       ) {
+        if (coachOperation.kind === "opportunity_note" &&
+            Number(coachOperation.accountId) !== accountId) {
+          return res.status(403).json({
+            message: "La nota debe guardarse dentro de la cuenta fija",
+          });
+        }
         relationRows = await query(
           "SELECT id FROM opportunities WHERE id = ? AND account_id = ? LIMIT 1",
           [Number(coachOperation.opportunityId || 0), accountId],
@@ -4780,12 +4786,6 @@ router.post(
       ) {
         return res.status(404).json({
           message: "El registro relacionado no pertenece a la cuenta fija",
-        });
-      }
-    } else if (coachOperation.kind === "opportunity_note") {
-      if (Number(coachOperation.accountId) !== accountId) {
-        return res.status(403).json({
-          message: "La nota debe guardarse dentro de la cuenta fija",
         });
       }
     }
