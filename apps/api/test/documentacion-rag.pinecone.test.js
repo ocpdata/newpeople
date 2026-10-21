@@ -1,0 +1,173 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { pineconeConfig } = vi.hoisted(() => ({
+  pineconeConfig: {
+    pinecone: {
+      apiKey: "test-api-key",
+      assistantName: "test-assistant",
+      assistantRegion: "us",
+      apiVersion: "2026-07",
+      maxFileBytes: 50 * 1024 * 1024,
+    },
+  },
+}));
+
+vi.mock("../src/config.js", () => ({ config: pineconeConfig }));
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("Pinecone Assistant REST client", () => {
+  beforeEach(() => {
+    pineconeConfig.pinecone.apiKey = "test-api-key";
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("sube el archivo al host del Assistant con metadatos y versión de API", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ name: "test-assistant", host: "assistant.example.com" }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ id: "operation-1", file_id: "rag-file-1" }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+    const { uploadRagFile } = await import("../src/documentacion-rag/pinecone.js");
+
+    const result = await uploadRagFile({
+      buffer: Buffer.from("contenido"),
+      fileName: "guia.pdf",
+      mimeType: "application/pdf",
+      metadata: { document_id: "doc-1", version_id: "version-1" },
+    });
+
+    expect(result).toEqual({ id: "operation-1", file_id: "rag-file-1" });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.pinecone.io/assistant/assistants/test-assistant",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://assistant.example.com/assistant/files/test-assistant",
+    );
+    expect(fetchMock.mock.calls[1][1].method).toBe("POST");
+    expect(fetchMock.mock.calls[1][1].headers).toMatchObject({
+      "Api-Key": "test-api-key",
+      "X-Pinecone-Api-Version": "2026-07",
+    });
+    expect(fetchMock.mock.calls[1][1].body.get("metadata")).toBe(
+      JSON.stringify({ document_id: "doc-1", version_id: "version-1" }),
+    );
+    expect(fetchMock.mock.calls[1][1].body.get("file").name).toBe("guia.pdf");
+  });
+
+  it("envía filtros y top-k al endpoint de contexto", async () => {
+    const filter = {
+      $and: [{ document_id: { $eq: "doc-1" } }, { version_id: { $eq: "v1" } }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ name: "test-assistant", host: "https://assistant.example.com" }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ snippets: [{ content: "Fragmento" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { retrieveRagContext } = await import("../src/documentacion-rag/pinecone.js");
+
+    await expect(
+      retrieveRagContext({ query: "¿Cómo funciona?", filter, topK: 6 }),
+    ).resolves.toEqual([{ content: "Fragmento" }]);
+
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://assistant.example.com/assistant/chat/test-assistant/context",
+    );
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      query: "¿Cómo funciona?",
+      top_k: 6,
+      filter,
+    });
+  });
+
+  it("espera a que el Assistant recién creado esté listo", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          name: "test-assistant",
+          host: "assistant.example.com",
+          status: "Initializing",
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          name: "test-assistant",
+          host: "assistant.example.com",
+          status: "Ready",
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getPineconeAssistant } = await import("../src/documentacion-rag/pinecone.js");
+
+    const assistantPromise = getPineconeAssistant();
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    await expect(assistantPromise).resolves.toMatchObject({
+      name: "test-assistant",
+      host: "https://assistant.example.com",
+      status: "Ready",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("filtra el resumen al documento y versión solicitados", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          name: "test-assistant",
+          host: "https://assistant.example.com",
+          status: "Ready",
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ message: { content: "  Resumen breve.  " } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { generateRagDocumentSummary } = await import("../src/documentacion-rag/pinecone.js");
+
+    await expect(
+      generateRagDocumentSummary({
+        fileName: "guia.pdf",
+        documentId: "doc-1",
+        versionId: "version-1",
+      }),
+    ).resolves.toBe("Resumen breve.");
+
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      filter: {
+        $and: [
+          { document_id: { $eq: "doc-1" } },
+          { version_id: { $eq: "version-1" } },
+        ],
+      },
+      messages: [{ role: "user" }],
+    });
+  });
+
+  it("falla explícitamente cuando falta la clave de Pinecone", async () => {
+    pineconeConfig.pinecone.apiKey = "";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { getPineconeAssistant } = await import("../src/documentacion-rag/pinecone.js");
+
+    await expect(getPineconeAssistant()).rejects.toMatchObject({
+      code: "PINECONE_NOT_CONFIGURED",
+      status: 503,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

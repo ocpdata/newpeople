@@ -194,6 +194,16 @@ export const config = {
     enableWebSearch:
       String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",
   },
+  pinecone: {
+    apiKey: process.env.PINECONE_API_KEY || "",
+    assistantName:
+      process.env.PINECONE_ASSISTANT_NAME || "newpeople-documentacion-rag",
+    assistantRegion: process.env.PINECONE_ASSISTANT_REGION || "us",
+    apiVersion: process.env.PINECONE_ASSISTANT_API_VERSION || "2026-07",
+    maxFileBytes: Number(
+      process.env.PINECONE_ASSISTANT_MAX_FILE_BYTES || 50 * 1024 * 1024,
+    ),
+  },
   tavily: {
     apiKey: process.env.TAVILY_API_KEY || "",
     baseUrl: process.env.TAVILY_BASE_URL || "https://api.tavily.com",

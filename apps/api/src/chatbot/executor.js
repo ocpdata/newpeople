@@ -2,6 +2,7 @@ import { query } from "../db.js";
 import { getOpportunityRecommendedStrategy } from "./opportunity-strategy.js";
 import { searchInternalAppKnowledge } from "./app-knowledge.js";
 import { searchMarkdownKnowledge } from "./knowledge-base.js";
+import { retrieveDocumentacionRagEvidence } from "../documentacion-rag/service.js";
 import {
   CHATBOT_ACCOUNT_READ_PERMISSIONS,
   CHATBOT_CONTACT_READ_PERMISSIONS,
@@ -802,6 +803,9 @@ export async function executeChatbotPlan({
   const appKnowledge = String(prompt || "").trim()
     ? await searchInternalAppKnowledge({ user, prompt, limit: 6 })
     : [];
+  const ragContext = String(prompt || "").trim()
+    ? await retrieveDocumentacionRagEvidence({ prompt })
+    : [];
 
   if (resolverOutput?.resolutionStatus === "resolved") {
     if (resolverOutput.selectedEntityType === "account") {
@@ -824,6 +828,7 @@ export async function executeChatbotPlan({
       if (result && appKnowledge.length) {
         result.applicationKnowledge = appKnowledge;
       }
+      if (result && ragContext.length) result.ragContext = ragContext;
       return result;
     }
     if (resolverOutput.selectedEntityType === "contact") {
@@ -846,6 +851,7 @@ export async function executeChatbotPlan({
       if (result && appKnowledge.length) {
         result.applicationKnowledge = appKnowledge;
       }
+      if (result && ragContext.length) result.ragContext = ragContext;
       return result;
     }
     if (resolverOutput.selectedEntityType === "opportunity") {
@@ -868,6 +874,7 @@ export async function executeChatbotPlan({
       if (result && appKnowledge.length) {
         result.applicationKnowledge = appKnowledge;
       }
+      if (result && ragContext.length) result.ragContext = ragContext;
       return result;
     }
   }
@@ -891,6 +898,7 @@ export async function executeChatbotPlan({
   if (appKnowledge.length) {
     fallbackEvidence.applicationKnowledge = appKnowledge;
   }
+  if (ragContext.length) fallbackEvidence.ragContext = ragContext;
 
   return fallbackEvidence;
 }

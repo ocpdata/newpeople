@@ -174,6 +174,50 @@ El analisis puede devolver campos vacios aunque la IA este funcionando correctam
 
 En esos casos deben prevalecer warnings y confianza baja, no valores inventados.
 
+## Biblioteca Documentación RAG
+
+El módulo **Documentación RAG** administra una biblioteca de documentos en
+Pinecone Assistant. Los temas agrupan los archivos y permiten habilitar o
+deshabilitar su uso en las consultas. Los archivos se cargan, reemplazan y
+eliminan desde la aplicación; Pinecone Assistant realiza su extracción,
+fragmentación e indexación. El sistema conserva en la base de datos los
+metadatos, estados de operación y resúmenes breves.
+
+El permiso `documentacion_rag.access` permite entrar y consultar el contenido
+del módulo. `documentacion_rag.manage` permite además administrar temas y
+documentos, e incluye acceso aunque no se asigne también el permiso de lectura.
+Ambos permisos se asignan inicialmente a los roles de sistema y al rol
+Administrador; otros roles se configuran desde la administración de roles. Los
+usuarios que no tienen esos permisos también pueden consultar los documentos
+activos a través del chatbot. La respuesta puede usar los fragmentos como
+evidencia, pero no debe citar ni identificar los documentos RAG.
+
+Configuración en `apps/api/.env`:
+
+- `PINECONE_API_KEY`: clave de Pinecone.
+- `PINECONE_ASSISTANT_NAME`: Assistant que usa el módulo; por defecto,
+  `newpeople-documentacion-rag`.
+- `PINECONE_ASSISTANT_REGION`: región del Assistant, `us` o `eu`; por defecto,
+  `us`.
+- `PINECONE_ASSISTANT_API_VERSION`: versión REST; por defecto, `2026-07`.
+- `PINECONE_ASSISTANT_MAX_FILE_BYTES`: límite por archivo en bytes; por defecto,
+  50 MiB.
+
+El backend usa la REST API de Assistant, por lo que no requiere instalar el SDK
+de Pinecone. Las operaciones de carga, reemplazo y eliminación se actualizan
+consultando el estado de Pinecone. La sustitución conserva la versión activa
+hasta que la nueva queda disponible; el backend mantiene el seguimiento en
+segundo plano, aunque el administrador cierre la pestaña. Los formatos
+aceptados son PDF, DOCX, JSON, Markdown y TXT.
+
+Además de cargar archivos locales, los administradores pueden importar enlaces
+públicos a archivos admitidos o a páginas web. Las páginas HTML se convierten a
+Markdown; la importación no rastrea el sitio ni sigue enlaces internos. El
+contenido remoto debe caber en el límite configurado y pasar validaciones de
+destino público, redirecciones y tiempo de espera. El sistema conserva la URL
+de origen como referencia administrativa; la IA utiliza el contenido importado
+en el momento de la carga y no sincroniza cambios posteriores de la página.
+
 ## Estado actual
 
 Uso implementado y activo hoy:

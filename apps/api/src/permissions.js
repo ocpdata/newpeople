@@ -14,6 +14,19 @@ const CORE_PERMISSIONS = [
     description: "Actualizar configuracion general",
   },
   {
+    code: "documentacion_rag.access",
+    module: "documentacion_rag",
+    action: "access",
+    description: "Acceder a la biblioteca de Documentacion RAG",
+  },
+  {
+    code: "documentacion_rag.manage",
+    module: "documentacion_rag",
+    action: "manage",
+    description:
+      "Administrar temas y documentos de la biblioteca Documentacion RAG",
+  },
+  {
     code: "cuentas.request",
     module: "cuentas",
     action: "request",

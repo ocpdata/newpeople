@@ -21,6 +21,7 @@ const OpportunityQuestionAdminPage = lazy(
 const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
 const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
 const DocumentationPage = lazy(() => import("./DocumentationPage"));
+const DocumentacionRagPage = lazy(() => import("./DocumentacionRagPage"));
 const AccountSettingsPage = lazy(() => import("./AccountSettingsPage"));
 const ToolsPage = lazy(() => import("./ToolsPage"));
 const SecurityTestsPage = lazy(() => import("./SecurityTestsPage"));
@@ -226,6 +227,9 @@ export default function AppShell({
     can("enablement_comercial.read") ||
     can("enablement_comercial.update") ||
     can("enablement_comercial.analytics");
+  const canAccessDocumentacionRag =
+    can("documentacion_rag.access") || can("documentacion_rag.manage");
+  const canManageDocumentacionRag = can("documentacion_rag.manage");
   const canAccessManufacturerRegistrations =
     can("registros_fabricantes.read") || can("registros_fabricantes.read_all");
   const canAccessLandingModule =
@@ -315,6 +319,18 @@ export default function AppShell({
           element={
             can("configuracion.read") ? (
               <DocumentationPage />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
+          path="/documentacion-rag"
+          element={
+            canAccessDocumentacionRag ? (
+              <DocumentacionRagPage
+                canManage={canManageDocumentacionRag}
+              />
             ) : (
               <Navigate to="/" />
             )
@@ -924,6 +940,7 @@ export default function AppShell({
             {(can("usuarios.read") ||
               can("roles.read") ||
               canAccessProcessCommercialConfig ||
+              canAccessDocumentacionRag ||
               can("configuracion.read") ||
               can("herramientas.read")) && (
               <SidebarNavGroup title="Sistema">
@@ -957,6 +974,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Configuración
+                  </GuardedNavLink>
+                )}
+                {canAccessDocumentacionRag && (
+                  <GuardedNavLink
+                    to="/documentacion-rag"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Documentación RAG
                   </GuardedNavLink>
                 )}
                 {can("configuracion.read") && (

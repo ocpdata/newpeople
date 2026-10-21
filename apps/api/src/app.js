@@ -26,6 +26,8 @@ import prospectResearchRoutes from "./routes.prospect-research.js";
 import manufacturerRegistrationRoutes from "./routes.manufacturer-registrations.js";
 import settingsRoutes from "./routes.settings.js";
 import documentationRoutes from "./routes.documentation.js";
+import documentacionRagRoutes from "./routes.documentacion-rag.js";
+import { startDocumentacionRagWorker } from "./documentacion-rag/service.js";
 import toolsRoutes from "./routes.tools.js";
 import securityTestRoutes, {
   githubRateLimitCallback,
@@ -42,6 +44,7 @@ import campaignEmailRoutes, {
 } from "./routes.campaign-emails.js";
 
 export function createApp() {
+  startDocumentacionRagWorker();
   const app = express();
   const requestBodyLimit = config.requestBodyLimit;
 
@@ -168,6 +171,12 @@ export function createApp() {
   app.use("/api/audit", authRequired, loadUser, auditRoutes);
   app.use("/api/settings", authRequired, loadUser, settingsRoutes);
   app.use("/api/documentation", authRequired, loadUser, documentationRoutes);
+  app.use(
+    "/api/documentacion-rag",
+    authRequired,
+    loadUser,
+    documentacionRagRoutes,
+  );
   app.use("/api/tools", authRequired, loadUser, toolsRoutes);
   app.use(
     "/api/tools/security-tests",
