@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   convertRagHtmlToMarkdown,
   isPublicRagAddress,
+  createPinnedRagLookup,
   validateRagSourceUrl,
 } from "../src/documentacion-rag/url-import.js";
 
@@ -40,6 +41,17 @@ describe("Documentación RAG URL sources", () => {
     expect(isPublicRagAddress("2606:4700:4700::1111")).toBe(true);
   });
 
+  it("supports both Node DNS lookup callback signatures while pinning the address", () => {
+    const address = { address: "159.60.155.233", family: 4 };
+    const lookup = createPinnedRagLookup(address);
+    const callback = vi.fn();
+    lookup("newpip.digitalvs.com", {}, callback);
+    expect(callback).toHaveBeenLastCalledWith(null, address.address, address.family);
+
+    lookup("newpip.digitalvs.com", { all: true }, callback);
+    expect(callback).toHaveBeenLastCalledWith(null, [address]);
+  });
+
   it("converts public HTML to readable Markdown without scripts or navigation", () => {
     const converted = convertRagHtmlToMarkdown(`
       <html><head><title>Guía de venta</title>
@@ -58,9 +70,11 @@ describe("Documentación RAG URL sources", () => {
     expect(converted.buffer.toString()).not.toContain("Menú");
   });
 
-  it("rejects empty pages instead of uploading empty text", () => {
+  it("explains when a page has no extractable HTML text", () => {
     expect(() =>
       convertRagHtmlToMarkdown("<html><script>hidden()</script></html>"),
-    ).toThrow("No se pudo extraer texto de la página web");
+    ).toThrow(
+      "puede cargar el contenido con JavaScript o requerir inicio de sesión",
+    );
   });
 });

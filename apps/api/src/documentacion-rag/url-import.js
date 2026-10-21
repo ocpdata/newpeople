@@ -113,6 +113,16 @@ async function resolvePublicAddress(hostname) {
   return addresses[0];
 }
 
+export function createPinnedRagLookup(address) {
+  return (_hostname, options, callback) => {
+    if (options?.all) {
+      callback(null, [address]);
+      return;
+    }
+    callback(null, address.address, address.family);
+  };
+}
+
 function requestUrl(url, address, maxBytes) {
   const request = url.protocol === "https:" ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
@@ -124,8 +134,7 @@ function requestUrl(url, address, maxBytes) {
           Accept: "text/html,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json,text/markdown,text/plain,*/*;q=0.1",
           "User-Agent": "NewPeople-DocumentacionRAG/1.0",
         },
-        lookup: (_hostname, _options, callback) =>
-          callback(null, address.address, address.family),
+        lookup: createPinnedRagLookup(address),
       },
       (response) => {
         const status = Number(response.statusCode || 0);
@@ -255,7 +264,11 @@ export function convertRagHtmlToMarkdown(html) {
     .replace(/\n[ \t]+/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  if (!markdown) throw new Error("No se pudo extraer texto de la página web");
+  if (!markdown) {
+    throw new Error(
+      "La página no contiene texto HTML legible; puede cargar el contenido con JavaScript o requerir inicio de sesión. Usa un enlace público directo al archivo o una página con texto visible sin iniciar sesión",
+    );
+  }
   return {
     fileName: `${safeFileName(title || "pagina-web").replace(/\.[^.]+$/, "")}.md`,
     buffer: Buffer.from(`${title ? `# ${title}\n\n` : ""}${markdown}`, "utf8"),
