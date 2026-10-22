@@ -52,6 +52,7 @@ test("previsualiza, importa sin cargar archivos y actualiza la biblioteca", asyn
   await expect(preview.getByRole("checkbox", { name: "Importar Procesando.pdf" })).toBeDisabled();
   await expect(preview.getByRole("button", { name: "Importar seleccionados" })).toBeDisabled();
   await preview.getByRole("checkbox", { name: "Importar BlueCat.pdf" }).check();
+  await expect(preview.getByText("1 seleccionado", { exact: true })).toBeVisible();
   await preview.getByRole("button", { name: "Importar seleccionados" }).click();
   await expect(preview.getByText("Importado correctamente.")).toBeVisible();
   expect(submissions).toEqual([{
@@ -61,6 +62,23 @@ test("previsualiza, importa sin cargar archivos y actualiza la biblioteca", asyn
   await expect(page.getByRole("heading", { name: "BlueCat.pdf" })).toBeVisible();
   await expect(page.getByText("Disponible", { exact: true })).toBeVisible();
   await expect(page.getByText("Tamaño no disponible")).toBeVisible();
+});
+
+test("mantiene la selección alineada y sin desbordamientos en móvil", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockLibrary(page);
+  await page.getByRole("button", { name: "Importar desde Pinecone", exact: true }).click();
+  const preview = page.getByRole("region", { name: "Importar desde Pinecone" });
+  await expect(preview.getByText("Listo para importar", { exact: true })).toBeVisible();
+  const row = preview.locator(".documentacion-rag-import-row").first();
+  const checkbox = await row.getByRole("checkbox").boundingBox();
+  const title = await row.locator("strong").boundingBox();
+  expect(Math.abs((checkbox.y + checkbox.height / 2) - (title.y + title.height / 2))).toBeLessThan(3);
+  expect(await preview.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await row.locator("strong").evaluate((element) => {
+    element.textContent = "BlueCat_Networks_Soluciones_Beneficios_RAG_documento_nombre_largo.pdf";
+  });
+  expect(await preview.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
 test("requiere asociación explícita para un conflicto de temas", async ({ page }) => {

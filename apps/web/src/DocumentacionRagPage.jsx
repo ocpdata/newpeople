@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CloudDownload, FileText, Info } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
 import "./documentacion-rag.css";
 
@@ -16,6 +17,14 @@ const FORMAT_LABELS = {
   ".md": "Markdown (.md)",
   ".pdf": "PDF",
   ".txt": "TXT",
+};
+
+const IMPORT_STATUS_LABELS = {
+  importable: "Listo para importar",
+  existing: "Ya registrado",
+  blocked: "No disponible",
+  topic_conflict: "Requiere tema",
+  imported: "Importado",
 };
 
 function formatFileSize(value) {
@@ -111,6 +120,7 @@ export default function DocumentacionRagPage({ canManage = false }) {
     }
     return grouped;
   }, [documents, topics]);
+  const selectedImportCount = Object.values(importSelections).filter(Boolean).length;
 
   async function previewImport() {
     setBusy("import-preview");
@@ -362,23 +372,38 @@ export default function DocumentacionRagPage({ canManage = false }) {
       ) : null}
       {loading ? <p className="field-hint">Cargando biblioteca...</p> : null}
       {activeTab === "documents" && canManage ? (
-        <button type="button" className="btn-secondary"
+        <button type="button" className="btn-secondary documentacion-rag-import-trigger"
           disabled={!pineconeConfigured || Boolean(busy)} onClick={previewImport}>
+          <CloudDownload size={18} aria-hidden="true" />
           {busy === "import-preview" ? "Consultando Pinecone..." : "Importar desde Pinecone"}
         </button>
       ) : null}
       {importPreview ? (
         <section className="documentacion-rag-import" aria-label="Importar desde Pinecone">
-          <h3>Importar desde Pinecone</h3>
-          <p>Assistant: <strong>{importPreview.assistantName}</strong></p>
-          <p className="documentacion-rag-warning">
-            No se subirán ni eliminarán archivos. Esta aplicación compartirá los archivos remotos:
-            un reemplazo o borrado desde otro entorno puede afectar su disponibilidad aquí.
-          </p>
+          <header className="documentacion-rag-import-header">
+            <div className="documentacion-rag-import-heading">
+              <span className="documentacion-rag-import-icon"><CloudDownload size={24} aria-hidden="true" /></span>
+              <div>
+                <h3>Importar desde Pinecone</h3>
+                <p>Incorpora archivos existentes a tu biblioteca, sin volver a cargarlos.</p>
+              </div>
+            </div>
+            <span className="documentacion-rag-import-count">
+              {importPreview.files.length} {importPreview.files.length === 1 ? "archivo encontrado" : "archivos encontrados"}
+            </span>
+          </header>
+          <div className="documentacion-rag-import-assistant">
+            Assistant: <strong>{importPreview.assistantName}</strong>
+          </div>
+          <div className="documentacion-rag-warning documentacion-rag-import-warning">
+            <Info size={18} aria-hidden="true" />
+            <p><strong>Los archivos seguirán compartidos.</strong> No se subirán ni eliminarán archivos.
+              Un reemplazo o borrado desde otro entorno puede afectar su disponibilidad aquí.</p>
+          </div>
           {importPreview.files.length === 0 ? <p>No hay archivos en este Assistant.</p> : null}
           {(importResults || importPreview.files).map((file) => (
-            <div className="documentacion-rag-import-row" key={file.fileId}>
-              <label>
+            <div className={`documentacion-rag-import-row${!importResults && importSelections[file.fileId] ? " is-selected" : ""}`} key={file.fileId}>
+              <label className="documentacion-rag-import-file">
                 {!importResults ? (
                   <input type="checkbox" aria-label={`Importar ${file.fileName}`}
                     checked={Boolean(importSelections[file.fileId])}
@@ -391,9 +416,13 @@ export default function DocumentacionRagPage({ canManage = false }) {
                     }))}
                   />
                 ) : null}
+                <span className="documentacion-rag-import-file-icon"><FileText size={20} aria-hidden="true" /></span>
                 <strong>{file.fileName || file.fileId}</strong>
               </label>
-              <p className="field-hint">{file.reason}</p>
+              <span className={`documentacion-rag-import-status import-status-${file.status}`}>
+                {IMPORT_STATUS_LABELS[file.status] || file.status}
+              </span>
+              <p className="field-hint documentacion-rag-import-reason">{file.reason}</p>
               {!importResults && file.status === "topic_conflict" ? (
                 <label>
                   Asociar a tema local
@@ -412,19 +441,25 @@ export default function DocumentacionRagPage({ canManage = false }) {
               ) : null}
             </div>
           ))}
-          <div className="documentacion-rag-inline-actions">
-            {!importResults ? <p className="field-hint">Selecciona hasta 200 documentos por importación.</p> : null}
+          <footer className="documentacion-rag-import-footer">
+            <div aria-live="polite">
+              <strong>{importResults
+                ? `${importResults.filter((file) => file.status === "imported").length} documentos importados`
+                : `${selectedImportCount} ${selectedImportCount === 1 ? "seleccionado" : "seleccionados"}`}</strong>
+              {!importResults ? <p className="field-hint">Selecciona hasta 200 documentos por importación.</p> : null}
+            </div>
+            <div className="documentacion-rag-inline-actions">
+            <button type="button" className="btn-secondary" disabled={Boolean(busy)}
+              onClick={() => setImportPreview(null)}>Cerrar</button>
             {!importResults ? (
               <button type="button" className="btn-primary"
-                disabled={Boolean(busy) || !Object.values(importSelections).some(Boolean) ||
-                  Object.values(importSelections).filter(Boolean).length > 200}
+                disabled={Boolean(busy) || !selectedImportCount || selectedImportCount > 200}
                 onClick={confirmImport}>
                 {busy === "import" ? "Importando..." : "Importar seleccionados"}
               </button>
             ) : null}
-            <button type="button" className="btn-secondary" disabled={Boolean(busy)}
-              onClick={() => setImportPreview(null)}>Cerrar</button>
-          </div>
+            </div>
+          </footer>
         </section>
       ) : null}
       {activeTab !== "admin" || !canManage ? (
