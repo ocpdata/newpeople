@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { config } from "../src/config.js";
 vi.mock("../src/coach/semantic-classifier-prompts.js", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -84,6 +85,43 @@ describe("customer intelligence contract", () => {
       source: { classifierPrompt: { channel: "customer_account", version: 0, source: "default" } },
     });
   });
+
+  it.each(["off", "on"])(
+    "routes general sales-process questions without asking for CRM context when contract mode is %s",
+    async (mode) => {
+      const previousMode = config.features.customerTurnContractMode;
+      config.features.customerTurnContractMode = mode;
+      try {
+        const classifyWithAI = vi.fn();
+        const decision = await classifyCustomerIntent({
+          question: "¿Cómo es el proceso de ventas?",
+          intents: [
+            { code: "opportunity_guidance", enabled: true },
+            { code: "account_overview", enabled: true },
+          ],
+          classifyWithAI,
+        });
+
+        expect(decision).toMatchObject({
+          intent: "opportunity_guidance",
+          requiresClarification: false,
+          source: { resolver: "deterministic_sales_process_question" },
+        });
+        expect(classifyWithAI).not.toHaveBeenCalled();
+        if (mode === "on") {
+          expect(decision.turnContract.components[0]).toMatchObject({
+            category: "guidance.strategy",
+            object: "general",
+            scope: "none",
+          });
+        } else {
+          expect(decision.turnContract).toBeUndefined();
+        }
+      } finally {
+        config.features.customerTurnContractMode = previousMode;
+      }
+    },
+  );
 
   it("uses the saved classifier version without changing the allowed output schema", async () => {
     loadSemanticClassifierPrompt.mockResolvedValueOnce({

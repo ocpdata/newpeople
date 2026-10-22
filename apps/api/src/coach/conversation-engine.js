@@ -984,6 +984,25 @@ export async function runConversationEngine({
             configuration: channelIntentCatalog,
           })
         : null;
+  let documentKnowledge = { status: "not_requested", snippets: [] };
+  if (
+    channel === "customer_account" &&
+    typeof dependencies.loadDocumentKnowledge === "function"
+  ) {
+    try {
+      documentKnowledge = await dependencies.loadDocumentKnowledge({
+        question,
+        routing: channelIntentRouting,
+        traceParentSpanId,
+      });
+    } catch (error) {
+      console.error("[account-chat] Document knowledge retrieval failed", {
+        jobId,
+        errorCode: error?.code || error?.name || "DOCUMENT_KNOWLEDGE_ERROR",
+      });
+      documentKnowledge = { status: "error", snippets: [] };
+    }
+  }
   const legacyIntent =
     channel === "coach"
       ? configuredCoachIntentClassification || classifyCoachIntent(question)
@@ -1221,6 +1240,9 @@ export async function runConversationEngine({
       : [];
   const promptModelSnapshot = {
     ...modelSnapshot,
+    ...(channel === "customer_account"
+      ? { documentKnowledge }
+      : {}),
     administrativeRules: administrativeRules.filter((rule) => rule.enabled),
     intentCatalog,
     intentRouting,
@@ -1750,6 +1772,7 @@ export async function runConversationEngine({
       },
       answerGeneration: adapterDiagnostics.answerGeneration || null,
       evidence: adapterDiagnostics.evidence || null,
+      documentKnowledge: adapterDiagnostics.documentKnowledge || null,
       answerAudit: adapterDiagnostics.answerAudit || null,
       agentMetrics: adapterDiagnostics.agentMetrics || [],
       failureStage: null,

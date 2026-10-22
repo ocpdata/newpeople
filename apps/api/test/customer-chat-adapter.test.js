@@ -14,6 +14,13 @@ vi.mock("../src/opportunity-workspace/service.js", async (importOriginal) => ({
 vi.mock("../src/structuredWebResearch.js", () => ({
   runStructuredTextResearch: vi.fn(),
 }));
+vi.mock("../src/documentacion-rag/service.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  retrieveCustomerChatDocumentKnowledge: vi.fn().mockResolvedValue({
+    status: "no_results",
+    snippets: [],
+  }),
+}));
 vi.mock("../src/coach/planner-prompts.js", async (importOriginal) => ({
   ...(await importOriginal()),
   loadPlannerPrompt: vi.fn(),
@@ -35,6 +42,7 @@ import { getAuthorizedCoachQuotationContent } from "../src/coach/quotation-read-
 import { readCustomerOpportunityForNotes } from "../src/coach/customer-note-access.js";
 import { listOpportunityNotes } from "../src/opportunity-workspace/service.js";
 import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
+import { retrieveCustomerChatDocumentKnowledge } from "../src/documentacion-rag/service.js";
 import { loadPlannerPrompt } from "../src/coach/planner-prompts.js";
 import * as coachBusinessRulesModule from "../src/coach/business-rules.js";
 import * as coachAdminRulesModule from "../src/coach/admin-rules.js";
@@ -83,6 +91,10 @@ describe("Customer account chat adapter", () => {
     config.features.customerTurnContractMode = "off";
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    retrieveCustomerChatDocumentKnowledge.mockResolvedValue({
+      status: "no_results",
+      snippets: [],
+    });
     loadSemanticClassifierPrompt.mockResolvedValue({
       channel: "customer_account",
       instruction: SEMANTIC_CLASSIFIER_DEFAULTS.customer_account,

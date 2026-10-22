@@ -5,6 +5,7 @@ const REQUEST_TIMEOUT_MS = 120_000;
 const ASSISTANT_READY_TIMEOUT_MS = 120_000;
 const ASSISTANT_POLL_INTERVAL_MS = 3_000;
 let assistantPromise = null;
+let assistantCache = null;
 
 function getApiKey() {
   const key = String(config.pinecone.apiKey || "").trim();
@@ -21,9 +22,27 @@ function assistantName() {
   return String(config.pinecone.assistantName || "").trim();
 }
 
-async function requestJson(url, { method = "GET", body, headers = {} } = {}) {
+async function requestJson(
+  url,
+  {
+    method = "GET",
+    body,
+    headers = {},
+    timeoutMs = REQUEST_TIMEOUT_MS,
+    deadlineAt = null,
+  } = {},
+) {
+  const effectiveTimeoutMs = deadlineAt
+    ? Math.min(timeoutMs, deadlineAt - Date.now())
+    : timeoutMs;
+  if (effectiveTimeoutMs <= 0) {
+    const error = new Error("La solicitud a Pinecone excedió el tiempo límite");
+    error.status = 504;
+    error.code = "PINECONE_TIMEOUT";
+    throw error;
+  }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), effectiveTimeoutMs);
   try {
     const response = await fetch(url, {
       method,
@@ -78,7 +97,10 @@ function getAssistantHost(assistant) {
   return host.startsWith("http") ? host.replace(/\/$/, "") : `https://${host}`;
 }
 
-async function loadOrCreateAssistant() {
+async function loadOrCreateAssistant(
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  deadlineAt = Date.now() + timeoutMs,
+) {
   const name = assistantName();
   if (!name) throw new Error("PINECONE_ASSISTANT_NAME no está configurado");
   const encodedName = encodeURIComponent(name);
@@ -87,6 +109,7 @@ async function loadOrCreateAssistant() {
   try {
     assistant = await requestJson(
       `${CONTROL_URL}/assistants/${encodedName}`,
+      { timeoutMs, deadlineAt },
     );
   } catch (error) {
     if (Number(error?.status) !== 404) throw error;
@@ -99,6 +122,8 @@ async function loadOrCreateAssistant() {
           instructions:
             "Responde con base únicamente en los documentos cargados. Si no hay información suficiente, indícalo sin inventar datos.",
         },
+        timeoutMs,
+        deadlineAt,
       });
     } catch (createError) {
       if (Number(createError?.status) !== 409 && Number(createError?.status) !== 429) {
@@ -106,16 +131,25 @@ async function loadOrCreateAssistant() {
       }
       assistant = await requestJson(
         `${CONTROL_URL}/assistants/${encodedName}`,
+        { timeoutMs, deadlineAt },
       );
     }
   }
 
   let status = String(assistant?.status || "");
-  const readyDeadline = Date.now() + ASSISTANT_READY_TIMEOUT_MS;
+  const readyDeadline = Math.min(
+    deadlineAt,
+    Date.now() + ASSISTANT_READY_TIMEOUT_MS,
+  );
   while (status === "Initializing" && Date.now() < readyDeadline) {
-    await new Promise((resolve) => setTimeout(resolve, ASSISTANT_POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(
+      resolve,
+      Math.min(ASSISTANT_POLL_INTERVAL_MS, Math.max(1, readyDeadline - Date.now())),
+    ));
+    if (Date.now() >= readyDeadline) break;
     assistant = await requestJson(
       `${CONTROL_URL}/assistants/${encodedName}`,
+      { timeoutMs, deadlineAt: readyDeadline },
     );
     status = String(assistant?.status || "");
   }
@@ -137,13 +171,27 @@ async function loadOrCreateAssistant() {
   };
 }
 
-export async function getPineconeAssistant() {
+export async function getPineconeAssistant({
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  deadlineAt = Date.now() + timeoutMs,
+} = {}) {
   getApiKey();
+  if (assistantCache) return assistantCache;
+  if (timeoutMs < REQUEST_TIMEOUT_MS) {
+    const assistant = await loadOrCreateAssistant(timeoutMs, deadlineAt);
+    assistantCache = assistant;
+    return assistant;
+  }
   if (!assistantPromise) {
-    assistantPromise = loadOrCreateAssistant().catch((error) => {
-      assistantPromise = null;
-      throw error;
-    });
+    assistantPromise = loadOrCreateAssistant(timeoutMs, deadlineAt)
+      .then((assistant) => {
+        assistantCache = assistant;
+        return assistant;
+      })
+      .catch((error) => {
+        assistantPromise = null;
+        throw error;
+      });
   }
   return assistantPromise;
 }
@@ -183,8 +231,14 @@ export async function deleteRagFile(fileId) {
   );
 }
 
-export async function retrieveRagContext({ query, filter, topK = 6 }) {
-  const assistant = await getPineconeAssistant();
+export async function retrieveRagContext({
+  query,
+  filter,
+  topK = 6,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+}) {
+  const deadlineAt = Date.now() + timeoutMs;
+  const assistant = await getPineconeAssistant({ timeoutMs, deadlineAt });
   const payload = await requestJson(
     `${assistant.host}/assistant/chat/${encodeURIComponent(assistant.name)}/context`,
     {
@@ -195,6 +249,8 @@ export async function retrieveRagContext({ query, filter, topK = 6 }) {
         snippet_size: 1200,
         ...(filter ? { filter } : {}),
       },
+      timeoutMs,
+      deadlineAt,
     },
   );
   return Array.isArray(payload?.snippets) ? payload.snippets : [];

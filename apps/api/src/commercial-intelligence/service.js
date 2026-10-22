@@ -52,6 +52,7 @@ import {
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
 import {
   classifyCustomerRequestB3,
+  isGeneralCustomerSalesProcessQuestion,
   resolveCustomerIntentB3,
 } from "./customer-intent-classification.js";
 import {
@@ -373,6 +374,56 @@ export async function classifyCustomerIntent(input = {}) {
   const classifierPrompt = await loadSemanticClassifierPrompt({
     channel: "customer_account",
   });
+  const hasGuidanceIntent = (Array.isArray(input.intents) ? input.intents : [])
+    .some((intent) => intent?.code === "opportunity_guidance" && intent.enabled !== false);
+  if (hasGuidanceIntent && isGeneralCustomerSalesProcessQuestion(input.question)) {
+    const turnContractEnabled = customerTurnContractEnabled(
+      config.features,
+      input.user?.id,
+    );
+    const turnContract = turnContractEnabled
+      ? {
+          version: 1,
+          movement: "new_request",
+          resolution: "resolved",
+          clarificationQuestion: "",
+          confidence: "high",
+          components: [{
+            id: "c1",
+            category: "guidance.strategy",
+            text: String(input.question).trim(),
+            object: "general",
+            topic: "",
+            scope: "none",
+            reference: "",
+            attribution: "none",
+            certainty: "unspecified",
+            explicitAction: false,
+            dependsOn: [],
+            continuationOf: "none",
+          }],
+        }
+      : null;
+    return {
+      intent: "opportunity_guidance",
+      confidence: 0.95,
+      requiresClarification: false,
+      clarificationQuestion: "",
+      reason: "Consulta general explícita sobre el proceso de ventas",
+      ...(turnContract ? { turnContract } : {}),
+      source: {
+        resolver: "deterministic_sales_process_question",
+        ...(turnContractEnabled
+          ? { providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION }
+          : {}),
+        classifierPrompt: {
+          channel: classifierPrompt.channel,
+          version: classifierPrompt.version,
+          source: classifierPrompt.source,
+        },
+      },
+    };
+  }
   if (customerTurnContractEnabled(config.features, input.user?.id)) {
     const contract = await interpretCustomerTurn({ ...input, classifierPrompt });
     const primary = contract.components[0] ? customerComponentCapability(contract.components[0]) : null;
@@ -4660,6 +4711,22 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
             event.label === "Validar routing y aplicar políticas" &&
             event.phase === "return",
         );
+        const documentKnowledgeEvent = [...executionTrace.events].reverse().find(
+          (event) =>
+            event.label === "Recuperar conocimiento documental" &&
+            event.phase === "return",
+        );
+        const documentKnowledgeStatus =
+          documentKnowledgeEvent?.status === "failed"
+            ? "error"
+            : documentKnowledgeEvent?.output?.status ||
+              qualityTrace?.diagnostics?.documentKnowledge?.status ||
+              "not_reached";
+        const documentKnowledgeCount = Number(
+          documentKnowledgeEvent?.output?.snippetsCount ||
+            qualityTrace?.diagnostics?.documentKnowledge?.snippetsCount ||
+            0,
+        );
         const engineInputSummary = {
           channel: adapter.channel,
           jobId: Number(jobId),
@@ -5057,6 +5124,48 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
               ],
             },
             {
+              block: "B12",
+              label: "Recuperación documental",
+              status: documentKnowledgeStatus,
+              input: {
+                requested: Boolean(documentKnowledgeEvent?.input?.requested),
+              },
+              output: {
+                status: documentKnowledgeStatus,
+                snippetsCount: documentKnowledgeCount,
+              },
+              checks: [
+                diagnosticCheck({
+                  field: "retrievalStatus",
+                  state: documentKnowledgeStatus === "error"
+                    ? "warning"
+                    : documentKnowledgeStatus === "not_reached"
+                      ? "not_checked"
+                      : documentKnowledgeStatus === "not_applicable"
+                        ? "not_applicable"
+                        : "pass",
+                  expected: "recuperación acotada, omisión justificada o fallback controlado",
+                  actual: {
+                    status: documentKnowledgeStatus,
+                    snippetsCount: documentKnowledgeCount,
+                  },
+                  message: documentKnowledgeStatus === "error"
+                    ? "Pinecone no respondió; el turno continuó sin evidencia documental."
+                    : documentKnowledgeStatus === "results"
+                      ? "Se recuperó conocimiento documental, separado de la evidencia CRM."
+                      : documentKnowledgeStatus === "no_results"
+                        ? "La búsqueda no encontró fragmentos documentales pertinentes."
+                        : documentKnowledgeStatus === "not_applicable"
+                          ? "La intención no requiere consultar documentación."
+                          : documentKnowledgeStatus === "not_configured"
+                            ? "Pinecone no está configurado; el turno continuó sin evidencia documental."
+                            : documentKnowledgeStatus === "no_documents"
+                              ? "No hay documentos activos disponibles para recuperar."
+                              : "La recuperación documental no se alcanzó.",
+                }),
+              ],
+            },
+            {
               block: "B7",
               label: "Read model del canal",
               status: evidenceDiagnostics ? "completed" : "not_reached",
@@ -5322,6 +5431,10 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
             { from: "B4", to: "B5", kind: "call", label: "invoca y espera" },
             { from: "B5", to: "B6", kind: "call", label: "solicita plan" },
             { from: "B6", to: "B5", kind: "return", label: "devuelve plan" },
+            { from: "B5", to: "B12", kind: "call", label: "consulta conocimiento documental si aplica" },
+            { from: "B12", to: "B5", kind: "return", label: "devuelve fragmentos acotados o estado" },
+            { from: "B4", to: "B12", kind: "call", label: "recuperación en contrato estructurado" },
+            { from: "B12", to: "B4", kind: "return", label: "devuelve contexto al contrato" },
             { from: "B5", to: "B7", kind: "call", label: "prepara lecturas" },
             { from: "B7", to: "B8", kind: "call", label: "ejecuta lecturas" },
             {

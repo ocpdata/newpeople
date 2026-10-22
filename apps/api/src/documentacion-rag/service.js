@@ -836,6 +836,49 @@ export async function retrieveDocumentacionRagEvidence({ prompt }) {
     .filter((snippet) => snippet.content);
 }
 
+export async function retrieveCustomerChatDocumentKnowledge({ prompt }) {
+  if (!isPineconeConfigured()) {
+    return { status: "not_configured", snippets: [] };
+  }
+  await ensureDocumentacionRagSchema();
+  const rows = await query(
+    `SELECT d.public_id, d.active_version_id
+     FROM documentacion_rag_documents d
+     INNER JOIN documentacion_rag_topics t ON t.id = d.topic_id
+     WHERE d.status IN ('available', 'replacing')
+       AND d.active_file_id IS NOT NULL
+       AND d.active_version_id IS NOT NULL
+       AND t.is_active = 1
+     ORDER BY d.updated_at DESC
+     LIMIT 200`,
+  );
+  if (!rows.length) return { status: "no_documents", snippets: [] };
+  const filter = {
+    $or: rows.map((row) => ({
+      $and: [
+        { document_id: { $eq: String(row.public_id) } },
+        { version_id: { $eq: String(row.active_version_id) } },
+      ],
+    })),
+  };
+  const snippets = await retrieveRagContext({
+    query: String(prompt || "").slice(0, 2000),
+    filter,
+    topK: 5,
+    timeoutMs: 8_000,
+  });
+  const evidence = snippets
+    .map((snippet) => ({
+      content: String(snippet?.content || "").trim().slice(0, 3000),
+      score: Number(snippet?.score || 0),
+    }))
+    .filter((snippet) => snippet.content);
+  return {
+    status: evidence.length ? "results" : "no_results",
+    snippets: evidence,
+  };
+}
+
 export function getDocumentacionRagUploadLimits() {
   return {
     maxFileBytes: Number.isFinite(MAX_FILE_SIZE_BYTES)

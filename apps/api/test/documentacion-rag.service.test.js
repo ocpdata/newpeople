@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { config, queryMock, retrieveRagContextMock } = vi.hoisted(() => ({
+const {
+  config,
+  queryMock,
+  retrieveRagContextMock,
+  isPineconeConfiguredMock,
+} = vi.hoisted(() => ({
   config: {
     pinecone: {
       apiKey: "test-api-key",
@@ -10,6 +15,7 @@ const { config, queryMock, retrieveRagContextMock } = vi.hoisted(() => ({
   },
   queryMock: vi.fn(),
   retrieveRagContextMock: vi.fn(),
+  isPineconeConfiguredMock: vi.fn(() => true),
 }));
 
 vi.mock("../src/config.js", () => ({ config }));
@@ -26,7 +32,7 @@ vi.mock("../src/documentacion-rag/pinecone.js", () => ({
   deleteRagFile: vi.fn(),
   describeRagOperation: vi.fn(),
   generateRagDocumentSummary: vi.fn(),
-  isPineconeConfigured: vi.fn(() => true),
+  isPineconeConfigured: isPineconeConfiguredMock,
   retrieveRagContext: retrieveRagContextMock,
   uploadRagFile: vi.fn(),
 }));
@@ -35,6 +41,7 @@ describe("Documentación RAG retrieval", () => {
   beforeEach(() => {
     queryMock.mockReset();
     retrieveRagContextMock.mockReset();
+    isPineconeConfiguredMock.mockReset().mockReturnValue(true);
   });
 
   it("limita la recuperación a documentos y versiones activas en temas activos", async () => {
@@ -88,6 +95,57 @@ describe("Documentación RAG retrieval", () => {
     await expect(
       retrieveDocumentacionRagEvidence({ prompt: "Consulta" }),
     ).resolves.toEqual([]);
+    expect(retrieveRagContextMock).not.toHaveBeenCalled();
+  });
+
+  it("recupera conocimiento para Cliente existente con estado y límites explícitos", async () => {
+    queryMock.mockResolvedValue([
+      { public_id: "doc-active", active_version_id: "version-active" },
+    ]);
+    retrieveRagContextMock.mockResolvedValue([
+      { content: "Proceso de ventas", score: 0.91, reference: { file: { id: "private-id" } } },
+    ]);
+    const { retrieveCustomerChatDocumentKnowledge } = await import(
+      "../src/documentacion-rag/service.js"
+    );
+
+    await expect(
+      retrieveCustomerChatDocumentKnowledge({ prompt: "¿Cuál es el proceso comercial?" }),
+    ).resolves.toEqual({
+      status: "results",
+      snippets: [{ content: "Proceso de ventas", score: 0.91 }],
+    });
+    expect(retrieveRagContextMock).toHaveBeenCalledWith(expect.objectContaining({
+      query: "¿Cuál es el proceso comercial?",
+      topK: 5,
+      timeoutMs: 8_000,
+      filter: {
+        $or: [{
+          $and: [
+            { document_id: { $eq: "doc-active" } },
+            { version_id: { $eq: "version-active" } },
+          ],
+        }],
+      },
+    }));
+    expect(JSON.stringify(retrieveRagContextMock.mock.results)).not.toContain("private-id");
+  });
+
+  it("distingue Pinecone no configurado y ausencia de documentos activos", async () => {
+    const { retrieveCustomerChatDocumentKnowledge } = await import(
+      "../src/documentacion-rag/service.js"
+    );
+    isPineconeConfiguredMock.mockReturnValue(false);
+    await expect(
+      retrieveCustomerChatDocumentKnowledge({ prompt: "Consulta" }),
+    ).resolves.toEqual({ status: "not_configured", snippets: [] });
+    expect(queryMock).not.toHaveBeenCalled();
+
+    isPineconeConfiguredMock.mockReturnValue(true);
+    queryMock.mockResolvedValue([]);
+    await expect(
+      retrieveCustomerChatDocumentKnowledge({ prompt: "Consulta" }),
+    ).resolves.toEqual({ status: "no_documents", snippets: [] });
     expect(retrieveRagContextMock).not.toHaveBeenCalled();
   });
 });

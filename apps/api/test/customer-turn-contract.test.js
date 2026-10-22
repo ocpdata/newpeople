@@ -77,6 +77,41 @@ describe("Customer turn contract", () => {
     expect(generateWithAI.mock.calls[0][0].context.dependencyResults).toEqual(dependencyResults);
     expect(generateWithAI.mock.calls[1][0].context.dependencyResults).toEqual(dependencyResults);
   });
+  it("keeps retrieved document fragments separate from CRM evidence in content generation and audit", async () => {
+    const documentKnowledge = {
+      status: "results",
+      snippets: [{ content: "La solución incluye protección de APIs.", score: 0.9 }],
+    };
+    const readToolResults = [{
+      toolName: "getOpportunityQuotation",
+      result: { products: ["WAF"] },
+    }];
+    const generateWithAI = vi.fn()
+      .mockResolvedValueOnce({ answer: "La solución puede ayudar a proteger APIs; validemos el alcance para esta oportunidad." })
+      .mockResolvedValueOnce({ approved: "yes" });
+
+    await generateCustomerContent({
+      component: component("content.value_argument", { text: "Prepara un argumento de valor" }),
+      question: "Prepara un argumento de valor para esta oportunidad",
+      readToolResults,
+      history: [],
+      documentKnowledge,
+      user: { id: 1 },
+      jobId: 0,
+      generateWithAI,
+    });
+
+    for (const [request] of generateWithAI.mock.calls) {
+      expect(request.context.evidence).toEqual(readToolResults);
+      expect(request.context.documentKnowledge).toEqual(documentKnowledge);
+      expect(request.systemPrompt).toContain("documentKnowledge");
+      expect(request.systemPrompt).toContain(
+        request.schemaName === "customer_account_content_audit"
+          ? "no hechos de cuenta"
+          : "nunca su adopción",
+      );
+    }
+  });
   it("keeps a quotation summary separate from discovery questions in a mixed request", async () => {
     const result = await interpretCustomerTurn({
       question: "Resume la cotización 18, pero no incluyas costos ni márgenes; luego prepara dos preguntas para Kimberly",
@@ -253,6 +288,21 @@ describe("Customer turn contract", () => {
       expect(result.components[0].trendSpec).toEqual({ metric: "financial" });
     }
     expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("no query.account_summary");
+  });
+  it("routes a general sales-process question to strategy instead of an account summary", async () => {
+    const result = await interpretCustomerTurn({
+      question: "¿Cómo es el proceso de ventas?",
+      classifierPrompt: { instruction: "" }, snapshot,
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.account_summary", { object: "account", reference: "" }),
+      ])),
+    });
+    expect(result.components[0]).toMatchObject({
+      category: "guidance.strategy",
+      object: "general",
+      text: "¿Cómo es el proceso de ventas?",
+      reference: "",
+    });
   });
   it.each([
     ["¿La relación con Totalplay está sana porque tiene oportunidades ganadas?", "guidance.situation_assessment"],

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1580" viewBox="0 0 1600 1580" role="img" aria-labelledby="title description">
-  <title id="title">Flujo conversacional y responsabilidades B1 a B11</title>
-  <desc id="description">B1 crea el job con B2 y consulta su estado mientras B3 procesa el turno. B3 valida y prepara contexto; Coach usa preclasificador, clasificador semántico y resolver, mientras Cliente existente usa señales de contenido/operación, clasificador semántico y resolver propios. B4 adapta el canal; B5 entrega la intención autoritativa a B6 y valida que el plan sea compatible antes de coordinar lecturas B7/B8, verificación B9 y respuesta B10. B9 puede pedir otra lectura. El resultado regresa por B4 a B3, que ejecuta la persistencia B11; B2 lo entrega a B1 cuando consulta el job.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1680" viewBox="0 0 1600 1680" role="img" aria-labelledby="title description">
+  <title id="title">Flujo conversacional y responsabilidades B1 a B12</title>
+  <desc id="description">B1 crea el job con B2 y consulta su estado mientras B3 procesa el turno. B3 valida y prepara contexto; Coach usa preclasificador, clasificador semántico y resolver, mientras Cliente existente usa señales de contenido/operación, clasificador semántico y resolver propios. B4 adapta el canal; B5 valida el plan de B6, consulta B12 para recuperar conocimiento documental pertinente y coordina lecturas B7/B8, verificación B9 y respuesta B10. Los fragmentos de B12 se mantienen separados de CRM; B9 puede pedir otra lectura. El resultado regresa por B4 a B3, que ejecuta la persistencia B11; B2 lo entrega a B1 cuando consulta el job.</desc>
   <defs>
     <marker id="arrow-flow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
       <path d="M0 0 L10 5 L0 10 z" fill="#496579"/>
@@ -33,7 +33,7 @@
     </style>
   </defs>
 
-  <rect class="canvas" width="1600" height="1580" rx="18"/>
+  <rect class="canvas" width="1600" height="1680" rx="18"/>
   <text class="title" x="48" y="58">Flujo conversacional por responsabilidades</text>
   <text class="subtitle" x="48" y="88">La interfaz sondea el job en paralelo; dentro del servidor, B5 coordina ramas de planificación, lecturas y evidencia.</text>
 
@@ -90,7 +90,7 @@
   </text>
   <path class="edge" d="M435 522 V532"/>
 
-  <rect class="engine" x="40" y="665" width="1520" height="690"/>
+  <rect class="engine" x="40" y="665" width="1520" height="790"/>
   <text class="engine-title" x="72" y="710">B5 · Motor conversacional</text>
   <text class="node-copy" x="72" y="738">Recibe la configuración de B4, coordina el turno y devuelve el resultado a B4.</text>
 
@@ -99,6 +99,12 @@
   <text class="node-copy" x="126" y="860">
     <tspan x="126" dy="0">Planifica según la intención resuelta por B3.</tspan>
     <tspan x="126" dy="22">No ejecuta consultas ni concede permisos.</tspan>
+  </text>
+  <rect class="node" x="100" y="950" width="420" height="100" fill="#f2edfa" stroke="#a28ac7"/>
+  <text class="node-title" x="126" y="982">B12 · Conocimiento documental</text>
+  <text class="node-small" x="126" y="1008">
+    <tspan x="126" dy="0">Fragmentos activos para consultas pertinentes;</tspan>
+    <tspan x="126" dy="18">separados de CRM, con fallback controlado.</tspan>
   </text>
   <rect class="node" x="590" y="790" width="420" height="145" fill="#eaf5f3" stroke="#87b7ad"/>
   <text class="node-title" x="616" y="827">B7 · Read model</text>
@@ -126,44 +132,51 @@
   <rect class="label-bg" x="1010" y="954" width="174" height="22"/>
   <text class="edge-label" x="1021" y="969">B8 devuelve resultados</text>
 
-  <rect class="node" x="280" y="1055" width="470" height="170" fill="#eaf5f3" stroke="#87b7ad"/>
-  <text class="node-title" x="306" y="1093">B9 · Verificador de evidencia</text>
-  <text class="node-copy" x="306" y="1127">
+  <rect class="node" x="280" y="1185" width="470" height="170" fill="#eaf5f3" stroke="#87b7ad"/>
+  <text class="node-title" x="306" y="1223">B9 · Verificador de evidencia</text>
+  <text class="node-copy" x="306" y="1257">
     <tspan x="306" dy="0">Determina si las lecturas respaldan lo pedido.</tspan>
     <tspan x="306" dy="22">Puede pedir otra lectura autorizada o aclarar.</tspan>
   </text>
-  <rect class="node" x="850" y="1055" width="470" height="170" fill="#eaf1e7" stroke="#9ab78d"/>
-  <text class="node-title" x="876" y="1093">B10 · Respuesta</text>
-  <text class="node-copy" x="876" y="1127">
+  <rect class="node" x="850" y="1185" width="470" height="170" fill="#eaf1e7" stroke="#9ab78d"/>
+  <text class="node-title" x="876" y="1223">B10 · Respuesta</text>
+  <text class="node-copy" x="876" y="1257">
     <tspan x="876" dy="0">Redacta con evidencia; en Coach, audita</tspan>
     <tspan x="876" dy="22">sus afirmaciones antes de volver a B5.</tspan>
   </text>
 
-  <path class="edge" d="M800 980 V1018 H515 V1045"/>
-  <text class="edge-label" x="572" y="1010">evidencia acumulada</text>
-  <path class="edge" d="M750 1135 H840"/>
-  <text class="edge-label" x="758" y="1119">suficiente</text>
-  <path class="loop" d="M280 1140 H205 V860 H580"/>
-  <rect class="label-bg" x="90" y="977" width="105" height="39"/>
-  <text class="edge-label" x="99" y="993">falta dato:</text>
-  <text class="edge-label" x="99" y="1008">otra lectura</text>
-  <path class="loop" d="M850 1190 H800 V1260 H515 V1235"/>
-  <rect class="label-bg" x="657" y="1239" width="165" height="22"/>
-  <text class="edge-label" x="668" y="1254">auditoría Coach: B10→B9</text>
-  <path class="return" d="M1085 1055 V1025 H1400 V755 H1448"/>
-  <rect class="label-bg" x="1195" y="1005" width="152" height="22"/>
-  <text class="edge-label" x="1206" y="1020">respuesta a B5/B4</text>
+  <path class="edge" d="M80 765 V1000 H90"/>
+  <rect class="label-bg" x="83" y="888" width="150" height="22"/>
+  <text class="edge-label" x="93" y="903">B5 consulta si aplica</text>
+  <path class="return" d="M520 1000 H550 V765 H760"/>
+  <rect class="label-bg" x="535" y="888" width="160" height="22"/>
+  <text class="edge-label" x="545" y="903">estado / fragmentos</text>
+  <path class="edge" d="M800 980 V1120 H515 V1175"/>
+  <text class="edge-label" x="572" y="1106">evidencia acumulada</text>
+  <path class="edge" d="M750 1265 H840"/>
+  <text class="edge-label" x="758" y="1249">suficiente</text>
+  <path class="loop" d="M280 1270 H60 V860 H580"/>
+  <rect class="label-bg" x="72" y="1080" width="105" height="39"/>
+  <text class="edge-label" x="81" y="1096">falta dato:</text>
+  <text class="edge-label" x="81" y="1111">otra lectura</text>
+  <path class="loop" d="M850 1320 H800 V1390 H515 V1365"/>
+  <rect class="label-bg" x="657" y="1369" width="165" height="22"/>
+  <text class="edge-label" x="668" y="1384">auditoría Coach: B10→B9</text>
+  <path class="return" d="M1085 1185 V1155 H1400 V755 H1448"/>
+  <rect class="label-bg" x="1195" y="1135" width="152" height="22"/>
+  <text class="edge-label" x="1206" y="1150">respuesta a B5/B4</text>
 
-  <path class="return" d="M1548 1280 V530 H1478"/>
+  <path class="return" d="M1548 1410 V530 H1478"/>
   <rect class="label-bg" x="1350" y="620" width="152" height="22"/>
   <text class="edge-label" x="1361" y="635">B5 → B4 → B3</text>
 
-  <rect x="64" y="1400" width="16" height="4" rx="2" fill="#496579"/>
-  <text class="legend" x="88" y="1405">Llamada / paso del flujo</text>
-  <rect x="290" y="1400" width="16" height="4" rx="2" fill="#187b70"/>
-  <text class="legend" x="314" y="1405">Retorno de resultados</text>
-  <rect x="520" y="1400" width="16" height="4" rx="2" fill="#ae7418"/>
-  <text class="legend" x="544" y="1405">Reintento acotado / auditoría</text>
-  <text class="note" x="64" y="1450">B11 es una tarea de B3. B2 expone el job persistido; B1 sondea y muestra su resultado.</text>
-  <text class="node-small" x="64" y="1480">Las flechas muestran la responsabilidad lógica. Algunos adaptadores agrupan preparación y lecturas en una llamada de código.</text>
+  <rect x="64" y="1550" width="16" height="4" rx="2" fill="#496579"/>
+  <text class="legend" x="88" y="1555">Llamada / paso del flujo</text>
+  <rect x="290" y="1550" width="16" height="4" rx="2" fill="#187b70"/>
+  <text class="legend" x="314" y="1555">Retorno de resultados</text>
+  <rect x="520" y="1550" width="16" height="4" rx="2" fill="#ae7418"/>
+  <text class="legend" x="544" y="1555">Reintento acotado / auditoría</text>
+  <text class="note" x="64" y="1600">B11 es una tarea de B3. B2 expone el job persistido; B1 sondea y muestra su resultado.</text>
+  <text class="node-small" x="64" y="1630">B12 devuelve solo fragmentos pertinentes; en el contrato estructurado de Cliente existente B4 puede invocarlo directamente.</text>
+  <text class="node-small" x="64" y="1655">Las flechas muestran la responsabilidad lógica. Algunos adaptadores agrupan preparación y lecturas en una llamada de código.</text>
 </svg>

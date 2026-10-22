@@ -7,6 +7,14 @@ function normalizeQuestion(value = "") {
     .trim();
 }
 
+export function isGeneralCustomerSalesProcessQuestion(question = "") {
+  const text = normalizeQuestion(question);
+  return /\b(?:como es|cual es|explica|describe|que etapas tiene)\b[\s\S]{0,80}\b(?:proceso de ventas?|proceso comercial|metodologia de ventas?)\b/
+    .test(text) &&
+    !/\b(?:esta|la)\s+(?:cuenta|oportunidad|cotizacion)\b|\bpara\s+(?:esta|la)\s+(?:cuenta|oportunidad)\b/
+      .test(text);
+}
+
 const EMAIL_CONTENT_PATTERN = /\b(correo|email|mail)\b/;
 const DRAFT_CONTENT_PATTERN =
   /\b(correo|email|mail|mensaje|documento|archivo|resumen|texto|guion|plantilla)\b/;

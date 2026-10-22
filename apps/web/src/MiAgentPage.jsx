@@ -129,6 +129,10 @@ const CUSTOMER_CHAT_DEBUG_GUIDE = {
     purpose: "Guarda respuesta, historial y contexto del siguiente turno.",
     check: "Si el contexto se recalculó o se conservó.",
   },
+  B12: {
+    purpose: "Recupera fragmentos documentales solo para preguntas pertinentes.",
+    check: "Estado y cantidad recuperada; nunca muestra el texto ni IDs documentales.",
+  },
 };
 
 const CUSTOMER_CHAT_DEBUG_STATUS_LABELS = {
@@ -143,6 +147,10 @@ const CUSTOMER_CHAT_DEBUG_STATUS_LABELS = {
   query_error: "Falló una consulta",
   query_limit_reached: "Límite de consultas",
   insufficient_evidence: "Falta evidencia",
+  results: "Fragmentos recuperados",
+  not_applicable: "No aplica",
+  not_configured: "Pinecone no configurado",
+  no_documents: "Sin documentos activos",
   timeout: "Tiempo agotado",
   verification_unavailable: "Verificación no disponible",
   verification_error: "Falló la verificación",
@@ -334,6 +342,13 @@ function summarizeCustomerChatDebugStep(item) {
         input: `Job ${input.jobId || "?"} y sesión ${input.chatSessionId || "?"}.`,
         output: `Job ${output.jobStatus || "sin estado"}; ${output.historyMessageCount || 0} mensajes guardados; contexto ${output.contextDisposition || "sin dato"}.`,
       };
+    case "B12":
+      return {
+        input: input.requested
+          ? "B5 solicitó conocimiento documental para esta intención."
+          : "La intención no requiere consultar documentos.",
+        output: `Recuperación ${CUSTOMER_CHAT_DEBUG_STATUS_LABELS[output.status] || output.status || "no alcanzada"}; ${output.snippetsCount || 0} fragmentos. El contenido documental no se expone en este diagnóstico.`,
+      };
     default:
       return {
         input: "Entrada disponible en los detalles JSON.",
@@ -362,6 +377,7 @@ const CUSTOMER_CHAT_DEBUG_EXPECTED_BLOCKS = [
   "B9",
   "B10",
   "B11",
+  "B12",
 ];
 
 function CustomerChatDebugStep({ item, issueBlock, traceId }) {
@@ -801,7 +817,7 @@ function CustomerChatDetailedTrace({ debug, transportTrace }) {
           )}
         </section>
         <section>
-          <h4>Worker · B2 → B11</h4>
+          <h4>Worker · B2 → B12</h4>
           {workerSpans.length ? (
             <ol>
               {renderedWorkerSpans.map((span) => (
@@ -1038,6 +1054,11 @@ function CustomerChatDebugFlow({ debug, transportTrace }) {
                 "despacha el job en segundo plano",
               )}
             />
+          </section>
+
+          <section className="mi-agent-customer-chat-debug-subflow">
+            <h4>Conocimiento documental: B5 o el contrato de B4 consulta B12</h4>
+            {renderStep("B12")}
           </section>
 
           <section className="mi-agent-customer-chat-debug-scope is-service">
@@ -7179,7 +7200,7 @@ export default function MiAgentPage({
                         {job.debug ? (
                           <details className="mi-agent-customer-chat-debug">
                             <summary>
-                              Diagnóstico B1–B11 ·{" "}
+                              Diagnóstico B1–B12 ·{" "}
                               {job.debug.issue?.block || "Sin bloque señalado"}
                             </summary>
                             <CustomerChatDebugFlow debug={job.debug} />

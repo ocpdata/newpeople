@@ -2116,6 +2116,11 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
   const asksForRewrite = /\b(?:reescribe|reescribir|reformula|reformular|hazlo|hazla|h[aá]galo|h[aá]gala)\b[\s\S]{0,40}\b(?:corto|breve|formal|director|claro)\b|\b(?:mas corto|mas breve|mas formal|para un director|reescribe|reformula)\b/i
     .test(normalizedQuestion);
   const asksForTranslation = /\b(?:traduce|traducir|traduccion|translate|translated)\b/i.test(normalizedQuestion);
+  const asksForGeneralSalesProcess =
+    /\b(?:como es|cual es|explica|describe|que etapas tiene)\b[\s\S]{0,80}\b(?:proceso de ventas?|proceso comercial|metodologia de ventas?)\b/i
+      .test(normalizedQuestion) &&
+    !/\b(?:esta|la)\s+(?:cuenta|oportunidad|cotizacion)\b|\bpara\s+(?:esta|la)\s+(?:cuenta|oportunidad)\b/i
+      .test(normalizedQuestion);
   const unsupportedReturnClaim = /\b(?:afirma|asegura|promete|di que|declara)\b[\s\S]{0,80}\b(?:recuper\w*\s+(?:la\s+)?inversion|roi|retorno de inversion)\b[\s\S]{0,60}\b(?:(?:\d+|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*(?:mes(?:es)?|a[nñ]os?|semanas?))\b/i
     .test(normalizedQuestion);
   const preMeetingDiscoveryQuestion = /\b(?:que debo|que deberia|que conviene|que necesito)\b[\s\S]{0,45}\bconfirmar\b[\s\S]{0,55}\b(?:reunion|reunirme|juntarme)\b/i
@@ -2163,6 +2168,12 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
   const normalizedComponents = parsed.data.components.map((item) => {
     const componentText = normalizeIntentText(item.text);
     const componentRequestsQuestions = /\b(?:preguntas?|cuestiones)\b/.test(componentText);
+    if (asksForGeneralSalesProcess && item.category === "query.account_summary") {
+      return {
+        ...item, category: "guidance.strategy", object: "general",
+        text: String(question || "").trim(), reference: "", explicitAction: false,
+      };
+    }
     if (asksForDiscoveryQuestions &&
         (parsed.data.components.length === 1 || componentRequestsQuestions)) {
       return {
