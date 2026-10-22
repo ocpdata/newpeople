@@ -2038,10 +2038,13 @@ describe("Customer contract B6/B9/B10 integration", () => {
 
   describe("Q01 useful account summary", () => {
     const summarySnapshot = { ...snapshot, permissions: { ...snapshot.permissions, canReadOpportunityActivities: true } };
-    it("returns a concise, call-oriented brief when the seller is preparing to call", async () => {
+    it.each(["Ponme al día en cinco puntos antes de llamar",
+      "Tengo dos minutos antes de llamar; ¿qué debo saber del cliente?",
+      "Antes de llamar, que debo saber del cliente",
+    ])("returns a concise, call-oriented brief for: %s", async (question) => {
       const result = await adapter([makeComponent("query.account_summary", "account", {
         reference: snapshot.account.name,
-      })], { snapshot: summarySnapshot }).runTurn({ question: "Ponme al día en cinco puntos antes de llamar", context: { accountId: 9001 } });
+      })], { snapshot: summarySnapshot }).runTurn({ question, context: { accountId: 9001 } });
       expect(result.response.responseType).toBe("informational");
       expect(result.response.accountSummary.summaryMode).toBe("call_brief");
       expect(result.response.answer).toContain("Antes de llamar");
@@ -2054,6 +2057,16 @@ describe("Customer contract B6/B9/B10 integration", () => {
       expect(result.response.answer.length).toBeLessThan(1200);
       expect(result.response.answer).toContain("Renovación Alfa");
       expect(result.qualityTrace.toolsUsed).toEqual(["searchOpportunities", "searchContacts", "getOpportunityActivities"]);
+      expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it("does not describe account contacts as associated with nonexistent opportunities", async () => {
+      const result = await adapter([makeComponent("query.account_summary", "account")], {
+        snapshot: { ...summarySnapshot, opportunities: [], inactiveOpportunities: [] },
+      }).runTurn({ question: "Resume esta cuenta y sus oportunidades", context: { accountId: 9001 } });
+      expect(result.response.responseType).toBe("informational");
+      expect(result.response.answer).toContain("Contactos de la cuenta:");
+      expect(result.response.answer).not.toContain("Asociados a");
+      expect(result.response.answer).toContain("0 oportunidades abiertas");
       expect(runStructuredTextResearch).not.toHaveBeenCalled();
     });
     it("keeps the requested five-point format when not preparing for a call", async () => {
@@ -2143,7 +2156,7 @@ describe("Customer contract B6/B9/B10 integration", () => {
           };
           if (request.schemaName.endsWith("_audit")) return { approved: "yes" };
           if (request.schemaName === "customer_account_content") return {
-            answer: "¿Los cuatro equipos cubren sus necesidades? ¿Qué fecha de entrega necesitan?",
+            questions: ["¿Los cuatro equipos cubren sus necesidades?", "¿Qué fecha de entrega necesitan?"],
           };
           return originalGeneration(request);
         });
@@ -3809,6 +3822,56 @@ describe("Customer contract B6/B9/B10 integration", () => {
     expect(sourceTexts).toEqual([original, brief]);
     expect(runStructuredTextResearch.mock.calls.map(([request]) => request.schemaName))
       .toEqual(["customer_account_content", "customer_account_content_audit", "customer_account_content", "customer_account_content_audit"]);
+  });
+  it("translates the latest draft instead of inherited original material after reloading context", async () => {
+    const latest = "Versión breve aprobada para revisar.";
+    const part = makeComponent("content.translation", "general", {
+      text: "Tradúcelo al inglés", reference: "", continuationOf: "c1",
+    });
+    const memory = {
+      contract: makeContract([makeComponent("content.rewrite", "general", { reference: "" })]),
+      pendingComponentIds: [],
+      referenceMaterial: { name: "Original adjunto", text: "Texto original que no debe reaparecer.", coverage: "complete", truncated: false },
+    };
+    const history = appendCustomerAccountChatHistory([], "Hazlo breve", latest, {
+      components: [{ id: "c1", category: "content.rewrite", status: "completed" }],
+    });
+    runStructuredTextResearch.mockImplementation(async (request) =>
+      request.schemaName === "customer_account_content_audit" ? { approved: "yes" } : { answer: "Latest version." });
+    const create = (referenceMaterial = null) => adapter([part], {
+      referenceMaterial,
+      authoritativeIntent: { turnContract: makeContract([part], { movement: "modify_draft" }) },
+    });
+    const result = await create().runTurn({
+      question: part.text, context: { accountId: 9001 }, history,
+      conversationContext: { accountId: 9001, turnMemory: JSON.parse(JSON.stringify(memory)) },
+    });
+    expect(result.response.responseType).toBe("informational");
+    const request = runStructuredTextResearch.mock.calls.find(([item]) => item.schemaName === "customer_account_content")[0];
+    expect(request.context.referenceMaterial.text).toBe(latest);
+    expect(result.response.components[0].contentValidation).toMatchObject({
+      stage: "audit", reasonCode: "approved", attempts: 1, durationMs: expect.any(Number),
+    });
+    runStructuredTextResearch.mockClear();
+    await create({ name: "Nuevo.txt", text: "Nuevo texto explícito.", coverage: "complete", truncated: false }).runTurn({
+      question: part.text, context: { accountId: 9001 }, history,
+      conversationContext: { accountId: 9001, turnMemory: memory },
+    });
+    expect(runStructuredTextResearch.mock.calls.find(([item]) => item.schemaName === "customer_account_content")[0]
+      .context.referenceMaterial.text).toBe("Nuevo texto explícito.");
+  });
+  it("asks for the source instead of reaching past a query or a failed draft", async () => {
+    const part = makeComponent("content.translation", "general", { text: "Tradúcelo al inglés", reference: "" });
+    const history = appendCustomerAccountChatHistory([], "Redacta un correo", "Borrador antiguo", {
+      components: [{ id: "c1", category: "content.email_draft", status: "completed" }],
+    });
+    const changed = appendCustomerAccountChatHistory(history, "Dime su monto", "USD 500,000", {
+      components: [{ id: "c1", category: "query.field_value", status: "completed" }],
+    });
+    const result = await adapter([part]).runTurn({ question: part.text, context: { accountId: 9001 }, history: changed });
+    expect(result.response.responseType).toBe("clarification");
+    expect(result.response.answer).toContain("borrador");
+    expect(runStructuredTextResearch).not.toHaveBeenCalled();
   });
   it("preserves a report and its speaker correction when business evidence is required", async () => {
     const rules = getCoachBusinessRules({ channel: "customer_account" });

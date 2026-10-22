@@ -1259,7 +1259,10 @@ export function normalizeChannelIntentPlan({
               operationPolicyDenied && validOperationKind === "create_contact"
                 ? 'La política de Cliente existente no permite crear contactos. Un administrador debe habilitar "Crear contacto".'
                 : rawAmbiguity.question ||
-                  (invalidCandidateSelection || operationNeedsSingleTarget
+                  (unresolvedModelReference && referenceSource === "current_message" &&
+                    targetType === "contact" && literalCandidateMatches.length === 0
+                    ? "No encontré una coincidencia única para ese contacto entre los registros autorizados de esta cuenta. Revisa el nombre o indica cuál registro quieres consultar."
+                    : invalidCandidateSelection || operationNeedsSingleTarget
                     ? "No pude validar el registro seleccionado. Indica cuál registro quieres usar."
                     : ""),
             )

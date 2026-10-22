@@ -2,7 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import mysql from "mysql2/promise";
 const state = vi.hoisted(() => ({
   pool: null, chat: vi.fn(), snapshot: vi.fn(), actor: vi.fn(), metrics: vi.fn(), result: vi.fn(),
-  rules: vi.fn(), permissions: new Set(), model: "evaluation-test", failCreate: false,
+  rules: vi.fn(), library: vi.fn(), permissions: new Set(), model: "evaluation-test", failCreate: false,
+}));
+vi.mock("../src/customer-chat-evaluations/library-readiness.js", () => ({
+  getEvaluationLibraryReadiness: state.library,
 }));
 vi.mock("../src/db.js", () => ({
   pool: { getConnection: async () => state.pool.getConnection() },
@@ -66,7 +69,11 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
       opportunities: [{ id: 36, name: "Hardware Refresh", amountUsd: 500000 }], contacts: [] });
     state.actor.mockResolvedValue(user); state.metrics.mockReturnValue([]);
     state.rules.mockResolvedValue({ operationPolicy: {} });
-    state.result.mockResolvedValue({ status: "completed", result: { answer: "Respuesta de prueba", operations: [] } });
+    state.library.mockResolvedValue({ ready: true, eligibleDocuments: 1, reason: "Preparado localmente" });
+    state.result.mockResolvedValue({ status: "completed", result: {
+      answer: "1. Situación de cuenta.\n2. Contacto disponible.\n3. Oportunidades registradas.\n4. Seguimiento pendiente.\n5. Pipeline no equivale a ventas realizadas.",
+      responseType: "informational", operations: [],
+    } });
     state.chat.mockResolvedValue(undefined);
   });
   afterAll(async () => {
@@ -77,6 +84,20 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
   it("validates requests strictly and blocks missing paid-call consent", () => {
     expect(evaluationRequestSchema.safeParse({ requestKey: randomUUID() }).success).toBe(false);
     expect(evaluationRequestSchema.safeParse({ requestKey: randomUUID(), acknowledgePaidCalls: true, url: "http://elsewhere" }).success).toBe(false);
+  });
+  it("marks stale contact fixtures inconclusive without creating or executing a chat job", async () => {
+    const { id } = await launch({ caseIds: ["Q02-02", "Q03-03"] });
+    state.metrics.mockReturnValue([{ source: "contacts", truncated: false, errorCode: null }]);
+    await processPendingEvaluations();
+    const rows = await caseRows(id);
+    expect(rows.map((row) => row.status)).toEqual(["inconclusive", "inconclusive"]);
+    for (const row of rows) {
+      const result = typeof row.result_json === "string" ? JSON.parse(row.result_json) : row.result_json;
+      expect(result.reason).toContain("no coincide");
+      expect(result.referenceBefore.contacts).toEqual([]);
+      expect(row.job_id).toBeNull();
+    }
+    expect(state.chat).not.toHaveBeenCalled();
   });
   it("times out an unresolved chat explicitly and clears its deadline timer", async () => {
     vi.useFakeTimers();
@@ -151,7 +172,7 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     expect(detail.run.status).toBe("completed");
     expect(detail.counts).toEqual({ human_review: 1 });
     const item = await getEvaluationCase(user, id, detail.cases[0].id);
-    expect(item.result.steps[0].answer).toBe("Respuesta de prueba");
+    expect(item.result.steps[0].answer).toContain("Pipeline no equivale a ventas realizadas");
     expect(item.result.steps[0].jobId).toBe(100);
     expect(state.chat).toHaveBeenCalledExactlyOnceWith({ user, jobId: 100, deadlineAt: expect.any(Number) });
     expect(state.chat.mock.calls[0][0].deadlineAt).toBeLessThanOrEqual(Date.now() + 90000);
@@ -265,7 +286,7 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     expect(state.chat).not.toHaveBeenCalled();
   });
   it("records capability restrictions as inconclusive and gives actual failed-check reasons", async () => {
-    const { id } = await launch({ caseIds: ["Q01-01", "C01-01"] });
+    const { id } = await launch({ caseIds: ["Q03-02", "C01-01"] });
     state.result.mockResolvedValueOnce({ status: "completed", result: { answer: "Deshabilitado", operations: [],
       components: [{ status: "disabled" }] } }).mockResolvedValueOnce({ status: "completed",
       result: { answer: "Estimada Kimberly, confirmemos el siguiente paso.", operations: [] } });
@@ -360,6 +381,47 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     expect(result.model).toBe("evaluation-test");
     expect(state.chat).not.toHaveBeenCalled();
   });
+  it("omits positive RAG cases without paid calls when local preparation is missing", async () => {
+    state.library.mockResolvedValue({ ready: false, eligibleDocuments: 0, reason: "Importa BlueCat" });
+    const { id } = await launch({ caseIds: ["Q09-04"] });
+    await processPendingEvaluations();
+    expect((await getEvaluation(user, id)).counts).toEqual({ omitted: 1 });
+    const row = (await caseRows(id))[0];
+    const detail = await getEvaluationCase(user, id, row.id);
+    expect(detail.result.reason).toBe("Importa BlueCat");
+    expect(state.chat).not.toHaveBeenCalled();
+  });
+  it("keeps technical regressions visible but never submits them as commercial chat", async () => {
+    const { id } = await launch({ caseIds: ["K13", "K14", "K15", "K16", "K17", "K18"] });
+    await processPendingEvaluations();
+    expect((await getEvaluation(user, id)).counts).toEqual({ omitted: 6 });
+    expect(state.chat).not.toHaveBeenCalled();
+  });
+  it("treats failed RAG preparation reads as environment errors, not an empty library", async () => {
+    state.library.mockRejectedValue(new Error("Catalog read failed"));
+    const { id } = await launch({ caseIds: ["Q09-04"] });
+    await processPendingEvaluations();
+    expect((await getEvaluation(user, id)).counts).toEqual({ environment_error: 1 });
+    expect(state.chat).not.toHaveBeenCalled();
+  });
+  it("checks each new sequence step and persists its retrieval provenance", async () => {
+    for (const category of ["query.opportunity_notes", "query.field_value", "query.opportunity_notes"]) {
+      state.result.mockResolvedValueOnce({ status: "completed", result: {
+        answer: "Dato consultado", responseType: "informational", operations: [],
+        components: [{ category, status: "completed" }],
+        debug: { flow: [{ block: "B12", input: { requested: false },
+          output: { status: "not_applicable", snippetsCount: 0 } }] },
+      } });
+    }
+    const { id } = await launch({ caseIds: ["SEQ12"] });
+    await processPendingEvaluations();
+    expect((await getEvaluation(user, id)).counts).toEqual({ human_review: 1 });
+    const row = (await caseRows(id))[0];
+    const detail = await getEvaluationCase(user, id, row.id);
+    expect(detail.result.steps).toHaveLength(3);
+    expect(detail.result.steps.every((step) => step.documentRetrieval.output.snippetsCount === 0)).toBe(true);
+    expect(state.chat).toHaveBeenCalledTimes(3);
+  });
   it("exports all cases beyond a page without truncating the catalog", async () => {
     const { id } = await launch({ suite: "full", repetitions: 2, caseIds: [] });
     const detail = await getEvaluation(user, id);
@@ -371,7 +433,7 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
   async function prepareAction(kind = "opportunity_field") {
     const operation = { kind, accountId: 22, opportunityId: 36, title: "Acción de prueba", missingFields: [] };
     state.result.mockResolvedValue({ status: "completed", result: { answer: "Propuesta de prueba", operations: [operation] } });
-    const { id } = await launch(); await processPendingEvaluations();
+    const { id } = await launch({ caseIds: ["A02-01"] }); await processPendingEvaluations();
     const row = (await caseRows(id))[0];
     await reviewEvaluationCase(user, id, row.id, { decision: "approved", note: "Validado para ejecutar exclusivamente este registro" });
     const req = { user: { ...user, permissionSet: new Set([...user.permissionSet, "mi_coach.evaluations_write"]) },

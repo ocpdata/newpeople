@@ -262,7 +262,9 @@ esa comprobación sigue dependiendo del modelo.
 
 La revisión usa el mismo presupuesto de tiempo del turno; sin fecha límite
 explícita dispone de 45 segundos para interpretación, revisión y eventual
-reparación, con un máximo de 15 segundos por llamada. Los errores
+reparación, con un máximo de 30 segundos por llamada de clasificación, siempre
+acotado por el plazo restante del turno. No se reintenta automáticamente una
+llamada que agota ese plazo. Los errores
 `CUSTOMER_B3_REVIEW_FAILED` y `CUSTOMER_B3_REVIEW_TIMEOUT` se persisten como fallos
 de clasificación en B3. `classificationFailure.reviewFailure` distingue salida
 inválida, evidencia inválida, fallo del proveedor y timeout, con intento y rutas de
@@ -275,6 +277,13 @@ Una reparación inválida o fallida tampoco habilita
 ejecución. Esta barrera añade una llamada de IA en el camino normal y, si hay
 reparación, hasta tres llamadas adicionales respecto al clasificador original.
 No modifica permisos ni confirmaciones.
+
+Clasificador y revisor declaran `useWebSearchTool: false`: interpretan el mensaje
+y el contexto autorizado, sin herramientas de búsqueda web. Esto no cambia la
+recuperación RAG ni las consultas públicas expresamente autorizadas en otras
+etapas. Una pregunta explícita de preparación de llamada, como «Tengo dos minutos
+antes de llamar; ¿qué debo saber del cliente?», no se rechaza por omitir la palabra
+«resumen» después de que B3 haya aprobado ese propósito.
 
 La traza de clasificación incluye `coherenceReview`: estado, número de revisiones,
 si se intentó reparar (`repairAttempted`), si la reparación fue aprobada (`repaired`),
@@ -809,6 +818,27 @@ Los reportes ofrecen un complemento revisable; «sí» o «confirmo» en el chat
 guarda cambios. El botón de oportunidad abre el borrador en una pestaña nueva y
 el usuario revisa y guarda manualmente; un bloqueo de ventanas se informa.
 
+**Fidelidad del contenido de Cliente existente:**
+
+- La auditoría comprueba todas las tareas y restricciones actuales, exclusiones,
+  atribución del relato y grado de certeza, también sin biblioteca RAG. Una
+  posibilidad no se convierte en compromiso ni una nota en dato CRM confirmado.
+- Las solicitudes con cantidad explícita de preguntas usan un arreglo
+  estructurado: el servidor verifica cantidad exacta, elementos no vacíos,
+  sin saltos de línea, sin varias preguntas por elemento ni duplicados literales
+  normalizados. Las agendas conservan la validación de minutos exactos.
+- Cantidad, duración y rechazo semántico comparten **una sola reparación por
+  componente**. Si vuelve a fallar, se bloquea el contenido rechazado. Fallos del
+  proveedor o auditorías inválidas no disparan reintentos automáticos.
+- Cada componente conserva etapa, motivo, intentos, duración y cantidades
+  validadas cuando corresponda. Estos controles no sustituyen la revisión humana
+  de significado, atribución y utilidad comercial en las pruebas de aceptación.
+- «Hazlo más breve» o «tradúcelo» usa el último borrador exitoso y único del
+  historial, no el adjunto original heredado. Un material aportado explícitamente
+  en el turno tiene prioridad. Si la última respuesta fue una consulta, un error
+  o varios componentes, se pide identificar el texto en vez de rescatar un
+  borrador antiguo ambiguo. Esto también aplica tras recargar la sesión.
+
 :::
 
 :::details B11 · Persistencia
@@ -840,6 +870,13 @@ trazas de fallos de preparación y persistencia; no se reconstruyen turnos antig
 **Variación por canal:** Coach actualiza el job y los turnos de la sesión, además de enlazar trazas y propuestas; Cliente existente guarda el resultado junto con el historial y contexto de la sesión de chat de la cuenta; Cuenta nueva guarda el resultado del job y añade los mensajes al historial de la sesión de prospecto. Cada canal persiste solo sus datos de sesión y alcance autorizados.
 
 **Cierre y entrega:** tras persistir, B3 devuelve el control al worker/job. B1 no recibe la respuesta desde B11: consulta a B2 con el `jobId`, y B2 lee el estado/resultado persistido y lo entrega. Si el job falla, B2 puede devolver ese estado/error en lugar de una respuesta comercial. No se reinicia el flujo B1–B10 ni se repiten lecturas por guardar el resultado.
+
+Al recargar Cliente existente, si el historial autorizado ya contiene la respuesta
+del mismo job pendiente, la interfaz elimina el marcador local y habilita el
+chat sin duplicar respuesta ni reenviar la pregunta. La conciliación exige que
+coincidan cuenta, sesión y job; si no hay prueba suficiente, mantiene el flujo
+de consulta/recuperación del job existente. Los reintentos recuperan su estado,
+no vuelven a ejecutar la solicitud comercial.
 
 **Límites:** B11 no decide el contenido, no valida evidencia, no ejecuta lecturas ni modifica directamente cuentas/oportunidades CRM. Su trabajo es guardar de forma asociada y recuperable el resultado, la sesión, propuestas pendientes y la observabilidad del turno. Una propuesta persistida no equivale a guardar una nota; la escritura en CRM requiere ejecución controlada e idempotente después de confirmación explícita.
 

@@ -1,4 +1,5 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
+import { latestCustomerDraft } from "./customer-content-validation.js";
 import { buildCustomerCreationResponse } from "./customer-creation.js";
 import { buildCustomerUpdateResponse, validateCustomerUpdateMemory } from "./customer-updates.js";
 import { buildCustomerLinkResponse } from "./customer-links.js";
@@ -4602,7 +4603,7 @@ export function createCustomerAccountAdapter({
           contract: turnContract, question,
           referenceMaterial,
           conversationContext: turnConversationContext || conversationContext, context,
-          executeComponent: async ({ component, capability, contract, question: componentQuestion, originalQuestion, context: componentContext, referenceMaterial: componentReferenceMaterial, dependencyResults: dependencies }) => {
+          executeComponent: async ({ component, capability, contract, question: componentQuestion, originalQuestion, context: componentContext, referenceMaterial: componentReferenceMaterial, referenceMaterialIsCurrent, dependencyResults: dependencies }) => {
             const writePermission = {
               activity: "calendario_comercial.update", stage_answer: "oportunidades.update",
               lead_call_outcome: "interacciones.update", account_field: "cuentas.update",
@@ -4749,15 +4750,19 @@ export function createCustomerAccountAdapter({
             }
             if (["content.rewrite", "content.translation"].includes(component.category) &&
                 component.object === "general") {
-              const previousDraft = [...history].reverse().find((message) =>
-                message.role === "assistant" && message.components?.some((part) =>
-                  part.category?.startsWith("content.") && part.status === "completed"));
+              const previousDraft = latestCustomerDraft(history);
               const continuesDraft = /\b(?:mas breve|mas corto|sin mencionar|traducelo|reescribelo|hazlo)\b/i
                 .test(String(originalQuestion).normalize("NFD").replace(/\p{Diacritic}/gu, ""));
-              const source = componentReferenceMaterial || (continuesDraft && previousDraft ? {
-                name: "Último borrador del chat",
-                text: previousDraft.text, coverage: "complete", truncated: false,
-              } : null);
+              const source = referenceMaterialIsCurrent ? componentReferenceMaterial
+                : continuesDraft ? previousDraft : componentReferenceMaterial;
+              if (continuesDraft && !source) {
+                return {
+                  response: { answer: "No hay un único borrador vigente para transformar. Comparte el texto o indica cuál quieres usar.",
+                    responseType: "clarification", operations: [], evidence: [] },
+                  qualityTrace: { toolsUsed: [], diagnostics: { content: { stage: "source", reasonCode: "draft_source_ambiguous" } } },
+                  channelIntentRouting: null,
+                };
+              }
               const response = await generateCustomerContent({
                 component, readToolResults: [], history, dependencyResults: dependencies,
                 user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
@@ -5418,6 +5423,10 @@ export function createCustomerAccountAdapter({
               if (Date.now() >= budget.deadlineAt) return stop("La lectura del resumen excedió el tiempo permitido. No se presenta como completada.");
               const relevantContacts = contacts ? [...contacts].sort((a, b) =>
                 Number(associatedIds.has(b.id)) - Number(associatedIds.has(a.id)) || a.id - b.id) : [];
+              const associatedContacts = relevantContacts.filter((record) => associatedIds.has(record.id));
+              const contactSummary = associatedContacts.length
+                ? `Asociados a las oportunidades destacadas: ${associatedContacts.slice(0, 3).map((record) => `${record.name}${record.positionTitle ? ` (${record.positionTitle})` : ""}`).join("; ")}.`
+                : `Contactos de la cuenta: ${relevantContacts.slice(0, 3).map((record) => `${record.name}${record.positionTitle ? ` (${record.positionTitle})` : ""}`).join("; ") || "no se encontraron contactos visibles"}.${ranked.length ? " No se encontró un contacto asociado a las oportunidades destacadas." : ""}`;
               const partial = snapshotQueryMetrics.some((metric) =>
                 ["opportunities_active", "opportunities_inactive", ...(contacts ? ["contacts"] : [])].includes(metric.source) &&
                 (metric.errorCode || metric.truncated !== false));
@@ -5441,7 +5450,7 @@ export function createCustomerAccountAdapter({
                 `Situación: ${open.length} oportunidades abiertas; el importe registrado suma ${formatUsd(pipeline)}${missingAmounts ? `. ${missingAmounts} no tienen importe informado` : ""}. No equivale a ventas realizadas.`,
                 `Oportunidades abiertas con mayor importe registrado: ${ranked.slice(0, 3).map((record) => `${record.name} (${record.amountUsd == null ? "importe no informado" : formatUsd(record.amountUsd)}; etapa ${record.stageName || "no informada"})`).join("; ") || "No encontré oportunidades abiertas en la consulta."}`,
                 contacts
-                  ? `${contacts.length} contactos visibles. Asociados a esas oportunidades: ${relevantContacts.slice(0, 3).map((record) => `${record.name}${record.positionTitle ? ` (${record.positionTitle})` : ""}`).join("; ") || "no se encontró un contacto asociado"}. La relación y el cargo no confirman quién puede firmar.`
+                  ? `${contacts.length} contactos visibles. ${contactSummary} La relación y el cargo no confirman quién puede firmar.`
                   : "No pude consultar los contactos con las herramientas y permisos disponibles.",
                 pendingAllowed
                   ? `${pendingSummary} Sugerencia: confirma el resultado y acuerda con el cliente el siguiente paso.`

@@ -190,6 +190,7 @@ export async function interpretReviewedCustomerTurn(input, {
     try {
       const result = await reviewWithAI({
         schemaName: "customer_account_turn_coherence",
+        useWebSearchTool: false,
         systemPrompt: `${reviewRules}\n${CUSTOMER_INTERPRETATION_CONTEXT_RULES}`,
         subject: "Revisión de coherencia de la interpretación B3",
         context: {

@@ -2,7 +2,14 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { businessImpactForCase, operationBusinessImpacts } from "./business-impact.js";
 
-export const SMOKE_CASE_IDS = ["Q01-01", "Q03-01", "Q05-01", "C01-01", "A08-04", "A09-01", "A10-01"];
+export const SMOKE_CASE_IDS = ["Q01-01", "Q03-01", "Q05-01", "C01-01", "A08-04", "A09-01", "A10-01",
+  "Q09-04", "SEQ12", "L09"];
+
+const libraryCases = new Set(["Q09-04", "Q09-05", "Q09-07", "MIX09", "SEQ11", "SEQ13", "SEQ15"]);
+const technicalCases = new Set(["K13", "K14", "K15", "K16", "K17", "K18"]);
+const regressionCases = new Set(["Q09-04", "Q09-05", "Q09-06", "Q09-07",
+  "Q12-04", "Q12-05", "Q12-06", "L09", "L10", "MIX09",
+  "SEQ11", "SEQ12", "SEQ13", "SEQ14", "SEQ15"]);
 
 const sourceUrl = new URL("../../../../readme/preguntas-validacion-chat-cliente-existente.md", import.meta.url);
 export const CATEGORIES = [
@@ -41,6 +48,10 @@ export function parseCatalog(markdown) {
     }
     if (sequence && /^\s+Esperado:/.test(line) && sequence.steps.length) {
       sequence.steps.at(-1).expected += line.trim().replace(/^Esperado:\s*/, "");
+      continue;
+    }
+    if (sequence && /^\s+\S/.test(line) && sequence.steps.length) {
+      sequence.steps.at(-1).expected += ` ${line.trim()}`;
       continue;
     }
     if (!line.startsWith("|")) continue;
@@ -85,6 +96,11 @@ export function parseCatalog(markdown) {
       item.blockedReason = "La secuencia requiere cambio de contexto de cuenta; ejecutar sus pasos con revisión de contexto en navegador.";
     }
     item.requiresHumanReview = true;
+    if (libraryCases.has(item.id)) item.requiresBluecatLibrary = true;
+    if (regressionCases.has(item.id)) item.readOnlyRegression = true;
+    if (technicalCases.has(item.id)) {
+      item.blockedReason = "Regresión técnica: requiere preparación controlada o interacción de navegador; no se ejecuta como una pregunta comercial ni se cuenta como aprobada.";
+    }
     item.mode = "proposal_only";
     item.businessImpact = businessImpactForCase(item.id);
   }

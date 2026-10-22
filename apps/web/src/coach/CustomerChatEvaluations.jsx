@@ -300,6 +300,12 @@ export function CustomerChatEvaluations({ canExecute = false, canWrite = false }
           <span className={`chat-evaluations-badge ${item.ready ? "is-ready" : "is-warning"}`}>{item.ready ? "Accesible" : "Revisar acceso"}</span>
           {" "}Cuenta {item.accountId}: {item.ready ? item.reference.account.name : item.message || "No disponible"}
         </p>)}
+        {preflight.library ? <p>
+          <span className={`chat-evaluations-badge ${preflight.library.ready ? "is-ready" : "is-warning"}`}>
+            {preflight.library.ready ? "RAG preparado localmente" : "Preparar RAG"}
+          </span>{" "}{preflight.library.reason}
+          {" "}Documentos elegibles: {preflight.library.eligibleDocuments}.
+        </p> : null}
         <p>Verifica que las cuentas de los casos elegidos estén disponibles. Esto no garantiza la respuesta del proveedor ni aprueba el chat.</p>
       </div> : null}
       </section>

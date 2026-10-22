@@ -27,6 +27,29 @@ const prospectTools = [
 ].map((name) => ({ name }));
 
 describe("shared non-Coach channel intent routing", () => {
+  it("explains a contact missing from authorized candidates without selecting a different account contact", () => {
+    const normalized = normalizeChannelIntentPlan({
+      channel: "customer_account", question: "¿Qué cargo tiene Alejandro Ruiz?",
+      context: { accountId: 22 }, availableTools: customerTools,
+      configuration: getChannelIntentDefaults("customer_account"),
+      serverEntityCandidates: [{
+        candidateKey: "contact_1", entityType: "contact", recordId: 232,
+        accountId: 22, referenceText: "Otro contacto",
+      }],
+      plan: {
+        mode: "read_only", intents: ["contact_query"], operationKind: "none",
+        entities: { contactReference: "Alejandro Ruiz" },
+        referenceResolution: { targetType: "contact", cardinality: "single",
+          source: "current_message", candidateKeys: [] },
+        ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
+        filters: {}, confidence: "high",
+      },
+    });
+    expect(normalized.mode).toBe("clarification");
+    expect(normalized.ambiguity.clarificationQuestion).toContain("registros autorizados de esta cuenta");
+    expect(normalized.referenceResolution.candidateKeys).toEqual([]);
+    expect(normalized.serverResolvedEntityIds?.contactId).toBeFalsy();
+  });
   it("uses B3's confident email-draft intent instead of a contradictory activity plan", () => {
     const normalized = normalizeChannelIntentPlan({
       channel: "customer_account",

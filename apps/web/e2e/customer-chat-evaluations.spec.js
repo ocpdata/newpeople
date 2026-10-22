@@ -3,7 +3,8 @@ import { businessImpacts, operationBusinessImpacts } from "../../api/src/custome
 const runId = "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6";
 const otherId = "77769f2d-6399-4e7e-9d4e-0601efc57f50";
 async function openEvaluations(page, { execute = true, read = true, write = false, status = "completed", failLaunch = false,
-  emptyHistory = false, actionHistory = [], actionKind = "validate_stage", failActionRead = false, activityHistory } = {}) {
+  emptyHistory = false, actionHistory = [], actionKind = "validate_stage", failActionRead = false, activityHistory,
+  library = { ready: false, eligibleDocuments: 0, reason: "Importa los documentos de BlueCat desde Pinecone." } } = {}) {
   const requests = { launches: [], preflights: 0, reviews: [], actions: [], cancellations: 0, exports: 0 };
   let runStatus = status, review = null;
   const definition = { id: "Q01-01", category: "Q01", accountId: 22, title: "Resumen de Totalplay", businessImpact: businessImpacts.none,
@@ -33,7 +34,7 @@ async function openEvaluations(page, { execute = true, read = true, write = fals
     if (path.endsWith("/preflight")) {
       requests.preflights += 1;
       return json({ instance: "Instancia actual", model: "test-model", userId: 31, providerReady: true, catalogVersion: "catalog-test",
-        cases: 1, accounts: [{ accountId: 22, ready: true, reference: { account: { name: "Totalplay" } } }] });
+        cases: 1, library, accounts: [{ accountId: 22, ready: true, reference: { account: { name: "Totalplay" } } }] });
     }
     if (path.endsWith("/runs") && req.method() === "POST") {
       requests.launches.push(req.postDataJSON());
@@ -76,6 +77,8 @@ test("evaluation tab uses the current instance and requires preflight plus paid-
   expect(requests.launches).toEqual([]);
   await panel.getByRole("button", { name: "Verificar entorno" }).click();
   await expect(panel).toContainText("test-model");
+  await expect(panel).toContainText("Preparar RAG");
+  await expect(panel).toContainText("Importa los documentos de BlueCat");
   await panel.getByLabel(/Autorizo llamadas reales/).check();
   await panel.getByRole("button", { name: "Ejecutar pruebas", exact: true }).click();
   await expect.poll(() => requests.launches.length).toBe(1);
@@ -83,6 +86,15 @@ test("evaluation tab uses the current instance and requires preflight plus paid-
   expect(requests.launches[0]).not.toHaveProperty("url");
   expect(requests.actions).toEqual([]);
   await expect(page.getByRole("region", { name: "Resultado de ejecución" })).toBeVisible();
+});
+test("preflight distinguishes local RAG preparation from Pinecone retrieval success", async ({ page }) => {
+  await openEvaluations(page, { library: {
+    ready: true, eligibleDocuments: 3, reason: "No verifica autenticación ni relevancia de fragmentos.",
+  } });
+  await page.getByRole("button", { name: "Verificar entorno" }).click();
+  await expect(page.getByText("RAG preparado localmente", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Documentos elegibles: 3/)).toBeVisible();
+  await expect(page.getByText(/No verifica autenticación/)).toBeVisible();
 });
 test("evaluation tab read-only permission does not enable paid executions", async ({ page }) => {
   const requests = await openEvaluations(page, { execute: false });

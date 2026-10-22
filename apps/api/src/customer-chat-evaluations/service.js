@@ -5,8 +5,9 @@ import { config } from "../config.js";
 import { getUserAuthContext } from "../auth.js";
 import { getEvaluationCatalog, SMOKE_CASE_IDS } from "./catalog.js";
 import { businessImpactForCase } from "./business-impact.js";
+import { getEvaluationLibraryReadiness } from "./library-readiness.js";
 import { ensureEvaluationSchema } from "./schema.js";
-import { evaluateResponse, evaluationStepBlockReason, safeEvidence, summarizeCases } from "./checks.js";
+import { evaluateResponse, evaluationStepBlockReason, evaluationReferenceBlockReason, safeEvidence, summarizeCases } from "./checks.js";
 import {
   buildAuthorizedCustomerSnapshot, createCustomerAccountChatJob,
   processCustomerAccountChatJob, getCustomerIntelligenceJob,
@@ -81,7 +82,7 @@ async function configurationFor(user) {
   return { model: config.openai.model, rules: safeEvidence(rules), permissions: [...user.permissionSet].sort(),
     classifier: { version: classifier.version, hash: digest(classifier.instruction) },
     planner: { version: planner.version, hash: digest(planner.instruction) },
-    intentsHash: digest(intents), evaluatorVersion: "1", applicationRevision: process.env.GIT_COMMIT || null };
+    intentsHash: digest(intents), evaluatorVersion: "3", applicationRevision: process.env.GIT_COMMIT || null };
 }
 export async function preflightEvaluation(user) {
   requireEvaluationPermission(user, "execute"); requireChat(user);
@@ -99,7 +100,7 @@ export async function preflightEvaluation(user) {
   }
   return { instance: "Instancia actual", userId: Number(user.id), model: config.openai.model,
     providerReady: Boolean(config.openai.apiKey), catalogVersion: catalog.version,
-    cases: catalog.cases.length, accounts: checks, businessWrites: false,
+    cases: catalog.cases.length, accounts: checks, library: await getEvaluationLibraryReadiness(), businessWrites: false,
     warning: "Llamadas reales de IA con costo. Se guardarán sesiones y resultados, sin confirmar cambios de negocio.",
     rules: (await configurationFor(user)).rules };
 }
@@ -288,6 +289,13 @@ export async function processEvaluationRun(run, workerId) {
     try {
       const user = await actorFor(run);
       if (digest(await configurationFor(user)) !== digest(settings.runtime)) throw evaluationError(409, "Cambió la configuración o los permisos desde el lanzamiento.");
+      if (definition.requiresBluecatLibrary) {
+        evidence.libraryPreparation = await getEvaluationLibraryReadiness();
+        if (!evidence.libraryPreparation.ready) {
+          await finishCase(row.id, "omitted", { ...evidence, reason: evidence.libraryPreparation.reason }, workerId);
+          continue;
+        }
+      }
       if (definition.businessImpact?.kind === "validation" && !settings.runtime.rules.operationPolicy?.allowedKinds?.includes("validate_stage")) {
         throw evaluationError(409, "Precondición incumplida: validate_stage está deshabilitado. No se envió la pregunta ni se cambiaron permisos; habilitarlo requiere una decisión administrativa explícita.");
       }
@@ -295,6 +303,8 @@ export async function processEvaluationRun(run, workerId) {
       const expectedAccount = definition.accountId === 22 ? "Totalplay" : "Grupo Hotelero Santa Fe";
       if (before.account.name !== expectedAccount) throw evaluationError(409, `El catálogo requiere la cuenta ${expectedAccount}; verifica sus referencias antes de ejecutar.`);
       evidence.referenceBefore = before;
+      const referenceBlockReason = evaluationReferenceBlockReason(definition, before);
+      if (referenceBlockReason) throw evaluationError(409, referenceBlockReason);
       await query("UPDATE customer_chat_evaluation_cases SET status='running',started_at=NOW(3) WHERE id=?", [row.id]);
       let sessionId;
       for (const step of definition.steps) {
@@ -324,7 +334,8 @@ export async function processEvaluationRun(run, workerId) {
           throw Object.assign(evaluationError(502, finished?.errorMessage || "El chat no confirmó una respuesta completada."),
             { code: finished?.result?.errorCode || "EVALUATION_CHAT_JOB_FAILED" });
         }
-        const checked = evaluateResponse({ definition, result: finished.result, accountId: definition.accountId, reference: before });
+        const checked = evaluateResponse({ definition, result: finished.result, accountId: definition.accountId, reference: before,
+          stepIndex: evidence.steps.length });
         evidence.steps.push({ question: step.question, expected: step.expected, answer: finished.result.answer,
           responseType: finished.result.responseType, errorCode: finished.result.errorCode, operations: finished.result.operations,
           activityHistory: finished.result.activityHistory,
@@ -334,6 +345,8 @@ export async function processEvaluationRun(run, workerId) {
           accountSummary: finished.result.accountSummary,
           documentCoverage: finished.result.documentCoverage,
           documentEvidence: finished.result.documentEvidence,
+          contentSource: finished.result.contentSource,
+          documentRetrieval: finished.result.debug?.flow?.find((block) => block.block === "B12") || null,
           evidence: finished.result.evidence, components: finished.result.components, evaluationOutcome: checked.outcome,
           jobId: job.id, sessionId, durationMs: Date.now() - stepStartedAt, checks: checked.checks });
         evidence.checks.push(...checked.checks);

@@ -353,7 +353,7 @@ describe("Customer turn contract", () => {
   it("audits discovery questions against the same prior deliverable used to draft them", async () => {
     const dependencyResults = [{ category: "query.document_content", answer: "Cotización 18: cuatro servidores, entrega en 45 días." }];
     const generateWithAI = vi.fn().mockResolvedValueOnce({
-      answer: "¿Los cuatro servidores cubren sus necesidades? ¿El plazo de 45 días es adecuado?",
+      questions: ["¿Los cuatro servidores cubren sus necesidades?", "¿El plazo de 45 días es adecuado?"],
     }).mockResolvedValueOnce({ approved: "yes" });
     const result = await generateCustomerContent({
       component: component("content.discovery_questions", { object: "general", text: "Prepara dos preguntas para Kimberly" }),
@@ -888,7 +888,7 @@ describe("Customer turn contract", () => {
     const classifyWithAI = vi.fn().mockRejectedValue(Object.assign(new Error("Transport abort"), { name }));
     await expect(interpretCustomerTurn({ question: "Consulta", classifierPrompt: { instruction: "" }, snapshot, classifyWithAI }))
       .rejects.toMatchObject({ code: "CUSTOMER_B3_TIMEOUT", contractVersion: CUSTOMER_TURN_PROVIDER_VERSION,
-        timeoutMs: 15000, durationMs: expect.any(Number) });
+        timeoutMs: 30000, durationMs: expect.any(Number) });
     expect(classifyWithAI).toHaveBeenCalledTimes(1);
   });
   it.each([Date.now() - 1, 0, "invalid-date"])("does not call the provider for an expired or invalid deadline %s", async (deadlineAt) => {
@@ -914,7 +914,8 @@ describe("Customer turn contract", () => {
   it("constrains every B3 movement at the provider boundary without changing internal category contracts", async () => {
     const classifyWithAI = vi.fn().mockResolvedValue(contract([component("query.account_summary", { object: "account" })]));
     await interpretCustomerTurn({ question: "Consulta", classifierPrompt: { instruction: "Custom guidance" }, snapshot, classifyWithAI });
-    const { responseVariants, context } = classifyWithAI.mock.calls[0][0];
+    const { responseVariants, context, useWebSearchTool } = classifyWithAI.mock.calls[0][0];
+    expect(useWebSearchTool).toBe(false);
     const seen = [];
     for (const variant of responseVariants) {
       const movements = variant.find((field) => field.key === "movement").enum;

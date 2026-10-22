@@ -2248,12 +2248,13 @@ test("Cliente existente conserva un job interrumpido al recargar y no duplica la
   await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
   await page.getByLabel("Cuenta existente").selectOption("160");
   await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
-  await chat.getByRole("button", { name: "Recuperar respuesta" }).click();
   await expect(chat.getByRole("button", { name: "Recuperar respuesta" })).toHaveCount(0);
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeEnabled();
   await expect(chat.getByRole("status")).toHaveCount(0);
   await expect(chat.getByText(answer, { exact: true })).toHaveCount(1);
   await expect(chat.getByText("Vrf 2027.", { exact: true })).toHaveCount(1);
   expect(state.submissions).toBe(1);
+  expect(state.polls).toBe(1);
   expect(await page.evaluate(() =>
     sessionStorage.getItem("mi-agent-customer-chat-pending:160"),
   )).toBeNull();

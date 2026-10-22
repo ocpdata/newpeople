@@ -50,6 +50,7 @@ describe("B3 interpretation coherence gate", () => {
     expect(reviewWithAI).toHaveBeenCalledTimes(1);
     expect(reviewWithAI.mock.calls[0][0]).toMatchObject({
       schemaName: "customer_account_turn_coherence", temperature: 0,
+      useWebSearchTool: false,
       context: { latestMessage: question, proposedContract: contract() },
       aiUsageContext: { userId: 0, featureCode: "commercial_intelligence.account_chat.intent" },
     });

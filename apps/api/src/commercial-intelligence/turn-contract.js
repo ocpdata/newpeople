@@ -1748,7 +1748,7 @@ export async function interpretCustomerTurn({
   const fields = getCustomerTurnContractFields();
   const responseVariants = getCustomerTurnProviderVariants(fields);
   const startedAt = Date.now();
-  const timeoutMs = Math.min(15000, deadlineAt != null ? new Date(deadlineAt).getTime() - startedAt : 15000);
+  const timeoutMs = Math.min(30000, deadlineAt != null ? new Date(deadlineAt).getTime() - startedAt : 30000);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw Object.assign(new Error("B3 agotó el tiempo disponible antes de interpretar la solicitud. No se prepararon ni ejecutaron acciones."),
       { code: "CUSTOMER_B3_TIMEOUT", durationMs: 0, timeoutMs: Math.max(0, Number.isFinite(timeoutMs) ? timeoutMs : 0),
@@ -1758,6 +1758,7 @@ export async function interpretCustomerTurn({
   try {
     result = await classifyWithAI({
     schemaName: "customer_account_turn_contract",
+    useWebSearchTool: false,
     temperature: 0,
     systemPrompt: `${CUSTOMER_TURN_INTERPRETATION_RULES}
 ${CUSTOMER_INTERPRETATION_CONTEXT_RULES}

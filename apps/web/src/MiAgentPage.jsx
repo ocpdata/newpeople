@@ -3232,6 +3232,14 @@ export default function MiAgentPage({
             !Number.isInteger(pending.jobId) || pending.jobId <= 0 ||
             typeof pending.question !== "string"
           ) throw new Error("El turno pendiente no corresponde a esta conversación");
+          const completedInHistory = (session.history || []).some((message) =>
+            message.role === "assistant" && String(message.text || "").trim() &&
+            Number(message.turnDebug?.currentTurn?.jobId) === pending.jobId);
+          if (completedInHistory) {
+            window.sessionStorage.removeItem(customerChatPendingKey(accountId));
+            setCustomerChatTurn(null);
+            return;
+          }
           setCustomerChatTurn({
             ...pending,
             status: "interrupted",

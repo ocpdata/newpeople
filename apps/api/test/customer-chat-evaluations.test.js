@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { CATEGORIES, getEvaluationCatalog, parseCatalog } from "../src/customer-chat-evaluations/catalog.js";
-import { evaluateResponse, evaluationStepBlockReason, safeEvidence, summarizeCases } from "../src/customer-chat-evaluations/checks.js";
+import { evaluateResponse, evaluationStepBlockReason, evaluationReferenceBlockReason, safeEvidence, summarizeCases } from "../src/customer-chat-evaluations/checks.js";
 import { businessImpactForCase } from "../src/customer-chat-evaluations/business-impact.js";
 
 describe("Customer chat evaluation catalog", () => {
@@ -12,7 +12,8 @@ describe("Customer chat evaluation catalog", () => {
     expect(CATEGORIES).toHaveLength(46);
     for (const category of CATEGORIES) expect(catalog.cases.some((item) => item.category === category)).toBe(true);
     for (const id of ids) expect(catalog.cases.find((item) => item.id === id)).toBeDefined();
-    expect(catalog.cases.filter((item) => item.category === "SEQ")).toHaveLength(10);
+    expect(catalog.cases.filter((item) => item.category === "SEQ")).toHaveLength(15);
+    expect(catalog.cases).toHaveLength(212);
     expect(new Set(catalog.cases.map((item) => item.id)).size).toBe(catalog.cases.length);
     expect(catalog.version).toMatch(/^[a-f0-9]{16}$/);
   });
@@ -67,7 +68,7 @@ describe("Customer chat evaluation catalog", () => {
     for (const id of ["A08-02", "A08-04", "A08-07.v2"]) expect(businessImpactForCase(id).kind, id).toBe("validation");
     expect(businessImpactForCase("A08-12").kind).toBe("form");
     expect(businessImpactForCase("K05").kind).toBe("confirm");
-    expect(catalog.smokeCaseIds).toHaveLength(7);
+    expect(catalog.smokeCaseIds).toHaveLength(10);
     expect(catalog.cases.filter((item) => catalog.smokeCaseIds.includes(item.id) && item.businessImpact.kind !== "none")
       .map((item) => item.id)).toEqual(["A08-04"]);
     expect(catalog.operationBusinessImpacts.validate_stage.kind).toBe("validation");
@@ -75,8 +76,98 @@ describe("Customer chat evaluation catalog", () => {
     expect(catalog.operationBusinessImpacts.opportunity_field.kind).toBe("confirm");
     expect(catalog.operationBusinessImpacts.remove_record).toBeUndefined();
   });
+  it("includes new regressions, preparation and literal multiline expectations in the tab catalog", async () => {
+    const catalog = await getEvaluationCatalog();
+    for (const id of ["Q09-04", "Q09-05", "Q09-07", "MIX09", "SEQ11", "SEQ13", "SEQ15"]) {
+      expect(catalog.cases.find((item) => item.id === id)).toMatchObject({
+        requiresBluecatLibrary: true, readOnlyRegression: true,
+      });
+    }
+    for (const id of ["K13", "K14", "K15", "K16", "K17", "K18"]) {
+      expect(catalog.cases.find((item) => item.id === id).blockedReason).toContain("Regresión técnica");
+    }
+    expect(catalog.cases.find((item) => item.id === "SEQ12").steps).toHaveLength(3);
+    expect(catalog.cases.find((item) => item.id === "SEQ13").steps).toHaveLength(2);
+    expect(catalog.cases.find((item) => item.id === "SEQ04").steps[2].expected).toContain("actividad persistida 75");
+    expect(catalog.smokeCaseIds).toEqual(expect.arrayContaining(["Q09-04", "SEQ12", "L09"]));
+  });
 });
 describe("Customer chat evaluation checks", () => {
+  it.each(["Q02-02", "Q03-03"])("blocks stale contact references without substituting another contact: %s", (id) => {
+    const coverage = [{ source: "contacts", truncated: false, errorCode: null }];
+    const reference = { contacts: [{ id: 500, name: "Alejandro Ruiz", positionTitle: "" }], coverage };
+    expect(evaluationReferenceBlockReason({ id }, reference)).toBeNull();
+    expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [] })).toContain("no coincide");
+    expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [
+      { id: 232, name: "Luis Becerra", positionTitle: "" },
+    ] })).toContain("no coincide");
+    expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [
+      { ...reference.contacts[0], positionTitle: "Director" },
+    ] })).toContain("no coincide");
+    expect(evaluationReferenceBlockReason({ id }, { ...reference, coverage: [] })).toContain("lectura completa");
+    expect(evaluationReferenceBlockReason({ id }, { ...reference, coverage: [{ source: "contacts", truncated: true }] }))
+      .toContain("lectura completa");
+  });
+  it("does not accept a generic clarification as an answer about a missing contact job title", () => {
+    const definition = { id: "Q03-03" };
+    const reference = { contacts: [{ id: 500, name: "Alejandro Ruiz", positionTitle: "" }] };
+    const result = { answer: "Alejandro Ruiz\n- Cargo: no informado", responseType: "informational",
+      entities: { accountId: 22, contactId: 500 }, operations: [] };
+    expect(evaluateResponse({ definition, result, reference, accountId: 22 }).outcome).toBe("human_review");
+    expect(evaluateResponse({ definition, result: { ...result, responseType: "clarification",
+      answer: "No pude validar el registro seleccionado" }, reference, accountId: 22 }).outcome).toBe("failed");
+  });
+  it("rejects an association with opportunities when the reference has no opportunities", () => {
+    const definition = { id: "Q01-03" };
+    const result = { answer: "1 contacto visible. Asociados a esas oportunidades: Luis", responseType: "informational",
+      entities: { accountId: 65 }, operations: [] };
+    expect(evaluateResponse({ definition, result, reference: { opportunities: [] }, accountId: 65 }).outcome).toBe("failed");
+    expect(evaluateResponse({ definition, result: { ...result, answer: "Contactos de la cuenta: Luis" },
+      reference: { opportunities: [] }, accountId: 65 }).outcome).toBe("human_review");
+  });
+  it("requires validated question counts rather than assuming one component meets the requested quantity", () => {
+    const definition = { id: "L10", readOnlyRegression: true };
+    const component = { category: "content.discovery_questions", status: "completed",
+      contentValidation: { reasonCode: "approved", requestedQuestionCount: 3, actualQuestionCount: 3 } };
+    const result = { answer: "Tres preguntas", operations: [], components: [component],
+      debug: { flow: [{ block: "B12", input: { requested: false }, output: { status: "not_applicable", snippetsCount: 0 } }] } };
+    expect(evaluateResponse({ definition, result, accountId: 22 }).outcome).toBe("human_review");
+    expect(evaluateResponse({ definition, result: { ...result, components: [{
+      ...component, contentValidation: { ...component.contentValidation, actualQuestionCount: 2 },
+    }] }, accountId: 22 }).outcome).toBe("failed");
+  });
+  it("evaluates the current sequence step rather than carrying notes into a field request", () => {
+    const definition = { id: "SEQ12", readOnlyRegression: true };
+    const result = { answer: "Fecha registrada", operations: [],
+      debug: { flow: [{ block: "B12", input: { requested: false }, output: { status: "not_applicable", snippetsCount: 0 } }] },
+      components: [
+      { category: "query.field_value", status: "completed" },
+    ] };
+    const good = evaluateResponse({ definition, result, accountId: 22, stepIndex: 1 });
+    expect(good.outcome).toBe("human_review");
+    expect(evaluateResponse({ definition, result, accountId: 22, stepIndex: 0 }).outcome).toBe("failed");
+    expect(evaluateResponse({ definition, accountId: 22, stepIndex: 1,
+      result: { ...result, operations: [{ kind: "record_note" }] } }).outcome).toBe("failed");
+  });
+  it("does not approve a positive library case on an empty-library response or missing provenance", () => {
+    const definition = { id: "Q09-04", readOnlyRegression: true };
+    const result = { answer: "Capacidades generales con evidencia", responseType: "informational", operations: [],
+      contentSource: "knowledge_library",
+      debug: { flow: [{ block: "B12", input: { requested: true }, output: { status: "results", snippetsCount: 2 } }] },
+      components: [{ category: "query.document_content", status: "completed" }] };
+    expect(evaluateResponse({ definition, result, accountId: 22 }).outcome).toBe("human_review");
+    expect(evaluateResponse({ definition, result: { ...result, answer: "No hay documentos activos disponibles" }, accountId: 22 }).outcome).toBe("failed");
+    expect(evaluateResponse({ definition, result: { ...result, contentSource: "user_provided" }, accountId: 22 }).outcome).toBe("failed");
+    expect(evaluateResponse({ definition, result: { ...result, debug: {} }, accountId: 22 }).outcome).toBe("failed");
+  });
+  it("requires an absent attachment clarification without inherited library provenance", () => {
+    const definition = { id: "SEQ13", readOnlyRegression: true };
+    const result = { answer: "Comparte el archivo", responseType: "clarification", operations: [],
+      debug: { flow: [{ block: "B12", input: { requested: false }, output: { status: "not_applicable", snippetsCount: 0 } }] } };
+    expect(evaluateResponse({ definition, result, stepIndex: 1, accountId: 22 }).outcome).toBe("human_review");
+    expect(evaluateResponse({ definition, result: { ...result, contentSource: "knowledge_library" },
+      stepIndex: 1, accountId: 22 }).outcome).toBe("failed");
+  });
   it("requires a verified quotation summary as well as completed questions for MIX07", () => {
     const result = {
       answer: "Resumen y preguntas", responseType: "informational", operations: [],

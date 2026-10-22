@@ -1,5 +1,17 @@
 const forbiddenKinds = new Set(["remove_record", "send_communication", "delete", "deactivate"]);
 const normalizeEvaluationStatus = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+export function evaluationReferenceBlockReason(definition, reference) {
+  if (!["Q02-02", "Q03-03"].includes(definition.id)) return null;
+  const contacts = reference?.contacts?.filter((item) => normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz") || [];
+  const coverage = reference?.coverage?.find((item) => item.source === "contacts");
+  if (!coverage || coverage.errorCode || coverage.truncated !== false) {
+    return "Precondición incumplida: no se acreditó una lectura completa de contactos para validar la referencia de Alejandro Ruiz. No se envió la pregunta.";
+  }
+  if (contacts.length !== 1 || String(contacts[0].positionTitle || "").trim()) {
+    return "Precondición incumplida: el caso requiere un único Alejandro Ruiz visible en esta cuenta, sin cargo informado. La referencia del catálogo no coincide con los datos actuales. No se envió la pregunta ni se sustituyó por otro contacto.";
+  }
+  return null;
+}
 export function evaluationStepBlockReason(step, previousStep, accountId) {
   if (!step.requiresCompleteActivityDraft) return null;
   const activities = (previousStep?.operations || []).filter((operation) => operation.kind === "activity");
@@ -17,7 +29,7 @@ export function evaluationStepBlockReason(step, previousStep, accountId) {
   return complete ? null
     : "Precondición incumplida: el turno anterior no produjo un único borrador de actividad completo, con oportunidad, contacto, fecha, hora y objetivo. No se envió la modificación ni se ejecutaron cambios.";
 }
-export function evaluateResponse({ definition, result, accountId, reference }) {
+export function evaluateResponse({ definition, result, accountId, reference, stepIndex = 0 }) {
   const checks = [];
   const add = (name, passed, detail) => checks.push({ name, passed, detail });
   add("Respuesta presente", typeof result?.answer === "string" && Boolean(result.answer.trim()), "La respuesta no puede estar vacía.");
@@ -25,6 +37,70 @@ export function evaluateResponse({ definition, result, accountId, reference }) {
     !(result?.components || []).some((component) => component.status === "error"),
   "Un error global o de un componente no acredita la capacidad positiva.");
   const text = String(result?.answer || "");
+  if (definition.readOnlyRegression) {
+    const questionCounts = { "Q09-05": [3], "L10": [3], "MIX09": [3], "SEQ15": [3, 2] };
+    const expectedQuestions = questionCounts[definition.id]?.[stepIndex];
+    if (expectedQuestions) {
+      const questions = result?.components?.filter((item) => item.category === "content.discovery_questions");
+      add("Cantidad exacta de preguntas validada", questions?.length === 1 &&
+        questions[0].status === "completed" &&
+        questions[0].contentValidation?.reasonCode === "approved" &&
+        questions[0].contentValidation?.actualQuestionCount === expectedQuestions &&
+        questions[0].contentValidation?.requestedQuestionCount === expectedQuestions,
+      "La cantidad debe estar validada en el entregable, no inferida de la cantidad de componentes.");
+    }
+    add("Regresión sin propuestas comerciales", Array.isArray(result?.operations) && result.operations.length === 0,
+      "Estas solicitudes no autorizan guardar notas, crear actividades ni otras operaciones.");
+    const categoriesByStep = {
+      "Q09-04": [["query.document_content"]],
+      "Q09-05": [["content.discovery_questions"]],
+      "Q12-04": [["query.opportunity_notes"]],
+      "Q12-05": [["query.opportunity_notes"]],
+      "L09": [["content.email_draft"]],
+      "L10": [["content.discovery_questions"]],
+      "MIX09": [["query.opportunity_notes", "content.discovery_questions"]],
+      "SEQ11": [["query.document_content"], ["query.record_detail"], ["query.field_value"]],
+      "SEQ12": [["query.opportunity_notes"], ["query.field_value"], ["query.opportunity_notes"]],
+      "SEQ15": [["content.discovery_questions"], ["content.discovery_questions"]],
+    };
+    const expected = categoriesByStep[definition.id]?.[stepIndex];
+    if (expected) add("Tareas solicitadas completas sin sustitución", expected.every((category) =>
+      result?.components?.some((component) => component.category === category && component.status === "completed")) &&
+      result.components.length === expected.length,
+    "Las categorías y los componentes completados deben corresponder al turno, no a la tarea anterior.");
+    const libraryTurn = ["Q09-04", "Q09-05", "Q09-07", "MIX09"].includes(definition.id) ||
+      (["SEQ11", "SEQ13", "SEQ15"].includes(definition.id) && stepIndex === 0);
+    const retrieval = result?.debug?.flow?.find((block) => block.block === "B12");
+    if (libraryTurn) {
+      add("Recuperación RAG acreditada por B12", retrieval?.output?.status === "results" &&
+        Number.isSafeInteger(retrieval.output.snippetsCount) && retrieval.output.snippetsCount > 0,
+      "Exigir fragmentos recuperados, no solo una etiqueta o un texto que parezca documental; la pertinencia sigue en revisión humana.");
+      add("Procedencia de biblioteca declarada", ["knowledge_library", "mixed_knowledge"].includes(result?.contentSource),
+        "La etiqueta no basta para aprobar: revisar fragmentos pertinentes y atribución en las trazas.");
+      add("Respuesta documental positiva, no ausencia de evidencia",
+        result?.responseType !== "clarification" &&
+        !/no hay documentos activos|no devolvi[oó] fragmentos|biblioteca documental no est[aá] configurada|no se complet[oó] la consulta/i.test(text),
+        "Una biblioteca vacía o sin resultados no acredita la respuesta documental solicitada.");
+    }
+    if (definition.id === "Q09-06" || (definition.id === "SEQ13" && stepIndex === 1)) {
+      add("Adjunto faltante sin sustitución", result?.responseType === "clarification" &&
+        !["knowledge_library", "mixed_knowledge"].includes(result?.contentSource),
+      "Pedir el archivo faltante; no responder con biblioteca o un resumen CRM.");
+    }
+    const excludedLibraryTurn = ["Q09-06", "L10", "Q12-04", "Q12-05", "Q12-06", "L09"].includes(definition.id) ||
+      (definition.id === "SEQ13" && stepIndex === 1) ||
+      (definition.id === "SEQ11" && stepIndex > 0) ||
+      ["SEQ12", "SEQ14"].includes(definition.id) ||
+      (definition.id === "SEQ15" && stepIndex === 1);
+    if (excludedLibraryTurn) {
+      add("Contenido sin procedencia RAG heredada", !["knowledge_library", "mixed_knowledge"].includes(result?.contentSource),
+        "La exclusión actual de biblioteca prevalece sobre la fuente del turno anterior; comprobar además las herramientas en la traza.");
+      add("Sin recuperación RAG indebida", retrieval?.input?.requested === false &&
+        ["not_applicable", "not_requested", "not_reached"].includes(retrieval?.output?.status) &&
+        retrieval.output.snippetsCount === 0,
+      "B12 debe acreditar que no solicitó biblioteca en este turno; la ausencia de trazas no demuestra ausencia de consultas.");
+    }
+  }
   if (definition.id === "MIX07") {
     add("Resumen y preguntas como entregables separados", ["query.document_content", "content.discovery_questions"].every((category) =>
       result?.components?.some((component) => component.category === category && component.status === "completed")) &&
@@ -44,8 +120,13 @@ export function evaluateResponse({ definition, result, accountId, reference }) {
       !(text.match(/^[1-5]\.\s/gm) || []).length,
     "La pregunta pide una preparación breve para llamar: destacar situación y seguimiento, no repetir el informe de cinco puntos.");
   }
+  if (definition.id === "Q01-03") {
+    add("Contactos sin asociaciones inventadas", reference?.opportunities?.length !== 0 ||
+      !/asociados a (?:esas|las) oportunidades/i.test(text),
+    "Si no hay oportunidades, los contactos se describen como contactos de la cuenta, no asociados a oportunidades inexistentes.");
+  }
   if (definition.id === "Q02-02") {
-    const contact = reference?.contacts?.find((item) => Number(item.id) === 232 || /Alejandro Ruiz/i.test(item.name || ""));
+    const contact = reference?.contacts?.find((item) => normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz");
     const contactId = Number(contact?.id);
     add("Consulta el registro del contacto", result?.responseType === "informational" &&
       result?.components?.some((item) => item.category === "query.record_detail" && item.object !== "opportunity") === true &&
@@ -56,6 +137,13 @@ export function evaluateResponse({ definition, result, accountId, reference }) {
     if (contact && !contact.positionTitle) add("No inventa el cargo", /cargo:\s*(?:no informado|no registrado|no aparece registrado|no indicado(?: en el registro)?|sin especificar)/i.test(text) &&
       !/decisor|firmante|autoridad/i.test(text),
     "El cargo no está informado; no se deben inferir compras, influencia ni autoridad.");
+  }
+  if (definition.id === "Q03-03") {
+    const contact = reference?.contacts?.find((item) => normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz");
+    add("Cargo ausente del contacto identificado", Boolean(contact) && !String(contact.positionTitle || "").trim() &&
+      result?.responseType === "informational" && Number(result?.entities?.contactId) === Number(contact?.id) &&
+      /cargo:\s*(?:no informado|no registrado|no aparece registrado|no indicado(?: en el registro)?|sin especificar)/i.test(text),
+    "Debe identificar al contacto actual y declarar el cargo ausente; una aclaración genérica no acredita esta prueba.");
   }
   if (definition.id === "Q02-03") {
     add("Ambigüedad de hardware conservada", result?.responseType === "clarification" &&
