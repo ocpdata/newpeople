@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  CUSTOMER_TURN_CATEGORIES, CUSTOMER_DIALOGUE_MOVEMENTS, customerTurnContractSchema,
+  CUSTOMER_TURN_CATEGORIES, CUSTOMER_DIALOGUE_MOVEMENTS, CUSTOMER_TURN_INTERPRETATION_RULES, customerTurnContractSchema,
   customerTurnContractEnabled, customerComponentCapability, constrainCustomerComponentPlan,
   customerComponentAnswerRules, customerComponentVerificationRules,
   interpretCustomerTurn,
@@ -13,7 +13,7 @@ import {
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 import { customerReadQueryKey } from "../src/commercial-intelligence/customer-chat-evidence.js";
 import { buildCustomerUpdateResponse } from "../src/commercial-intelligence/customer-updates.js";
-import { CUSTOMER_TURN_CASES, SYNTHETIC_CUSTOMER_SNAPSHOT as snapshot } from "./fixtures/customer-turn-cases.js";
+import { CUSTOMER_TURN_CASES, CUSTOMER_DIMENSION_CASES, SYNTHETIC_CUSTOMER_SNAPSHOT as snapshot } from "./fixtures/customer-turn-cases.js";
 
 function component(category = "report.client_statement", extra = {}) {
   return {
@@ -36,6 +36,293 @@ const reportArgs = () => ({
 });
 
 describe("Customer turn contract", () => {
+  it("sends dimension criteria and contrasts without replacing the saved classifier guidance or schema", async () => {
+    const question = "Muéstrame la ficha de Renovación Alfa";
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([component("query.record_detail")]));
+    const instruction = "Guía administrable de prueba";
+    await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction }, classifyWithAI });
+    const request = classifyWithAI.mock.calls[0][0];
+    expect(request.systemPrompt.startsWith(CUSTOMER_TURN_INTERPRETATION_RULES)).toBe(true);
+    for (const dimension of ["1. PROPÓSITO:", "2. OBJETO:", "3. FUENTE:", "4. CONTINUIDAD:"]) {
+      expect(request.systemPrompt).toContain(dimension);
+    }
+    expect(request.systemPrompt).toContain("COMPROBACIÓN DE DIMENSIONES");
+    expect(request.systemPrompt).toContain("CONTROL FINAL DE COHERENCIA DOCUMENTAL");
+    expect(request.systemPrompt).toContain("Distingue conservar ENTIDAD de conservar TAREA");
+    expect(request.systemPrompt).toContain("No añadas campos de razonamiento al esquema");
+    expect(request.context.classifierGuidance.instruction).toBe(instruction);
+    expect(request.context.latestMessage).toBe(question);
+    expect(request.temperature).toBe(0);
+    expect(classifyWithAI).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(CUSTOMER_DIMENSION_CASES)("preserves dimension assignments and current request in $id", async (item) => {
+    if (item.conversationContext?.turnMemory) {
+      expect(customerTurnContractSchema.safeParse(item.conversationContext.turnMemory.contract).success).toBe(true);
+    }
+    const components = item.expected.map((part, index) => {
+      const { source, ...fields } = part;
+      return component(part.category, {
+        ...fields, id: `c${index + 1}`, text: item.question,
+        reference: part.object === "opportunity" ? "Renovación Alfa" : "",
+        scope: part.object === "general" ? "none" : "single",
+        ...(source ? { documentSpec: { ...fields.documentSpec, source, aspect: "question" } } : {}),
+      });
+    });
+    const classifyWithAI = vi.fn().mockResolvedValue(contract(components, {
+      movement: item.movements?.[0] || "new_request",
+    }));
+    const actual = await interpretCustomerTurn({
+      question: item.question, snapshot, classifierPrompt: { instruction: "" },
+      conversationHistory: item.conversationHistory,
+      conversationContext: item.conversationContext,
+      referenceMaterial: item.referenceMaterial, classifyWithAI,
+    });
+    expect(actual.components).toHaveLength(item.expected.length);
+    item.expected.forEach(({ source, ...expected }, index) => {
+      expect(actual.components[index]).toMatchObject(expected);
+      if (source) expect(actual.components[index].documentSpec.source).toBe(source);
+    });
+    const request = classifyWithAI.mock.calls[0][0];
+    expect(request.context.previousMessages).toEqual((item.conversationHistory || []).slice(-6));
+    expect(request.context.validatedContinuation).toEqual(item.conversationContext
+      ? Object.fromEntries(Object.entries(item.conversationContext).filter(([key]) => key !== "turnMemory")) : null);
+    if (item.currentText) expect(actual.components[0].text).toContain(item.currentText);
+  });
+
+  it("does not replace an explicitly requested missing file with an excluded library source", async () => {
+    const actual = await interpretCustomerTurn({
+      question: "Resume el archivo adjunto, no consultes la biblioteca interna.",
+      snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: async () => contract([component("query.document_content", {
+        object: "general", reference: "", scope: "none",
+        documentSpec: { source: "provided_document", aspect: "summary" },
+      })]),
+    });
+    expect(actual.components[0].documentSpec.source).toBe("provided_document");
+  });
+
+  it("does not replace an explicit document summary with a general content summary", async () => {
+    const actual = await interpretCustomerTurn({
+      question: "Resume el archivo adjunto; no consultes la biblioteca interna.",
+      snapshot, classifierPrompt: { instruction: "" },
+      referenceMaterial: { name: "Guia.txt", text: "El documento explica DNS y DHCP." },
+      classifyWithAI: async () => contract([component("query.document_content", {
+        object: "document", reference: "", scope: "single",
+        documentSpec: { source: "provided_document", aspect: "summary" },
+      })]),
+    });
+    expect(actual.components[0]).toMatchObject({
+      category: "query.document_content", object: "document",
+      documentSpec: { source: "provided_document", aspect: "summary" },
+    });
+  });
+
+  it.each([
+    "detalla la oportunidad propuesta seguridad correo",
+    "Dame el detalle de la oportunidad Propuesta Seguridad Correo",
+    "Muéstrame el detalle completo de la oportunidad Propuesta Seguridad Correo",
+  ])("does not substitute notes for generic detail: %s", async (question) => {
+    const result = await interpretCustomerTurn({
+      question, snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.opportunity_notes", { reference: "Propuesta Seguridad Correo" }),
+      ])),
+    });
+    expect(result.components[0]).toMatchObject({
+      category: "query.record_detail", object: "opportunity", text: question,
+      requestedFields: [],
+    });
+    expect(result.components[0].reference.toLocaleLowerCase("es")).toBe("propuesta seguridad correo");
+  });
+
+  it("does not carry the prior library source into an explicit opportunity-detail request", async () => {
+    const result = await interpretCustomerTurn({
+      question: "detalla la oportunidad propuesta seguridad correo", snapshot,
+      classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.document_content", { object: "general",
+          documentSpec: { source: "knowledge_library" } }),
+      ])),
+    });
+    expect(result.components[0]).toMatchObject({
+      category: "query.record_detail", object: "opportunity",
+      reference: "propuesta seguridad correo",
+    });
+    expect(result.components[0]).not.toHaveProperty("documentSpec");
+  });
+  it.each([
+    "Detalla las notas de la oportunidad Propuesta Seguridad Correo",
+    "Dame el detalle de la oportunidad Propuesta Seguridad Correo, solo sus notas",
+    "¿Qué dice la última nota de Propuesta Seguridad Correo?",
+  ])("preserves an explicit notes query: %s", async (question) => {
+    const result = await interpretCustomerTurn({
+      question, snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.opportunity_notes")])),
+    });
+    expect(result.components[0].category).toBe("query.opportunity_notes");
+  });
+  it("reconciles an explicit internal-library request misclassified as an unattached document", async () => {
+    const question = "¿Qué problemas resuelve BlueCat según nuestra documentación interna?";
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("query.document_content", {
+        object: "general", text: "Pregunta anterior del historial",
+        documentSpec: { source: "provided_document", aspect: "summary",
+          opportunityReference: "Alfa", quotationReference: "18", versionNumber: 2 },
+      }),
+    ]));
+    const result = await interpretCustomerTurn({
+      question, snapshot, classifierPrompt: { instruction: "" }, classifyWithAI,
+      conversationHistory: [{ role: "assistant", text: 'La capacidad para el objeto "general" no está disponible.' }],
+    });
+    expect(result.components[0]).toMatchObject({
+      text: question, object: "general", reference: "", scope: "none",
+      documentSpec: { source: "knowledge_library", aspect: "question" },
+    });
+    expect(result.components[0].documentSpec).not.toHaveProperty("quotationReference");
+    expect(customerComponentCapability(result.components[0]).available).toBe(true);
+  });
+
+  it.each([
+    ["Resume el archivo aportado", "general", null],
+    ["Consulta nuestra documentación interna", "document", null],
+    ["Consulta nuestra documentación interna", "general", { name: "BlueCat.txt", text: "Archivo adjunto" }],
+  ])("preserves the provided-document source for %s with object=%s", async (question, object, referenceMaterial) => {
+    const result = await interpretCustomerTurn({
+      question, snapshot, referenceMaterial, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([
+        component("query.document_content", { object, reference: "",
+          documentSpec: { source: "provided_document" } }),
+      ])),
+    });
+    expect(result.components[0].documentSpec.source).toBe("provided_document");
+  });
+  it("supports the library without an attachment and preserves the other document sources", () => {
+    const item = component("query.document_content", {
+      object: "general", reference: "", scope: "none",
+      documentSpec: { source: "knowledge_library", changed: ["source"] },
+    });
+    expect(customerTurnContractSchema.safeParse(contract([item])).success).toBe(true);
+    expect(customerComponentCapability(item)).toMatchObject({ available: true, providedDocument: false });
+    expect(customerComponentCapability({ ...item, object: "document",
+      documentSpec: { source: "provided_document" } })).toMatchObject({ available: false });
+    expect(customerComponentCapability({ ...item, object: "document",
+      documentSpec: { source: "provided_document" } }, { hasReferenceMaterial: true }))
+      .toMatchObject({ available: true, providedDocument: true });
+    expect(customerComponentCapability({ ...item, object: "quotation",
+      documentSpec: { source: "quotation" } })).toMatchObject({ intent: "quotation_query", available: true });
+    expect(customerComponentCapability({ ...item, category: "report.document_evidence" }))
+      .toMatchObject({ available: false });
+  });
+
+  it.each(["quotation", "provided_document"])("clears the prior %s selection when continuing with the library", (source) => {
+    const previous = component("query.document_content", {
+      object: source === "quotation" ? "quotation" : "document",
+      documentSpec: { source, opportunityReference: "Alfa", quotationReference: "18", versionNumber: 2 },
+    });
+    const current = component("query.document_content", {
+      object: "general", reference: "", continuationOf: "c1",
+      documentSpec: { source: "knowledge_library", changed: ["source"] },
+    });
+    const result = resolveCustomerContinuation(
+      contract([current], { movement: "continue" }),
+      { contract: contract([previous]), pendingComponentIds: [] },
+      "Ahora consulta la biblioteca interna sobre BlueCat",
+    );
+    expect(result.components[0].documentSpec).toEqual({ source: "knowledge_library", changed: ["source"] });
+    expect(result.components[0].object).toBe("general");
+  });
+
+  it("keeps library provenance separate in a mixed library and CRM answer", async () => {
+    const result = await runCustomerContractTurn({
+      contract: contract([
+        component("query.document_content", { object: "general", documentSpec: { source: "knowledge_library" } }),
+        component("query.account_summary", { id: "c2", object: "account" }),
+      ]),
+      question: "Explica BlueCat y resume la cuenta", context: { accountId: 1 },
+      executeComponent: vi.fn()
+        .mockResolvedValueOnce(engine("BlueCat permite gestionar DDI.", "informational", { contentSource: "knowledge_library" }))
+        .mockResolvedValueOnce(engine("Resumen CRM autorizado")),
+    });
+    expect(result.response.contentSource).toBe("mixed_knowledge");
+  });
+
+  it.each([
+    ["no_documents", "informational", "No hay documentos activos"],
+    ["no_results", "informational", "no devolvió fragmentos"],
+    ["not_configured", "error", "no está configurada"],
+    ["error", "error", "Falló la consulta"],
+  ])("reports library status %s without inventing an answer", async (status, responseType, text) => {
+    const generateWithAI = vi.fn();
+    const result = await generateCustomerContent({
+      component: component("query.document_content", {
+        object: "general", documentSpec: { source: "knowledge_library" },
+      }),
+      readToolResults: [], history: [], documentKnowledge: { status, snippets: [] },
+      user: { id: 1 }, jobId: 0, generateWithAI,
+    });
+    expect(result).toMatchObject({
+      responseType, contentSource: "knowledge_library",
+      contentDiagnostics: { stage: "retrieval", reasonCode: status },
+    });
+    expect(result.answer).toContain(text);
+    expect(generateWithAI).not.toHaveBeenCalled();
+  });
+
+  it("repairs a rejected RAG draft once and audits the corrected answer", async () => {
+    const generateWithAI = vi.fn()
+      .mockResolvedValueOnce({ answer: "BlueCat ya está instalado en esta cuenta." })
+      .mockResolvedValueOnce({ approved: "no", reasonCode: "unsupported_crm_claim" })
+      .mockResolvedValueOnce({ answer: "La documentación describe gestión DDI; no confirma su uso en esta cuenta." })
+      .mockResolvedValueOnce({ approved: "yes", reasonCode: "supported" });
+    const result = await generateCustomerContent({
+      component: component("query.document_content", {
+        object: "general", text: "¿Qué resuelve BlueCat?", documentSpec: { source: "knowledge_library" },
+      }),
+      question: "¿Qué resuelve BlueCat?", readToolResults: [], history: [],
+      documentKnowledge: { status: "results", snippets: [{ content: "BlueCat permite gestionar DDI." }] },
+      user: { id: 1 }, jobId: 0, generateWithAI,
+    });
+    expect(result).toMatchObject({
+      responseType: "informational", contentSource: "knowledge_library",
+      contentDiagnostics: { stage: "audit", reasonCode: "approved", repaired: true },
+      operations: [],
+    });
+    expect(generateWithAI).toHaveBeenCalledTimes(4);
+    expect(generateWithAI.mock.calls[2][0].context.correction.reasonCode).toBe("unsupported_crm_claim");
+  });
+
+  it("does not bypass the audit when a RAG repair is also rejected", async () => {
+    const generateWithAI = vi.fn().mockImplementation(async ({ schemaName }) =>
+      schemaName === "customer_account_content"
+        ? { answer: "Una afirmación sin respaldo" }
+        : { approved: "no", reasonCode: "insufficient_document_support" });
+    const result = await generateCustomerContent({
+      component: component("content.discovery_questions", { object: "general" }),
+      readToolResults: [], history: [], user: { id: 1 }, jobId: 0, generateWithAI,
+      documentKnowledge: { status: "results", snippets: [{ content: "Otro tema" }] },
+    });
+    expect(result).toMatchObject({
+      responseType: "error",
+      contentDiagnostics: { stage: "audit", reasonCode: "insufficient_document_support", repaired: true },
+    });
+    expect(generateWithAI).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    ["customer_account_content", "CUSTOMER_CONTENT_GENERATION_FAILED"],
+    ["customer_account_content_audit", "CUSTOMER_CONTENT_AUDIT_FAILED"],
+  ])("identifies provider failure at %s", async (failureSchema, code) => {
+    const generateWithAI = vi.fn().mockImplementation(async ({ schemaName }) => {
+      if (schemaName === failureSchema) throw new Error("Provider unavailable");
+      return { answer: "Contenido" };
+    });
+    await expect(generateCustomerContent({
+      component: component("content.discovery_questions"), readToolResults: [], history: [],
+      user: { id: 1 }, jobId: 0, generateWithAI,
+    })).rejects.toMatchObject({ code });
+  });
+
   it("retries a 19-minute agenda requested as 20 minutes and renders only validated block durations", async () => {
     const generateWithAI = vi.fn()
       .mockResolvedValueOnce({ blocks: [{ title: "Revisión", durationMinutes: 19, description: "Validar necesidades." }] })
@@ -651,7 +938,8 @@ describe("Customer turn contract", () => {
       classifierPrompt: { instruction: "Guía personalizada sin cambios" }, classifyWithAI });
     const { systemPrompt, context, temperature, schemaName } = classifyWithAI.mock.calls[0][0];
     expect(context.previousMessages).toEqual(conversationHistory.slice(-6));
-    expect(context.validatedContinuation).toEqual(conversationContext);
+    expect(context.validatedContinuation).toEqual(
+      Object.fromEntries(Object.entries(conversationContext).filter(([key]) => key !== "turnMemory")));
     expect(context.classifierGuidance.instruction).toBe("Guía personalizada sin cambios");
     expect(context.catalog.map((item) => item.code)).toEqual(CUSTOMER_TURN_CATEGORIES.map((item) => item.code));
     expect(temperature).toBe(0);
@@ -1848,8 +2136,10 @@ describe("Customer turn contract", () => {
     expect(result.components[0].listSpec).toMatchObject({
       statusCodes: ["en_proceso"], amountFilters: [{ operator: "gt", value: 500000, currency: "USD" }],
     });
-    expect(classifyWithAI.mock.calls[0][0].context.validatedContinuation.turnMemory.contract)
-      .toEqual(pending);
+    expect(classifyWithAI.mock.calls[0][0].context.interpretationContext.previousTasks[0])
+      .toMatchObject(pending.components[0]);
+    expect(classifyWithAI.mock.calls[0][0].context.interpretationContext.previousTurn.pendingComponentIds)
+      .toEqual(["c1"]);
   });
   it.each(["En USD.", "USD", "En dólares estadounidenses"])("recognizes the explicit currency answer %s without losing pending filters", async (question) => {
     const previous = contract([component("query.record_search", { listSpec: {
@@ -1946,7 +2236,8 @@ describe("Customer turn contract", () => {
     expect(result.movement).toBe("continue");
     expect(result.components[0].listSpec).toEqual({ limit: 5 });
     const request = classifyWithAI.mock.calls[0][0];
-    expect(request.context.validatedContinuation).toEqual(conversationContext);
+    expect(request.context.validatedContinuation).toEqual(
+      Object.fromEntries(Object.entries(conversationContext).filter(([key]) => key !== "turnMemory")));
     for (const rule of [
       'pendingComponentIds=[]', 'No son new_request por usar "muéstrame" o "busca"',
       'changed=["limit"], limit=5', 'No combines new_request/change_focus con continuationOf=c1..c4',

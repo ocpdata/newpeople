@@ -76,7 +76,10 @@ export function shouldRetrieveCustomerDocumentKnowledge({
       return false;
     }
     if (components.some((component) =>
-      DOCUMENT_KNOWLEDGE_CATEGORIES.has(component.category))) {
+      DOCUMENT_KNOWLEDGE_CATEGORIES.has(component.category) ||
+      (component.category === "query.document_content" &&
+        component.object === "general" &&
+        component.documentSpec?.source === "knowledge_library"))) {
       return true;
     }
     return false;

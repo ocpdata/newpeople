@@ -2514,6 +2514,7 @@ export default function MiAgentPage({
   const [customerChatMessages, setCustomerChatMessages] = useState([]);
   const [customerChatLoading, setCustomerChatLoading] = useState(false);
   const [customerChatTurn, setCustomerChatTurn] = useState(null);
+  const customerChatTurnBlocking = Boolean(customerChatTurn && customerChatTurn.status !== "failed");
   const customerChatRevisionRef = useRef(0);
   const customerChatRequestRef = useRef(null);
   const customerChatThreadRef = useRef(null);
@@ -3631,7 +3632,7 @@ export default function MiAgentPage({
     if (
       !normalizedQuestion || !hasCustomerContext ||
       customerChatRequestRef.current || customerChatSessionLoading ||
-      (!recovery && customerChatTurn && customerChatTurn.status !== "completed")
+      (!recovery && customerChatTurnBlocking)
     ) return;
     const revision = ++customerChatRevisionRef.current;
     customerChatRequestRef.current = revision;
@@ -8701,7 +8702,7 @@ export default function MiAgentPage({
                     disabled={
                       customerChatLoading ||
                       customerChatSessionLoading ||
-                      Boolean(customerChatTurn) ||
+                      customerChatTurnBlocking ||
                       !hasCustomerContext
                     }
                   >
@@ -8715,7 +8716,7 @@ export default function MiAgentPage({
                     disabled={
                       customerChatLoading ||
                       customerChatSessionLoading ||
-                      Boolean(customerChatTurn) ||
+                      customerChatTurnBlocking ||
                       !hasCustomerContext
                     }
                   >
@@ -8729,7 +8730,7 @@ export default function MiAgentPage({
                       )
                     }
                     disabled={customerChatLoading || customerChatSessionLoading ||
-                      Boolean(customerChatTurn) || !hasCustomerContext}
+                      customerChatTurnBlocking || !hasCustomerContext}
                   >
                     Expansión
                   </button>
@@ -8798,7 +8799,7 @@ export default function MiAgentPage({
                 disabled={
                   customerChatLoading ||
                   customerChatSessionLoading ||
-                  Boolean(customerChatTurn) ||
+                  customerChatTurnBlocking ||
                   !customerChatQuestion.trim() ||
                   !hasCustomerContext
                 }
@@ -8834,6 +8835,10 @@ export default function MiAgentPage({
                           ? "Cambio propuesto · no acredita guardado"
                           : message.creationMetadata
                           ? "Datos aportados · borrador no guardado"
+                          : message.contentSource === "knowledge_library"
+                          ? "Biblioteca documental RAG; no acredita hechos del cliente"
+                          : message.contentSource === "mixed_knowledge"
+                          ? "Biblioteca RAG + otras fuentes; respaldo diferenciado en la respuesta"
                           : message.contentSource === "user_provided"
                           ? "Material aportado; no verificado en CRM"
                           : message.contentSource === "mixed_document"
@@ -9625,6 +9630,8 @@ export default function MiAgentPage({
                       >
                         Recargar conversación
                       </button>
+                    ) : customerChatTurn.status === "failed" ? (
+                      <p>Puedes corregir tu pregunta o enviar otra en esta misma conversación.</p>
                     ) : customerChatTurn.status !== "pending" ? (
                       <p>Inicia una nueva conversación para enviar otra pregunta.</p>
                     ) : null}

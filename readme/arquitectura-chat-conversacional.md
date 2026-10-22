@@ -188,18 +188,161 @@ verificada del CRM.
 
 **Cliente existente · 2. Interpretación estructurada del turno**
 
-**Qué decide B3:** interpreta una sola vez el turno actual y entrega una
+**Elección de dimensiones en B3:** el clasificador distingue el entregable
+(`category`), su objeto (`object`), la fuente documental cuando aplica
+(`documentSpec.source`) y la continuidad (`movement`/`continuationOf`).
+Las reglas técnicas incluyen criterios de entrada/exclusión y ejemplos
+contrastivos de detalle/notas/campos, consulta/redacción/operación y
+biblioteca/adjunto/cotización. El mensaje actual determina el propósito;
+conservar una entidad no obliga a conservar la tarea ni la fuente anterior.
+Una comprobación en el mismo prompt pide preservar tareas, cantidades y
+restricciones, sin añadir campos al contrato ni una llamada adicional.
+No es un verificador independiente ni garantiza exactitud semántica.
+La guía predeterminada administrable mantiene estos criterios; las versiones
+personalizadas guardadas no se sobrescriben y siguen subordinadas al contrato.
+La evaluación focalizada se ejecuta con
+`npm run test:customer-chat:contract:live --prefix apps/api -- --dimensions-only`.
+Realiza llamadas pagadas al proveedor con datos sintéticos y contrasta propósito,
+objeto, fuente, movimiento y cantidad actual en casos de límites y continuidad.
+Exige coincidencia tanto en la salida original del modelo como después de las
+reconciliaciones del servidor, para no atribuir a la IA aciertos de una corrección.
+Esta selección no sustituye la evaluación completa del catálogo y del diálogo.
+Las normalizaciones posteriores no deben cambiar un objeto documental explícito
+a oportunidad solo porque el mensaje mencione su nombre. La reconciliación de
+fuente hacia biblioteca tampoco interviene cuando el mensaje menciona un archivo,
+adjunto o PDF: ante señales de ambas fuentes conserva la decisión del clasificador
+en vez de asumir que toda mención de biblioteca es una petición de consultarla.
+
+**Barrera de coherencia antes de ejecutar:** después de interpretar y normalizar
+el contrato, B3 aplica comprobaciones deterministas de fuente/objeto documental y
+referencias de continuidad, y una llamada semántica independiente. También revisa
+el contrato del atajo determinista de preguntas sobre el proceso de ventas cuando
+la ruta estructurada está habilitada. La ruta legacy (`off`) no cambia.
+
+El revisor contrasta mensaje actual, mensajes seleccionados (seis recientes y hasta
+dos antecedentes de tareas pendientes), contexto validado,
+disponibilidad de material y contrato propuesto. No recupera Pinecone ni nuevas
+lecturas CRM. Comprueba propósito, objeto, fuente, continuidad, cobertura de
+tareas y restricciones. El esquema limita la evidencia a identificadores seguros
+(`e1`, `e2`, etc.) de `evidenceCatalog`; el servidor los resuelve a fragmentos
+literales del mensaje o historial (máximo 500 caracteres por fragmento) para cada
+discrepancia semántica; evidencia inventada, salida inválida o proveedor fallido
+bloquean el turno con error explícito, sin activar el adaptador de ejecución.
+El texto original, incluidos saltos de línea, queda en el contexto y las trazas
+resueltas, no en los valores `enum` del esquema estricto del proveedor.
+
+**Contraste bidireccional con el mensaje original:** la misma llamada del revisor
+examina tres ejes. El servidor calcula `comparison` con tres booleanos a partir
+de los códigos de las discrepancias validadas:
+
+| Comprobación | Sentido | Discrepancia |
+| --- | --- | --- |
+| `coverage` | Cada petición explícita está representada en el contrato. | `MISSING_TASK` |
+| `support` | Cada componente está respaldado por una petición actual o continuación inequívoca. | `UNSUPPORTED_TASK` |
+| `fidelity` | Se conservan entidad, cantidad, alcance, fuente, exclusiones, condiciones, atribución y certeza. | Las demás discrepancias de coherencia. |
+
+Una cita existente no basta: el revisor debe explicar en `problem` qué componente
+o campo omite, añade o altera lo pedido por ella. Una acción mencionada en un
+correo, una propuesta del asistente o un encargo anterior reemplazado no autorizan
+otra tarea. Por ejemplo, redactar un correo para pedir reunión no solicita
+programarla. Las lecturas internas necesarias no se consideran tareas adicionales.
+El servidor calcula los indicadores sin pedir al modelo resultados redundantes:
+cada eje queda en `false` si hay una discrepancia de ese tipo; una aprobación
+exige que no existan discrepancias. `UNSUPPORTED_TASK` debe identificar el componente
+agregado. Esto no demuestra mecánicamente la pertinencia semántica de una cita;
+esa comprobación sigue dependiendo del modelo.
+
+- **Aprobación:** entrega el contrato a ejecución. Una aprobación semántica no
+  anula una contradicción determinista.
+- **Contradicción con solicitud clara:** permite una sola reinterpretación con
+  retroalimentación y revisa nuevamente el resultado normalizado.
+- **Ambigüedad real:** solicita una aclaración específica sin reparar por su cuenta.
+- **Contradicción persistente:** conserva los componentes y devuelve aclaración
+  con confianza baja; no ejecuta la solicitud.
+
+La revisión usa el mismo presupuesto de tiempo del turno; sin fecha límite
+explícita dispone de 45 segundos para interpretación, revisión y eventual
+reparación, con un máximo de 15 segundos por llamada. Los errores
+`CUSTOMER_B3_REVIEW_FAILED` y `CUSTOMER_B3_REVIEW_TIMEOUT` se persisten como fallos
+de clasificación en B3. `classificationFailure.reviewFailure` distingue salida
+inválida, evidencia inválida, fallo del proveedor y timeout, con intento y rutas de
+validación sin guardar respuestas crudas del proveedor.
+Un job definitivamente `failed` libera el formulario para corregir la pregunta o
+enviar otra en la misma sesión; no se reenvía automáticamente el job fallido.
+Un turno pendiente, interrumpido o con error al cargar historial sigue bloqueando
+nuevos envíos hasta recuperar su resultado o la conversación, para evitar duplicados.
+Una reparación inválida o fallida tampoco habilita
+ejecución. Esta barrera añade una llamada de IA en el camino normal y, si hay
+reparación, hasta tres llamadas adicionales respecto al clasificador original.
+No modifica permisos ni confirmaciones.
+
+La traza de clasificación incluye `coherenceReview`: estado, número de revisiones,
+si se intentó reparar (`repairAttempted`), si la reparación fue aprobada (`repaired`),
+discrepancias, `comparison` en cada revisión y contrato inicial cuando fue rechazado.
+El runtime no debe convertir un contrato que pide aclaración en confirmación de
+un borrador ni resolverlo automáticamente desde memoria.
+La evaluación sintética completa de esta barrera usa el comando anterior con
+`--reviewed`: añade seis propuestas iniciales deliberadamente erróneas (detalle
+reducido a notas, tarea omitida, fuente excluida, cantidad alterada, reunión no
+solicitada y atribución/certeza cambiadas) y exige
+detectarlas, repararlas y aprobarlas en la segunda revisión. El evaluador sin
+esa opción sigue midiendo solo el clasificador.
+La revisión es una segunda barrera, no una garantía de exactitud: puede omitir
+contradicciones o producir falsos positivos y requiere seguimiento.
+
+**Qué decide B3:** interpreta y revisa el turno actual, con una reparación máxima, y entrega una
 descripción estructurada de la solicitud. B3 no decide si una lectura está
 autorizada, no elige IDs CRM y no ejecuta acciones; permisos, alcance y
 disponibilidad se validan en los pasos posteriores.
 
 **Qué información utiliza:** `service.js` selecciona esta ruta según la
-configuración y llama a `interpretCustomerTurn`. La interpretación considera el
+configuración y llama a `interpretReviewedCustomerTurn`, que utiliza `interpretCustomerTurn`.
+La interpretación considera el
 mensaje actual, el historial, el contexto conversacional ya revalidado, el
 material aportado y pistas de nombres/tipos tomadas de entidades autorizadas del
 snapshot. El modelo recibe nombres y tipos, no puede seleccionar IDs CRM. Las
 instrucciones administrables de B3 solo orientan la interpretación: están
 subordinadas al catálogo y al esquema del servidor y no los reemplazan.
+
+**Preparación compartida del contexto:** `interpretation-context.js` construye
+`interpretationContext` una vez por turno revisado y lo reutiliza también en la
+reparación. Clasificador y revisor reciben los mismos mensajes seleccionados,
+continuidad y marcas de origen; no se añade una llamada de IA ni un resumen generado.
+
+- `currentRequest` conserva el mensaje actual completo como autoridad sobre la tarea.
+- `entityFocus` separa cuenta como alcance de acceso y oportunidad/contacto vigentes
+  como identidad, no como tarea o fuente heredada.
+- `previousTasks` distingue `pending`, `not_pending` y `abandoned`. No pendiente no
+  significa ejecución completada: es solo el estado de continuidad registrado.
+  Conserva especificaciones y parches de cada componente; `previousTurn` conserva
+  movimiento, resolución, aclaración y IDs pendientes. La IA no recibe además una
+  copia del contrato anterior en `validatedContinuation.turnMemory`: la memoria
+  completa permanece disponible en el servidor para las normalizaciones y el runtime.
+- `pendingState` identifica memorias existentes de borradores/selecciones sin
+  convertirlas en autorización para ejecutar. Los filtros y parches validados se
+  conservan en `validatedContinuation`; no se infieren nuevas cantidades por código.
+- `history` conserva hasta seis mensajes conversacionales recientes y agrega como
+  máximo dos antecedentes originales de tareas pendientes, en orden cronológico.
+  Solo agrega mensajes del usuario cuyo texto contenga literalmente el fragmento
+  de la tarea (mínimo 20 caracteres para coincidencias parciales). Si no hay ancla
+  fiable, no la inventa; una tarea no pendiente no reactiva mensajes antiguos.
+  Cada mensaje seleccionado se limita a 2000 caracteres y marca su truncamiento.
+- Las marcas de origen distinguen afirmación del usuario, salida/propuesta del
+  asistente, selección validada y documento aportado. No certifican la verdad de
+  afirmaciones ni convierten propuestas en órdenes.
+- `material` distingue descripción del adjunto actual y material anterior disponible.
+  El material previo es un candidato de continuidad, no un adjunto nuevo ni una
+  fuente obligatoria. Una tarea abandonada no lo presenta como material vigente.
+- `ambiguities` presenta nombres autorizados de candidatos de la selección de monto
+  pendiente, sin elegir uno. Otras ambigüedades siguen resolviéndose con las pistas
+  autorizadas y el clasificador, no con una nueva heurística de nombres.
+
+Si la cuenta de la memoria difiere explícitamente de la cuenta del snapshot,
+descarta memoria e historial para la interpretación; también filtra mensajes con
+otra cuenta explícita y roles distintos de usuario/asistente. En producción la
+sesión y su historial ya deben haber sido autorizados por B3: estas comprobaciones
+no sustituyen esa validación. La traza `coherenceReview.contextSelection` registra
+límites, cantidad de mensajes y descarte por cuenta, sin duplicar todo el historial.
 
 **Qué produce:** una salida validada con versión, confianza, resolución y
 pregunta aclaratoria cuando hace falta. Incluye un movimiento conversacional y
@@ -486,9 +629,7 @@ y se pide seleccionar uno. Los estados de salida distinguen `completed`,
 - **Cliente existente:** B5 recibe la intención autoritativa de B3 y la entrega a B6 junto con el catálogo habilitado, el contexto de cuenta y las herramientas. B6 propone consultas, entidades, filtros y, cuando corresponde, detalles de una operación, pero no puede cambiar la intención final. B5 valida que el plan sea compatible con esa intención, además de validar catálogo, contexto, entidades confiables, permisos y políticas antes de permitir lecturas o propuestas.
 - **Cuenta nueva:** B5 carga la configuración propia del canal y la usa para clasificar/enrutar la solicitud dentro del alcance de la sesión de prospecto. La ruta resultante limita las herramientas disponibles; no habilita consultas CRM ni conversión automática de la sesión.
 
-**B12 · Conocimiento documental para Cliente existente:** después de validar el routing, B5 consulta el índice del Assistant de Pinecone solo cuando la pregunta pide orientación comercial o conocimiento general sobre procesos, productos o soluciones. Las consultas de CRM, aclaraciones y operaciones no disparan la recuperación. A Pinecone se envía únicamente la pregunta actual, depurada para retirar nombres de cuenta/oportunidad/contacto seleccionados y referencias CRM numéricas; no se envían el historial, el snapshot ni lecturas CRM. El filtro del servidor incluye únicamente documentos y versiones activas de temas activos. La búsqueda tiene un tiempo límite y devuelve hasta cinco fragmentos, sin identificadores de documento. En el contrato estructurado de Cliente existente, que puede completar componentes sin pasar por el motor genérico, B4 llama al mismo recuperador cuando hay una categoría pertinente.
-
-Los fragmentos se pasan en `documentKnowledge`, separados de `readToolResults` y de la evidencia CRM. Pueden respaldar información general; no demuestran qué compró, necesita, configuró o logró la cuenta, ni sustituyen lecturas autorizadas. El modelo debe tratar los fragmentos como datos no confiables, no como instrucciones. Si no hay coincidencias, el flujo continúa sin esa fuente; si Pinecone falla o no está configurado, se registra el estado y el turno continúa con las demás fuentes. Una pregunta que dependa de un documento ausente no debe recibir una respuesta inventada. B12 registra estado y cantidad en el diagnóstico, nunca el texto de los fragmentos.
+**Interacción con B12:** en Cliente existente, B5 solicita conocimiento documental cuando la intención lo requiere y mantiene sus fragmentos separados de la evidencia CRM. En el contrato estructurado, B4 puede llamar al mismo recuperador sin pasar por B5. La recuperación, sus fuentes y límites se describen en el bloque independiente **B12 · Conocimiento documental**.
 
 **Carga y aplicación de Reglas conversacionales de Administración:** son las instrucciones comunes o específicas que orientan las respuestas del asistente. B5 las carga para el canal y proceso vigentes a través del adaptador, conserva solo las reglas activas y las incorpora al contexto/prompt que envía al modelo. Por eso influyen en cómo el modelo interpreta la solicitud y redacta la respuesta; en Coach también se entregan a B9/B10 para orientar la evaluación de evidencia y la auditoría. B5 y los bloques posteriores deben respetarlas al conducir el turno, pero estas instrucciones no conceden permisos ni habilitan herramientas: B5 valida el plan y las operaciones, y B7/B8 siguen limitados por permisos, herramientas y alcance autorizados por el servidor.
 
@@ -506,8 +647,6 @@ Los fragmentos se pasan en `documentKnowledge`, separados de `readToolResults` y
 - **Coach:** usa la intención y el modo ya resueltos por el gateway para limitar herramientas y respuesta; la planificación de lecturas no vuelve a decidir la intención final. Cuando está habilitado el pipeline, B5 coordina sus etapas de plan, lectura, evaluación de evidencia y auditoría. Si la consulta es de proceso general, puede responder desde la guía/política sin evidencia CRM; una solicitud de detalle fuera del espacio de Coach puede terminar en handoff.
 - **Cliente existente:** ejecuta la ruta descrita arriba y respeta además el límite de tiempo y las rondas de evidencia configuradas para este canal.
 - **Cuenta nueva:** enruta la consulta únicamente hacia las herramientas disponibles para la sesión de prospecto y mantiene la respuesta asociada a ese contexto; no convierte el prospecto ni crea una cuenta CRM.
-
-**B12 · Recuperador documental:** está implementado para Cliente existente mediante el Assistant de Pinecone configurado en Documentación RAG. B5 consulta el recuperador tras validar el routing; las preguntas puramente factuales de CRM, aclaraciones y operaciones no lo consultan. A Pinecone se envía solo la pregunta actual sanitizada: se omiten nombres de entidades seleccionadas y referencias numéricas CRM, nunca el snapshot ni las lecturas. El catálogo se limita en servidor a documentos/versiones activos y temas activos, con máximo de cinco fragmentos y timeout. En el contrato estructurado, que puede resolver algunos componentes directamente desde B4, se usa el mismo recuperador y se pasa el contexto al componente compatible. La respuesta mantiene `documentKnowledge` separado de la evidencia CRM; B12 no ejecuta consultas CRM ni redacta, y un error continúa como fallback registrado en el diagnóstico.
 
 **Ramas de salida:** puede responder directamente, devolver aclaración/handoff/error antes de leer, completar una o más llamadas autorizadas a herramientas y continuar la generación, o cerrar con evidencia insuficiente cuando no es seguro afirmar una respuesta. Un plan inválido, una referencia ambigua, un fallo de lectura o el agotamiento de límites no se presentan como una consulta exitosa sin resultados.
 
@@ -706,11 +845,46 @@ trazas de fallos de preparación y persistencia; no se reconstruyen turnos antig
 
 :::
 
+:::details B12 · Conocimiento documental
+
+**Propósito:** recuperar conocimiento general de la biblioteca Documentación RAG mediante el Assistant de Pinecone para Cliente existente. Es una fuente separada del CRM, no una lectura de registros del cliente.
+
+**Recibe:** desde B5, tras validar el routing, o desde B4 en los componentes compatibles del contrato estructurado, la pregunta actual depurada para retirar nombres de cuenta, oportunidad y contacto seleccionados y referencias CRM numéricas. No se envían a Pinecone el historial, el snapshot ni las lecturas CRM.
+
+**Cuándo se consulta:** para orientación comercial, preparación de contenido sobre procesos, productos o soluciones y consultas explícitas a la biblioteca interna. Las preguntas puramente factuales del CRM, aclaraciones y operaciones no disparan la recuperación.
+
+**Fuentes e interpretación:**
+
+- Las consultas directas usan `query.document_content`, `object=general` y `documentSpec.source=knowledge_library`, distinto de `quotation` (cotización CRM) y `provided_document` (archivo aportado).
+- Ejemplos: «Según nuestra documentación interna, ¿qué problemas de DNS, DHCP e IPAM resuelve BlueCat?» o «¿Cómo protege F5 las aplicaciones y APIs?». No requieren adjuntar de nuevo los documentos ni seleccionar una oportunidad.
+- Si la solicitud menciona explícitamente documentación interna o la biblioteca RAG y no hay adjunto, B3 reconcilia una clasificación contradictoria `query.document_content`/`general`/`provided_document` como `knowledge_library`. Registra `CUSTOMER_LIBRARY_SOURCE_RECONCILED` y elimina referencias de selección heredadas; no cambia consultas de cotizaciones ni archivos identificados.
+- Cambiar de fuente no conserva la selección de una cotización. El contenido general de descubrimiento, reuniones o argumentos de valor no ejecuta lecturas CRM innecesarias; las peticiones sobre una oportunidad concreta conservan sus verificaciones de alcance.
+
+**Hace:** limita la búsqueda en servidor a documentos y versiones activos de temas activos. Aplica un tiempo máximo de ocho segundos y recupera hasta cinco fragmentos. Reutiliza los resultados dentro del turno para evitar llamadas duplicadas.
+
+**Devuelve:** estado y fragmentos en `documentKnowledge`, separados de `readToolResults` y de la evidencia CRM. La interfaz y el historial identifican `knowledge_library` como «Biblioteca documental RAG» y `mixed_knowledge` cuando se combina con otras fuentes.
+
+**Uso en respuesta y auditoría:** generación y auditoría reciben los mismos fragmentos. Pueden respaldar características generales, pero no demuestran qué compró, necesita, configuró o logró la cuenta. Se tratan como datos no confiables, nunca como instrucciones. La auditoría conserva un código de motivo acotado en B9; si rechaza un borrador respaldado por RAG, se permite una única corrección con nueva auditoría dentro del plazo del turno. Un segundo rechazo bloquea el contenido: no se desactiva el verificador. Los fallos del proveedor distinguen generación y auditoría.
+
+**Estados y fallos:** distingue `results`, `no_results`, `no_documents`, `not_configured`, `error` y omisiones como `not_applicable`. Un error de Pinecone no se presenta como búsqueda sin resultados. El turno puede continuar con otras fuentes cuando corresponda; una consulta que depende de documentación no disponible informa el límite, sin inventar una respuesta.
+
+**Diagnóstico:** registra estado y cantidad de fragmentos, nunca su texto ni identificadores documentales. El resumen empareja llamada y retorno por `spanId`: `requested` proviene de la llamada; estado y cantidad, del retorno de esa misma ejecución, conservando también un conteo de cero. B11 persiste esa traza junto con el resultado del turno.
+
+**Límites:** B12 no ejecuta consultas CRM, no autoriza lecturas ni escrituras y no redacta la respuesta final. Recuperar fragmentos no demuestra por sí solo pertinencia, aprobación de la respuesta ni cobertura completa de la biblioteca.
+
+:::
+
 :::
 
 :::
 
 ## Validación de Cliente existente
+
+Las solicitudes de detalle general de una oportunidad usan `query.record_detail`;
+no se sustituyen por `query.opportunity_notes`, que exige una petición de notas.
+B3 reconcilia esa confusión para peticiones explícitas de detalle y registra
+`CUSTOMER_OPPORTUNITY_DETAIL_PURPOSE_RECONCILED`, sin cambiar consultas específicas
+de notas, actividades, historial o cotizaciones.
 
 Las pruebas no forman parte del flujo que ejecuta cada mensaje ni son bloques
 adicionales de B3. Hay dos evaluaciones separadas:

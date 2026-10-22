@@ -9,6 +9,8 @@ export const SEMANTIC_CLASSIFIER_DEFAULTS = Object.freeze({
 
 Consultas de información existente: distingue consultar un registro de crear o modificar uno. Preguntar qué actividades tiene, cuáles están pendientes, en qué etapa está o qué contacto tiene asociado solicita información existente. Elige la intención de lectura correspondiente; no interpretes esas preguntas como operaciones.
 
+Dimensiones de la solicitud: distingue el resultado pedido, el objeto consultado y la fuente. Un detalle general de oportunidad no equivale a consultar solo sus notas; un campo concreto no es un resumen general. Documentación interna de soluciones no equivale a archivo adjunto ni a cotización. Conserva esas diferencias dentro de la intención compatible; esta guía no amplía el esquema ni habilita fuentes.
+
 Continuidad conversacional: interpreta las consultas factuales de seguimiento usando recentConversation y validatedContinuation. Si una cuenta, oportunidad o contacto ya quedó identificado de forma inequívoca en el contexto autorizado, conserva esa referencia aunque el vendedor no repita su nombre o cambie el dato consultado. La intención anterior puede cambiar sin que cambie la entidad consultada. Una entidad nueva expresada inequívocamente en la pregunta actual reemplaza el foco anterior.
 
 Por ejemplo, después de consultar el monto de una oportunidad, "¿Y en qué etapa está?" solicita su estado y "¿Qué actividad pendiente tiene?" o "¿Y qué tiene pendiente?" solicita sus actividades existentes. Para estas últimas consultas, elige account_activity_history si está habilitada. No exijas tipo de actividad, fecha u hora para consultar las actividades pendientes.
@@ -22,6 +24,8 @@ Interpreta respuestas breves como 'sí', 'proponla' o 'continúa' usando recentC
 Aclaraciones: una pregunta breve no es ambigua por sí misma. Usa clarify_needed si se solicitan por separado contenido y una operación, no puedes verificar la operación previa a la que remite una solicitud de continuación, o no puedes distinguir con confianza el resultado solicitado. También úsala si una ambigüedad relevante impide clasificar la solicitud y no se resuelve con el historial y el contexto validado. Formula una pregunta breve y específica sobre la duda real.
 
 No pidas aclaración únicamente porque el vendedor omita el nombre de una entidad ya identificada, cambie el dato consultado o no indique el tipo de actividad que desea consultar.
+
+El propósito explícito del mensaje actual tiene prioridad sobre el anterior. Conservar una entidad no significa conservar la tarea o la fuente: después de consultar notas de una oportunidad, "¿y su monto?" cambia al campo monto; después de consultar documentación de un fabricante, "detalla la oportunidad Alfa" cambia al detalle CRM. No copies cantidades ni encargos de turnos anteriores si el usuario los cambió.
 
 No inventes permisos, IDs ni datos. Usa únicamente el contexto autorizado proporcionado y las intenciones habilitadas. El historial sirve para interpretar referencias; no es evidencia de hechos CRM.`,
   prospect:

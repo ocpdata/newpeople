@@ -191,6 +191,8 @@ describe("Customer account chat adapter", () => {
           attribution: "none", certainty: "unspecified",
           dependsOn: [], continuationOf: "none",
         }],
+      }).mockResolvedValueOnce({
+        status: "approved", clarificationQuestion: "", issues: [],
       });
       const classified = await classifyCustomerIntent({
         question: "Lista las oportunidades.", user: { id: 31 }, snapshot,
@@ -199,6 +201,8 @@ describe("Customer account chat adapter", () => {
       expect(classified.source.resolver).toBe("turn_contract_v1");
       expect(classified.turnContract.components[0].category).toBe("query.record_list");
       expect(runStructuredTextResearch.mock.calls[0][0].schemaName).toBe("customer_account_turn_contract");
+      expect(runStructuredTextResearch.mock.calls[1][0].schemaName).toBe("customer_account_turn_coherence");
+      expect(classified.source.coherenceReview.status).toBe("approved");
     } finally {
       config.features.customerTurnContractMode = previousMode;
       config.features.customerTurnContractPilotUserIds = previousUsers;
@@ -1491,6 +1495,95 @@ describe("Customer account chat adapter", () => {
     interactions: [],
     accountHealth: { status: "healthy", score: 80 },
   };
+
+  it.each([
+    ["BlueCat", "query.document_content"],
+    ["F5", "query.document_content"],
+    ["proceso comercial", "query.document_content"],
+    ["BlueCat", "content.discovery_questions"],
+    ["BlueCat", "content.discovery_questions", true],
+  ])("answers %s through %s without reading CRM or selecting a quotation", async (topic, category, withReference) => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account"),
+    );
+    const question = `Según nuestra documentación interna, explica ${topic}`;
+    retrieveCustomerChatDocumentKnowledge.mockResolvedValue({
+      status: "results", snippets: [{ content: `Documentación de ${topic}`, score: 0.9 }],
+    });
+    runStructuredTextResearch.mockImplementation(async ({ schemaName }) => {
+      if (schemaName === "customer_account_content") return { answer: `Según la biblioteca: ${topic}` };
+      if (schemaName === "customer_account_content_audit") return { approved: "yes", reasonCode: "supported" };
+      throw new Error(`Unexpected AI request: ${schemaName}`);
+    });
+    const adapter = createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: new Set(["cuentas.read"]) }, snapshot,
+      referenceMaterial: withReference
+        ? { name: "Notas de reunión", text: "Validar DNS sin asumir necesidades confirmadas." } : null,
+      authoritativeIntent: {
+        turnContract: {
+          version: 1, movement: "new_request", resolution: "resolved",
+          clarificationQuestion: "", confidence: "high",
+          components: [{
+            id: "c1", category, text: question, object: "general",
+            scope: "none", reference: "", topic, attribution: "none", certainty: "unspecified",
+            explicitAction: false, dependsOn: [], continuationOf: "none",
+            ...(category === "query.document_content"
+              ? { documentSpec: { source: "knowledge_library", changed: ["source"] } } : {}),
+          }],
+        },
+      },
+      agents: [], jobId: 10,
+    });
+    const result = await adapter.runTurn({ question, context: { accountId: 7 } });
+    expect(result.response).toMatchObject({
+      responseType: "informational", contentSource: withReference ? "mixed_knowledge" : "knowledge_library", operations: [],
+    });
+    expect(result.response.answer).toContain(topic);
+    if (category === "query.document_content") expect(result.response.documentMemory).toBeNull();
+    expect(result.qualityTrace.toolsUsed).toEqual([]);
+    expect(result.qualityTrace.diagnostics.content).toMatchObject({ reasonCode: "approved" });
+    expect(retrieveCustomerChatDocumentKnowledge).toHaveBeenCalledTimes(1);
+    expect(getAuthorizedCoachQuotationContent).not.toHaveBeenCalled();
+    if (withReference) {
+      expect(runStructuredTextResearch.mock.calls[0][0].context.referenceMaterial.text)
+        .toContain("Validar DNS");
+    }
+    const history = appendCustomerAccountChatHistory([], question, result.response.answer, {
+      contentSource: result.response.contentSource,
+    });
+    expect(history.at(-1).contentSource).toBe(withReference ? "mixed_knowledge" : "knowledge_library");
+  });
+
+  it("does not answer a library query when its channel intent is disabled", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account").map((intent) =>
+        intent.code === "account_overview" ? { ...intent, enabled: false } : intent),
+    );
+    const adapter = createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: new Set(["cuentas.read"]) }, snapshot,
+      authoritativeIntent: { turnContract: {
+        version: 1, movement: "new_request", resolution: "resolved",
+        clarificationQuestion: "", confidence: "high",
+        components: [{
+          id: "c1", category: "query.document_content", text: "Consulta BlueCat", object: "general",
+          scope: "none", reference: "", topic: "BlueCat", attribution: "none", certainty: "unspecified",
+          explicitAction: false, dependsOn: [], continuationOf: "none",
+          documentSpec: { source: "knowledge_library", changed: ["source"] },
+        }],
+      } }, agents: [], jobId: 10,
+    });
+    const result = await adapter.runTurn({ question: "Consulta BlueCat", context: { accountId: 7 } });
+    expect(result.response.capabilityStatus).toBe("disabled");
+    expect(runStructuredTextResearch).not.toHaveBeenCalled();
+  });
 
   it("mantiene cuenta fija y operaciones confirmables", () => {
     const adapter = createCustomerAccountAdapter({

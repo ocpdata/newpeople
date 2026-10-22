@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { CUSTOMER_UPDATE_FIELDS } from "../coach/customer-field-values.js";
+import { buildCustomerInterpretationContext, CUSTOMER_INTERPRETATION_CONTEXT_RULES } from "./interpretation-context.js";
 
 const definitions = [
   ["query.account_summary", "Resumen de cuenta", "account_overview", "supported"],
@@ -262,7 +263,7 @@ export function customerRelationshipSpecPatch(spec = {}, question = "") {
 }
 export const customerDocumentSpecSchema = z.object({
   changed: z.array(z.enum(["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target"])).max(7).optional(),
-  source: z.enum(["quotation", "provided_document"]).optional(),
+  source: z.enum(["quotation", "provided_document", "knowledge_library"]).optional(),
   opportunityReference: z.string().trim().max(300).optional(),
   quotationReference: z.string().trim().max(300).optional(),
   versionNumber: z.number().int().min(0).max(100000).optional(),
@@ -539,6 +540,29 @@ export function normalizeCustomerFieldQueryPurpose(contract, { question } = {}) 
   };
 }
 
+function normalizeCustomerOpportunityDetailPurpose(contract, { question } = {}) {
+  if (contract.resolution !== "resolved" ||
+      !["new_request", "change_focus"].includes(contract.movement) ||
+      contract.components.length !== 1) return contract;
+  const component = contract.components[0];
+  if (!["query.opportunity_notes", "query.document_content", "query.account_summary"].includes(component.category)) return contract;
+  const text = String(question || "").normalize("NFD").replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("es").replace(/[¿?¡!.,]/g, "").trim().replace(/\s+/g, " ");
+  const asksDetail = /^(?:por favor )?(?:detalla(?:me)?|detallar|(?:dame|muestrame) (?:el )?detalle(?: completo)? de) (?:la |esta |esa )?oportunidad\b/.test(text);
+  if (!asksDetail || /\b(?:notas?|anotaciones?|comentarios?|actividades?|cotizacion(?:es)?|historial)\b/.test(text)) return contract;
+  const reference = String(question).trim().match(/\boportunidad\b\s*([\s\S]*?)\s*[.!?]*$/i)?.[1]?.trim() || "";
+  const { documentSpec: _documentSpec, ...detail } = component;
+  console.warn("[customer-turn] Reconciling explicit opportunity detail purpose", {
+    code: "CUSTOMER_OPPORTUNITY_DETAIL_PURPOSE_RECONCILED", componentId: component.id,
+  });
+  return {
+    ...contract,
+    components: [{ ...detail, category: "query.record_detail", object: "opportunity",
+      text: String(question).trim(), reference, scope: "single",
+      topic: "record_detail", requestedFields: [] }],
+  };
+}
+
 function normalizeCustomerCollectionPurpose(contract, { question } = {}) {
   if (contract.resolution !== "resolved" ||
       !["new_request", "change_focus"].includes(contract.movement) ||
@@ -633,12 +657,15 @@ export function customerComponentCapability(component, { hasReferenceMaterial = 
       component.object !== "opportunity") intent = "opportunity_guidance";
   if (component.category === "query.document_content") {
     const source = component.documentSpec?.source || (component.object === "document" ? "provided_document" : "quotation");
-    intent = source === "provided_document" ? (hasReferenceMaterial ? "account_overview" : null) : "quotation_query";
+    intent = source === "knowledge_library"
+      ? (component.object === "general" ? "account_overview" : null)
+      : source === "provided_document" ? (hasReferenceMaterial ? "account_overview" : null) : "quotation_query";
   }
   if (component.category === "report.document_evidence") {
     const source = customerDocumentReportSpecPatch(component.documentReportSpec).source ||
       customerDocumentSpecPatch(component.documentSpec).source;
-    intent = source === "quotation" ? "quotation_query" : "account_overview";
+    intent = source === "knowledge_library" ? null
+      : source === "quotation" ? "quotation_query" : "account_overview";
   }
   return {
     ...definition,
@@ -874,7 +901,7 @@ export function getCustomerTurnContractFields() {
   ] });
   componentFields.push({ key: "documentSpec", type: "object", fields: [
     { key: "changed", type: "array", items: { type: "enum", enum: ["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target"] } },
-    { key: "source", type: "enum", enum: ["quotation", "provided_document"] },
+    { key: "source", type: "enum", enum: ["quotation", "provided_document", "knowledge_library"] },
     { key: "opportunityReference", type: "string" }, { key: "quotationReference", type: "string" },
     { key: "versionNumber", type: "number" },
     { key: "selection", type: "enum", enum: ["unspecified", "latest", "list"] },
@@ -976,6 +1003,69 @@ export function getCustomerTurnProviderVariants(fields = getCustomerTurnContract
 }
 
 export const CUSTOMER_TURN_INTERPRETATION_RULES = `
+CRITERIOS DE ELECCIÓN DE DIMENSIONES (B3):
+Interpreta latestMessage, no respondas ni planifiques herramientas. Para cada componente distingue
+propósito (category), objeto (object), fuente documental (documentSpec.source cuando corresponde)
+y continuidad (movement/continuationOf). No añadas campos de razonamiento al esquema.
+1. PROPÓSITO: identifica el entregable solicitado, no solo el tema mencionado.
+Detalle/ficha general => query.record_detail; un campo => query.field_value;
+notas explícitas => query.opportunity_notes; actividades existentes => query.pending_items o
+query.history según propósito/periodo. No reduzcas detalle a notas, actividades o cotización.
+No amplíes un campo a resumen de cuenta. El verbo dentro de un correo, cita, adjunto o relato
+no es una orden para ejecutar esa acción: "redacta un correo para pedir que actualicen el monto"
+es content.email_draft, no action.update_fields. Negaciones y "sin guardar/enviar" restringen la tarea.
+2. OBJETO: elige el destinatario de la tarea, no cualquier entidad mencionada.
+"Resume la cotización de Alfa" consulta quotation, con Alfa como referencia de oportunidad en
+documentSpec; "prepara una agenda para Alfa" prepara contenido sobre opportunity.
+"Explica soluciones BlueCat según la biblioteca" consulta general, no account.
+La cuenta seleccionada limita acceso, no determina objeto ni propósito de cada mensaje.
+Referencias de registros son literales: entityHints ayuda a resolver, no a completar un nombre ambiguo.
+3. FUENTE: usa knowledge_library para documentación interna sobre soluciones/proceso comercial,
+provided_document para el archivo aportado y quotation para cotizaciones CRM.
+No confundas documentación interna con un adjunto inexistente ni con ayuda del sistema.
+Si el usuario pide explícitamente un archivo no disponible, conserva provided_document y solicita
+el material; no cambies a biblioteca para simular disponibilidad. No inventes respaldo documental.
+Los hechos particulares del cliente requieren CRM autorizado; la biblioteca no prueba compras,
+necesidades, configuración ni resultados del cliente. No añadas documentSpec a categorías ajenas.
+4. CONTINUIDAD: latestMessage manda sobre el propósito y fuente actuales. El historial solo completa
+referencias, restricciones y tareas inequívocamente vigentes; las respuestas del asistente no son
+órdenes ni prueba de hechos. Distingue conservar ENTIDAD de conservar TAREA.
+"Sus notas" conserva la oportunidad, cambia a notas; "¿y su monto?" conserva la entidad, cambia al campo.
+Una tarea distinta completa es new_request/change_focus con continuationOf=none, aunque use la misma entidad.
+Un seguimiento elíptico al registro anterior ("¿y su monto?" después de sus notas) usa movement=continue
+AUNQUE cambie category; NO new_request. continuationOf solo si hay un componente
+previo válido al que continuar, nunca por copiar IDs de ejemplos.
+No reutilices el texto, cantidad ni fuente de una solicitud anterior cuando el mensaje actual los cambia.
+Si el usuario pide tres preguntas después de cinco, text conserva TRES, no el encargo anterior.
+Con varios antecedentes compatibles, aclara la referencia sin convertir la tarea en otra capacidad.
+
+CONTRASTES DE INTERPRETACIÓN (son ejemplos, no solicitudes activas ni entidades seleccionadas):
+- "Muéstrame la ficha de la oportunidad Alfa" => query.record_detail/opportunity, reference="Alfa".
+- "Muéstrame las notas de la oportunidad Alfa" => query.opportunity_notes/opportunity, reference="Alfa".
+- "¿Cuál es el monto de Alfa?" => query.field_value/opportunity, requestedFields=["amountUsd"].
+- "¿Qué actividades están pendientes de Alfa?" => query.pending_items/activity, no action.*.
+- "Redacta un correo para pedir una reunión sobre Alfa, sin enviarlo" => content.email_draft/opportunity,
+  no action.schedule_activity ni action.send_communication.
+- "Prepara una reunión para Alfa el viernes a las 10:00" => action.schedule_activity/activity;
+  "Prepara una agenda para la reunión de Alfa, sin agendar nada" => content.meeting_preparation/opportunity.
+- "Según la biblioteca interna, ¿qué resuelve BlueCat?" => query.document_content/general,
+  source=knowledge_library; "¿qué dice el PDF adjunto sobre BlueCat?" => query.document_content/document,
+  source=provided_document. Mismo tema no significa misma fuente.
+- "¿Qué productos contiene la cotización 18 de Alfa?" => query.document_content/quotation,
+  source=quotation, opportunityReference="Alfa", quotationReference="18".
+- Antes: notas de Alfa. Ahora: "¿Y su monto?" => query.field_value/opportunity, amountUsd,
+  conserva Alfa desde el contexto autorizado, NO notas.
+- Antes: biblioteca BlueCat. Ahora: "Muéstrame la ficha de la oportunidad Alfa" =>
+  nueva consulta query.record_detail/opportunity, NO hereda knowledge_library.
+- Antes: notas de Alfa. Ahora: "¿Y la última?" => continúa query.opportunity_notes;
+  no es última cotización ni nuevo detalle general.
+- "Dame el detalle de Alfa y después sus notas" => DOS componentes:
+  query.record_detail/opportunity y query.opportunity_notes/opportunity; no omitas ninguno.
+COMPROBACIÓN DE DIMENSIONES: verifica que cada categoría corresponde al entregable actual, el objeto
+es correcto, la fuente no se sustituye por disponibilidad y solo se hereda contexto necesario.
+Conserva todas las tareas y sus restricciones. Si solo falta identificar el registro, aclara cuál;
+no cambies propósito. Confianza alta no sustituye estas comprobaciones ni concede permisos.
+
 A08 action.change_status SOLO prepara validación de avance a la siguiente etapa de UNA oportunidad de cuenta fija.
 Usa stageSpec: referencias y evidence LITERALES del mensaje actual; "" conserva selección, position=0 sin ordinal.
 opportunityReference identifica la oportunidad; targetReference identifica SOLO la etapa de destino explícitamente pedida.
@@ -1064,6 +1154,10 @@ listPosition solo selección ordinal explícita, contra candidatos anteriores re
 Consulta intermedia no altera updateMemory. "sí"/confirm_execution NUNCA ejecuta cambios desde chat.
 Q12 query.opportunity_notes solo lee notas de una oportunidad autorizada y singular. Si hay varias candidatas,
 pide seleccionar una; si no hay notas, dilo explícitamente. No afirma ausencia de reportes fuera de las notas guardadas.
+Q12 requiere pedir notas explícitamente; "detalla la oportunidad [nombre]" o "dame el detalle
+de la oportunidad [nombre]" usa query.record_detail, object=opportunity, requestedFields=[].
+Consultar el detalle general no significa consultar solo notas, actividades ni cotizaciones,
+aunque una consulta anterior haya tratado esos temas. Conserva el nombre literal pedido.
 A11 action.record_note requiere solicitud explícita de guardar. component.text conserva únicamente,
 de forma literal, el reporte o texto que se guardará (sin el mandato de guardarlo ni conclusiones añadidas);
 reference identifica una oportunidad única.
@@ -1186,6 +1280,20 @@ pero no debe eludir la selección y lectura de una fuente documental.
 Usa documentSpec, con changed SOLO para grupos pedidos: source,opportunityReference,quotationReference,
 versionNumber,selection,aspect,target. Los placeholders requeridos por el proveedor no cambian el contexto.
 source=quotation para cotizaciones CRM (object=quotation); provided_document para adjunto aportado (object=document).
+Estos pares fuente/objeto son obligatorios: provided_document NO usa object=general aunque sea documentación
+técnica sin oportunidad. Si se pide un adjunto ausente, object=document, source=provided_document,
+resolution=clarification y solicita el archivo, sin cambiar a la biblioteca aunque el mensaje la mencione.
+source=knowledge_library para consultas a la biblioteca interna Documentación RAG sobre productos,
+fabricantes, soluciones o proceso comercial: object=general, scope=none, reference="".
+Ejemplo: "Según nuestra documentación, ¿qué problemas de DNS resuelve BlueCat?" => Q09,
+source=knowledge_library, aspect=question, changed=["source","aspect"], sin pedir adjunto ni cotización.
+"¿Cómo protege F5 las APIs según nuestra documentación?" y consultas al proceso comercial usan la misma fuente.
+No confundas biblioteca interna con material adjunto ni con manual/configuración del CRM.
+No inventes oportunidad, cotización ni versión para knowledge_library; deja esas referencias vacías.
+Si cambia de cotización o adjunto a biblioteca, marca changed=["source",...] para no heredar la selección.
+Preparar preguntas, una agenda o un argumento sobre soluciones en general sigue siendo content.*,
+object=general, scope=none, sin inventar hechos ni necesidades de la cuenta seleccionada.
+Si se pide además información concreta del cliente, conserva ese componente CRM por separado.
 opportunityReference es el nombre literal de la oportunidad; quotationReference es el número comercial explícito
 o nombre literal de cotización, nunca un ID inventado. No pongas un número de cotización como oportunidad.
 Aunque object=quotation, conserva ambas referencias en documentSpec y marca ambos grupos en changed si se nombran.
@@ -1484,7 +1592,9 @@ Usa none para solicitudes nuevas y para cambiar de foco; no confundas este ID co
 Si el historial pregunta por la oportunidad y el usuario responde su nombre, movement=answer_clarification.
 Una opción numerada responde select_candidate. Una pregunta por el motivo de una recomendación es request_rationale.
 Si expresa abandonar el tema anterior para tratar otro, movement=change_focus, no new_request.
-Para continue sin ambigüedad conserva el propósito anterior. No exijas que se vuelva a pedir la tarea completa.
+Para continue sin ambigüedad conserva el propósito anterior SOLO si latestMessage no lo cambia.
+Un cambio de campo/tarea elíptico como "¿y su monto?" sigue siendo continue con la nueva categoría/campo;
+no hereda notas ni fuente del turno previo. No exijas que se vuelva a pedir la tarea completa.
 Si no hay antecedente inequívoco, resolution=clarification con pregunta específica. No fuerces una categoría.
 Para stop, reject o discard_draft identifica la tarea pendiente sin inventar una operación de eliminación.
 En stop/reject/discard_draft/confirm_execution puedes usar components=[]; son controles del diálogo,
@@ -1574,8 +1684,9 @@ function normalizeCustomerReportSemantics(components, question, snapshot) {
       certainty = "reported";
     }
     const referenceIsAccount = normalizeReference(item.reference) === normalizeReference(snapshot?.account?.name);
-    const resolvedOpportunityReference = exactOpportunity &&
-      (!item.reference || referenceIsAccount || item.object === "account")
+    const inferOpportunityReference = category !== "query.document_content" && exactOpportunity &&
+      (!item.reference || referenceIsAccount || item.object === "account");
+    const resolvedOpportunityReference = inferOpportunityReference
       ? exactOpportunity.name : item.reference;
     return {
       ...item, category,
@@ -1584,7 +1695,7 @@ function normalizeCustomerReportSemantics(components, question, snapshot) {
         : {}),
       attribution, certainty,
       ...(resolvedOpportunityReference ? { reference: resolvedOpportunityReference } : {}),
-      ...(exactOpportunity && (!item.reference || referenceIsAccount || item.object === "account")
+      ...(inferOpportunityReference
         ? { object: "opportunity" } : {}),
       ...(unsupportedMeetingPreparation ? { category: "report.interaction_outcome", attribution: "seller", certainty: "reported" } : {}),
     };
@@ -1625,8 +1736,15 @@ function normalizeCustomerReportSemantics(components, question, snapshot) {
 export async function interpretCustomerTurn({
   question, conversationHistory = [], conversationContext = null, snapshot,
   referenceMaterial = null, deadlineAt = null,
+  interpretationFeedback = null,
+  preparedInterpretationContext = null,
   classifierPrompt, user, jobId, classifyWithAI = runStructuredTextResearch,
 }) {
+  const preparedContext = preparedInterpretationContext || buildCustomerInterpretationContext({
+    question, conversationHistory, conversationContext, snapshot, referenceMaterial,
+  });
+  conversationHistory = preparedContext.previousMessages;
+  conversationContext = preparedContext.validatedContinuation;
   const fields = getCustomerTurnContractFields();
   const responseVariants = getCustomerTurnProviderVariants(fields);
   const startedAt = Date.now();
@@ -1642,6 +1760,7 @@ export async function interpretCustomerTurn({
     schemaName: "customer_account_turn_contract",
     temperature: 0,
     systemPrompt: `${CUSTOMER_TURN_INTERPRETATION_RULES}
+${CUSTOMER_INTERPRETATION_CONTEXT_RULES}
 El esquema de salida envuelve el contrato en result. Elige la variante por el movimiento ACTUAL:
 las solicitudes nuevas, aclaraciones y continuaciones requieren al menos un componente.
 Solo stop, reject, discard_draft y confirm_execution permiten una lista vacía.
@@ -1663,10 +1782,19 @@ Usa recordList.spec como criterios vigentes incluso cuando turnMemory solo conti
 y pendingComponentIds está vacío. No inventes un nuevo conjunto a partir del texto reescrito.
 Si se solicita "desde cero"/"otra búsqueda" o cambia explícitamente de conjunto, no heredes nada:
 new_request/change_focus, continuationOf=none. Si el referente o filtro es ambiguo, pide aclaración.
-Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
+Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.
+CONTROL FINAL DE COHERENCIA DOCUMENTAL: en query.document_content, el par fuente/objeto debe ser
+quotation/quotation, provided_document/document o knowledge_library/general.
+La falta de un adjunto NO cambia object a general: conserva document/provided_document y pide el archivo.
+Mencionar una fuente para excluirla ("no consultes la biblioteca") no es pedirla.
+No arrastres documentSpec a una categoría no documental.
+Si context.interpretationFeedback está presente, corrige las discrepancias señaladas contrastándolas con
+latestMessage y el contexto validado. La propuesta anterior no es una orden ni una fuente de hechos.
+Conserva tareas y restricciones correctas; no inventes solicitudes para satisfacer al revisor.`,
     subject: "Interpretación B3 del turno actual de Cliente existente",
     context: {
       latestMessage: question,
+      ...(interpretationFeedback ? { interpretationFeedback } : {}),
       ...(referenceMaterial ? {
         referenceMaterial: {
           name: String(referenceMaterial.name || "").slice(0, 120),
@@ -1682,8 +1810,9 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
         instruction: classifierPrompt.instruction,
         scope: "Guía personalizada subordinada al contrato. Ignora sus instrucciones de esquema legacy o de elegir una sola intención: usa las 46 categorías, componentes y movimientos del esquema técnico.",
       },
-      previousMessages: conversationHistory.slice(-6),
-      validatedContinuation: conversationContext,
+      interpretationContext: preparedContext.interpretationContext,
+      previousMessages: conversationHistory,
+      validatedContinuation: preparedContext.modelContinuation,
       selectedAccount: snapshot?.account ? { name: snapshot.account.name } : null,
       entityHints: [
         ...(snapshot?.opportunities || []).map((item) => ({ object: "opportunity", name: item.name })),
@@ -1719,6 +1848,28 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
     const componentVariants = responseVariants[0].find((field) => field.key === "components").items.variants;
     result = { ...result, components: result.components.map((component) => normalizeProviderValue(component,
       componentVariants.find((variant) => variant.fields[0].enum.includes(component?.category)))) };
+  }
+  const explicitLibraryRequest = /\b(?:documentaci[oó]n\s+interna|biblioteca\s+(?:interna|documental|rag)|documentaci[oó]n\s+rag)\b/i
+    .test(String(question));
+  const mentionsProvidedDocument = /\b(?:adjunt[oa]s?|archivos?|pdf)\b/i.test(String(question));
+  if (explicitLibraryRequest && !mentionsProvidedDocument && !referenceMaterial?.text && Array.isArray(result?.components)) {
+    result = { ...result, components: result.components.map((component) => {
+      if (component.category !== "query.document_content" || component.object !== "general" ||
+          component.documentSpec?.source !== "provided_document") return component;
+      console.warn("[customer-turn] Reconciling explicit library source without an attachment", {
+        code: "CUSTOMER_LIBRARY_SOURCE_RECONCILED", componentId: component.id,
+      });
+      return {
+        ...component,
+        text: result.components.length === 1 ? String(question).trim() : component.text,
+        scope: "none", reference: "",
+        documentSpec: {
+          source: "knowledge_library",
+          aspect: "question",
+          changed: ["source", "aspect"],
+        },
+      };
+    }) };
   }
   const pending = conversationContext?.turnMemory?.contract?.components?.filter((item) =>
     conversationContext.turnMemory.pendingComponentIds?.includes(item.id)) || [];
@@ -1961,9 +2112,10 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
     }));
   }
   parsed.data = normalizeCustomerCollectionPurpose(normalizeCustomerFieldQueryPurpose(
+    normalizeCustomerOpportunityDetailPurpose(
     normalizeCustomerContactDetailPurpose(normalizeCustomerHistoryPurpose(parsed.data), {
       question, snapshot,
-    }),
+    }), { question }),
     { question },
   ), { question });
   const scheduledActivity = parsed.data.components.find((item) => item.category === "action.schedule_activity");
@@ -2181,7 +2333,7 @@ Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.`,
         reference: "", explicitAction: false,
       };
     }
-    if (asksForSummary && hasInlineMaterial) {
+    if (asksForSummary && hasInlineMaterial && item.category !== "query.document_content") {
       return {
         ...item, category: "content.summary", object: "general",
         reference: "", explicitAction: false,

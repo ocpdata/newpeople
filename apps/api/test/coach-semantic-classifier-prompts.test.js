@@ -60,6 +60,8 @@ describe("B3 semantic classifier configuration", () => {
       expect(prompt.initialInstruction).toBe(prompt.instruction);
     }
     expect(prompts[1].instruction).toContain("account_activity_history");
+    expect(prompts[1].instruction).toContain("Conservar una entidad no significa conservar la tarea o la fuente");
+    expect(prompts[1].instruction).toContain("Dimensiones de la solicitud");
     expect(prompts[2].instruction).toContain("no conectada");
   });
 

@@ -2314,7 +2314,7 @@ export function appendCustomerAccountChatHistory(
         ? { stageAnswerPrefill: message.stageAnswerPrefill } : {}),
       ...(message.role === "assistant" && Array.isArray(message.components)
         ? { components: message.components } : {}),
-      ...(message.role === "assistant" && ["user_provided", "mixed_document"].includes(message.contentSource)
+      ...(message.role === "assistant" && ["user_provided", "mixed_document", "knowledge_library", "mixed_knowledge"].includes(message.contentSource)
         ? { contentSource: message.contentSource } : {}),
       ...(message.role === "assistant" && message.documentCoverage
         ? { documentCoverage: message.documentCoverage, documentEvidence: message.documentEvidence || [] } : {}),
@@ -2371,7 +2371,7 @@ export function appendCustomerAccountChatHistory(
             ? { stageAnswerPrefill: assistantMetadata.stageAnswerPrefill } : {}),
           ...(Array.isArray(assistantMetadata.components)
             ? { components: assistantMetadata.components } : {}),
-          ...(["user_provided", "mixed_document"].includes(assistantMetadata.contentSource)
+          ...(["user_provided", "mixed_document", "knowledge_library", "mixed_knowledge"].includes(assistantMetadata.contentSource)
             ? { contentSource: assistantMetadata.contentSource } : {}),
           ...(assistantMetadata.documentCoverage
             ? { documentCoverage: assistantMetadata.documentCoverage, documentEvidence: assistantMetadata.documentEvidence || [] } : {}),
@@ -2895,7 +2895,8 @@ export function normalizeCustomerResponse(
       normalized.answer || "No fue posible responder la pregunta.",
     ),
     responseType: normalized.responseType || "informational",
-    ...(normalized.contentSource === "user_provided" ? { contentSource: "user_provided" } : {}),
+    ...(["user_provided", "mixed_document", "knowledge_library", "mixed_knowledge"].includes(normalized.contentSource)
+      ? { contentSource: normalized.contentSource } : {}),
     evidence: Array.isArray(normalized.evidence) ? normalized.evidence : [],
     inferences: Array.isArray(normalized.inferences)
       ? normalized.inferences
@@ -3388,6 +3389,7 @@ export function createCustomerAccountAdapter({
           documentKnowledge: payload.context?.documentKnowledge,
         });
         turnDiagnostics.evidence = { status: result.responseType === "error" ? "content_failed" : "content_validated", verifier: "content", rounds: 0 };
+        turnDiagnostics.content = result.contentDiagnostics || null;
         recordAnswerGeneration("contract_content", result);
         return result;
       }
@@ -4610,7 +4612,9 @@ export function createCustomerAccountAdapter({
               link_contact_to_opportunity: "oportunidades.update",
               reschedule_activity: "calendario_comercial.update",
             }[capability.operationKind];
-            const disabled = (!["query.document_content", "report.document_evidence"].includes(component.category) &&
+            const libraryQuery = component.category === "query.document_content" &&
+              component.documentSpec?.source === "knowledge_library";
+            const disabled = ((libraryQuery || !["query.document_content", "report.document_evidence"].includes(component.category)) &&
               contractIntents.some((intent) => intent.code === capability.intent && intent.enabled === false)) ||
               (capability.operationKind && !contractRules.operationPolicy.allowedKinds.includes(capability.operationKind));
             const detailDomain = ["query.record_detail", "query.field_value", "query.record_list", "query.record_search"].includes(component.category)
@@ -4658,6 +4662,30 @@ export function createCustomerAccountAdapter({
               qualityTrace: { toolsUsed: [], diagnostics: { answerGeneration: { source: "content_purpose_clarification" } } },
               channelIntentRouting: null,
             };
+            if (libraryQuery || (component.object === "general" &&
+                ["content.discovery_questions", "content.meeting_preparation", "content.value_argument"].includes(component.category))) {
+              const response = await generateCustomerContent({
+                component, readToolResults: [],
+                history: libraryQuery ? [] : history,
+                dependencyResults: libraryQuery ? [] : dependencies,
+                referenceMaterial: libraryQuery ? null : componentReferenceMaterial,
+                user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
+                question: originalQuestion, documentKnowledge: turnDocumentKnowledge,
+              });
+              return {
+                response,
+                qualityTrace: { toolsUsed: [], diagnostics: {
+                  answerGeneration: { source: libraryQuery ? "knowledge_library" : "contract_content" },
+                  content: response.contentDiagnostics || null,
+                  documentKnowledge: turnDiagnostics.documentKnowledge,
+                  evidence: {
+                    status: response.responseType === "error" ? "content_failed" : "content_validated",
+                    verifier: "content", rounds: 0,
+                  },
+                } },
+                channelIntentRouting: null,
+              };
+            }
             if (component.category === "content.meeting_preparation" && component.object === "opportunity" &&
                 /\bagenda\b/i.test(component.text)) {
               const stop = (answer, responseType = "error") => ({
@@ -4715,6 +4743,7 @@ export function createCustomerAccountAdapter({
               });
               return { response, qualityTrace: { toolsUsed: ["getOpportunity"], diagnostics: {
                 answerGeneration: { source: "contract_content" },
+                content: response.contentDiagnostics || null,
                 evidence: { status: response.responseType === "error" ? "content_failed" : "content_validated", verifier: "content", rounds: 0 },
               } }, channelIntentRouting: null };
             }
@@ -4740,6 +4769,7 @@ export function createCustomerAccountAdapter({
                 qualityTrace: { toolsUsed: [], diagnostics: {
                   evidence: { status: response.responseType === "error" ? "content_failed" : "content_validated", verifier: "content", rounds: 0 },
                   answerGeneration: { source: "contract_content" },
+                  content: response.contentDiagnostics || null,
                 } },
                 channelIntentRouting: null,
               };

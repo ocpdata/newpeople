@@ -39,6 +39,22 @@ import {
 } from "../src/commercial-intelligence/contract.js";
 
 describe("customer intelligence contract", () => {
+  it("blocks the deterministic structured path when coherence review fails", async () => {
+    const previousMode = config.features.customerTurnContractMode;
+    config.features.customerTurnContractMode = "on";
+    try {
+      const classifyWithAI = vi.fn();
+      await expect(classifyCustomerIntent({
+        question: "¿Cómo es el proceso de ventas?",
+        intents: [{ code: "opportunity_guidance", enabled: true }],
+        classifyWithAI, reviewWithAI: async () => null,
+      })).rejects.toMatchObject({ code: "CUSTOMER_B3_REVIEW_FAILED" });
+      expect(classifyWithAI).not.toHaveBeenCalled();
+    } finally {
+      config.features.customerTurnContractMode = previousMode;
+    }
+  });
+
   it.each([
     ["¿Qué actividad pendiente tiene?", "account_activity_history"],
     ["¿Y qué tiene pendiente?", "account_activity_history"],
@@ -93,6 +109,9 @@ describe("customer intelligence contract", () => {
       config.features.customerTurnContractMode = mode;
       try {
         const classifyWithAI = vi.fn();
+        const reviewWithAI = vi.fn().mockResolvedValue({
+          status: "approved", clarificationQuestion: "", issues: [],
+        });
         const decision = await classifyCustomerIntent({
           question: "¿Cómo es el proceso de ventas?",
           intents: [
@@ -100,6 +119,7 @@ describe("customer intelligence contract", () => {
             { code: "account_overview", enabled: true },
           ],
           classifyWithAI,
+          reviewWithAI,
         });
 
         expect(decision).toMatchObject({
@@ -108,6 +128,7 @@ describe("customer intelligence contract", () => {
           source: { resolver: "deterministic_sales_process_question" },
         });
         expect(classifyWithAI).not.toHaveBeenCalled();
+        expect(reviewWithAI).toHaveBeenCalledTimes(mode === "on" ? 1 : 0);
         if (mode === "on") {
           expect(decision.turnContract.components[0]).toMatchObject({
             category: "guidance.strategy",

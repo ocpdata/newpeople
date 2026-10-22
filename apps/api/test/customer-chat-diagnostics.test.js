@@ -129,6 +129,53 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
       ]),
     });
   });
+
+  it.each([
+    [true, "results", 5],
+    [true, "no_results", 0],
+    [false, "not_applicable", 0],
+  ])("pairs B12 input and output for requested=%s and status=%s", async (requested, status, snippetsCount) => {
+    const adapter = createCustomerAccountAdapter();
+    createCustomerAccountAdapter.mockImplementationOnce(({ executionTrace }) => {
+      adapter.runTurn.mockImplementationOnce(async () => {
+        for (const retrieval of [
+          { requested: !requested, status: "results", snippetsCount: 5 },
+          { requested, status, snippetsCount },
+        ]) {
+          await executionTrace.span(
+            {
+              from: "B4", to: "B12",
+              label: "Recuperar conocimiento documental",
+              input: { requested: retrieval.requested },
+            },
+            async () => ({ status: retrieval.status, snippetsCount: retrieval.snippetsCount }),
+            (result) => result,
+          );
+        }
+        return {
+          response: { answer: "Resumen de Totalplay", responseType: "informational", operations: [], evidence: [] },
+          qualityTrace: {
+            validationStatus: "valid", toolsUsed: [], toolMetrics: [],
+            diagnostics: { documentKnowledge: { status: "results", snippetsCount: 5 } },
+          },
+        };
+      });
+      return adapter;
+    });
+
+    const job = await processCustomerAccountChatJob({ jobId: 1, user });
+    expect(job.status).toBe("completed");
+    expect(job.result.debug.flow.find((item) => item.block === "B12")).toMatchObject({
+      status,
+      input: { requested },
+      output: { status, snippetsCount },
+    });
+    const historyWrite = writes.filter(({ sql }) => sql.includes("SET history_json")).at(-1);
+    expect(JSON.parse(historyWrite.params[0]).at(-1).turnDebug).toEqual(job.result.debug);
+    const jobWrite = writes.find(({ sql }) => sql.includes("status = 'completed'"));
+    expect(JSON.parse(jobWrite.params[0]).debug).toEqual(job.result.debug);
+  });
+
   it("persists explicit B3 timeout metadata without executing the business pipeline", async () => {
     config.features.customerTurnContractMode = "on";
     runStructuredTextResearch.mockRejectedValueOnce(Object.assign(new Error("Request aborted"), { name: "TimeoutError" }));
@@ -159,7 +206,12 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
       response: { answer: "Resultado del verificador", responseType, operations: [], evidence: [] },
       qualityTrace: {
         validationStatus: "valid", toolsUsed: [], toolMetrics: [],
-        diagnostics: { evidence: { status } },
+        diagnostics: {
+          evidence: { status },
+          ...(status === "content_failed" ? {
+            content: { stage: "audit", reasonCode: "insufficient_document_support", repaired: true },
+          } : {}),
+        },
       },
     });
     const job = await processCustomerAccountChatJob({ jobId: 1, user });
@@ -172,6 +224,10 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ field: "evidenceStatus", state: checkState, actual: status }),
       ]));
+    if (status === "content_failed") {
+      expect(job.result.debug.flow.find((item) => item.block === "B9").output.content)
+        .toMatchObject({ stage: "audit", reasonCode: "insufficient_document_support", repaired: true });
+    }
     if (status === "report_destination_validated") {
       expect(job.result.debug.issue.message).toContain("no verifica su veracidad");
     }
@@ -195,5 +251,64 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
         expect.objectContaining({ label: "Retornar fallo de preparación", status: "failed" }),
       ]),
     });
+  });
+
+  it("blocks execution and persists a review failure in B3 diagnostics", async () => {
+    config.features.customerTurnContractMode = "on";
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_turn_contract") return {
+        version: 1, movement: "new_request", resolution: "resolved", clarificationQuestion: "", confidence: "high",
+        components: [{
+          id: "c1", category: "query.account_summary", text: "Resume la cuenta",
+          object: "account", topic: "", scope: "single", reference: "Totalplay",
+          attribution: "none", certainty: "unspecified", dependsOn: [], continuationOf: "none",
+        }],
+      };
+      return null;
+    });
+    try {
+      expect(await processCustomerAccountChatJob({ jobId: 1, user })).toBeNull();
+      expect(createCustomerAccountAdapter).not.toHaveBeenCalled();
+      const failureWrite = writes.find(({ sql }) => sql.includes("status = 'failed'"));
+      const saved = JSON.parse(failureWrite.params[1]);
+      expect(JSON.stringify(saved)).toContain("CUSTOMER_B3_REVIEW_FAILED");
+      expect(saved.debug.issue.block).toBe("B3");
+      expect(saved.debug.currentTurn.diagnostics.classificationFailure.reviewFailure)
+        .toMatchObject({ kind: "invalid_review", attempt: 1 });
+    } finally {
+      runStructuredTextResearch.mockReset().mockResolvedValue(null);
+    }
+  });
+
+  it("includes successful coherence review in the persisted classification trace", async () => {
+    config.features.customerTurnContractMode = "on";
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_turn_contract") return {
+        version: 1, movement: "new_request", resolution: "resolved", clarificationQuestion: "", confidence: "high",
+        components: [{
+          id: "c1", category: "query.account_summary", text: "Resume la cuenta",
+          object: "account", topic: "", scope: "single", reference: "Totalplay",
+          attribution: "none", certainty: "unspecified", dependsOn: [], continuationOf: "none",
+        }],
+      };
+      if (request.schemaName === "customer_account_turn_coherence") return {
+        status: "approved", clarificationQuestion: "", issues: [],
+      };
+      return null;
+    });
+    try {
+      const job = await processCustomerAccountChatJob({ jobId: 1, user });
+      expect(job.status).toBe("completed");
+      const classification = job.result.debug.executionTrace.find((event) =>
+        event.label === "Clasificar intención de la solicitud" && event.phase === "return");
+      expect(classification.output.coherenceReview).toMatchObject({
+        status: "approved", attempts: 1, repaired: false,
+        checks: [{ comparison: { coverage: true, support: true, fidelity: true } }],
+      });
+      const jobWrite = writes.find(({ sql }) => sql.includes("status = 'completed'"));
+      expect(JSON.parse(jobWrite.params[0]).debug).toEqual(job.result.debug);
+    } finally {
+      runStructuredTextResearch.mockReset().mockResolvedValue(null);
+    }
   });
 });

@@ -85,4 +85,31 @@ describe("customer chat document knowledge policy", () => {
       },
     })).toBe(false);
   });
+
+  it.each(["BlueCat", "F5", "proceso comercial"])("retrieves explicit library queries about %s", (topic) => {
+    expect(shouldRetrieveCustomerDocumentKnowledge({
+      question: `Consulta la documentación de ${topic}`,
+      turnContract: {
+        resolution: "resolved",
+        components: [{
+          category: "query.document_content", object: "general",
+          documentSpec: { source: "knowledge_library" },
+        }],
+      },
+    })).toBe(true);
+  });
+
+  it.each(["quotation", "provided_document"])("does not substitute the library for %s", (source) => {
+    expect(shouldRetrieveCustomerDocumentKnowledge({
+      question: "¿Qué dice de BlueCat?",
+      turnContract: {
+        resolution: "resolved",
+        components: [{
+          category: "query.document_content",
+          object: source === "quotation" ? "quotation" : "document",
+          documentSpec: { source },
+        }],
+      },
+    })).toBe(false);
+  });
 });

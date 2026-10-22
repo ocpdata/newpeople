@@ -2289,6 +2289,14 @@ test("Cliente existente no deja vacío un turno completado sin resultado y disti
   await expect(chat.getByRole("alert")).toContainText("No fue posible responder");
   await expect(chat.getByRole("button", { name: "Recuperar respuesta" })).toHaveCount(0);
   await expect(chat.getByRole("button", { name: "Nueva conversación" })).toBeEnabled();
+  await expect(chat.getByText("Puedes corregir tu pregunta o enviar otra en esta misma conversación.")).toBeVisible();
+  await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Muéstrame las notas de Vrf 2027.");
+  await expect(chat.getByRole("button", { name: "Preguntar", exact: true })).toBeEnabled();
+  state.failed = false;
+  await chat.getByRole("button", { name: "Preguntar", exact: true }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  expect(state.submissions).toBe(3);
+  await expect(chat.getByText("Muéstrame las notas de Vrf 2027.", { exact: true })).toBeVisible();
 });
 
 test("Cliente existente conserva el job cuando se agota la espera y recupera sin reenviar", async ({ page }) => {
@@ -3299,6 +3307,31 @@ test.describe("Mi Coach governance and workspaces", () => {
         "Aún no hay investigaciones guardadas con esos criterios.",
       ),
     ).toBeVisible();
+  });
+
+  test("identifica una respuesta de la biblioteca RAG sin presentarla como fuente CRM", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await page.route("**/api/commercial-intelligence/account-chat/jobs/921", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ job: {
+          id: 921, status: "completed",
+          result: {
+            answer: "La documentación de BlueCat describe gestión DDI.",
+            responseType: "informational", contentSource: "knowledge_library",
+            confidence: "medium", operations: [], evidence: [],
+          },
+        } }),
+      }),
+    );
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    await chat.getByRole("button", { name: "Resumen para reunión" }).click();
+    await expect(chat.getByText("La documentación de BlueCat describe gestión DDI.")).toBeVisible();
+    await expect(chat.locator(".mi-agent-customer-source-label").last())
+      .toContainText("Biblioteca documental RAG; no acredita hechos del cliente");
+    await expect(chat.locator(".mi-agent-customer-source-label").last()).not.toContainText("Fuente CRM");
   });
 
   test("copia el flujo completo del job de Cliente existente como JSON", async ({

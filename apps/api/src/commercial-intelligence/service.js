@@ -11,9 +11,9 @@ import { describeCustomerEvidenceStatus } from "./customer-chat-evidence.js";
 import {
   customerTurnContractEnabled,
   customerComponentCapability,
-  interpretCustomerTurn,
   CUSTOMER_TURN_PROVIDER_VERSION,
 } from "./turn-contract.js";
+import { interpretReviewedCustomerTurn } from "./turn-contract-review.js";
 import { extractContentFromBuffer } from "../opportunity-documents/service.js";
 import { getCommercialSettings } from "../settings.js";
 import {
@@ -381,7 +381,7 @@ export async function classifyCustomerIntent(input = {}) {
       config.features,
       input.user?.id,
     );
-    const turnContract = turnContractEnabled
+    const proposedContract = turnContractEnabled
       ? {
           version: 1,
           movement: "new_request",
@@ -404,17 +404,29 @@ export async function classifyCustomerIntent(input = {}) {
           }],
         }
       : null;
+    const reviewed = proposedContract
+      ? await interpretReviewedCustomerTurn({ ...input, classifierPrompt }, {
+        initialContract: proposedContract, reviewWithAI: input.reviewWithAI,
+      })
+      : null;
+    const turnContract = reviewed?.contract;
+    const primary = turnContract?.components[0] ? customerComponentCapability(turnContract.components[0]) : null;
     return {
-      intent: "opportunity_guidance",
-      confidence: 0.95,
-      requiresClarification: false,
-      clarificationQuestion: "",
-      reason: "Consulta general explícita sobre el proceso de ventas",
+      intent: turnContract
+        ? (turnContract.resolution === "clarification" ? "clarify_needed" : primary?.intent || "clarify_needed")
+        : "opportunity_guidance",
+      confidence: turnContract
+        ? (turnContract.confidence === "high" ? 0.95 : turnContract.confidence === "medium" ? 0.75 : 0.35)
+        : 0.95,
+      requiresClarification: turnContract?.resolution === "clarification" || false,
+      clarificationQuestion: turnContract?.clarificationQuestion || "",
+      reason: reviewed ? "Contrato revisado de B3 a partir de la consulta sobre el proceso de ventas"
+        : "Consulta general explícita sobre el proceso de ventas",
       ...(turnContract ? { turnContract } : {}),
       source: {
         resolver: "deterministic_sales_process_question",
         ...(turnContractEnabled
-          ? { providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION }
+          ? { providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION, coherenceReview: reviewed.review }
           : {}),
         classifierPrompt: {
           channel: classifierPrompt.channel,
@@ -425,7 +437,9 @@ export async function classifyCustomerIntent(input = {}) {
     };
   }
   if (customerTurnContractEnabled(config.features, input.user?.id)) {
-    const contract = await interpretCustomerTurn({ ...input, classifierPrompt });
+    const { contract, review } = await interpretReviewedCustomerTurn({ ...input, classifierPrompt }, {
+      reviewWithAI: input.reviewWithAI,
+    });
     const primary = contract.components[0] ? customerComponentCapability(contract.components[0]) : null;
     return {
       intent: primary?.intent || "clarify_needed",
@@ -436,6 +450,7 @@ export async function classifyCustomerIntent(input = {}) {
       turnContract: contract,
       source: {
         resolver: "turn_contract_v1",
+        coherenceReview: review,
         providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION,
         classifierPrompt: { channel: classifierPrompt.channel, version: classifierPrompt.version, source: classifierPrompt.source },
       },
@@ -3865,6 +3880,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           resolver: value.source?.resolver || "unknown",
           providerContractVersion: value.source?.providerContractVersion || null,
           classifierPrompt: value.source?.classifierPrompt || null,
+          coherenceReview: value.source?.coherenceReview || null,
           turnContract: value.turnContract || null,
         }),
       ),
@@ -3901,8 +3917,9 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     const contractFailure = error?.code === "CUSTOMER_TURN_CONTRACT_INVALID" ? {
       code: error.code, validationIssues: error.validationIssues, invalidStructure: error.invalidStructure,
     } : null;
-    const classificationFailure = error?.code === "CUSTOMER_B3_TIMEOUT" ? {
+    const classificationFailure = ["CUSTOMER_B3_TIMEOUT", "CUSTOMER_B3_REVIEW_TIMEOUT", "CUSTOMER_B3_REVIEW_FAILED"].includes(error?.code) ? {
       code: error.code, durationMs: error.durationMs, timeoutMs: error.timeoutMs, contractVersion: error.contractVersion,
+      ...(error.reviewFailure ? { reviewFailure: error.reviewFailure } : {}),
     } : null;
     console.error("[account-chat] Preparation failed", {
       jobId, stage: preparationStage, code: error?.code || "chat_preparation_failed",
@@ -4716,6 +4733,13 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
             event.label === "Recuperar conocimiento documental" &&
             event.phase === "return",
         );
+        const documentKnowledgeCallEvent = documentKnowledgeEvent
+          ? executionTrace.events.find(
+              (event) =>
+                event.spanId === documentKnowledgeEvent.spanId &&
+                event.phase === "call",
+            )
+          : null;
         const documentKnowledgeStatus =
           documentKnowledgeEvent?.status === "failed"
             ? "error"
@@ -4723,8 +4747,8 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
               qualityTrace?.diagnostics?.documentKnowledge?.status ||
               "not_reached";
         const documentKnowledgeCount = Number(
-          documentKnowledgeEvent?.output?.snippetsCount ||
-            qualityTrace?.diagnostics?.documentKnowledge?.snippetsCount ||
+          documentKnowledgeEvent?.output?.snippetsCount ??
+            qualityTrace?.diagnostics?.documentKnowledge?.snippetsCount ??
             0,
         );
         const engineInputSummary = {
@@ -5128,7 +5152,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
               label: "Recuperación documental",
               status: documentKnowledgeStatus,
               input: {
-                requested: Boolean(documentKnowledgeEvent?.input?.requested),
+                requested: Boolean(documentKnowledgeCallEvent?.input?.requested),
               },
               output: {
                 status: documentKnowledgeStatus,
@@ -5275,7 +5299,11 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
               input: {
                 toolMetrics: qualityTrace?.toolMetrics || [],
               },
-              output: evidenceDiagnostics,
+              output: evidenceDiagnostics ? {
+                ...evidenceDiagnostics,
+                ...(qualityTrace?.diagnostics?.content
+                  ? { content: qualityTrace.diagnostics.content } : {}),
+              } : null,
               checks: [
                 diagnosticCheck({
                   field: "evidenceStatus",
