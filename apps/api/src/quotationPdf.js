@@ -12,6 +12,48 @@ const COLORS = {
   border: "#c7d0d6",
 };
 const CARD_ROW_TEXT_PADDING = 6;
+const TABLE_COLUMNS = [32, 72, 214, 48, 79, 83];
+const TABLE_CELL_PADDING = 4;
+
+function tableCellOptions(width, index) {
+  return {
+    width: width - TABLE_CELL_PADDING * 2,
+    align: index >= 3 ? "right" : "left",
+    lineGap: 0,
+    paragraphGap: 0,
+  };
+}
+
+function measureTableValues(doc, values, columns) {
+  doc.font("Helvetica").fontSize(9);
+  return Math.max(22, ...values.map((value, index) =>
+    doc.heightOfString(value, tableCellOptions(columns[index], index)) + TABLE_CELL_PADDING * 2));
+}
+
+function splitTableCell(doc, text, options, maxHeight) {
+  if (!text || doc.heightOfString(text, options) <= maxHeight) {
+    return { text, remainder: "" };
+  }
+  let low = 1;
+  let high = text.length;
+  let fitting = 0;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (doc.heightOfString(text.slice(0, middle), options) <= maxHeight) {
+      fitting = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (!fitting) {
+    throw new Error("No hay espacio para una linea de la cotizacion en la pagina.");
+  }
+  const prefix = text.slice(0, fitting);
+  const boundary = Math.max(prefix.lastIndexOf("\n"), prefix.lastIndexOf(" "), prefix.lastIndexOf("\t"));
+  const end = boundary > 0 ? boundary : fitting;
+  return { text: text.slice(0, end).trimEnd(), remainder: text.slice(end).trimStart() };
+}
 
 function asText(value) {
   if (value == null) return "";
@@ -609,7 +651,7 @@ function drawOutlinedParagraphCard(doc, title, content) {
 }
 
 function drawTableHeader(doc, startY) {
-  const columns = [32, 72, 214, 48, 79, 83];
+  const columns = TABLE_COLUMNS;
   const headers = [
     "#",
     "Codigo",
@@ -642,33 +684,26 @@ function drawTableHeader(doc, startY) {
 
 function measureSectionRow(doc, row, columns, currencyCode) {
   const values = [
-    row.displayOrder == null ? "" : String(row.displayOrder),
-    asText(row.productCode),
-    asText(row.productDescription),
+    row.displayOrder == null ? "-" : String(row.displayOrder),
+    asText(row.productCode) || "-",
+    asText(row.productDescription) || "-",
     asText(row.quantityDisplay) || asNumber(row.quantity).toFixed(2),
     formatCurrency(row.salePriceUnit, currencyCode),
     formatCurrency(row.salePriceTotal, currencyCode),
   ];
 
-  const cellHeights = values.map((value, index) =>
-    doc.heightOfString(value || " ", {
-      width: columns[index] - 8,
-      align: index >= 3 ? "right" : "left",
-    }),
-  );
-
   return {
     values,
-    rowHeight: Math.max(22, ...cellHeights.map((height) => height + 8)),
+    rowHeight: measureTableValues(doc, values, columns),
   };
 }
 
-function getSectionOpeningHeight(doc, title, firstRowHeight = 0) {
-  const titleHeight = doc.heightOfString(title, {
-    width: PAGE_WIDTH,
+function measureSectionHeaderHeight(doc, title) {
+  const titleHeight = measureTextHeight(doc, title, {
+    width: PAGE_WIDTH, font: "Helvetica-Bold", fontSize: 11,
   });
 
-  return titleHeight + 6 + 22 + firstRowHeight + 1;
+  return titleHeight + 6 + 22;
 }
 
 function renderSectionHeader(doc, section, { isContinuation = false } = {}) {
@@ -677,10 +712,9 @@ function renderSectionHeader(doc, section, { isContinuation = false } = {}) {
     .font("Helvetica-Bold")
     .fontSize(11)
     .fillColor(COLORS.brand)
-    .text(isContinuation ? `${sectionTitle} (cont.)` : sectionTitle, {
-      width: PAGE_WIDTH,
-    });
-  doc.moveDown(0.3);
+    .text(isContinuation ? `${sectionTitle} (cont.)` : sectionTitle,
+      doc.page.margins.left, doc.y, { width: PAGE_WIDTH });
+  doc.y += 6;
 
   return drawTableHeader(doc, doc.y);
 }
@@ -691,16 +725,15 @@ function drawSectionTable(doc, section, currencyCode) {
     return;
   }
 
-  const columns = [32, 72, 214, 48, 79, 83];
+  const columns = TABLE_COLUMNS;
   const sectionTitle = asText(section?.title) || "Seccion";
   const firstMeasuredRow = rows[0]
     ? measureSectionRow(doc, rows[0], columns, currencyCode)
     : null;
-  const openingHeight = getSectionOpeningHeight(
-    doc,
-    sectionTitle,
-    firstMeasuredRow?.rowHeight || 0,
-  );
+  const headerHeight = measureSectionHeaderHeight(doc, sectionTitle);
+  const freshBodyHeight = doc.page.height - doc.page.margins.top -
+    doc.page.margins.bottom - headerHeight - 1;
+  const openingHeight = headerHeight + Math.min(firstMeasuredRow?.rowHeight || 0, freshBodyHeight) + 1;
   const tableX = doc.page.margins.left;
 
   ensureSpace(doc, openingHeight);
@@ -714,44 +747,44 @@ function drawSectionTable(doc, section, currencyCode) {
       currencyCode,
     );
 
-    ensureSpace(doc, rowHeight + 1, () => {
+    const nextPage = () => {
+      doc.addPage();
       renderSectionHeader(doc, section, { isContinuation: true });
-    });
+    };
+    const bottom = doc.page.height - doc.page.margins.bottom - 1;
+    const freshPageHeight = bottom - doc.page.margins.top -
+      measureSectionHeaderHeight(doc, `${sectionTitle} (cont.)`);
+    if (rowHeight > bottom - doc.y && rowHeight <= freshPageHeight) nextPage();
 
-    const rowTop = doc.y;
-    doc
-      .save()
-      .rect(tableX, rowTop, PAGE_WIDTH, rowHeight)
-      .strokeColor(COLORS.border)
-      .lineWidth(0.75)
-      .stroke()
-      .restore();
-
-    let x = tableX;
-    values.forEach((value, index) => {
-      if (index > 0) {
-        doc
-          .save()
-          .moveTo(x, rowTop)
-          .lineTo(x, rowTop + rowHeight)
-          .strokeColor(COLORS.border)
-          .lineWidth(0.75)
-          .stroke()
-          .restore();
-      }
-
-      doc
-        .font("Helvetica")
-        .fontSize(9)
-        .fillColor(COLORS.text)
-        .text(value || "-", x + 4, rowTop + 4, {
-          width: columns[index] - 8,
-          align: index >= 3 ? "right" : "left",
-        });
-      x += columns[index];
-    });
-
-    doc.y = rowTop + rowHeight;
+    let remaining = values;
+    while (remaining.some(Boolean)) {
+      if (bottom - doc.y < 22) nextPage();
+      doc.font("Helvetica").fontSize(9);
+      const maxTextHeight = bottom - doc.y - TABLE_CELL_PADDING * 2;
+      const cells = remaining.map((value, index) =>
+        splitTableCell(doc, value, tableCellOptions(columns[index], index), maxTextHeight));
+      const chunkValues = cells.map((cell) => cell.text);
+      const chunkHeight = measureTableValues(doc, chunkValues, columns);
+      const rowTop = doc.y;
+      doc.save().rect(tableX, rowTop, PAGE_WIDTH, chunkHeight)
+        .strokeColor(COLORS.border).lineWidth(0.75).stroke().restore();
+      let x = tableX;
+      chunkValues.forEach((value, index) => {
+        if (index > 0) {
+          doc.save().moveTo(x, rowTop).lineTo(x, rowTop + chunkHeight)
+            .strokeColor(COLORS.border).lineWidth(0.75).stroke().restore();
+        }
+        if (value) {
+          doc.font("Helvetica").fontSize(9).fillColor(COLORS.text)
+            .text(value, x + TABLE_CELL_PADDING, rowTop + TABLE_CELL_PADDING,
+              tableCellOptions(columns[index], index));
+        }
+        x += columns[index];
+      });
+      doc.y = rowTop + chunkHeight;
+      remaining = cells.map((cell) => cell.remainder);
+      if (remaining.some(Boolean)) nextPage();
+    }
   }
 
   ensureSpace(doc, 28);

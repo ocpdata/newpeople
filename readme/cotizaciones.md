@@ -31,6 +31,8 @@ Estas politicas definen el comportamiento oficial del documento de cotizacion:
 - El branding del documento se resuelve en backend o configuracion central, no desde datos editables del frontend.
 - La fidelidad esperada es funcional: estructura, importes, secciones, resumen, bundles y notas deben ser correctos aunque no exista paridad pixel-perfect con una vista HTML previa.
 - La numeracion de pagina debe renderizarse dentro del area imprimible y no debe crear paginas vacias adicionales.
+- La tabla mide y dibuja las celdas con la misma tipografia y ancho. Las descripciones multilinea y listas de series no deben superponerse con la siguiente fila.
+- Una fila que cabe completa en una pagina se conserva junta. Si supera el area disponible de una pagina completa, continua en las siguientes con encabezado de tabla y seccion repetido, sin duplicar cantidades ni importes. Esta regla tambien aplica al anexo de cotizacion de una propuesta.
 
 Reglas visibles dentro del preview PDF:
 
