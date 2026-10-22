@@ -41,6 +41,44 @@ Web:
 
 ## 4. Validaciones CI/CD
 
+### Importar una biblioteca RAG existente en Pinecone
+
+Los archivos de Pinecone y el catalogo SQL de Documentacion RAG son independientes.
+Un despliegue de codigo no copia el catalogo entre bases de datos.
+
+1. Configura `PINECONE_API_KEY`, `PINECONE_ASSISTANT_NAME` y
+   `PINECONE_ASSISTANT_REGION` en el backend destino para acceder al proyecto y
+   Assistant que contienen los archivos. Guardarlos en GitHub no los inyecta
+   automaticamente: el workflow de despliegue debe transportarlos al proceso.
+2. Con permiso `documentacion_rag.manage`, abre Documentacion RAG > Documentos >
+   **Importar desde Pinecone**.
+3. Revisa la vista previa. Selecciona hasta 200 archivos disponibles por lote.
+   Los archivos deben conservar los metadatos `document_id`, `version_id`,
+   `topic_id` y `topic_name` que escribe la aplicacion al cargarlos.
+4. Si hay un conflicto de nombre/identificador de tema, selecciona explicitamente
+   un tema local activo. Metadatos incompletos, versiones ambiguas, operaciones
+   locales en curso y archivos no disponibles quedan bloqueados.
+5. Confirma. Se crean solo registros locales faltantes, conservando los IDs
+   documentales y de Pinecone. Los resumenes se generan por el worker existente.
+6. Verifica que el documento aparece disponible y que Mi Coach recupera evidencia.
+
+La vista previa usa `GET /api/documentacion-rag/pinecone-import/preview` y la
+confirmacion `POST /api/documentacion-rag/pinecone-import`; ambas exigen permiso
+de administracion. La confirmacion vuelve a consultar Pinecone y valida los IDs
+de documento/version mostrados. Las importaciones se serializan con un bloqueo
+SQL y se escriben en una transaccion; los registros existentes no se sobrescriben.
+Un fallo SQL revierte el lote y se informa como error, no como importacion exitosa.
+
+No se suben ni eliminan archivos remotos, ni se crea un Assistant ausente.
+La API de listado devuelve todos los archivos sin paginacion. El tipo MIME se
+infiere del nombre y el tamano queda como no disponible porque el listado no lo
+incluye. Los enlaces originales y resumenes editados en otro entorno no se
+recuperan de los metadatos actuales.
+
+**Compartir Assistant no crea copias independientes:** reemplazar o borrar un
+archivo desde localhost puede afectar su disponibilidad en la VM, y viceversa.
+La importacion no sincroniza cambios posteriores ni limpia registros locales.
+
 CI automatico:
 
 - Workflow: `.github/workflows/ci.yml`

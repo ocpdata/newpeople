@@ -20,6 +20,7 @@ const FORMAT_LABELS = {
 
 function formatFileSize(value) {
   const bytes = Number(value || 0);
+  if (!bytes) return "Tamaño no disponible";
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
@@ -40,6 +41,10 @@ export default function DocumentacionRagPage({ canManage = false }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
+  const [importPreview, setImportPreview] = useState(null);
+  const [importSelections, setImportSelections] = useState({});
+  const [importTopics, setImportTopics] = useState({});
+  const [importResults, setImportResults] = useState(null);
   const [uploadTarget, setUploadTarget] = useState(null);
   const [sourceDialog, setSourceDialog] = useState(null);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -106,6 +111,49 @@ export default function DocumentacionRagPage({ canManage = false }) {
     }
     return grouped;
   }, [documents, topics]);
+
+  async function previewImport() {
+    setBusy("import-preview");
+    setError("");
+    setNotice("");
+    setImportResults(null);
+    try {
+      const { data } = await api.get("/api/documentacion-rag/pinecone-import/preview", { timeout: 125000 });
+      setImportPreview(data);
+      setImportSelections({});
+      setImportTopics({});
+    } catch (previewError) {
+      setError(getApiErrorMessage(previewError, "No fue posible consultar los archivos de Pinecone"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function confirmImport() {
+    const selections = importPreview.files
+      .filter((file) => importSelections[file.fileId])
+      .map((file) => ({
+        fileId: file.fileId,
+        documentId: file.documentId,
+        versionId: file.versionId,
+        ...(importTopics[file.fileId] ? { topicId: importTopics[file.fileId] } : {}),
+      }));
+    setBusy("import");
+    setError("");
+    try {
+      const { data } = await api.post("/api/documentacion-rag/pinecone-import", {
+        assistantName: importPreview.assistantName,
+        selections,
+      }, { timeout: 125000 });
+      setImportResults(data.results);
+      setNotice(`Importados: ${data.results.filter((item) => item.status === "imported").length}. Ya registrados: ${data.results.filter((item) => item.status === "existing").length}. Bloqueados: ${data.results.filter((item) => !["imported", "existing"].includes(item.status)).length}.`);
+      await loadLibrary();
+    } catch (importError) {
+      setError(getApiErrorMessage(importError, "No fue posible importar los documentos. Actualiza la vista previa antes de reintentar."));
+    } finally {
+      setBusy("");
+    }
+  }
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0];
@@ -313,6 +361,72 @@ export default function DocumentacionRagPage({ canManage = false }) {
         </div>
       ) : null}
       {loading ? <p className="field-hint">Cargando biblioteca...</p> : null}
+      {activeTab === "documents" && canManage ? (
+        <button type="button" className="btn-secondary"
+          disabled={!pineconeConfigured || Boolean(busy)} onClick={previewImport}>
+          {busy === "import-preview" ? "Consultando Pinecone..." : "Importar desde Pinecone"}
+        </button>
+      ) : null}
+      {importPreview ? (
+        <section className="documentacion-rag-import" aria-label="Importar desde Pinecone">
+          <h3>Importar desde Pinecone</h3>
+          <p>Assistant: <strong>{importPreview.assistantName}</strong></p>
+          <p className="documentacion-rag-warning">
+            No se subirán ni eliminarán archivos. Esta aplicación compartirá los archivos remotos:
+            un reemplazo o borrado desde otro entorno puede afectar su disponibilidad aquí.
+          </p>
+          {importPreview.files.length === 0 ? <p>No hay archivos en este Assistant.</p> : null}
+          {(importResults || importPreview.files).map((file) => (
+            <div className="documentacion-rag-import-row" key={file.fileId}>
+              <label>
+                {!importResults ? (
+                  <input type="checkbox" aria-label={`Importar ${file.fileName}`}
+                    checked={Boolean(importSelections[file.fileId])}
+                    disabled={Boolean(busy) || !(
+                      file.status === "importable" ||
+                      (file.status === "topic_conflict" && importTopics[file.fileId])
+                    )}
+                    onChange={(event) => setImportSelections((current) => ({
+                      ...current, [file.fileId]: event.target.checked,
+                    }))}
+                  />
+                ) : null}
+                <strong>{file.fileName || file.fileId}</strong>
+              </label>
+              <p className="field-hint">{file.reason}</p>
+              {!importResults && file.status === "topic_conflict" ? (
+                <label>
+                  Asociar a tema local
+                  <select aria-label={`Tema para ${file.fileName}`}
+                    value={importTopics[file.fileId] || ""} disabled={Boolean(busy)}
+                    onChange={(event) => {
+                      setImportTopics((current) => ({ ...current, [file.fileId]: event.target.value }));
+                      setImportSelections((current) => ({ ...current, [file.fileId]: false }));
+                    }}>
+                    <option value="">Selecciona un tema</option>
+                    {importPreview.topics.filter((topic) => topic.isActive).map((topic) => (
+                      <option key={topic.id} value={topic.id}>{topic.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+          ))}
+          <div className="documentacion-rag-inline-actions">
+            {!importResults ? <p className="field-hint">Selecciona hasta 200 documentos por importación.</p> : null}
+            {!importResults ? (
+              <button type="button" className="btn-primary"
+                disabled={Boolean(busy) || !Object.values(importSelections).some(Boolean) ||
+                  Object.values(importSelections).filter(Boolean).length > 200}
+                onClick={confirmImport}>
+                {busy === "import" ? "Importando..." : "Importar seleccionados"}
+              </button>
+            ) : null}
+            <button type="button" className="btn-secondary" disabled={Boolean(busy)}
+              onClick={() => setImportPreview(null)}>Cerrar</button>
+          </div>
+        </section>
+      ) : null}
       {activeTab !== "admin" || !canManage ? (
         <p className="field-hint documentacion-rag-format-hint">
           Formatos aceptados:{" "}

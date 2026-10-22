@@ -22,6 +22,38 @@ function jsonResponse(payload, status = 200) {
 }
 
 describe("Pinecone Assistant REST client", () => {
+  it("lista archivos sin crear Assistants ni exponer signed_url", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: "Ready", host: "assistant.example.com" }))
+      .mockResolvedValueOnce(jsonResponse({ files: [{
+        id: "file-1", name: "guide.pdf", status: "Available",
+        metadata: { document_id: "doc-1" }, signed_url: "https://private.example.com",
+      }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listRagFiles } = await import("../src/documentacion-rag/pinecone.js");
+    const result = await listRagFiles();
+    expect(result.files[0]).not.toHaveProperty("signed_url");
+    expect(fetchMock.mock.calls[1][0]).toBe("https://assistant.example.com/assistant/files/test-assistant");
+    expect(fetchMock.mock.calls.every(([, options]) => options.method === "GET")).toBe(true);
+  });
+
+  it("no crea un Assistant ausente durante la importación", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ message: "not found" }, 404));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listRagFiles } = await import("../src/documentacion-rag/pinecone.js");
+    await expect(listRagFiles()).rejects.toMatchObject({ status: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechaza listados malformados en lugar de tratarlos como vacíos", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ host: "assistant.example.com", status: "Ready" }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listRagFiles } = await import("../src/documentacion-rag/pinecone.js");
+    await expect(listRagFiles()).rejects.toMatchObject({ status: 502 });
+  });
+
   beforeEach(() => {
     pineconeConfig.pinecone.apiKey = "test-api-key";
     vi.resetModules();

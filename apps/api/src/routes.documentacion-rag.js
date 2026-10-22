@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { ensureDocumentacionRagPermissions } from "./documentacion-rag/permissions.js";
 import { ensureDocumentacionRagSchema } from "./documentacion-rag/schema.js";
+import { importPineconeDocuments, previewPineconeImport } from "./documentacion-rag/import-service.js";
 import {
   createDocumentacionRagTopic,
   deleteDocumentacionRagDocument,
@@ -49,6 +50,29 @@ router.get(
 );
 
 router.use(requirePermission("documentacion_rag.manage"));
+
+router.get("/pinecone-import/preview", async (_req, res) => {
+  return res.json(await previewPineconeImport());
+});
+
+router.post("/pinecone-import", async (req, res) => {
+  const parsed = z.object({
+    assistantName: z.string().min(1).max(255),
+    selections: z.array(z.object({
+      fileId: z.string().min(1).max(128),
+      documentId: z.string().min(1).max(64),
+      versionId: z.string().min(1).max(64),
+      topicId: z.string().min(1).max(64).optional(),
+    })).min(1).max(200).refine(
+      (items) => new Set(items.map((item) => item.fileId)).size === items.length,
+      "No se permiten archivos repetidos",
+    ),
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Selección de importación no válida", errors: parsed.error.flatten() });
+  }
+  return res.json(await importPineconeDocuments({ user: req.user, ...parsed.data }));
+});
 
 router.post("/topics", async (req, res) => {
   const parsed = topicSchema.safeParse(req.body || {});

@@ -285,3 +285,19 @@
     grid-template-columns: 1fr;
   }
 }
+.documentacion-rag-import {
+  margin: 16px 0;
+  padding: 20px;
+  border: 1px solid var(--border-color, #e2e6eb);
+  border-radius: 12px;
+}
+
+.documentacion-rag-import-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color, #e2e6eb);
+  overflow-wrap: anywhere;
+}
+
+.documentacion-rag-import-row input {
+  margin-right: 8px;
+}

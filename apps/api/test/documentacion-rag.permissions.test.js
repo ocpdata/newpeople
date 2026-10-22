@@ -12,6 +12,10 @@ const {
   ensureSchemaMock: vi.fn(),
 }));
 
+vi.mock("../src/documentacion-rag/import-service.js", () => ({
+  previewPineconeImport: vi.fn(async () => ({ files: [] })),
+  importPineconeDocuments: vi.fn(async () => ({ results: [] })),
+}));
 vi.mock("../src/documentacion-rag/permissions.js", () => ({
   ensureDocumentacionRagPermissions: ensurePermissionsMock,
 }));
@@ -37,6 +41,7 @@ import documentacionRagRoutes from "../src/routes.documentacion-rag.js";
 
 function createTestApp(permissionCodes) {
   const app = express();
+  app.use(express.json());
   app.use((req, _res, next) => {
     req.user = { permissionSet: new Set(permissionCodes), id: 1 };
     next();
@@ -46,6 +51,26 @@ function createTestApp(permissionCodes) {
 }
 
 describe("Documentación RAG route permissions", () => {
+  it("protege la vista previa y la importación con manage", async () => {
+    const app = createTestApp(["documentacion_rag.access"]);
+    expect((await request(app).get("/api/documentacion-rag/pinecone-import/preview")).status).toBe(403);
+    expect((await request(app).post("/api/documentacion-rag/pinecone-import").send({})).status).toBe(403);
+    expect((await request(createTestApp(["documentacion_rag.manage"])).get("/api/documentacion-rag/pinecone-import/preview")).status).toBe(200);
+  });
+
+  it("valida selección vacía, duplicados y cantidad máxima", async () => {
+    const app = createTestApp(["documentacion_rag.manage"]);
+    const selection = { fileId: "file", documentId: "doc", versionId: "v1" };
+    for (const selections of [[], [selection, selection], Array.from({ length: 201 }, (_, index) => ({ ...selection, fileId: `file-${index}` }))]) {
+      expect((await request(app).post("/api/documentacion-rag/pinecone-import").send({
+        assistantName: "library", selections,
+      })).status).toBe(400);
+    }
+    expect((await request(app).post("/api/documentacion-rag/pinecone-import").send({
+      assistantName: "library", selections: [selection],
+    })).status).toBe(200);
+  });
+
   beforeEach(() => {
     getBootstrapMock.mockReset().mockResolvedValue({
       topics: [],

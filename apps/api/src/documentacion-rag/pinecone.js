@@ -216,6 +216,36 @@ export async function uploadRagFile({
   });
 }
 
+export async function listRagFiles() {
+  const deadlineAt = Date.now() + REQUEST_TIMEOUT_MS;
+  const assistant = await requestJson(
+    `${CONTROL_URL}/assistants/${encodeURIComponent(assistantName())}`,
+    { deadlineAt },
+  );
+  if (assistant?.status && assistant.status !== "Ready") {
+    const error = new Error("El Assistant configurado no está listo para importar");
+    error.status = 503;
+    throw error;
+  }
+  const result = await requestJson(
+    `${getAssistantHost(assistant)}/assistant/files/${encodeURIComponent(assistantName())}`,
+    { deadlineAt },
+  );
+  // The Assistant list-files API returns all files, without pagination.
+  if (!Array.isArray(result?.files) || result.files.some((file) =>
+    !file || typeof file.id !== "string" || typeof file.name !== "string")) {
+    const error = new Error("Pinecone devolvió un listado de archivos no válido");
+    error.status = 502;
+    throw error;
+  }
+  return {
+    assistantName: assistantName(),
+    files: result.files.map(({ id, name, status, metadata }) => ({
+      id, name, status, metadata,
+    })),
+  };
+}
+
 export async function describeRagOperation(operationId) {
   const assistant = await getPineconeAssistant();
   return requestJson(
