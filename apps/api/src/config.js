@@ -39,6 +39,8 @@ export const config = {
     },
   },
   features: {
+    customerConversationalResponseEnabled:
+      String(process.env.CUSTOMER_CONVERSATIONAL_RESPONSE_ENABLED || "true") === "true",
     customerTurnContractMode: String(
       process.env.CUSTOMER_TURN_CONTRACT_MODE || "on",
     ).trim().toLowerCase(),

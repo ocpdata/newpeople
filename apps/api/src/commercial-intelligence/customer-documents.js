@@ -59,8 +59,23 @@ function opportunities(snapshot) {
 export function validateCustomerDocumentMemory(value, snapshot) {
   if (!value || Number(value.accountId) !== Number(snapshot.account?.id)) return null;
   if (value.source === "provided_document") return { accountId: Number(snapshot.account.id), source: value.source };
-  if (value.source !== "quotation" || snapshot.permissions?.canReadOpportunities === false ||
+  if (!["quotation", "opportunity_document", "quotation_document"].includes(value.source) || snapshot.permissions?.canReadOpportunities === false ||
       !opportunities(snapshot).some((item) => Number(item.id) === value.opportunityId)) return null;
+  if (["opportunity_document", "quotation_document"].includes(value.source)) {
+    const candidates = value.documentCandidates || [];
+    const selected = value.documentIds || [];
+    if (!Array.isArray(candidates) || candidates.length > 50 || candidates.some((id) => !positive(id)) ||
+        !Array.isArray(selected) || selected.length > 5 || selected.some((id) => !positive(id)) ||
+        new Set(candidates).size !== candidates.length || new Set(selected).size !== selected.length ||
+        (value.source === "quotation_document" &&
+          [value.quotationId, value.versionId, value.versionNumber].some((item) => item != null) &&
+          (!positive(value.quotationId) || !positive(value.versionId) || !positive(value.versionNumber)))) return null;
+    return { accountId: Number(snapshot.account.id), source: value.source, opportunityId: value.opportunityId,
+      quotationId: value.quotationId || null, versionId: value.versionId || null, versionNumber: value.versionNumber || null,
+      quotationReference: typeof value.quotationReference === "string" ? value.quotationReference.slice(0, 300) : "",
+      documentReference: typeof value.documentReference === "string" ? value.documentReference.slice(0, 300) : "",
+      documentCandidates: candidates, documentIds: selected };
+  }
   if (value.quotationId != null && !positive(value.quotationId)) return null;
   if (value.versionNumber != null && !positive(value.versionNumber)) return null;
   if (value.versionId != null && !positive(value.versionId)) return null;
@@ -102,12 +117,30 @@ export function resolveCustomerDocumentRequest({ component, movement, previous, 
   if (spec.accountReference && normalize(spec.accountReference) !== normalize(snapshot.account.name)) {
     return fail("La consulta está limitada a la cuenta seleccionada. Selecciona la otra cuenta en la interfaz.");
   }
-  const continuation = continuing(movement);
+  const explicitPrevious = spec.documentSelection === "previous";
+  if (explicitPrevious) {
+    previous = validateCustomerDocumentMemory(previous, snapshot);
+    const priorOpportunity = previous && opportunities(snapshot).find((item) => Number(item.id) === previous.opportunityId);
+    if (!previous?.documentIds?.length || !["opportunity_document", "quotation_document"].includes(previous.source) ||
+        ["change_focus", "stop", "reject", "discard_draft"].includes(movement) ||
+        ["latest", "list"].includes(spec.selection) || component.listPosition > 0 ||
+        (spec.source && spec.source !== previous.source) ||
+        (spec.opportunityReference && normalize(spec.opportunityReference) !== normalize(priorOpportunity?.name)) ||
+        (spec.documentReference && normalize(spec.documentReference) !== normalize(previous.documentReference || "")) ||
+        (spec.quotationReference && spec.quotationReference !== String(previous.quotationId) &&
+          normalize(spec.quotationReference) !== normalize(previous.quotationReference || "")) ||
+        (Object.hasOwn(spec, "versionNumber") && spec.versionNumber !== previous.versionNumber)) {
+      return fail("La selección documental anterior no es válida o entra en conflicto con la fuente solicitada. Identifica el documento que deseas consultar.");
+    }
+  }
+  const continuation = continuing(movement) || explicitPrevious;
   if (!["quotation", "document", "opportunity"].includes(component.object) && !spec.source &&
       !(continuation && previous?.source)) {
     return fail("Indica si deseas consultar una cotización de oportunidad o un archivo aportado. No sustituiré otro tipo de registro por una cotización.");
   }
-  const source = spec.source || (component.object === "document" ? "provided_document" :
+  const source = spec.source || (continuation && component.object === "document" &&
+    ["opportunity_document", "quotation_document"].includes(previous?.source) ? previous.source :
+    component.object === "document" ? "provided_document" :
     continuation && previous?.source ? previous.source : "quotation");
   if (source === "provided_document") {
     const material = normalizeCustomerReferenceMaterial(referenceMaterial);
@@ -127,20 +160,30 @@ export function resolveCustomerDocumentRequest({ component, movement, previous, 
       records.some((record) => Number(record.id) === Number(item.opportunityId)))
       .map((item) => Number(item.opportunityId)))] : [];
   const fallbackId = quotationOpportunityIds.length === 1 ? quotationOpportunityIds[0] :
-    continuation && previous?.source === "quotation" ? previous.opportunityId :
+    continuation && previous?.source === source ? previous.opportunityId :
     businessRules.serverPolicy?.selectedOpportunityFallback === "require_explicit" ? null :
       context.opportunityId || snapshot.selectedOpportunity?.id;
   const opportunity = reference ? (matches.length === 1 ? matches[0] : null) :
     records.find((item) => Number(item.id) === Number(fallbackId));
-  if (!opportunity) return fail("Indica el nombre de una única oportunidad autorizada para identificar sus cotizaciones.");
+  if (!opportunity) return fail("Indica el nombre de una única oportunidad autorizada para identificar sus cotizaciones o documentos.");
   if (!spec.opportunityReference && independentReference) {
     console.warn("[customer-document] Resolved independent opportunity reference", {
       code: "CUSTOMER_DOCUMENT_OPPORTUNITY_REFERENCE_RECONCILED", opportunityId: Number(opportunity.id),
     });
   }
-  const same = continuation && previous?.source === "quotation" && previous.opportunityId === Number(opportunity.id);
   const quotationReference = spec.quotationReference || (component.object === "quotation" ? component.reference : "") || "";
-  const inherit = same && !quotationReference && spec.selection !== "latest" && spec.selection !== "list";
+  // A new task may explicitly identify the same source without being classified as a continuation.
+  if (!continuation) previous = validateCustomerDocumentMemory(previous, snapshot);
+  const sameCrmQuotation = source === "quotation_document" && previous &&
+    (quotationReference === String(previous.quotationId) ||
+      normalize(quotationReference) === normalize(previous.quotationReference || ""));
+  const explicitSameSource = movement === "new_request" && spec.documentReference &&
+    spec.opportunityReference && ["opportunity_document", "quotation_document"].includes(source) &&
+    (source === "opportunity_document" || sameCrmQuotation);
+  const same = (continuation || explicitSameSource) && previous?.source === source &&
+    previous.opportunityId === Number(opportunity.id);
+  const inherit = same && (!quotationReference || sameCrmQuotation) && spec.selection !== "latest" && spec.selection !== "list" &&
+    (!Object.hasOwn(spec, "versionNumber") || spec.versionNumber === previous.versionNumber);
   return {
     source, spec, opportunity, quotationReference, previous: inherit ? previous : null,
     versionNumber: Object.hasOwn(spec, "versionNumber") ? spec.versionNumber || null :
@@ -206,7 +249,11 @@ function quotationFragments(quotation) {
 
 export function buildCustomerDocumentBasis({ request, quotation = null }) {
   let fragments, partial, sourceLabel, memory = request.memory;
-  if (request.source === "quotation") {
+  if (["opportunity_document", "quotation_document"].includes(request.source)) {
+    sourceLabel = request.sourceLabel;
+    fragments = request.fragments;
+    partial = request.partial;
+  } else if (request.source === "quotation") {
     if (!quotation || Number(quotation.accountId) !== memory.accountId ||
         Number(quotation.opportunityId) !== memory.opportunityId ||
         (request.selectedQuotationId && quotation.quotationId !== request.selectedQuotationId) ||
@@ -329,5 +376,7 @@ export async function answerCustomerDocument({
     }, currentValues: {}, fields: [{ key: "approved", type: "enum", enum: ["yes", "no"] }], aiUsageContext: usage,
   });
   if (audit?.approved !== "yes") return base("No pude validar la respuesta contra el contenido documental leído. Puedes reintentar; no se modificó ni envió nada.", "error");
-  return finish(draft.answer, cited.map((item) => `${sourceLabel} [${item.key}]: ${item.text}`));
+  const crmDocument = ["opportunity_document", "quotation_document"].includes(request.source);
+  return finish(draft.answer, cited.map((item) =>
+    `${sourceLabel} [${item.key}]${crmDocument ? "" : `: ${item.text}`}`));
 }

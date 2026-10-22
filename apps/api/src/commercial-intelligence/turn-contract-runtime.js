@@ -113,11 +113,24 @@ function mergeDocumentSelection(selected, current) {
   const prior = selection(selected), patch = selection(current);
   const changedSource = patch.source && prior.source && patch.source !== prior.source;
   const inherited = changedSource ? {} : { ...prior };
+  if (["list", "previous"].includes(inherited.documentSelection) || current.listPosition > 0) delete inherited.documentSelection;
+  if (current.listPosition > 0) delete inherited.documentReference;
+  if (["list", "all"].includes(patch.documentSelection)) delete inherited.documentReference;
   if (patch.opportunityReference && patch.opportunityReference !== prior.opportunityReference) {
     delete inherited.quotationReference;
     delete inherited.versionNumber;
+    delete inherited.documentReference;
+    delete inherited.documentSelection;
   }
-  if (patch.quotationReference && patch.quotationReference !== prior.quotationReference) delete inherited.versionNumber;
+  if (patch.quotationReference && patch.quotationReference !== prior.quotationReference) {
+    delete inherited.versionNumber;
+    delete inherited.documentReference;
+    delete inherited.documentSelection;
+  }
+  if (Object.hasOwn(patch, "versionNumber") && patch.versionNumber !== prior.versionNumber) {
+    delete inherited.documentReference;
+    delete inherited.documentSelection;
+  }
   return { ...inherited, ...patch };
 }
 
@@ -244,6 +257,12 @@ export function resolveCustomerContinuation(contract, memory, question = "") {
     previous.pendingComponentIds.includes(item.id));
   if (!pending.length && ["modify_draft", "correct", "request_rationale"].includes(contract.movement)) {
     pending = previous.contract.components;
+  }
+  if (!pending.length && previousComponent?.category === "query.document_content" &&
+      ["opportunity_document", "quotation_document"].includes(previousComponent.documentSpec?.source) &&
+      currentComponent?.category === "query.document_content" &&
+      ["continue", "select_candidate", "answer_clarification"].includes(contract.movement)) {
+    pending = [previousComponent];
   }
   if (contract.components.length !== 1) return contract;
   const current = contract.components[0];
@@ -998,6 +1017,9 @@ export async function runCustomerContractTurn({
         entities: { accountId: context?.accountId || null, opportunityId: null, contactId: null },
       } : {}),
       ...(documentQueries.length ? {
+        documentListings: documentQueries.filter((item) => item.result.response.documentListing)
+          .map((item) => ({ id: item.component.id, answer: item.result.response.documentListing })),
+        documentSources: documentQueries.flatMap((item) => item.result.response.documentSources || []),
         documentEvidence: documentQueries.flatMap((item) => item.result.response.documentEvidence || item.result.response.evidence || []),
         documentCoverage: documentQueries.length === 1 ? documentQueries[0].result.response.documentCoverage : {
           source: "multiple", partial: documentQueries.some((item) =>

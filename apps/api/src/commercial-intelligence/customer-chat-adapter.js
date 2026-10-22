@@ -26,6 +26,7 @@ import {
 import {
   answerCustomerDocument, resolveCustomerDocumentRequest, selectCustomerQuotation, validateCustomerDocumentMemory,
 } from "./customer-documents.js";
+import { answerCustomerCrmDocuments } from "./customer-crm-documents.js";
 import { contrastCustomerDocumentReport, resolveCustomerDocumentReport, validateCustomerDocumentReportMemory } from "./customer-document-reports.js";
 import {
   buildCustomerRelationshipResponse, resolveCustomerRelationshipRequest, validateCustomerRelationshipMemory,
@@ -2290,6 +2291,7 @@ export function appendCustomerAccountChatHistory(
     .map((message) => ({
       role: message.role,
       text: String(message.text).trim().slice(0, message.role === "assistant" && (message.comparisonMetadata || message.trendMetadata || message.scenarioMetadata || message.documentReportMetadata) ? 256000 :
+        message.role === "assistant" && message.presentation ? 48000 :
         message.role === "assistant" && (message.rescheduleMetadata || message.outcomeMetadata || message.stageMetadata) ? 64000 :
         message.role === "assistant" && (message.creationMetadata || message.updateMetadata) ? 16000 :
         message.role === "assistant" && message.priorityMetadata ? 64000 :
@@ -2308,6 +2310,8 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && message.turnDebug
         ? { turnDebug: message.turnDebug }
         : {}),
+      ...(message.role === "assistant" && message.presentation
+        ? { presentation: message.presentation } : {}),
       ...(message.role === "assistant" && Array.isArray(message.operations)
         ? { operations: message.operations }
         : {}),
@@ -2318,7 +2322,8 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && ["user_provided", "mixed_document", "knowledge_library", "mixed_knowledge"].includes(message.contentSource)
         ? { contentSource: message.contentSource } : {}),
       ...(message.role === "assistant" && message.documentCoverage
-        ? { documentCoverage: message.documentCoverage, documentEvidence: message.documentEvidence || [] } : {}),
+        ? { documentCoverage: message.documentCoverage, documentEvidence: message.documentEvidence || [],
+          documentSources: message.documentSources || [] } : {}),
       ...(message.role === "assistant" && message.priorityMetadata
         ? { priorityMetadata: message.priorityMetadata, priorityEvidence: message.priorityEvidence || [] } : {}),
       ...(message.role === "assistant" && message.comparisonMetadata
@@ -2358,13 +2363,14 @@ export function appendCustomerAccountChatHistory(
     answer
       ? {
           role: "assistant",
-          text: String(answer).trim().slice(0, assistantMetadata.comparisonMetadata || assistantMetadata.trendMetadata || assistantMetadata.scenarioMetadata || assistantMetadata.documentReportMetadata ? 256000 : assistantMetadata.priorityMetadata || assistantMetadata.rescheduleMetadata || assistantMetadata.outcomeMetadata || assistantMetadata.stageMetadata ? 64000 : assistantMetadata.documentCoverage || assistantMetadata.creationMetadata || assistantMetadata.updateMetadata ? 16000 : 2000),
+          text: String(answer).trim().slice(0, assistantMetadata.comparisonMetadata || assistantMetadata.trendMetadata || assistantMetadata.scenarioMetadata || assistantMetadata.documentReportMetadata ? 256000 : assistantMetadata.presentation ? 48000 : assistantMetadata.priorityMetadata || assistantMetadata.rescheduleMetadata || assistantMetadata.outcomeMetadata || assistantMetadata.stageMetadata ? 64000 : assistantMetadata.documentCoverage || assistantMetadata.creationMetadata || assistantMetadata.updateMetadata ? 16000 : 2000),
           ...(assistantMetadata.activityHistory
             ? { activityHistory: assistantMetadata.activityHistory }
             : {}),
           ...(assistantMetadata.turnDebug
             ? { turnDebug: assistantMetadata.turnDebug }
             : {}),
+          ...(assistantMetadata.presentation ? { presentation: assistantMetadata.presentation } : {}),
           ...(Array.isArray(assistantMetadata.operations)
             ? { operations: assistantMetadata.operations }
             : {}),
@@ -2375,7 +2381,8 @@ export function appendCustomerAccountChatHistory(
           ...(["user_provided", "mixed_document", "knowledge_library", "mixed_knowledge"].includes(assistantMetadata.contentSource)
             ? { contentSource: assistantMetadata.contentSource } : {}),
           ...(assistantMetadata.documentCoverage
-            ? { documentCoverage: assistantMetadata.documentCoverage, documentEvidence: assistantMetadata.documentEvidence || [] } : {}),
+            ? { documentCoverage: assistantMetadata.documentCoverage, documentEvidence: assistantMetadata.documentEvidence || [],
+              documentSources: assistantMetadata.documentSources || [] } : {}),
           ...(assistantMetadata.priorityMetadata
             ? { priorityMetadata: assistantMetadata.priorityMetadata, priorityEvidence: assistantMetadata.priorityEvidence || [] } : {}),
           ...(assistantMetadata.comparisonMetadata
@@ -4952,6 +4959,56 @@ export function createCustomerAccountAdapter({
                 channelIntentRouting: null,
               };
             }
+            if (["query.record_detail", "query.field_value"].includes(component.category) &&
+                component.object === "contact" && component.reference?.trim() && !component.listPosition) {
+              const scoped = scopeCustomerSnapshot(snapshot);
+              const normalizeName = (value) => normalizeCustomerSearchText(value).replace(/[^a-z0-9]+/g, " ").trim();
+              const reference = normalizeName(component.reference);
+              const nameMatches = (scoped.contacts || []).filter((item) =>
+                normalizeName(item.name).includes(reference));
+              const exactMatches = nameMatches.filter((item) => normalizeName(item.name) === reference);
+              const matches = exactMatches.length ? exactMatches : nameMatches;
+              if (reference && matches.length !== 1) {
+                const finish = (answer, responseType, evidence = [], toolsUsed = []) => ({
+                  response: { answer, responseType, operations: [], evidence, inferences: [],
+                    recommendedActions: [], pendingItems: [],
+                    entities: { accountId: scoped.account?.id || null, contactId: null, opportunityId: null } },
+                  qualityTrace: { toolsUsed, diagnostics: {
+                    contactLookup: { status: responseType === "error" ? "failed" : matches.length ? "ambiguous" : "not_found" },
+                  } },
+                  channelIntentRouting: null,
+                });
+                const intent = contractIntents.find((item) => item.code === capability.intent && item.enabled !== false);
+                if (!scoped.account?.id || Number(componentContext.accountId) !== Number(scoped.account.id) ||
+                    contractRules.scope?.contactSearchAllowed === false || !intent?.allowedTools.includes("searchContacts")) {
+                  return finish("No puedo verificar ese contacto con el alcance y las herramientas autorizadas actuales.", "error");
+                }
+                const coverage = snapshotQueryMetrics.find((item) => item.source === "contacts");
+                if (!coverage || coverage.errorCode || coverage.truncated !== false) {
+                  return finish("No pude completar la consulta autorizada de contactos. No puedo afirmar que el contacto no exista; revisa la disponibilidad de la consulta.", "error");
+                }
+                if (Date.now() >= budget.deadlineAt || budget.remainingReadQueries < 1) throw Object.assign(
+                  new Error("No hay presupuesto para verificar el contacto"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                budget.remainingReadQueries -= 1;
+                const args = { accountId: scoped.account.id };
+                const execute = () => executeCustomerReadTool({
+                  toolName: "searchContacts", snapshot: buildCustomerCoachSnapshot(scoped), args, businessRules: contractRules,
+                });
+                const read = executionTrace ? executionTrace.spanSync({
+                  from: "B7", to: "B8", label: "Verificar contacto solicitado",
+                  parentSpanId: turnTraceParentSpanId, input: { toolName: "searchContacts", args },
+                }, execute, (value) => ({ toolName: "searchContacts", failed: Boolean(value.error) })) : execute();
+                if (read.error || read.queryFailed || !Array.isArray(read.result)) {
+                  return finish("No pude verificar el contacto con la lectura autorizada; esto no significa que no exista.", "error", [], ["searchContacts"]);
+                }
+                const contacts = read.result.filter((item) => normalizeName(item.name).includes(reference));
+                const evidence = [`searchContacts: ${contacts.length} coincidencias por nombre en la cuenta autorizada ${scoped.account.name}.`];
+                return finish(contacts.length
+                  ? `Encontré varias coincidencias para ${component.reference} entre los contactos visibles de ${scoped.account.name}. ¿Cuál deseas consultar?`
+                  : `No encontré un contacto llamado ${component.reference} entre los contactos visibles de ${scoped.account.name}. ¿Está registrado con otro nombre?`,
+                contacts.length ? "clarification" : "informational", evidence, ["searchContacts"]);
+              }
+            }
             if (["query.document_content", "report.document_evidence"].includes(component.category)) {
               const scoped = scopeCustomerSnapshot(snapshot);
               const isReport = component.category === "report.document_evidence";
@@ -5016,6 +5073,7 @@ export function createCustomerAccountAdapter({
                   qualityTrace: { toolsUsed: used, diagnostics: {
                     answerGeneration: { source: isReport ? "document_report" : "document_query" },
                     documentCoverage: result.documentCoverage || null,
+                    ...(result.documentSources ? { documentSources: result.documentSources } : {}),
                     ...(isReport ? { documentReport: result.documentReportMetadata || null } : {}),
                   } }, channelIntentRouting: null,
                 };
@@ -5060,7 +5118,8 @@ export function createCustomerAccountAdapter({
               if (request.error) return stop(request.error, request.responseType);
               documentSource = request.source;
               const intent = contractIntents.find((item) =>
-                item.code === (request.source === "provided_document" ? "account_overview" : "quotation_query"));
+                item.code === (request.source === "provided_document" ? "account_overview" :
+                  request.source === "opportunity_document" ? "opportunity_status" : "quotation_query"));
               if (!intent || intent.enabled === false) return finish({
                 answer: "Reconocí la consulta documental, pero esta fuente está deshabilitada por la configuración del canal.",
                 responseType: "informational", capabilityStatus: "disabled",
@@ -5074,6 +5133,40 @@ export function createCustomerAccountAdapter({
                 });
                 assertTime();
                 return finish(response);
+              }
+              if (["opportunity_document", "quotation_document"].includes(request.source)) {
+                if (isReport) return stop("Para contrastar archivos CRM, consulta primero su contenido y formula el contraste sobre esa fuente.", "clarification");
+                if ((!permissionGranted(permissions, "oportunidades.read") && !permissionGranted(permissions, "oportunidades.read_all")) ||
+                    (!permissionGranted(permissions, "cuentas.read") && !permissionGranted(permissions, "cuentas.read_all")) ||
+                    scoped.permissions?.canReadOpportunities === false || contractRules.scope?.opportunitySearchAllowed === false ||
+                    (request.source === "quotation_document" && (!hasQuotationReadAccess(user) ||
+                      contractRules.scope?.quotationSearchAllowed === false || !intent.allowedTools.includes("getOpportunityQuotation"))) ||
+                    !intent.allowedTools.includes("searchOpportunities")) {
+                  return stop("Tu perfil o la configuración del canal no permiten consultar estos documentos.");
+                }
+                if (snapshotQueryMetrics.some((metric) =>
+                  ["opportunities_active", "opportunities_inactive"].includes(metric.source) && metric.errorCode)) {
+                  return stop("Falló la lectura necesaria para verificar la oportunidad; no significa que no tenga documentos.");
+                }
+                const readDocument = async (label, cost, execute) => {
+                  assertTime();
+                  if (budget.remainingReadQueries < cost) throw Object.assign(
+                    new Error("No hay presupuesto suficiente para la lectura documental"), { code: "CUSTOMER_TURN_BUDGET_EXCEEDED" });
+                  budget.remainingReadQueries -= cost;
+                  used.push(request.source === "opportunity_document" ? "readOpportunityDocument" : "readQuotationDocument");
+                  const value = executionTrace ? await executionTrace.span({
+                    from: "B7", to: "B8", label, parentSpanId: turnTraceParentSpanId,
+                    input: { source: request.source, opportunityId: request.opportunity.id },
+                  }, execute, () => ({ completed: true })) : await execute();
+                  assertTime();
+                  return value;
+                };
+                const result = await answerCustomerCrmDocuments({
+                  request, component, user, jobId, signal: getDeadlineSignal(budget.deadlineAt), read: readDocument,
+                  canRead: () => budget.remainingReadQueries > 0,
+                });
+                assertTime();
+                return finish({ ...result, entities: { accountId: scoped.account.id, opportunityId: request.opportunity.id } });
               }
               if (!permissionGranted(permissions, "oportunidades.read") || !hasQuotationReadAccess(user) ||
                   scoped.permissions?.canReadOpportunities === false ||

@@ -1,14 +1,12 @@
+import { hasSupportedConversationalPresentation } from "../commercial-intelligence/customer-conversational-response.js";
+
 const forbiddenKinds = new Set(["remove_record", "send_communication", "delete", "deactivate"]);
 const normalizeEvaluationStatus = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 export function evaluationReferenceBlockReason(definition, reference) {
   if (!["Q02-02", "Q03-03"].includes(definition.id)) return null;
-  const contacts = reference?.contacts?.filter((item) => normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz") || [];
   const coverage = reference?.coverage?.find((item) => item.source === "contacts");
   if (!coverage || coverage.errorCode || coverage.truncated !== false) {
     return "Precondición incumplida: no se acreditó una lectura completa de contactos para validar la referencia de Alejandro Ruiz. No se envió la pregunta.";
-  }
-  if (contacts.length !== 1 || String(contacts[0].positionTitle || "").trim()) {
-    return "Precondición incumplida: el caso requiere un único Alejandro Ruiz visible en esta cuenta, sin cargo informado. La referencia del catálogo no coincide con los datos actuales. No se envió la pregunta ni se sustituyó por otro contacto.";
   }
   return null;
 }
@@ -36,7 +34,13 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   add("Sin error de chat", result?.responseType !== "error" &&
     !(result?.components || []).some((component) => component.status === "error"),
   "Un error global o de un componente no acredita la capacidad positiva.");
-  const text = String(result?.answer || "");
+  const conversational = hasSupportedConversationalPresentation(result?.presentation) &&
+    result.presentation.auditedAnswer === result.answer;
+  if (result?.presentation?.status === "completed") {
+    add("Respuesta final auditada por B10", conversational,
+      "La redacción final debe coincidir con el texto auditado y conservar hechos, cobertura, incertidumbre y estado de operaciones.");
+  }
+  const text = String(conversational ? result.presentation.verifiedAnswer : result?.answer || "");
   if (definition.readOnlyRegression) {
     const questionCounts = { "Q09-05": [3], "L10": [3], "MIX09": [3], "SEQ15": [3, 2] };
     const expectedQuestions = questionCounts[definition.id]?.[stepIndex];
@@ -125,25 +129,45 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       !/asociados a (?:esas|las) oportunidades/i.test(text),
     "Si no hay oportunidades, los contactos se describen como contactos de la cuenta, no asociados a oportunidades inexistentes.");
   }
-  if (definition.id === "Q02-02") {
-    const contact = reference?.contacts?.find((item) => normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz");
-    const contactId = Number(contact?.id);
-    add("Consulta el registro del contacto", result?.responseType === "informational" &&
-      result?.components?.some((item) => item.category === "query.record_detail" && item.object !== "opportunity") === true &&
-      Number.isSafeInteger(contactId) && Number(result?.entities?.contactId) === contactId &&
-      !Number(result?.entities?.opportunityId) && /Alejandro Ruiz/i.test(text) &&
-      !/coincidencias 0|no hay coincidencias/i.test(text),
-    "Una pregunta sobre lo registrado de Alejandro Ruiz debe recuperar el contacto, no buscar oportunidades con él.");
-    if (contact && !contact.positionTitle) add("No inventa el cargo", /cargo:\s*(?:no informado|no registrado|no aparece registrado|no indicado(?: en el registro)?|sin especificar)/i.test(text) &&
-      !/decisor|firmante|autoridad/i.test(text),
-    "El cargo no está informado; no se deben inferir compras, influencia ni autoridad.");
-  }
-  if (definition.id === "Q03-03") {
-    const contact = reference?.contacts?.find((item) => normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz");
-    add("Cargo ausente del contacto identificado", Boolean(contact) && !String(contact.positionTitle || "").trim() &&
-      result?.responseType === "informational" && Number(result?.entities?.contactId) === Number(contact?.id) &&
-      /cargo:\s*(?:no informado|no registrado|no aparece registrado|no indicado(?: en el registro)?|sin especificar)/i.test(text),
-    "Debe identificar al contacto actual y declarar el cargo ausente; una aclaración genérica no acredita esta prueba.");
+  if (["Q02-02", "Q03-03"].includes(definition.id)) {
+    const contacts = reference?.contacts?.filter((item) =>
+      normalizeEvaluationStatus(item.name).trim() === "alejandro ruiz") || [];
+    add("Consulta de contacto sin operaciones", Array.isArray(result?.operations) && result.operations.length === 0 &&
+      !Number(result?.entities?.opportunityId),
+    "Consultar un contacto o su cargo no autoriza escrituras ni sustituirlo por una oportunidad.");
+    if (contacts.length === 0) {
+      const normalized = normalizeEvaluationStatus(text);
+      add("Contacto no encontrado comunicado", ["informational", "clarification"].includes(result?.responseType) &&
+        /alejandro ruiz/.test(normalized) &&
+        /no (?:encontre|se encontro|se encontraron|hay|existe|aparece)|sin coincidencias|coincidencias(?: conocidas)?[: ]+0/.test(normalized) &&
+        /cuenta|totalplay|visibles|autorizad|registros (?:consultados|disponibles)/.test(normalized) &&
+        !Number(result?.entities?.contactId) &&
+        !/cargo\s*:/.test(normalized),
+      "Si no hay coincidencias, comunicar la ausencia dentro del alcance visible, sin inventar identidad ni cargo.");
+      add("Búsqueda de contacto acreditada", result?.evidence?.some((item) =>
+        typeof item === "string" && item.includes("searchContacts")) === true,
+      "Una frase de ausencia no basta: la respuesta debe conservar evidencia de la lectura autorizada de contactos.");
+    } else if (contacts.length > 1) {
+      add("Contactos homónimos requieren aclaración", result?.responseType === "clarification" &&
+        /Alejandro Ruiz/i.test(text) && /[¿?]/.test(text) && !Number(result?.entities?.contactId),
+      "Con varias coincidencias, pedir cuál contacto consultar, sin elegir uno por el usuario.");
+    } else {
+      const contact = contacts[0];
+      add("Consulta el registro del contacto", result?.responseType === "informational" &&
+        result?.components?.some((item) => item.category ===
+          (definition.id === "Q02-02" ? "query.record_detail" : "query.field_value") && item.status === "completed") === true &&
+        Number(result?.entities?.contactId) === Number(contact.id) && /Alejandro Ruiz/i.test(text) &&
+        !/coincidencias 0|no hay coincidencias/i.test(text),
+      "La respuesta debe identificar al contacto vigente y completar la consulta solicitada, no sustituirlo por otro registro.");
+      if (!String(contact.positionTitle || "").trim()) {
+        add("No inventa el cargo", /cargo:\s*(?:no informado|no registrado|no aparece registrado|no indicado(?: en el registro)?|sin especificar)/i.test(text) &&
+          !/decisor|firmante|autoridad/i.test(text),
+        "El cargo no está informado; no se deben inferir compras, influencia ni autoridad.");
+      } else {
+        add("Cargo vigente del contacto", normalizeEvaluationStatus(text).includes(normalizeEvaluationStatus(contact.positionTitle)),
+          "El cargo debe corresponder al registro actual; no usar la expectativa histórica de cargo vacío.");
+      }
+    }
   }
   if (definition.id === "Q02-03") {
     add("Ambigüedad de hardware conservada", result?.responseType === "clarification" &&

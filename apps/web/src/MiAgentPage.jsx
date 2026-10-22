@@ -3194,12 +3194,14 @@ export default function MiAgentPage({
                 : {
                     role: "assistant",
                     answer: message.text,
+                    presentation: message.presentation || null,
                     activityHistory: message.activityHistory || null,
                     operations: message.operations || [],
                     stageAnswerPrefill: message.stageAnswerPrefill || null,
                     components: message.components || [],
                     contentSource: message.contentSource || null,
                     documentCoverage: message.documentCoverage || null,
+                    documentSources: message.documentSources || [],
                     documentEvidence: message.documentEvidence || [],
                     priorityMetadata: message.priorityMetadata || null,
                     priorityEvidence: message.priorityEvidence || [],
@@ -8862,13 +8864,33 @@ export default function MiAgentPage({
                       </small>
                       {message.documentCoverage ? (
                         <small className="mi-agent-customer-source-label">
-                          {message.documentCoverage.partial
+                          {message.documentCoverage.kind === "metadata_only"
+                            ? message.documentCoverage.partial
+                              ? "Listado documental parcial; contenido no leído"
+                              : "Listado documental; contenido no leído"
+                            : message.documentCoverage.partial
                             ? "Cobertura documental parcial"
                             : "Contenido comercial o texto extraído consultado"}
                           {message.documentCoverage.availableLength != null
                             ? ` · ${message.documentCoverage.availableLength} caracteres disponibles`
                             : ""}
                         </small>
+                      ) : null}
+                      {message.documentSources?.length ? (
+                        <details aria-label="Fuentes documentales CRM">
+                          <summary>Documentos CRM consultados</summary>
+                          <ul>
+                            {message.documentSources.map((document, index) => (
+                              <li key={`${document.source}-${document.documentId}-${index}`}>
+                                {document.name}
+                                {document.versionNumber ? ` · cotización ${document.quotationId}, versión ${document.versionNumber}` : ""}
+                                {` · ${document.status === "ready" ? "contenido leído" : "contenido no disponible"}`}
+                                {document.kind === "summary" ? " · solo resumen" : ""}
+                                {document.availableLength ? ` · ${document.availableLength} caracteres utilizados` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
                       ) : null}
                       {message.linkMetadata ? (
                         <details aria-label="Propuesta de vínculo A04">
@@ -9088,6 +9110,11 @@ export default function MiAgentPage({
                           {message.answer}
                         </h4>
                       )}
+                      {message.presentation?.status === "degraded" ? (
+                        <p role="status">
+                          No pude completar la redacción conversacional. Te muestro el resultado verificado.
+                        </p>
+                      ) : null}
                       {message.components?.length > 1 ? (
                         <ul aria-label="Estado de solicitudes">
                           {message.components.map((component) => (

@@ -137,8 +137,20 @@ aprobación humana se muestran por separado.
   incluye un componente en vez de sugerir una solicitud nueva vacía.
   La restricción estructural no garantiza la clasificación semántica:
   siguen siendo necesarias la revisión y la aceptación con proveedor real.
-- La versión del proveedor `compact-v1` conserva los campos comunes del
-  componente, pero solo exige los bloques propios de la categoría:
+- La versión del proveedor `compact-v5` conserva la estructura compacta de
+  `compact-v1` y añade fuentes `opportunity_document`/`quotation_document`,
+  nombre de archivo y selección documental, incluida `previous` para conservar
+  la fuente de una pregunta de seguimiento tras completar un resumen.
+  Distingue listar nombres de archivos de resumir datos comerciales de la
+  cotización; el contexto compartido conserva su identidad y revisión en
+  `quotationSelection` sin afirmar que existan adjuntos.
+  `documentList` conserva la fuente de un listado terminado antes de seleccionar
+  un archivo, para resumir por nombre sin volver a pedir la oportunidad.
+  No requiere volver a adjuntar
+  archivos asociados a registros CRM. La huella de evaluación incluye esta
+  versión para no mezclar ejecuciones con contratos diferentes.
+  Conserva los campos comunes del componente, pero solo exige los bloques
+  propios de la categoría:
 
   | Categorías | Bloques específicos |
   | --- | --- |
@@ -517,7 +529,7 @@ usan los nombres, no estos alias, salvo que la conversación los haya definido.
 | 82 | Kimberly Lidia Rodriguez Mejia | Gerente TI | Contacto de oportunidades 36, 50, 52 y 67. |
 | 109 | Rene Negrete | Gerente de Operaciones | Contacto de oportunidades 51, 58, 94, 95, 96, 103 y 104. |
 | 138 | Moises Abraham Vargas Dominguez | Director de compras | Contacto de la cuenta; el cargo no demuestra autoridad de firma ni vinculación a H. |
-| Por verificar | Alejandro Ruiz | Sin cargo informado | Referencia histórica: el ID 232 ya no corresponde a este contacto en la base local revisada el 2026-10-22. Q02-02/Q03-03 requieren prepararlo explícitamente en la cuenta de prueba; no inventar puesto ni reutilizar ese ID. |
+| Por verificar | Alejandro Ruiz | Según los datos vigentes | Referencia histórica: el ID 232 ya no corresponde a este contacto en la base local revisada el 2026-10-22. Q02-02/Q03-03 se ejecutan aunque no esté registrado; evaluar la respuesta contra los contactos visibles actuales, sin crear datos de prueba ni reutilizar ese ID. |
 
 La pertenencia a la cuenta, la asociación a una oportunidad y la autoridad de
 decisión son hechos diferentes. La tabla no certifica facultad de compra,
@@ -668,7 +680,7 @@ el modelo real; la implementación no cambia su estado a aprobado.
 | Caso | Pregunta | Respuesta esperada y aprobación |
 | --- | --- | --- |
 | Q02-01 | «Muéstrame el detalle de Hardware Refresh, sin la de 3 Años». | H: USD 500.000, cierre 2027-01-31, Contacto Inicial, En proceso, Kimberly. No mezclar importe de H3 ni exponer campos internos no autorizados. |
-| Q02-02 | «¿Qué tenemos registrado de Alejandro Ruiz?». | Requiere un único Alejandro Ruiz visible en Totalplay, sin cargo informado; resolver su ID actual, no asumir el histórico 232. Si falta esa preparación, el evaluador marca inconcluso antes de llamar a IA. Con la preparación válida, mostrar solo campos visibles, sin atribuirle compras, influencia o autoridad por su nombre. |
+| Q02-02 | «¿Qué tenemos registrado de Alejandro Ruiz?». | Enviar la pregunta aunque el contacto no esté registrado. Con lectura completa y sin coincidencias, informar que no se encontró entre los contactos visibles de Totalplay y conservar evidencia de searchContacts; no afirmar ausencia global ni sustituirlo por otra persona. Con una coincidencia, resolver su ID actual y mostrar solo campos visibles, incluido el cargo vigente o su ausencia; no asumir el ID histórico 232 ni atribuir autoridad. Con homónimos, pedir cuál consultar. |
 | Q02-03 | «Dame el detalle de la oportunidad de hardware». | Presentar H y H3 como candidatos si no existe foco previo suficiente; preguntar cuál. No elegir la de mayor importe. |
 
 #### Q03. Campo específico — `query.field_value`
@@ -683,7 +695,16 @@ modelo real; no constituyen evidencia de aprobación.
 | --- | --- | --- |
 | Q03-01 | «¿Cuál es el monto de Hardware Refresh, no la de 3 Años?». | USD 500.000,00. Respuesta directa; sin modificarlo ni confundirlo con un total de cotización. |
 | Q03-02 | «¿En qué etapa y estado comercial está Seguridad Dns Total Play 2026?». | Etapa Waiting y estado Ganada, claramente separados. No decir que está En proceso porque su etapa no se llama Ganada. |
-| Q03-03 | «¿Qué cargo tiene Alejandro Ruiz?». | Requiere el mismo contacto preparado de Q02-02; si falta o ya tiene cargo, el evaluador marca inconcluso sin llamar a IA. Con la preparación válida, identificar su ID actual y responder cargo no registrado. Una aclaración genérica no acredita el caso; no completar por similitud ni consultar fuentes públicas sin solicitud. |
+| Q03-03 | «¿Qué cargo tiene Alejandro Ruiz?». | Enviar la pregunta con los datos actuales. Si no se encuentra el contacto tras una lectura completa, comunicarlo dentro del alcance visible de Totalplay, con evidencia de searchContacts y sin inventar cargo. Si existe uno, identificar su ID actual y responder solo el cargo vigente o indicar que no está registrado. Con homónimos, pedir cuál consultar. Una aclaración genérica no acredita ausencia; no sustituir por similitud ni consultar fuentes públicas sin solicitud. |
+
+La automatización conserva la respuesta real antes de evaluarla. Q02-02 y Q03-03
+no exigen preparar un contacto ni un cargo vacío: la ausencia comprobada es un
+escenario evaluable, no una precondición fallida. La lectura de referencia debe
+ser completa; un error o truncamiento no prueba ausencia. Las comprobaciones
+satisfactorias dejan el caso en revisión humana, no aprobado automáticamente.
+Cada resultado distingue con sus comprobaciones qué escenario se ejercitó:
+contacto ausente, único con/sin cargo o varias coincidencias. Los resultados
+históricos no se reescriben; los cambios aplican a nuevas ejecuciones.
 
 En la ejecución de estos mismos casos, verificar también:
 

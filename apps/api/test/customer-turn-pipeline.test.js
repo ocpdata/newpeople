@@ -7,6 +7,7 @@ import { SYNTHETIC_CUSTOMER_SNAPSHOT } from "./fixtures/customer-turn-cases.js";
 import { interpretCustomerTurn } from "../src/commercial-intelligence/turn-contract.js";
 import { runCustomerContractTurn } from "../src/commercial-intelligence/turn-contract-runtime.js";
 import { getAuthorizedCoachQuotationContent, listAuthorizedCoachQuotations } from "../src/coach/quotation-read-service.js";
+import { listCustomerCrmDocuments, readCustomerCrmDocument } from "../src/coach/customer-document-access.js";
 
 const provider = vi.hoisted(() => ({ real: null }));
 vi.mock("../src/structuredWebResearch.js", async (original) => {
@@ -21,6 +22,9 @@ vi.mock("../src/coach/business-rules.js", async (original) => {
 vi.mock("../src/coach/admin-rules.js", () => ({ listCoachAdminRules: vi.fn(async () => []) }));
 vi.mock("../src/coach/quotation-read-service.js", async (original) => ({
   ...(await original()), getAuthorizedCoachQuotationContent: vi.fn(), listAuthorizedCoachQuotations: vi.fn(),
+}));
+vi.mock("../src/coach/customer-document-access.js", () => ({
+  listCustomerCrmDocuments: vi.fn(), readCustomerCrmDocument: vi.fn(),
 }));
 vi.mock("../src/coach/channel-intent-governance.js", async (original) => {
   const actual = await original();
@@ -2131,8 +2135,208 @@ describe("Customer contract B6/B9/B10 integration", () => {
         question: "Consulta documental sintética", context: { accountId: 9001 }, conversationContext,
       });
       beforeEach(() => {
+        listCustomerCrmDocuments.mockReset();
+        readCustomerCrmDocument.mockReset();
         listAuthorizedCoachQuotations.mockResolvedValue({ candidates: [candidates[0]], truncated: false });
         getAuthorizedCoachQuotationContent.mockResolvedValue(quote);
+      });
+      it.each(["opportunity_document", "quotation_document"])("reads an existing %s and persists its selection and provenance", async (source) => {
+        listCustomerCrmDocuments.mockResolvedValue({
+          candidates: [{ documentId: 7, name: "requisitos.txt", aiEnabled: true, extractionStatus: "completed" }],
+          truncated: false, version: source === "quotation_document" ? {
+            quotationId: 18, versionId: 108, versionNumber: 8,
+          } : null,
+        });
+        readCustomerCrmDocument.mockResolvedValue({
+          documentId: 7, status: "ready", kind: "extracted_text", text: "Requiere garantía de 12 meses.",
+          originalLength: 29, ...(source === "quotation_document" ? { versionId: 108, versionNumber: 8 } : {}),
+        });
+        const original = runStructuredTextResearch.getMockImplementation();
+        runStructuredTextResearch.mockImplementation(async (request) =>
+          request.schemaName === "customer_account_document_answer"
+            ? { answer: "El archivo solicita garantía de 12 meses.", citations: ["doc1-f1"] }
+            : original(request));
+        const result = await run(adapter([part({ source, quotationReference: source === "quotation_document" ? "18" : "",
+          aspect: "question" }, { object: "document", text: "¿Qué garantía pide el archivo de Renovación Alfa?" })], {
+          user: { id: 19, permissionSet: quotePermissions },
+        }));
+        expect(result.response.responseType).toBe("informational");
+        expect(result.response.answer).toContain("garantía de 12 meses");
+        expect(result.response.documentMemory).toMatchObject({ source, documentIds: [7] });
+        expect(result.response.documentSources[0]).toMatchObject({ source, documentId: 7 });
+        expect(result.response.operations).toEqual([]);
+        expect(getAuthorizedCoachQuotationContent).not.toHaveBeenCalled();
+        const stored = appendCustomerAccountChatHistory([], "Consulta documental", result.response.answer, result.response);
+        expect(stored.at(-1).documentSources).toEqual(result.response.documentSources);
+      });
+      it("blocks CRM document reads when opportunity permission is absent", async () => {
+        const result = await run(adapter([part({ source: "opportunity_document" }, { object: "document" })], {
+          user: { id: 19, permissionSet: new Set(["cuentas.read"]) },
+        }));
+        expect(result.response.responseType).toBe("error");
+        expect(listCustomerCrmDocuments).not.toHaveBeenCalled();
+        expect(readCustomerCrmDocument).not.toHaveBeenCalled();
+      });
+      it("lists stored documents without requiring an attachment or a generation call", async () => {
+        listCustomerCrmDocuments.mockResolvedValue({
+          candidates: [{ documentId: 7, name: "requisitos.txt", aiEnabled: true, extractionStatus: "pending" }],
+          truncated: false, version: null,
+        });
+        const result = await run(adapter([part({ source: "opportunity_document", documentSelection: "list" },
+          { object: "document" })], { user: { id: 19, permissionSet: quotePermissions } }));
+        expect(result.response.answer).toContain("requisitos.txt");
+        expect(result.response.documentMemory.documentCandidates).toEqual([7]);
+        expect(result.response.documentListings).toEqual([{ id: "c1", answer: result.response.components[0].answer }]);
+        expect(result.response.documentCoverage.kind).toBe("metadata_only");
+        expect(readCustomerCrmDocument).not.toHaveBeenCalled();
+        expect(runStructuredTextResearch).not.toHaveBeenCalled();
+      });
+      it.each([false, true])("lists quotation filenames without reading commercial content (follow-up=%s)", async (followup) => {
+        listCustomerCrmDocuments.mockResolvedValue({
+          candidates: [{ documentId: 7, name: "Hardware Refresh - propuesta.xlsx",
+            aiEnabled: true, extractionStatus: "uploaded" }],
+          truncated: false, version: { quotationId: 18, versionId: 108, versionNumber: 8 },
+        });
+        const question = followup ? "cuales son los nombres de esos archivos?" :
+          "¿Qué archivos están asociados a la cotización 18 de Hardware Refresh?";
+        const scopedSnapshot = { ...snapshot,
+          opportunities: snapshot.opportunities.map((item) => ({ ...item, name: "Hardware Refresh" })),
+        };
+        const contract = makeContract([part({
+          source: "quotation_document", opportunityReference: "Hardware Refresh",
+          quotationReference: "18", documentSelection: "list", ...(followup ? { versionNumber: 8 } : {}),
+        }, { object: "document", text: question })], { movement: followup ? "continue" : "new_request" });
+        const result = await adapter(contract.components, {
+          snapshot: scopedSnapshot, user: { id: 19, permissionSet: quotePermissions },
+          authoritativeIntent: { turnContract: contract },
+        }).runTurn({
+          question, context: { accountId: 9001 },
+          conversationContext: followup ? { accountId: 9001, documentMemory: {
+            source: "quotation", accountId: 9001, opportunityId: 9101,
+            quotationId: 18, versionId: 108, versionNumber: 8, candidates: [],
+          } } : null,
+        });
+        expect(result.response.responseType).toBe("informational");
+        expect(result.response.answer).toContain("Hardware Refresh - propuesta.xlsx");
+        expect(result.response.documentCoverage).toMatchObject({ source: "quotation_document", kind: "metadata_only" });
+        expect(result.response.documentMemory).toMatchObject({
+          quotationId: 18, versionId: 108, versionNumber: 8, documentCandidates: [7], documentIds: [],
+        });
+        expect(result.response.documentListings).toEqual([{ id: "c1", answer: result.response.components[0].answer }]);
+        expect(listCustomerCrmDocuments).toHaveBeenCalledWith(expect.objectContaining({
+          accountId: 9001, opportunityId: 9101, quotationId: 18,
+          ...(followup ? { versionNumber: 8 } : {}),
+        }));
+        expect(readCustomerCrmDocument).not.toHaveBeenCalled();
+        expect(getAuthorizedCoachQuotationContent).not.toHaveBeenCalled();
+        expect(runStructuredTextResearch).not.toHaveBeenCalled();
+        expect(result.response.operations).toEqual([]);
+      });
+      it("continues from a completed document list through a positional selection and a later question", async () => {
+        listCustomerCrmDocuments.mockResolvedValue({
+          candidates: [
+            { documentId: 7, name: "requisitos.txt", aiEnabled: true, extractionStatus: "completed" },
+            { documentId: 8, name: "alcance.txt", aiEnabled: true, extractionStatus: "completed" },
+          ], truncated: false, version: null,
+        });
+        readCustomerCrmDocument.mockResolvedValue({
+          documentId: 8, status: "ready", kind: "extracted_text", text: "Garantía de 12 meses.",
+        });
+        const original = runStructuredTextResearch.getMockImplementation();
+        runStructuredTextResearch.mockImplementation(async (request) =>
+          request.schemaName === "customer_account_document_answer"
+            ? { answer: "El archivo señala garantía de 12 meses.", citations: ["doc1-f1"] }
+            : original(request));
+        const actor = { id: 19, permissionSet: quotePermissions };
+        const first = await run(adapter([part({ source: "opportunity_document", documentSelection: "list" },
+          { object: "document" })], { user: actor }));
+        expect(first.turnMemory.pendingComponentIds).toEqual([]);
+        const follow = (movement, extra) => adapter([], { user: actor, authoritativeIntent: {
+          turnContract: makeContract([makeComponent("query.document_content", "document", {
+            reference: "", documentSpec: {}, ...extra,
+          })], { movement }),
+        } });
+        const selected = await run(follow("select_candidate", { listPosition: 2 }), {
+          accountId: 9001, documentMemory: first.response.documentMemory, turnMemory: first.turnMemory,
+        });
+        expect(selected.response.responseType).toBe("informational");
+        expect(selected.response.documentMemory.documentIds).toEqual([8]);
+        expect(readCustomerCrmDocument).toHaveBeenLastCalledWith(expect.objectContaining({ documentId: 8 }));
+        const next = await run(follow("continue", { text: "¿Y qué garantía indica?" }), {
+          accountId: 9001, documentMemory: selected.response.documentMemory, turnMemory: selected.turnMemory,
+        });
+        expect(next.response.responseType).toBe("informational");
+        expect(next.response.documentMemory.documentIds).toEqual([8]);
+        expect(readCustomerCrmDocument).toHaveBeenCalledTimes(2);
+        expect(readCustomerCrmDocument).toHaveBeenLastCalledWith(expect.objectContaining({ documentId: 8 }));
+      });
+      it("answers the reported requirements follow-up using an explicit source selection with no opportunity in the new question", async () => {
+        listCustomerCrmDocuments.mockResolvedValue({
+          candidates: [{ documentId: 9, name: "Notas de Gemini.docx", aiEnabled: true, extractionStatus: "completed" }],
+          truncated: false, version: null,
+        });
+        readCustomerCrmDocument.mockResolvedValue({
+          documentId: 9, status: "ready", kind: "extracted_text", text: "El cliente requiere protección WAF.",
+        });
+        const original = runStructuredTextResearch.getMockImplementation();
+        runStructuredTextResearch.mockImplementation(async (request) =>
+          request.schemaName === "customer_account_document_answer"
+            ? { answer: "El documento indica que el cliente requiere protección WAF.", citations: ["doc1-f1"] }
+            : original(request));
+        const actor = { id: 19, permissionSet: quotePermissions };
+        const first = await run(adapter([part({ source: "opportunity_document", documentReference: "Notas de Gemini.docx" },
+          { object: "document", text: "Resume el documento Notas de Gemini.docx" })], { user: actor }));
+        const question = "¿Qué dice ese documento sobre los requerimientos del cliente?";
+        const next = await adapter([], { user: actor, authoritativeIntent: {
+          turnContract: makeContract([makeComponent("query.document_content", "document", {
+            text: question, reference: "", documentSpec: {
+              source: "opportunity_document", documentSelection: "previous", aspect: "question",
+            },
+          })], { movement: "continue" }),
+        } }).runTurn({ question, context: { accountId: 9001 }, conversationContext: {
+          accountId: 9001, documentMemory: first.response.documentMemory, turnMemory: first.turnMemory,
+        } });
+        expect(next.response.responseType).toBe("informational");
+        expect(next.response.documentMemory.documentIds).toEqual([9]);
+        expect(next.response.answer).toContain("protección WAF");
+        expect(next.response.answer).not.toContain("Indica el nombre");
+        expect(readCustomerCrmDocument).toHaveBeenCalledTimes(2);
+        expect(readCustomerCrmDocument).toHaveBeenLastCalledWith(expect.objectContaining({ documentId: 9, opportunityId: 9101 }));
+      });
+      it.each(["continue", "new_request"])("summarizes a named file after a quotation list on %s", async (movement) => {
+        listCustomerCrmDocuments.mockImplementation(async ({ documentReference }) => ({
+          candidates: documentReference ? [] : [{ documentId: 92, name: "Cotizacion  VVF 1-3 Años Access Quality Junio-26.pdf",
+            aiEnabled: true, extractionStatus: "completed" }],
+          truncated: false, version: { quotationId: 18, versionId: 108, versionNumber: 8 },
+        }));
+        readCustomerCrmDocument.mockResolvedValue({ documentId: 92, versionId: 108,
+          status: "ready", kind: "extracted_text", text: "Garantía de doce meses." });
+        const original = runStructuredTextResearch.getMockImplementation();
+        runStructuredTextResearch.mockImplementation(async (request) =>
+          request.schemaName === "customer_account_document_answer"
+            ? { answer: "La garantía es de doce meses.", citations: ["doc1-f1"] } : original(request));
+        const actor = { id: 19, permissionSet: quotePermissions };
+        const first = await run(adapter([part({ source: "quotation_document",
+          quotationReference: "18", documentSelection: "list" }, { object: "document" })], { user: actor }));
+        const question = "resume el archivo Cotizacion VVF 1-3 Años Access Quality Junio-26.pdf";
+        const followup = makeContract([makeComponent("query.document_content", "document", {
+          text: question, reference: "", documentSpec: { source: "quotation_document",
+            documentReference: "Cotizacion VVF 1-3 Años Access Quality Junio-26.pdf", aspect: "summary",
+            ...(movement === "new_request" ? { opportunityReference: "Renovación Alfa", quotationReference: "18" } : {}) },
+        })], { movement });
+        const result = await adapter([], { user: actor, authoritativeIntent: { turnContract: followup } }).runTurn({
+          question, context: { accountId: 9001 }, conversationContext: { accountId: 9001,
+            documentMemory: first.response.documentMemory, turnMemory: first.turnMemory },
+        });
+        expect(result.response.answer).toContain("La garantía es de doce meses");
+        expect(result.response.responseType).toBe("informational");
+        expect(result.response.documentMemory).toMatchObject({
+          quotationId: 18, versionId: 108, versionNumber: 8, documentIds: [92],
+        });
+        expect(readCustomerCrmDocument).toHaveBeenCalledWith(expect.objectContaining({
+          documentId: 92, quotationId: 18, versionNumber: 8, opportunityId: 9101,
+        }));
+        expect(getAuthorizedCoachQuotationContent).not.toHaveBeenCalled();
       });
       it("executes structured content from the selected quotation without planner or generative fallback", async () => {
         const result = await run(make({ quotationReference: "18" }));
@@ -3583,6 +3787,80 @@ describe("Customer contract B6/B9/B10 integration", () => {
       expect(result.response.answer).toContain("elena@example.invalid");
       expect(result.response.answer).not.toContain("other@example.invalid");
       expect(result.response.operations).toEqual([]);
+    });
+    it.each(["query.record_detail", "query.field_value"])("reports an absent named contact for %s without substituting another", async (category) => {
+      const question = category === "query.record_detail"
+        ? "¿Qué tenemos registrado de Alejandro Ruiz?" : "¿Qué cargo tiene Alejandro Ruiz?";
+      const result = await adapter([makeComponent(category, "contact", {
+        reference: "Alejandro Ruiz", text: question,
+        ...(category === "query.field_value" ? { requestedFields: ["positionTitle"] } : {}),
+      })], {
+        snapshotQueryMetrics: [{ source: "contacts", resultCount: 1, resultLimit: 50, truncated: false, errorCode: null }],
+      }).runTurn({ question, context: { accountId: 9001 } });
+      expect(result.response.answer).toContain("No encontré");
+      expect(result.response.answer).toContain("Alejandro Ruiz");
+      expect(result.response.answer).toContain("Taller Aurora");
+      expect(result.response.answer).not.toContain("elena@example.invalid");
+      expect(result.response.entities?.contactId).toBeFalsy();
+      expect(result.response.operations).toEqual([]);
+      expect(result.response.evidence.some((item) => item.includes("searchContacts"))).toBe(true);
+      expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it.each([
+      { coverage: [], description: "missing coverage" },
+      { coverage: [{ source: "contacts", truncated: true }], description: "partial reads" },
+      { coverage: [{ source: "contacts", truncated: false, errorCode: "query_error" }], description: "failed reads" },
+    ])("does not claim contact absence with $description", async ({ coverage }) => {
+      const result = await adapter([makeComponent("query.record_detail", "contact", {
+        reference: "Alejandro Ruiz",
+      })], { snapshotQueryMetrics: coverage })
+        .runTurn({ question: "¿Qué tenemos registrado de Alejandro Ruiz?", context: { accountId: 9001 } });
+      expect(result.response.responseType).toBe("error");
+      expect(result.response.answer).toContain("No pude completar");
+      expect(result.response.evidence).toEqual([]);
+      expect(result.qualityTrace.toolsUsed).toEqual([]);
+      expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it.each(["query.record_detail", "query.field_value"])("asks which homonymous contact to consult for %s", async (category) => {
+      const contacts = [9302, 9303].map((id) => ({ id, accountId: 9001, name: "Alejandro Ruiz" }));
+      const result = await adapter([makeComponent(category, "contact", {
+        reference: "Alejandro Ruiz",
+        ...(category === "query.field_value" ? { requestedFields: ["positionTitle"] } : {}),
+      })], {
+        snapshot: { ...snapshot, contacts },
+        snapshotQueryMetrics: [{ source: "contacts", truncated: false, errorCode: null }],
+      }).runTurn({ question: "Consulta Alejandro Ruiz", context: { accountId: 9001 } });
+      expect(result.response.responseType).toBe("clarification");
+      expect(result.response.answer).toContain("varias coincidencias para Alejandro Ruiz");
+      expect(result.response.entities?.contactId).toBeFalsy();
+      expect(result.response.operations).toEqual([]);
+      expect(result.qualityTrace.toolsUsed).toEqual(["searchContacts"]);
+      expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it("does not reveal an absent-contact lookup when contact reads are denied", async () => {
+      const result = await adapter([makeComponent("query.record_detail", "contact", {
+        reference: "Alejandro Ruiz",
+      })], {
+        user: { id: 0, permissionSet: new Set([...permissions].filter((code) => code !== "contactos.read")) },
+        snapshotQueryMetrics: [{ source: "contacts", truncated: false, errorCode: null }],
+      }).runTurn({ question: "Consulta Alejandro Ruiz", context: { accountId: 9001 } });
+      expect(result.response.components[0].status).toBe("permission_denied");
+      expect(result.response.evidence).toEqual([]);
+      expect(result.qualityTrace.toolsUsed).toEqual([]);
+    });
+    it("does not search another account or inherit a stale selected contact for an absent name", async () => {
+      const result = await adapter([makeComponent("query.record_detail", "contact", {
+        reference: "Alejandro Ruiz",
+      })], {
+        snapshot: { ...snapshot, contacts: [...snapshot.contacts,
+          { id: 9303, accountId: 9999, name: "Alejandro Ruiz", positionTitle: "Director" }],
+        },
+        conversationContext: { accountId: 9001, contactId: snapshot.contacts[0].id },
+        snapshotQueryMetrics: [{ source: "contacts", truncated: false, errorCode: null }],
+      }).runTurn({ question: "Consulta Alejandro Ruiz", context: { accountId: 9001 } });
+      expect(result.response.answer).toContain("No encontré un contacto llamado Alejandro Ruiz");
+      expect(result.response.answer).not.toContain("Director");
+      expect(result.response.entities?.contactId).toBeFalsy();
     });
     it("routes a generic contact-record question through authorized contact detail", async () => {
       const question = "¿Qué tenemos registrado de Alejandro Ruiz?";

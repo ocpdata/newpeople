@@ -19,6 +19,64 @@ const continuation = (pendingComponentIds = []) => ({
 });
 
 describe("B3 shared interpretation context", () => {
+  it("exposes the last quotation document list even before any file is selected", () => {
+    const documentMemory = { accountId: 9001, source: "quotation_document", opportunityId: 9101,
+      quotationId: 18, versionId: 22, versionNumber: 1, documentCandidates: [92, 91], documentIds: [] };
+    const context = { ...continuation(), documentMemory };
+    const prepare = (conversationContext) => buildCustomerInterpretationContext({
+      question: "Resume el archivo Cotizacion VVF.pdf", snapshot, conversationContext,
+    }).interpretationContext;
+    expect(prepare(context).documentList).toMatchObject({
+      ...documentMemory, opportunityName: "Renovación Alfa",
+      origin: "validated_document_list", role: "source_identity_only_requires_authorized_reread",
+    });
+    expect(prepare(context).documentSelection).toBeNull();
+    for (const invalid of [
+      { ...context, accountId: 33 },
+      { ...context, documentMemory: { ...documentMemory, opportunityId: 999 } },
+      { ...context, turnMemory: { contract: { ...contract, movement: "stop" }, pendingComponentIds: [] } },
+    ]) expect(prepare(invalid).documentList).toBeNull();
+  });
+  it("exposes quotation identity for a filename follow-up without claiming any attached files", () => {
+    const documentMemory = { accountId: 9001, source: "quotation", opportunityId: 9101,
+      quotationId: 18, versionId: 22, versionNumber: 1, candidates: [] };
+    const context = { ...continuation(), documentMemory };
+    const prepare = (conversationContext) => buildCustomerInterpretationContext({
+      question: "cuales son los nombres de esos archivos?", snapshot, conversationContext,
+    }).interpretationContext;
+    const prepared = prepare(context);
+    expect(prepared.quotationSelection).toEqual({
+      accountId: 9001, opportunityId: 9101, opportunityName: "Renovación Alfa",
+      quotationId: 18, versionId: 22, versionNumber: 1,
+      origin: "validated_quotation_selection", role: "identity_only_requires_authorized_reread",
+    });
+    expect(prepared.documentSelection).toBeNull();
+    for (const invalid of [
+      { ...context, accountId: 33 },
+      { ...context, documentMemory: { ...documentMemory, opportunityId: 999 } },
+      { ...context, documentMemory: { ...documentMemory, versionId: null } },
+      { ...context, turnMemory: { contract: { ...contract, movement: "stop" }, pendingComponentIds: [] } },
+    ]) expect(prepare(invalid).quotationSelection).toBeNull();
+  });
+  it("exposes a completed CRM document selection as source identity rather than a pending task", () => {
+    const documentMemory = { accountId: 9001, source: "opportunity_document", opportunityId: 9101,
+      documentIds: [9], documentCandidates: [9], documentReference: "requisitos.docx" };
+    const prepared = buildCustomerInterpretationContext({
+      question: "¿Qué dice ese documento sobre los requerimientos del cliente?", snapshot,
+      conversationContext: { ...continuation(), documentMemory },
+    });
+    expect(prepared.interpretationContext.documentSelection).toMatchObject({
+      ...documentMemory, opportunityName: "Renovación Alfa",
+      role: "source_identity_only_requires_authorized_reread",
+    });
+    expect(prepared.interpretationContext.documentSelection).not.toHaveProperty("text");
+    for (const context of [
+      { ...continuation(), accountId: 33, documentMemory },
+      { ...continuation(), documentMemory: { ...documentMemory, opportunityId: 999 } },
+      { ...continuation(), documentMemory, turnMemory: { contract: { ...contract, movement: "stop" }, pendingComponentIds: [] } },
+    ]) expect(buildCustomerInterpretationContext({ question: "Ese documento", snapshot, conversationContext: context })
+      .interpretationContext.documentSelection).toBeNull();
+  });
   it("separates current request, entity identity and non-pending task without inventing completion", () => {
     const prepared = buildCustomerInterpretationContext({
       question: "¿Y su monto?", snapshot, conversationContext: continuation(),

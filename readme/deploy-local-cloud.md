@@ -13,6 +13,15 @@ API:
   todos los entornos, sin ampliar permisos ni omitir confirmaciones. Al actualizar
   un despliegue existente, cambiar cualquier valor explicito `off` o `pilot` a
   `on` y reiniciar la API. Para rollback, usar `off` y reiniciar.
+- Redaccion conversacional B10 de Cliente existente:
+  `CUSTOMER_CONVERSATIONAL_RESPONSE_ENABLED=true` por defecto, efectiva solo
+  en turnos con contrato B3. Usa el proveedor y presupuesto de IA configurados.
+  Agrega como maximo dos llamadas (redaccion y auditoria) por turno elegible,
+  no por componente. Los entregables de contenido ya completados y las respuestas
+  individuales generadas y auditadas no se vuelven a redactar. Dispone de hasta
+  20 segundos, dentro del plazo restante del turno (90 segundos desde el inicio
+  cuando no se proporciona uno). Para rollback, usar `false` y reiniciar la API;
+  no cambia datos, permisos ni los resultados historicos.
 
 Web:
 

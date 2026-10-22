@@ -17,6 +17,7 @@ import { getCoachBusinessRules, loadCoachBusinessRules } from "../coach/business
 import { loadSemanticClassifierPrompt } from "../coach/semantic-classifier-prompts.js";
 import { loadPlannerPrompt } from "../coach/planner-prompts.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
+import { CUSTOMER_TURN_PROVIDER_VERSION } from "../commercial-intelligence/turn-contract.js";
 
 export const evaluationRequestSchema = z.object({
   requestKey: z.string().uuid(), suite: z.enum(["smoke", "full", "selected"]).default("smoke"),
@@ -82,7 +83,10 @@ async function configurationFor(user) {
   return { model: config.openai.model, rules: safeEvidence(rules), permissions: [...user.permissionSet].sort(),
     classifier: { version: classifier.version, hash: digest(classifier.instruction) },
     planner: { version: planner.version, hash: digest(planner.instruction) },
-    intentsHash: digest(intents), evaluatorVersion: "3", applicationRevision: process.env.GIT_COMMIT || null };
+    intentsHash: digest(intents), evaluatorVersion: "5",
+    turnContractProviderVersion: CUSTOMER_TURN_PROVIDER_VERSION,
+    conversationalResponseEnabled: config.features?.customerConversationalResponseEnabled === true,
+    applicationRevision: process.env.GIT_COMMIT || null };
 }
 export async function preflightEvaluation(user) {
   requireEvaluationPermission(user, "execute"); requireChat(user);
@@ -337,6 +341,7 @@ export async function processEvaluationRun(run, workerId) {
         const checked = evaluateResponse({ definition, result: finished.result, accountId: definition.accountId, reference: before,
           stepIndex: evidence.steps.length });
         evidence.steps.push({ question: step.question, expected: step.expected, answer: finished.result.answer,
+          presentation: finished.result.presentation,
           responseType: finished.result.responseType, errorCode: finished.result.errorCode, operations: finished.result.operations,
           activityHistory: finished.result.activityHistory,
           relationshipStatus: finished.result.relationshipStatus,
@@ -366,7 +371,9 @@ export async function processEvaluationRun(run, workerId) {
       await finishCase(row.id, status, evidence, workerId);
     } catch (error) {
       console.error("[customer-chat-evaluation] Case failed", { runId: run.id, caseId: definition.id, message: error.message });
-      await finishCase(row.id, error.code === "CUSTOMER_TURN_CONTRACT_INVALID" ? "failed" : error.status === 409 ? "inconclusive" : "environment_error",
+      const invalidChatReview = error.code === "CUSTOMER_B3_REVIEW_FAILED" &&
+        ["invalid_review", "invalid_evidence"].includes(evidence.jobFailure?.classificationFailure?.reviewFailure?.kind);
+      await finishCase(row.id, error.code === "CUSTOMER_TURN_CONTRACT_INVALID" || invalidChatReview ? "failed" : error.status === 409 ? "inconclusive" : "environment_error",
         { ...evidence, errorCode: error.code || null, reason: error.message }, workerId);
       if (["EVALUATION_CHAT_TIMEOUT", "EVALUATION_STOPPED"].includes(error.code)) {
         await query("UPDATE customer_chat_evaluation_cases SET status='omitted',result_json=?,finished_at=NOW(3) WHERE run_id=? AND status='pending'",

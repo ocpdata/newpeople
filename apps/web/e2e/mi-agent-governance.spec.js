@@ -2147,7 +2147,9 @@ async function mockCustomerChatRecovery(page) {
           history: state.historySaved ? [
             ...history,
             { role: "user", text: "Vrf 2027." },
-            { role: "assistant", text: answer, turnDebug: { currentTurn: { jobId: 921 } } },
+            { role: "assistant", text: answer, presentation: state.presentation,
+              documentCoverage: state.documentCoverage, documentSources: state.documentSources,
+              turnDebug: { currentTurn: { jobId: 921 } } },
           ] : history,
         },
       }),
@@ -2187,6 +2189,8 @@ async function mockCustomerChatRecovery(page) {
           errorMessage: state.failed ? "No fue posible responder" : null,
           result: state.emptyResult ? null : {
             answer, responseType: "informational", sourceDomain: "crm_internal",
+            presentation: state.presentation,
+            documentCoverage: state.documentCoverage, documentSources: state.documentSources,
             ...(state.activityHistory ? { activityHistory: state.activityHistory } : {}),
           },
         },
@@ -2216,6 +2220,63 @@ test("Cliente existente reintenta lecturas transitorias y muestra el estado hast
   await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeEnabled();
   expect(state.submissions).toBe(1);
   expect(state.polls).toBe(4);
+});
+
+test("Cliente existente conserva la respuesta y avisa si B10 no completa la redaccion conversacional", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.presentation = { status: "degraded", reasonCode: "CUSTOMER_B10_AUDIT_REJECTED" };
+  await send();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(chat.getByRole("status")).toContainText("Te muestro el resultado verificado");
+  expect(state.submissions).toBe(1);
+  state.historySaved = true;
+  await page.reload();
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  const restoredChat = page.getByRole("region", { name: "Chat de cuenta" });
+  await expect(restoredChat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(restoredChat.getByRole("status")).toContainText("Te muestro el resultado verificado");
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente muestra las fuentes documentales CRM y conserva la version al recargar", async ({ page }) => {
+  const { state, chat, send } = await mockCustomerChatRecovery(page);
+  state.documentCoverage = { source: "quotation_document", partial: true };
+  state.documentSources = [{
+    name: "requerimientos.pdf", documentId: 7, source: "quotation_document",
+    quotationId: 18, versionId: 103, versionNumber: 3, status: "ready",
+    kind: "summary", availableLength: 200,
+  }];
+  await send();
+  const sources = chat.getByLabel("Fuentes documentales CRM");
+  await sources.getByText("Documentos CRM consultados", { exact: true }).click();
+  await expect(sources).toContainText("requerimientos.pdf");
+  await expect(sources).toContainText("cotización 18, versión 3");
+  await expect(sources).toContainText("solo resumen");
+  await expect(chat).toContainText("Cobertura documental parcial");
+  state.historySaved = true;
+  await page.reload();
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  const restored = page.getByRole("region", { name: "Chat de cuenta" }).getByLabel("Fuentes documentales CRM");
+  await restored.getByText("Documentos CRM consultados", { exact: true }).click();
+  await expect(restored).toContainText("requerimientos.pdf");
+  await expect(restored).toContainText("cotización 18, versión 3");
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente no presenta un listado de documentos como contenido leido", async ({ page }) => {
+  const { state, chat, send } = await mockCustomerChatRecovery(page);
+  state.documentCoverage = { source: "opportunity_document", partial: false, kind: "metadata_only" };
+  await send();
+  await expect(chat.getByText("Listado documental; contenido no leído", { exact: true })).toBeVisible();
+  await expect(chat.getByText("Contenido comercial o texto extraído consultado", { exact: true })).toHaveCount(0);
+  state.historySaved = true;
+  await page.reload();
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  await expect(page.getByRole("region", { name: "Chat de cuenta" })
+    .getByText("Listado documental; contenido no leído", { exact: true })).toBeVisible();
 });
 
 test("Cliente existente recupera el mismo job tras agotar reintentos sin duplicar la pregunta", async ({ page }) => {

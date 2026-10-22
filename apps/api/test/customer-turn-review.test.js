@@ -29,6 +29,102 @@ const mismatch = () => ({
 const input = () => ({ question, classifierPrompt: { instruction: "Personalizada" }, user: { id: 0 } });
 
 describe("B3 interpretation coherence gate", () => {
+  it("repairs a named file selection after a completed quotation list even if the AI reviewer approves", async () => {
+    const question = "resume el archivo Cotizacion VVF 1-3 Años Access Quality Junio-26.pdf";
+    const spec = { source: "quotation_document", documentReference: "Cotizacion VVF 1-3 Años Access Quality Junio-26.pdf" };
+    const wrong = contract({}, [component({ category: "query.document_content", object: "document",
+      text: question, reference: "", documentSpec: spec })]);
+    const fixed = contract({ movement: "continue" }, [component({
+      category: "query.document_content", object: "document", text: question, reference: "",
+      documentSpec: { ...spec, opportunityReference: "Hardware Refresh", quotationReference: "18", versionNumber: 1 },
+    })]);
+    const interpret = vi.fn().mockResolvedValue(fixed);
+    const reviewWithAI = vi.fn().mockResolvedValue(approved());
+    const result = await interpretReviewedCustomerTurn({
+      ...input(), question,
+      snapshot: { account: { id: 22 }, opportunities: [{ id: 36, accountId: 22, name: "Hardware Refresh" }] },
+      conversationContext: { accountId: 22, documentMemory: {
+        source: "quotation_document", accountId: 22, opportunityId: 36, quotationId: 18,
+        versionId: 22, versionNumber: 1, documentCandidates: [92, 91], documentIds: [],
+      } },
+    }, { initialContract: wrong, interpret, reviewWithAI });
+    expect(result.contract).toEqual(fixed);
+    expect(result.review.repaired).toBe(true);
+    expect(interpret.mock.calls[0][0].interpretationFeedback.issues)
+      .toEqual([expect.objectContaining({ code: "CONTINUITY_MISMATCH" })]);
+    expect(reviewWithAI.mock.calls[0][0].context.interpretationContext.documentList)
+      .toMatchObject({ opportunityName: "Hardware Refresh", documentCandidates: [92, 91] });
+    expect(findCustomerContractContradictions(contract({}, [{ ...wrong.components[0],
+      documentSpec: { ...spec, opportunityReference: "Otra oportunidad" },
+    }]), { documentMemory: { ...spec, documentCandidates: [92, 91], documentIds: [] } })).toEqual([]);
+  });
+  it.each([
+    "¿Qué archivos están asociados a la cotización 18 de Hardware Refresh?",
+    "cuales son los nombres de esos archivos?",
+  ])("repairs a structured quotation source used for the filename request: %s", async (question) => {
+    const spec = { source: "quotation", opportunityReference: "Hardware Refresh", quotationReference: "18" };
+    const wrong = contract({ movement: "continue" }, [component({
+      category: "query.document_content", object: "quotation", text: question, reference: "", documentSpec: spec,
+    })]);
+    const fixed = contract({ movement: "continue" }, [component({
+      category: "query.document_content", object: "document", text: question, reference: "",
+      documentSpec: { ...spec, source: "quotation_document", documentSelection: "list", versionNumber: 1 },
+    })]);
+    const discrepancy = { status: "contradiction", clarificationQuestion: "", issues: [{
+      code: "SOURCE_MISMATCH", componentId: "c1", dimension: "source", evidence: "e1",
+      problem: "Se solicitaron nombres de archivos asociados, no datos comerciales estructurados.",
+    }] };
+    const interpret = vi.fn().mockResolvedValue(fixed);
+    const reviewWithAI = vi.fn().mockResolvedValueOnce(discrepancy).mockResolvedValueOnce(approved());
+    const result = await interpretReviewedCustomerTurn({
+      ...input(), question,
+      snapshot: { account: { id: 22 }, opportunities: [{ id: 36, accountId: 22, name: "Hardware Refresh" }] },
+      conversationContext: { accountId: 22, documentMemory: {
+        source: "quotation", accountId: 22, opportunityId: 36, quotationId: 18,
+        versionId: 22, versionNumber: 1, candidates: [],
+      } },
+    }, { initialContract: wrong, interpret, reviewWithAI });
+    expect(result.contract).toEqual(fixed);
+    expect(result.review.repaired).toBe(true);
+    expect(interpret.mock.calls[0][0].interpretationFeedback.issues).toEqual([
+      { ...discrepancy.issues[0], evidence: question },
+    ]);
+    const request = reviewWithAI.mock.calls[0][0];
+    expect(request.context.interpretationContext.quotationSelection)
+      .toMatchObject({ quotationId: 18, versionNumber: 1, opportunityName: "Hardware Refresh" });
+    expect(request.systemPrompt).toContain("exige quotation_document/document y documentSelection=list");
+    expect(request.systemPrompt).toContain("quotation/quotation sigue siendo");
+    expect(reviewWithAI).toHaveBeenCalledTimes(2);
+  });
+  it("repairs the reported document follow-up even when the AI reviewer approves its incomplete new-request identity", async () => {
+    const followup = "¿Qué dice ese documento sobre los requerimientos del cliente?";
+    const documentSpec = { source: "opportunity_document", documentReference: "requisitos.docx" };
+    const wrong = contract({}, [component({ object: "document", category: "query.document_content",
+      text: followup, reference: "", documentSpec })]);
+    const fixed = contract({ movement: "continue" }, [component({ object: "document", category: "query.document_content",
+      text: followup, reference: "", documentSpec: { source: "opportunity_document", documentSelection: "previous" } })]);
+    const interpret = vi.fn().mockResolvedValue(fixed);
+    const reviewWithAI = vi.fn().mockResolvedValue(approved());
+    const result = await interpretReviewedCustomerTurn({
+      ...input(), question: followup,
+      snapshot: { account: { id: 1 }, opportunities: [{ id: 10, accountId: 1, name: "Alfa" }] },
+      conversationContext: { accountId: 1, documentMemory: { source: "opportunity_document",
+        accountId: 1, opportunityId: 10, documentIds: [9], documentCandidates: [9], documentReference: "requisitos.docx" } },
+    }, { initialContract: wrong, interpret, reviewWithAI });
+    expect(result.contract).toEqual(fixed);
+    expect(result.review.repaired).toBe(true);
+    expect(interpret.mock.calls[0][0].interpretationFeedback.issues).toEqual([
+      expect.objectContaining({ code: "CONTINUITY_MISMATCH", dimension: "continuity" }),
+    ]);
+    expect(reviewWithAI.mock.calls[0][0].context.interpretationContext.documentSelection)
+      .toMatchObject({ documentIds: [9], opportunityName: "Alfa" });
+    expect(reviewWithAI).toHaveBeenCalledTimes(2);
+    const independent = { ...wrong, components: [{ ...wrong.components[0],
+      documentSpec: { ...documentSpec, opportunityReference: "Otra oportunidad" } }] };
+    expect(findCustomerContractContradictions(independent, {
+      documentMemory: { ...documentSpec, documentIds: [9] },
+    })).toEqual([]);
+  });
   it.each(CUSTOMER_COHERENCE_CASES)("keeps seeded $id structurally valid but semantically incorrect", (item) => {
     expect(customerTurnContractSchema.safeParse(item.initialContract).success).toBe(true);
     expect(item.initialContract.components[0].category === item.expected[0].category &&
@@ -171,9 +267,70 @@ describe("B3 interpretation coherence gate", () => {
     },
   ])("blocks invalid or ungrounded review output %#", async (review) => {
     const interpret = vi.fn().mockResolvedValue(contract());
-    await expect(interpretReviewedCustomerTurn(input(), { interpret, reviewWithAI: async () => review }))
-      .rejects.toMatchObject({ code: "CUSTOMER_B3_REVIEW_FAILED" });
+    const reviewWithAI = vi.fn().mockResolvedValue(review);
+    await expect(interpretReviewedCustomerTurn(input(), { interpret, reviewWithAI }))
+      .rejects.toMatchObject({ code: "CUSTOMER_B3_REVIEW_FAILED", reviewFailure: { attempt: 2 } });
     expect(interpret).toHaveBeenCalledTimes(1);
+    expect(reviewWithAI).toHaveBeenCalledTimes(2);
+  });
+
+  it("revalidates an inconsistent hardware clarification once without executing or replacing the contract", async () => {
+    const hardwareQuestion = "Dame el detalle de la oportunidad de hardware";
+    const proposed = contract({}, [component({ text: hardwareQuestion, reference: "hardware" })]);
+    const clarificationQuestion = "¿Te refieres a Hardware Refresh o Hardware Refresh 3 Años?";
+    const invalid = { status: "approved", clarificationQuestion, issues: [{
+      code: "AMBIGUOUS_REFERENCE", componentId: "c1", dimension: "object", evidence: "e1",
+      problem: "La referencia hardware no distingue los dos registros.",
+    }] };
+    const reviewWithAI = vi.fn().mockResolvedValueOnce(invalid)
+      .mockResolvedValueOnce({ ...invalid, status: "ambiguous" });
+    const interpret = vi.fn();
+    const result = await interpretReviewedCustomerTurn({ ...input(), question: hardwareQuestion }, {
+      initialContract: proposed, interpret, reviewWithAI,
+    });
+    expect(result.contract.resolution).toBe("clarification");
+    expect(result.contract.clarificationQuestion).toBe(clarificationQuestion);
+    expect(result.review).toMatchObject({ reviewRequests: 2, attempts: 1, repaired: false,
+      validationFailures: [{ kind: "invalid_review", receivedReview: invalid,
+        validationIssues: [{ path: ["issues"], message: expect.any(String) },
+          { path: ["clarificationQuestion"], message: expect.any(String) }] }] });
+    const retry = reviewWithAI.mock.calls[1][0];
+    expect(retry.context.proposedContract).toEqual(proposed);
+    expect(retry.context.reviewValidationFeedback.receivedReview).toEqual(invalid);
+    expect(retry.context.latestMessage).toBe(hardwareQuestion);
+    expect(interpret).not.toHaveBeenCalled();
+    const executeComponent = vi.fn();
+    const turn = await runCustomerContractTurn({ question: hardwareQuestion, contract: result.contract,
+      context: { accountId: 22 }, executeComponent });
+    expect(turn.response.answer).toContain("Hardware Refresh 3 Años");
+    expect(turn.response.operations).toEqual([]);
+    expect(executeComponent).not.toHaveBeenCalled();
+  });
+
+  it("can recover invalid evidence but still requires a valid semantic review", async () => {
+    const reviewWithAI = vi.fn()
+      .mockResolvedValueOnce({ ...mismatch(), issues: [{ ...mismatch().issues[0], evidence: "e999" }] })
+      .mockResolvedValueOnce(mismatch())
+      .mockResolvedValueOnce(approved());
+    const interpret = vi.fn().mockResolvedValue(contract());
+    const result = await interpretReviewedCustomerTurn(input(), { initialContract: contract(), interpret, reviewWithAI });
+    expect(result.review).toMatchObject({ reviewRequests: 3, repaired: true,
+      validationFailures: [{ kind: "invalid_evidence" }] });
+    expect(interpret).toHaveBeenCalledTimes(1);
+    expect(reviewWithAI.mock.calls[2][0].context.reviewValidationFeedback).toBeUndefined();
+  });
+
+  it("shares a single invalid-review retry across both contract attempts", async () => {
+    const invalid = { ...approved(), clarificationQuestion: "¿Qué oportunidad?" };
+    const reviewWithAI = vi.fn().mockResolvedValueOnce(invalid).mockResolvedValueOnce(mismatch()).mockResolvedValueOnce(invalid);
+    await expect(interpretReviewedCustomerTurn(input(), {
+      initialContract: contract(), interpret: async () => contract(), reviewWithAI,
+    })).rejects.toMatchObject({ code: "CUSTOMER_B3_REVIEW_FAILED", reviewFailure: {
+      attempt: 3, contractAttempt: 2, kind: "invalid_review",
+      validationIssues: [{ path: ["clarificationQuestion"], message: expect.any(String) }],
+      previousFailures: [{ attempt: 1, kind: "invalid_review" }],
+    } });
+    expect(reviewWithAI).toHaveBeenCalledTimes(3);
   });
 
   it.each(["TimeoutError", "AbortError", "Error"])("blocks provider failure: %s", async (name) => {
@@ -184,6 +341,7 @@ describe("B3 interpretation coherence gate", () => {
       code: name === "Error" ? "CUSTOMER_B3_REVIEW_FAILED" : "CUSTOMER_B3_REVIEW_TIMEOUT",
       reviewFailure: { kind: name === "Error" ? "provider_failure" : "timeout", attempt: 1 },
     });
+    expect(reviewWithAI).toHaveBeenCalledTimes(1);
   });
 
   it("does not start requests after the shared deadline expires", async () => {
@@ -267,5 +425,18 @@ describe("B3 interpretation coherence gate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("does not retry an invalid review after the shared deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const reviewWithAI = vi.fn(async () => {
+        vi.advanceTimersByTime(101);
+        return { ...approved(), issues: mismatch().issues };
+      });
+      await expect(interpretReviewedCustomerTurn({ ...input(), deadlineAt: Date.now() + 100 }, {
+        initialContract: contract(), reviewWithAI,
+      })).rejects.toMatchObject({ code: "CUSTOMER_B3_REVIEW_TIMEOUT" });
+      expect(reviewWithAI).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
 });

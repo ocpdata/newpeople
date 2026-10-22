@@ -14,6 +14,7 @@ import {
   CUSTOMER_TURN_PROVIDER_VERSION,
 } from "./turn-contract.js";
 import { interpretReviewedCustomerTurn } from "./turn-contract-review.js";
+import { composeCustomerConversationalResponse } from "./customer-conversational-response.js";
 import { extractContentFromBuffer } from "../opportunity-documents/service.js";
 import { getCommercialSettings } from "../settings.js";
 import {
@@ -4624,6 +4625,23 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     })),
     publicSources,
   };
+  if (config.features?.customerConversationalResponseEnabled && authoritativeIntent?.turnContract) {
+    const conversational = await executionTrace.span({
+      from: "B9", to: "B10", label: "Redactar y auditar respuesta conversacional",
+      input: { responseType: response.responseType, componentCount: response.components?.length || 0 },
+    }, () => composeCustomerConversationalResponse({
+      response, contract: authoritativeIntent.turnContract, question: request.question,
+      history: conversationHistory, userId: user.id, jobId,
+      alreadyGeneratedAndAudited: qualityTrace?.diagnostics?.answerGeneration?.source === "structured_answer_model" &&
+        qualityTrace?.diagnostics?.answerAudit?.status === "supported",
+      deadlineAt: Math.min(deadlineAt ? new Date(deadlineAt).getTime() : turnStartedAt + 90000, Date.now() + 20000),
+    }), (value) => ({ status: value.diagnostics.status, calls: value.diagnostics.calls,
+      reasonCode: value.diagnostics.reasonCode || null }));
+    response = conversational.response;
+    qualityTrace = { ...qualityTrace, diagnostics: {
+      ...qualityTrace?.diagnostics, conversationalPresentation: conversational.diagnostics,
+    } };
+  }
   const qualityTraceId = await recordCoachTurnQualityTrace({
     channel: "customer_account",
     process: "default",
@@ -4687,6 +4705,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           components: response.components,
           contentSource: response.contentSource,
           documentCoverage: response.documentCoverage,
+          documentSources: response.documentSources,
           documentEvidence: response.documentCoverage ? response.documentEvidence || response.evidence : null,
           priorityMetadata: response.priorityMetadata,
           priorityEvidence: response.priorityEvidence,
@@ -4704,6 +4723,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           stageMetadata: response.stageMetadata,
           documentReportEvidence: response.documentReportEvidence,
           trendEvidence: response.trendEvidence,
+          presentation: response.presentation,
         },
       );
       persistedHistoryForTrace = nextHistory;
@@ -4812,6 +4832,13 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           };
         } else if (evidenceDescription.issue?.severity === "warning") {
           issue = evidenceDescription.issue;
+        } else if (response.presentation?.status === "degraded") {
+          issue = {
+            severity: "warning", block: "B10",
+            title: "Se conservó la respuesta verificada sin redacción conversacional",
+            message: response.presentation.reasonCode,
+            nextAction: "Revisa la generación y auditoría conversacional de B10; no se repitió la solicitud.",
+          };
         } else if (response.responseType === "clarification") {
           issue = {
             severity: "warning",
@@ -5318,7 +5345,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
             {
               block: "B10",
               label: "Respuesta final",
-              status: "completed",
+              status: response.presentation?.status === "degraded" ? "degraded" : "completed",
               input: {
                 evidenceStatus: evidenceDiagnostics?.status || null,
                 responseType: response.responseType || "informational",
@@ -5340,6 +5367,8 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
                   "none",
                 answerGeneration:
                   qualityTrace?.diagnostics?.answerGeneration || null,
+                conversationalPresentation:
+                  qualityTrace?.diagnostics?.conversationalPresentation || null,
               },
               output: {
                 answer: response.answer || "",
@@ -5360,8 +5389,22 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
                   qualityTrace?.diagnostics?.answerGeneration || null,
                 auditDiagnostics:
                   qualityTrace?.diagnostics?.answerAudit || null,
+                conversationalPresentation:
+                  qualityTrace?.diagnostics?.conversationalPresentation || null,
               },
               checks: [
+                ...(response.presentation ? [diagnosticCheck({
+                  field: "conversationalPresentation",
+                  state: response.presentation.status === "completed" ? "pass"
+                    : response.presentation.status === "degraded" ? "warning" : "not_applicable",
+                  expected: "Redacción final auditada o respuesta base conservada explícitamente.",
+                  actual: response.presentation.status,
+                  message: response.presentation.status === "degraded"
+                    ? "Se mostró la respuesta verificada sin reformulación; revisar el motivo de degradación."
+                    : response.presentation.status === "completed"
+                      ? "La respuesta final pasó los controles de fidelidad y cobertura."
+                      : "No se necesitó una redacción adicional.",
+                })] : []),
                 ...(qualityTrace?.diagnostics?.answerAudit
                   ? [
                       diagnosticCheck({

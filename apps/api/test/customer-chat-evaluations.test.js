@@ -93,17 +93,20 @@ describe("Customer chat evaluation catalog", () => {
   });
 });
 describe("Customer chat evaluation checks", () => {
-  it.each(["Q02-02", "Q03-03"])("blocks stale contact references without substituting another contact: %s", (id) => {
+  it.each(["Q02-02", "Q03-03"])("runs contact questions regardless of matches or registered job titles: %s", (id) => {
     const coverage = [{ source: "contacts", truncated: false, errorCode: null }];
     const reference = { contacts: [{ id: 500, name: "Alejandro Ruiz", positionTitle: "" }], coverage };
     expect(evaluationReferenceBlockReason({ id }, reference)).toBeNull();
-    expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [] })).toContain("no coincide");
+    expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [] })).toBeNull();
     expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [
       { id: 232, name: "Luis Becerra", positionTitle: "" },
-    ] })).toContain("no coincide");
+    ] })).toBeNull();
     expect(evaluationReferenceBlockReason({ id }, { ...reference, contacts: [
       { ...reference.contacts[0], positionTitle: "Director" },
-    ] })).toContain("no coincide");
+    ] })).toBeNull();
+    expect(evaluationReferenceBlockReason({ id }, { ...reference,
+      contacts: [reference.contacts[0], { ...reference.contacts[0], id: 501 }],
+    })).toBeNull();
     expect(evaluationReferenceBlockReason({ id }, { ...reference, coverage: [] })).toContain("lectura completa");
     expect(evaluationReferenceBlockReason({ id }, { ...reference, coverage: [{ source: "contacts", truncated: true }] }))
       .toContain("lectura completa");
@@ -112,10 +115,46 @@ describe("Customer chat evaluation checks", () => {
     const definition = { id: "Q03-03" };
     const reference = { contacts: [{ id: 500, name: "Alejandro Ruiz", positionTitle: "" }] };
     const result = { answer: "Alejandro Ruiz\n- Cargo: no informado", responseType: "informational",
-      entities: { accountId: 22, contactId: 500 }, operations: [] };
+      entities: { accountId: 22, contactId: 500 }, operations: [],
+      components: [{ category: "query.field_value", status: "completed" }] };
     expect(evaluateResponse({ definition, result, reference, accountId: 22 }).outcome).toBe("human_review");
     expect(evaluateResponse({ definition, result: { ...result, responseType: "clarification",
       answer: "No pude validar el registro seleccionado" }, reference, accountId: 22 }).outcome).toBe("failed");
+  });
+  it.each(["Q02-02", "Q03-03"])("evaluates a verified missing contact instead of requiring a fixture: %s", (id) => {
+    const definition = { id };
+    const reference = { contacts: [{ id: 232, name: "Luis Becerra" }] };
+    const result = {
+      answer: "No encontré un contacto llamado Alejandro Ruiz entre los registros visibles de Totalplay. ¿Está registrado con otro nombre?",
+      responseType: "clarification", operations: [], entities: { accountId: 22 },
+      evidence: ["searchContacts: 0 coincidencias en la cuenta autorizada."],
+    };
+    const evaluate = (patch) => evaluateResponse({ definition, reference, accountId: 22, result: { ...result, ...patch } });
+    expect(evaluate().outcome).toBe("human_review");
+    expect(evaluate({ responseType: "informational" }).outcome).toBe("human_review");
+    expect(evaluate({ evidence: [] }).outcome).toBe("failed");
+    expect(evaluate({ answer: "Indica el contacto que quieres consultar." }).outcome).toBe("failed");
+    expect(evaluate({ answer: "No pude consultar los contactos de Totalplay." }).outcome).toBe("failed");
+    expect(evaluate({ entities: { contactId: 232 } }).outcome).toBe("failed");
+    expect(evaluate({ answer: `${result.answer}\nCargo: Director` }).outcome).toBe("failed");
+    expect(evaluate({ operations: [{ kind: "contact_field", accountId: 22 }] }).outcome).toBe("failed");
+  });
+  it.each(["Q02-02", "Q03-03"])("evaluates duplicate contacts without choosing one: %s", (id) => {
+    const reference = { contacts: [500, 501].map((contactId) => ({ id: contactId, name: "Alejandro Ruiz" })) };
+    const result = { answer: "Encontré dos contactos Alejandro Ruiz en Totalplay. ¿Cuál deseas consultar?",
+      responseType: "clarification", operations: [], entities: { accountId: 22 } };
+    expect(evaluateResponse({ definition: { id }, reference, accountId: 22, result }).outcome).toBe("human_review");
+    expect(evaluateResponse({ definition: { id }, reference, accountId: 22,
+      result: { ...result, entities: { contactId: 500 } } }).outcome).toBe("failed");
+  });
+  it.each(["Q02-02", "Q03-03"])("checks the current job title when the contact has one: %s", (id) => {
+    const reference = { contacts: [{ id: 500, name: "Alejandro Ruiz", positionTitle: "Supervisor" }] };
+    const result = { answer: "Alejandro Ruiz\n- Cargo: Supervisor", responseType: "informational", operations: [],
+      entities: { accountId: 22, contactId: 500 },
+      components: [{ category: id === "Q02-02" ? "query.record_detail" : "query.field_value", status: "completed" }] };
+    expect(evaluateResponse({ definition: { id }, reference, accountId: 22, result }).outcome).toBe("human_review");
+    expect(evaluateResponse({ definition: { id }, reference, accountId: 22,
+      result: { ...result, answer: "Alejandro Ruiz\n- Cargo: No informado" } }).outcome).toBe("failed");
   });
   it("rejects an association with opportunities when the reference has no opportunities", () => {
     const definition = { id: "Q01-03" };
@@ -228,6 +267,7 @@ describe("Customer chat evaluation checks", () => {
       responseType: "informational",
       components: [{ category: "query.record_detail", status: "completed" }],
       entities: { accountId: 22, contactId: 232, opportunityId: null },
+      operations: [],
     };
     const reference = { contacts: [{ id: 232, name: "Alejandro Ruiz", positionTitle: "" }] };
     expect(evaluateResponse({ definition, result, reference, accountId: 22 }).outcome).toBe("human_review");

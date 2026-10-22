@@ -226,8 +226,11 @@ lecturas CRM. Comprueba propósito, objeto, fuente, continuidad, cobertura de
 tareas y restricciones. El esquema limita la evidencia a identificadores seguros
 (`e1`, `e2`, etc.) de `evidenceCatalog`; el servidor los resuelve a fragmentos
 literales del mensaje o historial (máximo 500 caracteres por fragmento) para cada
-discrepancia semántica; evidencia inventada, salida inválida o proveedor fallido
-bloquean el turno con error explícito, sin activar el adaptador de ejecución.
+discrepancia semántica. Una salida inválida o evidencia inexistente permite una
+sola solicitud correctiva al revisor por turno, con el mismo contrato y los
+errores de validación como retroalimentación; no es una aprobación ni una
+reinterpretación automática. Si sigue siendo inválida, o falla el proveedor,
+el turno se bloquea con error explícito, sin activar el adaptador de ejecución.
 El texto original, incluidos saltos de línea, queda en el contexto y las trazas
 resueltas, no en los valores `enum` del esquema estricto del proveedor.
 
@@ -267,15 +270,21 @@ acotado por el plazo restante del turno. No se reintenta automáticamente una
 llamada que agota ese plazo. Los errores
 `CUSTOMER_B3_REVIEW_FAILED` y `CUSTOMER_B3_REVIEW_TIMEOUT` se persisten como fallos
 de clasificación en B3. `classificationFailure.reviewFailure` distingue salida
-inválida, evidencia inválida, fallo del proveedor y timeout, con intento y rutas de
-validación sin guardar respuestas crudas del proveedor.
+inválida, evidencia inválida, fallo del proveedor y timeout, con intento,
+rutas y mensajes de validación. Conserva una proyección acotada de los campos
+de revisión recibidos, no la respuesta cruda del proveedor.
+Las revisiones recuperadas conservan `validationFailures` y `reviewRequests`;
+el único reintento correctivo comparte el plazo original y no se aplica a
+timeouts ni fallos del proveedor. En la evaluación, una revisión persistentemente
+inválida es un fallo de la aplicación, no un error de entorno.
 Un job definitivamente `failed` libera el formulario para corregir la pregunta o
 enviar otra en la misma sesión; no se reenvía automáticamente el job fallido.
 Un turno pendiente, interrumpido o con error al cargar historial sigue bloqueando
 nuevos envíos hasta recuperar su resultado o la conversación, para evitar duplicados.
 Una reparación inválida o fallida tampoco habilita
 ejecución. Esta barrera añade una llamada de IA en el camino normal y, si hay
-reparación, hasta tres llamadas adicionales respecto al clasificador original.
+reparación del contrato, hasta tres llamadas adicionales respecto al clasificador
+original, más una única llamada correctiva si la revisión es inválida.
 No modifica permisos ni confirmaciones.
 
 Clasificador y revisor declaran `useWebSearchTool: false`: interpretan el mensaje
@@ -735,6 +744,94 @@ autorizados, no contra IDs elegidos por el modelo.
 permisos, pertenencia de la oportunidad y estado de la cuenta antes de leer
 `opportunity_notes`. El historial vacío es un resultado explícito, y una página
 con notas anteriores informa que la lectura está limitada a las 50 más recientes.
+
+**Archivos asociados a registros CRM (Cliente existente):**
+
+- `query.document_content`, `object=document`, admite `source=opportunity_document`
+  para archivos asociados a una oportunidad y `source=quotation_document` para
+  archivos de una versión de cotización. No se confunden con `quotation`
+  (datos comerciales estructurados), `provided_document` (adjunto del chat) ni
+  `knowledge_library` (biblioteca general). No hay bandera de activación.
+- Pedir archivos asociados a una cotización o sus nombres usa
+  `quotation_document` con `documentSelection=list`, nunca un resumen de
+  productos o condiciones de `quotation`. Clasificador y revisor contrastan
+  esta distinción también en seguimientos. El contexto compartido expone
+  `quotationSelection` como identidad validada de oportunidad/cotización/revisión,
+  sin afirmar que existan archivos. Una petición de nombres puede cambiar de
+  fuente conservando esa identidad, incluso si el turno anterior consultó datos
+  estructurados. B10 no puede convertir productos, secciones u opciones
+  comerciales en supuestos archivos asociados.
+- B3/B5 fijan la fuente y las referencias; B7/B8 usan
+  `coach/customer-document-access.js`. Cada listado y lectura comprueba permisos
+  de cuenta/oportunidad, propiedad o alcance global de ambos módulos, cuenta
+  activa, asociación vigente y documento no eliminado. Los archivos de
+  cotización requieren además acceso a cotizaciones. Administración de
+  cotizaciones no amplía por sí sola el alcance de cuentas/oportunidades.
+- `documentSelection=list` lista metadatos sin leer contenido;
+  `documentReference` selecciona un nombre literal inequívoco; `listPosition`
+  selecciona sobre la lista anterior revalidada. Con varios candidatos se pide
+  aclaración, salvo solicitud explícita `documentSelection=all`.
+  El nombre explícito se filtra en servidor antes del límite de listado, por
+  lo que puede localizar un archivo anterior a los 50 más recientes.
+  B10 protege el listado seleccionable completo mediante un placeholder y lo
+  inserta literalmente después de redactar: no renombra archivos, reescribe
+  fechas, elimina extensiones ni reordena posiciones. Si falta o se duplica
+  el placeholder, conserva la respuesta base. La interfaz diferencia listado
+  de metadatos de lectura del contenido.
+  Un turno compuesto solo por un listado verificado de metadatos se presenta
+  directamente, sin una reescritura B10 innecesaria; en turnos mixtos el listado
+  sigue protegido mientras la IA conecta los resultados.
+- Se listan hasta 50 archivos y se leen hasta cinco por turno, sujetos al
+  presupuesto común de herramientas y al plazo del turno. Un listado truncado,
+  una lectura omitida o extracción pendiente/fallida no significan ausencia.
+  La respuesta declara el límite y mantiene la evidencia que sí pudo leer.
+- Las cotizaciones conservan su identidad y revisión. Sin revisión explícita se
+  resuelve la última de la cotización elegida y se fija esa versión para todas
+  las lecturas del turno. En seguimientos se revalida la revisión seleccionada.
+  Cambiar fuente, oportunidad, cotización o revisión invalida selecciones
+  incompatibles. `ai_enabled=0` permite listar el nombre, pero impide leer y
+  enviar contenido a la IA; se vuelve a comprobar en la consulta de contenido.
+- El contexto de B3/revisor expone `documentSelection` como identidad validada
+  de fuente, incluso después de completar un resumen. Preguntar después por
+  requerimientos del mismo archivo usa `documentSelection=previous` y
+  `movement=continue`. El revisor detecta una propuesta `new_request` que copia
+  el nombre anterior sin su oportunidad y solicita una reparación acotada.
+  El resolutor separa identidad de fuente y movimiento de tarea: una referencia
+  explícita `previous` recupera cuenta, oportunidad, archivo y revisión, valida
+  conflictos y vuelve a leer con autorización. No busca globalmente por nombre,
+  no sustituye un ID eliminado por un homónimo y no revive selecciones tras
+  cambio de foco, revocación o abandono.
+  Antes de elegir un archivo, `documentList` expone la identidad de la lista
+  validada aunque `documentIds` esté vacío. Seleccionar por nombre continúa esa
+  fuente y conserva su revisión, sin usar `previous` como si ya hubiera selección.
+  Una propuesta nueva sin oportunidad tras el listado dispara reparación acotada.
+  Los nombres copiados se comparan con la normalización existente de Unicode y
+  espacios dentro de los IDs de aquella lista, revalidados por SQL en la misma
+  asociación autorizada; no se hace búsqueda global ni selección aproximada.
+  Primero se conserva la búsqueda literal en esa fuente; solo sin coincidencias
+  se revalida la lista anterior. Así un nombre nuevo explícito puede seguir
+  encontrando archivos fuera de los candidatos anteriores.
+  Si B3 marca `new_request` pero identifica explícitamente la misma oportunidad
+  y cotización, el resolutor puede conservar la lista y revisión de esa fuente
+  tras validar la memoria. La identidad no depende solo del movimiento de tarea;
+  cambios de fuente, oportunidad, cotización, revisión o foco no heredan la lista.
+- Se reutiliza texto/transcripción extraídos; un resumen se identifica como tal.
+  Los adjuntos de cotización en estado `uploaded`, que no encolan extracción al
+  cargarse, admiten extracción local de TXT, MD, PDF con texto, DOCX, EML, CSV,
+  XLSX y XLS, hasta 8 MiB. No se inicia OCR, transcripción ni análisis pagado
+  adicional y no se escriben extracciones en CRM desde esta lectura.
+- Cada archivo aporta hasta 12.000 caracteres, con un máximo agregado de
+  12.000 incluyendo las etiquetas de fuente de los fragmentos, repartidos entre
+  los archivos seleccionados.
+  La cobertura se declara parcial: no se garantiza que la extracción cubra el
+  original completo. Los fragmentos son datos no confiables, nunca instrucciones.
+- Generación y auditoría documental reciben los mismos fragmentos y verifican
+  citas, atribución, incertidumbre y exclusión de costos/márgenes/notas internas.
+  Las citas persistidas identifican fuente y fragmento sin copiar texto bruto
+  de archivos CRM. B10 conserva estas limitaciones; B11 guarda selección y
+  metadatos de procedencia, y la interfaz muestra archivo, versión y cobertura
+  también al recuperar el historial.
+
 **Entrega y errores:** devuelve a B7 el nombre de la herramienta, el resultado y, cuando corresponda, error/código de error, timeout, truncamiento u otra métrica de calidad. Una lista vacía solo significa que una lectura terminó correctamente y no encontró coincidencias; si hubo error, timeout, truncamiento o la consulta se omitió por límites, esos estados se conservan y no se presentan como “sin resultados”.
 
 **Límites de seguridad:** el modelo no recibe credenciales SQL ni puede enviar SQL arbitrario. B8 solo ejecuta las herramientas conocidas del catálogo sobre el snapshot o servicio de lectura que le entrega el servidor; las operaciones de escritura y conversión pertenecen a otros flujos y requieren sus propias reglas/confirmaciones.
@@ -817,6 +914,52 @@ componentes. Las consultas no generan recomendaciones de acción implícitas.
 Los reportes ofrecen un complemento revisable; «sí» o «confirmo» en el chat no
 guarda cambios. El botón de oportunidad abre el borrador en una pestaña nueva y
 el usuario revisa y guarda manualmente; un bloqueo de ventanas se informa.
+
+**Redacción conversacional de Cliente existente:** cuando hay contrato B3 y
+`CUSTOMER_CONVERSATIONAL_RESPONSE_ENABLED=true` (predeterminado), B10 recibe el
+resultado normalizado completo, sus estados, evidencia, operaciones y los últimos
+seis mensajes pertinentes. No recibe el snapshot completo ni herramientas CRM.
+La pregunta actual prevalece y el historial sirve únicamente para continuidad,
+no para acreditar hechos. La capa se aplica después de reunir los componentes,
+añadir límites de cobertura y normalizar operaciones, antes de B11.
+
+El modelo devuelve únicamente el texto final; el servidor conserva sin cambios
+entidades, memoria, evidencias, propuestas, estados y componentes. Esto permite
+redactar también consultas deterministas, ausencias verificadas, aclaraciones,
+errores y solicitudes compuestas sin depender de reemplazos de frases para
+producir el estilo. Los reemplazos anteriores permanecen como presentación de la
+respuesta base y como respaldo seguro, no como motor conversacional.
+
+Los entregables completados de contenido no se reescriben. En turnos mixtos,
+el modelo ubica marcadores de entregables y el servidor inserta los originales
+exactamente una vez; marcadores omitidos, duplicados o desconocidos bloquean
+la reformulación. Un turno solo de contenido completado o una respuesta
+individual ya generada y auditada evita la llamada redundante.
+
+Una auditoría independiente revisa **el texto final que se mostrará**, no solo
+los componentes originales. Exige fidelidad, cobertura, incertidumbre, estado
+de operaciones y continuidad conversacional. Rechazos, dudas o respuestas
+inconsistentes no habilitan la reformulación. Un control adicional rechaza
+números nuevos: la redacción debe conservar los formatos numéricos disponibles.
+La auditoría semántica no equivale a una garantía ni a aprobación humana.
+
+La generación y auditoría comparten hasta 20 segundos, sin reintentos, dentro
+del plazo restante del turno; sin plazo explícito se usa el límite de 90 segundos
+desde su inicio. Ambas llamadas registran uso con la funcionalidad de chat ya
+existente. La entrada tiene un máximo de 60000 caracteres; no se truncan hechos
+para hacerla caber. El borrador está limitado a 24000 caracteres y el texto con
+entregables insertados a 48000. Si no puede completarse, se conserva la respuesta
+base, se registra `presentation.status=degraded` y la interfaz lo comunica.
+Una falla de estilo no vuelve a ejecutar el turno ni altera su resultado comercial.
+
+B11 guarda el texto mostrado y la presentación también en el historial.
+La traza de B10 conserva duración, cantidad de llamadas, metadatos del proveedor,
+dictamen por dimensión y motivo de degradación. El resultado conserva el texto
+base y el texto auditado para trazabilidad. La evaluación mantiene los controles
+estructurales sobre el resultado base y exige una auditoría semántica válida,
+vinculada exactamente al texto final, antes de admitir redacciones equivalentes.
+Así no exige frases como «Cargo: ...» en la respuesta conversacional ni omite
+el contraste factual original; los casos siguen sujetos a revisión humana.
 
 **Fidelidad del contenido de Cliente existente:**
 

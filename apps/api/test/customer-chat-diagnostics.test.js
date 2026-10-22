@@ -30,11 +30,13 @@ import {
 
 const originalEnvironment = config.nodeEnv;
 const originalContractMode = config.features.customerTurnContractMode;
+const originalConversationalEnabled = config.features.customerConversationalResponseEnabled;
 const user = { id: 31, permissionSet: new Set(["cuentas.read"]) };
 let writes;
 
 beforeEach(() => {
   config.features.customerTurnContractMode = "off";
+  config.features.customerConversationalResponseEnabled = false;
   vi.clearAllMocks();
   writes = [];
   query.mockImplementation(async (sql, params) => {
@@ -63,6 +65,7 @@ beforeEach(() => {
 afterEach(() => {
   config.nodeEnv = originalEnvironment;
   config.features.customerTurnContractMode = originalContractMode;
+  config.features.customerConversationalResponseEnabled = originalConversationalEnabled;
 });
 
 describe.each(["development", "production"])("Customer chat diagnostics in %s", (environment) => {
@@ -184,7 +187,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
     const result = JSON.parse(failureWrite.params[1]);
     expect(result.errorCode).toBe("CUSTOMER_B3_TIMEOUT");
     expect(result.debug.currentTurn.diagnostics.classificationFailure).toMatchObject({
-      code: "CUSTOMER_B3_TIMEOUT", contractVersion: "compact-v1", durationMs: expect.any(Number),
+      code: "CUSTOMER_B3_TIMEOUT", contractVersion: "compact-v5", durationMs: expect.any(Number),
     });
     expect(result.debug.currentTurn.diagnostics.classificationFailure.timeoutMs).toBeLessThanOrEqual(2000);
     expect(createCustomerAccountAdapter).not.toHaveBeenCalled();
@@ -274,7 +277,13 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
       expect(JSON.stringify(saved)).toContain("CUSTOMER_B3_REVIEW_FAILED");
       expect(saved.debug.issue.block).toBe("B3");
       expect(saved.debug.currentTurn.diagnostics.classificationFailure.reviewFailure)
-        .toMatchObject({ kind: "invalid_review", attempt: 1 });
+        .toMatchObject({ kind: "invalid_review", attempt: 2,
+          receivedReview: { receivedType: "null" },
+          validationIssues: [{ code: "invalid_type", path: [], message: expect.any(String) }],
+          previousFailures: [{ kind: "invalid_review", attempt: 1 }],
+        });
+      expect(runStructuredTextResearch.mock.calls.filter(([request]) =>
+        request.schemaName === "customer_account_turn_coherence")).toHaveLength(2);
     } finally {
       runStructuredTextResearch.mockReset().mockResolvedValue(null);
     }
@@ -307,6 +316,48 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
       });
       const jobWrite = writes.find(({ sql }) => sql.includes("status = 'completed'"));
       expect(JSON.parse(jobWrite.params[0]).debug).toEqual(job.result.debug);
+    } finally {
+      runStructuredTextResearch.mockReset().mockResolvedValue(null);
+    }
+  });
+
+  it.each([true, false])("persists the final B10 answer and its audit/degradation status: supported=%s", async (supported) => {
+    config.features.customerTurnContractMode = "on";
+    config.features.customerConversationalResponseEnabled = true;
+    const natural = "Totalplay tiene la información disponible para revisar.";
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_turn_contract") return {
+        version: 1, movement: "new_request", resolution: "resolved", clarificationQuestion: "", confidence: "high",
+        components: [{ id: "c1", category: "query.account_summary", text: "Resume la cuenta", object: "account",
+          topic: "", scope: "single", reference: "Totalplay", attribution: "none", certainty: "unspecified",
+          dependsOn: [], continuationOf: "none" }],
+      };
+      if (request.schemaName === "customer_account_turn_coherence") return {
+        status: "approved", clarificationQuestion: "", issues: [],
+      };
+      if (request.schemaName === "customer_account_conversational_response") return { answer: natural };
+      if (request.schemaName === "customer_account_conversational_audit") return {
+        status: supported ? "supported" : "unsupported", reasons: supported ? [] : ["Falta información."],
+        checks: { faithfulness: true, coverage: supported, uncertainty: true, operationState: true, conversation: true },
+      };
+      return null;
+    });
+    try {
+      const job = await processCustomerAccountChatJob({ jobId: 1, user });
+      expect(job.status).toBe("completed");
+      expect(job.result.answer).toBe(supported ? natural : "Resumen de Totalplay");
+      expect(job.result.presentation.status).toBe(supported ? "completed" : "degraded");
+      const b10 = job.result.debug.flow.find((item) => item.block === "B10");
+      expect(b10.output.conversationalPresentation).toMatchObject({
+        status: supported ? "completed" : "degraded", calls: 2,
+      });
+      if (!supported) expect(job.result.debug.issue).toMatchObject({ block: "B10", severity: "warning" });
+      const historyWrite = writes.filter(({ sql }) => sql.includes("SET history_json")).at(-1);
+      const finalMessage = JSON.parse(historyWrite.params[0]).at(-1);
+      expect(finalMessage.text).toBe(job.result.answer);
+      expect(finalMessage.presentation).toEqual(job.result.presentation);
+      const jobWrite = writes.find(({ sql }) => sql.includes("status = 'completed'"));
+      expect(JSON.parse(jobWrite.params[0]).answer).toBe(job.result.answer);
     } finally {
       runStructuredTextResearch.mockReset().mockResolvedValue(null);
     }

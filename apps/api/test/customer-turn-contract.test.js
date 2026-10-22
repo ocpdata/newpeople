@@ -50,6 +50,9 @@ describe("Customer turn contract", () => {
     expect(request.systemPrompt).toContain("CONTROL FINAL DE COHERENCIA DOCUMENTAL");
     expect(request.systemPrompt).toContain("Distingue conservar ENTIDAD de conservar TAREA");
     expect(request.systemPrompt).toContain("No añadas campos de razonamiento al esquema");
+    expect(request.systemPrompt).toContain('source=quotation_document, object=document, documentSelection=list, quotationReference="18"');
+    expect(request.systemPrompt).toContain("aunque la respuesta anterior haya usado");
+    expect(request.systemPrompt).toContain("interpretationContext.quotationSelection");
     expect(request.context.classifierGuidance.instruction).toBe(instruction);
     expect(request.context.latestMessage).toBe(question);
     expect(request.temperature).toBe(0);
@@ -1604,7 +1607,7 @@ describe("Customer turn contract", () => {
     });
     const fields = classifyWithAI.mock.calls[0][0].fields.find((field) => field.key === "components").items.fields;
     expect(fields.find((field) => field.key === "documentSpec").fields.map((field) => field.key)).toEqual([
-      "changed", "source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect",
+      "changed", "source", "documentReference", "documentSelection", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect",
       "target", "accountReference", "clarification", "unsupported",
     ]);
     expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("No confundas cotizaciones independientes");
@@ -1623,6 +1626,32 @@ describe("Customer turn contract", () => {
     expect(customerComponentCapability(component("query.document_content", {
       object: "quotation", documentSpec: { source: "provided_document" },
     }), { hasReferenceMaterial: true }).intent).toBe("account_overview");
+  });
+  it.each([
+    [{ documentSelection: "all" }, { documentSelection: "all" }],
+    [{}, {}],
+  ])("does not inherit an old listing command or filename when switching selection: %j", (patch, expected) => {
+    const previous = contract([component("query.document_content", {
+      object: "document", reference: "", documentSpec: { source: "opportunity_document",
+        opportunityReference: "Renovación Alfa", documentReference: "requisitos.txt", documentSelection: "list" },
+    })]);
+    const next = resolveCustomerContinuation(contract([component("query.document_content", {
+      object: "document", reference: "", documentSpec: patch,
+    })], { movement: "continue" }), { contract: previous, pendingComponentIds: [] });
+    expect(next.components[0].documentSpec.documentSelection).toBe(expected.documentSelection);
+    if (patch.documentSelection === "all") expect(next.components[0].documentSpec.documentReference).toBeUndefined();
+    expect(next.components[0].documentSpec.source).toBe("opportunity_document");
+  });
+  it("does not retain a named file when selecting a list position", () => {
+    const previous = contract([component("query.document_content", {
+      object: "document", reference: "", documentSpec: { source: "opportunity_document",
+        opportunityReference: "Renovación Alfa", documentReference: "requisitos.txt", documentSelection: "list" },
+    })]);
+    const next = resolveCustomerContinuation(contract([component("query.document_content", {
+      object: "document", reference: "", listPosition: 2, documentSpec: {},
+    })], { movement: "continue" }), { contract: previous, pendingComponentIds: [] });
+    expect(next.components[0].documentSpec.documentReference).toBeUndefined();
+    expect(next.components[0].listPosition).toBe(2);
   });
   it("preserves pending documentary criteria when a quotation is clarified", () => {
     const previous = contract([component("query.document_content", {

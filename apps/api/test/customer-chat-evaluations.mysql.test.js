@@ -85,19 +85,37 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     expect(evaluationRequestSchema.safeParse({ requestKey: randomUUID() }).success).toBe(false);
     expect(evaluationRequestSchema.safeParse({ requestKey: randomUUID(), acknowledgePaidCalls: true, url: "http://elsewhere" }).success).toBe(false);
   });
-  it("marks stale contact fixtures inconclusive without creating or executing a chat job", async () => {
+  it("executes questions about absent contacts and retains their actual answers", async () => {
     const { id } = await launch({ caseIds: ["Q02-02", "Q03-03"] });
     state.metrics.mockReturnValue([{ source: "contacts", truncated: false, errorCode: null }]);
+    state.result.mockResolvedValue({ status: "completed", result: {
+      answer: "No encontré un contacto llamado Alejandro Ruiz entre los contactos visibles de Totalplay.",
+      responseType: "informational", operations: [], entities: { accountId: 22 },
+      evidence: ["searchContacts: 0 coincidencias en la cuenta autorizada."],
+    } });
     await processPendingEvaluations();
     const rows = await caseRows(id);
-    expect(rows.map((row) => row.status)).toEqual(["inconclusive", "inconclusive"]);
+    expect(rows.map((row) => row.status)).toEqual(["human_review", "human_review"]);
     for (const row of rows) {
       const result = typeof row.result_json === "string" ? JSON.parse(row.result_json) : row.result_json;
-      expect(result.reason).toContain("no coincide");
       expect(result.referenceBefore.contacts).toEqual([]);
-      expect(row.job_id).toBeNull();
+      expect(result.steps[0].answer).toContain("No encontré un contacto llamado Alejandro Ruiz");
+      expect(row.job_id).toBe(100);
     }
-    expect(state.chat).not.toHaveBeenCalled();
+    expect(state.chat).toHaveBeenCalledTimes(2);
+  });
+  it("records an incorrect application answer about an absent contact as failed, not inconclusive", async () => {
+    const { id } = await launch({ caseIds: ["Q02-02", "Q03-03"] });
+    state.metrics.mockReturnValue([{ source: "contacts", truncated: false, errorCode: null }]);
+    state.result.mockResolvedValue({ status: "completed", result: {
+      answer: "Alejandro Ruiz es Director.", responseType: "informational",
+      operations: [], entities: { accountId: 22, contactId: 232 },
+    } });
+    await processPendingEvaluations();
+    expect((await getEvaluation(user, id)).counts).toEqual({ failed: 2 });
+    expect(state.chat).toHaveBeenCalledTimes(2);
+    const item = await getEvaluationCase(user, id, (await caseRows(id))[0].id);
+    expect(item.result.steps[0].answer).toBe("Alejandro Ruiz es Director.");
   });
   it("times out an unresolved chat explicitly and clears its deadline timer", async () => {
     vi.useFakeTimers();
@@ -315,6 +333,21 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     const { id } = await launch(); await processPendingEvaluations();
     expect((await getEvaluation(user, id)).counts).toEqual({ environment_error: 1 });
     expect(state.chat).toHaveBeenCalledTimes(1);
+  });
+  it("attributes an invalid B3 review to the application, preserving the validation message", async () => {
+    const { id } = await launch({ caseIds: ["Q02-03"] });
+    const reviewFailure = { kind: "invalid_review", attempt: 2, validationIssues: [
+      { code: "custom", path: ["clarificationQuestion"], message: "La revisión ambigua requiere una pregunta." },
+    ] };
+    state.result.mockResolvedValue({ status: "failed", errorMessage: "No se pudo validar la interpretación de B3.",
+      result: { errorCode: "CUSTOMER_B3_REVIEW_FAILED", debug: { currentTurn: { diagnostics: {
+        classificationFailure: { code: "CUSTOMER_B3_REVIEW_FAILED", reviewFailure },
+      } } } } });
+    await processPendingEvaluations();
+    expect((await getEvaluation(user, id)).counts).toEqual({ failed: 1 });
+    const item = await getEvaluationCase(user, id, (await caseRows(id))[0].id);
+    expect(item.result.jobFailure.classificationFailure.reviewFailure).toEqual(reviewFailure);
+    expect(item.jobId).toBe(100);
   });
   it("does not treat failed reference reads as empty CRM data", async () => {
     state.metrics.mockReturnValue([{ errorCode: "query_error" }]);

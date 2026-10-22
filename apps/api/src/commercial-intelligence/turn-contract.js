@@ -262,8 +262,10 @@ export function customerRelationshipSpecPatch(spec = {}, question = "") {
     "CUSTOMER_RELATIONSHIP_REFERENCE_MASK_RECONCILED");
 }
 export const customerDocumentSpecSchema = z.object({
-  changed: z.array(z.enum(["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target"])).max(7).optional(),
-  source: z.enum(["quotation", "provided_document", "knowledge_library"]).optional(),
+  changed: z.array(z.enum(["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target", "documentReference", "documentSelection"])).max(9).optional(),
+  source: z.enum(["quotation", "provided_document", "knowledge_library", "opportunity_document", "quotation_document"]).optional(),
+  documentReference: z.string().trim().max(300).optional(),
+  documentSelection: z.enum(["unspecified", "list", "all", "previous"]).optional(),
   opportunityReference: z.string().trim().max(300).optional(),
   quotationReference: z.string().trim().max(300).optional(),
   versionNumber: z.number().int().min(0).max(100000).optional(),
@@ -275,7 +277,7 @@ export const customerDocumentSpecSchema = z.object({
   unsupported: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
 }).strict();
 export function customerDocumentSpecPatch(spec = {}, question = "") {
-  return referenceSpecPatch(spec, question, ["opportunityReference", "quotationReference"],
+  return referenceSpecPatch(spec, question, ["opportunityReference", "quotationReference", "documentReference"],
     "CUSTOMER_DOCUMENT_REFERENCE_MASK_RECONCILED");
 }
 export const customerDocumentReportSpecSchema = z.object({
@@ -659,7 +661,8 @@ export function customerComponentCapability(component, { hasReferenceMaterial = 
     const source = component.documentSpec?.source || (component.object === "document" ? "provided_document" : "quotation");
     intent = source === "knowledge_library"
       ? (component.object === "general" ? "account_overview" : null)
-      : source === "provided_document" ? (hasReferenceMaterial ? "account_overview" : null) : "quotation_query";
+      : source === "provided_document" ? (hasReferenceMaterial ? "account_overview" : null)
+        : source === "opportunity_document" ? "opportunity_status" : "quotation_query";
   }
   if (component.category === "report.document_evidence") {
     const source = customerDocumentReportSpecPatch(component.documentReportSpec).source ||
@@ -673,6 +676,7 @@ export function customerComponentCapability(component, { hasReferenceMaterial = 
     operationKind,
     supportingIntents,
     providedDocument: component.category === "query.document_content" &&
+      !["opportunity_document", "quotation_document"].includes(component.documentSpec?.source) &&
       (component.documentSpec?.source === "provided_document" || component.object === "document") && hasReferenceMaterial,
     verifier: component.category.split(".")[0],
     available: Boolean(intent),
@@ -900,8 +904,10 @@ export function getCustomerTurnContractFields() {
     { key: "unsupported", type: "array", items: { type: "string" } },
   ] });
   componentFields.push({ key: "documentSpec", type: "object", fields: [
-    { key: "changed", type: "array", items: { type: "enum", enum: ["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target"] } },
-    { key: "source", type: "enum", enum: ["quotation", "provided_document", "knowledge_library"] },
+    { key: "changed", type: "array", items: { type: "enum", enum: ["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target", "documentReference", "documentSelection"] } },
+    { key: "source", type: "enum", enum: ["quotation", "provided_document", "knowledge_library", "opportunity_document", "quotation_document"] },
+    { key: "documentReference", type: "string" },
+    { key: "documentSelection", type: "enum", enum: ["unspecified", "list", "all", "previous"] },
     { key: "opportunityReference", type: "string" }, { key: "quotationReference", type: "string" },
     { key: "versionNumber", type: "number" },
     { key: "selection", type: "enum", enum: ["unspecified", "latest", "list"] },
@@ -921,7 +927,7 @@ export function getCustomerTurnContractFields() {
   return fields;
 }
 
-export const CUSTOMER_TURN_PROVIDER_VERSION = "compact-v1";
+export const CUSTOMER_TURN_PROVIDER_VERSION = "compact-v5";
 function compactSpecification(field) {
   return { ...field,
     ...(field.type === "object" && ["listSpec", "period", "comparePeriod"].includes(field.key)
@@ -1021,10 +1027,14 @@ documentSpec; "prepara una agenda para Alfa" prepara contenido sobre opportunity
 La cuenta seleccionada limita acceso, no determina objeto ni propósito de cada mensaje.
 Referencias de registros son literales: entityHints ayuda a resolver, no a completar un nombre ambiguo.
 3. FUENTE: usa knowledge_library para documentación interna sobre soluciones/proceso comercial,
-provided_document para el archivo aportado y quotation para cotizaciones CRM.
+provided_document para el archivo aportado, quotation para cotizaciones CRM estructuradas,
+opportunity_document para archivos guardados en una oportunidad y quotation_document para archivos
+asociados a una versión de cotización. Ambos documentos CRM usan object=document.
 No confundas documentación interna con un adjunto inexistente ni con ayuda del sistema.
-Si el usuario pide explícitamente un archivo no disponible, conserva provided_document y solicita
-el material; no cambies a biblioteca para simular disponibilidad. No inventes respaldo documental.
+Si el usuario pide un archivo aportado EN ESTE CHAT y no está disponible, conserva provided_document
+y solicita el material; no cambies a biblioteca para simular disponibilidad.
+Esto no aplica a archivos ya guardados en oportunidades o cotizaciones: consulta su fuente CRM.
+No inventes respaldo documental.
 Los hechos particulares del cliente requieren CRM autorizado; la biblioteca no prueba compras,
 necesidades, configuración ni resultados del cliente. No añadas documentSpec a categorías ajenas.
 4. CONTINUIDAD: latestMessage manda sobre el propósito y fuente actuales. El historial solo completa
@@ -1278,10 +1288,45 @@ Q09 query.document_content responde qué dice una fuente; no modifica ni envía 
 "Resume este archivo/cotización" pertenece a Q09; C05 content.summary transforma contenido o contexto,
 pero no debe eludir la selección y lectura de una fuente documental.
 Usa documentSpec, con changed SOLO para grupos pedidos: source,opportunityReference,quotationReference,
-versionNumber,selection,aspect,target. Los placeholders requeridos por el proveedor no cambian el contexto.
+versionNumber,selection,aspect,target,documentReference,documentSelection. Los placeholders requeridos por el proveedor no cambian el contexto.
+Para archivos YA GUARDADOS en CRM usa source=opportunity_document o quotation_document, object=document.
+No pidas volver a adjuntarlos ni los sustituyas por quotation estructurada o knowledge_library.
+opportunityReference identifica la oportunidad; quotationReference identifica la cotización.
+documentReference es el nombre literal del archivo (no un ID inventado); vacío si no se nombró.
+documentSelection=list lista archivos sin leer su contenido; all consulta todos dentro de los límites
+o compara esos archivos; unspecified requiere uno inequívoco o selección del usuario.
+"¿Qué documentos tiene la oportunidad ...?" solicita documentSelection=list, no seleccionar un
+archivo para leerlo. Conserva documentReference literalmente como el nombre almacenado; no lo
+traduces, abreviás ni conviertas sus fechas a otro formato.
+"¿Qué archivos están asociados a la cotización 18 de Hardware Refresh?" solicita
+source=quotation_document, object=document, documentSelection=list, quotationReference="18",
+opportunityReference="Hardware Refresh". Preguntar cuáles son los archivos, sus nombres o qué
+adjuntos tiene una cotización NO solicita resumir sus productos ni leer los archivos.
+"¿Cuáles son los nombres de esos archivos?" conserva la identidad de la cotización del contexto,
+pero usa quotation_document y documentSelection=list aunque la respuesta anterior haya usado
+quotation por error. No heredes una fuente incompatible con el entregable actual.
+interpretationContext.quotationSelection permite recuperar oportunidad, cotización y revisión;
+conserva versionNumber si se refiere a esa revisión. No uses documentSelection=previous para
+listar: no hay que seleccionar ni leer un archivo. Un listado vacío se resuelve en la lectura
+autorizada, no sustituyendo archivos por datos comerciales ni pidiendo un adjunto.
+interpretationContext.documentList conserva la fuente de una lista aunque documentIds esté vacío.
+"Resume el archivo [nombre de la lista anterior]" continúa esa lista: movement=continue,
+source de documentList, opportunityReference=opportunityName, quotationReference y versionNumber
+si corresponden, documentReference con el nombre pedido. No es new_request sin oportunidad.
+No uses documentSelection=previous si solo hay candidatos; usa unspecified para elegir por nombre.
+No mantengas documentSelection=list cuando ahora se pide resumir un archivo.
+documentSelection=previous referencia explícitamente la selección documental validada de
+interpretationContext.documentSelection. Cambiar de resumen a una pregunta sobre ese archivo
+NO cambia la fuente: usa movement=continue, documentSelection=previous y conserva la identidad
+completa sin reconstruirla a partir del nombre. No uses new_request con un nombre heredado y sin
+su oportunidad. Si el usuario cambia explícitamente de fuente o registro, no uses previous.
+listPosition selecciona de la última lista de DOCUMENTOS, no de cotizaciones.
+En quotation_document, selection elige la cotización, versionNumber su revisión y documentSelection sus archivos.
+Para comparar documentos con datos estructurados crea componentes separados con dependencias.
+Una pregunta posterior sobre el archivo mantiene fuente y selección, no cambia a provided_document.
 source=quotation para cotizaciones CRM (object=quotation); provided_document para adjunto aportado (object=document).
 Estos pares fuente/objeto son obligatorios: provided_document NO usa object=general aunque sea documentación
-técnica sin oportunidad. Si se pide un adjunto ausente, object=document, source=provided_document,
+técnica sin oportunidad. Si se pide un adjunto aportado en el chat pero ausente, object=document, source=provided_document,
 resolution=clarification y solicita el archivo, sin cambiar a la biblioteca aunque el mensaje la mencione.
 source=knowledge_library para consultas a la biblioteca interna Documentación RAG sobre productos,
 fabricantes, soluciones o proceso comercial: object=general, scope=none, reference="".
@@ -1785,8 +1830,10 @@ Si se solicita "desde cero"/"otra búsqueda" o cambia explícitamente de conjunt
 new_request/change_focus, continuationOf=none. Si el referente o filtro es ambiguo, pide aclaración.
 Un componente único siempre lleva dependsOn=[], aunque continuationOf=c1.
 CONTROL FINAL DE COHERENCIA DOCUMENTAL: en query.document_content, el par fuente/objeto debe ser
-quotation/quotation, provided_document/document o knowledge_library/general.
-La falta de un adjunto NO cambia object a general: conserva document/provided_document y pide el archivo.
+quotation/quotation, provided_document/document, knowledge_library/general,
+opportunity_document/document o quotation_document/document.
+La falta de un adjunto del chat NO cambia object a general: conserva document/provided_document y pide el archivo.
+Los archivos ya asociados a registros usan opportunity_document/quotation_document; no exijas volver a adjuntarlos.
 Mencionar una fuente para excluirla ("no consultes la biblioteca") no es pedirla.
 No arrastres documentSpec a una categoría no documental.
 Si context.interpretationFeedback está presente, corrige las discrepancias señaladas contrastándolas con
