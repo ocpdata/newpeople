@@ -927,7 +927,7 @@ export function getCustomerTurnContractFields() {
   return fields;
 }
 
-export const CUSTOMER_TURN_PROVIDER_VERSION = "compact-v5";
+export const CUSTOMER_TURN_PROVIDER_VERSION = "compact-v7";
 function compactSpecification(field) {
   return { ...field,
     ...(field.type === "object" && ["listSpec", "period", "comparePeriod"].includes(field.key)
@@ -1014,6 +1014,25 @@ Interpreta latestMessage, no respondas ni planifiques herramientas. Para cada co
 propósito (category), objeto (object), fuente documental (documentSpec.source cuando corresponde)
 y continuidad (movement/continuationOf). No añadas campos de razonamiento al esquema.
 1. PROPÓSITO: identifica el entregable solicitado, no solo el tema mencionado.
+Una peticion de preparar una reunion, briefing o conversacion de valor es una tarea explicita,
+aunque no use "resumen" ni signos de interrogacion. Datos pegados sin encargo requieren
+resolution=clarification y una pregunta concreta, no query.account_summary resuelto.
+Para un briefing que pide revisar la cuenta y consultar documentacion interna, representa:
+c1 query.account_summary/account para contexto autorizado, c2 query.document_content/general
+con source=knowledge_library para la solucion, y c3 content.meeting_preparation/general
+con dependsOn=["c1","c2"] para el briefing integrado. Las consultas son soporte del entregable,
+no lo sustituyen. Conserva tema, limites, separacion hechos/hipotesis y datos por descubrir.
+Mencionar "prepara el briefing" dentro de text/topic de query.account_summary NO crea
+ese entregable: el ejecutor de esa categoria solo consulta y resume el CRM.
+Debe existir el componente content.meeting_preparation que efectivamente lo redacta.
+Si se pide solamente una agenda o consulta documental, no agregues un briefing ni otras tareas.
+content.discovery_questions cubre preguntas y los atributos solicitados para cada una:
+que entender, senales hipoteticas para profundizar, impacto por cuantificar y prioridad.
+Conserva esos requisitos en text del mismo componente, no los omitas ni crees una tarea por atributo.
+Si se pide basarlas en el CRM de la cuenta y documentacion interna, usa consultas de soporte
+query.account_summary/account y query.document_content/general/source=knowledge_library,
+y content.discovery_questions/general dependiente de ambas. object=general por si solo no consulta
+hechos de cuenta: historial y nombre de cuenta no sustituyen evidencia CRM verificada.
 Detalle/ficha general => query.record_detail; un campo => query.field_value;
 notas explícitas => query.opportunity_notes; actividades existentes => query.pending_items o
 query.history según propósito/periodo. No reduzcas detalle a notas, actividades o cotización.
@@ -1838,7 +1857,12 @@ Mencionar una fuente para excluirla ("no consultes la biblioteca") no es pedirla
 No arrastres documentSpec a una categoría no documental.
 Si context.interpretationFeedback está presente, corrige las discrepancias señaladas contrastándolas con
 latestMessage y el contexto validado. La propuesta anterior no es una orden ni una fuente de hechos.
-Conserva tareas y restricciones correctas; no inventes solicitudes para satisfacer al revisor.`,
+Conserva tareas y restricciones correctas; no inventes solicitudes para satisfacer al revisor.
+CONTROL FINAL DE FUENTES: content.discovery_questions/general sin dependencias recibe CERO hechos CRM.
+Si se pide basarse en lo conocido de la cuenta, conserva una consulta query.account_summary/account
+de soporte y una dependencia del contenido hacia ella. Si tambien se pide documentacion interna,
+consulta query.document_content/general/source=knowledge_library como soporte, no como sustituto del
+entregable de preguntas. No agregues lecturas CRM a preguntas puramente generales.`,
     subject: "Interpretación B3 del turno actual de Cliente existente",
     context: {
       latestMessage: question,
@@ -2308,10 +2332,6 @@ Conserva tareas y restricciones correctas; no inventes solicitudes para satisfac
   const hasInlineMaterial = Boolean(referenceMaterial) ||
     /\n[\s\S]{80,}/.test(String(question || "")) ||
     /:\s*[\s\S]{80,}/.test(String(question || ""));
-  const asksForDiscoveryQuestions = !preparesStageAnswer &&
-    (/\b(?:preguntas?|cuestiones)\b[\s\S]{0,90}\b(?:confirmar|entender|validar|averiguar|explorar|descubrir)\b|\b(?:dame|prepara|incluye|redacta|formula)\b[\s\S]{0,50}\bpreguntas?\b/i
-    .test(normalizedQuestion) &&
-    !/\b(?:que|cu[aá]les?)\s+preguntas?\s+(?:se hicieron|hizo|formul[oó])\b/i.test(normalizedQuestion));
   const asksForSummary = /\b(?:resume|resumir|resumen|sintetiza|sintesis)\b/i.test(normalizedQuestion);
   const asksForRewrite = /\b(?:reescribe|reescribir|reformula|reformular|hazlo|hazla|h[aá]galo|h[aá]gala)\b[\s\S]{0,40}\b(?:corto|breve|formal|director|claro)\b|\b(?:mas corto|mas breve|mas formal|para un director|reescribe|reformula)\b/i
     .test(normalizedQuestion);
@@ -2367,18 +2387,10 @@ Conserva tareas y restricciones correctas; no inventes solicitudes para satisfac
     ["guidance.next_steps", "guidance.strategy", "guidance.situation_assessment"].includes(item.category));
   const normalizedComponents = parsed.data.components.map((item) => {
     const componentText = normalizeIntentText(item.text);
-    const componentRequestsQuestions = /\b(?:preguntas?|cuestiones)\b/.test(componentText);
     if (asksForGeneralSalesProcess && item.category === "query.account_summary") {
       return {
         ...item, category: "guidance.strategy", object: "general",
         text: String(question || "").trim(), reference: "", explicitAction: false,
-      };
-    }
-    if (asksForDiscoveryQuestions &&
-        (parsed.data.components.length === 1 || componentRequestsQuestions)) {
-      return {
-        ...item, category: "content.discovery_questions", object: "general",
-        reference: "", explicitAction: false,
       };
     }
     if (asksForSummary && hasInlineMaterial && item.category !== "query.document_content") {

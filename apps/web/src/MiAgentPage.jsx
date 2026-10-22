@@ -23,6 +23,7 @@ import { CustomerRescheduleSummary } from "./coach/CustomerRescheduleReview";
 import { CustomerOutcomeSummary } from "./coach/CustomerOutcomeSummary";
 import { CustomerStageSummary } from "./coach/CustomerStageReview";
 import { CustomerChatEvaluations } from "./coach/CustomerChatEvaluations";
+import { CustomerChatAnswer } from "./coach/CustomerChatAnswer";
 import ServerRulesSection from "./ServerRulesSection";
 import SemanticClassifierSection from "./SemanticClassifierSection";
 import {
@@ -9092,24 +9093,12 @@ export default function MiAgentPage({
                           ))}
                         </div>
                       ) : null}
-                      {String(message.answer || "").includes("\n") ? (
-                        <p className="mi-agent-coach-answer-text is-multiline">
-                          {message.comparisonMetadata?.table || message.comparisonMetadata?.tables?.length ||
+                      <CustomerChatAnswer
+                        answer={message.comparisonMetadata?.table || message.comparisonMetadata?.tables?.length ||
                             message.trendMetadata?.table || message.trendMetadata?.tables?.length || message.scenarioMetadata?.tables?.length
                             ? String(message.answer || "").split("\n").filter((line) => !line.startsWith("|")).join("\n")
                             : message.answer}
-                        </p>
-                      ) : (
-                        <h4
-                          className={
-                            message.activityHistory
-                              ? "mi-agent-customer-history-summary"
-                              : undefined
-                          }
-                        >
-                          {message.answer}
-                        </h4>
-                      )}
+                      />
                       {message.presentation?.status === "degraded" ? (
                         <p role="status">
                           No pude completar la redacción conversacional. Te muestro el resultado verificado.

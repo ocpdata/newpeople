@@ -372,6 +372,35 @@ orden acíclico. Algunos movimientos de control pueden no incluir componentes.
 El servidor deriva la marca `explicitAction` de la categoría; esa marca no
 autoriza ni ejecuta una operación.
 
+La presencia de una tarea se decide semánticamente en B3 y su revisión: aportar
+datos sin encargo exige aclaración, pero preparar un briefing es una tarea explícita
+aunque no incluya «resumen» ni signos de pregunta. El runtime respeta esa resolución,
+sin volver a decidirla por una lista de palabras. Para un briefing integrado de
+CRM y biblioteca, `query.account_summary` y `query.document_content` con fuente
+`knowledge_library` alimentan un `content.meeting_preparation` dependiente de ambas.
+Solo resultados de consultas CRM completadas se incorporan como
+`verifiedComponentResult` a la evidencia de generación y auditoría; no el historial
+ni la prosa arbitraria de otros entregables. RAG sigue siendo una fuente separada
+de capacidades, no prueba necesidades del cliente. Un requisito fallido bloquea la
+síntesis; la falta de fragmentos se declara sin completar capacidades de memoria.
+En la preparación integrada, los resultados CRM se insertan literalmente mediante
+marcadores protegidos compartidos con B10; no se encargan al modelo sus hechos
+numéricos ni su cobertura para que los reinterprete. La auditoría revisa el texto
+ya insertado, con comprobaciones separadas de hechos CRM, necesidades documentadas,
+alcance e hipótesis. Un rechazo devuelve observaciones concretas a la única
+reparación permitida; esas observaciones no constituyen evidencia nueva.
+Las preguntas de descubrimiento pueden incluir explicaciones, señales hipotéticas
+para profundizar e impacto por cuantificar dentro del mismo elemento. El contador
+valida la cantidad de preguntas principales sin descartar esos atributos ni permitir
+preguntas adicionales o duplicadas. Si se solicita adaptarlas a hechos CRM y RAG,
+el contenido depende de consultas autorizadas de soporte; el historial no sustituye
+esa evidencia y las señales hipotéticas no se atribuyen al cliente.
+La consulta documental de soporte recibe el encargo de su componente, no la
+solicitud compuesta entera, para no exigirle hechos de cuenta ni el entregable final.
+La auditoría contrasta el borrador actual y cita literalmente cualquier afirmación
+rechazada; no trata preguntas hipotéticas como respuestas confirmadas ni exige que
+la biblioteca contenga exactamente las preguntas propuestas.
+
 **Categorías de propósito (44):** indican qué busca conseguir el usuario. El
 catálogo de Cliente existente agrupa consultas (`query`), orientaciones
 (`guidance`), contenido (`content`), reportes (`report`) y acciones (`action`).
@@ -404,7 +433,7 @@ indica qué está disponible, limitado o no implementado.
 | 19 | `guidance.strategy` | Proponer estrategia desde el contexto autorizado. |
 | 20 | `content.email_draft` | Redactar un correo, nunca enviarlo. |
 | 21 | `content.message_draft` | Redactar un mensaje breve, sin envío. |
-| 22 | `content.meeting_preparation` | Preparar agenda o guion, sin programar una reunión. |
+| 22 | `content.meeting_preparation` | Preparar briefing, agenda o guion, sin programar una reunión. |
 | 23 | `content.discovery_questions` | Preparar preguntas de descubrimiento. |
 | 24 | `content.summary` | Resumir material disponible. |
 | 25 | `content.explanation` | Explicar contenido o términos comerciales, no abrir una consulta externa libre. |
@@ -935,12 +964,20 @@ el modelo ubica marcadores de entregables y el servidor inserta los originales
 exactamente una vez; marcadores omitidos, duplicados o desconocidos bloquean
 la reformulación. Un turno solo de contenido completado o una respuesta
 individual ya generada y auditada evita la llamada redundante.
+Si el único entregable es un briefing integrado auditado y todos los demás
+componentes son consultas de las que depende, B10 muestra solo ese briefing
+literal (`validated_integrated_content`), conservando componentes y evidencias
+para trazabilidad. No oculta tareas independientes ni requisitos fallidos.
 
 Una auditoría independiente revisa **el texto final que se mostrará**, no solo
 los componentes originales. Exige fidelidad, cobertura, incertidumbre, estado
 de operaciones y continuidad conversacional. Rechazos, dudas o respuestas
 inconsistentes no habilitan la reformulación. Un control adicional rechaza
 números nuevos: la redacción debe conservar los formatos numéricos disponibles.
+Se permite copiar un identificador alfanumérico exacto del pedido actual, como
+`F5`; eso no autoriza cantidades nuevas, porcentajes ni identificadores alterados.
+Los briefings integrados se insertan sin anteponer otra versión resumida, y no se
+reinterpreta el importe de oportunidades abiertas como ventas o ingresos.
 La auditoría semántica no equivale a una garantía ni a aprobación humana.
 
 La generación y auditoría comparten hasta 20 segundos, sin reintentos, dentro
@@ -953,6 +990,11 @@ base, se registra `presentation.status=degraded` y la interfaz lo comunica.
 Una falla de estilo no vuelve a ejecutar el turno ni altera su resultado comercial.
 
 B11 guarda el texto mostrado y la presentación también en el historial.
+La interfaz de Cliente existente presenta las respuestas actuales e históricas
+como Markdown: tablas GFM con encabezados y desplazamiento horizontal local en
+pantallas estrechas, listas, títulos y énfasis. El texto almacenado no cambia.
+No interpreta HTML ni carga imágenes del contenido; los enlaces usan protocolos
+seguros y las tablas comerciales estructuradas existentes mantienen su presentación.
 La traza de B10 conserva duración, cantidad de llamadas, metadatos del proveedor,
 dictamen por dimensión y motivo de degradación. El resultado conserva el texto
 base y el texto auditado para trazabilidad. La evaluación mantiene los controles

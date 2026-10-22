@@ -1,6 +1,17 @@
 export const CUSTOMER_FRIENDLY_STYLE_INSTRUCTIONS =
   "Habla con el vendedor en español natural, claro y respetuoso. Empieza por el dato o la conclusión que más le sirve. Usa frases cortas y palabras cotidianas; evita jerga interna, nombres de bloques, etiquetas técnicas y explicaciones del funcionamiento del sistema. Si un término comercial es necesario, explícalo brevemente. Conserva todos los datos, nombres, cifras, fechas, fuentes, límites, incertidumbre, condiciones y advertencias importantes. Distingue hechos registrados, información aportada, recomendaciones, hipótesis y propuestas. No conviertas una propuesta en acuerdo o acción ejecutada, no ocultes datos faltantes y no inventes información. Organiza listas o tablas cuando faciliten la lectura y no repitas la pregunta.";
 
+export function insertCustomerProtectedText(answer, items, errorCode) {
+  let result = answer;
+  for (const item of items) {
+    const placeholder = `[[deliverable:${item.id}]]`;
+    if (result.split(placeholder).length !== 2) throw Object.assign(new Error(errorCode), { code: errorCode });
+    result = result.replace(placeholder, () => item.answer);
+  }
+  if (/\[\[deliverable:/.test(result)) throw Object.assign(new Error(errorCode), { code: errorCode });
+  return result;
+}
+
 const componentLabels = Object.freeze({
   "query.account_summary": "Resumen de la cuenta",
   "query.record_detail": "Datos del registro",

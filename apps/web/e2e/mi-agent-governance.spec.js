@@ -2115,9 +2115,10 @@ async function openMiCoach(page, { workspace = "coach" } = {}) {
     await page.getByRole("button", { name: "Cliente existente" }).click();
 }
 
-async function mockCustomerChatRecovery(page) {
+async function mockCustomerChatRecovery(page, {
+  answer = "La oportunidad Vrf 2027 tiene un monto de 2,000,000 USD.",
+} = {}) {
   await mockMiCoachApi(page, { withCustomerHealth: true });
-  const answer = "La oportunidad Vrf 2027 tiene un monto de 2,000,000 USD.";
   const state = {
     submissions: 0,
     polls: 0,
@@ -2207,6 +2208,77 @@ async function mockCustomerChatRecovery(page) {
   };
   return { state, chat, answer, send };
 }
+
+test("Cliente existente presenta tablas Markdown legibles y las conserva al recargar en movil", async ({ page }) => {
+  const answer = [
+    "## Comparación de valor",
+    "",
+    "Estas son **hipótesis por validar**, no necesidades confirmadas.",
+    "",
+    "| Necesidad del cliente | Capacidad documentada | Valor esperado | Condiciones o dependencias | Pendiente de validar |",
+    "| --- | --- | --- | --- | --- |",
+    "| Seguridad de APIs | WAAP: descubrimiento y protección de APIs | Protección contra bots y ataques | Validar despliegue y alcance | APIs expuestas y prioridades |",
+    "| Mejor control de Kubernetes | App Stack para gestión de clústeres | Simplificar operaciones | Revisar arquitectura existente | Nubes y clústeres actuales |",
+    "",
+    "- Confirmar prioridades",
+    "- Validar alcance",
+  ].join("\n");
+  const { state, chat, send } = await mockCustomerChatRecovery(page, { answer });
+  await send();
+  const table = chat.getByRole("table");
+  await expect(table).toBeVisible();
+  await expect(table.getByRole("columnheader")).toHaveCount(5);
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await expect(table.getByRole("cell", { name: "Seguridad de APIs", exact: true })).toBeVisible();
+  await expect(chat.getByRole("heading", { name: "Comparación de valor" })).toBeVisible();
+  await expect(chat.locator(".customer-chat-answer strong")).toHaveText("hipótesis por validar");
+  await expect(chat.locator(".customer-chat-answer li")).toHaveCount(2);
+  await expect(chat.locator(".customer-chat-answer").last()).not.toContainText("| ---");
+  await expect(chat.getByRole("region", { name: "Tabla de la respuesta" })).toHaveAttribute("tabindex", "0");
+  state.historySaved = true;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  const restored = page.getByRole("region", { name: "Chat de cuenta" });
+  await expect(restored.getByRole("columnheader")).toHaveCount(5);
+  const scroll = restored.getByRole("region", { name: "Tabla de la respuesta" });
+  expect(await scroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  expect(await scroll.evaluate((element) => {
+    const message = element.closest(".mi-agent-coach-message").getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    return bounds.width <= message.width && bounds.right <= message.right;
+  })).toBe(true);
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente muestra formato sin ejecutar HTML ni cargar imagenes externas", async ({ page }) => {
+  let imageRequests = 0;
+  await page.route("https://untrusted.example/**", (route) => {
+    imageRequests += 1;
+    return route.abort();
+  });
+  const { chat, send } = await mockCustomerChatRecovery(page, { answer: [
+    "Contenido **verificado**.",
+    "<img src=\"https://untrusted.example/pixel\" onerror=\"window.chatInjected=true\">",
+    "![pixel](https://untrusted.example/markdown)",
+    "[enlace inseguro](javascript:alert(1))",
+    "[Documento](https://example.com/documento)",
+    "",
+    "```html",
+    "<script>alert('texto, no ejecución')</script>",
+    "```",
+  ].join("\n") });
+  await send();
+  const answer = chat.locator(".customer-chat-answer").last();
+  await expect(answer.locator("strong")).toHaveText("verificado");
+  await expect(answer.locator("img, script")).toHaveCount(0);
+  await expect(answer.getByRole("link", { name: "Documento" })).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(answer.locator("a[href^='javascript:']")).toHaveCount(0);
+  await expect(answer.locator("pre code")).toContainText("<script>");
+  expect(await page.evaluate(() => window.chatInjected)).toBeUndefined();
+  expect(imageRequests).toBe(0);
+});
 
 test("Cliente existente reintenta lecturas transitorias y muestra el estado hasta recibir la respuesta", async ({ page }) => {
   const { state, chat, answer, send } = await mockCustomerChatRecovery(page);

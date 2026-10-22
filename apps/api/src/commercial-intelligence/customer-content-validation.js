@@ -16,8 +16,8 @@ export function requestedCustomerQuestionCount(component) {
 export function validateCustomerQuestions(items, count) {
   return Array.isArray(items) && items.length === count &&
     items.every((item) => typeof item === "string" && item.trim() &&
-      !/[\r\n]/.test(item) && (item.match(/\?/g) || []).length <= 1) &&
-    new Set(items.map((item) => item.trim().toLocaleLowerCase())).size === count;
+      (item.match(/\?/g) || []).length <= 1) &&
+    new Set(items.map((item) => item.trim().split(/\r?\n/, 1)[0].trim().toLocaleLowerCase())).size === count;
 }
 
 export function latestCustomerDraft(history) {

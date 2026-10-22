@@ -187,7 +187,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
     const result = JSON.parse(failureWrite.params[1]);
     expect(result.errorCode).toBe("CUSTOMER_B3_TIMEOUT");
     expect(result.debug.currentTurn.diagnostics.classificationFailure).toMatchObject({
-      code: "CUSTOMER_B3_TIMEOUT", contractVersion: "compact-v5", durationMs: expect.any(Number),
+      code: "CUSTOMER_B3_TIMEOUT", contractVersion: "compact-v7", durationMs: expect.any(Number),
     });
     expect(result.debug.currentTurn.diagnostics.classificationFailure.timeoutMs).toBeLessThanOrEqual(2000);
     expect(createCustomerAccountAdapter).not.toHaveBeenCalled();

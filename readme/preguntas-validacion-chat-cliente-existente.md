@@ -137,7 +137,7 @@ aprobación humana se muestran por separado.
   incluye un componente en vez de sugerir una solicitud nueva vacía.
   La restricción estructural no garantiza la clasificación semántica:
   siguen siendo necesarias la revisión y la aceptación con proveedor real.
-- La versión del proveedor `compact-v5` conserva la estructura compacta de
+- La versión del proveedor `compact-v7` conserva la estructura compacta de
   `compact-v1` y añade fuentes `opportunity_document`/`quotation_document`,
   nombre de archivo y selección documental, incluida `previous` para conservar
   la fuente de una pregunta de seguimiento tras completar un resumen.
@@ -146,6 +146,13 @@ aprobación humana se muestran por separado.
   `quotationSelection` sin afirmar que existan adjuntos.
   `documentList` conserva la fuente de un listado terminado antes de seleccionar
   un archivo, para resumir por nombre sin volver a pedir la oportunidad.
+  Los briefings de reunion con CRM y RAG usan consultas de soporte y un
+  `content.meeting_preparation` dependiente de ambas; no equivalen a dos
+  respuestas independientes. La ausencia de tarea se aclara en B3 y su revision,
+  sin invalidar contratos resueltos por una lista posterior de palabras.
+  Las preguntas de descubrimiento conservan explicaciones y prioridad dentro de
+  cada elemento. Sus consultas CRM y RAG de soporte no se recategorizan como
+  preguntas por mencionar ese entregable en su texto.
   No requiere volver a adjuntar
   archivos asociados a registros CRM. La huella de evaluación incluye esta
   versión para no mezclar ejecuciones con contratos diferentes.

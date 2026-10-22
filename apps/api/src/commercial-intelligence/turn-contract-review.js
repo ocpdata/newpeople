@@ -89,6 +89,22 @@ No confundas que una cita mencione una acción con que solicite ejecutarla.
 Compara el entregable pedido con category, el objeto con object, la fuente con documentSpec.source
 y el seguimiento con movement/continuationOf. Detecta tareas omitidas, negaciones, cantidades y
 restricciones perdidas, así como herencia indebida de propósito o fuente. Conservar entidad no es conservar tarea.
+Una solicitud explicita de preparar un briefing o reunion no es "datos sin tarea" por carecer de
+la palabra resumen. Si solo se aportan datos sin encargo, exige resolution=clarification.
+Cuando se pide un briefing integrado con contexto CRM y documentacion interna, consultas separadas
+de cuenta y biblioteca NO cubren por si solas el entregable: exige content.meeting_preparation
+dependiente de ambas consultas. Su ausencia es MISSING_TASK/coverage. Una agenda sola no es un
+briefing. No agregues esa sintesis si solo se pidieron consultas independientes.
+Para decidir cobertura, una mencion del briefing en text o topic de una consulta
+NO cuenta como tarea de contenido: query.account_summary solo devuelve un resumen CRM.
+Verifica la presencia LITERAL de content.meeting_preparation y de sus dependencias.
+content.discovery_questions incluye en UNA tarea sus explicaciones, senales para profundizar,
+impacto por cuantificar y priorizacion cuando text los conserva. No exijas componentes separados
+ni reportes MISSING_TASK si esos atributos ya estan en el text actual. Contrasta literalmente
+antes de afirmar que se omitieron. Una respuesta hipotetica que justificaria profundizar es una
+condicion de descubrimiento, no una respuesta que se atribuye al cliente.
+Si se pide adaptar preguntas a lo registrado en la cuenta, exige una consulta CRM de soporte
+de la que dependa el contenido: object=general, el historial o nombrar la cuenta no aportan evidencia.
 Lee la categoría LITERAL de proposedContract.components[].category en ESTA llamada.
 topic es una etiqueta auxiliar, no la categoría ni el entregable. La palabra "notas" en topic o
 en una negación de text no convierte query.record_detail en query.opportunity_notes.
@@ -257,7 +273,10 @@ export async function interpretReviewedCustomerTurn(input, {
         result = await reviewWithAI({
           schemaName: "customer_account_turn_coherence",
           useWebSearchTool: false,
-          systemPrompt: `${reviewRules}\n${CUSTOMER_INTERPRETATION_CONTEXT_RULES}`,
+          systemPrompt: `${reviewRules}\n${CUSTOMER_INTERPRETATION_CONTEXT_RULES}
+CONTROL FINAL DE FUENTES: content.discovery_questions/general sin dependencias recibe CERO hechos CRM.
+Si se pide basarse en lo conocido de la cuenta, verifica la consulta CRM de soporte y la dependencia;
+si faltan, MISSING_TASK/coverage. Las explicaciones y prioridad ya presentes en text no faltan.`,
           subject: "Revisión de coherencia de la interpretación B3",
           context: {
             latestMessage: input.question,

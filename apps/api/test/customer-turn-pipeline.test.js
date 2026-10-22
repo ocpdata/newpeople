@@ -158,6 +158,10 @@ describe("Customer contract B6/B9/B10 integration", () => {
           ? "The quotation is pending review, not approved."
           : "Estimada Elena: propongo conversar sobre Renovación Alfa. [Fecha por completar].",
       };
+      if (request.schemaName === "customer_account_content_audit" && request.context.component.id === "c3") return {
+        approved: "yes", reasonCode: "supported",
+        sourceChecks: { crmFacts: true, documentedNeeds: true, scope: true, hypotheses: true },
+      };
       if (request.schemaName === "customer_account_content_audit") return { approved: "yes" };
       if (request.schemaName === "customer_account_document_answer") return {
         answer: "El archivo indica que se busca reducir fugas de información.", citations: ["fragment-1"],
@@ -174,6 +178,88 @@ describe("Customer contract B6/B9/B10 integration", () => {
       }
       throw new Error(`Unexpected AI schema ${request.schemaName}`);
     });
+  });
+  it.each([
+      "Voy a reunirme con este cliente para explorar si F5 Distributed Cloud Services puede aportarle valor. Revisa la información autorizada de la cuenta y consulta la documentación interna de F5 Distributed Cloud Services. Prepara un briefing con: contexto comercial relevante, necesidades documentadas, posibles áreas de valor y datos que todavía debemos descubrir. Separa los hechos registrados de las hipótesis; no asumas que el cliente necesita la solución.",
+      "Prepara un briefing para explorar el valor de F5 Distributed Cloud Services con la informacion de la cuenta y la documentacion interna.",
+      "Preparame para la reunion: combina el contexto de la cuenta con la documentacion interna de F5 Distributed Cloud Services, sin asumir necesidades.",
+      "Ayudame a construir una conversacion de valor usando el CRM y la documentacion interna de F5 Distributed Cloud Services.",
+    ])("integrates verified account evidence and RAG into the requested meeting preparation: %s", async (question) => {
+      const parts = [
+        makeComponent("query.account_summary", "account", { id: "c1", text: "Revisa el contexto de la cuenta", reference: "" }),
+        makeComponent("query.document_content", "general", { id: "c2", text: "Consulta la documentacion interna de F5 Distributed Cloud Services",
+          reference: "", scope: "none", documentSpec: { source: "knowledge_library" } }),
+        makeComponent("content.meeting_preparation", "general", { id: "c3", text: question,
+          reference: "", scope: "none", dependsOn: ["c1", "c2"] }),
+      ];
+      const knowledge = { status: "results", snippets: [{
+        text: "F5 Distributed Cloud Services ofrece seguridad de aplicaciones. No prueba necesidades del cliente.",
+        title: "F5 DCS", source: "internal",
+      }] };
+      const original = runStructuredTextResearch.getMockImplementation();
+      runStructuredTextResearch.mockImplementation(async (request) => {
+        if (request.schemaName === "customer_account_content") return {
+          answer: request.context.component.id === "c2"
+            ? "La documentacion describe seguridad de aplicaciones."
+            : "Briefing:\n[[deliverable:c1]]\nHipotesis: explorar seguridad de aplicaciones. Pendiente: validar necesidades.",
+        };
+        return original(request);
+      });
+      const result = await adapter(parts, { initialDocumentKnowledge: knowledge }).runTurn({
+        question, context: { accountId: snapshot.account.id },
+      });
+      expect(result.response.responseType).toBe("informational");
+      expect(result.response.components.map((item) => item.status)).toEqual(["completed", "completed", "completed"]);
+      const synthesis = runStructuredTextResearch.mock.calls.map(([request]) => request)
+        .find((request) => request.schemaName === "customer_account_content" && request.context.component.id === "c3");
+      expect(synthesis.context.evidence).toEqual([expect.objectContaining({
+        toolName: "verifiedComponentResult", result: expect.objectContaining({
+          componentId: "c1", source: "crm", answer: expect.any(String),
+        }),
+      })]);
+      expect(synthesis.context.documentKnowledge).toEqual(knowledge);
+      expect(synthesis.context.dependencyResults).toHaveLength(2);
+      const audit = runStructuredTextResearch.mock.calls.map(([request]) => request)
+        .find((request) => request.schemaName === "customer_account_content_audit" && request.context.component.id === "c3");
+      expect(audit.context.evidence).toEqual(synthesis.context.evidence);
+      expect(audit.context.documentKnowledge).toEqual(knowledge);
+      const library = runStructuredTextResearch.mock.calls.map(([request]) => request)
+        .find((request) => request.schemaName === "customer_account_content" && request.context.component.id === "c2");
+      expect(library.context.originalRequest).toBe(parts[1].text);
+      expect(synthesis.systemPrompt).toContain("hipotesis de valor por validar");
+      expect(result.response.operations).toEqual([]);
+      expect(result.response.answer).toContain("Briefing:");
+  });
+  it("executes verified support queries before eight annotated discovery questions", async () => {
+    const question = "Prepara ocho preguntas de descubrimiento con la cuenta y la biblioteca F5. Por cada una explica el objetivo, cuando profundizar y el impacto por cuantificar.";
+    const parts = [
+      makeComponent("query.account_summary", "account", { id: "c1", text: "Consulta la cuenta para preparar preguntas", reference: "" }),
+      makeComponent("query.document_content", "general", { id: "c2", text: "Consulta la biblioteca F5 para preparar preguntas",
+        reference: "", scope: "none", documentSpec: { source: "knowledge_library" } }),
+      makeComponent("content.discovery_questions", "general", { id: "c3", text: question,
+        reference: "", scope: "none", dependsOn: ["c1", "c2"] }),
+    ];
+    const knowledge = { status: "results", snippets: [{ text: "F5 protege aplicaciones y APIs." }] };
+    const original = runStructuredTextResearch.getMockImplementation();
+    runStructuredTextResearch.mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_content") return request.context.component.id === "c2"
+        ? { answer: "La biblioteca describe proteccion de APIs." }
+        : { questions: Array.from({ length: 8 }, (_, index) =>
+          `¿Que prioridad tiene el area ${index + 1}?\nObjetivo: explorar.\nProfundizar si confirma impacto.\nCuantificar: horas operativas.`) };
+      return original(request);
+    });
+    const result = await adapter(parts, { initialDocumentKnowledge: knowledge }).runTurn({
+      question, context: { accountId: snapshot.account.id },
+    });
+    expect(result.response.components.map((part) => part.status)).toEqual(["completed", "completed", "completed"]);
+    const requests = runStructuredTextResearch.mock.calls.map(([request]) => request);
+    const generation = requests.find((request) => request.schemaName === "customer_account_content" && request.context.component.id === "c3");
+    const audit = requests.find((request) => request.schemaName === "customer_account_content_audit" && request.context.component.id === "c3");
+    expect(generation.context.evidence[0].result).toMatchObject({ componentId: "c1", source: "crm" });
+    expect(audit.context.evidence).toEqual(generation.context.evidence);
+    expect(audit.context.documentKnowledge).toBe(knowledge);
+    expect(result.response.components[2].contentValidation.actualQuestionCount).toBe(8);
+    expect(result.response.operations).toEqual([]);
   });
   it("surfaces an exhausted AI budget as an error rather than asking the seller to clarify", async () => {
       runStructuredTextResearch.mockRejectedValue(Object.assign(new Error("Budget exhausted"), { code: "AI_BUDGET_EXCEEDED" }));

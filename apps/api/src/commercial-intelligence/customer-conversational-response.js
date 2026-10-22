@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
-import { CUSTOMER_FRIENDLY_STYLE_INSTRUCTIONS } from "./customer-presentation.js";
+import { CUSTOMER_FRIENDLY_STYLE_INSTRUCTIONS, insertCustomerProtectedText } from "./customer-presentation.js";
 
 const draftSchema = z.object({ answer: z.string().trim().min(1).max(24000) }).strict();
 const auditDimensions = ["faithfulness", "coverage", "uncertainty", "operationState", "conversation"];
@@ -22,6 +22,8 @@ const operationFields = [
 const select = (value, fields) => Object.fromEntries(fields.filter((key) =>
   value?.[key] !== undefined).map((key) => [key, value[key]]));
 const failure = (code) => Object.assign(new Error(code), { code });
+const identifiers = (text) => [...String(text).matchAll(/[\p{L}\p{N}]+(?:[._/-][\p{L}\p{N}]+)*/gu)]
+  .filter(([value]) => /\p{L}/u.test(value) && /\p{N}/u.test(value));
 
 export function hasSupportedConversationalPresentation(presentation) {
   const parsed = auditSchema.safeParse(presentation?.audit);
@@ -70,6 +72,15 @@ export async function composeCustomerConversationalResponse({
       response.documentListings?.length === 1 && response.documentListings[0].id === components[0].id &&
       response.documentListings[0].answer === response.answer) {
     return finish(response, "skipped", "verified_document_listing");
+  }
+  const integrated = contract.components.find((item) =>
+    item.category === "content.meeting_preparation" && item.dependsOn?.length &&
+    contract.components.every((other) => other.id === item.id ||
+      (other.category.startsWith("query.") && item.dependsOn.includes(other.id))));
+  const integratedResult = integrated && components.find((item) => item.id === integrated.id);
+  if (components.length === contract.components.length && components.every((item) => item.status === "completed") &&
+      integratedResult?.contentValidation?.reasonCode === "approved" && integratedResult.answer?.trim()) {
+    return finish({ ...response, answer: integratedResult.answer }, "skipped", "validated_integrated_content");
   }
   const protectedIds = new Set(contract.components.filter((item) =>
     item.category.startsWith("content.")).map((item) => item.id));
@@ -130,11 +141,14 @@ Empieza por la respuesta útil. Si piden un dato, responde brevemente; si piden 
 campos solicitados, cifras, fechas y nombres. En consultas compuestas conecta los resultados sin
 repetir encabezados técnicos. Mantén la diferencia entre consulta sin resultados, lectura incompleta,
 error y acceso restringido. No conviertas ausencia visible en inexistencia global.
+No conviertas oportunidades abiertas ni su importe en ventas o ingresos; conserva el alcance temporal.
 Conserva cada aclaración necesaria y sus alternativas, límites relevantes y datos pendientes.
 No repitas avisos de no escritura en consultas simples, pero conserva las condiciones de confirmación,
 los estados de propuestas y la ausencia de ejecución cuando sean relevantes.
 No reescribas entregables de contenido ya validados. Inserta exactamente una vez cada placeholder
 de protectedDeliverables en el lugar correspondiente; el servidor insertará su texto original.
+Si un entregable integra consultas de soporte mediante dependsOn, no antepongas otra version del
+briefing ni repitas sus hechos, hipotesis o recomendaciones: ubica su placeholder con una introduccion breve.
 Los placeholders document-list-* protegen listados seleccionables: conserva el bloque completo,
 sin parafrasearlo además. Los nombres de archivo, extensiones, fechas y posiciones son identificadores,
 no títulos editoriales. Listar archivos no significa haber leído su contenido ni poder enviarlos.
@@ -145,16 +159,15 @@ No copies además ese contenido. Devuelve solo answer, sin operaciones ni cambio
       subject: "Respuesta conversacional basada en resultados verificados",
       context, fields: [{ key: "answer", type: "string" }],
     }, diagnostics.generation));
-    let answer = draft.answer;
-    for (const item of deliverables) {
-      const placeholder = `[[deliverable:${item.id}]]`;
-      if (answer.split(placeholder).length !== 2) throw failure("CUSTOMER_B10_DELIVERABLE_MISMATCH");
-      answer = answer.replace(placeholder, () => item.answer);
-    }
-    if (/\[\[deliverable:/.test(answer)) throw failure("CUSTOMER_B10_DELIVERABLE_MISMATCH");
+    const answer = insertCustomerProtectedText(draft.answer, deliverables, "CUSTOMER_B10_DELIVERABLE_MISMATCH");
     if (answer.length > 48000) throw failure("CUSTOMER_B10_OUTPUT_LIMIT");
     const sourceNumbers = new Set((JSON.stringify(verifiedResult).match(/\d+(?:[.,:/-]\d+)*/g) || []));
-    if ((answer.match(/\d+(?:[.,:/-]\d+)*/g) || []).some((value) => !sourceNumbers.has(value))) {
+    const requestedIdentifiers = new Set(identifiers(question).map(([value]) => value));
+    const answerIdentifiers = identifiers(answer).filter(([value]) => requestedIdentifiers.has(value));
+    if ([...answer.matchAll(/\d+(?:[.,:/-]\d+)*/g)].some((match) =>
+      !sourceNumbers.has(match[0]) && !answerIdentifiers.some((identifier) =>
+        match.index >= identifier.index &&
+        match.index + match[0].length <= identifier.index + identifier[0].length))) {
       throw failure("CUSTOMER_B10_UNSUPPORTED_NUMBER");
     }
     stage = "audit";

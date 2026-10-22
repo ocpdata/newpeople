@@ -457,6 +457,8 @@
   overflow-wrap: anywhere;
 }
 .mi-agent-coach-message.is-coach {
+  min-width: 0;
+  box-sizing: border-box;
   align-self: flex-start;
   background: #fff;
   border: 1px solid #d7e4e8;

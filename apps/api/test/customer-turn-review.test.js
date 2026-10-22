@@ -29,6 +29,69 @@ const mismatch = () => ({
 const input = () => ({ question, classifierPrompt: { instruction: "Personalizada" }, user: { id: 0 } });
 
 describe("B3 interpretation coherence gate", () => {
+  it("keeps explanations and prioritization in the same discovery component with verified source dependencies", async () => {
+    const question = "Prepara ocho preguntas basadas en la cuenta y la documentacion de F5. Para cada una explica que entender, que respuesta justificaria profundizar y que impacto cuantificar. Prioriza las mas relevantes.";
+    const proposed = contract({}, [
+      component({ category: "query.account_summary", object: "account", reference: "", text: "Revisa la cuenta" }),
+      component({ id: "c2", category: "query.document_content", object: "general", scope: "none", reference: "",
+        documentSpec: { source: "knowledge_library" }, text: "Consulta la documentacion de F5" }),
+      component({ id: "c3", category: "content.discovery_questions", object: "general", scope: "none",
+        reference: "", text: question, dependsOn: ["c1", "c2"] }),
+    ]);
+    const interpret = vi.fn();
+    const reviewWithAI = vi.fn().mockResolvedValue(approved());
+    const result = await interpretReviewedCustomerTurn({ ...input(), question },
+      { initialContract: proposed, interpret, reviewWithAI });
+    expect(result.contract).toEqual(proposed);
+    expect(interpret).not.toHaveBeenCalled();
+    const request = reviewWithAI.mock.calls[0][0];
+    expect(request.systemPrompt).toContain("ni reportes MISSING_TASK");
+    expect(request.systemPrompt).toContain("consulta CRM de soporte");
+    expect(request.context.proposedContract.components[2].text).toBe(question);
+  });
+  it("repairs omission of the integrated deliverable instead of accepting two independent reads as a briefing", async () => {
+    const question = "Prepara un briefing para una reunion usando el CRM y la documentacion interna de F5 Distributed Cloud Services.";
+    const reads = [
+      component({ category: "query.account_summary", object: "account", text: "Revisa la cuenta", reference: "" }),
+      component({ id: "c2", category: "query.document_content", object: "general", scope: "none",
+        text: "Consulta la documentacion interna de F5", reference: "", documentSpec: { source: "knowledge_library" } }),
+    ];
+    const fixed = contract({}, [...reads, component({ id: "c3", category: "content.meeting_preparation",
+      object: "general", scope: "none", text: question, reference: "", dependsOn: ["c1", "c2"] })]);
+    const interpret = vi.fn().mockResolvedValue(fixed);
+    const reviewWithAI = vi.fn().mockResolvedValueOnce({
+      status: "contradiction", clarificationQuestion: "", issues: [{
+        code: "MISSING_TASK", componentId: "none", dimension: "coverage", evidence: "e1",
+        problem: "Falta el briefing integrado dependiente de las dos consultas.",
+      }],
+    }).mockResolvedValueOnce(approved());
+    const result = await interpretReviewedCustomerTurn({ ...input(), question },
+      { initialContract: contract({}, reads), interpret, reviewWithAI });
+    expect(result.contract).toEqual(fixed);
+    expect(result.review.repaired).toBe(true);
+    expect(reviewWithAI.mock.calls[0][0].systemPrompt).toContain("consultas separadas");
+    expect(reviewWithAI.mock.calls[0][0].systemPrompt).toContain("MISSING_TASK/coverage");
+  });
+  it("repairs a resolved summary of supplied facts into a semantic clarification before execution", async () => {
+    const question = "La cuenta tiene aplicaciones en varias nubes.";
+    const wrong = contract({}, [component({ category: "query.account_summary", object: "account",
+      text: question, reference: "" })]);
+    const fixed = { ...wrong, resolution: "clarification", clarificationQuestion: "Que deseas preparar con estos datos?" };
+    const interpret = vi.fn().mockResolvedValue(fixed);
+    const reviewWithAI = vi.fn().mockResolvedValueOnce({
+      status: "contradiction", clarificationQuestion: "", issues: [{
+        code: "UNSUPPORTED_TASK", componentId: "c1", dimension: "support", evidence: "e1",
+        problem: "Se aportaron datos, pero no se solicito un resumen.",
+      }],
+    }).mockResolvedValueOnce(approved());
+    const result = await interpretReviewedCustomerTurn({ ...input(), question },
+      { initialContract: wrong, interpret, reviewWithAI });
+    const executeComponent = vi.fn();
+    const turn = await runCustomerContractTurn({ contract: result.contract, question, executeComponent });
+    expect(turn.response.responseType).toBe("clarification");
+    expect(executeComponent).not.toHaveBeenCalled();
+    expect(reviewWithAI.mock.calls[0][0].systemPrompt).toContain("Si solo se aportan datos sin encargo");
+  });
   it("repairs a named file selection after a completed quotation list even if the AI reviewer approves", async () => {
     const question = "resume el archivo Cotizacion VVF 1-3 Años Access Quality Junio-26.pdf";
     const spec = { source: "quotation_document", documentReference: "Cotizacion VVF 1-3 Años Access Quality Junio-26.pdf" };

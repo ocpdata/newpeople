@@ -4678,7 +4678,7 @@ export function createCustomerAccountAdapter({
                 dependencyResults: libraryQuery ? [] : dependencies,
                 referenceMaterial: libraryQuery ? null : componentReferenceMaterial,
                 user, jobId, signal: getDeadlineSignal(budget.deadlineAt),
-                question: originalQuestion, documentKnowledge: turnDocumentKnowledge,
+                question: libraryQuery ? component.text : originalQuestion, documentKnowledge: turnDocumentKnowledge,
               });
               return {
                 response,

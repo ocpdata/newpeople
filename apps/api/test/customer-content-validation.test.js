@@ -19,10 +19,12 @@ describe("Final content constraints", () => {
     expect(requestedCustomerQuestionCount({ ...component, text: "Dos preguntas o tres preguntas" })).toBeNull();
     expect(requestedCustomerQuestionCount({ ...component, text: "Preguntas para 3 clientes" })).toBeNull();
   });
-  it("rejects duplicate, empty, multiline and bundled questions", () => {
+  it("allows requested annotations but rejects duplicate, empty and bundled questions", () => {
     expect(validateCustomerQuestions(questions, 3)).toBe(true);
+    expect(validateCustomerQuestions(questions.map((item) => `${item}\nObjetivo: explorar.\nProfundizar si confirma impacto.`), 3)).toBe(true);
     for (const invalid of [[], ["¿Una?", "¿Una?", "¿Otra?"], ["", "¿Dos?", "¿Tres?"],
-      ["¿Una?\n¿Otra?", "¿Dos?", "¿Tres?"], ["¿Una? ¿Otra?", "¿Dos?", "¿Tres?"]]) {
+      ["¿Una?\n¿Otra?", "¿Dos?", "¿Tres?"], ["¿Una? ¿Otra?", "¿Dos?", "¿Tres?"],
+      ["¿Una?\nObjetivo A", "¿Una?\nObjetivo B", "¿Otra?"]]) {
       expect(validateCustomerQuestions(invalid, 3)).toBe(false);
     }
   });
@@ -37,6 +39,39 @@ describe("Final content constraints", () => {
     expect(generate.mock.calls[2][0].context.constraints.requestedQuestionCount).toBe(3);
     expect(generate).toHaveBeenCalledTimes(3);
   });
+  it("preserves eight annotated discovery items with the same verified CRM and RAG in generation and audit", async () => {
+    const question = "Según la documentación interna de F5 Distributed Cloud Services y lo que sabemos de esta cuenta, prepara ocho preguntas de descubrimiento. Para cada una, explica qué buscamos entender, qué respuesta justificaría profundizar y qué impacto de negocio convendría cuantificar. Prioriza las preguntas más relevantes para este cliente.";
+    const items = Array.from({ length: 8 }, (_, index) =>
+      `¿Qué prioridad tiene el área ${index + 1}?\nBuscamos entender: el contexto actual.\nProfundizar si: confirma una limitación.\nImpacto por cuantificar: tiempo operativo.`);
+    const evidence = { source: "crm", componentId: "c1", answer: "Contacto visible; necesidades no confirmadas.", evidence: [] };
+    const knowledge = { status: "results", snippets: [{ text: "F5 DCS ofrece seguridad de APIs." }] };
+    const generate = vi.fn().mockResolvedValueOnce({ questions: items })
+      .mockResolvedValueOnce({ approved: "yes", reasonCode: "supported", feedback: "" });
+    const result = await run(generate, {
+      component: { ...component, text: question }, question,
+      dependencyResults: [{ category: "query.account_summary", verifiedEvidence: evidence }],
+      documentKnowledge: knowledge,
+    });
+    expect(result.responseType).toBe("informational");
+    expect(result.contentDiagnostics).toMatchObject({ requestedQuestionCount: 8, actualQuestionCount: 8 });
+    expect(result.answer.match(/^\d+\. ¿/gm)).toHaveLength(8);
+    expect(result.answer.match(/Buscamos entender:/g)).toHaveLength(8);
+    expect(result.answer.match(/Profundizar si:/g)).toHaveLength(8);
+    expect(result.answer.match(/Impacto por cuantificar:/g)).toHaveLength(8);
+    expect(generate.mock.calls[0][0].context.outputInstruction).toContain("MISMO elemento");
+    expect(generate.mock.calls[0][0].fields).toEqual([
+      expect.objectContaining({ key: "questions", minItems: 8, maxItems: 8 }),
+    ]);
+    for (const [request] of generate.mock.calls) {
+      expect(request.context.evidence).toEqual([{ toolName: "verifiedComponentResult", result: evidence }]);
+      expect(request.context.documentKnowledge).toBe(knowledge);
+      expect(request.context.currentDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    expect(generate.mock.calls[1][0].context.draft).toBe(result.answer);
+    expect(generate.mock.calls[1][0].systemPrompt).toContain("pasaje literal del borrador");
+    expect(generate.mock.calls[1][0].systemPrompt).toContain("no inventes afirmaciones rechazadas");
+    expect(generate.mock.calls[1][0].systemPrompt).toContain("Falta de una lista oficial");
+  });
   it("never returns the rejected draft after a second quantity failure", async () => {
     const generate = vi.fn().mockResolvedValue({ questions: ["rechazado"] });
     const result = await run(generate);
@@ -44,6 +79,14 @@ describe("Final content constraints", () => {
     expect(result.answer).not.toContain("rechazado");
     expect(result.contentDiagnostics).toMatchObject({ stage: "format", reasonCode: "quantity_mismatch", attempts: 2 });
     expect(generate).toHaveBeenCalledTimes(2);
+  });
+  it("identifies bundled interrogatives for the bounded repair rather than repeatedly asking for the already correct count", async () => {
+    const generate = vi.fn().mockResolvedValueOnce({ questions: ["¿Usan APIs? ¿Cuantas?", ...questions.slice(1)] })
+      .mockResolvedValueOnce({ questions }).mockResolvedValueOnce({ approved: "yes", reasonCode: "supported" });
+    const result = await run(generate);
+    expect(result.responseType).toBe("informational");
+    expect(generate.mock.calls[1][0].context.correction.feedback).toContain("Los elementos 1 contienen varias preguntas");
+    expect(generate).toHaveBeenCalledTimes(3);
   });
   it.each(["lost_constraint", "attribution_changed", "uncertainty_changed", "task_coverage", "unsupported_commitment"])(
     "repairs %s once using the same source and current request, without requiring RAG", async (reasonCode) => {

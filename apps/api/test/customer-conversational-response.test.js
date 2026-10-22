@@ -24,6 +24,53 @@ const provider = (answer = natural, audit = approved()) => vi.fn()
 afterEach(() => vi.useRealTimers());
 
 describe("B10 conversational response", () => {
+  it("shows only the audited integrated briefing when all other components are its supporting queries", async () => {
+    const original = input();
+    original.contract.components = [
+      { id: "c1", category: "query.account_summary" },
+      { id: "c2", category: "query.document_content" },
+      { id: "c3", category: "content.meeting_preparation", dependsOn: ["c1", "c2"] },
+    ];
+    original.response.components = original.contract.components.map((part) => ({
+      ...part, status: "completed", answer: part.id === "c3" ? "Briefing integrado y auditado" : "Consulta de soporte",
+      ...(part.id === "c3" ? { contentValidation: { reasonCode: "approved" } } : {}),
+    }));
+    original.response.answer = "Consulta de soporte\nConsulta de soporte\nBriefing integrado y auditado";
+    const research = vi.fn();
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe("Briefing integrado y auditado");
+    expect(result.response.presentation).toEqual({ status: "skipped", reasonCode: "validated_integrated_content" });
+    expect(result.response.components).toEqual(original.response.components);
+    expect(result.response.evidence).toEqual(original.response.evidence);
+    expect(research).not.toHaveBeenCalled();
+    original.contract.components[1].category = "content.discovery_questions";
+    original.response.components[1].category = "content.discovery_questions";
+    const mixedProvider = provider("[[deliverable:c2]]\n[[deliverable:c3]]");
+    const mixed = await composeCustomerConversationalResponse(original, { research: mixedProvider });
+    expect(mixed.response.presentation.status).toBe("completed");
+    expect(mixed.response.answer).toContain("Consulta de soporte");
+    expect(mixedProvider).toHaveBeenCalledTimes(2);
+  });
+  it("allows the exact requested F5 identifier without allowing new numeric claims", async () => {
+    const original = input();
+    original.question = "Prepara un briefing de F5 Distributed Cloud Services.";
+    original.response.answer = "No pude preparar el briefing; falta respaldo documental.";
+    const answer = "No pude preparar el briefing de F5 Distributed Cloud Services; falta respaldo documental.";
+    const research = provider(answer);
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.presentation.status).toBe("completed");
+    expect(research).toHaveBeenCalledTimes(2);
+    for (const rejected of [
+      `${answer} El ahorro es 50%.`,
+      "F50 ofrece la solucion.",
+      "El plazo es de 5 meses.",
+    ]) {
+      const attempt = provider(rejected);
+      const failure = await composeCustomerConversationalResponse(original, { research: attempt });
+      expect(failure.response.presentation.reasonCode).toBe("CUSTOMER_B10_UNSUPPORTED_NUMBER");
+      expect(attempt).toHaveBeenCalledTimes(1);
+    }
+  });
   const listing = "Documentos de la oportunidad:\n1. Seguimiento reunion Nginx - 2026_05_22 15_00 CST.docx · extracción: completed\n2. Notas de Gemini - 2026_04_13.docx · extracción: completed";
   const documentInput = () => {
     const original = input();
