@@ -264,6 +264,7 @@ export function customerRelationshipSpecPatch(spec = {}, question = "") {
 export const customerDocumentSpecSchema = z.object({
   changed: z.array(z.enum(["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target", "documentReference", "documentSelection"])).max(9).optional(),
   source: z.enum(["quotation", "provided_document", "knowledge_library", "opportunity_document", "quotation_document"]).optional(),
+  purpose: z.enum(["source_content", "associated_files"]).optional(),
   documentReference: z.string().trim().max(300).optional(),
   documentSelection: z.enum(["unspecified", "list", "all", "previous"]).optional(),
   opportunityReference: z.string().trim().max(300).optional(),
@@ -277,8 +278,11 @@ export const customerDocumentSpecSchema = z.object({
   unsupported: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
 }).strict();
 export function customerDocumentSpecPatch(spec = {}, question = "") {
-  return referenceSpecPatch(spec, question, ["opportunityReference", "quotationReference", "documentReference"],
-    "CUSTOMER_DOCUMENT_REFERENCE_MASK_RECONCILED");
+  return {
+    ...referenceSpecPatch(spec, question, ["opportunityReference", "quotationReference", "documentReference"],
+      "CUSTOMER_DOCUMENT_REFERENCE_MASK_RECONCILED"),
+    ...(spec.purpose ? { purpose: spec.purpose } : {}),
+  };
 }
 export const customerDocumentReportSpecSchema = z.object({
   changed: z.array(z.enum(["claim", "source", "mode", "questionReference"])).max(4).optional(),
@@ -313,6 +317,7 @@ export function customerPrioritySpecPatch(spec = {}) {
 export const CUSTOMER_COMPARISON_DIMENSIONS = Object.freeze(["amountUsd", "stageName", "commercialStatusCode", "closeDate", "associatedContact"]);
 export const customerComparisonSpecSchema = z.object({
   changed: z.array(z.enum(["set", "references", "positions", "dimensions", "calculations", "edit", "mode"])).max(7).optional(),
+  purpose: z.enum(["fields", "commercial_readiness"]).optional(),
   set: z.enum(["named", "previous_list"]).optional(),
   references: z.array(z.string().trim().min(1).max(300)).max(50).optional(),
   positions: z.array(z.number().int().min(1).max(50)).max(50).optional(),
@@ -330,7 +335,7 @@ export const customerComparisonSpecSchema = z.object({
 }).strict();
 export function customerComparisonSpecPatch(spec = {}) {
   return spec.changed ? Object.fromEntries(Object.entries(spec).filter(([key]) =>
-    ["clarification", "unsupported", "accountReference"].includes(key) || spec.changed.includes(key))) : spec;
+    ["purpose", "clarification", "unsupported", "accountReference"].includes(key) || spec.changed.includes(key))) : spec;
 }
 export const CUSTOMER_TREND_METRICS = Object.freeze([
   "created", "stage_movements", "stage_duration", "journey", "closures", "changes", "pipeline", "financial", "unspecified",
@@ -401,7 +406,11 @@ const componentSchema = z.object({
   listSpec: customerRecordListSpecSchema.optional(),
   historySpec: customerHistorySpecSchema.optional(),
   stageReadinessSpec: z.object({
-    purpose: z.enum(["requirements", "quotation_need_principle"]),
+    purpose: z.enum(["requirements", "recorded_needs", "quotation_need_principle"]),
+  }).strict().optional(),
+  accountSummarySpec: z.object({
+    purpose: z.enum(["overview", "recorded_needs"]),
+    opportunityReferences: z.array(z.string().trim().min(1).max(300)).max(50),
   }).strict().optional(),
   pendingSpec: customerPendingSpecSchema.optional(),
   relationshipSpec: customerRelationshipSpecSchema.optional(),
@@ -466,6 +475,101 @@ export function normalizeCustomerHistoryPurpose(contract) {
       code: "CUSTOMER_HISTORY_PURPOSE_RECONCILED", componentId: component.id, purpose: component.historySpec.purpose,
     });
     return { ...component, category: "query.history" };
+  }) };
+}
+
+export function normalizeCustomerComparisonPurpose(contract, { snapshot } = {}) {
+  const collections = contract.components.filter((item) => item.category === "query.stage_readiness" &&
+    item.stageReadinessSpec?.purpose === "recorded_needs" && item.scope === "collection");
+  const requests = contract.components.filter((item) =>
+    (item.category === "guidance.comparison" && item.comparisonSpec?.purpose === "commercial_readiness") ||
+    (item.category === "query.account_summary" && item.accountSummarySpec?.purpose === "recorded_needs") ||
+    collections.includes(item));
+  if (!requests.length || contract.resolution !== "resolved") return contract;
+  const clarify = (clarificationQuestion) => {
+    console.warn("[customer-turn] Commercial readiness comparison requires clarification", {
+      code: "CUSTOMER_READINESS_COMPARISON_CLARIFICATION", componentIds: requests.map((item) => item.id),
+    });
+    return { ...contract, resolution: "clarification", clarificationQuestion };
+  };
+  const referencesById = new Map();
+  for (const item of requests) {
+    const accountCollection = collections.includes(item);
+    const spec = item.comparisonSpec || { references: item.accountSummarySpec?.opportunityReferences };
+    if (accountCollection) {
+      const accountReference = item.reference.trim().toLocaleLowerCase("es");
+      if (accountReference && accountReference !== String(snapshot?.account?.name || "").trim().toLocaleLowerCase("es")) {
+        return clarify("Indica las oportunidades de la cuenta seleccionada cuyas necesidades deseas revisar.");
+      }
+      spec.references = [...new Map([...(snapshot?.opportunities || []), ...(snapshot?.inactiveOpportunities || [])]
+        .filter((record) => Number(record.accountId) === Number(snapshot?.account?.id))
+        .map((record) => [Number(record.id), record.name])).values()];
+    }
+    const accountReference = String(spec.accountReference || "").trim().toLocaleLowerCase("es");
+    if (accountReference && accountReference !== String(snapshot?.account?.name || "").trim().toLocaleLowerCase("es")) {
+      return clarify("La evaluación se limita a la cuenta seleccionada. ¿Qué oportunidades de esta cuenta deseas consultar?");
+    }
+    if (spec.clarification || spec.unsupported?.length) {
+      return clarify(spec.clarification || "La solicitud incluye fuentes o criterios adicionales a los requisitos de etapa. Delimita qué deseas consultar sin omitir esas partes.");
+    }
+    if (spec.calculations?.length || ["add", "remove"].includes(spec.edit)) {
+      return clarify("La solicitud combina preparación comercial con campos, cálculos o cambios de una comparación. Delimita las consultas que deseas realizar en este turno.");
+    }
+    const references = [...new Set(spec.references || [])];
+    if (spec.set === "previous_list" || spec.positions?.length || !references.length) {
+      return clarify("Indica los nombres de las oportunidades cuya preparación comercial deseas consultar.");
+    }
+    referencesById.set(item.id, references);
+  }
+  const count = contract.components.reduce((total, item) =>
+    total + (referencesById.get(item.id)?.length || 1), 0);
+  if (count > 4) {
+    return clarify("La evaluación requiere más de cuatro consultas. Delimita las oportunidades y fuentes que deseas revisar en este turno.");
+  }
+  let nextId = 1;
+  const ids = new Map(contract.components.map((item) => [
+    item.id, Array.from({ length: referencesById.get(item.id)?.length || 1 }, () => `c${nextId++}`),
+  ]));
+  const components = contract.components.flatMap((item) => {
+    const dependsOn = item.dependsOn.flatMap((id) => ids.get(id) || []);
+    const references = referencesById.get(item.id);
+    if (!references) return [{ ...item, id: ids.get(item.id)[0], dependsOn }];
+    console.warn("[customer-turn] Routing typed commercial readiness comparison", {
+      code: "CUSTOMER_READINESS_COMPARISON_RECONCILED", componentId: item.id, opportunityCount: references.length,
+    });
+    const { comparisonSpec: _comparisonSpec, accountSummarySpec, ...base } = item;
+    return references.map((reference, index) => ({
+      ...base, id: ids.get(item.id)[index], category: "query.stage_readiness",
+      object: "opportunity", reference, scope: "single", dependsOn, explicitAction: false,
+      stageReadinessSpec: { purpose: accountSummarySpec?.purpose === "recorded_needs" ||
+        item.stageReadinessSpec?.purpose === "recorded_needs" ? "recorded_needs" : "requirements" },
+    }));
+  });
+  return customerTurnContractSchema.parse({ ...contract, components });
+}
+
+export function normalizeCustomerDocumentPurpose(contract, { conversationContext, snapshot } = {}) {
+  const previous = conversationContext?.turnMemory?.contract;
+  const priorDocument = previous?.resolution === "resolved" && previous.components?.length === 1 &&
+    previous.components[0].category === "query.document_content" ? previous.components[0] : null;
+  const sameAccount = Number(snapshot?.account?.id) > 0 &&
+    Number(snapshot.account.id) === Number(conversationContext?.accountId);
+  return { ...contract, components: contract.components.map((item) => {
+    if (item.category !== "query.document_content") return item;
+    const spec = customerDocumentSpecPatch(item.documentSpec || {}, item.text);
+    const associatedSource = spec.quotationReference || ["quotation", "quotation_document"].includes(spec.source)
+      ? "quotation_document" : "opportunity_document";
+    const source = spec.purpose === "associated_files" ? associatedSource : spec.source;
+    const opportunityReference = spec.opportunityReference ||
+      (sameAccount && source === "opportunity_document" && priorDocument?.documentSpec?.opportunityReference &&
+        item.scope === "single" && item.continuationOf === priorDocument.id &&
+        ["continue", "answer_clarification", "select_candidate"].includes(contract.movement)
+        ? priorDocument.documentSpec.opportunityReference : "");
+    const object = { knowledge_library: "general", quotation: "quotation", provided_document: "document",
+      opportunity_document: "document", quotation_document: "document" }[source] || item.object;
+    return { ...item, object, documentSpec: { ...spec, ...(source ? { source } : {}),
+      ...(opportunityReference ? { opportunityReference } : {}),
+      ...(spec.purpose === "associated_files" ? { documentSelection: "list" } : {}) } };
   }) };
 }
 
@@ -759,7 +863,11 @@ export function getCustomerTurnContractFields() {
   const componentFields = fields.find((field) => field.key === "components").items.fields;
   const periodFields = componentFields.find((field) => field.key === "historySpec").fields.find((field) => field.key === "period");
   componentFields.push({ key: "stageReadinessSpec", type: "object", fields: [
-    { key: "purpose", type: "enum", enum: ["requirements", "quotation_need_principle"] },
+    { key: "purpose", type: "enum", enum: ["requirements", "recorded_needs", "quotation_need_principle"] },
+  ] });
+  componentFields.push({ key: "accountSummarySpec", type: "object", fields: [
+    { key: "purpose", type: "enum", enum: ["overview", "recorded_needs"] },
+    { key: "opportunityReferences", type: "array", items: { type: "string" } },
   ] });
   componentFields.push({ key: "pendingSpec", type: "object", fields: [
     { key: "changed", type: "array", items: { type: "enum", enum: ["mode", "asOf", "period", "sources",
@@ -816,6 +924,7 @@ export function getCustomerTurnContractFields() {
   ] });
   componentFields.push({ key: "comparisonSpec", type: "object", fields: [
     { key: "changed", type: "array", items: { type: "enum", enum: ["set", "references", "positions", "dimensions", "calculations", "edit", "mode"] } },
+    { key: "purpose", type: "enum", enum: ["fields", "commercial_readiness"] },
     { key: "set", type: "enum", enum: ["named", "previous_list"] },
     { key: "references", type: "array", items: { type: "string" } },
     { key: "positions", type: "array", items: { type: "number" } },
@@ -906,6 +1015,7 @@ export function getCustomerTurnContractFields() {
   componentFields.push({ key: "documentSpec", type: "object", fields: [
     { key: "changed", type: "array", items: { type: "enum", enum: ["source", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect", "target", "documentReference", "documentSelection"] } },
     { key: "source", type: "enum", enum: ["quotation", "provided_document", "knowledge_library", "opportunity_document", "quotation_document"] },
+    { key: "purpose", type: "enum", enum: ["source_content", "associated_files"] },
     { key: "documentReference", type: "string" },
     { key: "documentSelection", type: "enum", enum: ["unspecified", "list", "all", "previous"] },
     { key: "opportunityReference", type: "string" }, { key: "quotationReference", type: "string" },
@@ -927,7 +1037,7 @@ export function getCustomerTurnContractFields() {
   return fields;
 }
 
-export const CUSTOMER_TURN_PROVIDER_VERSION = "compact-v7";
+export const CUSTOMER_TURN_PROVIDER_VERSION = "compact-v9";
 function compactSpecification(field) {
   return { ...field,
     ...(field.type === "object" && ["listSpec", "period", "comparePeriod"].includes(field.key)
@@ -951,6 +1061,7 @@ function normalizeProviderValue(value, field) {
     .map(([key, entry]) => [key, normalizeProviderValue(entry, field.fields.find((child) => child.key === key))]));
 }
 const categorySpecifications = {
+  "query.account_summary": ["accountSummarySpec"],
   "query.stage_readiness": ["stageReadinessSpec"],
   "query.record_list": ["listSpec"],
   "query.record_search": ["listSpec"],
@@ -1266,13 +1377,49 @@ Pronóstico garantizado, causas no documentadas o importes de facturación van e
 Continuaciones "ahora mensual", "contra el trimestre anterior", "actualiza", "explica la caída"
 siguen G06 con métrica, filtros y conjunto; mode=analyze|explain|refresh.
 G05 guidance.comparison compara de 2 a 5 oportunidades distintas de la cuenta seleccionada, object=opportunity.
+Selecciona la capacidad por el objetivo comercial, no por el verbo "comparar".
+Un resumen de necesidades registradas NO es un resumen de importes, etapas y contactos.
+Para necesidades y su procedencia en oportunidades nombradas, usa query.stage_readiness
+por oportunidad con stageReadinessSpec.purpose=recorded_needs. Consulta respuestas de etapa
+e interacciones registradas, distinguiendo registros comerciales de declaraciones verificadas.
+Si eliges query.account_summary para ese objetivo, accountSummarySpec.purpose=recorded_needs
+y opportunityReferences conserva todos los nombres; el servidor lo coordina con esas consultas.
+Un resumen general usa accountSummarySpec.purpose=overview. Nunca cuentes oportunidades
+como necesidades confirmadas ni atribuyas resúmenes automáticos directamente al cliente.
+Para atribución literal cliente/vendedor desde una reunión, consulta su documento; una respuesta
+de etapa o un resumen de interacción no acredita por sí solo quién pronunció cada afirmación.
+Si pide contrastar qué se sabe, qué falta confirmar, madurez, preparación para avanzar o vacíos
+de varias oportunidades, usa query.stage_readiness independiente por cada oportunidad nombrada,
+con reference literal individual, scope=single, stageReadinessSpec.purpose=requirements y sin dependsOn
+entre ellas. Cada text pide evidencia registrada, respuestas, faltantes y siguiente paso sugerido de esa
+oportunidad; conserva en el texto los límites del pedido (no inferir duplicidad ni independencia).
+No uses G05 ni sus campos actuales como sustituto de ese diagnóstico. No declares la preparación
+comercial unsupported: los requisitos y respuestas se consultan mediante Q10.
+Ejemplo: "Compara Alfa, Alfa 3 Años y Beta por preparación comercial: qué sabemos y falta confirmar"
+produce tres componentes query.stage_readiness, referencias "Alfa", "Alfa 3 Años", "Beta".
+B10 integra sus resultados en una sola respuesta comparativa, sin una cuarta consulta redundante.
+No elijas una ganadora ni una probabilidad por importe o etapa. Si pide además historial, notas o
+documentos, agrega la consulta específica solo cuando cabe en los cuatro componentes; si no cabe,
+pide delimitar sin omitir oportunidades o fuentes. Más de cuatro oportunidades para Q10 requiere
+delimitar el conjunto explícitamente, nunca truncarlo.
 Usa comparisonSpec; changed SOLO para set,references,positions,dimensions,calculations,edit,mode.
+comparisonSpec.purpose distingue el OBJETIVO: fields compara campos actuales;
+commercial_readiness contrasta evidencia registrada, madurez para avanzar y faltantes de etapa.
+Si representas ese objetivo con guidance.comparison, marca purpose=commercial_readiness,
+set=named y conserva TODOS los nombres en references; el servidor lo coordina con Q10 por nombre.
+No marques fields para una pregunta de madurez aunque también aparezca el verbo comparar.
+purpose es clasificación semántica, no una dimensión ni un campo editable de changed.
+dimensions solo se aplica a purpose=fields: con commercial_readiness sus valores predeterminados
+no cambian el objetivo ni sustituyen Q10. Devuelve dimensions=[] para commercial_readiness.
+Si se piden además importes, cálculos u otros campos explícitos, conserva una comparación fields
+separada, además de las lecturas Q10, o pide delimitar si se exceden cuatro componentes.
 Conserva TODOS los nombres en references y deja component.reference=""; set=named.
 set=previous_list usa exactamente las posiciones indicadas en positions del listado previo;
 sin posiciones usa todos los mostrados, nunca los primeros cinco ni los no mostrados.
 Por defecto compara amountUsd,stageName,commercialStatusCode,closeDate; associatedContact SOLO si se pide.
-Pendientes, historial, productos, competidores, otras monedas y preparación comercial no están soportados en G05:
+Pendientes, historial, productos, competidores y otras monedas no están soportados en G05:
 indícalos en unsupported, sin sustituirlos por campos disponibles ni omitir partes de la solicitud.
+La preparación comercial no se ejecuta en G05: coordina Q10 por oportunidad como se indicó arriba.
 dimensions debe contener solo las dimensiones pedidas, no placeholders; [] explícito pide aclaración.
 edit=replace por defecto, add para añadir nombres, remove para quitar nombres o posiciones DE LA COMPARACIÓN.
 mode=compare normal, explain para explicar diferencias previas, refresh para actualizar.
@@ -1304,6 +1451,13 @@ vencidas en bloque separado de revisión y sin fecha en bloque de información i
 Top estricto: no exceder cantidad ni 50; advertir empate cortado. No atribuyas prioridad comercial integral
 a un orden por importe ni cierres registrados. Una explicación no debe reclasificarse content.explanation.
 Q09 query.document_content responde qué dice una fuente; no modifica ni envía documentos.
+Para LISTAR ARCHIVOS asociados a un registro, documentSpec.purpose=associated_files,
+documentSelection=list y source=opportunity_document o quotation_document, nunca knowledge_library.
+Para resumir o preguntar por contenido, purpose=source_content: conserva la fuente y la oportunidad.
+El nombre de un producto dentro del nombre de oportunidad NO solicita la biblioteca de ese producto.
+Una continuación "esta oportunidad" tras una consulta documental conserva la referencia de esa
+consulta, no su propósito de listar: movement=continue, scope=single, continuationOf del antecedente.
+Si solo hay un archivo candidato, puede leerse sin pedir una selección redundante.
 "Resume este archivo/cotización" pertenece a Q09; C05 content.summary transforma contenido o contexto,
 pero no debe eludir la selección y lectura de una fuente documental.
 Usa documentSpec, con changed SOLO para grupos pedidos: source,opportunityReference,quotationReference,
@@ -2190,6 +2344,8 @@ entregable de preguntas. No agregues lecturas CRM a preguntas puramente generale
     }), { question }),
     { question },
   ), { question });
+  parsed.data = normalizeCustomerComparisonPurpose(parsed.data, { question, snapshot });
+  parsed.data = normalizeCustomerDocumentPurpose(parsed.data, { conversationContext, snapshot });
   const scheduledActivity = parsed.data.components.find((item) => item.category === "action.schedule_activity");
   if (scheduledActivity &&
       !/\?|¿|\b(?:consulta|verifica|comprueba|dime|mu[eé]strame|qui[eé]n|cu[aá]les?)\b/i.test(String(question))) {

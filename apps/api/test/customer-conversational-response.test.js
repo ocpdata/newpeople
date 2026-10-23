@@ -24,6 +24,184 @@ const provider = (answer = natural, audit = approved()) => vi.fn()
 afterEach(() => vi.useRealTimers());
 
 describe("B10 conversational response", () => {
+  it("never rewrites an interpretation clarification into a claim that a document was not found", async () => {
+    const original = input();
+    original.contract.resolution = "clarification";
+    original.response.responseType = "clarification";
+    original.response.answer = "No pude conciliar la interpretación. Indica qué documento deseas consultar.";
+    const research = provider("No encontré información del documento.");
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(original.response.answer);
+    expect(result.response.presentation.reasonCode).toBe("verified_clarification");
+    expect(research).not.toHaveBeenCalled();
+  });
+  it("keeps an already audited CRM document answer and its partial coverage intact", async () => {
+    const original = input();
+    original.contract.components = [{ id: "c1", category: "query.document_content" }];
+    original.response.components = [{ id: "c1", category: "query.document_content", status: "completed" }];
+    original.response.documentCoverage = { source: "opportunity_document", partial: true };
+    original.response.documentValidation = { status: "supported" };
+    original.response.answer = "Cobertura parcial. Iván describe infraestructura; Yoeli presenta una propuesta.";
+    const research = provider();
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(original.response.answer);
+    expect(result.response.presentation.reasonCode).toBe("validated_crm_document");
+    expect(research).not.toHaveBeenCalled();
+  });
+  it("does not rewrite verified needs reads and their audited dependent explanation", async () => {
+    const original = input();
+    original.contract.components = [
+      { id: "c1", category: "query.stage_readiness", stageReadinessSpec: { purpose: "recorded_needs" } },
+      { id: "c2", category: "content.explanation", dependsOn: ["c1"] },
+    ];
+    original.response.components = [
+      { id: "c1", category: "query.stage_readiness", status: "completed" },
+      { id: "c2", category: "content.explanation", status: "completed", contentValidation: { reasonCode: "approved" } },
+    ];
+    original.response.stageReadinessResults = [{ componentId: "c1", readiness: { coverage: { source: "current_stage" } } }];
+    const research = provider();
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(original.response.answer);
+    expect(result.response.presentation.reasonCode).toBe("verified_needs_explanation");
+    expect(research).not.toHaveBeenCalled();
+  });
+  it.each(["completed", "error"])("preserves verified per-opportunity readiness instead of inventing negative facts: %s", async (status) => {
+    const original = input();
+    original.contract.components = ["Alfa", "Beta"].map((reference, index) => ({
+      id: `c${index + 1}`, category: "query.stage_readiness", reference,
+    }));
+    original.response.components = original.contract.components.map((item, index) => ({
+      id: item.id, category: item.category, status: index ? status : "completed",
+      answer: index && status === "error" ? "Beta: no pude completar la lectura."
+        : `${item.reference}: falta validar el criterio de siguiente paso, no significa que no exista.`,
+    }));
+    original.response.stageReadinessResults = original.contract.components.map((item, index) => ({
+      componentId: item.id, reference: item.reference, status: index ? status : "completed",
+      readiness: index && status === "error" ? null : { coverage: { source: "current_stage" } },
+    }));
+    original.response.answer = original.response.components.map((item) => item.answer).join("\n");
+    const research = provider("No se ha acordado un siguiente paso.");
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(original.response.answer);
+    expect(result.response.stageReadinessResults).toEqual(original.response.stageReadinessResults);
+    expect(result.response.presentation).toEqual({ status: "skipped", reasonCode: "verified_readiness_comparison" });
+    expect(result.diagnostics.calls).toBe(0);
+    expect(research).not.toHaveBeenCalled();
+  });
+  it("audits multi-opportunity evidence and retains explicit failures rather than treating them as missing data", async () => {
+    const original = input();
+    original.question = "Compara la preparación de Alfa, Beta y Gamma.";
+    original.contract.components = ["Alfa", "Beta", "Gamma"].map((reference, index) => ({
+      id: `c${index + 1}`, category: "query.stage_readiness", reference,
+    }));
+    original.response.stageReadiness = null;
+    original.response.stageReadinessResults = [
+      { componentId: "c1", reference: "Alfa", status: "completed", readiness: { opportunityId: 1 } },
+      { componentId: "c2", reference: "Beta", status: "error", readiness: null },
+      { componentId: "c3", reference: "Gamma", status: "completed", readiness: { opportunityId: 3 } },
+    ];
+    original.response.components = [
+      { id: "c1", category: "query.stage_readiness", status: "completed", answer: "Alfa: necesidad registrada; falta validar plazo." },
+      { id: "c2", category: "query.stage_readiness", status: "error", answer: "Beta: falló la lectura, no se puede concluir ausencia de información." },
+      { id: "c3", category: "query.stage_readiness", status: "completed", answer: "Gamma: falta registrar necesidad en la etapa actual." },
+    ];
+    original.response.answer = original.response.components.map((item) => item.answer).join("\n");
+    const answer = "Alfa: necesidad registrada; falta validar plazo.\nBeta: no se pudo consultar.\nGamma: falta documentar necesidad en la etapa actual. Cobertura parcial.";
+    const research = provider(answer);
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.presentation.status).toBe("completed");
+    expect(research.mock.calls[0][0].context.verifiedResult.stageReadinessResults)
+      .toEqual(original.response.stageReadinessResults);
+    expect(research.mock.calls[1][0].systemPrompt).toContain("fuente no consultada NO acredita ausencia");
+    expect(research.mock.calls[1][0].systemPrompt).toContain("no ocultar lecturas exitosas");
+    expect(research.mock.calls[1][0].systemPrompt).toContain('"no se ha acordado un siguiente paso" NO está respaldado');
+    expect(research.mock.calls[0][0].systemPrompt).toContain("Las actividades registradas");
+    expect(result.response.operations).toEqual([]);
+  });
+  it("keeps a capability limit when the draft invents an absence of account information", async () => {
+    const original = input();
+    original.response.answer = "Esta herramienta no consultó las respuestas de etapa.";
+    const research = provider("No tenemos información comercial de la cuenta.", {
+      ...approved(), status: "unsupported",
+      checks: { ...approved().checks, faithfulness: false, uncertainty: false },
+      reasons: ["Una fuente no consultada no demuestra falta de información."],
+    });
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(original.response.answer);
+    expect(result.response.presentation.reasonCode).toBe("CUSTOMER_B10_AUDIT_REJECTED");
+    expect(research).toHaveBeenCalledTimes(2);
+  });
+  it("allows exact requested comparison names in clarifications without authorizing their numeric parts", async () => {
+    const original = input();
+    original.question = "Compara Hardware Refresh 3 Años y Vrf 2027.";
+    original.contract.components = [{ id: "c1", category: "guidance.comparison",
+      comparisonSpec: { references: ["Hardware Refresh 3 Años", "Vrf 2027"] } }];
+    original.response.answer = "Indica las dimensiones que deseas comparar.";
+    const answer = "¿Qué dimensiones deseas comparar entre Hardware Refresh 3 Años y Vrf 2027?";
+    const research = provider(answer);
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.presentation.status).toBe("completed");
+    expect(research).toHaveBeenCalledTimes(2);
+    for (const rejected of [
+      "El plazo es de 3 años.", "El cierre está confirmado para 2027.",
+      "Compara Vrf 20270.", "Compara XVrf 2027.", "Compara Hardware Refresh 30 Años.",
+    ]) {
+      const attempt = provider(rejected);
+      const failure = await composeCustomerConversationalResponse(original, { research: attempt });
+      expect(failure.response.presentation.reasonCode).toBe("CUSTOMER_B10_UNSUPPORTED_NUMBER");
+      expect(attempt).toHaveBeenCalledTimes(1);
+    }
+  });
+  it.each([
+    ["USD 500,000", "USD 500000"],
+    ["USD 1,500,000", "USD 1500000.00"],
+    ["USD 190,000.50", "USD 190000.500"],
+    ["USD 20000", "USD 20,000"],
+    ["USD 0.00", "USD 0"],
+    ["USD 9007199254740993.10", "USD 9,007,199,254,740,993.1"],
+  ])("audits equivalent CRM numeric formats: %s -> %s", async (source, answer) => {
+    const original = input();
+    original.response.answer = source;
+    const research = provider(answer);
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.presentation.status).toBe("completed");
+    expect(result.response.answer).toBe(answer);
+    expect(research).toHaveBeenCalledTimes(2);
+    expect(research.mock.calls[1][0].context.proposedAnswer).toBe(answer);
+  });
+  it.each([
+    ["USD 500,000", "USD 500.000", "500.000"],
+    ["USD 500,000", "USD 500001", "500001"],
+    ["USD 190,000.50", "USD 190000.51", "190000.51"],
+    ["USD 9007199254740993", "USD 9007199254740992", "9007199254740992"],
+    ["Cierre 2027-01-31", "Cierre 2027-02-01", "2027-02-01"],
+    ["Cierre 2027-01-31", "Cierre 20270131", "20270131"],
+    ["USD 500,000", "USD 50,00", "50,00"],
+  ])("retains the verified answer and diagnoses unsupported numbers: %s -> %s", async (source, answer, number) => {
+    const original = input();
+    original.response.answer = source;
+    original.response.entities = { accountId: 22 };
+    original.response.evidence = [];
+    const research = provider(answer);
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(source);
+    expect(result.response.presentation.reasonCode).toBe("CUSTOMER_B10_UNSUPPORTED_NUMBER");
+    expect(result.diagnostics.generation.unsupportedNumbers).toEqual([number]);
+    expect(result.diagnostics.failure.stage).toBe("generation");
+    expect(research).toHaveBeenCalledTimes(1);
+  });
+  it("still rejects equivalent numeric formatting when the semantic audit fails", async () => {
+    const original = input();
+    original.response.answer = "Importe de oportunidad: USD 500,000.";
+    const research = provider("Ingresos facturados: USD 500000.", {
+      ...approved(), status: "unsupported", checks: { ...approved().checks, faithfulness: false },
+      reasons: ["El importe de una oportunidad no es facturación."],
+    });
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.answer).toBe(original.response.answer);
+    expect(result.response.presentation.reasonCode).toBe("CUSTOMER_B10_AUDIT_REJECTED");
+    expect(research).toHaveBeenCalledTimes(2);
+  });
   it("shows only the audited integrated briefing when all other components are its supporting queries", async () => {
     const original = input();
     original.contract.components = [

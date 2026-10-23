@@ -1999,6 +1999,53 @@ describe("Customer contract B6/B9/B10 integration", () => {
       }, { ...snapshot.opportunities[0], id: 999, name: "Hardware Refresh 3 Años" }],
     };
     const part = makeComponent("query.stage_readiness", "opportunity", { reference: "Hardware Refresh" });
+    it.each([true, false])("reads recorded needs with honest attribution and interaction permissions: %s", async (allowed) => {
+      const current = { ...stageSnapshot, interactions: [
+        { id: 70, accountId: 9001, opportunityId: 9101, title: "Llamada inicial", summary: "Se sugirió una demo de APIs." },
+        { id: 71, accountId: 9001, opportunityId: 999, title: "Otra oportunidad", summary: "No debe mezclarse." },
+      ], opportunities: [{
+        ...stageSnapshot.opportunities[0],
+        stageQuestions: [{ ...missingQuestion, answer: "Modernización de APIs y aplicaciones." }],
+      }] };
+      const result = await adapter([{ ...part, stageReadinessSpec: { purpose: "recorded_needs" } }], {
+        snapshot: current,
+        user: { id: 0, permissionSet: new Set([...permissions].filter((item) => allowed || item !== "interacciones.read")) },
+        snapshotQueryMetrics: [{ source: "interactions", truncated: false }],
+      }).runTurn({ question: "Resume necesidades y distingue lo dicho por cliente y vendedor.", context: { accountId: 9001 } });
+      expect(result.response.answer).toContain("Modernización de APIs");
+      expect(result.response.answer).toContain("no atribución literal");
+      expect(result.response.answer).not.toContain("No debe mezclarse");
+      expect(result.response.operations).toEqual([]);
+      if (allowed) {
+        expect(result.response.answer).toContain("Se sugirió una demo");
+        expect(result.qualityTrace.toolsUsed).toContain("searchInteractions");
+        expect(result.response.stageReadiness.coverage.interactionStatus).toBe("read");
+      } else {
+        expect(result.response.answer).not.toContain("Se sugirió una demo");
+        expect(result.response.stageReadiness.coverage.partial).toBe(true);
+        expect(result.qualityTrace.toolsUsed).not.toContain("searchInteractions");
+      }
+      expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it("synthesizes attribution from verified needs reads without a second CRM planner", async () => {
+      const result = await adapter([
+        { ...part, stageReadinessSpec: { purpose: "recorded_needs" } },
+        makeComponent("content.explanation", "general", {
+          id: "c2", reference: "", dependsOn: ["c1"],
+          text: "Distingue respuestas registradas de declaraciones confirmadas del cliente.",
+        }),
+      ], { snapshot: stageSnapshot }).runTurn({
+        question: "Resume necesidades y distingue su procedencia.", context: { accountId: 9001 },
+      });
+      expect(result.response.components.map((item) => item.category)).toEqual(["query.stage_readiness", "content.explanation"]);
+      expect(result.response.components.map((item) => item.status)).toEqual(["completed", "completed"]);
+      const requests = runStructuredTextResearch.mock.calls.map(([item]) => item);
+      const content = requests.find((item) => item.schemaName === "customer_account_content");
+      expect(content.context.evidence[0].toolName).toBe("verifiedComponentResult");
+      expect(content.systemPrompt).toContain("autoría no está verificada");
+      expect(requests.some((item) => item.schemaName === "customer_account_query_plan")).toBe(false);
+      expect(result.response.operations).toEqual([]);
+    });
     const run = (extra = {}, component = part) => adapter([component], { snapshot: stageSnapshot, ...extra }).runTurn({
       question: "¿Qué falta documentar en la etapa actual de Hardware Refresh, no la de 3 Años?",
       context: { accountId: 9001 },
@@ -2012,13 +2059,61 @@ describe("Customer contract B6/B9/B10 integration", () => {
       expect(result.response.stageReadiness.unansweredQuestions).toHaveLength(1);
       expect(result.response.stageReadiness.pendingCriteria).toHaveLength(2);
       expect(result.response.answer).toContain("Pregunta obligatoria sin respuesta");
-      expect(result.response.answer).toContain("También faltan estos requisitos");
+      expect(result.response.answer).toContain("Criterios pendientes de validación");
       expect(result.response.answer).toContain("Confirma con el cliente qué harán después antes de darlo por acordado.");
       expect(result.response.answer).not.toContain("Falta verificar");
       expect(result.response.answer).not.toContain("3 Años");
       expect(result.response.operations).toEqual([]);
       expect(result.qualityTrace.toolsUsed).toEqual(["getOpportunity", "getOpportunityReadiness"]);
       expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it("reads all three named opportunities with separate answers and gaps without a comparison shortcut", async () => {
+      const names = ["Hardware Refresh", "Hardware Refresh 3 Años", "Vrf 2027"];
+      const opportunities = names.map((name, index) => ({
+        ...stageSnapshot.opportunities[0], id: 9101 + index, name,
+        stageQuestions: [{ ...missingQuestion,
+          answer: index === 1 ? "Necesita soporte durante tres años." : "" }],
+      }));
+      const parts = names.map((reference, index) => ({ ...part, id: `c${index + 1}`, reference }));
+      const result = await adapter(parts, { snapshot: { ...stageSnapshot, opportunities } }).runTurn({
+        question: "Compara Hardware Refresh, Hardware Refresh 3 Años y Vrf 2027 por preparación comercial, no solamente por importe. ¿Qué sabemos y qué falta confirmar en cada una?",
+        context: { accountId: 9001 },
+      });
+      expect(result.response.components.map((item) => item.status)).toEqual(["completed", "completed", "completed"]);
+      expect(result.response.stageReadiness).toBeNull();
+      expect(result.response.entities.opportunityId).toBeNull();
+      expect(result.response.stageReadinessResults.map((item) => item.readiness.opportunityId)).toEqual([9101, 9102, 9103]);
+      expect(result.response.stageReadinessResults[1].readiness.recordedAnswers).toEqual([
+        { question: missingQuestion.prompt, answer: "Necesita soporte durante tres años." },
+      ]);
+      expect(result.response.stageReadinessResults[0].readiness.coverage.pendingCriteriaMeaning)
+        .toBe("requirements_awaiting_validation_not_proof_of_absence");
+      expect(result.response.answer).toContain("Un criterio pendiente no prueba");
+      for (const name of names) expect(result.response.answer).toContain(name);
+      expect(result.response.answer).toContain("Necesita soporte durante tres años.");
+      expect(result.response.answer).toContain("Siguiente paso sugerido");
+      expect(result.response.answer).toContain("no se consultaron cotizaciones");
+      expect(result.response.operations).toEqual([]);
+      expect(runStructuredTextResearch).not.toHaveBeenCalled();
+    });
+    it("keeps successful readiness reads when another opportunity lacks source data", async () => {
+      const names = ["Hardware Refresh", "Hardware Refresh 3 Años", "Vrf 2027"];
+      const opportunities = names.map((name, index) => ({
+        ...stageSnapshot.opportunities[0], id: 9101 + index, name,
+        ...(index === 1 ? { stageQuestions: undefined } : {}),
+      }));
+      const result = await adapter(names.map((reference, index) => ({
+        ...part, id: `c${index + 1}`, reference,
+      })), { snapshot: { ...stageSnapshot, opportunities } }).runTurn({
+        question: "¿Qué sabemos y qué falta confirmar en estas tres oportunidades?",
+        context: { accountId: 9001 },
+      });
+      expect(result.response.components.map((item) => item.status)).toEqual(["completed", "error", "completed"]);
+      expect(result.response.stageReadinessResults.map((item) => item.readiness?.opportunityId || null))
+        .toEqual([9101, null, 9103]);
+      expect(result.response.answer).toContain("No se recuperaron las preguntas");
+      expect(result.response.answer).toContain("Vrf 2027");
+      expect(result.response.operations).toEqual([]);
     });
     it("reports no pending requirements without advancing or inventing a next step", async () => {
       const opportunity = stageSnapshot.opportunities[0];

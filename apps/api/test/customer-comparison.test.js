@@ -32,6 +32,15 @@ describe("G05 selection and dimensions", () => {
     expect(resolve().ids).toEqual([1, 2]);
     expect(resolve().spec.dimensions).toEqual(["amountUsd", "stageName", "commercialStatusCode", "closeDate"]);
   });
+  it("accepts a redundant selected-account reference with a separately specified named set", () => {
+    const result = resolve({ references: items.slice(0, 3).map((item) => item.name) }, {
+      component: { ...component({ references: items.slice(0, 3).map((item) => item.name) }),
+        reference: "Totalplay" },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.ids).toEqual([1, 2, 3]);
+    expect(resolve({}, { component: { ...component({}), reference: "Totalplay" } }).error).toContain("por separado");
+  });
   it.each([
     [{}, "entre 2 y 5"],
     [{ references: [] }, "vacía"],

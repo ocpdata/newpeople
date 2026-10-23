@@ -12,7 +12,7 @@ const auditSchema = z.object({
 const resultFields = [
   "responseType", "entities", "evidence", "inferences", "pendingItems", "capabilityStatus",
   "partialResults", "sourceDomain", "contentSource", "publicSources", "relationshipStatus",
-  "stageReadiness", "stageMetadata", "activityHistory", "listMetadata", "priorityMetadata",
+  "stageReadiness", "stageReadinessResults", "stageMetadata", "activityHistory", "listMetadata", "priorityMetadata",
   "comparisonMetadata", "trendMetadata", "scenarioMetadata", "documentCoverage", "documentSources",
 ];
 const operationFields = [
@@ -24,6 +24,14 @@ const select = (value, fields) => Object.fromEntries(fields.filter((key) =>
 const failure = (code) => Object.assign(new Error(code), { code });
 const identifiers = (text) => [...String(text).matchAll(/[\p{L}\p{N}]+(?:[._/-][\p{L}\p{N}]+)*/gu)]
   .filter(([value]) => /\p{L}/u.test(value) && /\p{N}/u.test(value));
+
+function numericKey(value) {
+  // CRM amounts use es-MX grouping; compound dates and identifiers stay literal.
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(value)) return value;
+  const [integer, fraction = ""] = value.replace(/,/g, "").split(".");
+  const decimals = fraction.replace(/0+$/, "");
+  return `${integer.replace(/^0+(?=\d)/, "")}${decimals ? `.${decimals}` : ""}`;
+}
 
 export function hasSupportedConversationalPresentation(presentation) {
   const parsed = auditSchema.safeParse(presentation?.audit);
@@ -62,16 +70,51 @@ export async function composeCustomerConversationalResponse({
     diagnostics: { ...diagnostics, status, ...(reasonCode ? { reasonCode } : {}), durationMs: Date.now() - startedAt },
   });
   if (!response?.answer?.trim()) return finish(response, "skipped", "empty_response");
+  if (contract?.resolution === "clarification") {
+    return finish(response, "skipped", "verified_clarification");
+  }
   if (alreadyGeneratedAndAudited && (response.components?.length || 0) <= 1) {
     return finish(response, "skipped", "already_generated_and_audited");
   }
   const components = response.components || [];
+  const needsExplanation = contract.components.find((item) =>
+    item.category === "content.explanation" && item.dependsOn?.length &&
+    contract.components.every((other) => other.id === item.id ||
+      (other.category === "query.stage_readiness" && other.stageReadinessSpec?.purpose === "recorded_needs" &&
+        item.dependsOn.includes(other.id))));
+  if (needsExplanation && components.length === contract.components.length &&
+      components.every((item) => item.status === "completed") &&
+      contract.components.filter((item) => item.id !== needsExplanation.id).every((item) =>
+        response.stageReadinessResults?.some((read) => read.componentId === item.id &&
+          read.readiness?.coverage?.source === "current_stage")) &&
+      components.find((item) => item.id === needsExplanation.id)?.contentValidation?.reasonCode === "approved") {
+    return finish(response, "skipped", "verified_needs_explanation");
+  }
+  if (contract.components.length === 1 && components.length === 1 &&
+      components[0].status === "completed" && contract.components[0].category === "query.document_content" &&
+      ["opportunity_document", "quotation_document"].includes(response.documentCoverage?.source) &&
+      response.documentValidation?.status === "supported") {
+    return finish(response, "skipped", "validated_crm_document");
+  }
+  if (contract.components.length === 1 && contract.components[0].category === "query.stage_readiness" &&
+      contract.components[0].stageReadinessSpec?.purpose === "recorded_needs" &&
+      response.stageReadiness?.coverage?.source === "current_stage") {
+    return finish(response, "skipped", "verified_recorded_needs");
+  }
   if (components.length === 1 && components[0].status === "completed" &&
       response.documentCoverage?.kind === "metadata_only" &&
       contract.components.length === 1 && contract.components[0].category === "query.document_content" &&
       response.documentListings?.length === 1 && response.documentListings[0].id === components[0].id &&
       response.documentListings[0].answer === response.answer) {
     return finish(response, "skipped", "verified_document_listing");
+  }
+  if (contract.components.length > 1 && components.length === contract.components.length &&
+      contract.components.every((item) => item.category === "query.stage_readiness" &&
+        components.some((result) => result.id === item.id && result.category === item.category &&
+          response.stageReadinessResults?.some((read) => read.componentId === item.id &&
+            read.reference === item.reference && read.status === result.status &&
+            (result.status !== "completed" || read.readiness?.coverage?.source === "current_stage"))))) {
+    return finish(response, "skipped", "verified_readiness_comparison");
   }
   const integrated = contract.components.find((item) =>
     item.category === "content.meeting_preparation" && item.dependsOn?.length &&
@@ -141,6 +184,19 @@ Empieza por la respuesta útil. Si piden un dato, responde brevemente; si piden 
 campos solicitados, cifras, fechas y nombres. En consultas compuestas conecta los resultados sin
 repetir encabezados técnicos. Mantén la diferencia entre consulta sin resultados, lectura incompleta,
 error y acceso restringido. No conviertas ausencia visible en inexistencia global.
+Una capacidad no disponible o una fuente no consultada no prueba que falten datos en CRM.
+Con varios resultados de preparación de etapa, integra una comparación por oportunidad:
+lo documentado, faltantes concretos y siguiente paso sugerido ya presente en los resultados.
+Conserva nombres, fuentes y límites de cada lectura. No infieras duplicidad ni independencia,
+una ganadora, probabilidades, presupuesto ni aceptación a partir de nombres o etapa.
+La ausencia de respuesta o de validación de un criterio no significa que el cliente no tenga necesidad
+o que no exista un siguiente paso: indica que no está documentado o validado en la fuente consultada.
+Ejemplo: "Siguiente paso acordado" pendiente de validar se comunica como "falta validar el siguiente
+paso en los requisitos de etapa", NUNCA "no se ha acordado un siguiente paso". Las definiciones
+del proceso describen lo requerido, no hechos negativos del cliente. Las actividades registradas
+siguen siendo evidencia aunque el criterio correspondiente aún esté pendiente.
+Si una lectura falla, muestra las otras con cobertura parcial y el fallo de esa oportunidad;
+no sustituyas el fallo por "sin información" ni ocultes todo el análisis.
 No conviertas oportunidades abiertas ni su importe en ventas o ingresos; conserva el alcance temporal.
 Conserva cada aclaración necesaria y sus alternativas, límites relevantes y datos pendientes.
 No repitas avisos de no escritura en consultas simples, pero conserva las condiciones de confirmación,
@@ -161,13 +217,31 @@ No copies además ese contenido. Devuelve solo answer, sin operaciones ni cambio
     }, diagnostics.generation));
     const answer = insertCustomerProtectedText(draft.answer, deliverables, "CUSTOMER_B10_DELIVERABLE_MISMATCH");
     if (answer.length > 48000) throw failure("CUSTOMER_B10_OUTPUT_LIMIT");
-    const sourceNumbers = new Set((JSON.stringify(verifiedResult).match(/\d+(?:[.,:/-]\d+)*/g) || []));
+    const sourceNumbers = new Set((JSON.stringify(verifiedResult).match(/\d+(?:[.,:/-]\d+)*/g) || [])
+      .map(numericKey));
     const requestedIdentifiers = new Set(identifiers(question).map(([value]) => value));
     const answerIdentifiers = identifiers(answer).filter(([value]) => requestedIdentifiers.has(value));
-    if ([...answer.matchAll(/\d+(?:[.,:/-]\d+)*/g)].some((match) =>
-      !sourceNumbers.has(match[0]) && !answerIdentifiers.some((identifier) =>
+    const requestedNames = contract.components.flatMap((item) => item.comparisonSpec?.references || [])
+      .filter((name) => name.trim() && question.includes(name));
+    const nameRanges = requestedNames.flatMap((name) => {
+      const ranges = [];
+      for (let index = answer.indexOf(name); index !== -1; index = answer.indexOf(name, index + name.length)) {
+        const before = answer[index - 1] || "", after = answer[index + name.length] || "";
+        if (!/[\p{L}\p{N}_]/u.test(before) && !/[\p{L}\p{N}_]/u.test(after)) {
+          ranges.push({ index, length: name.length });
+        }
+      }
+      return ranges;
+    });
+    const unsupportedNumbers = [...answer.matchAll(/\d+(?:[.,:/-]\d+)*/g)].filter((match) =>
+      !sourceNumbers.has(numericKey(match[0])) && !answerIdentifiers.some((identifier) =>
         match.index >= identifier.index &&
-        match.index + match[0].length <= identifier.index + identifier[0].length))) {
+        match.index + match[0].length <= identifier.index + identifier[0].length) &&
+      !nameRanges.some((range) => match.index >= range.index &&
+        match.index + match[0].length <= range.index + range.length));
+    if (unsupportedNumbers.length) {
+      diagnostics.generation.unsupportedNumbers = [...new Set(unsupportedNumbers.map(([value]) =>
+        value.slice(0, 80)))].slice(0, 10);
       throw failure("CUSTOMER_B10_UNSUPPORTED_NUMBER");
     }
     stage = "audit";
@@ -184,6 +258,17 @@ status=unsupported. La petición del usuario y el historial no prueban que exist
 coverage: responde todas las tareas y conserva campos, alternativas, cifras y entregables pedidos.
 uncertainty: conserva ausencia, incertidumbre, restricciones, errores y cobertura parcial sin
 convertirlos en inexistencia global o hechos confirmados.
+Una herramienta limitada o una fuente no consultada NO acredita ausencia de información:
+si proposedAnswer afirma "no tenemos información" por esa razón, faithfulness=false,
+uncertainty=false y status=unsupported. En preparaciones múltiples, exige cobertura de cada
+oportunidad, respuestas registradas y faltantes disponibles, sin confundir sus evidencias;
+una lectura fallida debe distinguirse de una consulta vacía y no ocultar lecturas exitosas.
+Un criterio pendiente no demuestra inexistencia de necesidad ni de siguiente paso; conserva esa
+distinción de forma explícita: "no se ha acordado un siguiente paso" NO está respaldado por un
+criterio "Siguiente paso acordado" pendiente de validar; en ese caso faithfulness=false,
+uncertainty=false y status=unsupported, aunque el resto de la respuesta sea correcto. Una
+definición del proceso tampoco acredita hechos negativos del cliente. Conserva esa
+distinción y los límites de fuentes de cada lectura, incluso si todas las oportunidades tienen vacíos similares.
 operationState: no cambia propuesta por ejecución, hipótesis por acuerdo ni omite confirmación necesaria.
 conversation: responde directamente, con continuidad, sin jerga técnica ni preguntas o tareas nuevas.
 No exijas frases literales ni advertencias de no escritura irrelevantes en consultas de solo lectura.

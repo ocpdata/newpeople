@@ -19,6 +19,22 @@ const continuation = (pendingComponentIds = []) => ({
 });
 
 describe("B3 shared interpretation context", () => {
+  it("recovers an unambiguous opportunity identity from a previous documentary task without inheriting its wrong source", () => {
+    const context = { accountId: 9001, turnMemory: { contract: {
+      ...contract, components: [{ ...component, category: "query.document_content", object: "general",
+        reference: "", documentSpec: { source: "knowledge_library", opportunityReference: "Renovación Alfa" } }],
+    }, pendingComponentIds: [] } };
+    const prepare = (conversationContext) => buildCustomerInterpretationContext({
+      question: "Resume el documento de reunión de esta oportunidad.", snapshot, conversationContext,
+    }).interpretationContext;
+    const actual = prepare(context);
+    expect(actual.entityFocus.opportunity).toEqual({
+      name: "Renovación Alfa", origin: "previous_document_reference", role: "identity_only",
+    });
+    expect(actual.documentSelection).toBeNull();
+    expect(actual.documentList).toBeNull();
+    expect(prepare({ ...context, accountId: 9999 }).entityFocus.opportunity).toBeNull();
+  });
   it("exposes the last quotation document list even before any file is selected", () => {
     const documentMemory = { accountId: 9001, source: "quotation_document", opportunityId: 9101,
       quotationId: 18, versionId: 22, versionNumber: 1, documentCandidates: [92, 91], documentIds: [] };

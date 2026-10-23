@@ -14,6 +14,23 @@
   justify-content: flex-end;
   gap: 14px;
   min-width: 0;
+  flex-wrap: wrap;
+}
+.mi-agent-customer-chat {
+  padding: 16px;
+}
+.mi-agent-customer-chat > .mi-agent-section-heading {
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 0;
+  padding-bottom: 8px;
+}
+.mi-agent-customer-chat > .mi-agent-section-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.mi-agent-customer-chat-header-actions > .mi-agent-secondary-button {
+  padding: 8px 12px;
 }
 .mi-agent-customer-chat-header-actions > .mi-agent-secondary-button {
   flex: 0 0 auto;
@@ -195,31 +212,6 @@
   border-radius: 5px;
   background: #fff;
 }
-.mi-agent-customer-chat-toolbox {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin: 12px 0 4px;
-  padding: 10px 0;
-  border-bottom: 1px solid #e2eaed;
-}
-.mi-agent-customer-chat-prompts {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  min-width: 0;
-}
-.mi-agent-customer-chat-toolbox-label {
-  color: #5a7184;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-.mi-agent-customer-chat-toolbox .mi-agent-coach-suggestions {
-  margin-top: 0;
-}
 .mi-agent-customer-public-research {
   display: grid;
   grid-template-columns: 16px auto;
@@ -319,6 +311,23 @@
   order: 12;
   margin-top: 12px;
 }
+.mi-agent-customer-chat .mi-agent-coach-form {
+  align-items: flex-start;
+}
+.mi-agent-customer-chat .mi-agent-coach-form > textarea {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 90px;
+  min-height: 90px;
+  padding: 12px 14px;
+  border: 1px solid #cbd9df;
+  border-radius: 6px;
+  font: inherit;
+  line-height: 1.4;
+  color: #173b52;
+  resize: vertical;
+}
 .mi-agent-customer-chat-file-picker {
   position: relative;
   display: inline-flex;
@@ -374,8 +383,9 @@
   .mi-agent-customer-chat .mi-agent-coach-form {
     flex-wrap: wrap;
   }
-  .mi-agent-customer-chat .mi-agent-coach-form > input {
+  .mi-agent-customer-chat .mi-agent-coach-form > textarea {
     flex: 1 1 100%;
+    width: 100%;
   }
   .mi-agent-customer-chat-file-name {
     flex: 1 1 120px;
@@ -1022,15 +1032,6 @@
   }
   .mi-agent-coach-foundation-toggle {
     margin-left: auto;
-  }
-  .mi-agent-customer-chat-toolbox {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .mi-agent-customer-chat-prompts {
-    display: grid;
-    justify-items: start;
-    width: 100%;
   }
   .mi-agent-customer-public-research {
     align-self: flex-start;

@@ -8663,10 +8663,21 @@ export default function MiAgentPage({
           >
             <div className="mi-agent-section-heading">
               <div>
-                <span className="mi-agent-section-label">Chat de cuenta</span>
-                <h3>Pregúntale sobre esta cuenta</h3>
+                <h3>Chat de cuenta</h3>
               </div>
               <div className="mi-agent-customer-chat-header-actions">
+                <label className="mi-agent-customer-public-research">
+                  <input
+                    type="checkbox"
+                    checked={customerChatPublicResearch}
+                    onChange={(event) =>
+                      setCustomerChatPublicResearch(event.target.checked)
+                    }
+                    disabled={customerChatLoading || customerChatSessionLoading || !hasCustomerContext}
+                  />
+                  <span>Incluir fuentes públicas</span>
+                  <small>Requiere gobierno y permiso</small>
+                </label>
                 <button
                   type="button"
                   className="mi-agent-secondary-button"
@@ -8698,67 +8709,6 @@ export default function MiAgentPage({
                   />
                 </label>
               </div>
-            </div>
-            <div className="mi-agent-customer-chat-toolbox">
-              <div className="mi-agent-customer-chat-prompts">
-                <span className="mi-agent-customer-chat-toolbox-label">
-                  Preguntas sugeridas
-                </span>
-                <div className="mi-agent-coach-suggestions">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      askCustomerChat("Resume esta cuenta para mi reunión.")
-                    }
-                    disabled={
-                      customerChatLoading ||
-                      customerChatSessionLoading ||
-                      customerChatTurnBlocking ||
-                      !hasCustomerContext
-                    }
-                  >
-                    Resumen para reunión
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      askCustomerChat("¿Qué riesgos debo atender?")
-                    }
-                    disabled={
-                      customerChatLoading ||
-                      customerChatSessionLoading ||
-                      customerChatTurnBlocking ||
-                      !hasCustomerContext
-                    }
-                  >
-                    Riesgos
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      askCustomerChat(
-                        "¿Qué oportunidades de expansión existen?",
-                      )
-                    }
-                    disabled={customerChatLoading || customerChatSessionLoading ||
-                      customerChatTurnBlocking || !hasCustomerContext}
-                  >
-                    Expansión
-                  </button>
-                </div>
-              </div>
-              <label className="mi-agent-customer-public-research">
-                <input
-                  type="checkbox"
-                  checked={customerChatPublicResearch}
-                  onChange={(event) =>
-                    setCustomerChatPublicResearch(event.target.checked)
-                  }
-                  disabled={customerChatLoading || customerChatSessionLoading || !hasCustomerContext}
-                />
-                <span>Incluir fuentes públicas</span>
-                <small>Requiere gobierno y permiso</small>
-              </label>
             </div>
             <form
               className="mi-agent-coach-form"
@@ -8796,7 +8746,9 @@ export default function MiAgentPage({
                   </button>
                 </div>
               ) : null}
-              <input
+              <textarea
+                rows={3}
+                aria-label="Pregunta sobre la cuenta"
                 value={customerChatQuestion}
                 onChange={(event) =>
                   setCustomerChatQuestion(event.target.value)

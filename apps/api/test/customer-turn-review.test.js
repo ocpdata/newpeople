@@ -29,6 +29,71 @@ const mismatch = () => ({
 const input = () => ({ question, classifierPrompt: { instruction: "Personalizada" }, user: { id: 0 } });
 
 describe("B3 interpretation coherence gate", () => {
+  it("retries a reviewer that falsely claims the literal documentary instructions were omitted", async () => {
+    const question = "Resume el documento de reunión. Distingue necesidades del cliente, propuestas del vendedor y pendientes. Señala lectura parcial.";
+    const proposed = contract({}, [component({ text: question, category: "query.document_content", object: "document",
+      documentSpec: { source: "opportunity_document", aspect: "summary", opportunityReference: "Alfa" } })]);
+    const reviewWithAI = vi.fn().mockResolvedValueOnce({
+      status: "contradiction", clarificationQuestion: "", issues: [{
+        code: "MISSING_TASK", dimension: "coverage", componentId: "c1", evidence: "e1",
+        problem: "Falta distinguir cliente y vendedor y señalar lectura parcial.", requiredCategory: "query.document_content",
+      }],
+    }).mockResolvedValueOnce(approved());
+    const interpret = vi.fn();
+    const result = await interpretReviewedCustomerTurn({ ...input(), question },
+      { initialContract: proposed, interpret, reviewWithAI });
+    expect(result.contract).toEqual(proposed);
+    expect(result.review.validationFailures).toHaveLength(1);
+    expect(reviewWithAI).toHaveBeenCalledTimes(2);
+    expect(reviewWithAI.mock.calls[1][0].context.reviewValidationFeedback.validationIssues[0].message)
+      .toContain("literalmente");
+    expect(interpret).not.toHaveBeenCalled();
+  });
+  it("does not accept a missing-task claim without identifying the allegedly omitted task", async () => {
+    const reviewWithAI = vi.fn().mockResolvedValueOnce({
+      status: "contradiction", clarificationQuestion: "", issues: [{
+        code: "MISSING_TASK", dimension: "coverage", componentId: "c1", evidence: "e1",
+        problem: "Falta distinguir la procedencia.", requiredCategory: "none",
+      }],
+    }).mockResolvedValueOnce(approved());
+    const interpret = vi.fn();
+    const result = await interpretReviewedCustomerTurn(input(),
+      { initialContract: contract(), interpret, reviewWithAI });
+    expect(result.review.validationFailures).toHaveLength(1);
+    expect(result.review.status).toBe("approved");
+    expect(interpret).not.toHaveBeenCalled();
+  });
+  it("still repairs a genuinely missing email task after a documentary query", async () => {
+    const question = "Resume el documento y redacta un correo para el cliente.";
+    const proposed = contract({}, [component({ text: question, category: "query.document_content", object: "document",
+      documentSpec: { source: "opportunity_document", aspect: "summary", opportunityReference: "Alfa" } })]);
+    const fixed = contract({}, [...proposed.components, component({ id: "c2", category: "content.email_draft", dependsOn: ["c1"] })]);
+    const reviewWithAI = vi.fn().mockResolvedValueOnce({
+      status: "contradiction", clarificationQuestion: "", issues: [{
+        code: "MISSING_TASK", dimension: "coverage", componentId: "c1", evidence: "e1",
+        problem: "Falta el correo solicitado.", requiredCategory: "content.email_draft",
+      }],
+    }).mockResolvedValueOnce(approved());
+    const result = await interpretReviewedCustomerTurn({ ...input(), question },
+      { initialContract: proposed, interpret: vi.fn().mockResolvedValue(fixed), reviewWithAI });
+    expect(result.contract).toEqual(fixed);
+    expect(result.review.validationFailures).toHaveLength(0);
+  });
+  it("accepts independent stage evidence queries for a comparative commercial assessment", async () => {
+    const question = "Compara Alfa, Alfa 3 Años y Beta: qué sabemos y qué falta confirmar para avanzar.";
+    const proposed = contract({}, ["Alfa", "Alfa 3 Años", "Beta"].map((reference, index) =>
+      component({ id: `c${index + 1}`, category: "query.stage_readiness", reference,
+        text: `Consulta evidencia registrada y faltantes de ${reference}.`,
+        stageReadinessSpec: { purpose: "requirements" } })));
+    const interpret = vi.fn();
+    const reviewWithAI = vi.fn().mockResolvedValue(approved());
+    const result = await interpretReviewedCustomerTurn({ ...input(), question },
+      { initialContract: proposed, interpret, reviewWithAI });
+    expect(result.contract).toEqual(proposed);
+    expect(interpret).not.toHaveBeenCalled();
+    expect(reviewWithAI.mock.calls[0][0].systemPrompt).toContain("No exijas guidance.comparison");
+    expect(reviewWithAI.mock.calls[0][0].systemPrompt).toContain("no se omitan");
+  });
   it("keeps explanations and prioritization in the same discovery component with verified source dependencies", async () => {
     const question = "Prepara ocho preguntas basadas en la cuenta y la documentacion de F5. Para cada una explica que entender, que respuesta justificaria profundizar y que impacto cuantificar. Prioriza las mas relevantes.";
     const proposed = contract({}, [

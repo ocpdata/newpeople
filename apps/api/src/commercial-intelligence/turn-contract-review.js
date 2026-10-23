@@ -18,6 +18,7 @@ const issueSchema = z.object({
   dimension: z.enum(dimensions),
   evidence: z.string().min(1).max(500),
   problem: z.string().trim().min(1).max(500),
+  requiredCategory: z.enum(["none", ...CUSTOMER_TURN_CATEGORIES.map((item) => item.code)]).optional(),
 }).strict();
 const reviewSchema = z.object({
   status: z.enum(["approved", "contradiction", "ambiguous"]),
@@ -34,9 +35,10 @@ const reviewSchema = z.object({
   }
   for (const [index, issue] of value.issues.entries()) {
     if ((issue.code === "MISSING_TASK" && issue.dimension !== "coverage") ||
+        (issue.code === "MISSING_TASK" && issue.requiredCategory === "none") ||
         (issue.code === "UNSUPPORTED_TASK" && (issue.dimension !== "support" || issue.componentId === "none"))) {
       ctx.addIssue({ code: "custom", path: ["issues", index],
-        message: "MISSING_TASK requiere coverage; UNSUPPORTED_TASK requiere support y un componentId distinto de none." });
+        message: "MISSING_TASK requiere coverage y una categoría de tarea omitida (no none); UNSUPPORTED_TASK requiere support y un componentId distinto de none." });
     }
   }
 });
@@ -51,6 +53,7 @@ function reviewFields(evidenceOptions) {
       { key: "dimension", type: "enum", enum: dimensions },
       { key: "evidence", type: "enum", enum: evidenceOptions },
       { key: "problem", type: "string" },
+      { key: "requiredCategory", type: "enum", enum: ["none", ...CUSTOMER_TURN_CATEGORIES.map((item) => item.code)] },
     ] } },
   ];
 }
@@ -80,12 +83,22 @@ coverage/support/fidelity a partir de sus códigos. No devuelvas indicadores adi
 No dupliques un cambio de detalle como tres errores: si se pide tres preguntas y hay cinco, la tarea
 está presente y respaldada; SOLO falla fidelidad (LOST_CONSTRAINT), no cobertura ni respaldo.
 Si ya hay borrador y sobra una programación, falta respetar "no programar", NO falta otra tarea.
+Para MISSING_TASK, requiredCategory identifica la categoría de la tarea realmente omitida;
+para otros códigos usa none. No uses MISSING_TASK para un atributo del texto ya conservado.
 No uses MISSING_TASK para una exclusión incumplida: usa UNSUPPORTED_TASK para la tarea agregada,
 y LOST_CONSTRAINT solo si hace falta señalar otra restricción perdida.
 Cada cita debe ser PERTINENTE, no solo existente: problem debe explicar qué campo/componente del
 contrato omite, añade o altera lo pedido por esa cita. Para una tarea inventada, cita la petición
 que acota el encargo y explica por qué NO respalda el componente adicional.
 No confundas que una cita mencione una acción con que solicite ejecutarla.
+Una evaluación comparativa de preparación, madurez, qué se sabe o qué falta confirmar de varias
+oportunidades se cubre con query.stage_readiness por oportunidad, referencias individuales y sin
+dependencias entre ellas; B10 integra esos resultados. No exijas guidance.comparison, que solo compara
+campos actuales, ni una cuarta tarea de contenido para esa consulta. Comprueba que no se omitan
+oportunidades ni restricciones; una comparación solo de importe/etapa no cubre ese objetivo.
+Para resumir necesidades registradas, consultas Q10 con purpose=recorded_needs conservan
+respuestas de etapa e interacciones con sus límites de atribución. Un resumen de conteos e importes
+no cubre la procedencia de necesidades ni acredita declaraciones del cliente.
 Compara el entregable pedido con category, el objeto con object, la fuente con documentSpec.source
 y el seguimiento con movement/continuationOf. Detecta tareas omitidas, negaciones, cantidades y
 restricciones perdidas, así como herencia indebida de propósito o fuente. Conservar entidad no es conservar tarea.
@@ -118,6 +131,14 @@ Detalle general no significa solo notas; redactar no significa enviar ni modific
 Una cotización mencionada como fuente no prueba necesidades ni hechos del cliente.
 provided_document/document, quotation/quotation, knowledge_library/general,
 opportunity_document/document y quotation_document/document son pares de consulta documental.
+Listar documentos asociados a una oportunidad exige opportunity_document y documentSelection=list,
+no knowledge_library aunque el nombre de la oportunidad contenga un producto como F5.
+La biblioteca aporta conocimiento general, nunca acredita archivos asociados a un registro.
+En una consulta documental, las distinciones y límites escritos en component.text son instrucciones
+del entregable: no requieren componentes ni campos separados. Lee el texto completo antes de afirmar
+que falta distinguir cliente/vendedor/pendientes o advertir cobertura parcial. Si el texto coincide
+literalmente con latestMessage y la fuente/objeto son correctos, no denuncies MISSING_TASK por
+supuestamente faltar esos mismos atributos. No evalúes una respuesta futura imaginada.
 Los archivos ya guardados en oportunidad/cotización no requieren adjuntarse de nuevo.
 No confundas quotation (datos estructurados) con quotation_document (archivos asociados a una versión).
 Preguntar qué archivos están asociados a una cotización, cuáles son sus nombres o qué adjuntos
@@ -308,6 +329,18 @@ si faltan, MISSING_TASK/coverage. Las explicaciones y prioridad ya presentes en 
           }),
         } : result;
         const validatedReview = reviewSchema.parse(resolvedResult);
+        if (validatedReview.issues.some((issue) => {
+          const component = contract.components.find((item) => item.id === issue.componentId);
+          return issue.code === "MISSING_TASK" && issue.dimension === "coverage" &&
+            component?.category === "query.document_content" &&
+            issue.requiredCategory === component.category &&
+            ["opportunity_document", "quotation_document"].includes(component.documentSpec?.source) &&
+            component.object === "document" && component.text.trim() === input.question.trim() &&
+            ["summary", "question"].includes(component.documentSpec?.aspect);
+        })) {
+          throw Object.assign(new Error("El revisor atribuyó una omisión al texto documental que conserva literalmente la solicitud completa. Contrasta campos y texto, no una respuesta hipotética."),
+            { code: "CUSTOMER_B3_REVIEW_INVALID_EVIDENCE" });
+        }
         if (validatedReview.issues.some((issue) =>
           (issue.componentId !== "none" && !contract.components.some((part) => part.id === issue.componentId)) ||
           !evidenceTexts.some((text) => String(text || "").includes(issue.evidence)))) {

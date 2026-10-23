@@ -121,6 +121,23 @@ describe("Q04 deterministic collections", () => {
     expect(response.answer).not.toContain("hidden@example.invalid");
     expect(response.answer).toContain("solo activados");
   });
+  it("keeps opportunity names when only commercial columns are requested", () => {
+    const response = render({ columns: ["amountUsd", "stageName", "closeDate", "associatedContact"] });
+    expect(response.recordList.spec.columns).toEqual(["amountUsd", "stageName", "closeDate", "associatedContact"]);
+    expect(response.answer).toContain("1. Nombre: Alfa | Importe (USD): USD 0 | Etapa: Waiting");
+    expect(response.answer).toContain("2. Nombre: Beta | Importe (USD): USD 500");
+    expect(response.recordList.ids).toEqual([10, 11, 13, 12]);
+  });
+  it("keeps contact identity without adding unrequested contact details", () => {
+    const response = render({}, {
+      object: "contact", spec: spec({ columns: ["positionTitle"] }, "contact"),
+      readToolResults: [{ toolName: "searchContacts", result: [
+        { id: 20, accountId: 1, name: "Elena", positionTitle: "Gerente", email: "hidden@example.invalid" },
+      ] }],
+    });
+    expect(response.answer).toContain("1. Nombre: Elena | Cargo: Gerente");
+    expect(response.answer).not.toContain("hidden@example.invalid");
+  });
   it("distinguishes a verified empty collection from an unknown or truncated one", () => {
     const empty = { readToolResults: [{ toolName: "searchOpportunities", result: [] }] };
     expect(render({}, empty).answer).toContain("No hay coincidencias con esos filtros");

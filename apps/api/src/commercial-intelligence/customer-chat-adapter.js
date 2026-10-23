@@ -4670,7 +4670,11 @@ export function createCustomerAccountAdapter({
               qualityTrace: { toolsUsed: [], diagnostics: { answerGeneration: { source: "content_purpose_clarification" } } },
               channelIntentRouting: null,
             };
-            if (libraryQuery || (component.object === "general" &&
+            const dependencySynthesis = component.object === "general" && dependencies.length > 0 &&
+              component.category === "content.explanation" &&
+              !["prioritySpec", "comparisonSpec", "trendSpec", "scenarioSpec", "documentReportSpec", "documentSpec", "historySpec"]
+                .some((key) => component[key]);
+            if (libraryQuery || dependencySynthesis || (component.object === "general" &&
                 ["content.discovery_questions", "content.meeting_preparation", "content.value_argument"].includes(component.category))) {
               const response = await generateCustomerContent({
                 component, readToolResults: [],
@@ -5647,6 +5651,66 @@ export function createCustomerAccountAdapter({
                 return stop("No pude leer de forma completa la preparación de esta oportunidad. No significa que no tenga requisitos pendientes.");
               }
               const readiness = reads[1].result;
+              const recordedAnswers = opportunity.stageQuestions
+                .filter((item) => String(item.answer ?? "").trim())
+                .map((item) => ({ question: String(item.prompt || ""), answer: String(item.answer) }));
+              if (component.stageReadinessSpec?.purpose === "recorded_needs") {
+                const interactionsAllowed = permissionGranted(permissions, "interacciones.read") &&
+                  scoped.permissions?.canReadInteractions !== false && contractRules.scope?.interactionSearchAllowed !== false &&
+                  intent?.allowedTools.includes("searchInteractions");
+                let interactions = [], interactionStatus = "restricted_or_unavailable";
+                if (interactionsAllowed && budget.remainingReadQueries > 0 && Date.now() < budget.deadlineAt) {
+                  budget.remainingReadQueries -= 1;
+                  const execute = () => executeCustomerReadTool({
+                    toolName: "searchInteractions", args: { accountId: scoped.account.id },
+                    snapshot: scoped, businessRules: contractRules,
+                  });
+                  const read = executionTrace ? executionTrace.spanSync({
+                    from: "B7", to: "B8", label: "Consultar interacciones para necesidades registradas",
+                    parentSpanId: turnTraceParentSpanId, input: {
+                      toolName: "searchInteractions", accountId: scoped.account.id, opportunityId: opportunity.id,
+                    },
+                  }, execute, (result) => ({ toolName: "searchInteractions", failed: Boolean(result.error) })) : execute();
+                  tools.push("searchInteractions");
+                  if (!read.error && !read.queryFailed && Array.isArray(read.result)) {
+                    interactions = read.result.filter((item) =>
+                      Number(item.accountId) === Number(scoped.account.id) &&
+                      (!item.opportunityId || Number(item.opportunityId) === Number(opportunity.id)));
+                    interactionStatus = "read";
+                  } else interactionStatus = "failed";
+                } else if (interactionsAllowed) interactionStatus = "budget_exhausted";
+                const interactionMetrics = snapshotQueryMetrics.filter((item) => item.source === "interactions");
+                const partial = interactionStatus !== "read" || !interactionMetrics.length ||
+                  interactionMetrics.some((item) => item.errorCode || item.truncated !== false);
+                const coverage = { source: "current_stage", partial, interactionStatus,
+                  unqueriedSources: ["opportunity_notes", "quotations", "documents"] };
+                const interactionLimits = {
+                  restricted_or_unavailable: "sin permisos o herramienta disponible",
+                  failed: "falló la lectura",
+                  budget_exhausted: "presupuesto o plazo agotado",
+                };
+                return finish({
+                  answer: [
+                    `${opportunity.name} — información registrada en ${readiness.currentStage.name}.`,
+                    "Respuestas guardadas en las preguntas de etapa (autoría no verificada; no atribución literal ni confirmación independiente del cliente):",
+                    ...(recordedAnswers.length ? recordedAnswers.map((item) => `- ${item.question}: ${item.answer}`) :
+                      ["- No se recuperaron respuestas registradas en esta etapa."]),
+                    "Interacciones registradas (sus resúmenes pueden contener análisis automático; no equivalen a declaraciones textuales del cliente):",
+                    ...interactions.map((item) => `- ${item.title} [interacción ${item.id}; ${item.opportunityId ? "asociada a esta oportunidad" : "de la cuenta, sin asociación a una oportunidad"}]: ${item.summary || "Sin resumen disponible."}`),
+                    ...(interactionStatus !== "read" ? [`No se completó la consulta de interacciones: ${interactionLimits[interactionStatus]}. No demuestra ausencia de necesidades.`] :
+                      !interactions.length ? ["No se encontraron interacciones en el alcance consultado."] : []),
+                    "Para separar necesidades expresadas por el cliente de propuestas del vendedor, hay que contrastar las intervenciones en el documento de la reunión. Esta lectura no confirma esa atribución.",
+                    `Cobertura${partial ? " parcial" : ""}: respuestas de la etapa actual e interacciones autorizadas; no se leyeron notas, cotizaciones ni documentos.`,
+                    "No se guardó ningún cambio CRM.",
+                  ].join("\n"),
+                  responseType: "informational", operations: [], recommendedActions: [], pendingItems: [], inferences: [],
+                  stageReadiness: { opportunityId: Number(opportunity.id), opportunityName: opportunity.name,
+                    currentStage: readiness.currentStage, recordedAnswers, interactions, coverage },
+                  partialResults: { isPartial: partial, sources: partial ? ["interactions"] : [] },
+                  evidence: tools.map((tool) => `${tool}: lectura autorizada para ${opportunity.name} en la cuenta ${scoped.account.id}.`),
+                  entities: { accountId: Number(scoped.account.id), opportunityId: Number(opportunity.id) },
+                }, tools);
+              }
               const questions = readiness.pendingItems.filter((item) => item.evidence.some((entry) =>
                 entry.label === "Pregunta definida por el proceso comercial"));
               const criteria = readiness.pendingItems.filter((item) => !questions.includes(item));
@@ -5656,19 +5720,33 @@ export function createCustomerAccountAdapter({
                 advance_with_caution: "Se puede avanzar, pero conviene atender los puntos de atención.",
               }[readiness.recommendation] || "Revisa la recomendación de avance en Oportunidades.";
               const lines = [`${opportunity.name} — etapa actual: ${readiness.currentStage.name}.`,
+                "Cobertura: datos y requisitos de la etapa actual; no se consultaron cotizaciones, notas ni documentos en esta lectura.",
+                ...(recordedAnswers.length ? ["Respuestas registradas (no confirmación independiente del cliente):",
+                  ...recordedAnswers.map((item) => `- ${item.question}: ${item.answer}`)] :
+                  ["No hay respuestas registradas en las preguntas de la etapa actual consultada."]),
                 questions.length ? "Para avanzar, hace falta responder:" : "Preguntas:",
                 ...(questions.length ? questions.map((item) => `- ${item.title} — ${item.detail}`) : ["- No hay preguntas sin respuesta en la lectura actual."]),
-                criteria.length ? "También faltan estos requisitos del proceso:" : "Requisitos revisados:",
+                criteria.length ? "Criterios pendientes de validación en el proceso:" : "Requisitos revisados:",
                 ...(criteria.length ? criteria.map((item) => `- ${item.title} — ${item.detail}`) : ["- No hay criterios pendientes en la lectura actual."]),
+                "Un criterio pendiente no prueba que el cliente carezca de necesidad o que no haya acordado un siguiente paso; falta validar su cumplimiento en esta fuente.",
                 ...(readiness.confirmedProgress.length ? ["Lo que ya está anotado:", ...readiness.confirmedProgress.map((item) => `- ${item.title} — ${item.detail}`)] : []),
                 ...(readiness.risks.length ? ["Puntos de atención:", ...readiness.risks.map((item) => `- ${item.title} — ${item.detail}`)] : []),
                 readinessSummary,
+                questions.length || criteria.length
+                  ? "Siguiente paso sugerido: revisar con el cliente las preguntas sin respuesta y los requisitos pendientes indicados; documentar únicamente lo que confirme."
+                  : "Siguiente paso sugerido: confirmar con el cliente la vigencia de lo registrado y acordar el próximo hito; completar requisitos no equivale a una aprobación de compra.",
                 "Confirma con el cliente qué harán después antes de darlo por acordado.",
                 "Esta consulta no guarda respuestas ni cambia la etapa."];
               return finish({
                 answer: lines.join("\n"), responseType: "informational", operations: [], recommendedActions: [], inferences: [],
                 pendingItems: readiness.pendingItems.map((item) => item.title),
-                stageReadiness: { opportunityId: Number(opportunity.id), currentStage: readiness.currentStage,
+                stageReadiness: { opportunityId: Number(opportunity.id), opportunityName: opportunity.name,
+                  currentStage: readiness.currentStage, recordedAnswers,
+                  coverage: {
+                    source: "current_stage",
+                    pendingCriteriaMeaning: "requirements_awaiting_validation_not_proof_of_absence",
+                    unqueriedSources: ["opportunity_notes", "quotations", "documents"],
+                  },
                   confirmedProgress: readiness.confirmedProgress, pendingItems: readiness.pendingItems,
                   risks: readiness.risks, recommendation: readiness.recommendation, rationale: readiness.rationale,
                   unansweredQuestions: questions, pendingCriteria: criteria },

@@ -36,6 +36,155 @@ const reportArgs = () => ({
 });
 
 describe("Customer turn contract", () => {
+  it("routes a recorded-needs account request to evidence reads rather than counting opportunities", async () => {
+    const question = "Resume qué necesidades quedaron registradas en Grupo Lactalis y cuáles están relacionadas con Servicios de Pentest y Monitoreo de Api'S F5 Dcs. Distingue lo expresado por el cliente de las sugerencias del equipo comercial o del análisis automático.";
+    const names = ["Servicios de Pentest", "Monitoreo de Api'S F5 Dcs"];
+    const result = await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.account_summary", {
+        object: "account", text: question, accountSummarySpec: { purpose: "recorded_needs", opportunityReferences: names },
+      })])) });
+    expect(result.components.map((item) => item.category)).toEqual(["query.stage_readiness", "query.stage_readiness"]);
+    expect(result.components.map((item) => item.reference)).toEqual(names);
+    expect(result.components.every((item) => item.stageReadinessSpec.purpose === "recorded_needs" && item.text === question)).toBe(true);
+  });
+  it("expands a typed account-wide needs query without treating the account name as one opportunity", async () => {
+    const records = [snapshot.opportunities[0], { ...snapshot.opportunities[0], id: 9102, name: "API Security" }];
+    const result = await interpretCustomerTurn({ question: "Resume necesidades registradas en la cuenta.",
+      snapshot: { ...snapshot, opportunities: records }, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.stage_readiness", {
+        scope: "collection", reference: snapshot.account.name, stageReadinessSpec: { purpose: "recorded_needs" },
+      })])) });
+    expect(result.components.map((item) => item.reference)).toEqual(records.map((item) => item.name));
+    expect(result.components.every((item) => item.scope === "single")).toBe(true);
+  });
+  it("routes a typed associated-file listing away from product knowledge even with a product in its name", async () => {
+    const question = "Lista los documentos asociados a Monitoreo de Api'S F5 Dcs.";
+    const result = await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.document_content", {
+        object: "general", text: question, reference: "", documentSpec: {
+          changed: ["source", "opportunityReference"], purpose: "associated_files", source: "knowledge_library",
+          opportunityReference: "Monitoreo de Api'S F5 Dcs",
+        },
+      })])) });
+    expect(result.components[0]).toMatchObject({ object: "document", documentSpec: {
+      purpose: "associated_files", source: "opportunity_document", documentSelection: "list",
+      opportunityReference: "Monitoreo de Api'S F5 Dcs",
+    } });
+  });
+  it("does not change a remembered quotation-file listing to opportunity files", async () => {
+    const result = await interpretCustomerTurn({ question: "Lista sus archivos asociados.", snapshot,
+      classifierPrompt: { instruction: "" },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.document_content", {
+        object: "document", reference: "", documentSpec: { source: "quotation_document", purpose: "associated_files" },
+      })])) });
+    expect(result.components[0].documentSpec.source).toBe("quotation_document");
+    expect(result.components[0].documentSpec.documentSelection).toBe("list");
+  });
+  it.each([true, false])("only inherits a documentary reference from the same account: %s", async (sameAccount) => {
+    const question = "Resume el documento de la reunión del 12 de agosto asociado a esta oportunidad. Distingue cliente y vendedor; señala lectura parcial.";
+    const prior = contract([component("query.document_content", { documentSpec: {
+      source: "opportunity_document", opportunityReference: "Monitoreo de Api'S F5 Dcs", documentSelection: "list",
+    } })]);
+    const result = await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" },
+      conversationContext: { accountId: sameAccount ? snapshot.account.id : 999999,
+        turnMemory: { contract: prior, pendingComponentIds: [] } },
+      classifyWithAI: vi.fn().mockResolvedValue(contract([component("query.document_content", {
+        text: question, object: "general", scope: "single", reference: "", continuationOf: "c1",
+        documentSpec: { source: "opportunity_document", purpose: "source_content", aspect: "summary" },
+      })], { movement: "continue" })) });
+    expect(result.components[0].object).toBe("document");
+    expect(result.components[0].documentSpec.opportunityReference || "").toBe(sameAccount ? "Monitoreo de Api'S F5 Dcs" : "");
+    expect(result.components[0].documentSpec.documentSelection).not.toBe("list");
+    expect(result.components[0].text).toBe(question);
+  });
+  it.each([
+    "¿Cuál está más madura para avanzar: Alfa, Alfa 3 Años o Beta?",
+    "Contrasta lo que sabemos y falta confirmar de Alfa, Alfa 3 Años y Beta.",
+  ])("routes a typed commercial-readiness comparison independently of phrasing: %s", async (question) => {
+    const names = ["Alfa", "Alfa 3 Años", "Beta"];
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("guidance.comparison", { text: question, reference: "", comparisonSpec: {
+        changed: ["set", "references", "dimensions"], purpose: "commercial_readiness", set: "named", references: names,
+        dimensions: ["amountUsd", "stageName"], positions: [9], calculations: [], edit: "remove",
+      } }),
+    ]));
+    const result = await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" }, classifyWithAI });
+    expect(result.resolution).toBe("resolved");
+    expect(result.components.map((item) => item.reference)).toEqual(names);
+    expect(result.components.every((item) => item.category === "query.stage_readiness" &&
+      item.stageReadinessSpec.purpose === "requirements" && !item.dependsOn.length)).toBe(true);
+    expect(result.components.every((item) => !item.comparisonSpec && item.text.includes(question))).toBe(true);
+  });
+  it("preserves dependent tasks when expanding a typed readiness comparison", async () => {
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("guidance.comparison", { comparisonSpec: {
+        purpose: "commercial_readiness", references: ["Alfa", "Beta"],
+      } }),
+      component("content.email_draft", { id: "c2", dependsOn: ["c1"] }),
+    ]));
+    const result = await interpretCustomerTurn({ question: "Evalúa Alfa y Beta y redacta un correo según eso.",
+      snapshot, classifierPrompt: { instruction: "" }, classifyWithAI });
+    expect(result.components.map((item) => item.id)).toEqual(["c1", "c2", "c3"]);
+    expect(result.components[2].dependsOn).toEqual(["c1", "c2"]);
+  });
+  it.each([
+    { references: ["Alfa", "Beta", "Gamma", "Delta", "Epsilon"] },
+    { references: [], set: "previous_list", positions: [1, 2] },
+    { references: ["Alfa", "Beta"], accountReference: "Otra cuenta" },
+    { references: ["Alfa", "Beta"], unsupported: ["historial"] },
+    { references: ["Alfa", "Beta"], calculations: [{ kind: "ratio", fromPosition: 1, toPosition: 2 }] },
+    { references: ["Alfa", "Beta"], edit: "remove" },
+  ])("clarifies readiness without silently dropping requested scope: %j", async (spec) => {
+    const classifyWithAI = vi.fn().mockResolvedValue(contract([
+      component("guidance.comparison", { comparisonSpec: { purpose: "commercial_readiness", ...spec } }),
+    ]));
+    const result = await interpretCustomerTurn({ question: "Revisa la preparación comercial.", snapshot,
+      classifierPrompt: { instruction: "" }, classifyWithAI });
+    expect(result.resolution).toBe("clarification");
+    expect(result.clarificationQuestion).not.toBe("");
+    expect(result.components).toHaveLength(1);
+    const executeComponent = vi.fn();
+    await runCustomerContractTurn({ contract: result, question: "Revisa la preparación comercial.", executeComponent });
+    expect(executeComponent).not.toHaveBeenCalled();
+  });
+  it("leaves a field comparison unchanged with explicit semantic purpose", async () => {
+    const proposed = contract([component("guidance.comparison", { comparisonSpec: {
+      purpose: "fields", references: ["Alfa", "Beta"], dimensions: ["amountUsd"],
+    } })]);
+    const result = await interpretCustomerTurn({ question: "Compara el importe de Alfa y Beta.", snapshot,
+      classifierPrompt: { instruction: "" }, classifyWithAI: vi.fn().mockResolvedValue(proposed) });
+    expect(result).toEqual(proposed);
+  });
+  it.each([
+    "Compara Alfa, Alfa 3 Años y Beta por preparación comercial: qué sabemos y qué falta confirmar.",
+    "¿Cuál está más madura y qué necesita cada una para avanzar: Alfa, Alfa 3 Años y Beta?",
+  ])("coordinates independent readiness queries rather than a field comparison: %s", async (question) => {
+    const names = ["Alfa", "Alfa 3 Años", "Beta"];
+    const parts = names.map((reference, index) => component("query.stage_readiness", {
+      id: `c${index + 1}`, reference, scope: "single", dependsOn: [],
+      text: `Consulta lo documentado, faltantes y siguiente paso sugerido de ${reference}.`,
+      stageReadinessSpec: { purpose: "requirements" },
+    }));
+    const classifyWithAI = vi.fn().mockResolvedValue(contract(parts));
+    const interpreted = await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" }, classifyWithAI });
+    expect(interpreted.components.map((part) => part.reference)).toEqual(names);
+    expect(interpreted.components.every((part) => part.category === "query.stage_readiness")).toBe(true);
+    expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("Selecciona la capacidad por el objetivo comercial");
+    const executeComponent = vi.fn(async ({ component: part }) =>
+      part.reference === "Alfa 3 Años" ? engine("No se pudo consultar esta oportunidad.", "error")
+        : engine(`${part.reference}: necesidad documentada; confirmar alcance.`, "informational", {
+          stageReadiness: { opportunityId: part.reference === "Alfa" ? 1 : 3 },
+        }));
+    const result = await runCustomerContractTurn({ contract: interpreted, question, executeComponent });
+    expect(executeComponent).toHaveBeenCalledTimes(3);
+    expect(result.response.components.map((part) => part.status)).toEqual(["completed", "error", "completed"]);
+    expect(result.response.stageReadiness).toBeNull();
+    expect(result.response.stageReadinessResults.map((part) => part.reference)).toEqual(names);
+    expect(result.response.stageReadinessResults[1].readiness).toBeNull();
+    expect(result.response.answer).toContain("Alfa: necesidad documentada");
+    expect(result.response.answer).toContain("Beta: necesidad documentada");
+    expect(result.response.operations).toEqual([]);
+  });
   it.each([
     { failedId: "c1", reason: "CRM access denied" },
     { failedId: "c2", reason: "RAG retrieval error" },
@@ -943,6 +1092,7 @@ describe("Customer turn contract", () => {
     }
   });
   const specialized = {
+    "query.account_summary": ["accountSummarySpec"],
     "query.stage_readiness": ["stageReadinessSpec"],
     "query.record_list": ["listSpec"], "query.record_search": ["listSpec"], "query.history": ["historySpec"],
     "query.pending_items": ["pendingSpec"],
@@ -1433,7 +1583,7 @@ describe("Customer turn contract", () => {
     expect(result.components[0].comparisonSpec).toEqual({ references: ["Alfa", "Beta"], accountReference: "", clarification: "", unsupported: [] });
     const fields = classifyWithAI.mock.calls[0][0].fields.find((field) => field.key === "components").items.fields;
     expect(fields.find((field) => field.key === "comparisonSpec").fields.map((field) => field.key)).toEqual([
-      "changed", "set", "references", "positions", "dimensions", "calculations", "edit", "mode", "accountReference", "clarification", "unsupported",
+      "changed", "purpose", "set", "references", "positions", "dimensions", "calculations", "edit", "mode", "accountReference", "clarification", "unsupported",
     ]);
     expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("G05 guidance.comparison");
   });
@@ -1716,7 +1866,7 @@ describe("Customer turn contract", () => {
     });
     const fields = classifyWithAI.mock.calls[0][0].fields.find((field) => field.key === "components").items.fields;
     expect(fields.find((field) => field.key === "documentSpec").fields.map((field) => field.key)).toEqual([
-      "changed", "source", "documentReference", "documentSelection", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect",
+      "changed", "source", "purpose", "documentReference", "documentSelection", "opportunityReference", "quotationReference", "versionNumber", "selection", "aspect",
       "target", "accountReference", "clarification", "unsupported",
     ]);
     expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("No confundas cotizaciones independientes");

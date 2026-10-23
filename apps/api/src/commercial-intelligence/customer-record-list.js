@@ -287,7 +287,8 @@ export function buildCustomerRecordListResponse({
   ];
   const rows = shown.map((record, index) => {
     const fields = formatCustomerRecordFields(object, record);
-    return `${index + 1}. ${spec.columns.map((column) => fields[column]).join(" | ")}`;
+    const columns = spec.columns.includes("name") ? spec.columns : ["name", ...spec.columns];
+    return `${index + 1}. ${columns.map((column) => fields[column]).join(" | ")}`;
   });
   if (!shown.length) rows.push(sourceComplete
     ? "No hay coincidencias con esos filtros dentro del alcance autorizado."

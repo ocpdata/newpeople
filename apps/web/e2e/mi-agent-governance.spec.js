@@ -2726,7 +2726,8 @@ test("Cliente existente permite confirmar actividad persistida y abrir Calendari
   await openMiCoach(page, { workspace: "customer" });
   await page.getByLabel("Cuenta existente").selectOption("160");
   const chat = page.getByRole("region", { name: "Chat de cuenta" });
-  await chat.getByRole("button", { name: "Resumen para reunión" }).click();
+  await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume esta cuenta para mi reunión.");
+  await chat.getByRole("button", { name: "Preguntar", exact: true }).click();
   await expect(
     chat.getByText("Llamada con Rene Negrete", { exact: false }),
   ).toBeVisible();
@@ -3443,6 +3444,31 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
   });
 
+  test("permite preguntas multilínea y conserva una cabecera compacta sin sugerencias", async ({ page }) => {
+    await mockMiCoachApi(page, { withCustomerHealth: true });
+    await openMiCoach(page, { workspace: "customer" });
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    const question = chat.getByRole("textbox", { name: "Pregunta sobre la cuenta" });
+    await expect(question).toHaveJSProperty("tagName", "TEXTAREA");
+    await expect(chat.getByText("Preguntas sugeridas")).toHaveCount(0);
+    await expect(chat.getByRole("button", { name: "Resumen para reunión" })).toHaveCount(0);
+    await expect(chat.getByRole("heading", { name: "Chat de cuenta", exact: true })).toBeVisible();
+    await expect(chat.locator(".mi-agent-section-heading .mi-agent-customer-public-research")).toBeVisible();
+    await question.fill("Primera línea");
+    await question.press("Enter");
+    await question.pressSequentially("Segunda línea");
+    await expect(question).toHaveValue("Primera línea\nSegunda línea");
+    await expect(chat.getByRole("button", { name: "Preguntar", exact: true })).toBeEnabled();
+    const height = await question.evaluate((element) => element.getBoundingClientRect().height);
+    expect(height).toBe(90);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(question).toBeVisible();
+    expect(await question.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await chat.getByRole("button", { name: "Preguntar", exact: true }).click();
+    await expect(chat.getByText("La cuenta requiere seguimiento comercial.")).toBeVisible();
+  });
+
   test("identifica una respuesta de la biblioteca RAG sin presentarla como fuente CRM", async ({ page }) => {
     await mockMiCoachApi(page, { withCustomerHealth: true });
     await page.route("**/api/commercial-intelligence/account-chat/jobs/921", (route) =>
@@ -3461,7 +3487,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await openMiCoach(page, { workspace: "customer" });
     await page.getByLabel("Cuenta existente").selectOption("160");
     const chat = page.getByRole("region", { name: "Chat de cuenta" });
-    await chat.getByRole("button", { name: "Resumen para reunión" }).click();
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume esta cuenta para mi reunión.");
+    await chat.getByRole("button", { name: "Preguntar", exact: true }).click();
     await expect(chat.getByText("La documentación de BlueCat describe gestión DDI.")).toBeVisible();
     await expect(chat.locator(".mi-agent-customer-source-label").last())
       .toContainText("Biblioteca documental RAG; no acredita hechos del cliente");
@@ -3483,9 +3510,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.getByLabel("Cuenta existente").selectOption("160");
 
     const customerChat = page.getByRole("region", { name: "Chat de cuenta" });
-    await customerChat
-      .getByRole("button", { name: "Resumen para reunión" })
-      .click();
+    await customerChat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume esta cuenta para mi reunión.");
+    await customerChat.getByRole("button", { name: "Preguntar", exact: true }).click();
     await customerChat
       .locator(".mi-agent-customer-chat-debug > summary")
       .last()
@@ -3556,9 +3582,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await openMiCoach(page, { workspace: "customer" });
     await page.getByLabel("Cuenta existente").selectOption("160");
     const customerChat = page.getByRole("region", { name: "Chat de cuenta" });
-    await customerChat
-      .getByRole("button", { name: "Resumen para reunión" })
-      .click();
+    await customerChat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume esta cuenta para mi reunión.");
+    await customerChat.getByRole("button", { name: "Preguntar", exact: true }).click();
     await expect(
       customerChat.getByText("La cuenta requiere seguimiento comercial."),
     ).toBeVisible();
@@ -3759,7 +3784,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await openMiCoach(page, { workspace: "customer" });
     await page.getByLabel("Cuenta existente").selectOption("160");
     const chat = page.getByRole("region", { name: "Chat de cuenta" });
-    await chat.getByRole("button", { name: "Resumen para reunión" }).click();
+    await chat.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume esta cuenta para mi reunión.");
+    await chat.getByRole("button", { name: "Preguntar", exact: true }).click();
     await expect(chat.getByText("La cuenta requiere seguimiento comercial.")).toBeVisible();
     await expect(chat.getByRole("button", { name: "Abrir oportunidad para revisar" })).toBeVisible();
     await expect(chat.locator(".mi-agent-customer-chat-debug")).toHaveCount(0);
@@ -5827,7 +5853,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       page.getByRole("link", { name: "Ver fuente pública" }),
     ).toHaveAttribute("href", "https://public.example/evidence");
-    await page.getByRole("button", { name: "Resumen para reunión" }).click();
+    await page.getByPlaceholder("Pregunta sobre la cuenta...").fill("Resume esta cuenta para mi reunión.");
+    await page.getByRole("button", { name: "Preguntar", exact: true }).click();
     await expect(
       page.getByText("La cuenta requiere seguimiento comercial."),
     ).toBeVisible();

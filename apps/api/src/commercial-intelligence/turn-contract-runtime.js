@@ -934,8 +934,16 @@ export async function runCustomerContractTurn({
     ...primary.result,
     response: {
       ...primary.result.response,
-      ...(results.filter((item) => item.component.category === "query.stage_readiness").length === 1 ? {
-        stageReadiness: results.find((item) => item.component.category === "query.stage_readiness").result.response.stageReadiness || null,
+      ...(results.some((item) => item.component.category === "query.stage_readiness") ? {
+        stageReadiness: results.filter((item) => item.component.category === "query.stage_readiness").length === 1
+          ? results.find((item) => item.component.category === "query.stage_readiness").result.response.stageReadiness || null
+          : null,
+        stageReadinessResults: results.filter((item) => item.component.category === "query.stage_readiness")
+          .map((item) => ({ componentId: item.component.id, reference: item.component.reference,
+            status: item.status, readiness: item.result.response.stageReadiness || null })),
+      } : {}),
+      ...(results.filter((item) => item.component.category === "query.stage_readiness").length > 1 ? {
+        entities: { accountId: context?.accountId || null, opportunityId: null, contactId: null },
       } : {}),
       ...(results.some((item) => item.component.category === "action.change_status") ? {
         stageMemory: results.find((item) => item.component.category === "action.change_status").result.response.stageMemory || null,
@@ -1272,6 +1280,7 @@ export async function generateCustomerContent({
   const purposeClarification = customerEmailPurposeClarification(component, question);
   if (purposeClarification) return purposeClarification;
   const categoryGuidance = ({
+    "content.explanation": "Explica solo lo respaldado por evidence. Una respuesta guardada en una pregunta de etapa no acredita quién la redactó ni si procede de una declaración del cliente, una propuesta comercial o análisis automático. Si la autoría no está verificada, conserva ese límite: no la atribuyas al equipo comercial ni al cliente por intuición. Los resúmenes de interacción tampoco son citas textuales. Distingue procedencia del registro y autoría de las afirmaciones; para una atribución literal se necesita el documento con las intervenciones.",
     "query.document_content": "Responde exclusivamente la consulta documental de component usando documentKnowledge. No uses conocimientos de memoria como si estuvieran documentados. Identifica si los fragmentos corresponden al fabricante o tema solicitado: contenido de otro fabricante no respalda esta respuesta. Si faltan datos pertinentes, dilo expresamente en vez de inventar capacidades. No pidas una oportunidad, cotización o adjunto para consultar la biblioteca. No inventes títulos, URLs, citas ni nombres de documentos. Puedes referirte a los fragmentos por su posición en documentKnowledge. No atribuyas productos, necesidades, compras ni configuraciones al cliente.",
     "content.discovery_questions": "Entrega la cantidad de preguntas solicitada y no respondas por el cliente. Conserva todos los atributos pedidos para cada pregunta: proposito, senales hipoteticas para profundizar, impacto por cuantificar, explicaciones y prioridad cuando se soliciten. Esas explicaciones forman parte del mismo entregable, no son respuestas ficticias del cliente ni tareas adicionales. Una senal para profundizar se formula como condicion hipotetica, nunca como respuesta confirmada. Si hay documentKnowledge, úsalo solo como contexto general para orientar las preguntas, no como evidencia de necesidades de este cliente. Si hay evidence con verifiedComponentResult, son consultas CRM verificadas para contextualizar y priorizar; conserva su alcance y limites. Si faltan hechos pertinentes de la cuenta, no inventes prioridades: explica que el orden es exploratorio. Si hay dependencyResults, usa sus entregables como contexto para formular preguntas, conservando sus límites y sin añadir hechos ni pedir datos internos excluidos. Atiende solo este componente: no repitas ni exijas volver a entregar el resumen u otras tareas de la solicitud original que corresponden a componentes separados. Si te piden contestarlas como si fueras un contacto, aclara brevemente que no puedes atribuirle respuestas ficticias y ofrece solo las preguntas.",
     "content.summary": "Resume exclusivamente el material que el vendedor aportó en la solicitud o referenceMaterial. Respeta la cantidad y el foco pedidos; conserva estados, negaciones, nombres, cifras y fechas, sin incorporar hechos CRM. Una actividad pendiente o vencida no demuestra que el cliente no haya respondido.",

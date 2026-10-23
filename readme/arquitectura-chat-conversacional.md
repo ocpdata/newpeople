@@ -973,9 +973,51 @@ Una auditoría independiente revisa **el texto final que se mostrará**, no solo
 los componentes originales. Exige fidelidad, cobertura, incertidumbre, estado
 de operaciones y continuidad conversacional. Rechazos, dudas o respuestas
 inconsistentes no habilitan la reformulación. Un control adicional rechaza
-números nuevos: la redacción debe conservar los formatos numéricos disponibles.
+números nuevos. Para importes en formato CRM (`es-MX`), admite equivalencias
+exactas al añadir o retirar comas de miles y ceros decimales finales, sin
+redondear ni convertir monedas. La comparación usa texto decimal, sin pérdida
+de precisión. Fechas y otros formatos siguen requiriendo coincidencia literal;
+no se interpreta un punto como separador de miles. La auditoría semántica
+sigue siendo obligatoria aunque las cifras coincidan.
 Se permite copiar un identificador alfanumérico exacto del pedido actual, como
 `F5`; eso no autoriza cantidades nuevas, porcentajes ni identificadores alterados.
+También permite reproducir nombres exactos de oportunidades enumeradas en el
+pedido actual y en `comparisonSpec.references`, incluso en aclaraciones sin
+datos CRM recuperados. Sus números solo se admiten dentro del nombre completo,
+no como fechas, cantidades o compromisos independientes; la auditoría sigue
+comprobando que mencionar el nombre no se convierta en una afirmación CRM.
+Una referencia auxiliar a la cuenta seleccionada no bloquea la comparación si
+el conjunto de oportunidades está expresado por separado en `references`.
+Esto no habilita comparaciones entre cuentas ni dimensiones no soportadas.
+El límite de G05 no limita las consultas compuestas del canal: para contrastar
+preparación comercial, B3 puede coordinar Q10 por oportunidad, con referencias
+individuales y sin dependencias entre lecturas. El revisor conserva ese plan;
+B10 integra respuestas registradas, requisitos y siguientes pasos sugeridos
+sin transformar criterios pendientes en inexistencia de necesidad o actividad.
+Los estados por oportunidad viajan en `stageReadinessResults`; una lectura fallida
+no borra las exitosas ni selecciona como foco una oportunidad arbitraria.
+`comparisonSpec.purpose=commercial_readiness` permite reconciliar un comparador
+tipado con esas lecturas Q10 antes de la revisión; `purpose=fields` conserva G05.
+No se decide mediante una expresión que reconozca una frase del vendedor.
+El contrato del proveedor avanza a `compact-v8` para incluir ese discriminador.
+Una comparación compuesta exclusivamente de lecturas Q10 con cobertura de etapa
+verificada conserva los bloques originales: B10 omite la reescritura mediante
+`verified_readiness_comparison`, sin considerarlo una degradación. Una auditoría
+generativa no garantiza por sí sola que “pendiente de validar” no se convierta en
+“no existe”; la presentación determinista conserva esa distinción y las lecturas
+fallidas sin otra llamada de IA.
+
+El contrato `compact-v9` añade el propósito documental `associated_files` frente
+a `source_content` y el propósito de necesidades registradas para Q10 y el resumen
+de cuenta. La normalización coordina lecturas por oportunidad y preserva las
+fuentes; no utiliza nombres de productos como regla de enrutamiento.
+El revisor identifica la categoría realmente omitida con `requiredCategory` para
+`MISSING_TASK`: una restricción conservada en el texto documental no se convierte
+en otra tarea. Una revisión que contradice esa conservación literal se rechaza y
+se reintenta dentro del límite existente, nunca se aprueba silenciosamente.
+Las aclaraciones de interpretación no se reescriben en B10. Una respuesta de
+documento CRM generada y auditada conserva `documentValidation` y su cobertura;
+B10 evita una segunda reescritura que pueda perder atribución o lectura parcial.
 Los briefings integrados se insertan sin anteponer otra versión resumida, y no se
 reinterpreta el importe de oportunidades abiertas como ventas o ingresos.
 La auditoría semántica no equivale a una garantía ni a aprobación humana.
@@ -996,12 +1038,21 @@ pantallas estrechas, listas, títulos y énfasis. El texto almacenado no cambia.
 No interpreta HTML ni carga imágenes del contenido; los enlaces usan protocolos
 seguros y las tablas comerciales estructuradas existentes mantienen su presentación.
 La traza de B10 conserva duración, cantidad de llamadas, metadatos del proveedor,
-dictamen por dimensión y motivo de degradación. El resultado conserva el texto
-base y el texto auditado para trazabilidad. La evaluación mantiene los controles
+dictamen por dimensión y motivo de degradación. Ante un rechazo numérico, los
+metadatos de generación incluyen hasta diez expresiones (máximo 80 caracteres por
+expresión), sin guardar el borrador completo.
+El resultado conserva el texto base y el texto auditado para trazabilidad.
+La evaluación mantiene los controles
 estructurales sobre el resultado base y exige una auditoría semántica válida,
 vinculada exactamente al texto final, antes de admitir redacciones equivalentes.
 Así no exige frases como «Cargo: ...» en la respuesta conversacional ni omite
 el contraste factual original; los casos siguen sujetos a revisión humana.
+
+Los listados deterministas de oportunidades y contactos conservan el nombre
+de cada registro aunque las columnas solicitadas solo incluyan otros campos.
+Esto permite identificar las filas también si se conserva la respuesta base
+por una degradación de B10, sin añadir otros datos no solicitados ni cambiar
+los filtros, el orden o la selección de registros.
 
 **Fidelidad del contenido de Cliente existente:**
 

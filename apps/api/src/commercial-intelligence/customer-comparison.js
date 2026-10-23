@@ -97,7 +97,10 @@ export function resolveCustomerComparisonRequest({ component, movement, previous
   if (patch.accountReference && normalizeCustomerSearchText(patch.accountReference) !== normalizeCustomerSearchText(snapshot.account.name)) {
     return fail("La comparación está limitada a la cuenta seleccionada; no consultaré otra cuenta sin cambiarla en la interfaz.");
   }
-  if (component.reference) return fail("Indica todas las oportunidades por separado en la comparación; no interpretaré una referencia combinada como el conjunto completo.");
+  if (component.reference && !(patch.references?.length &&
+      normalizeCustomerSearchText(component.reference) === selectedAccount)) {
+    return fail("Indica todas las oportunidades por separado en la comparación; no interpretaré una referencia combinada como el conjunto completo.");
+  }
   const prior = continuation(movement) ? previous : null;
   const edit = patch.edit || "replace";
   if (edit !== "replace" && !prior) return fail("No hay una comparación previa verificable a la que añadir o quitar oportunidades.");

@@ -36,6 +36,11 @@ Ayudar al vendedor a consultar, resumir y analizar información CRM de una cuent
 
 El chat es un asistente especializado en información comercial de la cuenta. No es un asistente general, no sustituye los módulos operativos del CRM y no debe afirmar que una propuesta de escritura ya se ejecutó.
 
+La entrada de preguntas admite varias líneas, ajuste de texto y altura inicial
+de 90 px ampliable verticalmente. Enter inserta un salto de línea; el botón
+**Preguntar** envía el mensaje. La cabecera compacta reúne nueva conversación,
+fundamento y fuentes públicas; no muestra preguntas sugeridas.
+
 ## Límites invariantes
 
 - El alcance de datos es una sola cuenta CRM seleccionada y autorizada.
@@ -519,6 +524,73 @@ Historial e interfaz conservan criterio, cobertura y fundamento al reabrir.
 Se utiliza el presupuesto compartido de lecturas y plazo del turno.
 No hay generación adicional para ordenar o explicar los criterios objetivos,
 ni operaciones CRM implícitas. La aceptación con proveedor real sigue pendiente.
+
+### Preparación comercial con consultas coordinadas (Q10)
+
+Una evaluación de preparación comercial de varias oportunidades no se reduce a
+G05: B3 coordina `query.stage_readiness` (Q10) independiente por cada oportunidad
+nombrada y B10 integra lo documentado, faltantes y siguientes pasos sugeridos.
+El revisor de B3 comprueba la cobertura del conjunto sin exigir un comparador
+de campos como sustituto. Se conserva el límite de cuatro componentes por turno;
+si la solicitud lo excede, se delimita explícitamente, sin truncar el conjunto.
+Las consultas comparten permisos, presupuesto y plazo existentes, sin ampliar
+accesos ni iniciar validaciones que puedan avanzar etapas.
+
+El contrato tipado de comparación distingue `purpose=fields` de
+`purpose=commercial_readiness`. En el segundo caso, el servidor expande las
+referencias nombradas en Q10 aunque el proveedor haya elegido `guidance.comparison`;
+las dimensiones predeterminadas de G05 no sustituyen ese objetivo. Los campos o
+cálculos pedidos además requieren tareas propias, sujetas al mismo límite.
+La expansión conserva dependencias posteriores y pide delimitación para conjuntos
+excesivos, referencias no resueltas o fuentes adicionales no cubiertas.
+
+Cada Q10 incluye respuestas registradas y requisitos de la etapa actual, no una
+confirmación independiente del cliente. No consultar cotizaciones, documentos o
+notas no prueba que falte información en esas fuentes. Una lectura fallida se
+identifica para esa oportunidad sin ocultar las restantes. No se concluye
+duplicidad, independencia, aceptación ni una ganadora por nombre o etapa.
+`stageReadinessResults` conserva estado y evidencia por oportunidad; con varias
+consultas no se selecciona arbitrariamente la primera como foco del chat.
+El campo `coverage` distingue requisitos por validar de ausencia real y enumera
+fuentes no consultadas. “Siguiente paso acordado” pendiente de validar no significa
+que no se haya acordado ninguno; las actividades documentadas conservan su valor.
+En turnos compuestos exclusivamente de estas lecturas Q10 verificadas, se conserva
+la presentación por oportunidad sin reescritura generativa final
+(`verified_readiness_comparison`). Esto evita que una paráfrasis convierta
+requisitos pendientes en afirmaciones de inexistencia; conserva también fallos
+individuales y no añade llamadas de presentación. Otros tipos de turnos mantienen
+su presentación y auditoría habituales.
+
+### Necesidades registradas y fuentes documentales
+
+- `query.stage_readiness` con `purpose=recorded_needs` lee respuestas de etapa e
+  interacciones autorizadas. Conserva el vínculo por oportunidad; las interacciones
+  sin vínculo se identifican como información de cuenta, no de esa oportunidad.
+  Las respuestas guardadas no acreditan su autoría ni declaraciones textuales del
+  cliente. El resumen de una interacción puede contener análisis automático.
+- Un resumen de necesidades no se sustituye por conteos de oportunidades o importes.
+  `accountSummarySpec.purpose=recorded_needs` con referencias nombradas se coordina
+  con esas lecturas. Una consulta Q10 de colección consulta el conjunto autorizado
+  de la cuenta, sujeto al límite de cuatro componentes y al presupuesto compartido;
+  si excede el límite, pide delimitar sin truncar.
+- `documentSpec.purpose=associated_files` lista archivos asociados a oportunidad
+  o cotización; nunca los sustituye por conocimiento general de una solución.
+  `source_content` conserva la fuente para preguntas y resúmenes posteriores.
+  El nombre de una solución dentro del nombre de oportunidad no cambia la fuente.
+- La oportunidad nombrada inequívocamente en una consulta documental anterior
+  puede servir de identidad para “esta oportunidad”, incluso si la interpretación
+  anterior eligió mal la fuente. No acredita archivos, no hereda esa fuente y no
+  evita revalidar permisos y asociaciones al leer.
+- Un bloqueo de interpretación conserva su aclaración original. B10 no lo
+  transforma en “no encontré el documento”. Un resumen documental CRM ya auditado
+  conserva su respuesta y advertencia de cobertura parcial sin otra reescritura
+  (`validated_crm_document`). Las lecturas de necesidades y su explicación
+  dependiente auditada se conservan con `verified_needs_explanation`.
+
+Se verificó de forma acotada la secuencia de Lactalis de necesidades, listado de
+archivos y resumen de la reunión del 12 de agosto: el archivo asociado se recuperó
+con permisos del usuario, con lectura parcial y sin cambios comerciales. Esa
+verificación no certifica todos los documentos ni todas las formulaciones.
 
 ### Comparación de oportunidades (G05)
 
