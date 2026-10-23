@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
 
 export function LoginPage({ onLogin, initialError = "" }) {
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [googleAuth, setGoogleAuth] = useState({
@@ -116,13 +118,25 @@ export function LoginPage({ onLogin, initialError = "" }) {
           placeholder="E-mail"
           required
         />
-        <input
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          type="password"
-          placeholder="Contraseña"
-          required
-        />
+        <div className="login-password-wrap">
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type={showPassword ? "text" : "password"}
+            placeholder="Contraseña"
+            autoComplete="current-password"
+            required
+          />
+          <button
+            className="login-password-toggle"
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+            title={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+          >
+            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        </div>
         {error && <p className="error">{error}</p>}
         <button disabled={saving}>{saving ? "Ingresando..." : "Entrar"}</button>
         {!loadingProviders && googleAuth.enabled ? (

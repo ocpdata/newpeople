@@ -797,6 +797,37 @@ body {
   padding: 22px;
 }
 
+.login-password-wrap {
+  position: relative;
+}
+
+.login-password-wrap input {
+  padding-right: 44px;
+}
+
+.login-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: #52677f;
+  transform: translateY(-50%);
+}
+
+.login-password-toggle:hover {
+  background: #eef4fb;
+  color: #1e4fa0;
+}
+
+.login-password-toggle:focus-visible {
+  outline: 2px solid #6ea0ea;
+  outline-offset: 2px;
+}
+
 .auth-divider {
   position: relative;
   margin: 2px 0;
