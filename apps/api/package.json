@@ -15,6 +15,7 @@
     "test:quick:calendar-create-rules": "node scripts/quickCalendarActivityCreationChecks.js",
     "test:customer-chat:evaluation": "vitest run --maxWorkers=1 test/customer-account-chat-evaluation.test.js",
     "test:customer-chat:acceptance": "node scripts/evaluateCustomerChat.js",
+    "test:customer-chat:bank": "node scripts/runCustomerChatAcceptance.js",
     "test:customer-chat:contract:live": "node scripts/evaluateCustomerTurnContract.js --live",
     "test:customer-chat:pipeline:live": "node scripts/evaluateCustomerTurnPipeline.js --live",
     "test:db:prepare": "node test/setupTestDb.js",

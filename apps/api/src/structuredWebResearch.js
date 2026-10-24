@@ -143,6 +143,8 @@ export async function runStructuredWebResearch({
   signal = null,
   temperature = null,
   responseVariants = null,
+  model = null,
+  reasoningEffort = null,
 }) {
   if (
     !config.openai.apiKey ||
@@ -151,6 +153,7 @@ export async function runStructuredWebResearch({
     return null;
   }
 
+  const resolvedModel = String(model || config.openai.model || "").trim();
   const safeAiUsageContext =
     aiUsageContext && typeof aiUsageContext === "object"
       ? aiUsageContext
@@ -162,8 +165,9 @@ export async function runStructuredWebResearch({
   }
 
   const payload = {
-    model: config.openai.model,
+    model: resolvedModel,
     ...(temperature === null ? {} : { temperature }),
+    ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     ...(useWebSearchTool ? { tools: [{ type: "web_search_preview" }] } : {}),
     text: {
       format: {
@@ -219,7 +223,7 @@ export async function runStructuredWebResearch({
       onResponseMetadata({
         responseId: String(data?.id || "").slice(0, 120) || null,
         model:
-          String(data?.model || config.openai.model || "").slice(0, 120) ||
+          String(data?.model || resolvedModel || "").slice(0, 120) ||
           null,
       });
     } catch {
@@ -235,7 +239,7 @@ export async function runStructuredWebResearch({
         String(
           safeAiUsageContext?.featureCode || "accounts.draft_analysis",
         ).trim() || "accounts.draft_analysis",
-      model: String(config.openai.model || "").trim(),
+      model: resolvedModel,
       openAiResponse: data,
       jobType: safeAiUsageContext?.jobType || null,
       jobId: safeAiUsageContext?.jobId || null,

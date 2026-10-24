@@ -60,6 +60,7 @@ import {
   processAccountIntelligenceAgentsJob,
   getAccountIntelligenceMetrics,
   createCustomerAccountChatSession,
+  getCustomerChatFocusOptions,
   createCustomerAccountChatJob,
   getCustomerAccountChatSession,
   getCustomerAccountChatDiagnosticSession,
@@ -655,6 +656,22 @@ router.post(
 );
 
 router.get(
+  "/account-chat/focus-options",
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const parsed = z.object({ accountId: z.coerce.number().int().positive() }).safeParse(req.query || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Cuenta invalida", issues: parsed.error.issues });
+    }
+    try {
+      return res.json(await getCustomerChatFocusOptions({ user: req.user, accountId: parsed.data.accountId }));
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cargar las oportunidades de la cuenta");
+    }
+  },
+);
+
+router.get(
   "/account-chat/diagnostics/sessions",
   requirePermission("mi_coach.chat_diagnostics"),
   async (req, res) => {
@@ -787,6 +804,7 @@ router.post(
           question: z.string().trim().min(1).max(2000),
           includePublicResearch: z.boolean().optional().default(false),
           chatSessionId: z.number().int().positive().optional(),
+          focusOpportunityId: z.number().int().positive().optional(),
         })
         .parse(payload);
       if (attachment) parsed.attachment = attachment;

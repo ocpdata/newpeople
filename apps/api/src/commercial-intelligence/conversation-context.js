@@ -123,6 +123,21 @@ export function getCustomerConversationFilterMemory(
   return validatedFilters(context?.filters);
 }
 
+export function validateCustomerDossierMemory(memory, visibleOpportunityIds) {
+  if (!memory || typeof memory !== "object" || !["account", "opportunity", "opportunities"].includes(memory.level)) return null;
+  const focusOpportunityIds = [...new Set((Array.isArray(memory.focusOpportunityIds) ? memory.focusOpportunityIds : [])
+    .map(positiveId).filter((id) => id && visibleOpportunityIds.has(id)))].slice(0, 3);
+  return {
+    level: memory.level === "account" || focusOpportunityIds.length ? memory.level : "account",
+    focusOpportunityIds,
+    obligations: (Array.isArray(memory.obligations) ? memory.obligations : []).slice(0, 8)
+      .filter((item) => typeof item?.ask === "string")
+      .map((item) => ({ id: String(item.id || "").slice(0, 20), ask: item.ask.slice(0, 300) })),
+    citedEvidenceIds: (Array.isArray(memory.citedEvidenceIds) ? memory.citedEvidenceIds : [])
+      .filter((id) => typeof id === "string" && /^[a-z]+\d+(?:\.\d+)?$/.test(id)).slice(0, 60),
+  };
+}
+
 export function validateCustomerConversationContext(
   context,
   snapshot,
@@ -216,6 +231,9 @@ export function validateCustomerConversationContext(
       ? { recordList: validateCustomerRecordList(context.recordList, snapshot, accountId) } : {}),
     ...(validateCustomerTurnMemory(context.turnMemory)
       ? { turnMemory: validateCustomerTurnMemory(context.turnMemory) }
+      : {}),
+    ...(validateCustomerDossierMemory(context.dossierMemory, visibleOpportunityIds)
+      ? { dossierMemory: validateCustomerDossierMemory(context.dossierMemory, visibleOpportunityIds) }
       : {}),
     ...(Number(context.pendingAmountSelection?.accountId) === accountId &&
     typeof context.pendingAmountSelection?.amount === "number" &&

@@ -4,6 +4,8 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 
 ## Indice
 
+- [Registro de correcciones y decisiones vigentes](./registro-de-correcciones.md)
+- [Diseño: consultas de Cliente existente con expediente y analista con citas](./diseno-consultas-expediente-cliente-existente.md)
 - [Logica de negocio](./logica-negocio.md)
 - [Uso de IA](./ia.md)
 - [Usuarios](./usuarios.md)
@@ -113,6 +115,11 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 1. Inicia en este archivo para ubicar el modulo.
 2. Abre el README especifico del tema y revisa primero su seccion `Logica de negocio`.
 3. Actualiza el archivo del modulo cuando se hagan cambios relevantes.
+
+Para corregir comportamientos, se recomienda consultar antes el
+[registro de correcciones y decisiones vigentes](./registro-de-correcciones.md)
+y documentar despues el alcance, las validaciones y los pendientes. Sus puntos
+de control por commit son una practica recomendada, no un requisito obligatorio.
 
 ## Estado actual de la aplicacion (2026-06)
 

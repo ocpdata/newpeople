@@ -2530,6 +2530,8 @@ export default function MiAgentPage({
   );
   const [customerChatPublicResearch, setCustomerChatPublicResearch] =
     useState(false);
+  const [customerFocusOptions, setCustomerFocusOptions] = useState({ enabled: false, opportunities: [] });
+  const [customerFocusOpportunityId, setCustomerFocusOpportunityId] = useState("");
   const [prospectForm, setProspectForm] = useState({
     companyName: "",
     country: "",
@@ -3109,6 +3111,40 @@ export default function MiAgentPage({
   const hasCustomerContext = Boolean(customerAccountId);
 
   useEffect(() => {
+    setCustomerFocusOpportunityId("");
+    if (activeWorkspace !== "customer" || !hasCustomerContext) {
+      setCustomerFocusOptions({ enabled: false, opportunities: [] });
+      return undefined;
+    }
+    let cancelled = false;
+    api
+      .get("/api/commercial-intelligence/account-chat/focus-options", {
+        params: { accountId: Number(customerAccountId) },
+      })
+      .then((response) => {
+        if (!cancelled) {
+          setCustomerFocusOptions({
+            enabled: Boolean(response.data?.enabled),
+            opportunities: Array.isArray(response.data?.opportunities) ? response.data.opportunities : [],
+            status: response.data?.status || null,
+          });
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCustomerFocusOptions({
+            enabled: false,
+            opportunities: [],
+            error: error?.response?.data?.message || "No se pudieron cargar las oportunidades de la cuenta.",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspace, customerAccountId, hasCustomerContext]);
+
+  useEffect(() => {
     if (activeWorkspace !== "customer" || !hasCustomerContext) {
       setCustomerContextSnapshot(null);
       return undefined;
@@ -3196,6 +3232,7 @@ export default function MiAgentPage({
                     role: "assistant",
                     answer: message.text,
                     presentation: message.presentation || null,
+                    dossierCitations: message.dossierCitations || [],
                     activityHistory: message.activityHistory || null,
                     operations: message.operations || [],
                     stageAnswerPrefill: message.stageAnswerPrefill || null,
@@ -3310,6 +3347,7 @@ export default function MiAgentPage({
     setCustomerChatSessionLoading(false);
     setCustomerChatFailureIds(null);
     setCustomerChatPublicResearch(false);
+    setCustomerFocusOpportunityId("");
   }
 
   function setCustomerActionResultOpen(action, isOpen) {
@@ -3762,6 +3800,9 @@ export default function MiAgentPage({
           chatSessionId: activeChatSessionId,
           question: normalizedQuestion,
           includePublicResearch: customerChatPublicResearch,
+          ...(customerFocusOptions.enabled && customerFocusOpportunityId
+            ? { focusOpportunityId: Number(customerFocusOpportunityId) }
+            : {}),
         };
         let requestBody = jobPayload;
         const requestSummary = { ...jobPayload };
@@ -8666,6 +8707,28 @@ export default function MiAgentPage({
                 <h3>Chat de cuenta</h3>
               </div>
               <div className="mi-agent-customer-chat-header-actions">
+                {customerFocusOptions.enabled ? (
+                  <label className="mi-agent-customer-focus">
+                    <span>Oportunidad</span>
+                    <select
+                      value={customerFocusOpportunityId}
+                      onChange={(event) => setCustomerFocusOpportunityId(event.target.value)}
+                      disabled={customerChatLoading || customerChatSessionLoading || !hasCustomerContext}
+                      aria-label="Oportunidad en foco"
+                    >
+                      <option value="">Toda la cuenta</option>
+                      {customerFocusOptions.opportunities.map((opportunity) => (
+                        <option key={opportunity.id} value={String(opportunity.id)}>
+                          {opportunity.name}
+                          {opportunity.stageName ? ` · ${opportunity.stageName}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {customerFocusOptions.error ? (
+                  <small className="form-error">{customerFocusOptions.error}</small>
+                ) : null}
                 <label className="mi-agent-customer-public-research">
                   <input
                     type="checkbox"
@@ -9053,8 +9116,25 @@ export default function MiAgentPage({
                       />
                       {message.presentation?.status === "degraded" ? (
                         <p role="status">
-                          No pude completar la redacción conversacional. Te muestro el resultado verificado.
+                          {message.presentation?.engine === "dossier"
+                            ? "Parte de esta respuesta no pudo verificarse con los registros del CRM; revisa la nota al final."
+                            : "No pude completar la redacción conversacional. Te muestro el resultado verificado."}
                         </p>
+                      ) : null}
+                      {message.dossierCitations?.length ? (
+                        <details className="mi-agent-dossier-citations">
+                          <summary>Evidencia del CRM citada ({message.dossierCitations.length})</summary>
+                          <ul>
+                            {message.dossierCitations.map((citation) => (
+                              <li key={citation.evidenceId}>
+                                <strong>{citation.label}</strong>
+                                {citation.detail ? <span> · {citation.detail}</span> : null}
+                                {citation.date ? <span> · {String(citation.date).slice(0, 10)}</span> : null}
+                                {citation.excerpt ? <p>{citation.excerpt}</p> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
                       ) : null}
                       {message.components?.length > 1 ? (
                         <ul aria-label="Estado de solicitudes">

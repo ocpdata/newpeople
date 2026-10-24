@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "description": "Banco de aceptación del chat de Cliente existente. Cada turno define hechos obligatorios con su evidencia CRM, afirmaciones prohibidas y forma exigida. Los hechos se verifican contra la base antes de cada corrida.",
+  "facts": {
+    "opp121.amount": { "table": "opportunities", "id": 121, "field": "amount_usd", "equals": "8000.00" },
+    "opp121.close_date": { "table": "opportunities", "id": 121, "field": "close_date", "equals": "2026-10-31" },
+    "opp121.stage": { "table": "opportunities", "id": 121, "field": "sales_stage_id", "equals": 7, "meaning": "Waiting" },
+    "opp121.status": { "table": "opportunities", "id": 121, "field": "commercial_status_id", "equals": 1, "meaning": "En proceso" },
+    "opp121.contact": { "table": "opportunities", "id": 121, "field": "contact_id", "equals": 226 },
+    "contact226.name": { "table": "contacts", "id": 226, "field": "last_name", "equals": "Carrillo", "meaning": "Daniel Carrillo" },
+    "contact226.title": { "table": "contacts", "id": 226, "field": "position_title", "equals": "Gerente de Infraestructura" },
+    "ans1092.need": { "table": "opportunity_stage_question_answers", "id": 1092, "field": "answer_value", "contains": "sensibles, los cuales necesita proteger" },
+    "ans1093.repository": { "table": "opportunity_stage_question_answers", "id": 1093, "field": "answer_value", "contains": "Google Drive" },
+    "ans1094.motivation": { "table": "opportunity_stage_question_answers", "id": 1094, "field": "answer_value", "contains": "regulacion" },
+    "ans1096.target_date": { "table": "opportunity_stage_question_answers", "id": 1096, "field": "answer_value", "contains": "finales de octubre de 2026" },
+    "ans1097.approval": { "table": "opportunity_stage_question_answers", "id": 1097, "field": "answer_value", "contains": "La direccion aprueba la compra despues de que el gerente de TI evalua y recomienda la solucion" },
+    "ans1186.price_floor": { "table": "opportunity_stage_question_answers", "id": 1186, "field": "answer_value", "contains": "No bajar de 8k USD" },
+    "act50.status": { "table": "opportunity_workspace_actions", "id": 50, "field": "status", "equals": "pending" },
+    "act50.due": { "table": "opportunity_workspace_actions", "id": 50, "field": "due_date", "equals": "2026-10-09" },
+    "act50.notes": { "table": "opportunity_workspace_actions", "id": 50, "field": "notes", "contains": "super administrador" },
+    "act51.status": { "table": "opportunity_workspace_actions", "id": 51, "field": "status", "equals": "pending" },
+    "act51.due": { "table": "opportunity_workspace_actions", "id": 51, "field": "due_date", "equals": "2026-10-16" },
+    "act51.notes": { "table": "opportunity_workspace_actions", "id": 51, "field": "notes", "contains": "19 al 24 de octubre" },
+    "q78v1.version": { "table": "quotation_versions", "id": 139, "field": "version_number", "equals": 1 },
+    "q78v1.status": { "table": "quotation_versions", "id": 139, "field": "status_id", "equals": 4, "meaning": "Aprobada (estado interno; anterior a Enviada y Aceptada)" },
+    "opp121.purchase_orders": { "table": "quotation_won_documents", "where": { "opportunity_id": 121, "document_role": "purchase_order" }, "count": 0, "meaning": "Documentos de orden de compra del cliente registrados en sus cotizaciones" },
+    "opp121.opportunity_notes": { "table": "opportunity_notes", "where": { "opportunity_id": 121 }, "count": 0 },
+    "account163.opportunities": { "table": "opportunities", "where": { "account_id": 163 }, "count": 2 },
+    "opp117.amount": { "table": "opportunities", "id": 117, "field": "amount_usd", "equals": "30000.00" },
+    "opp117.close_date": { "table": "opportunities", "id": 117, "field": "close_date", "equals": "2026-12-31" },
+    "opp117.stage": { "table": "opportunities", "id": 117, "field": "sales_stage_id", "equals": 2, "meaning": "Identificación de la oportunidad" },
+    "ans972.need": { "table": "opportunity_stage_question_answers", "id": 972, "field": "answer_value", "contains": "2000 y 2500 buzones" },
+    "ans1054.competitor": { "table": "opportunity_stage_question_answers", "id": 1054, "field": "answer_value", "contains": "Forti-Mail" },
+    "ans1053.budget": { "table": "opportunity_stage_question_answers", "id": 1053, "field": "answer_value", "contains": "fortinet" },
+    "ans1056.target_date": { "table": "opportunity_stage_question_answers", "id": 1056, "field": "answer_value", "contains": "antes del 31 de diciembre de 2026" },
+    "ans982.superseded_target": { "table": "opportunity_stage_question_answers", "id": 982, "field": "answer_value", "contains": "noviembre de 2026", "meaning": "Versión anterior sustituida por la respuesta 1056" },
+    "ans978.decision": { "table": "opportunity_stage_question_answers", "id": 978, "field": "answer_value", "contains": "Daniel es el que evalua y recomienda a la direccion" },
+    "opp117.activities": { "table": "opportunity_workspace_actions", "where": { "opportunity_id": 117 }, "count": 0 },
+    "opp117.opportunity_notes": { "table": "opportunity_notes", "where": { "opportunity_id": 117 }, "count": 0 },
+    "opp117.quotations": { "table": "quotations", "where": { "opportunity_id": 117 }, "count": 0 },
+    "opp27.amount": { "table": "opportunities", "id": 27, "field": "amount_usd", "equals": "41560.00" },
+    "opp27.status": { "table": "opportunities", "id": 27, "field": "commercial_status_id", "equals": 2, "meaning": "Ganada" },
+    "opp27.stage": { "table": "opportunities", "id": 27, "field": "sales_stage_id", "equals": 7, "meaning": "Waiting" },
+    "opp27.contact": { "table": "opportunities", "id": 27, "field": "contact_id", "equals": 33 },
+    "contact33.name": { "table": "contacts", "id": 33, "field": "last_name", "equals": "Jiménez", "meaning": "Pedro Jiménez" },
+    "contact33.title": { "table": "contacts", "id": 33, "field": "position_title", "equals": "Gerente de Desarrollo" },
+    "q14v1.status": { "table": "quotation_versions", "id": 15, "field": "status_id", "equals": 1, "meaning": "Borrador" },
+    "q14v2.status": { "table": "quotation_versions", "id": 16, "field": "status_id", "equals": 6, "meaning": "Ganada" },
+    "q15v1.status": { "table": "quotation_versions", "id": 17, "field": "status_id", "equals": 9, "meaning": "Aceptada" },
+    "ans223.decision": { "table": "opportunity_stage_question_answers", "id": 223, "field": "answer_value", "contains": "Pedro Jiménez" },
+    "ans243.next_step": { "table": "opportunity_stage_question_answers", "id": 243, "field": "answer_value", "equals": "Colocar la OC" },
+    "ans244.poc_result": { "table": "opportunity_stage_question_answers", "id": 244, "field": "answer_value", "contains": "Quedaron satisfechos" },
+    "act4.status": { "table": "opportunity_workspace_actions", "id": 4, "field": "status", "equals": "done", "meaning": "Cierre PoC" },
+    "act9.status": { "table": "opportunity_workspace_actions", "id": 9, "field": "status", "equals": "done", "meaning": "Seguimiento con cliente" },
+    "opp27.pending_activities": { "table": "opportunity_workspace_actions", "where": { "opportunity_id": 27, "status": "pending" }, "count": 0 }
+  },
+  "conversations": [
+    {
+      "id": "SEALPATH-ORIGINAL",
+      "title": "Sealpath: las cuatro preguntas de la sesión 61",
+      "accountId": 163,
+      "turns": [
+        {
+          "id": "T1",
+          "question": "Vamos a trabajar únicamente la oportunidad “Proteccion de Documentos Sealpath” de Grupo Diestra. Dame un resumen ejecutivo para preparar mi seguimiento: necesidad del cliente, importe, etapa, cierre previsto, contacto, cotización y último siguiente paso documentado. Separa lo registrado de las inferencias y señala lo que no esté confirmado",
+          "mustInclude": [
+            { "id": "need", "critical": true, "statement": "La necesidad registrada es proteger documentos sensibles en un repositorio (Google Drive) por regulación y necesidad del negocio; no se limita a dudas de permisos.", "evidence": ["ans1092.need", "ans1093.repository", "ans1094.motivation"] },
+            { "id": "amount", "critical": true, "statement": "El importe registrado es 8,000 USD.", "evidence": ["opp121.amount"] },
+            { "id": "stage", "critical": true, "statement": "La etapa registrada es Waiting.", "evidence": ["opp121.stage"] },
+            { "id": "close_date", "critical": true, "statement": "La fecha de cierre registrada es el 31 de octubre de 2026 (registrada, no necesariamente confirmada por el cliente).", "evidence": ["opp121.close_date"] },
+            { "id": "contact", "critical": true, "statement": "El contacto asociado es Daniel Carrillo, Gerente de Infraestructura.", "evidence": ["contact226.name", "contact226.title", "opp121.contact"] },
+            { "id": "quotation", "critical": true, "statement": "Existe una cotización (versión 1) en estado Aprobada; ese estado no acredita que el cliente la haya recibido o aceptado.", "evidence": ["q78v1.version", "q78v1.status"] },
+            { "id": "next_step", "critical": true, "statement": "El último siguiente paso documentado es la llamada para confirmar que las dudas quedaron aclaradas y proceder con la orden de compra, prevista para la semana del 19 al 24 de octubre.", "evidence": ["act51.notes", "act51.status"] },
+            { "id": "separation", "critical": false, "statement": "Distingue explícitamente lo registrado de lo inferido o no confirmado." }
+          ],
+          "mustNotClaim": [
+            { "id": "no_close_date", "statement": "Que la fecha de cierre no está registrada, especificada o disponible." },
+            { "id": "po_received", "statement": "Que la orden de compra ya fue recibida, emitida o registrada." },
+            { "id": "quote_accepted", "statement": "Que el cliente aceptó, recibió o aprobó la cotización." },
+            { "id": "daniel_authorizes", "statement": "Que Daniel Carrillo autoriza, aprueba o firma la compra." },
+            { "id": "no_quotation", "statement": "Que no hay cotización o que no se tiene información de la cotización." }
+          ]
+        },
+        {
+          "id": "T2",
+          "question": "Revisa las actividades de esta oportunidad. ¿Qué avances describen sus notas y cuáles siguen pendientes en el sistema? En particular, explica qué evidencia existe sobre las dudas aclaradas y la orden de compra prevista para la semana del 19 al 24 de octubre. No des por recibida la orden ni por realizadas las actividades.",
+          "mustInclude": [
+            { "id": "act50", "critical": true, "statement": "La actividad sobre permisos de Sealpath y administradores de Google Drive tiene una nota: basta que un usuario sea superadministrador para que los demás otorguen permisos de protección.", "evidence": ["act50.notes"] },
+            { "id": "act51", "critical": true, "statement": "La actividad de llamada de confirmación tiene una nota: las dudas quedaron aclaradas y se procederá con la orden de compra la semana del 19 al 24 de octubre.", "evidence": ["act51.notes"] },
+            { "id": "still_pending", "critical": true, "statement": "Ambas actividades siguen en estado pendiente en el sistema, aunque sus notas describen avances.", "evidence": ["act50.status", "act51.status"] },
+            { "id": "po_not_received", "critical": true, "statement": "No hay evidencia registrada de que la orden de compra se haya recibido; solo consta como prevista.", "evidence": ["opp121.purchase_orders", "act51.notes"] },
+            { "id": "due_dates", "critical": false, "statement": "Las actividades vencen el 9 y el 16 de octubre de 2026.", "evidence": ["act50.due", "act51.due"] }
+          ],
+          "mustNotClaim": [
+            { "id": "no_activities", "statement": "Que no hay actividades o que las actividades no tienen notas." },
+            { "id": "po_received", "statement": "Que la orden de compra ya fue recibida o emitida." },
+            { "id": "activities_done", "statement": "Que las actividades están completadas o cerradas en el sistema." },
+            { "id": "doubts_unresolved", "statement": "Que las dudas sobre permisos siguen sin aclarar, contradiciendo las notas." }
+          ]
+        },
+        {
+          "id": "T3",
+          "question": "Con esa evidencia, ¿cuáles son los tres puntos que debo verificar primero para acercar esta oportunidad a un cierre sólido? Ordénalos por impacto y dime qué confirmación concreta del cliente resolvería cada uno.",
+          "form": { "kind": "exact_items", "count": 3, "itemRequirement": "Cada punto incluye la confirmación concreta del cliente que lo resolvería." },
+          "mustInclude": [
+            { "id": "grounded", "critical": true, "statement": "Los puntos se basan en hechos registrados de esta oportunidad (por ejemplo, la orden de compra prevista, las actividades pendientes, la cotización en estado Aprobada o el proceso de aprobación por la dirección)." },
+            { "id": "purchase_order", "critical": false, "statement": "Uno de los puntos se refiere a confirmar la emisión o la fecha de la orden de compra prevista.", "evidence": ["act51.notes", "opp121.purchase_orders"] },
+            { "id": "ordered", "critical": false, "statement": "Los puntos se presentan ordenados por impacto." }
+          ],
+          "mustNotClaim": [
+            { "id": "ask_criterion", "statement": "Que necesita que el usuario elija un criterio (importe, fecha u otro) para poder priorizar." },
+            { "id": "invented_probability", "statement": "Una probabilidad, porcentaje o puntuación de cierre inventada." },
+            { "id": "po_received", "statement": "Que la orden de compra ya fue recibida o emitida." }
+          ]
+        },
+        {
+          "id": "T4",
+          "question": "¿Qué sabemos de Daniel Carrillo y del proceso de aprobación de esta compra? Distingue al contacto registrado, a quien recomienda la solución y a quien autoriza la compra. ¿Qué nombres, responsabilidades o pasos todavía necesito confirmar? No supongas autoridad de compra por el cargo.",
+          "mustInclude": [
+            { "id": "contact", "critical": true, "statement": "Daniel Carrillo es el contacto registrado de la oportunidad, con cargo Gerente de Infraestructura.", "evidence": ["contact226.name", "contact226.title"] },
+            { "id": "approval_process", "critical": true, "statement": "Está registrado que la dirección aprueba la compra después de que el gerente de TI evalúa y recomienda la solución.", "evidence": ["ans1097.approval"] },
+            { "id": "recommender_unconfirmed", "critical": true, "statement": "No está confirmado que Daniel Carrillo sea el gerente de TI que recomienda la solución; hay que confirmarlo.", "evidence": ["ans1097.approval", "contact226.title"] },
+            { "id": "authorizer_unnamed", "critical": true, "statement": "No hay registrado un nombre concreto de quién en la dirección autoriza la compra; hay que confirmarlo.", "evidence": ["ans1097.approval"] }
+          ],
+          "mustNotClaim": [
+            { "id": "daniel_authorizes", "statement": "Que Daniel Carrillo autoriza, aprueba o firma la compra." },
+            { "id": "invented_name", "statement": "Un nombre concreto de la persona que autoriza la compra." },
+            { "id": "no_process", "statement": "Que no hay información registrada sobre el proceso de aprobación." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SEALPATH-VARIANTS",
+      "title": "Sealpath: las mismas necesidades con otra redacción",
+      "accountId": 163,
+      "turns": [
+        {
+          "id": "V1",
+          "question": "Dame un panorama rápido de la oportunidad de Sealpath en Grupo Diestra: cuánto vale, en qué etapa va, cuándo debería cerrar y qué cotización tenemos.",
+          "mustInclude": [
+            { "id": "amount", "critical": true, "statement": "El importe registrado es 8,000 USD.", "evidence": ["opp121.amount"] },
+            { "id": "stage", "critical": true, "statement": "La etapa registrada es Waiting.", "evidence": ["opp121.stage"] },
+            { "id": "close_date", "critical": true, "statement": "La fecha de cierre registrada es el 31 de octubre de 2026.", "evidence": ["opp121.close_date"] },
+            { "id": "quotation", "critical": true, "statement": "Hay una cotización versión 1 en estado Aprobada.", "evidence": ["q78v1.version", "q78v1.status"] }
+          ],
+          "mustNotClaim": [
+            { "id": "no_close_date", "statement": "Que la fecha de cierre no está registrada o especificada." },
+            { "id": "quote_accepted", "statement": "Que el cliente aceptó o recibió la cotización." },
+            { "id": "no_quotation", "statement": "Que no hay cotización o que no se tiene información de la cotización." }
+          ]
+        },
+        {
+          "id": "V2",
+          "question": "¿Qué dicen las notas de las actividades de Sealpath? ¿Ya nos mandaron la orden de compra?",
+          "mustInclude": [
+            { "id": "notes", "critical": true, "statement": "Las notas describen que las dudas de permisos quedaron aclaradas (basta un superadministrador) y que se procederá con la orden de compra la semana del 19 al 24 de octubre.", "evidence": ["act50.notes", "act51.notes"] },
+            { "id": "po_not_received", "critical": true, "statement": "No hay registro de que la orden de compra se haya recibido; solo consta como prevista.", "evidence": ["opp121.purchase_orders", "act51.notes"] }
+          ],
+          "mustNotClaim": [
+            { "id": "po_received", "statement": "Que la orden de compra ya fue recibida o emitida." },
+            { "id": "no_notes", "statement": "Que las actividades no tienen notas o que no hay actividades." }
+          ]
+        },
+        {
+          "id": "V3",
+          "question": "¿Qué riesgos ves para que no se cierre este mes?",
+          "mustInclude": [
+            { "id": "po_pending", "critical": true, "statement": "La orden de compra todavía no está registrada como recibida; solo prevista.", "evidence": ["opp121.purchase_orders", "act51.notes"] },
+            { "id": "grounded", "critical": true, "statement": "Los riesgos se basan en hechos registrados de esta oportunidad (actividades pendientes, cotización en estado Aprobada, aprobación por la dirección, fecha de cierre del 31 de octubre)." },
+            { "id": "close_date", "critical": false, "statement": "Menciona que la fecha de cierre registrada es el 31 de octubre de 2026.", "evidence": ["opp121.close_date"] }
+          ],
+          "mustNotClaim": [
+            { "id": "guaranteed", "statement": "Que el cierre está garantizado o asegurado." },
+            { "id": "invented_probability", "statement": "Una probabilidad o porcentaje de cierre inventado." },
+            { "id": "ask_criterion", "statement": "Que necesita que el usuario elija un criterio para poder analizar." }
+          ]
+        },
+        {
+          "id": "V4",
+          "question": "¿Quién toma la decisión de compra en Sealpath?",
+          "mustInclude": [
+            { "id": "approval_process", "critical": true, "statement": "Está registrado que la dirección aprueba la compra después de que el gerente de TI evalúa y recomienda la solución.", "evidence": ["ans1097.approval"] },
+            { "id": "daniel_role_unconfirmed", "critical": true, "statement": "Daniel Carrillo es el contacto registrado (Gerente de Infraestructura), pero no está acreditado que sea quien decide o recomienda.", "evidence": ["contact226.name", "contact226.title"] }
+          ],
+          "mustNotClaim": [
+            { "id": "daniel_authorizes", "statement": "Que Daniel Carrillo decide, autoriza o aprueba la compra." },
+            { "id": "invented_name", "statement": "Un nombre concreto de la persona de la dirección que autoriza la compra." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "DIESTRA-ACCOUNT",
+      "title": "Grupo Diestra: vista de cuenta y cambio de foco por nombre",
+      "accountId": 163,
+      "turns": [
+        {
+          "id": "A1",
+          "question": "¿Qué oportunidades tiene abiertas Grupo Diestra y cuál cierra antes?",
+          "mustInclude": [
+            { "id": "two_opportunities", "critical": true, "statement": "Grupo Diestra tiene dos oportunidades: Propuesta de Seguridad Correo 2500 Correos y Proteccion de Documentos Sealpath.", "evidence": ["account163.opportunities"] },
+            { "id": "closes_first", "critical": true, "statement": "La que cierra antes es Proteccion de Documentos Sealpath (31 de octubre de 2026); la de correo cierra el 31 de diciembre de 2026.", "evidence": ["opp121.close_date", "opp117.close_date"] },
+            { "id": "amounts", "critical": false, "statement": "Importes: 30,000 USD (correo) y 8,000 USD (Sealpath).", "evidence": ["opp117.amount", "opp121.amount"] }
+          ],
+          "mustNotClaim": [
+            { "id": "wrong_first", "statement": "Que la oportunidad de seguridad de correo cierra antes que Sealpath." }
+          ]
+        },
+        {
+          "id": "A2",
+          "question": "Ahora enfócate en la de seguridad de correo. ¿Qué necesidad registró el cliente, contra qué competidor estamos y para cuándo lo necesita?",
+          "mustInclude": [
+            { "id": "need", "critical": true, "statement": "La necesidad es proteger el correo electrónico de 2000 a 2500 buzones (solución Check Point mediante API).", "evidence": ["ans972.need"] },
+            { "id": "competitor", "critical": true, "statement": "El competidor o solución actual es Fortinet / FortiMail.", "evidence": ["ans1054.competitor", "ans1053.budget"] },
+            { "id": "target_date", "critical": true, "statement": "La fecha objetivo vigente es antes del 31 de diciembre de 2026.", "evidence": ["ans1056.target_date"] }
+          ],
+          "mustNotClaim": [
+            { "id": "november_current", "statement": "Que la fecha objetivo vigente es noviembre de 2026 (fue sustituida por una respuesta posterior)." },
+            { "id": "sealpath_mixup", "statement": "Datos de la oportunidad Sealpath atribuidos a la oportunidad de correo." }
+          ]
+        },
+        {
+          "id": "A3",
+          "question": "¿Tiene actividades, notas o cotizaciones registradas?",
+          "mustInclude": [
+            { "id": "none_registered", "critical": true, "statement": "La oportunidad de seguridad de correo no tiene actividades, notas de oportunidad ni cotizaciones registradas.", "evidence": ["opp117.activities", "opp117.opportunity_notes", "opp117.quotations"] }
+          ],
+          "mustNotClaim": [
+            { "id": "sealpath_mixup", "statement": "Actividades o cotizaciones de Sealpath atribuidas a la oportunidad de correo." },
+            { "id": "invented_records", "statement": "Actividades, notas o cotizaciones que no existen." }
+          ]
+        },
+        {
+          "id": "A4",
+          "question": "¿Quién decide la compra en esa oportunidad?",
+          "mustInclude": [
+            { "id": "decision_process", "critical": true, "statement": "Está registrado que Daniel evalúa y recomienda a la dirección, la dirección da el visto bueno y compras negocia el precio y emite la orden de compra.", "evidence": ["ans978.decision"] }
+          ],
+          "mustNotClaim": [
+            { "id": "daniel_authorizes", "statement": "Que Daniel Carrillo aprueba o autoriza la compra." },
+            { "id": "no_process", "statement": "Que no hay información registrada sobre quién decide." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RALOY-BIGIP",
+      "title": "Raloy: oportunidad ganada con varias cotizaciones",
+      "accountId": 23,
+      "turns": [
+        {
+          "id": "R1",
+          "question": "Resume la oportunidad Balanceo y Seguridad de Aplicaciones (Bigip) de Raloy: estado, importe, cotizaciones y siguiente paso.",
+          "mustInclude": [
+            { "id": "status", "critical": true, "statement": "El estado comercial registrado es Ganada (aunque la etapa figure como Waiting).", "evidence": ["opp27.status", "opp27.stage"] },
+            { "id": "amount", "critical": true, "statement": "El importe registrado es 41,560 USD.", "evidence": ["opp27.amount"] },
+            { "id": "quotations", "critical": true, "statement": "Hay dos cotizaciones: una con versión 2 en estado Ganada (versión 1 en Borrador) y otra versión 1 en estado Aceptada.", "evidence": ["q14v1.status", "q14v2.status", "q15v1.status"] },
+            { "id": "next_step", "critical": false, "statement": "El siguiente paso registrado tras la demostración es colocar la orden de compra.", "evidence": ["ans243.next_step"] }
+          ],
+          "mustNotClaim": [
+            { "id": "open_or_lost", "statement": "Que la oportunidad está perdida o sigue abierta en negociación." },
+            { "id": "no_quotation", "statement": "Que no hay cotizaciones." }
+          ]
+        },
+        {
+          "id": "R2",
+          "question": "¿Quién es el decisor y cuál fue el resultado de la prueba de concepto?",
+          "mustInclude": [
+            { "id": "decider", "critical": true, "statement": "Está registrado que el tomador de decisión es Pedro Jiménez (Gerente de Desarrollo), con compra directa tras aprobar la cotización.", "evidence": ["ans223.decision", "contact33.name", "contact33.title"] },
+            { "id": "poc_result", "critical": true, "statement": "El cliente quedó satisfecho con las pruebas de la prueba de concepto y se planteó una sesión con la dirección ejecutiva.", "evidence": ["ans244.poc_result", "act4.status"] }
+          ],
+          "mustNotClaim": [
+            { "id": "poc_failed", "statement": "Que la prueba de concepto falló o no se realizó." }
+          ]
+        },
+        {
+          "id": "R3",
+          "question": "¿Hay alguna actividad pendiente?",
+          "mustInclude": [
+            { "id": "none_pending", "critical": true, "statement": "No hay actividades pendientes: las dos actividades registradas (Cierre PoC y Seguimiento con cliente) están realizadas.", "evidence": ["opp27.pending_activities", "act4.status", "act9.status"] }
+          ],
+          "mustNotClaim": [
+            { "id": "invented_pending", "statement": "Que hay actividades pendientes." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "FOCUS-SEALPATH",
+      "title": "Oportunidad seleccionada sin nombrarla en el texto",
+      "accountId": 163,
+      "focusOpportunityId": 121,
+      "turns": [
+        {
+          "id": "F1",
+          "question": "¿Cuál es el último siguiente paso documentado y qué falta confirmar?",
+          "mustInclude": [
+            { "id": "next_step", "critical": true, "statement": "El último siguiente paso documentado es la llamada de confirmación: dudas aclaradas y orden de compra prevista para la semana del 19 al 24 de octubre.", "evidence": ["act51.notes"] },
+            { "id": "po_to_confirm", "critical": true, "statement": "Falta confirmar la emisión de la orden de compra; no consta como recibida.", "evidence": ["opp121.purchase_orders"] }
+          ],
+          "mustNotClaim": [
+            { "id": "ask_which", "statement": "Que necesita saber de qué oportunidad se trata." },
+            { "id": "po_received", "statement": "Que la orden de compra ya fue recibida." }
+          ]
+        },
+        {
+          "id": "F2",
+          "question": "¿Y qué cotización tiene?",
+          "mustInclude": [
+            { "id": "quotation", "critical": true, "statement": "Tiene una cotización versión 1 en estado Aprobada; no consta como enviada ni aceptada por el cliente.", "evidence": ["q78v1.version", "q78v1.status"] }
+          ],
+          "mustNotClaim": [
+            { "id": "quote_accepted", "statement": "Que el cliente aceptó la cotización." },
+            { "id": "no_quotation", "statement": "Que no hay cotización." }
+          ]
+        }
+      ]
+    }
+  ]
+}

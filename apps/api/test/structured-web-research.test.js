@@ -173,4 +173,26 @@ describe("structured web research schema", () => {
       fetch.mockRestore();
     }
   });
+
+  it("uses the configured model by default and an explicit model only when requested", async () => {
+    const apiKey = config.openai.apiKey;
+    config.openai.apiKey = "test-only";
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ output_text: "{}" })));
+    try {
+      const request = {
+        schemaName: "model_test", systemPrompt: "Test", subject: "synthetic",
+        context: {}, currentValues: {}, fields: [{ key: "answer", type: "string" }],
+      };
+      await runStructuredTextResearch(request);
+      await runStructuredTextResearch({ ...request, model: "evaluation-model", reasoningEffort: "medium" });
+      expect(JSON.parse(fetch.mock.calls[0][1].body).model).toBe(config.openai.model);
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).not.toHaveProperty("reasoning");
+      expect(JSON.parse(fetch.mock.calls[1][1].body).model).toBe("evaluation-model");
+      expect(JSON.parse(fetch.mock.calls[1][1].body).reasoning).toEqual({ effort: "medium" });
+    } finally {
+      config.openai.apiKey = apiKey;
+      fetch.mockRestore();
+    }
+  });
 });

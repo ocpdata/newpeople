@@ -13,3 +13,4 @@ apps/api/scripts/verifyDemoSeed.js
 waf-test-results.tsv
 bot-defense-results.tsv
 cert-f5/
+apps/api/acceptance-runs/

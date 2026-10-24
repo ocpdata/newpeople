@@ -2341,6 +2341,8 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && message.rescheduleMetadata ? { rescheduleMetadata: message.rescheduleMetadata } : {}),
       ...(message.role === "assistant" && message.outcomeMetadata ? { outcomeMetadata: message.outcomeMetadata } : {}),
       ...(message.role === "assistant" && message.stageMetadata ? { stageMetadata: message.stageMetadata } : {}),
+      ...(message.role === "assistant" && Array.isArray(message.dossierCitations)
+        ? { dossierCitations: message.dossierCitations.slice(0, 40) } : {}),
     }));
   return [
     ...normalizedHistory,
@@ -2400,6 +2402,8 @@ export function appendCustomerAccountChatHistory(
           ...(assistantMetadata.rescheduleMetadata ? { rescheduleMetadata: assistantMetadata.rescheduleMetadata } : {}),
           ...(assistantMetadata.outcomeMetadata ? { outcomeMetadata: assistantMetadata.outcomeMetadata } : {}),
           ...(assistantMetadata.stageMetadata ? { stageMetadata: assistantMetadata.stageMetadata } : {}),
+          ...(Array.isArray(assistantMetadata.dossierCitations)
+            ? { dossierCitations: assistantMetadata.dossierCitations.slice(0, 40) } : {}),
         }
       : null,
   ]

@@ -2311,6 +2311,53 @@ test("Cliente existente conserva la respuesta y avisa si B10 no completa la reda
   expect(state.submissions).toBe(1);
 });
 
+test("Cliente existente envía la oportunidad en foco y muestra la evidencia citada del expediente", async ({ page }) => {
+  await page.route("**/api/commercial-intelligence/account-chat/focus-options**", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ enabled: true, status: "loaded", opportunities: [
+      { id: 121, name: "Proteccion de Documentos Sealpath", stageName: "Waiting" },
+      { id: 117, name: "Propuesta de Seguridad Correo", stageName: "Identificación" },
+    ] }),
+  }));
+  const { chat, send } = await mockCustomerChatRecovery(page);
+  let submitted = null;
+  await page.route("**/api/commercial-intelligence/account-chat/jobs", (route) => {
+    submitted = route.request().postDataJSON();
+    return route.fallback();
+  });
+  const result = (presentation) => ({
+    answer: "La orden de compra sigue prevista; no consta como recibida.",
+    responseType: "informational",
+    presentation,
+    dossierCitations: [{ evidenceId: "act51", label: "Actividad: Llamada de confirmación",
+      detail: "estado pending · vence 2026-10-16", excerpt: "Se procederá con la orden de compra" }],
+  });
+  let presentation = { status: "completed", engine: "dossier" };
+  await page.route("**/api/commercial-intelligence/account-chat/jobs/921", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ job: { id: 921, accountId: 160, status: "completed", result: result(presentation) } }),
+  }));
+  const focus = chat.getByLabel("Oportunidad en foco");
+  await expect(focus.locator("option")).toHaveText([
+    "Toda la cuenta", "Proteccion de Documentos Sealpath · Waiting", "Propuesta de Seguridad Correo · Identificación",
+  ]);
+  await focus.selectOption("121");
+  await send();
+  await expect(chat.getByText("La orden de compra sigue prevista; no consta como recibida.")).toBeVisible();
+  expect(submitted.focusOpportunityId).toBe(121);
+  await expect(chat.getByRole("status")).toHaveCount(0);
+  const citations = chat.locator(".mi-agent-dossier-citations").last();
+  await citations.getByText("Evidencia del CRM citada (1)").click();
+  await expect(citations.getByText("Actividad: Llamada de confirmación")).toBeVisible();
+  await expect(citations.getByText("Se procederá con la orden de compra")).toBeVisible();
+
+  presentation = { status: "degraded", engine: "dossier", reasonCode: "DOSSIER_VERIFICATION_INCOMPLETE" };
+  await focus.selectOption("");
+  await send();
+  await expect(chat.getByRole("status")).toContainText("no pudo verificarse con los registros del CRM");
+  expect(submitted).not.toHaveProperty("focusOpportunityId");
+});
+
 test("Cliente existente muestra las fuentes documentales CRM y conserva la version al recargar", async ({ page }) => {
   const { state, chat, send } = await mockCustomerChatRecovery(page);
   state.documentCoverage = { source: "quotation_document", partial: true };

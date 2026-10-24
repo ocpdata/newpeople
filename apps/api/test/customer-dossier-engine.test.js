@@ -1,0 +1,321 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { routeCustomerTurn, validateRoute } from "../src/commercial-intelligence/dossier/router.js";
+import { analyzeCustomerTurn, parseAnalysis } from "../src/commercial-intelligence/dossier/analyst.js";
+import { verifyAnalysis } from "../src/commercial-intelligence/dossier/verifier.js";
+import { buildDossierQualityTrace, customerDossierEngineEnabled, describeCitation, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
+import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
+import { appendCustomerAccountChatHistory } from "../src/commercial-intelligence/customer-chat-adapter.js";
+
+const governance = { includeWonOpportunities: true, includeLostOpportunities: false, includeCancelledOpportunities: false };
+const user = { id: 7, permissionSet: new Set(["cuentas.read_all", "oportunidades.read_all", "contactos.read",
+  "desarrollo_comercial.read", "calendario_comercial.read_all", "interacciones.read_all", "cotizaciones.revision"]) };
+
+function fakeRun(overrides = {}) {
+  const handlers = [
+    ["FROM opportunities o\n       INNER JOIN", () => [
+      { id: 121, name: "Sealpath", amount_usd: "8000.00", close_date: "2026-10-31", sales_stage_id: 7, stage_name: "Waiting",
+        commercial_status_id: 1, commercial_status_code: "en_proceso", commercial_status_name: "En proceso", contact_id: 226, contact_name: "Daniel Carrillo" },
+      { id: 117, name: "Correo", amount_usd: "30000.00", close_date: "2026-12-31", sales_stage_id: 2, stage_name: "Identificación",
+        commercial_status_id: 1, commercial_status_code: "en_proceso", commercial_status_name: "En proceso", contact_id: 226, contact_name: "Daniel Carrillo" },
+    ]],
+    ["FROM opportunities o\n     INNER JOIN opportunity_sales_stages oss", () => [{
+      id: 121, name: "Sealpath", account_id: 163, contact_id: 226, amount_usd: "8000.00", close_date: "2026-10-31",
+      sales_stage_id: 7, stage_code: "waiting", stage_name: "Waiting", commercial_status_id: 1, commercial_status_code: "en_proceso",
+      commercial_status_name: "En proceso" }]],
+    ["FROM accounts a", () => [{ id: 163, name: "Grupo Diestra" }]],
+    ["FROM opportunity_stage_question_answers a\n       LEFT JOIN", () => [
+      { id: 1097, sales_stage_id: 2, stage_name: "Identificación", question_id: 6, question_code: "decisor",
+        question_prompt: "¿Quién decide?", answer_value: "La dirección aprueba tras la recomendación del gerente de TI" }]],
+    ["FROM opportunity_stage_questions q", () => []],
+    ["FROM contacts c", () => [{ id: 226, first_name: "Daniel", last_name: "Carrillo", position_title: "Gerente de Infraestructura" }]],
+    ["FROM opportunity_workspace_actions a", () => [
+      { id: 51, title: "Llamada de confirmación", status: "pending", due_date: "2026-10-16", notes: "Se procederá con la orden de compra" }]],
+    ["FROM commercial_calendar_activities cca", () => []],
+    ["FROM opportunity_notes n", () => []],
+    ["FROM quotations q", () => [{ id: 78, latest_version_id: 139 }]],
+    ["FROM quotation_versions v", () => [{ id: 139, quotation_id: 78, version_number: 1, status_id: 4, status_code: "aprobada", status_name: "Aprobada" }]],
+    ["FROM quotation_won_documents w", () => []],
+    ["FROM opportunity_document_links l", () => []],
+    ["FROM interactions i", () => []],
+    ["FROM audit_log a", () => []],
+    ["SELECT 'stage' AS catalog", () => []],
+  ];
+  return async (sql) => {
+    const override = Object.entries(overrides).find(([fragment]) => sql.includes(fragment));
+    if (override) return override[1]();
+    const handler = handlers.find(([fragment]) => sql.includes(fragment));
+    if (!handler) throw new Error(`Consulta inesperada: ${sql.slice(0, 60)}`);
+    return handler[1]();
+  };
+}
+
+const route = (overrides = {}) => ({
+  mode: "consult", focusLevel: "opportunity", opportunityIds: [121],
+  obligations: [{ id: "o1", ask: "Importe y cotización", form: "answer", count: 0, itemsNeedConfirmation: false }],
+  recordFilters: [], clarificationQuestion: "", clarificationOptions: [], reason: "Pide datos de Sealpath", ...overrides,
+});
+const rawRoute = (overrides = {}) => {
+  const value = route(overrides);
+  return { ...value, obligations: value.obligations.map(({ id: _id, ...item }) => item) };
+};
+const claim = (overrides = {}) => ({ text: "El importe registrado es 8,000 USD", kind: "registered", evidenceIds: ["opp121"],
+  sectionKeys: [], values: [{ type: "amount", value: "8000" }], ...overrides });
+const analysis = (overrides = {}) => ({
+  blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [], claims: [
+    claim(),
+    claim({ text: "La cotización está Aprobada", evidenceIds: ["qv139"], values: [{ type: "status", value: "Aprobada" }] }),
+  ] }],
+  answerText: "La oportunidad tiene un importe registrado de 8,000 USD y una cotización aprobada internamente.",
+  ...overrides,
+});
+
+let consoleError;
+beforeEach(() => { consoleError = vi.spyOn(console, "error").mockImplementation(() => {}); });
+afterEach(() => consoleError.mockRestore());
+
+describe("interruptor del motor de expedientes", () => {
+  it("respeta los modos off, on y piloto por usuario", () => {
+    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "off", customerDossierEnginePilotUserIds: [7] }, 7)).toBe(false);
+    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "on", customerDossierEnginePilotUserIds: [] }, 7)).toBe(true);
+    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "pilot", customerDossierEnginePilotUserIds: [7] }, 7)).toBe(true);
+    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "pilot", customerDossierEnginePilotUserIds: [8] }, 7)).toBe(false);
+  });
+});
+
+describe("enrutador", () => {
+  it("rechaza IDs ajenos a la cuenta y focos inconsistentes", () => {
+    expect(validateRoute(rawRoute({ opportunityIds: [999] }), { question: "x", opportunityIds: [121] }).issues)
+      .toContain("opportunityIds contiene IDs que no pertenecen a la cuenta.");
+    expect(validateRoute(rawRoute({ opportunityIds: [] }), { question: "x", opportunityIds: [121] }).issues)
+      .toContain("focusLevel=opportunity requiere exactamente un ID.");
+    expect(validateRoute(rawRoute({ obligations: [{ id: "o1", ask: "Tres puntos", form: "exact_items", count: 0, itemsNeedConfirmation: true }] }),
+      { question: "x", opportunityIds: [121] }).issues).toContain("La obligación o1 pide puntos exactos sin cantidad.");
+    expect(validateRoute(rawRoute({ focusLevel: "account", opportunityIds: [] }), { question: "x", opportunityIds: [121] }).issues).toEqual([]);
+  });
+
+  it("asigna identificadores de obligación por código y convierte errores de esquema en problemas", () => {
+    const valid = validateRoute(rawRoute({ obligations: [
+      { ask: "Importe", form: "answer", count: 3, itemsNeedConfirmation: false },
+      { ask: "Tres puntos", form: "exact_items", count: 3, itemsNeedConfirmation: true },
+    ] }), { question: "x", opportunityIds: [121] });
+    expect(valid.route.obligations.map(({ id, count }) => ({ id, count }))).toEqual([{ id: "o1", count: 0 }, { id: "o2", count: 3 }]);
+    const invalid = validateRoute({ ...rawRoute(), obligations: [{ id: "un-identificador-demasiado-largo", ask: "x", form: "answer", count: 0, itemsNeedConfirmation: false }] },
+      { question: "x", opportunityIds: [121] });
+    expect(invalid.route).toBeNull();
+    expect(invalid.issues[0]).toMatch(/^obligations\.0/);
+  });
+
+  it("descarta filtros sin cita literal del mensaje", () => {
+    const { route: validated, droppedFilters } = validateRoute(rawRoute({ recordFilters: [
+      { description: "Vencen esta semana", quote: "que vencen esta semana" },
+      { description: "Orden prevista", quote: "semana del 19 al 24" },
+    ] }), { question: "¿Qué actividades que vencen esta semana tiene?", opportunityIds: [121] });
+    expect(validated.recordFilters.map((filter) => filter.quote)).toEqual(["que vencen esta semana"]);
+    expect(droppedFilters.map((filter) => filter.quote)).toEqual(["semana del 19 al 24"]);
+  });
+
+  it("reintenta una vez con los problemas concretos y luego falla de forma explícita", async () => {
+    const call = vi.fn()
+      .mockResolvedValueOnce({ ...rawRoute(), obligations: [{ id: "extra", ask: "x", form: "answer", count: 0, itemsNeedConfirmation: false }] })
+      .mockResolvedValueOnce(rawRoute());
+    const result = await routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, call, model: "router" });
+    expect(result.route.opportunityIds).toEqual([121]);
+    expect(call.mock.calls[1][0].context.validationFeedback.issues).toHaveLength(1);
+    expect(call.mock.calls[0][0]).toMatchObject({ model: "router", temperature: 0,
+      aiUsageContext: { featureCode: "commercial_intelligence.account_chat.dossier_router", jobId: 1 } });
+    await expect(routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, model: "router",
+      call: vi.fn().mockResolvedValue(rawRoute({ opportunityIds: [999] })) }))
+      .rejects.toMatchObject({ code: "DOSSIER_ROUTE_INVALID" });
+  });
+});
+
+describe("analista", () => {
+  it("exige exactamente un bloque por obligación y un modelo configurado", async () => {
+    const obligations = route().obligations;
+    expect(() => parseAnalysis(analysis({ blocks: [] }), obligations)).toThrow(/exactamente un bloque/);
+    await expect(analyzeCustomerTurn({ context: {}, obligations, userId: 7, model: "", call: vi.fn() }))
+      .rejects.toMatchObject({ code: "DOSSIER_ANALYST_NOT_CONFIGURED" });
+    const call = vi.fn(async () => analysis());
+    await analyzeCustomerTurn({ context: {}, obligations, userId: 7, jobId: 3, model: "analista", reasoningEffort: "medium", call });
+    expect(call.mock.calls[0][0]).toMatchObject({ model: "analista", reasoningEffort: "medium",
+      aiUsageContext: { featureCode: "commercial_intelligence.account_chat.dossier_analyst", jobId: 3 } });
+  });
+});
+
+describe("verificación por código", () => {
+  const dossier = {
+    kind: "opportunity",
+    account: { evidenceId: "acct163", id: 163, name: "Grupo Diestra" },
+    opportunity: { evidenceId: "opp121", amountUsd: "8000.00", closeDate: "2026-10-31", stageName: "Waiting", sellerName: "Oscar Amaya" },
+    sections: {
+      activities: { key: "activities", status: "loaded", items: [{ evidenceId: "act51", status: "pending", dueDate: "2026-10-16" }] },
+      opportunityNotes: { key: "opportunityNotes", status: "empty", items: [] },
+      contacts: { key: "contacts", status: "restricted", items: [] },
+      quotations: { key: "quotations", status: "loaded", items: [{ evidenceId: "quote78", versions: [
+        { evidenceId: "qv139", statusName: "Aprobada", statusCode: "aprobada", quotationDate: "2026-10-01" }] }] },
+    },
+  };
+  const obligations = route().obligations;
+  const check = (value) => verifyAnalysis({ analysis: value, obligations, dossiers: [dossier] });
+
+  it("acepta afirmaciones citadas con valores que coinciden", () => {
+    expect(check(analysis())).toMatchObject({ ok: true, failures: [] });
+    expect(check(analysis()).citedEvidenceIds.sort()).toEqual(["opp121", "qv139"]);
+  });
+
+  it("rechaza evidencia inexistente y valores que no coinciden con lo citado", () => {
+    const result = check(analysis({ blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [], claims: [
+      claim({ evidenceIds: ["opp999"] }),
+      claim({ values: [{ type: "amount", value: "9000" }] }),
+      claim({ text: "Cierre", values: [{ type: "date", value: "2026-11-30" }] }),
+      claim({ text: "Cierre", values: [{ type: "date", value: "31/10/2026" }] }),
+      claim({ text: "Vendedor", values: [{ type: "person", value: "Daniel Carrillo" }] }),
+      claim({ text: "Etapa", values: [{ type: "status", value: "Negociación" }] }),
+    ] }] }));
+    expect(result.failures.map((failure) => failure.code)).toEqual(
+      ["UNKNOWN_EVIDENCE", "VALUE_WITHOUT_EVIDENCE", "VALUE_MISMATCH", "VALUE_MISMATCH", "VALUE_FORMAT", "VALUE_MISMATCH", "VALUE_MISMATCH"]);
+    expect(check(analysis({ blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [], claims: [
+      claim({ text: "Vendedor", values: [{ type: "person", value: "Oscar Amaya" }] }),
+      claim({ text: "Vence", evidenceIds: ["act51"], values: [{ type: "date", value: "2026-10-16" }, { type: "status", value: "pending" }] }),
+    ] }] })).ok).toBe(true);
+  });
+
+  it("solo acepta ausencias basadas en secciones leídas completas", () => {
+    const absence = (sectionKeys) => check(analysis({ blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [], claims: [
+      claim({ text: "No hay notas", kind: "absence", evidenceIds: [], sectionKeys, values: [] })] }] }));
+    expect(absence(["opportunityNotes"]).ok).toBe(true);
+    expect(absence(["contacts"]).failures[0]).toMatchObject({ code: "ABSENCE_INCOMPLETE_SECTION" });
+    expect(absence(["documents"]).failures[0]).toMatchObject({ code: "ABSENCE_UNKNOWN_SECTION" });
+    expect(absence([]).failures.map((failure) => failure.code)).toEqual(["MISSING_EVIDENCE", "ABSENCE_WITHOUT_SECTION"]);
+  });
+
+  it("exige la cantidad de puntos y la confirmación pedidas", () => {
+    const itemsObligation = [{ id: "o1", ask: "Tres puntos", form: "exact_items", count: 3, itemsNeedConfirmation: true }];
+    const result = verifyAnalysis({ obligations: itemsObligation, dossiers: [dossier], analysis: analysis({ blocks: [{
+      obligationId: "o1", status: "answered", reason: "", claims: [claim()],
+      items: [{ text: "Orden de compra", confirmation: "Fecha de emisión" }, { text: "Aprobación", confirmation: "" }],
+    }] }) });
+    expect(result.failures.map((failure) => failure.code)).toEqual(["ITEM_COUNT", "MISSING_CONFIRMATION"]);
+  });
+
+  it("exige motivo y respaldo según el estado del bloque", () => {
+    const result = check(analysis({ answerText: " ", blocks: [{ obligationId: "o1", status: "partial", reason: "", items: [], claims: [] }] }));
+    expect(result.failures.map((failure) => failure.code)).toEqual(["EMPTY_ANSWER", "MISSING_REASON", "MISSING_CLAIMS"]);
+  });
+});
+
+describe("motor de expedientes", () => {
+  const withConnection = (overrides) => (work) => work(fakeRun(overrides));
+  const base = { user, accountId: 163, question: "¿Cuánto vale Sealpath y qué cotización tiene?", governance, jobId: 9,
+    now: new Date("2026-10-23T18:00:00Z"), timezone: "America/Mexico_City" };
+
+  it("delega adjuntos y acciones al recorrido actual sin llamar al analista", async () => {
+    const analyze = vi.fn();
+    expect(await runCustomerDossierTurn({ ...base, hasAttachment: true, withConnection: withConnection(), analyze }))
+      .toMatchObject({ handled: false, reason: "attachment" });
+    const delegatedTurn = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze,
+      route: async () => ({ route: route({ mode: "action" }), droppedFilters: [], attempts: [] }) });
+    expect(delegatedTurn).toMatchObject({ handled: false, reason: "mode_action" });
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("rechaza un foco que no pertenece a la cuenta", async () => {
+    await expect(runCustomerDossierTurn({ ...base, focusOpportunityId: 999, withConnection: withConnection(), route: vi.fn(), analyze: vi.fn() }))
+      .rejects.toMatchObject({ status: 404, code: "DOSSIER_FOCUS_UNAVAILABLE" });
+  });
+
+  it("responde con citas verificadas, memoria del foco y traza", async () => {
+    const routeTurn = vi.fn(async () => ({ route: route(), droppedFilters: [], attempts: [{ issues: [] }] }));
+    const analyze = vi.fn(async () => analysis());
+    const result = await runCustomerDossierTurn({ ...base, focusOpportunityId: 121, withConnection: withConnection(), route: routeTurn, analyze });
+    expect(routeTurn.mock.calls[0][0].context).toMatchObject({ today: "2026-10-23", selectedOpportunity: { id: 121, name: "Sealpath" } });
+    expect(analyze.mock.calls[0][0].context.dossiers.map((dossier) => dossier.kind)).toEqual(["account", "opportunity"]);
+    expect(result).toMatchObject({ handled: true, response: { responseType: "informational", presentation: { status: "completed", engine: "dossier" } } });
+    expect(result.response.dossierCitations.map((citation) => citation.label)).toEqual(
+      expect.arrayContaining(["Oportunidad Sealpath", "Cotización 78 · versión 1"]));
+    expect(result.memory).toMatchObject({ level: "opportunity", focusOpportunityIds: [121], obligations: [{ id: "o1", ask: "Importe y cotización" }] });
+    expect(buildDossierQualityTrace(result)).toMatchObject({ intentType: "dossier_consult", validationStatus: "valid", evidenceCount: 2 });
+  });
+
+  it("repara una vez con los fallos concretos y degrada de forma visible si persisten", async () => {
+    const routeTurn = async () => ({ route: route(), droppedFilters: [], attempts: [] });
+    const invalid = analysis({ blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [], claims: [claim({ evidenceIds: ["opp999"] })] }] });
+    const repaired = vi.fn().mockResolvedValueOnce(invalid).mockResolvedValueOnce(analysis());
+    const ok = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn, analyze: repaired });
+    expect(repaired).toHaveBeenCalledTimes(2);
+    expect(repaired.mock.calls[1][0].context.repair.failures[0]).toMatchObject({ code: "UNKNOWN_EVIDENCE" });
+    expect(ok.response.presentation.status).toBe("completed");
+    const failing = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn,
+      analyze: vi.fn().mockResolvedValue(invalid) });
+    expect(failing.response.presentation).toMatchObject({ status: "degraded", reasonCode: "DOSSIER_VERIFICATION_INCOMPLETE" });
+    expect(failing.response.answer).toContain("No pude verificar por completo con los registros del CRM");
+    expect(buildDossierQualityTrace(failing)).toMatchObject({ validationStatus: "invalid",
+      validationReasons: ["UNKNOWN_EVIDENCE", "VALUE_WITHOUT_EVIDENCE"] });
+  });
+
+  it("devuelve la aclaración del enrutador sin leer expedientes de oportunidad", async () => {
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze: vi.fn(),
+      route: async () => ({ route: route({ mode: "clarify", clarificationQuestion: "¿De qué oportunidad hablas?",
+        clarificationOptions: [{ label: "Sealpath", opportunityId: 121 }, { label: "Correo", opportunityId: 117 }] }), droppedFilters: [], attempts: [] }) });
+    expect(result.response).toMatchObject({ responseType: "clarification", answer: "¿De qué oportunidad hablas?\n- Sealpath\n- Correo" });
+  });
+
+  it("no inventa el foco si la lista de oportunidades no se leyó completa", async () => {
+    await expect(runCustomerDossierTurn({ ...base, route: vi.fn(), analyze: vi.fn(),
+      withConnection: withConnection({ "FROM opportunities o\n       INNER JOIN": () => { throw new Error("db"); } }) }))
+      .rejects.toMatchObject({ code: "DOSSIER_ACCOUNT_OPPORTUNITIES_UNAVAILABLE" });
+  });
+
+  it("convierte fallos técnicos en errores comprensibles y los registra", async () => {
+    const routeTurn = async () => ({ route: route(), droppedFilters: [], attempts: [] });
+    await expect(runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn,
+      analyze: async () => { throw new Error("OpenAI web search failed: 400 {\"error\":\"bad request\"}"); } }))
+      .rejects.toMatchObject({ code: "DOSSIER_ENGINE_FAILED", message: "No pude completar la consulta con los registros del CRM. Intenta nuevamente." });
+    await expect(runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn,
+      analyze: async () => { throw Object.assign(new Error("aborted"), { name: "TimeoutError" }); } }))
+      .rejects.toMatchObject({ code: "DOSSIER_TURN_TIMEOUT" });
+    expect(consoleError).toHaveBeenCalledWith("[dossier] Turn failed", expect.objectContaining({ jobId: 9 }));
+  });
+
+  it("conserva el aviso de saldo agotado y reintenta una vez un fallo transitorio del proveedor", async () => {
+    const routeTurn = async () => ({ route: route(), droppedFilters: [], attempts: [] });
+    await expect(runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn,
+      analyze: async () => { throw Object.assign(new Error("No tienes saldo disponible para ejecutar funciones de IA."), { code: "AI_BUDGET_EXCEEDED", status: 402 }); } }))
+      .rejects.toMatchObject({ code: "AI_BUDGET_EXCEEDED", message: "No tienes saldo disponible para ejecutar funciones de IA." });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const flaky = vi.fn().mockRejectedValueOnce(new Error("OpenAI web search failed: 504 <html>")).mockResolvedValueOnce(analysis());
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn, analyze: flaky });
+    expect(flaky).toHaveBeenCalledTimes(2);
+    expect(result.diagnostics.transientRetries).toEqual(["analyst"]);
+    const failing = vi.fn().mockRejectedValue(new Error("OpenAI web search failed: 504 <html>"));
+    await expect(runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn, analyze: failing }))
+      .rejects.toMatchObject({ code: "DOSSIER_ENGINE_FAILED" });
+    expect(failing).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+});
+
+describe("memoria, historial y citas", () => {
+  it("valida la memoria del motor contra las oportunidades visibles", () => {
+    const snapshot = { account: { id: 163 }, opportunities: [{ id: 121, accountId: 163 }] };
+    const context = validateCustomerConversationContext({ accountId: 163, dossierMemory: {
+      level: "opportunities", focusOpportunityIds: [121, 999], obligations: [{ id: "o1", ask: "x".repeat(400) }],
+      citedEvidenceIds: ["opp121", "bad id", "ans1097"] } }, snapshot, 163);
+    expect(context.dossierMemory).toMatchObject({ level: "opportunities", focusOpportunityIds: [121], citedEvidenceIds: ["opp121", "ans1097"] });
+    expect(context.dossierMemory.obligations[0].ask).toHaveLength(300);
+  });
+
+  it("conserva las citas en el historial del chat", () => {
+    const history = appendCustomerAccountChatHistory([], "pregunta", "respuesta", {
+      presentation: { status: "completed", engine: "dossier" }, dossierCitations: [{ evidenceId: "act51", label: "Actividad" }] });
+    expect(history[1]).toMatchObject({ role: "assistant", dossierCitations: [{ evidenceId: "act51" }] });
+    expect(appendCustomerAccountChatHistory(history, "otra", "más")[1].dossierCitations).toHaveLength(1);
+  });
+
+  it("describe cada tipo de evidencia de forma legible", () => {
+    expect(describeCitation({ evidenceId: "ans982", stageName: "Identificación", current: false, answerValue: "Noviembre" }))
+      .toMatchObject({ label: "Respuesta de etapa Identificación (sustituida)", excerpt: "Noviembre" });
+    expect(describeCitation({ evidenceId: "audit5", createdAt: "2026-07-02", changes: [{ label: "estado comercial", before: "En proceso", after: "Ganada" }] }))
+      .toMatchObject({ excerpt: "estado comercial: En proceso → Ganada" });
+  });
+});

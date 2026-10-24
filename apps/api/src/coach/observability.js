@@ -168,6 +168,7 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
     "history",
     "agents",
     "adapter",
+    "dossier_engine",
   ]);
   const allowedPlannerSources = new Set(["structured_plan", "not_applicable"]);
   const allowedPlannerReasons = new Set([
@@ -490,8 +491,16 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
       : null,
     agentMetrics,
     snapshotMetrics,
+    ...(diagnostics.dossierEngine ? { dossierEngine: boundedDossierDiagnostics(diagnostics.dossierEngine) } : {}),
   };
   return result;
+}
+
+function boundedDossierDiagnostics(value) {
+  const serialized = JSON.stringify(value);
+  return serialized.length <= 30000
+    ? JSON.parse(serialized)
+    : { truncated: true, size: serialized.length, preview: serialized.slice(0, 2000) };
 }
 
 function mapQualityRow(row = {}) {
