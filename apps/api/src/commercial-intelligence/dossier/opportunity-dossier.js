@@ -1,5 +1,5 @@
 import {
-  allowedCommercialStatuses, authorizeAccount, canRead, canReadAll, dossierError, opportunityScopeSql, sectionPermissions,
+  allowedCommercialStatuses, authorizeAccount, canRead, canReadAll, dossierError, opportunityScopeSql, sectionPermissions, channelAllows,
 } from "./access.js";
 import {
   ACTIVITY_STATUS_MEANINGS, COMMERCIAL_STATUS_MEANINGS, EMPTY_MEANINGS, FAILED_MEANING, MEANINGS,
@@ -225,7 +225,7 @@ export async function buildOpportunityDossier({ user, opportunityId, governance,
   const row = await loadAuthorizedOpportunity({ user, opportunityId, governance, run });
   const account = await authorizeAccount({ user, accountId: row.account_id, run });
   const opportunity = opportunityProfile(row);
-  const permissions = sectionPermissions(user);
+  const permissions = sectionPermissions(user, governance);
   const id = opportunity.id;
   const sections = {};
 
@@ -487,12 +487,12 @@ export async function buildOpportunityDossier({ user, opportunityId, governance,
 
 export async function buildAccountDossier({ user, accountId, governance, run, now = new Date() }) {
   const account = await authorizeAccount({ user, accountId, run });
-  const permissions = sectionPermissions(user);
+  const permissions = sectionPermissions(user, governance);
   const scope = opportunityScopeSql(user);
   const showContactNames = canRead(user, "contactos");
   const sections = {};
   sections.opportunities = await buildSection({
-    key: "opportunities", allowed: canRead(user, "oportunidades"),
+    key: "opportunities", allowed: canRead(user, "oportunidades") && channelAllows(governance, "opportunities"),
     load: (limit) => run(
       `SELECT o.id, o.name, o.amount_usd, DATE_FORMAT(o.close_date, '%Y-%m-%d') AS close_date,
               o.sales_stage_id, oss.name AS stage_name, o.commercial_status_id,
@@ -533,7 +533,7 @@ export async function buildAccountDossier({ user, accountId, governance, run, no
   sections.contacts = await contactsSection({ accountId: account.id, opportunityContactId: null, run,
     allowed: permissions.contacts });
   sections.pendingActivities = await buildSection({
-    key: "pendingActivities", allowed: permissions.activities,
+    key: "pendingActivities", allowed: permissions.pendingActivities,
     load: (limit) => run(
       `SELECT a.id, a.opportunity_id, o.name AS opportunity_name, a.title, a.action_type, a.status,
               DATE_FORMAT(a.due_date, '%Y-%m-%d') AS due_date, CAST(a.scheduled_at AS CHAR) AS scheduled_at,

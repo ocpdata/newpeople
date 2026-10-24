@@ -48,11 +48,8 @@ export const config = {
       process.env.CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS || "",
     ).split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0),
     customerDossierEngineMode: String(
-      process.env.CUSTOMER_DOSSIER_ENGINE_MODE || "off",
+      process.env.CUSTOMER_DOSSIER_ENGINE_MODE || "on",
     ).trim().toLowerCase(),
-    customerDossierEnginePilotUserIds: String(
-      process.env.CUSTOMER_DOSSIER_ENGINE_PILOT_USER_IDS || "",
-    ).split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0),
     opportunityStageAnswerSuggestionsEnabled:
       String(
         process.env.OPPORTUNITY_STAGE_ANSWER_SUGGESTIONS_ENABLED || "true",
@@ -197,8 +194,8 @@ export const config = {
     apiKey: process.env.OPENAI_API_KEY || "",
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     routerModel: process.env.OPENAI_ROUTER_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    analystModel: process.env.OPENAI_ANALYST_MODEL || "",
-    analystReasoningEffort: process.env.OPENAI_ANALYST_REASONING_EFFORT || "",
+    analystModel: process.env.OPENAI_ANALYST_MODEL || "gpt-6.1-sol",
+    analystReasoningEffort: process.env.OPENAI_ANALYST_REASONING_EFFORT || "low",
     transcriptionModel:
       process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
     baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",

@@ -3233,6 +3233,7 @@ export default function MiAgentPage({
                     answer: message.text,
                     presentation: message.presentation || null,
                     dossierCitations: message.dossierCitations || [],
+                    opportunityOptions: message.opportunityOptions || [],
                     activityHistory: message.activityHistory || null,
                     operations: message.operations || [],
                     stageAnswerPrefill: message.stageAnswerPrefill || null,
@@ -9120,6 +9121,22 @@ export default function MiAgentPage({
                             ? "Parte de esta respuesta no pudo verificarse con los registros del CRM; revisa la nota al final."
                             : "No pude completar la redacción conversacional. Te muestro el resultado verificado."}
                         </p>
+                      ) : null}
+                      {message.opportunityOptions?.length && index === customerChatMessages.length - 1 ? (
+                        <div className="mi-agent-opportunity-options" role="group" aria-label="Elegir oportunidad">
+                          {message.opportunityOptions.map((option) => (
+                            <button
+                              type="button"
+                              className="mi-agent-secondary-button"
+                              key={option.id}
+                              disabled={customerChatLoading || customerChatSessionLoading}
+                              onClick={() => askCustomerChat(option.name)}
+                            >
+                              {option.name}
+                              {option.stageName ? ` · ${option.stageName}` : ""}
+                            </button>
+                          ))}
+                        </div>
                       ) : null}
                       {message.dossierCitations?.length ? (
                         <details className="mi-agent-dossier-citations">

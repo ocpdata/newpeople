@@ -33,7 +33,8 @@ No incluir secretos, credenciales ni datos personales innecesarios.
 | Referencia | Area | Comportamiento que debe conservarse | Estado de validacion |
 | --- | --- | --- | --- |
 | COR-001 | Ingreso | La contrasena comienza oculta. El icono permite mostrarla y ocultarla sin enviar el formulario ni cambiar su valor. | Implementada; compilacion verificada; interaccion en navegador pendiente. |
-| COR-010 | Consultas de Cliente existente | Las consultas y analisis se responden desde un expediente de evidencia con citas verificables; las acciones conservan sus contratos estrictos. COR-002 a COR-009 quedan descartadas. | Decision aprobada; fases 0, 1 y 2 completadas; motor desactivado por defecto, pendiente de piloto. |
+| COR-010 | Consultas de Cliente existente | Las consultas y analisis se responden desde un expediente de evidencia con citas verificables; las acciones conservan sus contratos estrictos. COR-002 a COR-009 quedan descartadas. | Decision aprobada; fases 0, 1 y 2 completadas; motor activo para todos los usuarios. |
+| COR-011 | Acciones de actividad en Cliente existente | Una respuesta breve a «¿a qué oportunidad?» o la fecha/hora de un borrador abierto completan la actividad recordada sin reinterpretarse como solicitud nueva. La oportunidad del selector es el destino de la acción. Si falta la oportunidad, se ofrecen opciones. | Implementada; pruebas unitarias y conversaciones reales verificadas. |
 
 ## Registro de correcciones
 
@@ -169,8 +170,50 @@ Agregar nuevas entradas sin eliminar las anteriores.
   banco; una prueba de navegador nueva y dos vecinas pasan. Las suites
   existentes de los modulos tocados dan el mismo resultado que el commit
   `5d85a71` (1 719 pasan; las mismas 10 fallas previas).
-- **Estado:** fases 0, 1 y 2 completadas; motor desactivado hasta decidir el
-  piloto (fase 3).
+- **Estado:** fases 0, 1 y 2 completadas. Por decision del usuario es una
+  aplicacion nueva para todos: el motor queda activo por defecto, sin piloto,
+  con `gpt-6.1-sol` (esfuerzo `low`) y respetando las herramientas
+  habilitadas en la gobernanza del canal. `off` queda solo como interruptor
+  de emergencia.
+
+### COR-011 - Continuidad de acciones de actividad (2026-10-24)
+
+- **Solicitud y problema observado:** tras «Agenda una llamada con Daniel el
+  martes» con «Toda la cuenta», el chat preguntó la oportunidad; la respuesta
+  «a sealpath» se reinterpretó como nueva consulta y devolvió la lista de
+  oportunidades, perdiendo la llamada. Al reproducirlo, la misma respuesta
+  también terminó en «contrato de turno inválido», y «a las 10 de la mañana»
+  se interpretó como reprogramación de otra actividad.
+- **Causa:** el recorrido de acciones volvía a clasificar con IA cada
+  respuesta breve en lugar de usar el estado pendiente; además, el borrador
+  solo aceptaba la oportunidad resuelta por el planificador e ignoraba la
+  seleccionada, por lo que preguntaba aun con una oportunidad elegida.
+- **Cambio:**
+  - `pending-activity-target.js`: resuelve sin IA la oportunidad de una
+    actividad recordada (nombre completo o palabras del nombre; si no hay una
+    sola coincidencia, ofrece opciones) y la fecha y hora de un borrador
+    abierto (días de la semana, hoy, mañana, ayer, fechas y horas habituales;
+    toma el día dicho antes en la conversación si la respuesta solo trae la
+    hora). Rechaza horas pasadas para actividades programadas.
+  - `activity-draft.js`: usa la oportunidad seleccionada cuando la solicitud
+    no nombra otra; usa los datos autorizados del snapshot solo si no se
+    intentó leer la oportunidad (una lectura fallida nunca se sustituye).
+  - `service.js`: aplica lo anterior antes de la clasificación heredada, pasa
+    la oportunidad del selector a las acciones y adjunta opciones a la
+    aclaración de oportunidad.
+  - Interfaz: botones con las oportunidades en la última aclaración.
+- **Fuera de alcance:** otras acciones (reprogramar, actualizar importe,
+  resultados) siguen en el recorrido actual; las horas sin «mañana/tarde» de
+  1 a 6 se interpretan como de la tarde y se muestran antes de confirmar.
+- **Validacion:** 13 pruebas nuevas en `customer-pending-activity.test.js` y
+  las de `customer-activity-draft.test.js` pasan. Conversaciones reales en
+  Grupo Diestra: «a sealpath», «la de seguridad», «la otra» (opciones),
+  selector en Sealpath y «a las 10 de la mañana» / «a las 4 de la tarde»
+  generan el borrador correcto para el martes 2026-10-27. Las suites del chat
+  dan las mismas fallas que el commit `36c16cc`; `customer-chat-diagnostics`
+  fija el motor de consultas en `off` porque prueba el recorrido heredado.
+  Los borradores creados en las pruebas se cancelaron.
+- **Estado:** implementada.
 
 ### Plantilla para la siguiente correccion
 

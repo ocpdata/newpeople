@@ -322,14 +322,23 @@ tipo de error que el código no puede detectar.
 
 | Variable | Uso | Valor por defecto |
 | --- | --- | --- |
-| `CUSTOMER_DOSSIER_ENGINE_MODE` | `off`, `pilot` u `on` | `off` |
-| `CUSTOMER_DOSSIER_ENGINE_PILOT_USER_IDS` | Usuarios del modo `pilot`, separados por comas | vacío |
+| `CUSTOMER_DOSSIER_ENGINE_MODE` | `on` para todos los usuarios; `off` solo como interruptor de emergencia | `on` |
 | `OPENAI_ROUTER_MODEL` | Modelo del enrutador | `OPENAI_MODEL` |
-| `OPENAI_ANALYST_MODEL` | Modelo del analista; obligatorio con el motor activo | vacío |
-| `OPENAI_ANALYST_REASONING_EFFORT` | Esfuerzo de razonamiento opcional | vacío |
+| `OPENAI_ANALYST_MODEL` | Modelo del analista | `gpt-6.1-sol` |
+| `OPENAI_ANALYST_REASONING_EFFORT` | Esfuerzo de razonamiento del analista | `low` |
 
-Con el motor desactivado, el chat funciona exactamente como antes. Cada
-modelo usado necesita una tarifa vigente.
+El motor es el recorrido de consultas para **todos los usuarios**; no hay
+modo piloto. Con `off`, el chat vuelve al recorrido anterior. Cada modelo
+usado necesita una tarifa vigente en el CRM.
+
+**Gobernanza del canal.** El expediente respeta las intenciones y
+herramientas habilitadas para el canal `customer_account`. Una fuente cuya
+herramienta no está habilitada en ninguna intención activa se marca como
+restringida y no se lee: oportunidades (`searchOpportunities`), contactos
+(`searchContacts`), actividades, calendario y pendientes
+(`getOpportunityActivities`), notas (`getOpportunityNotes`), cotizaciones y
+órdenes de compra (`getOpportunityQuotation`) e interacciones
+(`searchInteractions`).
 
 **Recorrido de un turno con el motor activo:**
 
@@ -364,7 +373,7 @@ oportunidad, también se actualiza la oportunidad del contexto para que las
 acciones posteriores del recorrido actual usen la misma. La memoria de turno
 del recorrido actual se descarta para no arrastrar categorías antiguas.
 
-**Interfaz.** Con el motor activo para el usuario, el chat muestra el
+**Interfaz.** Con el motor activo, el chat muestra el
 selector «Oportunidad» con «Toda la cuenta» y las oportunidades visibles,
 obtenidas con `GET /api/commercial-intelligence/account-chat/focus-options`.
 El foco viaja en cada pregunta como `focusOpportunityId`. Cada respuesta
@@ -545,9 +554,8 @@ económico de los candidatos y el más rápido. `gpt-6-astra` se descartó por
 falta de fiabilidad: hubo errores 504 incluso tras el reintento, conexiones
 interrumpidas y tiempos agotados, además de ser el más lento. El esfuerzo de
 razonamiento bajo reduce la mediana de 25 a 21 s y el máximo de 51 a 43 s,
-con una calidad equivalente dentro de la variación entre corridas. Se
-recomienda `OPENAI_ANALYST_MODEL=gpt-6.1-sol` y
-`OPENAI_ANALYST_REASONING_EFFORT=low`.
+con una calidad equivalente dentro de la variación entre corridas. Es la
+configuración por defecto (`gpt-6.1-sol` con esfuerzo `low`).
 
 **Revisión humana.** Leí las respuestas que antes fallaban. T3 entrega
 exactamente tres verificaciones ordenadas, cada una con su confirmación
@@ -586,7 +594,7 @@ reintento ante errores 504 del proveedor.
 | 0. Banco | Banco de aceptación y medición del sistema actual | Línea base documentada (**completada**, sección 12.3) |
 | 1. Expediente | Constructor con todas las secciones, estados y significados | Contiene el 100 % de los hechos obligatorios del banco; sin errores silenciosos (**completada**, sección 6.4) |
 | 2. Enrutador, analista y verificación | Recorrido nuevo detrás de un interruptor, solo para consultas; selector de oportunidad | Supera la línea base sin errores factuales críticos; latencia y coste medidos (**completada**, secciones 10.1 y 12.5) |
-| 3. Modo sombra | Ambos recorridos en paralelo; el vendedor ve el actual | Mejora sostenida en preguntas reales |
+| 3. Despliegue general | Motor activo para todos los usuarios y respetando la gobernanza del canal; sin piloto ni modo sombra | Seguimiento de preguntas reales (**en curso**) |
 | 4. Retiro gradual | Sustituir las ramas de consulta por categoría | Banco y pruebas de acciones en verde |
 
 ## 14. Qué se conserva

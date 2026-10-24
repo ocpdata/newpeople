@@ -15,7 +15,7 @@ import {
 } from "./turn-contract.js";
 import { interpretReviewedCustomerTurn } from "./turn-contract-review.js";
 import { buildDossierQualityTrace, customerDossierEngineEnabled, runCustomerDossierTurn } from "./dossier/engine.js";
-import { withReadOnlyConnection } from "./dossier/access.js";
+import { enabledChannelTools, withReadOnlyConnection } from "./dossier/access.js";
 import { buildAccountDossier } from "./dossier/opportunity-dossier.js";
 import { composeCustomerConversationalResponse } from "./customer-conversational-response.js";
 import { extractContentFromBuffer } from "../opportunity-documents/service.js";
@@ -24,6 +24,12 @@ import {
   loadCustomerPendingActivity,
   persistCustomerActivityDraft,
 } from "./activity-draft-persistence.js";
+import { buildCustomerActivityDraftResponse } from "./activity-draft.js";
+import {
+  buildPendingActivityOptionsResponse, buildPendingActivityRouting, buildPendingScheduleClarification,
+  buildPendingScheduleRouting, opportunityOptions, resolveActivitySchedule, resolvePendingActivitySchedule,
+  resolvePendingActivityTarget, visibleCustomerOpportunities,
+} from "./pending-activity-target.js";
 import {
   runStructuredTextResearch,
   runStructuredWebResearch,
@@ -3265,8 +3271,11 @@ export async function createCustomerAccountChatSession({ user, payload }) {
 }
 
 export async function getCustomerChatFocusOptions({ user, accountId }) {
-  if (!customerDossierEngineEnabled(config.features, user.id)) return { enabled: false, opportunities: [] };
-  const governance = await getMiCoachGovernanceSettings();
+  if (!customerDossierEngineEnabled(config.features)) return { enabled: false, opportunities: [] };
+  const governance = {
+    ...(await getMiCoachGovernanceSettings()),
+    channelTools: enabledChannelTools(await loadChannelIntentConfigurations({ channel: "customer_account" })),
+  };
   const dossier = await withReadOnlyConnection(pool, (run) =>
     buildAccountDossier({ user, accountId: Number(accountId), governance, run }));
   const section = dossier.sections.opportunities;
@@ -3725,6 +3734,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
   let channelIntentConfiguration = null;
   let authoritativeIntent = null;
   let dossierTurn = null;
+  let directActivityTurn = null;
   let preparationStage = "request";
   const turnStartedAt = Date.now();
   try {
@@ -3860,10 +3870,86 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       continuationContext = conversationContext;
       nextConversationContext = conversationContext;
     }
-    if (customerDossierEngineEnabled(config.features, user.id) &&
+    const focusOpportunity = visibleCustomerOpportunities(snapshot)
+      .find((item) => Number(item.id) === Number(request.focusOpportunityId || 0)) || null;
+    const pendingSchedule = resolvePendingActivitySchedule({
+      question: request.question,
+      history: conversationHistory,
+      conversationContext,
+      timeZone: snapshot.businessTimezone,
+    });
+    const pendingActivityTarget = pendingSchedule ? null : resolvePendingActivityTarget({
+      question: request.question,
+      focusOpportunityId: focusOpportunity?.id || null,
+      conversationContext,
+      snapshot,
+    });
+    const scheduleOpportunity = pendingSchedule && visibleCustomerOpportunities(snapshot)
+      .find((item) => Number(item.id) === pendingSchedule.opportunityId);
+    if (scheduleOpportunity) {
+      // A short date/time reply completes the open activity draft.
+      preparationStage = "pending_activity_schedule";
+      if (Number(snapshot.selectedOpportunity?.id || 0) !== Number(scheduleOpportunity.id)) {
+        snapshot = { ...snapshot, selectedOpportunity: scheduleOpportunity };
+      }
+      const resolved = pendingSchedule.status === "resolved";
+      const routing = buildPendingScheduleRouting(pendingSchedule.operation, resolved ? pendingSchedule.scheduledAt : "");
+      directActivityTurn = {
+        routing,
+        response: resolved
+          ? buildCustomerActivityDraftResponse({
+            routing, readToolResults: [], snapshot, permissions: user.permissionSet || new Set(),
+            pendingActivity: conversationContext.pendingActivity,
+          })
+          : buildPendingScheduleClarification(pendingSchedule),
+      };
+    } else if (pendingActivityTarget) {
+      // A short reply to the chat's own "which opportunity?" question completes the remembered activity.
+      preparationStage = "pending_activity_target";
+      const { intent } = pendingActivityTarget;
+      if (pendingActivityTarget.status === "resolved") {
+        const target = pendingActivityTarget.opportunity;
+        if (Number(snapshot.selectedOpportunity?.id || 0) !== Number(target.id)) {
+          snapshot = { ...snapshot, selectedOpportunity: target };
+        }
+        const routing = buildPendingActivityRouting(intent, target.id);
+        const schedule = resolveActivitySchedule({
+          question: request.question,
+          history: conversationHistory,
+          direction: intent.timing === "completed" ? "past" : "future",
+          timeZone: snapshot.businessTimezone,
+        });
+        const scheduledAt = schedule.date && schedule.time ? `${schedule.date}T${schedule.time}` : "";
+        if (scheduledAt && (intent.timing === "completed" ? scheduledAt <= schedule.nowLocal : scheduledAt > schedule.nowLocal)) {
+          routing.activityDraft.scheduledAt = scheduledAt;
+        } else if (schedule.date && !routing.activityDraft.temporalPreference) {
+          routing.activityDraft.temporalPreference = schedule.date;
+        }
+        directActivityTurn = {
+          routing,
+          response: buildCustomerActivityDraftResponse({
+            routing, readToolResults: [], snapshot, permissions: user.permissionSet || new Set(),
+            pendingActivityIntent: intent,
+          }),
+        };
+      } else {
+        directActivityTurn = {
+          routing: buildPendingActivityRouting(intent),
+          response: buildPendingActivityOptionsResponse(intent, pendingActivityTarget.candidates),
+        };
+      }
+    } else if (focusOpportunity && !Number(job.opportunity_id || 0) &&
+        Number(snapshot.selectedOpportunity?.id || 0) !== Number(focusOpportunity.id)) {
+      // The opportunity chosen in the chat selector is the explicit target for actions too.
+      snapshot = { ...snapshot, selectedOpportunity: focusOpportunity };
+    }
+    if (!directActivityTurn && customerDossierEngineEnabled(config.features) &&
         !conversationContext?.pendingActivity && !conversationContext?.pendingActivityIntent) {
       preparationStage = "dossier_engine";
-      const governance = await getMiCoachGovernanceSettings();
+      const governance = {
+        ...(await getMiCoachGovernanceSettings()),
+        channelTools: enabledChannelTools(channelIntentConfiguration),
+      };
       dossierTurn = await executionTrace.span(
         {
           from: "B3",
@@ -3897,7 +3983,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
         }),
       );
     }
-    if (dossierTurn?.handled) {
+    if (dossierTurn?.handled || directActivityTurn) {
       agents = [];
     } else {
       preparationStage = "intent_classification_and_agents";
@@ -4165,7 +4251,26 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     conversationContextUpdated = true;
   // The legacy adapter runs only when the dossier engine did not answer the turn.
   } else try {
-    engineResult = await executionTrace.span(
+    engineResult = directActivityTurn ? {
+      response: directActivityTurn.response,
+      channelIntentRouting: directActivityTurn.routing,
+      turnMemory: null,
+      qualityTrace: {
+        process: "default",
+        intentType: "crm_operation",
+        intentSubtype: "pending_activity_reply",
+        primaryEntity: "opportunity",
+        appliedRules: { channel: "customer_account", engine: "pending_activity_reply" },
+        validationStatus: directActivityTurn.response.responseType === "clarification" ? "clarification" : "valid",
+        validationReasons: [],
+        responseType: directActivityTurn.response.responseType,
+        confidence: "high",
+        evidenceCount: 0,
+        toolsUsed: [],
+        toolMetrics: [],
+        diagnostics: {},
+      },
+    } : await executionTrace.span(
       {
         from: "B3",
         to: "B4",
@@ -4283,6 +4388,25 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
         operations: [],
         activityIntent: pendingActivityIntent,
       };
+    }
+    const activityNeedsOpportunity =
+      response.responseType === "clarification" &&
+      ["scheduled", "completed"].includes(response.activityIntent?.timing) &&
+      !response.operations?.length &&
+      !Number(response.entities?.opportunityId || 0);
+    if (activityNeedsOpportunity && !response.opportunityOptions?.length &&
+        !response.pendingItems?.includes("Contacto")) {
+      const options = opportunityOptions(visibleCustomerOpportunities(snapshot));
+      // A remembered activity always needs its opportunity first; ask for it with selectable options.
+      if (options.length > 1) {
+        response = {
+          ...response,
+          answer: "¿A qué oportunidad vinculo la actividad? Elige una opción o escribe su nombre.",
+          pendingItems: ["Oportunidad"],
+          confidence: "high",
+          opportunityOptions: options,
+        };
+      }
     }
     const pendingAmountSelection = response.clarification?.pendingAmountSelection;
     if (pendingAmountSelection) {
@@ -4799,6 +4923,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           trendEvidence: response.trendEvidence,
           presentation: response.presentation,
           dossierCitations: response.dossierCitations,
+          opportunityOptions: response.opportunityOptions,
         },
       );
       persistedHistoryForTrace = nextHistory;

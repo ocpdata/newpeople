@@ -30,12 +30,15 @@ import {
 
 const originalEnvironment = config.nodeEnv;
 const originalContractMode = config.features.customerTurnContractMode;
+const originalDossierEngineMode = config.features.customerDossierEngineMode;
 const originalConversationalEnabled = config.features.customerConversationalResponseEnabled;
 const user = { id: 31, permissionSet: new Set(["cuentas.read"]) };
 let writes;
 
 beforeEach(() => {
   config.features.customerTurnContractMode = "off";
+  // These cases exercise diagnostics of the legacy adapter path.
+  config.features.customerDossierEngineMode = "off";
   config.features.customerConversationalResponseEnabled = false;
   vi.clearAllMocks();
   writes = [];
@@ -65,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
   config.nodeEnv = originalEnvironment;
   config.features.customerTurnContractMode = originalContractMode;
+  config.features.customerDossierEngineMode = originalDossierEngineMode;
   config.features.customerConversationalResponseEnabled = originalConversationalEnabled;
 });
 

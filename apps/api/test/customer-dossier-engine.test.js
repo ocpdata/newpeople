@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeCustomerTurn, validateRoute } from "../src/commercial-intelligence/dossier/router.js";
 import { analyzeCustomerTurn, parseAnalysis } from "../src/commercial-intelligence/dossier/analyst.js";
 import { verifyAnalysis } from "../src/commercial-intelligence/dossier/verifier.js";
+import { channelAllows, enabledChannelTools, sectionPermissions } from "../src/commercial-intelligence/dossier/access.js";
 import { buildDossierQualityTrace, customerDossierEngineEnabled, describeCitation, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 import { appendCustomerAccountChatHistory } from "../src/commercial-intelligence/customer-chat-adapter.js";
@@ -74,11 +75,33 @@ beforeEach(() => { consoleError = vi.spyOn(console, "error").mockImplementation(
 afterEach(() => consoleError.mockRestore());
 
 describe("interruptor del motor de expedientes", () => {
-  it("respeta los modos off, on y piloto por usuario", () => {
-    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "off", customerDossierEnginePilotUserIds: [7] }, 7)).toBe(false);
-    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "on", customerDossierEnginePilotUserIds: [] }, 7)).toBe(true);
-    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "pilot", customerDossierEnginePilotUserIds: [7] }, 7)).toBe(true);
-    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "pilot", customerDossierEnginePilotUserIds: [8] }, 7)).toBe(false);
+  it("está activo para todos los usuarios salvo el interruptor de emergencia off", () => {
+    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "on" })).toBe(true);
+    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "off" })).toBe(false);
+  });
+});
+
+describe("gobernanza del canal en el expediente", () => {
+  const user = { permissionSet: new Set(["cuentas.read", "oportunidades.read", "contactos.read",
+    "desarrollo_comercial.read", "calendario_comercial.read", "interacciones.read", "cotizaciones.read"]) };
+
+  it("sin configuración de canal conserva solo los permisos del usuario", () => {
+    expect(sectionPermissions(user, null)).toMatchObject({ contacts: true, activities: true, interactions: true });
+  });
+
+  it("restringe las fuentes cuya herramienta no está habilitada en intenciones activas", () => {
+    const channelTools = enabledChannelTools([
+      { code: "account_overview", enabled: true, allowedTools: ["searchAccounts", "searchOpportunities", "searchContacts"] },
+      { code: "quotation_query", enabled: false, allowedTools: ["getOpportunityQuotation"] },
+      { code: "contact_history", enabled: true, allowedTools: ["searchInteractions"] },
+    ]);
+    const permissions = sectionPermissions(user, { channelTools });
+    expect(permissions).toMatchObject({
+      contacts: true, interactions: true, quotations: false, purchaseOrders: false,
+      activities: false, pendingActivities: false, calendarActivities: false, opportunityNotes: false,
+    });
+    expect(channelAllows({ channelTools }, "opportunities")).toBe(true);
+    expect(channelAllows({ channelTools: new Set() }, "opportunities")).toBe(false);
   });
 });
 
@@ -292,6 +315,15 @@ describe("motor de expedientes", () => {
       .rejects.toMatchObject({ code: "DOSSIER_ENGINE_FAILED" });
     expect(failing).toHaveBeenCalledTimes(2);
     warn.mockRestore();
+  });
+
+  it("no reintenta y explica el límite de gasto del proveedor de IA", async () => {
+    const routeTurn = async () => ({ route: route(), droppedFilters: [], attempts: [] });
+    const quota = vi.fn().mockRejectedValue(new Error(
+      'OpenAI web search failed: 429 {"error":{"type":"insufficient_quota","code":"organization_spend_limit_exceeded"}}'));
+    await expect(runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn, analyze: quota }))
+      .rejects.toMatchObject({ code: "DOSSIER_PROVIDER_QUOTA_EXCEEDED", message: expect.stringContaining("límite de gasto") });
+    expect(quota).toHaveBeenCalledTimes(1);
   });
 });
 

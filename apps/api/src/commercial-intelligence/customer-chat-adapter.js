@@ -2343,6 +2343,8 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && message.stageMetadata ? { stageMetadata: message.stageMetadata } : {}),
       ...(message.role === "assistant" && Array.isArray(message.dossierCitations)
         ? { dossierCitations: message.dossierCitations.slice(0, 40) } : {}),
+      ...(message.role === "assistant" && Array.isArray(message.opportunityOptions)
+        ? { opportunityOptions: message.opportunityOptions.slice(0, 10) } : {}),
     }));
   return [
     ...normalizedHistory,
@@ -2404,6 +2406,8 @@ export function appendCustomerAccountChatHistory(
           ...(assistantMetadata.stageMetadata ? { stageMetadata: assistantMetadata.stageMetadata } : {}),
           ...(Array.isArray(assistantMetadata.dossierCitations)
             ? { dossierCitations: assistantMetadata.dossierCitations.slice(0, 40) } : {}),
+          ...(Array.isArray(assistantMetadata.opportunityOptions)
+            ? { opportunityOptions: assistantMetadata.opportunityOptions.slice(0, 10) } : {}),
         }
       : null,
   ]
@@ -3057,6 +3061,7 @@ export function createCustomerAccountAdapter({
   let activeBusinessRules = null;
   let activeConversationContext = conversationContext;
   let activeOriginalQuestion = "";
+  let activeSelectedOpportunityId = null;
   let sellerReportedStageAnswerQuestionIds = [];
   let sellerReportedStageAnswerCandidates = [];
   let sellerReportAssessment = null;
@@ -3418,6 +3423,7 @@ export function createCustomerAccountAdapter({
         pendingActivity: activeConversationContext?.pendingActivity,
         pendingActivityIntent:
           activeConversationContext?.pendingActivityIntent,
+        selectedOpportunityId: activeSelectedOpportunityId,
       });
       if (activityResponse) {
         recordAnswerGeneration(
@@ -4578,6 +4584,7 @@ export function createCustomerAccountAdapter({
       traceParentSpanId: turnTraceParentSpanId = traceParentSpanId,
     }) {
       activeOriginalQuestion = String(originalQuestion || question || "");
+      activeSelectedOpportunityId = Number(context?.opportunityId || 0) || null;
       const statusQuestionResponse = buildCustomerStatusQuestionResponse(
         question,
         snapshot || {},

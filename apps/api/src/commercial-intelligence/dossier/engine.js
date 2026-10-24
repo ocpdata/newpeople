@@ -6,10 +6,9 @@ import { buildRouterContext, DELEGATED_MODES, routeCustomerTurn } from "./router
 import { analyzeCustomerTurn, buildAnalystContext } from "./analyst.js";
 import { verifyAnalysis } from "./verifier.js";
 
-export function customerDossierEngineEnabled(features, userId) {
-  return features.customerDossierEngineMode === "on" ||
-    (features.customerDossierEngineMode === "pilot" &&
-      features.customerDossierEnginePilotUserIds.includes(Number(userId)));
+// "off" is only an operational kill switch; any other value serves every user.
+export function customerDossierEngineEnabled(features) {
+  return features.customerDossierEngineMode !== "off";
 }
 
 function businessDate(now, timezone) {
@@ -23,13 +22,20 @@ function remainingSignal(deadlineAt) {
 }
 
 const TRANSIENT_PROVIDER_ERROR = /failed: (?:5\d\d|429)\b/;
+// Quota and spend-limit rejections also arrive as 429, but retrying cannot succeed.
+const PROVIDER_QUOTA_ERROR = /insufficient_quota|spend_limit_exceeded|billing_hard_limit/;
 const MIN_RETRY_WINDOW_MS = 20000;
+
+export function isProviderQuotaError(error) {
+  return PROVIDER_QUOTA_ERROR.test(String(error?.message || ""));
+}
 
 async function withOneTransientRetry(work, { deadlineAt, diagnostics, name }) {
   try {
     return await work();
   } catch (error) {
-    if (!TRANSIENT_PROVIDER_ERROR.test(String(error?.message || "")) || deadlineAt - Date.now() < MIN_RETRY_WINDOW_MS) throw error;
+    if (!TRANSIENT_PROVIDER_ERROR.test(String(error?.message || "")) || isProviderQuotaError(error) ||
+        deadlineAt - Date.now() < MIN_RETRY_WINDOW_MS) throw error;
     console.warn("[dossier] Retrying transient provider failure once", { call: name, message: String(error.message).slice(0, 120) });
     diagnostics.transientRetries = [...(diagnostics.transientRetries || []), name];
     return work();
@@ -93,10 +99,18 @@ export async function runCustomerDossierTurn(input) {
     // Client-facing errors (for example, an exhausted AI budget) already carry an actionable message.
     if (Number(error?.status) >= 400 && Number(error?.status) < 500) throw error;
     const timeout = ["TimeoutError", "AbortError"].includes(error?.name);
+    const quota = isProviderQuotaError(error);
     console.error("[dossier] Turn failed", {
       jobId: input.jobId || null, errorName: String(error?.name || "Error").slice(0, 80),
       errorCode: String(error?.code || "").slice(0, 80) || null, errorMessage: String(error?.message || "").slice(0, 500),
     });
+    if (quota) {
+      throw Object.assign(new Error(
+        "El proveedor de IA rechazó la consulta porque la cuenta de la organización alcanzó su límite de gasto. "
+        + "Un administrador debe ampliar el límite o el saldo en el proveedor de IA."), {
+        code: "DOSSIER_PROVIDER_QUOTA_EXCEEDED", status: 503, cause: error,
+      });
+    }
     throw Object.assign(new Error(timeout
       ? "La consulta tardó más de lo permitido. Intenta nuevamente."
       : "No pude completar la consulta con los registros del CRM. Intenta nuevamente."), {

@@ -26,6 +26,23 @@ export function resolveCustomerActivityListOpportunity({ question, conversationC
   return id;
 }
 
+function snapshotOpportunityDetail(opportunity, snapshot) {
+  if (!opportunity) return null;
+  const contact = (snapshot.contacts || []).find(
+    (item) =>
+      Number(item.id) === Number(opportunity.contactId || 0) &&
+      Number(item.accountId) === Number(snapshot.account?.id),
+  );
+  const contactName = contact
+    ? [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() || contact.name
+    : "";
+  return {
+    id: Number(opportunity.id),
+    name: opportunity.name,
+    associatedContact: contactName ? { id: Number(contact.id), name: contactName } : null,
+  };
+}
+
 export function buildCustomerActivityDraftResponse({
   routing,
   readToolResults,
@@ -33,6 +50,7 @@ export function buildCustomerActivityDraftResponse({
   permissions,
   pendingActivity = null,
   pendingActivityIntent = null,
+  selectedOpportunityId = null,
 }) {
   const draft = routing?.activityDraft;
   const hasActivityDraftIntent =
@@ -135,15 +153,13 @@ export function buildCustomerActivityDraftResponse({
       activityIntent,
     };
   }
+  // An explicitly selected opportunity applies only when the request names no other opportunity.
   const opportunityId = Number(
-    routing.serverResolvedEntityIds?.opportunityId || 0,
+    routing.serverResolvedEntityIds?.opportunityId ||
+      (!String(routing.entities?.opportunityReference || "").trim() &&
+        Number(selectedOpportunityId || 0)) ||
+      0,
   );
-  const opportunity = readToolResults.find(
-    (item) =>
-      item.toolName === "getOpportunity" &&
-      !item.error &&
-      Number(item.result?.id) === opportunityId,
-  )?.result;
   const scopedOpportunity = [
     ...(snapshot.opportunities || []),
     ...(snapshot.inactiveOpportunities || []),
@@ -154,6 +170,14 @@ export function buildCustomerActivityDraftResponse({
       Number(item.accountId || snapshot.account?.id) ===
         Number(snapshot.account?.id),
   );
+  const opportunityReads = (readToolResults || []).filter(
+    (item) => item.toolName === "getOpportunity" &&
+      (Number(item.result?.id) === opportunityId || Number(item.input?.opportunityId) === opportunityId || item.error),
+  );
+  // Authorized snapshot data is used only when no opportunity read was attempted; a failed read never falls back.
+  const opportunity = opportunityReads.length
+    ? opportunityReads.find((item) => !item.error && Number(item.result?.id) === opportunityId)?.result
+    : snapshotOpportunityDetail(scopedOpportunity, snapshot);
   if (!opportunity || !scopedOpportunity) {
     return {
       answer:
@@ -254,7 +278,9 @@ export function buildCustomerActivityDraftResponse({
       ? `Voy a registrar la ${activityLabel} como ${timingLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name} (${scheduledAt.replace("T", " ")}).${notesLabel} No se ha guardado todavía; revisa y confirma el borrador para guardarlo en Calendario.`
       : timing === "completed"
         ? `¿Qué día y a qué hora ocurrió la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}?${notesLabel} El borrador se registrará como realizada y aún no se ha guardado en Calendario.`
-        : `¿Qué día y a qué hora${draft.temporalPreference && !draft.temporalPreference.includes("_") ? ` (${draft.temporalPreference})` : ""} quieres realizar la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como programada y aún no se ha guardado en Calendario.`,
+        : /^\d{4}-\d{2}-\d{2}$/.test(draft.temporalPreference || "")
+          ? `¿A qué hora del ${draft.temporalPreference} quieres realizar la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como programada y aún no se ha guardado en Calendario.`
+          : `¿Qué día y a qué hora${draft.temporalPreference && !draft.temporalPreference.includes("_") ? ` (${draft.temporalPreference})` : ""} quieres realizar la ${activityLabel} con ${opportunity.associatedContact.name} para ${scopedOpportunity.name}? El borrador se registrará como programada y aún no se ha guardado en Calendario.`,
     responseType: "operation",
     entities: { opportunityId, contactId },
     operations: [operation],

@@ -20,9 +20,35 @@ export async function withReadOnlyConnection(pool, work) {
   }
 }
 
-export function sectionPermissions(user) {
+// Channel governance tools that must stay enabled for each dossier source.
+export const SECTION_CHANNEL_TOOLS = Object.freeze({
+  opportunities: "searchOpportunities",
+  contacts: "searchContacts",
+  activities: "getOpportunityActivities",
+  pendingActivities: "getOpportunityActivities",
+  calendarActivities: "getOpportunityActivities",
+  opportunityNotes: "getOpportunityNotes",
+  quotations: "getOpportunityQuotation",
+  purchaseOrders: "getOpportunityQuotation",
+  interactions: "searchInteractions",
+});
+
+export function enabledChannelTools(intentConfigurations) {
+  if (!Array.isArray(intentConfigurations)) return null;
+  return new Set(intentConfigurations
+    .filter((intent) => intent?.enabled !== false)
+    .flatMap((intent) => (Array.isArray(intent?.allowedTools) ? intent.allowedTools : [])));
+}
+
+export function channelAllows(governance, key) {
+  const tools = governance?.channelTools;
+  const tool = SECTION_CHANNEL_TOOLS[key];
+  return !(tools instanceof Set) || !tool || tools.has(tool);
+}
+
+export function sectionPermissions(user, governance = null) {
   const base = canRead(user, "cuentas") && canRead(user, "oportunidades");
-  return {
+  const permissions = {
     contacts: canRead(user, "contactos"),
     activities: canRead(user, "oportunidades") && canRead(user, "desarrollo_comercial"),
     calendarActivities: canRead(user, "calendario_comercial") && canRead(user, "oportunidades"),
@@ -33,6 +59,11 @@ export function sectionPermissions(user) {
     interactions: canRead(user, "interacciones"),
     history: base,
   };
+  permissions.pendingActivities = permissions.activities;
+  for (const key of Object.keys(permissions)) {
+    permissions[key] = permissions[key] && channelAllows(governance, key);
+  }
+  return permissions;
 }
 
 export function allowedCommercialStatuses(governance) {
