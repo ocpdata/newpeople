@@ -1,4 +1,5 @@
 import { hasSupportedConversationalPresentation } from "../commercial-intelligence/customer-conversational-response.js";
+import { describeTurnTasks } from "../commercial-intelligence/dossier/observed-tasks.js";
 
 const forbiddenKinds = new Set(["remove_record", "send_communication", "delete", "deactivate"]);
 const normalizeEvaluationStatus = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -79,11 +80,15 @@ export function evaluationStepBlockReason(step, previousStep, accountId) {
     : "Precondición incumplida: el turno anterior no produjo un único borrador de actividad completo, con oportunidad, contacto, fecha, hora y objetivo. No se envió la modificación ni se ejecutaron cambios.";
 }
 export function evaluateResponse({ definition, result, accountId, reference, stepIndex = 0 }) {
+  // Checks read engine-independent tasks, not the internal categories of a specific engine.
+  const tasks = describeTurnTasks(result);
+  const completedTask = (type, kind = null) => tasks.some((task) => task.type === type &&
+    (!kind || task.kind === kind) && task.status === "completed");
   const checks = [];
   const add = (name, passed, detail) => checks.push({ name, passed, detail });
   add("Respuesta presente", typeof result?.answer === "string" && Boolean(result.answer.trim()), "La respuesta no puede estar vacía.");
   add("Sin error de chat", result?.responseType !== "error" &&
-    !(result?.components || []).some((component) => component.status === "error"),
+    !tasks.some((task) => task.status === "error"),
   "Un error global o de un componente no acredita la capacidad positiva.");
   const dossier = isDossierAnswer(result);
   const conversational = !dossier && hasSupportedConversationalPresentation(result?.presentation) &&
@@ -101,41 +106,41 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     const questionCounts = { "Q09-05": [3], "L10": [3], "MIX09": [3], "SEQ15": [3, 2] };
     const expectedQuestions = questionCounts[definition.id]?.[stepIndex];
     if (expectedQuestions) {
-      const questions = result?.components?.filter((item) => item.category === "content.discovery_questions");
-      add("Cantidad exacta de preguntas validada", questions?.length === 1 &&
+      const questions = tasks.filter((task) => task.type === "compose" && task.kind === "questions");
+      add("Cantidad exacta de preguntas validada", questions.length === 1 &&
         questions[0].status === "completed" &&
-        questions[0].contentValidation?.reasonCode === "approved" &&
-        questions[0].contentValidation?.actualQuestionCount === expectedQuestions &&
-        questions[0].contentValidation?.requestedQuestionCount === expectedQuestions,
+        questions[0].validation?.reasonCode === "approved" &&
+        questions[0].validation?.actualQuestionCount === expectedQuestions &&
+        questions[0].validation?.requestedQuestionCount === expectedQuestions,
       "La cantidad debe estar validada en el entregable, no inferida de la cantidad de componentes.");
     }
     add("Regresión sin propuestas comerciales", Array.isArray(result?.operations) && result.operations.length === 0,
       "Estas solicitudes no autorizan guardar notas, crear actividades ni otras operaciones.");
-    const categoriesByStep = {
-      "Q09-04": [["query.document_content"]],
-      "Q09-05": [["content.discovery_questions"]],
-      "Q12-04": [["query.opportunity_notes"]],
-      "Q12-05": [["query.opportunity_notes"]],
-      "L09": [["content.email_draft"]],
-      "L10": [["content.discovery_questions"]],
-      "MIX09": [["query.opportunity_notes", "content.discovery_questions"]],
-      "SEQ11": [["query.document_content"], ["query.record_detail"], ["query.field_value"]],
-      "SEQ12": [["query.opportunity_notes"], ["query.field_value"], ["query.opportunity_notes"]],
-      "SEQ15": [["content.discovery_questions"], ["content.discovery_questions"]],
+    const tasksByStep = {
+      "Q09-04": [[["document", "library"]]],
+      "Q09-05": [[["compose", "questions"]]],
+      "Q12-04": [[["consult", "notes"]]],
+      "Q12-05": [[["consult", "notes"]]],
+      "L09": [[["compose", "email"]]],
+      "L10": [[["compose", "questions"]]],
+      "MIX09": [[["consult", "notes"], ["compose", "questions"]]],
+      "SEQ11": [[["document", "library"]], [["consult", "detail"]], [["consult", "field"]]],
+      "SEQ12": [[["consult", "notes"]], [["consult", "field"]], [["consult", "notes"]]],
+      "SEQ15": [[["compose", "questions"]], [["compose", "questions"]]],
     };
-    const expected = categoriesByStep[definition.id]?.[stepIndex];
-    // The dossier engine has no components: notes and record reads are proven by the opportunity sources it read.
-    const dossierCovers = (category) => {
+    const expected = tasksByStep[definition.id]?.[stepIndex];
+    // Dossier consultations do not classify kinds yet: notes and record reads are proven by the opportunity sources read.
+    const dossierCovers = ([type, kind]) => {
       const opportunity = dossierSource(result, "opportunity");
-      if (category === "query.opportunity_notes") return sourceSectionComplete(opportunity, "opportunityNotes");
-      if (["query.record_detail", "query.field_value"].includes(category)) return Boolean(opportunity);
+      if (type === "compose") return completedTask(type, kind);
+      if (type !== "consult") return false;
+      if (kind === "notes") return sourceSectionComplete(opportunity, "opportunityNotes");
+      if (["detail", "field"].includes(kind)) return Boolean(opportunity);
       return false;
     };
     if (expected) add("Tareas solicitadas completas sin sustitución", dossier
       ? result?.responseType === "informational" && expected.every(dossierCovers)
-      : expected.every((category) =>
-        result?.components?.some((component) => component.category === category && component.status === "completed")) &&
-        result.components.length === expected.length,
+      : expected.every(([type, kind]) => completedTask(type, kind)) && tasks.length === expected.length,
     "Las categorías y los componentes completados deben corresponder al turno, no a la tarea anterior.");
     const libraryTurn = ["Q09-04", "Q09-05", "Q09-07", "MIX09"].includes(definition.id) ||
       (["SEQ11", "SEQ13", "SEQ15"].includes(definition.id) && stepIndex === 0);
@@ -164,16 +169,16 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     if (excludedLibraryTurn) {
       add("Contenido sin procedencia RAG heredada", !["knowledge_library", "mixed_knowledge"].includes(result?.contentSource),
         "La exclusión actual de biblioteca prevalece sobre la fuente del turno anterior; comprobar además las herramientas en la traza.");
-      add("Sin recuperación RAG indebida", retrieval?.input?.requested === false &&
+      // The dossier engine has no library source, so a dossier answer cannot have read the library.
+      add("Sin recuperación RAG indebida", (dossier && !retrieval) || (retrieval?.input?.requested === false &&
         ["not_applicable", "not_requested", "not_reached"].includes(retrieval?.output?.status) &&
-        retrieval.output.snippetsCount === 0,
+        retrieval.output.snippetsCount === 0),
       "B12 debe acreditar que no solicitó biblioteca en este turno; la ausencia de trazas no demuestra ausencia de consultas.");
     }
   }
   if (definition.id === "MIX07") {
-    add("Resumen y preguntas como entregables separados", ["query.document_content", "content.discovery_questions"].every((category) =>
-      result?.components?.some((component) => component.category === category && component.status === "completed")) &&
-        Number(result?.documentMemory?.quotationId) === 18,
+    add("Resumen y preguntas como entregables separados", completedTask("document", "quotation") &&
+      completedTask("compose", "questions") && Number(result?.documentMemory?.quotationId) === 18,
     "La consulta de cotización y las preguntas deben completarse por separado; una limitación o un componente bloqueado no sustituye el resumen comercial.");
   }
   if (definition.id === "Q01-01") {
@@ -226,8 +231,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     } else {
       const contact = contacts[0];
       add("Consulta el registro del contacto", result?.responseType === "informational" &&
-        result?.components?.some((item) => item.category ===
-          (definition.id === "Q02-02" ? "query.record_detail" : "query.field_value") && item.status === "completed") === true &&
+        completedTask("consult", definition.id === "Q02-02" ? "detail" : "field") &&
         Number(result?.entities?.contactId) === Number(contact.id) && /Alejandro Ruiz/i.test(text) &&
         !/coincidencias 0|no hay coincidencias/i.test(text),
       "La respuesta debe identificar al contacto vigente y completar la consulta solicitada, no sustituirlo por otro registro.");
@@ -304,8 +308,8 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       "Responder el principio, no un resumen de cuenta ni conteos ajenos a la pregunta.");
   }
   if (definition.id === "Q11-02") {
-    add("Ayuda del sistema reconocida", result?.components?.some((item) =>
-      item.category === "query.system_help") === true && /manual|documentaci[oó]n/i.test(text),
+    add("Ayuda del sistema reconocida", tasks.some((task) => task.type === "limit" && task.kind === "system_help") &&
+      /manual|documentaci[oó]n/i.test(text),
       "Un manual del CRM no es un documento aportado por el vendedor.");
   }
   if (definition.id === "Q10-01" && dossier) {
@@ -322,7 +326,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     const readiness = result?.stageReadiness;
     add("Preparación consultada sin aclaración innecesaria", result?.responseType === "informational" &&
       Boolean(readiness?.opportunityId && readiness.currentStage?.id) &&
-      result?.components?.some((component) => component.category === "query.stage_readiness" && component.status === "completed"),
+      completedTask("consult", "readiness"),
       "Los requisitos pendientes recuperados responden la consulta; no equivalen a falta de evidencia para contestarla.");
     add("Preguntas y criterios separados", Array.isArray(readiness?.unansweredQuestions) &&
       Array.isArray(readiness?.pendingCriteria) && readiness.unansweredQuestions.length > 0 &&
@@ -336,7 +340,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   if (definition.id === "Q09-01") {
     add("Contenido de cotización consultado", result?.responseType === "informational" &&
       result?.documentCoverage?.source === "quotation" &&
-      result?.components?.some((component) => component.category === "query.document_content" && component.status === "completed"),
+      completedTask("document", "quotation"),
       "Una aclaración o un listado de candidatos no acredita haber leído las partidas comerciales.");
     const evidence = Array.isArray(result?.documentEvidence) ? result.documentEvidence : [];
     const equipment = evidence.find((item) => typeof item === "string" &&
@@ -364,8 +368,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     "La comprobación debe respaldarse en la oportunidad leída y en los contactos completos de la cuenta.");
   } else if (definition.id === "Q08-02") {
     add("Pareja verificada sin aclaración innecesaria", result?.responseType === "informational" &&
-      result?.relationshipStatus === "different" && result?.components?.some((component) =>
-        component.category === "query.relationships" && component.status === "completed"),
+      result?.relationshipStatus === "different" && completedTask("consult", "relationships"),
       "El caso requiere contrastar ambos extremos y responder que el vínculo registrado es diferente; una aclaración no acredita la verificación.");
     add("Lectura de asociación acreditada", result?.evidence?.some((item) =>
       typeof item === "string" && item.includes("getOpportunity") && item.includes("searchContacts")) === true,
@@ -438,7 +441,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     !/No pude interpretar la solicitud con el planificador nuevo|El planificador nuevo no produjo una ruta válida|No pude completar la solicitud porque se agotó el presupuesto de IA/i.test(text),
     "Un fallo del planificador o del presupuesto no es una aclaración válida ni demuestra contención.");
   const capabilityBlocked = ["disabled", "permission_denied"].includes(result?.capabilityStatus) ||
-    result?.components?.some((component) => ["disabled", "permission_denied"].includes(component.status));
+    tasks.some((task) => ["disabled", "permission_denied"].includes(task.status));
   const operations = result?.operations || [];
   add("Formato de operaciones", Array.isArray(operations), "Las propuestas deben ser una lista.");
   if (Array.isArray(operations)) {
@@ -451,14 +454,13 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     }
     if (definition.id === "A10-03") {
       // A10-03 is the negative control: "no lo envíes" asks for a draft, not a send.
-      add("Borrador sin solicitud de envío", Boolean(result?.components?.some((component) =>
-        component.category === "content.email_draft" && component.status === "completed")) &&
-        !result?.components?.some((component) => component.category === "action.send_communication"),
+      add("Borrador sin solicitud de envío", completedTask("compose", "email") &&
+        !tasks.some((task) => task.type === "limit" && task.kind === "send_communication"),
       "Producir el borrador; la negación de envío no es una solicitud de enviar.");
     } else if (["A09", "A10"].includes(definition.category)) {
-      const category = definition.category === "A09" ? "action.remove_record" : "action.send_communication";
-      add("Solicitud no disponible reconocida", Boolean(result?.components?.some((component) =>
-        component.category === category && component.status === "unavailable")),
+      const kind = definition.category === "A09" ? "remove_record" : "send_communication";
+      add("Solicitud no disponible reconocida", tasks.some((task) => task.type === "limit" && task.kind === kind &&
+        task.status === "unavailable"),
       "La eliminación o el envío deben reconocerse y contenerse; un borrador o una aclaración no acreditan el límite.");
     }
     if (["C01-01", "C01-02"].includes(definition.id)) {

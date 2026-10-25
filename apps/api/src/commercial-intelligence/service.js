@@ -386,7 +386,7 @@ export async function classifyCustomerIntent(input = {}) {
   });
   const hasGuidanceIntent = (Array.isArray(input.intents) ? input.intents : [])
     .some((intent) => intent?.code === "opportunity_guidance" && intent.enabled !== false);
-  if (hasGuidanceIntent && isGeneralCustomerSalesProcessQuestion(input.question)) {
+  if (!input.plan?.tasks?.length && hasGuidanceIntent && isGeneralCustomerSalesProcessQuestion(input.question)) {
     const turnContractEnabled = customerTurnContractEnabled(
       config.features,
       input.user?.id,
@@ -447,8 +447,9 @@ export async function classifyCustomerIntent(input = {}) {
     };
   }
   if (customerTurnContractEnabled(config.features, input.user?.id)) {
-    const { contract, review } = await interpretReviewedCustomerTurn({ ...input, classifierPrompt }, {
-      reviewWithAI: input.reviewWithAI,
+    const { plan, ...interpretInput } = input;
+    const { contract, review } = await interpretReviewedCustomerTurn({ ...interpretInput, classifierPrompt }, {
+      reviewWithAI: input.reviewWithAI, plan,
     });
     const primary = contract.components[0] ? customerComponentCapability(contract.components[0]) : null;
     return {
@@ -456,10 +457,10 @@ export async function classifyCustomerIntent(input = {}) {
       confidence: contract.confidence === "high" ? 0.95 : contract.confidence === "medium" ? 0.75 : 0.35,
       requiresClarification: contract.resolution === "clarification",
       clarificationQuestion: contract.clarificationQuestion,
-      reason: "Contrato estructurado de B3",
+      reason: plan?.tasks?.length ? "Contrato de B3 alineado al plan del enrutador" : "Contrato estructurado de B3",
       turnContract: contract,
       source: {
-        resolver: "turn_contract_v1",
+        resolver: plan?.tasks?.length ? "dossier_plan_v1" : "turn_contract_v1",
         coherenceReview: review,
         providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION,
         classifierPrompt: { channel: classifierPrompt.channel, version: classifierPrompt.version, source: classifierPrompt.source },
@@ -4016,6 +4017,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
               intents: channelIntentConfiguration,
               user,
               jobId,
+              plan: dossierTurn?.plan || null,
             }),
           (value) => ({
             intent: value.intent,

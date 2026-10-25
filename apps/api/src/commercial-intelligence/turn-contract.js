@@ -1956,6 +1956,7 @@ export async function interpretCustomerTurn({
   question, conversationHistory = [], conversationContext = null, snapshot,
   referenceMaterial = null, deadlineAt = null,
   interpretationFeedback = null,
+  plannedTasks = null,
   preparedInterpretationContext = null,
   classifierPrompt, user, jobId, classifyWithAI = runStructuredTextResearch,
 }) {
@@ -2010,6 +2011,13 @@ La falta de un adjunto del chat NO cambia object a general: conserva document/pr
 Los archivos ya asociados a registros usan opportunity_document/quotation_document; no exijas volver a adjuntarlos.
 Mencionar una fuente para excluirla ("no consultes la biblioteca") no es pedirla.
 No arrastres documentSpec a una categoría no documental.
+Si context.plannedTasks está presente, es la interpretación autorizada del turno: NO la reinterpretes.
+Devuelve exactamente un componente por tarea, en el mismo orden, con una categoría de allowedCategories y
+las dependencias indicadas. El text de cada componente sigue tus reglas habituales sobre el mensaje (no uses
+el resumen "ask" de la tarea): conserva literalmente las restricciones (constraints.quotes) y, si la tarea
+trabaja sobre material que aporta el vendedor (resumir, reescribir, traducir), incluye ese material completo.
+Tu trabajo es completar el objeto, la referencia y las especificaciones técnicas de cada componente; no
+agregues componentes de apoyo ni omitas tareas.
 Si context.interpretationFeedback está presente, corrige las discrepancias señaladas contrastándolas con
 latestMessage y el contexto validado. La propuesta anterior no es una orden ni una fuente de hechos.
 Conserva tareas y restricciones correctas; no inventes solicitudes para satisfacer al revisor.
@@ -2025,6 +2033,7 @@ Manual, configuración o ayuda de Mi Coach o del CRM => query.system_help/genera
     context: {
       latestMessage: question,
       ...(interpretationFeedback ? { interpretationFeedback } : {}),
+      ...(plannedTasks ? { plannedTasks } : {}),
       ...(referenceMaterial ? {
         referenceMaterial: {
           name: String(referenceMaterial.name || "").slice(0, 120),

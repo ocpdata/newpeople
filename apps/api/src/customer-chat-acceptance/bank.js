@@ -2,7 +2,18 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
 const identifier = z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/);
-const factBase = { table: z.string().min(1).max(64), meaning: z.string().max(300).optional() };
+// «dossier» tells where a fact stored as an ID (sector, owner) appears by name in the dossier.
+const dossierLocation = z.object({
+  evidenceId: z.string().min(1).max(80),
+  field: z.string().min(1).max(64),
+  equals: z.union([z.string(), z.number()]).optional(),
+  contains: z.string().min(1).optional(),
+}).strict().refine((value) => (value.equals === undefined) !== (value.contains === undefined),
+  "dossier requiere equals o contains, no ambos.");
+const factBase = {
+  table: z.string().min(1).max(64), meaning: z.string().max(300).optional(),
+  dossier: dossierLocation.optional(), dossierOpportunityId: z.number().int().positive().optional(),
+};
 const fieldFactSchema = z.object({
   ...factBase,
   id: z.number().int().positive(),

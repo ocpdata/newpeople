@@ -3,7 +3,7 @@ import { routeCustomerTurn, validateRoute } from "../src/commercial-intelligence
 import { analyzeCustomerTurn, parseAnalysis } from "../src/commercial-intelligence/dossier/analyst.js";
 import { buildEvidenceIndex, normalizeAnalysisEvidence, presentationIssues, verifyAnalysis } from "../src/commercial-intelligence/dossier/verifier.js";
 import { channelAllows, enabledChannelTools, sectionPermissions } from "../src/commercial-intelligence/dossier/access.js";
-import { buildDossierQualityTrace, customerDossierEngineEnabled, describeCitation, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
+import { buildDossierQualityTrace, customerDossierEngineEnabled, describeCitation, limitAnswer, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 import { appendCustomerAccountChatHistory } from "../src/commercial-intelligence/customer-chat-adapter.js";
 
@@ -55,10 +55,13 @@ const route = (overrides = {}) => ({
   obligations: [{ id: "o1", ask: "Importe y cotización", form: "answer", count: 0, itemsNeedConfirmation: false }],
   recordFilters: [], clarificationQuestion: "", clarificationOptions: [], reason: "Pide datos de Sealpath", ...overrides,
 });
-const rawRoute = (overrides = {}) => {
-  const value = route(overrides);
-  return { ...value, obligations: value.obligations.map(({ id: _id, ...item }) => item) };
-};
+const QUESTION = "¿Cuánto vale Sealpath y qué cotización tiene?";
+const constraints = (overrides = {}) => ({ count: 0, durationMinutes: 0, length: "standard", format: "free",
+  excludedSources: [], excludedFields: [], noWrite: false, noSend: false, quotes: [], ...overrides });
+const planTask = (overrides = {}) => ({ type: "consult", kind: "detail", ask: "Importe y cotización", evidence: "Cuánto vale Sealpath",
+  focusLevel: "opportunity", opportunityIds: [121], dependsOn: [], itemsNeedConfirmation: false, constraints: constraints(), ...overrides });
+const rawPlan = (overrides = {}) => ({ tasks: [planTask()], recordFilters: [], continuation: { kind: "none", previousTaskIndex: 0 },
+  clarification: { question: "", options: [] }, reason: "Pide datos de Sealpath", ...overrides });
 const claim = (overrides = {}) => ({ text: "El importe registrado es 8,000 USD", kind: "registered", evidenceIds: ["opp121"],
   sectionKeys: [], values: [{ type: "amount", value: "8000" }], ...overrides });
 const analysis = (overrides = {}) => ({
@@ -106,55 +109,96 @@ describe("gobernanza del canal en el expediente", () => {
 });
 
 describe("enrutador", () => {
-  it("rechaza IDs ajenos a la cuenta y focos inconsistentes", () => {
-    expect(validateRoute(rawRoute({ opportunityIds: [999] }), { question: "x", opportunityIds: [121] }).issues)
-      .toContain("opportunityIds contiene IDs que no pertenecen a la cuenta.");
-    expect(validateRoute(rawRoute({ opportunityIds: [] }), { question: "x", opportunityIds: [121] }).issues)
-      .toContain("focusLevel=opportunity requiere exactamente un ID.");
-    expect(validateRoute(rawRoute({ obligations: [{ id: "o1", ask: "Tres puntos", form: "exact_items", count: 0, itemsNeedConfirmation: true }] }),
-      { question: "x", opportunityIds: [121] }).issues).toContain("La obligación o1 pide puntos exactos sin cantidad.");
-    expect(validateRoute(rawRoute({ focusLevel: "account", opportunityIds: [] }), { question: "x", opportunityIds: [121] }).issues).toEqual([]);
+  const ctx = { question: QUESTION, opportunityIds: [121, 117] };
+
+  it("rechaza IDs ajenos a la cuenta, focos inconsistentes y tipos inválidos", () => {
+    expect(validateRoute(rawPlan({ tasks: [planTask({ opportunityIds: [999] })] }), ctx).issues)
+      .toContain("t1: opportunityIds contiene IDs ajenos a la cuenta.");
+    expect(validateRoute(rawPlan({ tasks: [planTask({ opportunityIds: [] })] }), ctx).issues)
+      .toContain("t1: focusLevel=opportunity requiere un ID.");
+    expect(validateRoute(rawPlan({ tasks: [planTask({ kind: "email" })] }), ctx).issues)
+      .toContain("t1: kind=email no corresponde a type=consult.");
+    expect(validateRoute(rawPlan({ tasks: [planTask({ focusLevel: "account", opportunityIds: [] })] }), ctx).issues).toEqual([]);
   });
 
-  it("asigna identificadores de obligación por código y convierte errores de esquema en problemas", () => {
-    const valid = validateRoute(rawRoute({ obligations: [
-      { ask: "Importe", form: "answer", count: 3, itemsNeedConfirmation: false },
-      { ask: "Tres puntos", form: "exact_items", count: 3, itemsNeedConfirmation: true },
-    ] }), { question: "x", opportunityIds: [121] });
-    expect(valid.route.obligations.map(({ id, count }) => ({ id, count }))).toEqual([{ id: "o1", count: 0 }, { id: "o2", count: 3 }]);
-    const invalid = validateRoute({ ...rawRoute(), obligations: [{ id: "un-identificador-demasiado-largo", ask: "x", form: "answer", count: 0, itemsNeedConfirmation: false }] },
-      { question: "x", opportunityIds: [121] });
+  it("deriva modo, foco y obligaciones del plan y convierte errores de esquema en problemas", () => {
+    const { route } = validateRoute(rawPlan({ tasks: [
+      planTask(),
+      planTask({ kind: "next_steps", ask: "Tres próximos pasos", evidence: "qué cotización tiene",
+        itemsNeedConfirmation: true, constraints: constraints({ count: 3, length: "brief", quotes: ["Cuánto vale"] }) }),
+    ] }), ctx);
+    expect(route).toMatchObject({ mode: "consult", focusLevel: "opportunity", opportunityIds: [121], responseLength: "brief" });
+    expect(route.obligations.map(({ id, taskId, form, count, itemsNeedConfirmation }) => ({ id, taskId, form, count, itemsNeedConfirmation })))
+      .toEqual([{ id: "o1", taskId: "t1", form: "answer", count: 0, itemsNeedConfirmation: false },
+        { id: "o2", taskId: "t2", form: "exact_items", count: 3, itemsNeedConfirmation: true }]);
+    const invalid = validateRoute({ ...rawPlan(), tasks: [{ ...planTask(), extra: true }] }, ctx);
     expect(invalid.route).toBeNull();
-    expect(invalid.issues[0]).toMatch(/^obligations\.0/);
+    expect(invalid.issues[0]).toMatch(/^tasks\.0/);
+  });
+
+  it("clasifica el modo según las tareas del plan", () => {
+    const mode = (tasks, extra = {}) => validateRoute(rawPlan({ tasks, ...extra }), ctx).route.mode;
+    const limit = (kind) => planTask({ type: "limit", kind, focusLevel: "none", opportunityIds: [] });
+    expect(mode([planTask({ type: "compose", kind: "email" })])).toBe("compose");
+    expect(mode([planTask(), planTask({ type: "compose", kind: "translation", material: "previous_answer" })])).toBe("compose");
+    expect(mode([planTask({ type: "compose", kind: "questions", material: "library" })])).toBe("content");
+    expect(mode([planTask({ type: "compose", kind: "summary", material: "attachment" })])).toBe("content");
+    expect(mode([planTask(), planTask({ type: "action", kind: "schedule_activity" })])).toBe("action");
+    expect(mode([planTask({ type: "document", kind: "quotation" })])).toBe("document");
+    expect(mode([limit("remove_record")])).toBe("limit");
+    expect(mode([limit("out_of_scope")])).toBe("out_of_scope");
+    expect(mode([], { clarification: { question: "¿Cuál oportunidad?", options: [{ label: "Sealpath", opportunityId: 121 }] } })).toBe("clarify");
+    expect(mode([planTask(), limit("remove_record")])).toBe("consult");
   });
 
   it("descarta filtros sin cita literal del mensaje", () => {
-    const { route: validated, droppedFilters } = validateRoute(rawRoute({ recordFilters: [
+    const { route: validated, droppedFilters } = validateRoute(rawPlan({ recordFilters: [
       { description: "Vencen esta semana", quote: "que vencen esta semana" },
       { description: "Orden prevista", quote: "semana del 19 al 24" },
-    ] }), { question: "¿Qué actividades que vencen esta semana tiene?", opportunityIds: [121] });
+    ], tasks: [planTask({ evidence: "actividades" })] }), { question: "¿Qué actividades que vencen esta semana tiene?", opportunityIds: [121] });
     expect(validated.recordFilters.map((filter) => filter.quote)).toEqual(["que vencen esta semana"]);
     expect(droppedFilters.map((filter) => filter.quote)).toEqual(["semana del 19 al 24"]);
   });
 
   it("reintenta una vez con los problemas concretos y luego falla de forma explícita", async () => {
     const call = vi.fn()
-      .mockResolvedValueOnce({ ...rawRoute(), obligations: [{ id: "extra", ask: "x", form: "answer", count: 0, itemsNeedConfirmation: false }] })
-      .mockResolvedValueOnce(rawRoute());
-    const result = await routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, call, model: "router",
-      reasoningEffort: "" });
+      .mockResolvedValueOnce(rawPlan({ tasks: [planTask({ opportunityIds: [999] })] }))
+      .mockResolvedValueOnce(rawPlan());
+    const result = await routeCustomerTurn({ context: {}, ...ctx, userId: 7, jobId: 1, call, model: "router", reasoningEffort: "" });
     expect(result.route.opportunityIds).toEqual([121]);
     expect(call.mock.calls[1][0].context.validationFeedback.issues).toHaveLength(1);
     expect(call.mock.calls[0][0]).toMatchObject({ model: "router", temperature: 0,
       aiUsageContext: { featureCode: "commercial_intelligence.account_chat.dossier_router", jobId: 1 } });
-    await expect(routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, model: "router",
-      call: vi.fn().mockResolvedValue(rawRoute({ opportunityIds: [999] })) }))
+    await expect(routeCustomerTurn({ context: {}, ...ctx, userId: 7, jobId: 1, model: "router",
+      call: vi.fn().mockResolvedValue(rawPlan({ tasks: [planTask({ opportunityIds: [999] })] })) }))
       .rejects.toMatchObject({ code: "DOSSIER_ROUTE_INVALID" });
-    const reasoning = vi.fn().mockResolvedValue(rawRoute());
-    await routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, call: reasoning,
-      model: "router", reasoningEffort: "low" });
+    const reasoning = vi.fn().mockResolvedValue(rawPlan());
+    await routeCustomerTurn({ context: {}, ...ctx, userId: 7, jobId: 1, call: reasoning, model: "router", reasoningEffort: "low" });
     expect(reasoning.mock.calls[0][0]).toMatchObject({ reasoningEffort: "low" });
     expect(reasoning.mock.calls[0][0]).not.toHaveProperty("temperature");
+  });
+
+  it("tras el reintento acepta citas no literales como problema no bloqueante", async () => {
+    const loose = rawPlan({ tasks: [planTask({ evidence: "cuanto vale sealpath?" })] });
+    const result = await routeCustomerTurn({ context: {}, ...ctx, userId: 7, jobId: 1, model: "router", reasoningEffort: "",
+      call: vi.fn().mockResolvedValue(loose) });
+    expect(result.softIssues).toEqual(["t1: evidence debe ser un fragmento literal del mensaje."]);
+    const unquoted = rawPlan({ tasks: [planTask({ constraints: constraints({ excludedFields: ["prices"] }) })] });
+    const kept = await routeCustomerTurn({ context: {}, ...ctx, userId: 7, jobId: 1, model: "router", reasoningEffort: "",
+      call: vi.fn().mockResolvedValue(unquoted) });
+    expect(kept.route.plan.tasks[0].constraints.excludedFields).toEqual(["prices"]);
+    expect(result.route.plan.tasks[0].id).toBe("t1");
+  });
+});
+
+describe("respuestas de límite", () => {
+  it("usa mensajes fijos y enlaza la documentación solo cuando está configurada", () => {
+    expect(limitAnswer("remove_record")).toContain("No se eliminó ni modificó ningún registro");
+    expect(limitAnswer("send_communication")).toContain("No se envió ninguna comunicación");
+    expect(limitAnswer("system_help", "¿Dónde está el manual?", "https://docs.example.com"))
+      .toContain("Puedes consultar la documentación de la aplicación en https://docs.example.com.");
+    expect(limitAnswer("system_help", "¿Dónde está el manual?", "")).toContain("Solicita la documentación vigente al administrador.");
+    expect(limitAnswer("system_help", "¿Qué permisos tengo?", "")).toContain("No puedo consultar la configuración vigente");
   });
 });
 
@@ -282,6 +326,42 @@ describe("motor de expedientes", () => {
       route: async () => ({ route: route({ mode: "action" }), droppedFilters: [], attempts: [] }) });
     expect(delegatedTurn).toMatchObject({ handled: false, reason: "mode_action" });
     expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("entrega el plan en los turnos delegados y responde los límites con mensajes fijos", async () => {
+    const routed = (plan) => async () => ({ ...validateRoute(plan, { question: base.question, opportunityIds: [121, 117] }), attempts: [] });
+    const limit = planTask({ type: "limit", kind: "remove_record", ask: "Eliminar Correo", focusLevel: "none", opportunityIds: [] });
+    const analyze = vi.fn(async () => analysis());
+    const delegatedTurn = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze,
+      route: routed(rawPlan({ tasks: [planTask({ type: "compose", kind: "questions", material: "library" })] })) });
+    expect(delegatedTurn).toMatchObject({ handled: false, reason: "mode_content", plan: { tasks: [{ id: "t1", type: "compose" }] } });
+    const limitOnly = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze, route: routed(rawPlan({ tasks: [limit] })) });
+    expect(limitOnly.response.answer).toBe(limitAnswer("remove_record"));
+    expect(limitOnly.response.turnTasks).toEqual([expect.objectContaining({ type: "limit", kind: "remove_record", status: "unavailable" })]);
+    expect(analyze).not.toHaveBeenCalled();
+    const mixed = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze, route: routed(rawPlan({ tasks: [planTask(), limit] })) });
+    expect(mixed.response.answer).toBe(`${analysis().answerText}\n\n${limitAnswer("remove_record")}`);
+    expect(mixed.response.turnTasks.map((task) => `${task.type}:${task.status}`)).toEqual(["consult:completed", "limit:unavailable"]);
+  });
+
+  it("redacta con el motor nuevo, cita los hechos del cliente y repara una vez", async () => {
+    const routed = async () => ({ ...validateRoute(rawPlan({ tasks: [planTask(),
+      planTask({ type: "compose", kind: "email", ask: "Correo a Daniel" })] }), { question: base.question, opportunityIds: [121, 117] }), attempts: [] });
+    const email = (extra = {}) => ({ deliverables: [{ taskId: "t2", status: "done", reason: "", subject: "Seguimiento de Sealpath",
+      body: "Hola Daniel,\n\nRetomo la propuesta de Sealpath.", items: [], notes: "",
+      claims: [{ text: "La cotización está Aprobada", kind: "registered", evidenceIds: ["qv139"], sectionKeys: [],
+        values: [{ type: "status", value: "Aprobada" }] }], ...extra }] });
+    const compose = vi.fn().mockResolvedValueOnce(email({ subject: "" })).mockResolvedValueOnce(email());
+    const analyze = vi.fn(async () => analysis());
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routed, analyze, compose });
+    expect(compose).toHaveBeenCalledTimes(2);
+    expect(compose.mock.calls[0][0].context.analysisOfThisTurn).toBe(analysis().answerText);
+    expect(compose.mock.calls[1][0].context.repair.failures[0]).toMatchObject({ code: "EMAIL_SUBJECT" });
+    expect(result.response.answer).toBe(`${analysis().answerText}\n\nAsunto: Seguimiento de Sealpath\n\nHola Daniel,\n\nRetomo la propuesta de Sealpath.`);
+    expect(result.response.presentation.status).toBe("completed");
+    expect(result.response.turnTasks.map((task) => `${task.type}:${task.kind}:${task.status}`))
+      .toEqual(["consult:detail:completed", "compose:email:completed"]);
+    expect(result.memory.obligations.map((item) => item.id)).toEqual(["o1", "t2"]);
   });
 
   it("rechaza un foco que no pertenece a la cuenta", async () => {

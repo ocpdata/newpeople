@@ -301,7 +301,8 @@ describe("Customer chat evaluation checks", () => {
     const result = { answer: "Capacidades generales con evidencia", responseType: "informational", operations: [],
       contentSource: "knowledge_library",
       debug: { flow: [{ block: "B12", input: { requested: true }, output: { status: "results", snippetsCount: 2 } }] },
-      components: [{ category: "query.document_content", status: "completed" }] };
+      components: [{ category: "query.document_content", object: "general", status: "completed",
+        documentSpec: { source: "knowledge_library" } }] };
     expect(evaluateResponse({ definition, result, accountId: 22 }).outcome).toBe("human_review");
     expect(evaluateResponse({ definition, result: { ...result, answer: "No hay documentos activos disponibles" }, accountId: 22 }).outcome).toBe("failed");
     expect(evaluateResponse({ definition, result: { ...result, contentSource: "user_provided" }, accountId: 22 }).outcome).toBe("failed");

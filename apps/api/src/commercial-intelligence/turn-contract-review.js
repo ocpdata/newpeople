@@ -2,6 +2,7 @@ import { z } from "zod";
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { CUSTOMER_TURN_CATEGORIES, customerTurnContractSchema, interpretCustomerTurn } from "./turn-contract.js";
 import { buildCustomerInterpretationContext, CUSTOMER_INTERPRETATION_CONTEXT_RULES } from "./interpretation-context.js";
+import { alignContractWithPlan, comparePlanAndContract, plannedTasksForInterpretation } from "./dossier/plan-alignment.js";
 
 const issueCodes = [
   "PURPOSE_MISMATCH", "OBJECT_MISMATCH", "SOURCE_MISMATCH", "CONTINUITY_MISMATCH",
@@ -259,10 +260,50 @@ export function findCustomerContractContradictions(contract, conversationContext
   return issues;
 }
 
+// With a router plan, B3 only fills specifications and code checks the result against the plan;
+// the AI coherence review is not used because the plan is already the authoritative interpretation.
+async function interpretWithPlan(input, plan, interpret, deadlineAt) {
+  const plannedTasks = plannedTasksForInterpretation(plan);
+  const attempts = [];
+  let contract;
+  try {
+    contract = customerTurnContractSchema.parse(await interpret({ ...input, deadlineAt, plannedTasks }));
+  } catch (error) {
+    if (error?.code !== "CUSTOMER_REPORT_TEXT_CHANGED") throw error;
+    // A paraphrased report is fixable with the concrete rule; the plan keeps the task type.
+    attempts.push({ issues: [error.code] });
+    remainingTimeout(deadlineAt);
+    contract = customerTurnContractSchema.parse(await interpret({ ...input, deadlineAt, plannedTasks,
+      interpretationFeedback: { issues: [{ code: error.code, problem: error.message }],
+        instruction: "Un componente report.* copia literalmente en text el fragmento reportado del mensaje." } }));
+  }
+  let comparison = comparePlanAndContract(plan, contract, { question: input.question });
+  attempts.push({ issues: comparison.issues.map((issue) => issue.code) });
+  if (comparison.issues.length) {
+    remainingTimeout(deadlineAt);
+    contract = customerTurnContractSchema.parse(await interpret({
+      ...input, deadlineAt, plannedTasks,
+      interpretationFeedback: {
+        proposedContract: contract, issues: comparison.issues,
+        instruction: "Ajusta el contrato al plan autorizado: un componente por tarea, sin componentes adicionales, con las restricciones literales y el material aportado completo en el texto.",
+      },
+    }));
+    comparison = comparePlanAndContract(plan, contract, { question: input.question });
+    attempts.push({ issues: comparison.issues.map((issue) => issue.code) });
+  }
+  const aligned = comparison.issues.length ? alignContractWithPlan(plan, contract, { question: input.question }) : { contract, adjustments: null };
+  return {
+    contract: customerTurnContractSchema.parse(aligned.contract),
+    review: { status: "plan_aligned", attempts: attempts.length, checks: attempts, adjustments: aligned.adjustments,
+      reviewRequests: 0, validationFailures: [] },
+  };
+}
+
 export async function interpretReviewedCustomerTurn(input, {
   initialContract = null,
   interpret = interpretCustomerTurn,
   reviewWithAI = runStructuredTextResearch,
+  plan = null,
 } = {}) {
   const preparedContext = buildCustomerInterpretationContext(input);
   input = {
@@ -272,6 +313,7 @@ export async function interpretReviewedCustomerTurn(input, {
   };
   const deadlineAt = input.deadlineAt == null ? Date.now() + 45000 : new Date(input.deadlineAt).getTime();
   remainingTimeout(deadlineAt);
+  if (plan?.tasks?.length) return interpretWithPlan(input, plan, interpret, deadlineAt);
   const interpretOnce = async () => {
     try {
       return await interpret({ ...input, deadlineAt });

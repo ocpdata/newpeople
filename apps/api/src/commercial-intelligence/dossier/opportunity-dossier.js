@@ -2,6 +2,9 @@ import {
   allowedCommercialStatuses, authorizeAccount, canRead, canReadAll, dossierError, opportunityScopeSql, sectionPermissions, channelAllows,
 } from "./access.js";
 import {
+  accountActivitySections, accountProfileSection, manufacturerRegistrationsSection, proposalSections, workspaceSections,
+} from "./extended-sections.js";
+import {
   ACTIVITY_STATUS_MEANINGS, COMMERCIAL_STATUS_MEANINGS, EMPTY_MEANINGS, FAILED_MEANING, MEANINGS,
   QUOTATION_STATUS_MEANINGS, RESTRICTED_MEANING, TRUNCATED_MEANING,
 } from "./semantics.js";
@@ -10,6 +13,9 @@ export const DOSSIER_LIMITS = Object.freeze({
   stageAnswers: 300, stageRequirements: 100, contacts: 50, activities: 100, calendarActivities: 100,
   opportunityNotes: 50, quotations: 20, purchaseOrders: 20, documents: 50, interactions: 30, history: 50,
   opportunities: 50, pendingActivities: 50, accountActivities: 150,
+  accountProfile: 1, stakeholders: 30, weaknesses: 30, criterionAssessments: 50, deliverables: 30,
+  recommendedStrategy: 3, themeEntries: 50, manufacturerRegistrations: 10, proposals: 10, proposalDocuments: 10,
+  accountInteractions: 30, leads: 30, campaignInteractions: 20, accountCalendar: 50,
 });
 export const SECTION_TITLES = Object.freeze({
   stageAnswers: "Respuestas de todas las etapas",
@@ -26,6 +32,20 @@ export const SECTION_TITLES = Object.freeze({
   opportunities: "Oportunidades de la cuenta",
   pendingActivities: "Actividades pendientes de la cuenta",
   accountActivities: "Actividades de la cuenta en todos los estados (más recientes primero)",
+  accountProfile: "Perfil y responsables de la cuenta",
+  stakeholders: "Actores clave de la oportunidad",
+  weaknesses: "Debilidades y riesgos registrados",
+  criterionAssessments: "Evaluación de criterios del proceso comercial",
+  deliverables: "Entregables de la oportunidad",
+  recommendedStrategy: "Estrategia recomendada",
+  themeEntries: "Afirmaciones por tema",
+  manufacturerRegistrations: "Registros ante el fabricante y renovaciones",
+  proposals: "Propuestas comerciales",
+  proposalDocuments: "Documentos de propuesta",
+  accountInteractions: "Interacciones de la cuenta",
+  leads: "Interacciones y leads de la cuenta sin oportunidad",
+  campaignInteractions: "Campañas de la cuenta",
+  accountCalendar: "Calendario de la cuenta sin oportunidad",
 });
 const TEXT_LIMIT = 4000;
 
@@ -35,7 +55,7 @@ function clip(value, limit = TEXT_LIMIT) {
   return text.length > limit ? { value: text.slice(0, limit), truncated: true } : { value: text, truncated: false };
 }
 
-function withText(item, key, value, limit) {
+export function withText(item, key, value, limit) {
   const clipped = clip(value, limit);
   item[key] = clipped.value;
   if (clipped.truncated) item.truncatedFields = [...(item.truncatedFields || []), key];
@@ -476,6 +496,11 @@ export async function buildOpportunityDossier({ user, opportunityId, governance,
     }),
   });
 
+  Object.assign(sections, await workspaceSections({ opportunityId: id, run, allowed: permissions.stakeholders }));
+  sections.manufacturerRegistrations = await manufacturerRegistrationsSection({
+    opportunityId: id, run, allowed: permissions.manufacturerRegistrations });
+  Object.assign(sections, await proposalSections({ opportunityId: id, run, allowed: permissions.proposals }));
+
   const dossier = {
     kind: "opportunity",
     generatedAt: now.toISOString(),
@@ -576,6 +601,8 @@ export async function buildAccountDossier({ user, accountId, governance, run, no
   // Account-wide history questions need realized and cancelled activities too, not only pending ones.
   sections.accountActivities = await accountActivitiesSection("accountActivities", "",
     "COALESCE(a.due_date, DATE(a.created_at)) DESC, a.id DESC");
+  sections.accountProfile = await accountProfileSection({ account, run, allowed: permissions.accountProfile });
+  Object.assign(sections, await accountActivitySections({ user, account, run, permissions }));
   const dossier = {
     kind: "account",
     generatedAt: now.toISOString(),
@@ -680,6 +707,7 @@ export function indexDossierEvidence(dossier) {
     for (const item of section.items) {
       add(item);
       for (const version of item.versions || []) add(version);
+      for (const renewal of item.renewals || []) add(renewal);
     }
   }
   return index;

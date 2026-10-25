@@ -1,6 +1,6 @@
 # Diseño: migración completa del chat de Cliente existente al motor de expedientes
 
-Estado: **aprobado** (sin implementar). Fecha: 2026-10-25.
+Estado: **aprobado**; fases A, A1, B y C implementadas. Fecha: 2026-10-25.
 
 Documentos relacionados:
 [diseño de consultas con expediente](./diseno-consultas-expediente-cliente-existente.md),
@@ -339,6 +339,35 @@ presentación muestra una sección por tarea con su estado, como hoy.
 - **Criterio:** los hechos nuevos del banco aparecen en el expediente (como
   en la fase 1) y las preguntas nuevas pasan sin afirmar ausencias falsas.
 
+#### Estado de la fase A1 (2026-10-25)
+
+Implementada en `dossier/extended-sections.js`:
+
+- Expediente de cuenta: `accountProfile` (tipo, sector, sitio, ubicación,
+  descripción y responsables), `accountInteractions`, `leads`
+  (interacciones sin oportunidad), `campaignInteractions` y `accountCalendar`.
+- Expediente de oportunidad: `stakeholders`, `weaknesses`,
+  `criterionAssessments`, `deliverables`, `recommendedStrategy`,
+  `themeEntries`, `manufacturerRegistrations` (con renovaciones),
+  `proposals` y `proposalDocuments`.
+- Permisos: espacio de trabajo con oportunidades + desarrollo comercial;
+  `registros_fabricantes`, `propuestas`, `campanas`, `interacciones` y
+  `calendario_comercial` para sus fuentes. Cada sección respeta la
+  herramienta del canal correspondiente.
+- Las fechas de registros ante el fabricante se leen como el día guardado
+  por la aplicación (medianoche UTC del día elegido); formatearlas en la base
+  daba un día menos.
+- Banco ampliado a 23 turnos (conversaciones TOTALPLAY-A1 y DIESTRA-A1) y 62
+  hechos; los 62 están en el expediente (50/50 críticos).
+- **Resultado:** banco completo con el motor nuevo 22/23 turnos, 48/49 hechos
+  críticos y 0 afirmaciones prohibidas; las 6 preguntas nuevas pasan. El
+  único fallo es R3, el caso ya conocido que exige además nombrar las
+  actividades realizadas. Dos criterios nuevos (X3 y Y1) se ajustaron a lo
+  que preguntaban después de la primera evaluación: pedían el título de los
+  leads y el folio del registro, que las preguntas no solicitaban.
+- Hoy están vacías en la base las tablas de actores, debilidades, criterios,
+  entregables y temas; el expediente las lee y lo indicará cuando tengan datos.
+
 ### Fase B — Enrutador v2 como única puerta
 
 - El enrutador produce el plan para **todos** los turnos.
@@ -352,11 +381,95 @@ presentación muestra una sección por tarea con su estado, como hoy.
 - **Riesgo:** las funciones de ejecución esperan componentes de B3; el
   adaptador traduce tarea → componente y se cubre con pruebas.
 
+#### Estado de la fase B (2026-10-25)
+
+Implementada con un ajuste respecto del plan original: los ejecutores del
+recorrido anterior dependen de especificaciones por categoría (documento,
+lista, historial, acción), así que B3 **sigue rellenando esas
+especificaciones**, pero ya no interpreta el turno.
+
+- El enrutador produce el plan de `dossier/turn-plan.js` para todos los
+  turnos (tareas, restricciones con cita literal, filtros, continuación y
+  aclaración). La ruta del analista (modo, foco y obligaciones) se deriva del
+  plan por código.
+- Consultas: el motor nuevo. Límites (eliminar, enviar, ayuda del sistema,
+  fuera de alcance): respuestas fijas del motor nuevo, también cuando vienen
+  mezclados con consultas. La ayuda del sistema enlaza la documentación si se
+  configura `SYSTEM_DOCUMENTATION_URL`; si no, pide la documentación al
+  administrador.
+- Redacción, documentos y acciones: el plan viaja al recorrido anterior. B3
+  recibe las tareas (`plannedTasks`) con las categorías permitidas por tarea
+  y devuelve un componente por tarea. **Sin revisor de IA**: el código
+  compara contrato y plan (`dossier/plan-alignment.js`: tarea faltante,
+  componente no planificado, restricción literal perdida y material aportado
+  sustituido por una descripción), pide una sola corrección y después alinea
+  por código (quita lo no planificado, repone citas y material, crea tareas
+  sin especificación adicional como límites y redacciones simples).
+- Tras el reintento, los problemas de cita literal del enrutador quedan
+  registrados (`softIssues`) pero no hacen fallar el turno.
+- **Resultado:** banco de consultas 21/23 en la corrida completa; las dos
+  conversaciones fallidas pasan al repetirlas tras ajustar «qué cotización
+  tiene» como consulta (no documento). Pestaña Pruebas, 70 casos dirigidos
+  (acciones, redacción, límites, secuencias y mezclas): 58 en revisión humana
+  en la primera corrida; tras las correcciones, 4 de los 6 fallos no
+  relacionados con la biblioteca pasan al repetirlos. Pendientes:
+  - Q09-01 (inestable conocido: depende del aspecto que elige B3) → fase D.
+  - C05-01/C05-03: el auditor de contenido anterior rechaza resúmenes de
+    material aportado → fase C.
+  - «No hay un único borrador vigente» en transformaciones encadenadas
+    (SEQ06), ya presente antes → fase C.
+  - MIX09, SEQ11, SEQ13 y SEQ15 no pudieron validarse: la biblioteca
+    (Pinecone Assistant) agotó su límite mensual de 500.000 tokens de
+    contexto. El error ahora se registra con su mensaje real en lugar de
+    `SyntaxError`.
+
 ### Fase C — Redactor en el motor nuevo
 
 - Modo `compose` con las reglas de §4.5 y verificación por código.
 - **Casos objetivo:** C01-C09, L09, L10, MIX04/05.
 - **Retira:** generación de contenido del recorrido anterior (B9) y su auditor.
+
+#### Estado de la fase C (2026-10-25)
+
+Implementada en `dossier/composer.js`:
+
+- El plan indica por tarea su `material`: `none`, `message_text` (texto
+  pegado en el mensaje), `previous_answer` (respuesta anterior del
+  asistente), `attachment` o `library`. El motor nuevo redacta cuando las
+  tareas son consultas, redacciones y límites, y ninguna redacción usa
+  adjunto ni biblioteca (eso sigue en el recorrido anterior hasta la fase D).
+- El redactor devuelve entregables estructurados (asunto, cuerpo, puntos con
+  minutos, notas y afirmaciones con evidencia); el **código arma el texto
+  final**. En turnos mixtos, el analista responde primero y el redactor
+  recibe su respuesta.
+- Verificación por código (§4.5): asunto y saludo en correos; longitud de
+  mensajes; agenda que suma la duración pedida; cantidad exacta de puntos o
+  preguntas, que terminan en «?»; al transformar texto aportado, sin
+  registros del CRM ni cifras ausentes del texto fuente; incertidumbre
+  conservada («quizá», «no está confirmado»); sin importes si se excluyeron
+  precios o costos; sin afirmar envíos, guardados ni agendas; afirmaciones
+  del cliente verificadas como en el analista. Una reparación con los fallos
+  concretos.
+- Transformaciones encadenadas («más breve», «tradúcelo») trabajan sobre la
+  respuesta anterior; si no la hay, se pide el texto.
+- Las redacciones que excluyen el CRM o solo transforman texto aportado no
+  reciben registros del CRM.
+- Se corrigió el enrutador: preparar el contenido de una reunión es
+  redacción, no agendar una actividad.
+- **Streaming del proveedor de IA:** el gateway `OPENAI_BASE_URL` corta a
+  los ~30 s las peticiones sin respuesta. Las llamadas se piden en streaming
+  (`OPENAI_STREAM_RESPONSES`, activo por defecto); turnos grandes como MIX05
+  ya no fallan con 504. Un flujo que deja de enviar datos 60 s
+  (`OPENAI_STREAM_IDLE_TIMEOUT_MS`) se aborta como fallo transitorio y se
+  reintenta una vez; el enrutador también tiene ese reintento.
+- **Resultado:** 34 casos (C01-C09, L09, L10, MIX04, MIX05, SEQ06, A10-03):
+  todos en revisión humana tras repetir MIX05 con streaming. SEQ06
+  (redactar, acortar, traducir y pedir envío) funciona completo por primera
+  vez. Banco de consultas 22/23. Acciones, límites, secuencias y mezclas del
+  recorrido anterior (29 casos) en revisión humana con streaming.
+- Retiro pendiente: la generación de contenido del recorrido anterior (B9) y
+  su auditor siguen en uso para redacciones con biblioteca o adjunto; se
+  retiran con la fase D.
 
 ### Fase D — Documentos, biblioteca y calculadoras como fuentes
 
@@ -373,7 +486,7 @@ presentación muestra una sección por tarea con su estado, como hoy.
 - **Casos objetivo:** A01-A11, SEQ01-SEQ10, K08 y los escenarios del banco.
 - **Criterio adicional:** ninguna escritura sin confirmación en pruebas
   automáticas y revisión manual de 20 acciones reales en desarrollo. Sin modo
-  sombra (decisión 10.1.5).
+  sombra (decisión 11.1.5).
 
 ### Fase F — Retiro del recorrido anterior
 
@@ -399,7 +512,61 @@ Costo por turno en producción: enrutador `gpt-6.1-sol` (~0,005 USD) más
 analista o redactor (~0,02-0,04 USD). Las acciones agregan un proponente
 (~0,01 USD) y ya no pagan B3 ni su revisor.
 
-## 9. Riesgos y mitigaciones
+### Estado de la fase A (2026-10-25)
+
+Implementada:
+
+- Contrato del plan del turno en `dossier/turn-plan.js`: tipos y subtipos
+  de tarea, restricciones con cita literal, continuación y aclaración. La
+  validación por código revisa IDs visibles, dependencias, coherencia de
+  tipo y subtipo, negaciones (`noWrite`, `noSend`) y duración de agendas.
+- Estado unificado en `dossier/conversation-state.js`, con validación contra
+  las oportunidades visibles y conversión desde las memorias actuales.
+- Tareas observadas en `dossier/observed-tasks.js`: traduce las 46
+  categorías del recorrido anterior y las tareas del motor nuevo
+  (`turnTasks`) a la misma forma.
+- El evaluador de la pestaña Pruebas lee tareas observadas, no categorías
+  del recorrido anterior.
+- **Criterio cumplido:** al re-evaluar sin costo las respuestas guardadas de
+  tres corridas (471 pasos), el evaluador nuevo da exactamente los mismos
+  veredictos que el anterior.
+
+Ninguno de estos contratos se usa todavía para decidir el turno; la fase B
+los conecta.
+
+## 9. Inventario de pruebas por capacidad
+
+| Capacidad (catálogo) | Destino y fase | Pruebas automáticas actuales |
+| --- | --- | --- |
+| Resumen, detalle, campo, lista, búsqueda (Q01-Q05) | Consulta; ya en el motor nuevo; A1 completa el expediente | `customer-dossier`, `customer-dossier-engine`, `customer-record-list`, `customer-record-search`, `customer-chat-acceptance` |
+| Historial (Q06) | Consulta (A1: interacciones y calendario de cuenta) | `customer-history`, `customer-history-snapshot` |
+| Pendientes (Q07) | Consulta | `customer-pending`, `customer-pending-activity` |
+| Relaciones (Q08) | Consulta | `customer-relationships` |
+| Cotización y material (Q09) | Documento, fase D | `customer-documents`, `customer-crm-documents`, `customer-document-reports`, `customer-chat-document-knowledge` |
+| Preparación de etapa (Q10) | Consulta (fuente de preparación, fase D) | `customer-stage`, `customer-stage-routes` |
+| Ayuda del sistema (Q11) | Límite, fase B (enlace a documentación cuando exista) | `customer-turn-contract` |
+| Notas (Q12) | Consulta | `customer-dossier`, `customer-chat-adapter` |
+| Diagnóstico, riesgos, siguientes pasos, estrategia (G01-G03, G08) | Consulta | `customer-dossier-engine`, `customer-account-chat-evaluation` |
+| Priorización, comparación, tendencias, escenarios (G04-G07) | Consulta con calculadora, fase D | `customer-prioritization`, `customer-comparison`, `customer-trends`, `customer-scenarios` |
+| Correo, mensaje, reunión, preguntas, resumen, explicación, reescritura, traducción, argumento de valor (C01-C09) | Redacción, fase C | `customer-content-validation`, `customer-turn-contract`, `customer-turn-pipeline`, `customer-conversational-response` |
+| Reportes del vendedor (R01-R06) | Acción como propuesta revisable, fase E | `customer-document-reports`, `customer-turn-contract` |
+| Crear registro (A01) | Acción, fase E | `customer-creation`, `customer-creation-access`, `customer-creation-routes` |
+| Actualizar campos (A02) | Acción, fase E | `customer-updates`, `customer-update-access`, `customer-update-routes` |
+| Respuesta de etapa (A03) | Acción, fase E | `customer-stage-validator-preservation`, `customer-chat-adapter` |
+| Vínculo (A04) | Acción, fase E | `customer-links`, `customer-link-access`, `customer-link-routes` |
+| Actividad (A05) | Acción, fase E | `customer-activity-draft`, `customer-pending-activity` |
+| Reprogramar (A06) | Acción, fase E | `customer-reschedule`, `customer-reschedule-routes` |
+| Resultado de lead (A07) | Acción, fase E | `customer-outcomes`, `customer-outcomes-routes` |
+| Estado o etapa (A08) | Acción, fase E | `customer-stage`, `customer-stage-routes` |
+| Eliminar, enviar (A09-A10) | Límite, fase B | `customer-turn-contract` |
+| Nota (A11) | Acción, fase E | `customer-note-proposal-route` |
+| Transversal | — | `customer-turn-plan` (nuevo), `customer-chat-evaluations`, `customer-chat-diagnostics`, `customer-server-policy-runtime`, `customer-server-rules`, `customer-conversation-context`, `customer-presentation`, `customer-chat-evidence` |
+| Recorrido anterior que se retira (fase F) | — | `customer-turn-review`, `customer-interpretation-context`, `customer-turn-config`, partes de `customer-chat-adapter` y `customer-turn-pipeline` |
+
+Las variantes `*.mysql.test.js` requieren la base de pruebas y se ejecutan
+aparte.
+
+## 10. Riesgos y mitigaciones
 
 | Riesgo | Mitigación |
 | --- | --- |
@@ -410,9 +577,9 @@ analista o redactor (~0,02-0,04 USD). Las acciones agregan un proponente
 | Instancia en la nube con código anterior sobre la misma base | Desplegar cada fase o desactivar su worker de evaluaciones durante las corridas |
 | Costo de evaluación | Corridas dirigidas por fase y una completa al cierre de cada fase |
 
-## 10. Decisiones
+## 11. Decisiones
 
-### 10.1 Tomadas (2026-10-25)
+### 11.1 Tomadas (2026-10-25)
 
 1. **Orden de fases confirmado:** A → B → C → D → E → F, con la fase **A1**
    (expediente completo para consultas) agregada después de A a pedido del

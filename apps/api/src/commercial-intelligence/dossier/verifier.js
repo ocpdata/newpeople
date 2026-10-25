@@ -29,7 +29,7 @@ function valueMatches(value, item) {
 
 const EVIDENCE_TOKEN = /[a-z]+\d+(?:\.\d+)?/gi;
 // Internal vocabulary and record IDs must never reach the seller.
-const INTERNAL_TERMS = /\bexpedientes?\b|\bevidence(?:Id|Ids)?\b|\bsectionKeys?\b|\b(?:opp|acct|contact|ans|act|cal|qv|quote|note|po|doc|int|audit)\d+\b/i;
+const INTERNAL_TERMS = /\bexpedientes?\b|\bevidence(?:Id|Ids)?\b|\bsectionKeys?\b|\b(?:opp|acct|contact|ans|act|cal|qv|quote|note|po|doc|int|audit|aint|stk|wk|crit|dlv|strat|thm|reg|regr|prop|pdoc|camp)\d+\b/i;
 export const BRIEF_MAX_CHARS = 1100;
 
 export function buildEvidenceIndex(dossiers) {
@@ -90,14 +90,65 @@ export function presentationIssues({ answerText, responseLength = "standard" }) 
   return issues;
 }
 
-export function verifyAnalysis({ analysis, obligations, dossiers, responseLength = "standard" }) {
-  const index = buildEvidenceIndex(dossiers);
-  const sectionsByKey = new Map();
+export function sectionsByKey(dossiers) {
+  const map = new Map();
   for (const dossier of dossiers) {
-    for (const section of Object.values(dossier.sections)) {
-      sectionsByKey.set(section.key, [...(sectionsByKey.get(section.key) || []), section]);
+    for (const section of Object.values(dossier.sections)) map.set(section.key, [...(map.get(section.key) || []), section]);
+  }
+  return map;
+}
+
+/** Checks the evidence, absences and values of claims; shared by the analyst and the composer. */
+export function verifyClaims({ claims, obligationId, index, sections, fail, cited }) {
+  for (const claim of claims) {
+    const missing = claim.evidenceIds.filter((id) => !index.has(id));
+    if (missing.length) fail("UNKNOWN_EVIDENCE", obligationId, `Evidencia inexistente: ${missing.join(", ")}.`, claim);
+    const items = claim.evidenceIds.filter((id) => index.has(id)).map((id) => index.get(id));
+    items.forEach((item) => cited.add(item.evidenceId));
+    if (["registered", "absence"].includes(claim.kind) && !claim.evidenceIds.length && !claim.sectionKeys.length) {
+      fail("MISSING_EVIDENCE", obligationId, "Una afirmación registrada o de ausencia debe citar evidencia.", claim);
+    }
+    if (claim.kind === "absence") {
+      if (!claim.sectionKeys.length) {
+        fail("ABSENCE_WITHOUT_SECTION", obligationId, "Una ausencia debe indicar las secciones revisadas.", claim);
+      }
+      for (const key of claim.sectionKeys) {
+        const found = sections.get(key) || [];
+        if (!found.length) fail("ABSENCE_UNKNOWN_SECTION", obligationId, `La sección ${key} no está en los expedientes.`, claim);
+        const incomplete = found.filter((section) => !COMPLETE.has(section.status));
+        if (incomplete.length) {
+          fail("ABSENCE_INCOMPLETE_SECTION", obligationId,
+            `La sección ${key} está ${incomplete.map((section) => section.status).join("/")}; no permite afirmar ausencia.`, claim);
+        }
+      }
+    }
+    for (const value of claim.values) {
+      if (["count", "amount_total"].includes(value.type)) {
+        const result = items.length ? aggregateMatches(value, items) : { ok: false };
+        if (result.code) fail("VALUE_FORMAT", obligationId, `Formato no válido para ${value.type}: ${value.value}.`, claim);
+        else if (!result.ok) {
+          fail("AGGREGATE_MISMATCH", obligationId,
+            `El valor ${value.type}=${value.value} no coincide con los registros citados; cita exactamente los registros que suman o cuentas.`, claim);
+        }
+        continue;
+      }
+      if (!items.length) {
+        fail("VALUE_WITHOUT_EVIDENCE", obligationId, `El valor ${value.value} no cita un registro.`, claim);
+        continue;
+      }
+      const results = items.map((item) => valueMatches(value, item));
+      if (results.some((result) => result.code === "VALUE_FORMAT")) {
+        fail("VALUE_FORMAT", obligationId, `Formato no válido para ${value.type}: ${value.value}.`, claim);
+      } else if (!results.some((result) => result.ok)) {
+        fail("VALUE_MISMATCH", obligationId, `El valor ${value.type}=${value.value} no coincide con la evidencia citada.`, claim);
+      }
     }
   }
+}
+
+export function verifyAnalysis({ analysis, obligations, dossiers, responseLength = "standard" }) {
+  const index = buildEvidenceIndex(dossiers);
+  const sections = sectionsByKey(dossiers);
   const failures = [];
   const fail = (code, obligationId, detail, claim = null) => failures.push({
     code, obligationId, detail, ...(claim ? { claim: claim.text.slice(0, 300) } : {}),
@@ -121,50 +172,7 @@ export function verifyAnalysis({ analysis, obligations, dossiers, responseLength
         fail("MISSING_CONFIRMATION", obligation.id, "Cada punto debe incluir su confirmación concreta.");
       }
     }
-    for (const claim of block.claims) {
-      const missing = claim.evidenceIds.filter((id) => !index.has(id));
-      if (missing.length) fail("UNKNOWN_EVIDENCE", obligation.id, `Evidencia inexistente: ${missing.join(", ")}.`, claim);
-      const items = claim.evidenceIds.filter((id) => index.has(id)).map((id) => index.get(id));
-      items.forEach((item) => cited.add(item.evidenceId));
-      if (["registered", "absence"].includes(claim.kind) && !claim.evidenceIds.length && !claim.sectionKeys.length) {
-        fail("MISSING_EVIDENCE", obligation.id, "Una afirmación registrada o de ausencia debe citar evidencia.", claim);
-      }
-      if (claim.kind === "absence") {
-        if (!claim.sectionKeys.length) {
-          fail("ABSENCE_WITHOUT_SECTION", obligation.id, "Una ausencia debe indicar las secciones revisadas.", claim);
-        }
-        for (const key of claim.sectionKeys) {
-          const sections = sectionsByKey.get(key) || [];
-          if (!sections.length) fail("ABSENCE_UNKNOWN_SECTION", obligation.id, `La sección ${key} no está en los expedientes.`, claim);
-          const incomplete = sections.filter((section) => !COMPLETE.has(section.status));
-          if (incomplete.length) {
-            fail("ABSENCE_INCOMPLETE_SECTION", obligation.id,
-              `La sección ${key} está ${incomplete.map((section) => section.status).join("/")}; no permite afirmar ausencia.`, claim);
-          }
-        }
-      }
-      for (const value of claim.values) {
-        if (["count", "amount_total"].includes(value.type)) {
-          const result = items.length ? aggregateMatches(value, items) : { ok: false };
-          if (result.code) fail("VALUE_FORMAT", obligation.id, `Formato no válido para ${value.type}: ${value.value}.`, claim);
-          else if (!result.ok) {
-            fail("AGGREGATE_MISMATCH", obligation.id,
-              `El valor ${value.type}=${value.value} no coincide con los registros citados; cita exactamente los registros que suman o cuentas.`, claim);
-          }
-          continue;
-        }
-        if (!items.length) {
-          fail("VALUE_WITHOUT_EVIDENCE", obligation.id, `El valor ${value.value} no cita un registro.`, claim);
-          continue;
-        }
-        const results = items.map((item) => valueMatches(value, item));
-        if (results.some((result) => result.code === "VALUE_FORMAT")) {
-          fail("VALUE_FORMAT", obligation.id, `Formato no válido para ${value.type}: ${value.value}.`, claim);
-        } else if (!results.some((result) => result.ok)) {
-          fail("VALUE_MISMATCH", obligation.id, `El valor ${value.type}=${value.value} no coincide con la evidencia citada.`, claim);
-        }
-      }
-    }
+    verifyClaims({ claims: block.claims, obligationId: obligation.id, index, sections, fail, cited });
   }
   const presentation = presentationIssues({ answerText: analysis.answerText, responseLength });
   return { ok: failures.length === 0, failures, presentationIssues: presentation, citedEvidenceIds: [...cited] };

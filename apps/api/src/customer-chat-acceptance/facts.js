@@ -7,6 +7,13 @@ const FACT_SOURCES = Object.freeze({
   quotations: ["opportunity_id"],
   quotation_versions: ["status_id", "version_number", "quotation_id"],
   quotation_won_documents: ["opportunity_id", "document_role"],
+  accounts: ["economic_sector_id", "account_type_id", "city", "website"],
+  account_owners: ["account_id", "user_id"],
+  opportunity_workspace_recommended_strategy: ["heading", "final_objective", "opportunity_id"],
+  interactions: ["title", "analysis_status", "account_id", "primary_opportunity_id"],
+  campaign_account_interactions: ["estado_interaccion", "etapa_ciclo_vida", "account_id"],
+  opportunity_manufacturer_registrations: ["registration_folio", "expires_at", "status_code", "opportunity_id"],
+  proposals: ["title", "status_code", "opportunity_id", "account_id"],
 });
 const DATE_FIELDS = new Set(["close_date", "due_date"]);
 
@@ -30,7 +37,7 @@ export function buildFactQuery(fact) {
   return {
     sql: DATE_FIELDS.has(fact.field)
       ? "SELECT DATE_FORMAT(??, '%Y-%m-%d') AS value FROM ?? WHERE id = ?"
-      : "SELECT ?? AS value FROM ?? WHERE id = ?",
+      : "SELECT CAST(?? AS CHAR) AS value FROM ?? WHERE id = ?",
     params: [fact.field, fact.table, fact.id],
   };
 }

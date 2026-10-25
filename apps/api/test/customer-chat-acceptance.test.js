@@ -30,7 +30,7 @@ describe("banco de aceptación del chat de Cliente existente", () => {
   it("carga el banco real con evidencias existentes y conversaciones únicas", async () => {
     const bank = await loadAcceptanceBank();
     expect(bank.conversations.length).toBeGreaterThanOrEqual(5);
-    expect(bank.conversations.flatMap((item) => item.turns)).toHaveLength(17);
+    expect(bank.conversations.flatMap((item) => item.turns)).toHaveLength(23);
     expect(selectConversations(bank, ["SEALPATH-ORIGINAL"]).map((item) => item.id)).toEqual(["SEALPATH-ORIGINAL"]);
     expect(() => selectConversations(bank, ["NO-EXISTE"])).toThrow(/desconocidas/);
   });

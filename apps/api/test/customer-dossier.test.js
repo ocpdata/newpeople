@@ -3,6 +3,7 @@ import {
   buildAccountDossier, buildOpportunityDossier, buildSection, indexDossierEvidence, loadCommercialHistory,
 } from "../src/commercial-intelligence/dossier/opportunity-dossier.js";
 import { checkDossierCoverage, dossierTargets, summarizeCoverage } from "../src/customer-chat-acceptance/dossier-coverage.js";
+import { describeCitation } from "../src/commercial-intelligence/dossier/engine.js";
 
 const governance = { includeWonOpportunities: true, includeLostOpportunities: false, includeCancelledOpportunities: false };
 const ALL = ["cuentas.read_all", "oportunidades.read_all", "contactos.read", "desarrollo_comercial.read",
@@ -249,5 +250,76 @@ describe("cobertura del banco en el expediente", () => {
     expect(byId.noPurchaseOrder).toMatchObject({ located: false, reason: "seccion_restricted", critical: true });
     expect(byId.notes).toMatchObject({ located: false, reason: "seccion_failed" });
     expect(byId.opportunities).toMatchObject({ located: false, reason: "expediente_ausente" });
+  });
+});
+
+describe("fuentes de la fase A1", () => {
+  const A1 = [...ALL, "registros_fabricantes.read", "propuestas.read", "campanas.read"];
+  const extended = {
+    "LEFT JOIN account_types at": () => [{ id: 163, account_type: "Prospecto", economic_sector: "Hotelería",
+      website: "https://ejemplo.mx/?utm=1", city: "Ciudad de México", country: "Mexico", description: "Operadora hotelera",
+      owner_names: "Oscar Amaya" }],
+    "FROM account_interactions ai": () => [{ id: 4, interaction_type: "Llamada", result_name: "Interesado", title: "Seguimiento",
+      summary: "Pidió propuesta", occurred_at: "2026-10-01 10:00:00", contact_names: "Daniel Carrillo" }],
+    "FROM interactions i LEFT JOIN users u": () => [{ id: 105, title: "Totalplay", analysis_status: "lead_assigned",
+      processing_status: "analyzed", seller_name: "Jacob" }],
+    "FROM campaign_account_interactions ci": () => [{ id: 9, campaign_name: "Renovaciones", etapa_ciclo_vida: "cliente_nuevo",
+      estado_interaccion: "no_enviado" }],
+    "WHERE cca.account_id = ? AND cca.opportunity_id IS NULL": () => [],
+    "FROM opportunity_workspace_stakeholders s": () => [{ id: 3, name: "Kimberly", role_label: "Evaluadora técnica",
+      influence_level: "alta", support_level: "favorable", concerns: "Plazo de implementación" }],
+    "FROM opportunity_workspace_weaknesses w": () => [],
+    "FROM opportunity_workspace_criterion_assessments c": () => [],
+    "FROM opportunity_workspace_deliverables d": () => [],
+    "FROM opportunity_workspace_recommended_strategy s": () => [{ id: 1286, heading: "Consolidar la etapa",
+      final_objective: "Salir de Cotización", steps_json: JSON.stringify([{ title: "Validar presupuesto" }]) }],
+    "FROM opportunity_workspace_theme_entries t": () => [],
+    "FROM opportunity_manufacturer_registrations r": () => [{ id: 18, provider_name: "BlueCat", status_code: "aprobado",
+      expires_at: "2027-03-10", registration_folio: "DR-1", renewal_count: 1 }],
+    "FROM opportunity_manufacturer_registration_renewals n": () => [{ id: 2, registration_id: 18, new_folio: "DR-1",
+      new_expires_at: "2027-03-10", renewed_at: "2026-09-10" }],
+    "FROM proposals p": () => [{ id: 3, title: "Propuesta Sealpath", status_code: "active", revision_count: 2 }],
+    "FROM proposal_documents d": () => [],
+  };
+
+  it("agrega perfil, interacciones de cuenta, leads y campañas al expediente de cuenta", async () => {
+    const { run } = makeRun({ "FROM opportunities o\n       INNER JOIN": () => [], ...extended });
+    const dossier = await buildAccountDossier({ user: userWith(A1), accountId: 163, governance, run });
+    expect(dossier.sections.accountProfile.items[0]).toMatchObject({ evidenceId: "acct163", economicSector: "Hotelería",
+      website: "https://ejemplo.mx/", ownerNames: "Oscar Amaya" });
+    expect(dossier.sections.accountInteractions.items[0]).toMatchObject({ evidenceId: "aint4", contactNames: "Daniel Carrillo" });
+    expect(dossier.sections.leads.items[0]).toMatchObject({ evidenceId: "int105", analysisStatus: "lead_assigned" });
+    expect(dossier.sections.campaignInteractions.items[0]).toMatchObject({ evidenceId: "camp9", interactionStatus: "no_enviado" });
+    expect(dossier.sections.accountCalendar.status).toBe("empty");
+    const index = indexDossierEvidence(dossier);
+    expect(index.get("acct163")).toMatchObject({ name: "Grupo Diestra", economicSector: "Hotelería" });
+    expect(describeCitation(index.get("acct163")).excerpt).toContain("Hotelería");
+  });
+
+  it("agrega espacio de trabajo, registros con renovaciones y propuestas al expediente de oportunidad", async () => {
+    const { run } = makeRun(extended);
+    const dossier = await buildOpportunityDossier({ user: userWith(A1), opportunityId: 121, governance, run });
+    expect(dossier.sections.stakeholders.items[0]).toMatchObject({ evidenceId: "stk3", role: "Evaluadora técnica",
+      concerns: "Plazo de implementación" });
+    expect(dossier.sections.recommendedStrategy.items[0]).toMatchObject({ evidenceId: "strat1286", finalObjective: "Salir de Cotización" });
+    expect(dossier.sections.recommendedStrategy.items[0].steps).toContain("Validar presupuesto");
+    expect(dossier.sections.weaknesses).toMatchObject({ status: "empty", total: 0 });
+    expect(dossier.sections.manufacturerRegistrations.items[0].renewals[0]).toMatchObject({ evidenceId: "regr2" });
+    expect(dossier.sections.proposals.items[0]).toMatchObject({ evidenceId: "prop3", revisionCount: 2 });
+    const index = indexDossierEvidence(dossier);
+    expect([...index.keys()]).toEqual(expect.arrayContaining(["stk3", "strat1286", "reg18", "regr2", "prop3"]));
+    expect(describeCitation(index.get("reg18")).label).toBe("Registro ante BlueCat DR-1");
+  });
+
+  it("marca como restringidas las fuentes sin permiso o con la herramienta deshabilitada en el canal", async () => {
+    const { run, calls } = makeRun({ "FROM opportunities o\n       INNER JOIN": () => [], ...extended });
+    const dossier = await buildAccountDossier({ user: userWith(ALL), accountId: 163, governance, run });
+    expect(dossier.sections.campaignInteractions.status).toBe("restricted");
+    expect(calls.some((call) => call.sql.includes("campaign_account_interactions"))).toBe(false);
+    const opportunity = await buildOpportunityDossier({ user: userWith(ALL), opportunityId: 121,
+      governance: { ...governance, channelTools: new Set(["searchOpportunities", "getOpportunityActivities"]) }, run });
+    expect(opportunity.sections.manufacturerRegistrations.status).toBe("restricted");
+    expect(opportunity.sections.proposals.status).toBe("restricted");
+    expect(opportunity.sections.stakeholders.status).toBe("restricted");
   });
 });

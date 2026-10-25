@@ -130,6 +130,54 @@ function extractResponseOutputText(data) {
   return contentText || "";
 }
 
+const STREAM_ERROR_STATUS = { rate_limit_exceeded: 429, server_error: 500, insufficient_quota: 429 };
+
+/** Reads a Responses API event stream and returns the final response object, like the non-streamed body. */
+async function readStreamedResponse(response) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final = null;
+  const handle = (block) => {
+    const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+    if (!data || data === "[DONE]") return;
+    const event = JSON.parse(data);
+    if (["response.completed", "response.incomplete"].includes(event.type)) final = event.response;
+    if (event.type === "response.failed" || event.type === "error") {
+      const error = event.response?.error || event.error || event;
+      const status = STREAM_ERROR_STATUS[error?.code] || 500;
+      throw new Error(`OpenAI web search failed: ${status} ${JSON.stringify({ error })}`);
+    }
+  };
+  const reader = response.body.getReader();
+  const idleMs = config.openai.streamIdleTimeoutMs;
+  while (true) {
+    let timer;
+    // A stream that stops sending data would otherwise wait for the whole turn deadline.
+    const idle = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`OpenAI web search failed: 504 La respuesta en streaming no envió datos en ${idleMs} ms.`)), idleMs);
+    });
+    let read;
+    try {
+      read = await Promise.race([reader.read(), idle]);
+    } catch (error) {
+      reader.cancel().catch(() => {});
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (read.done) break;
+    buffer += decoder.decode(read.value, { stream: true });
+    let separator;
+    while ((separator = buffer.indexOf("\n\n")) >= 0) {
+      handle(buffer.slice(0, separator));
+      buffer = buffer.slice(separator + 2);
+    }
+  }
+  if (buffer.trim()) handle(buffer);
+  if (!final) throw new Error("OpenAI web search failed: 502 La respuesta en streaming terminó sin resultado.");
+  return final;
+}
+
 export async function runStructuredWebResearch({
   schemaName,
   systemPrompt,
@@ -204,7 +252,7 @@ export async function runStructuredWebResearch({
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.openai.apiKey}`,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(config.openai.streamResponses ? { ...payload, stream: true } : payload),
       ...(signal ? { signal } : {}),
     },
   );
@@ -216,7 +264,9 @@ export async function runStructuredWebResearch({
     );
   }
 
-  const data = await response.json();
+  const data = String(response.headers?.get?.("content-type") || "").includes("text/event-stream")
+    ? await readStreamedResponse(response)
+    : await response.json();
 
   if (typeof onResponseMetadata === "function") {
     try {

@@ -27,6 +27,20 @@ export const SECTION_CHANNEL_TOOLS = Object.freeze({
   activities: "getOpportunityActivities",
   pendingActivities: "getOpportunityActivities",
   accountActivities: "getOpportunityActivities",
+  accountProfile: "searchAccounts",
+  stakeholders: "getOpportunity",
+  weaknesses: "getOpportunity",
+  criterionAssessments: "getOpportunity",
+  deliverables: "getOpportunity",
+  recommendedStrategy: "getOpportunity",
+  themeEntries: "getOpportunity",
+  manufacturerRegistrations: "getOpportunity",
+  proposals: "getOpportunityQuotation",
+  proposalDocuments: "getOpportunityQuotation",
+  accountInteractions: "searchInteractions",
+  leads: "searchInteractions",
+  campaignInteractions: "searchInteractions",
+  accountCalendar: "getOpportunityActivities",
   calendarActivities: "getOpportunityActivities",
   opportunityNotes: "getOpportunityNotes",
   quotations: "getOpportunityQuotation",
@@ -62,6 +76,19 @@ export function sectionPermissions(user, governance = null) {
   };
   permissions.pendingActivities = permissions.activities;
   permissions.accountActivities = permissions.activities;
+  const workspace = canRead(user, "oportunidades") && canRead(user, "desarrollo_comercial");
+  Object.assign(permissions, {
+    accountProfile: canRead(user, "cuentas"),
+    stakeholders: workspace, weaknesses: workspace, criterionAssessments: workspace, deliverables: workspace,
+    recommendedStrategy: workspace, themeEntries: workspace,
+    manufacturerRegistrations: canRead(user, "oportunidades") && canRead(user, "registros_fabricantes"),
+    proposals: canRead(user, "oportunidades") && canRead(user, "propuestas"),
+    proposalDocuments: canRead(user, "oportunidades") && canRead(user, "propuestas"),
+    accountInteractions: canRead(user, "interacciones"),
+    leads: canRead(user, "interacciones"),
+    campaignInteractions: canRead(user, "campanas"),
+    accountCalendar: canRead(user, "calendario_comercial"),
+  });
   for (const key of Object.keys(permissions)) {
     permissions[key] = permissions[key] && channelAllows(governance, key);
   }

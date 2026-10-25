@@ -45,6 +45,27 @@ export const MEANINGS = Object.freeze({
   requirement: "Pregunta de la etapa actual según la configuración del proceso comercial.",
 });
 
+export const EXTENDED_MEANINGS = Object.freeze({
+  accountType: "Tipo de cuenta registrado en el CRM (por ejemplo, prospecto o cliente).",
+  accountOwners: "Usuarios responsables asignados a la cuenta en el CRM.",
+  accountDescription: "Descripción registrada de la cuenta; puede provenir de investigación previa y no prueba necesidades actuales.",
+  stakeholder: "Actor registrado en el espacio de trabajo de la oportunidad; rol, influencia y apoyo son valoraciones del equipo comercial.",
+  weakness: "Debilidad o riesgo registrado por el equipo comercial, con su estado y plan de mitigación.",
+  criterionAssessment: "Evaluación de un criterio del proceso comercial; puntuación y confianza son valoraciones internas.",
+  deliverable: "Entregable registrado para la oportunidad; su estado no acredita aceptación del cliente.",
+  recommendedStrategy: "Estrategia recomendada registrada para la oportunidad; es una recomendación, no un compromiso ni un hecho del cliente.",
+  themeEntry: "Afirmación registrada por tema, con su fuente y confianza; no es un dato verificado del cliente salvo que su fuente lo acredite.",
+  manufacturerRegistration: "Registro de la oportunidad ante el fabricante (deal registration).",
+  registrationExpiry: "Fecha de vencimiento del registro ante el fabricante.",
+  proposal: "Propuesta comercial generada en el CRM; su estado no acredita envío ni aceptación del cliente.",
+  proposalDocument: "Documento de propuesta del CRM; solo metadatos, sin su contenido.",
+  accountInteraction: "Interacción registrada a nivel de cuenta (no necesariamente ligada a una oportunidad).",
+  lead: "Interacción o lead de la cuenta sin oportunidad principal; su análisis puede ser automático.",
+  leadAnalysisStatus: "Estado del análisis o la asignación del lead, no de una venta.",
+  campaignInteraction: "Estado de la cuenta en una campaña; no_enviado indica que la campaña no se le ha enviado.",
+  calendarDate: "Fecha programada o de vencimiento; no acredita que la actividad se haya realizado.",
+});
+
 export const EMPTY_MEANINGS = Object.freeze({
   stageAnswers: "No hay respuestas de etapa registradas para esta oportunidad.",
   stageRequirements: "La etapa actual no tiene preguntas configuradas.",
@@ -60,6 +81,20 @@ export const EMPTY_MEANINGS = Object.freeze({
   opportunities: "La cuenta no tiene oportunidades visibles con los permisos y la política actuales.",
   pendingActivities: "No hay actividades de oportunidad pendientes o reprogramadas en las oportunidades visibles de la cuenta.",
   accountActivities: "No hay actividades registradas, en ningún estado, en las oportunidades visibles de la cuenta.",
+  accountProfile: "No se encontró el perfil de la cuenta.",
+  stakeholders: "No hay actores registrados en el espacio de trabajo de la oportunidad.",
+  weaknesses: "No hay debilidades registradas en el espacio de trabajo de la oportunidad.",
+  criterionAssessments: "No hay evaluaciones de criterios registradas para la oportunidad.",
+  deliverables: "No hay entregables registrados para la oportunidad.",
+  recommendedStrategy: "No hay estrategia recomendada registrada para la oportunidad.",
+  themeEntries: "No hay afirmaciones por tema registradas para la oportunidad.",
+  manufacturerRegistrations: "No hay registros ante el fabricante para la oportunidad.",
+  proposals: "No hay propuestas comerciales generadas para la oportunidad.",
+  proposalDocuments: "No hay documentos de propuesta para la oportunidad.",
+  accountInteractions: "No hay interacciones registradas a nivel de cuenta.",
+  leads: "No hay interacciones o leads de la cuenta sin oportunidad asociada.",
+  campaignInteractions: "La cuenta no figura en campañas.",
+  accountCalendar: "No hay actividades de calendario de la cuenta sin oportunidad asociada.",
 });
 
 export const RESTRICTED_MEANING = "Sin permiso para consultar esta fuente; no significa que no existan registros.";

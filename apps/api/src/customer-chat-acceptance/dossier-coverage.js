@@ -6,6 +6,12 @@ const EVIDENCE_PREFIX = Object.freeze({
   opportunity_stage_question_answers: "ans",
   opportunity_workspace_actions: "act",
   quotation_versions: "qv",
+  accounts: "acct",
+  opportunity_workspace_recommended_strategy: "strat",
+  interactions: "int",
+  campaign_account_interactions: "camp",
+  opportunity_manufacturer_registrations: "reg",
+  proposals: "prop",
 });
 const COUNT_SECTION = Object.freeze({
   opportunity_notes: "opportunityNotes",
@@ -23,6 +29,7 @@ export function dossierTargets(bank) {
   const accountIds = new Set(bank.conversations.map((conversation) => conversation.accountId));
   for (const fact of Object.values(bank.facts)) {
     if (fact.table === "opportunities" && fact.id) opportunityIds.add(fact.id);
+    if (fact.dossierOpportunityId) opportunityIds.add(Number(fact.dossierOpportunityId));
     if (fact.where?.opportunity_id) opportunityIds.add(Number(fact.where.opportunity_id));
     if (fact.where?.account_id) accountIds.add(Number(fact.where.account_id));
   }
@@ -64,6 +71,15 @@ export function checkDossierCoverage(bank, { opportunityDossiers, accountDossier
     .flatMap((turn) => turn.mustInclude.filter((item) => item.critical).flatMap((item) => item.evidence))));
   return Object.entries(bank.facts).map(([factId, fact]) => {
     const base = { factId, critical: criticalFacts.has(factId) };
+    // Facts stored as IDs in the CRM (sector, owners) appear in the dossier by name: «dossier» says where to look.
+    if (fact.dossier) {
+      const items = indexes.map((index) => index.get(fact.dossier.evidenceId)).filter(Boolean);
+      if (!items.length) return { ...base, evidenceId: fact.dossier.evidenceId, located: false, reason: "evidencia_ausente" };
+      const match = items.find((item) => compareValue(fact.dossier, item[fact.dossier.field]).ok);
+      return match ? { ...base, evidenceId: fact.dossier.evidenceId, located: true }
+        : { ...base, evidenceId: fact.dossier.evidenceId, located: false, reason: "valor_distinto",
+          actual: String(items[0][fact.dossier.field] ?? "").slice(0, 200) };
+    }
     if (fact.where) return { ...base, ...locateCount(fact, { opportunityDossiers, accountDossiers }) };
     const prefix = EVIDENCE_PREFIX[fact.table];
     if (!prefix) return { ...base, located: false, reason: "tabla_sin_ubicacion" };

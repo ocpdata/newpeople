@@ -37,6 +37,10 @@ No incluir secretos, credenciales ni datos personales innecesarios.
 | COR-011 | Acciones de actividad en Cliente existente | Una respuesta breve a «¿a qué oportunidad?» o la fecha/hora de un borrador abierto completan la actividad recordada sin reinterpretarse como solicitud nueva. La oportunidad del selector es el destino de la acción. Si falta la oportunidad, se ofrecen opciones. | Implementada; pruebas unitarias y conversaciones reales verificadas. |
 | COR-012 | Pestaña Pruebas y verificación del motor de consultas | Las respuestas del motor de expedientes se evalúan por su verificación propia y su contenido, no por el formato del chat anterior. IDs de evidencia con texto pegado se limpian sin aceptar IDs inexistentes; totales y conteos se verifican; no se muestran términos internos; las peticiones breves se respetan. | Implementada; 8 de 9 casos Q01–Q03 en revisión humana y el noveno corregido en el evaluador. |
 | COR-013 | Catálogo completo de la pestaña Pruebas | Las consultas se enrutan con un modelo capaz; la cuenta incluye actividades en todos los estados; los correos solos se redactan y en pedidos de varias tareas se pregunta el propósito; la biblioteca excluida no se consulta; el adjunto faltante se pide; eliminar o enviar se reconocen como límite; «sin incluir costos» es una exclusión. El evaluador verifica el motor nuevo por contenido. | Implementada; verificada en vivo salvo 4 casos del recorrido anterior (ver entrada). |
+| COR-014 | Migración total: fase A | Contratos del plan del turno y del estado unificado; tareas observadas comunes a ambos recorridos; evaluador independiente de las categorías del recorrido anterior. | Implementada; mismos veredictos que el evaluador anterior en 471 pasos re-evaluados. |
+| COR-015 | Migración total: fase A1 | El expediente incluye perfil y responsables de la cuenta, espacio de trabajo de la oportunidad, interacciones de cuenta, leads, campañas, calendario de cuenta, registros ante el fabricante y propuestas, con permisos y gobernanza por fuente. | Implementada; banco 22/23 con 0 afirmaciones prohibidas. |
+| COR-016 | Migración total: fase B | El enrutador es la única interpretación del turno: consultas y límites en el motor nuevo; redacción, documentos y acciones llevan el plan al recorrido anterior, donde B3 solo completa especificaciones y el código alinea el contrato con el plan, sin revisor de IA. | Implementada; banco 21/23 y las 2 conversaciones fallidas pasan al repetirlas; Pruebas dirigidas 58/70 en la primera corrida, pendientes asignados a fases C y D y casos de biblioteca bloqueados por el límite mensual de Pinecone. |
+| COR-017 | Migración total: fase C | Las redacciones sin biblioteca ni adjunto las prepara el redactor del motor nuevo; el código arma el texto y verifica asunto, saludo, duración de agendas, cantidad de preguntas, fidelidad al texto aportado, incertidumbre, exclusión de precios y que no se afirmen envíos. Las llamadas al proveedor de IA usan streaming para no ser cortadas por el gateway. | Implementada; 34/34 casos de redacción y 29/29 de acciones y mezclas en revisión humana; banco 22/23. |
 
 ## Registro de correcciones
 
@@ -318,6 +322,92 @@ Agregar nuevas entradas sin eliminar las anteriores.
     B3 no lo resolvió y se revirtió.
 - **Estado:** implementada; verificada salvo los pendientes indicados.
 
+### COR-014 - Migración total al motor de expedientes: fase A (2026-10-25)
+
+- **Contexto:** diseño aprobado en
+  [diseno-migracion-total-motor-expedientes.md](./diseno-migracion-total-motor-expedientes.md).
+- **Cambio:** `dossier/turn-plan.js` (contrato y validación del plan del
+  turno), `dossier/conversation-state.js` (estado unificado y conversión
+  desde las memorias actuales), `dossier/observed-tasks.js` (tareas
+  observadas de ambos recorridos), `turnTasks` en las respuestas del motor
+  nuevo y evaluador basado en tareas observadas.
+- **Validación:** pruebas nuevas en `customer-turn-plan.test.js`; las del
+  evaluador y del motor pasan. Re-evaluación sin costo de las respuestas
+  guardadas de tres corridas: 471 pasos con veredicto idéntico al evaluador
+  anterior.
+- **Sin cambio visible:** los contratos aún no deciden el turno.
+- **Estado:** implementada.
+
+### COR-015 - Migración total: fase A1, expediente completo (2026-10-25)
+
+- **Solicitud:** el expediente no leía el perfil de la cuenta, el espacio de
+  trabajo de la oportunidad, interacciones de cuenta, leads, campañas,
+  calendario de cuenta, registros ante el fabricante ni propuestas.
+- **Cambio:** `dossier/extended-sections.js` y su integración en el
+  expediente, con significados, permisos, gobernanza, citas legibles y
+  términos internos nuevos en el verificador. Banco con hechos y preguntas
+  nuevas; el verificador de hechos admite ubicar en el expediente un dato
+  guardado como ID (sector, responsable).
+- **Hallazgo:** formatear en la base las fechas de registros ante el
+  fabricante daba un día menos (la aplicación guarda la medianoche UTC del
+  día elegido); se leen igual que en el módulo de registros.
+- **Validación:** pruebas unitarias nuevas; 62/62 hechos en la base y en el
+  expediente; banco en vivo 22/23 (R3, caso conocido). Los criterios de X3 y
+  Y1 se ajustaron tras la primera evaluación porque pedían datos que la
+  pregunta no solicitaba (registrado en el diseño).
+- **Estado:** implementada.
+
+
+### COR-016 - Migración total: fase B, enrutador como única puerta (2026-10-25)
+
+- **Problema:** el enrutador y B3 interpretaban por separado el mismo
+  mensaje; cuando discrepaban, el revisor de B3 pedía aclaraciones («no pude
+  conciliar») o se perdían restricciones.
+- **Corrección:** el enrutador produce el plan del turno y el código deriva la
+  ruta. Consultas y límites se resuelven en el motor nuevo (los límites con
+  mensajes fijos, también mezclados con consultas). Los turnos de redacción,
+  documento y acción llevan el plan a B3, que devuelve un componente por
+  tarea con las categorías permitidas; el código compara contrato y plan,
+  pide una corrección y después alinea (`dossier/plan-alignment.js`). Se
+  retiró el revisor de IA en ese camino. La ayuda del sistema queda lista
+  para enlazar la documentación (`SYSTEM_DOCUMENTATION_URL`).
+- **Ajustes tras verificar en vivo:** «qué cotización tiene» es consulta del
+  registro, no lectura del documento; el texto de los componentes conserva el
+  material aportado para resumir o traducir; una restricción sin cita tras el
+  reintento ya no hace fallar el turno; el error de cuota de Pinecone se
+  informa con su mensaje.
+- **Validación:** pruebas nuevas del plan, la ruta, los límites y la
+  alineación; suite completa sin regresiones frente a HEAD (las 140 fallas
+  existentes son las mismas). Banco 21/23 en la corrida completa;
+  FOCUS-SEALPATH y DIESTRA-ACCOUNT pasan completas al repetirlas. Pruebas dirigidas: 58/70 en
+  revisión humana en la primera corrida; tras las correcciones pasan C01-03,
+  C05-01, C08-01 y SEQ06.
+- **Pendientes:** Q09-01 (fase D), C05-03 y transformaciones encadenadas
+  (fase C); MIX09, SEQ11, SEQ13 y SEQ15 sin validar por el límite mensual de
+  tokens de contexto de Pinecone Assistant.
+
+### COR-017 - Migración total: fase C, redactor en el motor nuevo (2026-10-25)
+
+- **Problema:** las redacciones pasaban por B3, la generación de contenido y
+  su auditor (B9) y la presentación auditada (B10). El auditor rechazaba
+  resúmenes y traducciones correctas de texto aportado y las transformaciones
+  encadenadas respondían «No hay un único borrador vigente».
+- **Corrección:** el plan indica el material de cada tarea; el redactor del
+  motor nuevo produce entregables estructurados y el código arma y verifica
+  el texto (reglas del §4.5 del diseño). Las redacciones con biblioteca o
+  adjunto siguen en el recorrido anterior hasta la fase D. Preparar el
+  contenido de una reunión ya no se interpreta como agendarla.
+- **Infraestructura:** el gateway de OpenAI configurado corta a ~30 s las
+  peticiones sin primer byte; las llamadas se piden en streaming
+  (`OPENAI_STREAM_RESPONSES=true` por defecto) y se lee el evento final. Un
+  flujo sin datos durante 60 s se aborta como fallo transitorio
+  (`OPENAI_STREAM_IDLE_TIMEOUT_MS`) y el enrutador lo reintenta una vez.
+- **Validación:** pruebas del redactor, del motor con redacción y consulta en
+  el mismo turno, y del streaming; sin regresiones frente a HEAD. Pruebas
+  dirigidas: 34/34 en revisión humana (MIX05 tras activar streaming) y 29/29
+  acciones, límites, secuencias y mezclas. Banco 22/23 (R1, omisión del
+  analista sobre cotizaciones).
+- **Pendientes:** retirar B9 y su auditor con la fase D.
 ### Plantilla para la siguiente correccion
 
 Copiar estos campos en una nueva entrada con su ID definitivo:

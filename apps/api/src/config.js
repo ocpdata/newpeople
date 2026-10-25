@@ -68,6 +68,8 @@ export const config = {
   },
   app: {
     baseUrl: process.env.APP_BASE_URL || "",
+    // Link used by the customer chat for system help once the application documentation exists.
+    systemDocumentationUrl: process.env.SYSTEM_DOCUMENTATION_URL || "",
     inviteSetupUrl:
       process.env.APP_INVITE_SETUP_URL || "http://localhost:5173/set-password",
     passwordSetupTokenMinutes: Number(
@@ -207,6 +209,10 @@ export const config = {
     transcriptionModel:
       process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
     baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    // Streaming returns headers at once, so gateways that cut requests without a first byte after ~30 s
+    // do not abort long model calls.
+    streamResponses: String(process.env.OPENAI_STREAM_RESPONSES || "true") !== "false",
+    streamIdleTimeoutMs: Number(process.env.OPENAI_STREAM_IDLE_TIMEOUT_MS || 60000),
     enableWebSearch:
       String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",
   },

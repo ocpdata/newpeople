@@ -59,7 +59,13 @@ async function requestJson(
       signal: controller.signal,
     });
     const text = response.status === 204 ? "" : await response.text();
-    const payload = text ? JSON.parse(text) : null;
+    let payload = null;
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch (parseError) {
+      // Quota and gateway errors arrive as plain text; keep their message instead of a parse error.
+      if (response.ok) throw parseError;
+    }
     if (!response.ok) {
       const message = String(
         payload?.error?.message ||

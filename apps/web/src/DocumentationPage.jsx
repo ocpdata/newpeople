@@ -338,6 +338,104 @@ export default function DocumentationPage() {
     [selectedItem],
   );
 
+  async function exportDocumentationPdf() {
+    const content = document.querySelector(".documentation-content");
+    if (!content) return;
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setError("Permite las ventanas emergentes para exportar el documento a PDF.");
+      return;
+    }
+    printWindow.opener = null;
+
+    try {
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html>
+        <html lang="es">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>${escapeHtml(selectedTitle)}</title>
+            <style>
+              @page { size: A4; margin: 16mm; }
+              * { box-sizing: border-box; }
+              body {
+                margin: 0;
+                color: #1f2937;
+                font: 10pt/1.6 Arial, Helvetica, sans-serif;
+                overflow-wrap: anywhere;
+              }
+              h1, h2, h3, h4, h5, h6 {
+                color: #0f172a;
+                line-height: 1.3;
+                break-after: avoid;
+              }
+              h1 { margin: 0 0 1.2em; font-size: 22pt; }
+              h2 { font-size: 17pt; }
+              h3 { font-size: 14pt; }
+              p, ul, ol, blockquote, pre, table { margin: 0.8em 0; }
+              li { break-inside: avoid; }
+              a { color: #1d4ed8; }
+              img { max-width: 100%; height: auto; break-inside: avoid; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td {
+                padding: 6pt;
+                border: 1px solid #cbd5e1;
+                text-align: left;
+                vertical-align: top;
+              }
+              th { background: #eaf2f5; }
+              pre {
+                padding: 8pt;
+                background: #f1f5f9;
+                white-space: pre-wrap;
+                break-inside: avoid;
+              }
+              code { font-family: Menlo, Consolas, monospace; font-size: 9pt; }
+              details { margin: 0.8em 0; }
+              details > summary { font-weight: bold; }
+              details > :not(summary) { display: block !important; }
+              blockquote { padding-left: 10pt; border-left: 3px solid #93c5fd; }
+              tr { break-inside: avoid; }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>${escapeHtml(selectedTitle)}</h1>
+              ${content.innerHTML}
+            </main>
+          </body>
+        </html>`);
+      printWindow.document.close();
+      printWindow.document.querySelectorAll("details").forEach((details) => {
+        details.open = true;
+      });
+
+      const imagesReady = Promise.all(
+        Array.from(printWindow.document.images, (image) =>
+          typeof image.decode === "function"
+            ? image.decode().catch(() => undefined)
+            : Promise.resolve(),
+        ),
+      );
+      await Promise.race([
+        Promise.all([imagesReady, printWindow.document.fonts?.ready]),
+        new Promise((resolve) => window.setTimeout(resolve, 5000)),
+      ]);
+      printWindow.focus();
+      printWindow.print();
+    } catch (printError) {
+      printWindow.close();
+      setError(
+        getApiErrorMessage(
+          printError,
+          "No fue posible preparar el documento para exportarlo a PDF",
+        ),
+      );
+    }
+  }
+
   useEffect(() => {
     let ignore = false;
     const objectUrls = [];
@@ -404,6 +502,13 @@ export default function DocumentationPage() {
             <p className="roles-subtitle">{selectedTitle}</p>
           </div>
           <div className="documentation-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void exportDocumentationPdf()}
+            >
+              Exportar a PDF
+            </button>
             <button
               type="button"
               className="btn-secondary"
