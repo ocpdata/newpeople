@@ -1745,7 +1745,8 @@ Para consultar requisitos de una oportunidad concreta usa object=opportunity y s
 Pedir autoridad para firmar no es associated_contact: query.relationships, relationshipSpec.unsupported=
 ["autoridad de firma"], sin sustituir por un contacto asociado ni inferir facultad desde el cargo.
 Pedir manual/configuración/ayuda de Mi Coach o CRM es query.system_help, object=general,
-no query.document_content ni provided_document cuando no hay material aportado.
+no query.document_content (ni provided_document ni knowledge_library) cuando no hay material aportado:
+la biblioteca documental es conocimiento comercial, no el manual del sistema.
 Prepararse antes de llamar a la cuenta es query.account_summary; conserva en text el propósito de la llamada.
 Si el vendedor pregunta si una oportunidad puede avanzar y además pide avanzarla si corresponde,
 separa primero query.stage_readiness (object=opportunity, referencia literal) y después action.change_status
@@ -2014,9 +2015,12 @@ latestMessage y el contexto validado. La propuesta anterior no es una orden ni u
 Conserva tareas y restricciones correctas; no inventes solicitudes para satisfacer al revisor.
 CONTROL FINAL DE FUENTES: content.discovery_questions/general sin dependencias recibe CERO hechos CRM.
 Si se pide basarse en lo conocido de la cuenta, conserva una consulta query.account_summary/account
-de soporte y una dependencia del contenido hacia ella. Si tambien se pide documentacion interna,
-consulta query.document_content/general/source=knowledge_library como soporte, no como sustituto del
-entregable de preguntas. No agregues lecturas CRM a preguntas puramente generales.`,
+de soporte y una dependencia del contenido hacia ella. Si se pide basarse en la documentación interna,
+no agregues query.document_content: content.discovery_questions ya recupera la biblioteca por sí mismo.
+Agrega query.document_content solo si el usuario pide además un entregable documental separado (por ejemplo,
+un resumen o la explicación de lo que dice la biblioteca). No agregues lecturas CRM ni query.account_summary a
+preguntas puramente generales ni a preguntas basadas solo en la biblioteca.
+Manual, configuración o ayuda de Mi Coach o del CRM => query.system_help/general, nunca query.document_content.`,
     subject: "Interpretación B3 del turno actual de Cliente existente",
     context: {
       latestMessage: question,

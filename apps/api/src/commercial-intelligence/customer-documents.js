@@ -102,7 +102,7 @@ export function resolveCustomerDocumentRequest({ component, movement, previous, 
   if (spec.clarification) return fail(spec.clarification);
   const excludedFields = new Set();
   const requestedText = normalize(component.text).replace(
-    /\b(?:no (?:incluyas|incluya|incluyan|muestres|muestre)|sin|excluye|omite)\s+(?:los?\s+|las?\s+)?(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas)(?:\s+(?:ni|y)\s+(?:los?\s+|las?\s+)?(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas))*/g,
+    /\b(?:no (?:incluyas|incluya|incluyan|muestres|muestre)|sin(?:\s+(?:incluir|mostrar|agregar|considerar|detallar))?|excluye(?:ndo)?|excluir|omite|omitiendo)\s+(?:los?\s+|las?\s+)?(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas)(?:\s+(?:ni|y)\s+(?:los?\s+|las?\s+)?(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas))*/g,
     (exclusion) => {
       for (const match of exclusion.matchAll(/\b(?:costos?(?: internos)?|costes?(?: internos)?|margen(?:es)?|notas internas)\b/g)) {
         excludedFields.add(internalFieldKey(match[0]));

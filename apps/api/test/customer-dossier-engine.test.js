@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routeCustomerTurn, validateRoute } from "../src/commercial-intelligence/dossier/router.js";
 import { analyzeCustomerTurn, parseAnalysis } from "../src/commercial-intelligence/dossier/analyst.js";
-import { verifyAnalysis } from "../src/commercial-intelligence/dossier/verifier.js";
+import { buildEvidenceIndex, normalizeAnalysisEvidence, presentationIssues, verifyAnalysis } from "../src/commercial-intelligence/dossier/verifier.js";
 import { channelAllows, enabledChannelTools, sectionPermissions } from "../src/commercial-intelligence/dossier/access.js";
 import { buildDossierQualityTrace, customerDossierEngineEnabled, describeCitation, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
@@ -141,7 +141,8 @@ describe("enrutador", () => {
     const call = vi.fn()
       .mockResolvedValueOnce({ ...rawRoute(), obligations: [{ id: "extra", ask: "x", form: "answer", count: 0, itemsNeedConfirmation: false }] })
       .mockResolvedValueOnce(rawRoute());
-    const result = await routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, call, model: "router" });
+    const result = await routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, call, model: "router",
+      reasoningEffort: "" });
     expect(result.route.opportunityIds).toEqual([121]);
     expect(call.mock.calls[1][0].context.validationFeedback.issues).toHaveLength(1);
     expect(call.mock.calls[0][0]).toMatchObject({ model: "router", temperature: 0,
@@ -149,6 +150,11 @@ describe("enrutador", () => {
     await expect(routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, model: "router",
       call: vi.fn().mockResolvedValue(rawRoute({ opportunityIds: [999] })) }))
       .rejects.toMatchObject({ code: "DOSSIER_ROUTE_INVALID" });
+    const reasoning = vi.fn().mockResolvedValue(rawRoute());
+    await routeCustomerTurn({ context: {}, question: "x", opportunityIds: [121], userId: 7, jobId: 1, call: reasoning,
+      model: "router", reasoningEffort: "low" });
+    expect(reasoning.mock.calls[0][0]).toMatchObject({ reasoningEffort: "low" });
+    expect(reasoning.mock.calls[0][0]).not.toHaveProperty("temperature");
   });
 });
 
@@ -221,6 +227,42 @@ describe("verificación por código", () => {
     expect(result.failures.map((failure) => failure.code)).toEqual(["ITEM_COUNT", "MISSING_CONFIRMATION"]);
   });
 
+  it("limpia texto pegado a un ID real sin aceptar IDs inexistentes", () => {
+    const index = buildEvidenceIndex([dossier]);
+    const { analysis: cleaned, repaired } = normalizeAnalysisEvidence(analysis({ blocks: [{ obligationId: "o1", status: "answered",
+      reason: "", items: [], claims: [
+        claim({ evidenceIds: ["opp121 trunc"] }),
+        claim({ text: "Cotización y actividad", evidenceIds: ["qv139殊act51"], values: [] }),
+        claim({ evidenceIds: ["opp999 extra"] }),
+      ] }] }), index);
+    expect(repaired).toBe(2);
+    expect(cleaned.blocks[0].claims.map((item) => item.evidenceIds)).toEqual([["opp121"], ["qv139", "act51"], ["opp999 extra"]]);
+    expect(check(cleaned).failures.map((failure) => failure.code)).toEqual(["UNKNOWN_EVIDENCE", "VALUE_WITHOUT_EVIDENCE"]);
+  });
+
+  it("verifica conteos y sumas contra exactamente los registros citados", () => {
+    const account = { kind: "account", account: { evidenceId: "acct163", id: 163 }, sections: {
+      opportunities: { key: "opportunities", status: "loaded", items: [
+        { evidenceId: "opp121", amountUsd: "8000.00" }, { evidenceId: "opp117", amountUsd: "30000.00" }] } } };
+    const aggregate = (values, evidenceIds = ["opp121", "opp117"]) => verifyAnalysis({ obligations, dossiers: [account],
+      analysis: analysis({ blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [],
+        claims: [claim({ text: "Dos abiertas suman 38,000 USD", evidenceIds, values })] }] }) });
+    expect(aggregate([{ type: "count", value: "2" }, { type: "amount_total", value: "38000" }]).ok).toBe(true);
+    expect(aggregate([{ type: "amount_total", value: "38000" }], ["opp121"]).failures[0]).toMatchObject({ code: "AGGREGATE_MISMATCH" });
+    expect(aggregate([{ type: "count", value: "3" }]).failures[0]).toMatchObject({ code: "AGGREGATE_MISMATCH" });
+  });
+
+  it("detecta términos internos y respuestas largas cuando se pidió brevedad", () => {
+    expect(presentationIssues({ answerText: "No figura en el expediente recibido." })[0]).toMatchObject({ code: "INTERNAL_TERMS" });
+    expect(presentationIssues({ answerText: "Ver opp121 para el detalle." })[0]).toMatchObject({ code: "INTERNAL_TERMS" });
+    expect(presentationIssues({ answerText: "No figura entre los contactos registrados de Totalplay." })).toEqual([]);
+    expect(presentationIssues({ answerText: "x".repeat(1200), responseLength: "brief" }).map((issue) => issue.code))
+      .toEqual(["TOO_LONG_FOR_BRIEF"]);
+    expect(presentationIssues({ answerText: "## Resumen\nCorto.", responseLength: "brief" }).map((issue) => issue.code))
+      .toEqual(["HEADINGS_IN_BRIEF"]);
+    expect(presentationIssues({ answerText: "x".repeat(1200), responseLength: "standard" })).toEqual([]);
+  });
+
   it("exige motivo y respaldo según el estado del bloque", () => {
     const result = check(analysis({ answerText: " ", blocks: [{ obligationId: "o1", status: "partial", reason: "", items: [], claims: [] }] }));
     expect(result.failures.map((failure) => failure.code)).toEqual(["EMPTY_ANSWER", "MISSING_REASON", "MISSING_CLAIMS"]);
@@ -274,6 +316,23 @@ describe("motor de expedientes", () => {
     expect(failing.response.answer).toContain("No pude verificar por completo con los registros del CRM");
     expect(buildDossierQualityTrace(failing)).toMatchObject({ validationStatus: "invalid",
       validationReasons: ["UNKNOWN_EVIDENCE", "VALUE_WITHOUT_EVIDENCE"] });
+  });
+
+  it("repara la presentación sin marcarla como no verificada ni perder la verificación factual", async () => {
+    const routeTurn = async () => ({ route: route({ responseLength: "brief" }), droppedFilters: [], attempts: [] });
+    const jargon = analysis({ answerText: "Según el expediente, el importe es 8,000 USD." });
+    const fixed = vi.fn().mockResolvedValueOnce(jargon).mockResolvedValueOnce(analysis());
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn, analyze: fixed });
+    expect(fixed.mock.calls[1][0].context.repair.failures[0]).toMatchObject({ code: "INTERNAL_TERMS" });
+    expect(fixed.mock.calls[0][0].context.responseLength).toBe("brief");
+    expect(result.response).toMatchObject({ presentation: { status: "completed" }, answer: analysis().answerText });
+    expect(result.response.dossierSources[0]).toMatchObject({ kind: "account", id: 163 });
+    expect(result.response.dossierSources[0].sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "contacts", status: "loaded" })]));
+    const broken = analysis({ blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [], claims: [claim({ evidenceIds: ["opp999"] })] }] });
+    const worse = vi.fn().mockResolvedValueOnce(jargon).mockResolvedValueOnce(broken);
+    const kept = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routeTurn, analyze: worse });
+    expect(kept.response).toMatchObject({ presentation: { status: "completed" }, answer: jargon.answerText });
   });
 
   it("devuelve la aclaración del enrutador sin leer expedientes de oportunidad", async () => {

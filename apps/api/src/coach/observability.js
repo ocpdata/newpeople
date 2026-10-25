@@ -492,6 +492,12 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
     agentMetrics,
     snapshotMetrics,
     ...(diagnostics.dossierEngine ? { dossierEngine: boundedDossierDiagnostics(diagnostics.dossierEngine) } : {}),
+    ...(diagnostics.dossierFailure ? { dossierFailure: {
+      code: String(diagnostics.dossierFailure.code || "").slice(0, 80) || null,
+      causeName: String(diagnostics.dossierFailure.causeName || "").slice(0, 80) || null,
+      causeCode: String(diagnostics.dossierFailure.causeCode || "").slice(0, 80) || null,
+      cause: String(diagnostics.dossierFailure.cause || "").slice(0, 300) || null,
+    } } : {}),
   };
   return result;
 }

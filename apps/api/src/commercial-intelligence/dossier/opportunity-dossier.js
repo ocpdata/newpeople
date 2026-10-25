@@ -9,7 +9,7 @@ import {
 export const DOSSIER_LIMITS = Object.freeze({
   stageAnswers: 300, stageRequirements: 100, contacts: 50, activities: 100, calendarActivities: 100,
   opportunityNotes: 50, quotations: 20, purchaseOrders: 20, documents: 50, interactions: 30, history: 50,
-  opportunities: 50, pendingActivities: 50,
+  opportunities: 50, pendingActivities: 50, accountActivities: 150,
 });
 export const SECTION_TITLES = Object.freeze({
   stageAnswers: "Respuestas de todas las etapas",
@@ -25,6 +25,7 @@ export const SECTION_TITLES = Object.freeze({
   history: "Historial de cambios comerciales",
   opportunities: "Oportunidades de la cuenta",
   pendingActivities: "Actividades pendientes de la cuenta",
+  accountActivities: "Actividades de la cuenta en todos los estados (más recientes primero)",
 });
 const TEXT_LIMIT = 4000;
 
@@ -532,19 +533,20 @@ export async function buildAccountDossier({ user, accountId, governance, run, no
   });
   sections.contacts = await contactsSection({ accountId: account.id, opportunityContactId: null, run,
     allowed: permissions.contacts });
-  sections.pendingActivities = await buildSection({
-    key: "pendingActivities", allowed: permissions.pendingActivities,
+  const accountActivitiesSection = (key, statusFilter, order) => buildSection({
+    key, allowed: permissions[key],
     load: (limit) => run(
       `SELECT a.id, a.opportunity_id, o.name AS opportunity_name, a.title, a.action_type, a.status,
               DATE_FORMAT(a.due_date, '%Y-%m-%d') AS due_date, CAST(a.scheduled_at AS CHAR) AS scheduled_at,
-              a.notes, CAST(a.created_at AS CHAR) AS created_at
+              a.success_criteria, a.notes, u.full_name AS owner_name,
+              CAST(a.created_at AS CHAR) AS created_at, CAST(a.updated_at AS CHAR) AS updated_at
        FROM opportunity_workspace_actions a
        INNER JOIN opportunities o ON o.id = a.opportunity_id
        INNER JOIN opportunity_commercial_statuses ocs ON ocs.id = o.commercial_status_id
        INNER JOIN opportunity_activation_statuses oas ON oas.id = o.activation_status_id
-       WHERE o.account_id = ? AND oas.code = 'activada' AND ocs.code IN (?) ${scope.sql}
-         AND a.status IN ('pending', 'rescheduled')
-       ORDER BY COALESCE(a.due_date, DATE(a.created_at)), a.id
+       LEFT JOIN users u ON u.id = a.owner_user_id
+       WHERE o.account_id = ? AND oas.code = 'activada' AND ocs.code IN (?) ${scope.sql} ${statusFilter}
+       ORDER BY ${order}
        LIMIT ?`,
       [account.id, allowedCommercialStatuses(governance), ...scope.params, limit],
     ),
@@ -558,7 +560,10 @@ export async function buildAccountDossier({ user, accountId, governance, run, no
       status: activity.status,
       dueDate: activity.due_date,
       scheduledAt: activity.scheduled_at,
+      successCriteria: activity.success_criteria || null,
+      ownerName: activity.owner_name || null,
       createdAt: activity.created_at,
+      updatedAt: activity.updated_at,
       meanings: {
         status: ACTIVITY_STATUS_MEANINGS[activity.status] || null,
         dueDate: MEANINGS.dueDate,
@@ -566,6 +571,11 @@ export async function buildAccountDossier({ user, accountId, governance, run, no
       },
     }, "notes", activity.notes || null),
   });
+  sections.pendingActivities = await accountActivitiesSection("pendingActivities",
+    "AND a.status IN ('pending', 'rescheduled')", "COALESCE(a.due_date, DATE(a.created_at)), a.id");
+  // Account-wide history questions need realized and cancelled activities too, not only pending ones.
+  sections.accountActivities = await accountActivitiesSection("accountActivities", "",
+    "COALESCE(a.due_date, DATE(a.created_at)) DESC, a.id DESC");
   const dossier = {
     kind: "account",
     generatedAt: now.toISOString(),
@@ -651,8 +661,16 @@ export function indexDossierEvidence(dossier) {
   const index = new Map();
   const add = (item) => {
     if (!item?.evidenceId) return;
-    if (index.has(item.evidenceId)) {
-      throw dossierError(500, "DOSSIER_DUPLICATE_EVIDENCE", `Evidencia duplicada en el expediente: ${item.evidenceId}`);
+    const existing = index.get(item.evidenceId);
+    if (existing) {
+      // The same record may appear in two sections (for example, a pending activity); different records may not share an ID.
+      const sameRecord = existing.source?.table && existing.source.table === item.source?.table &&
+        Number(existing.source.id) === Number(item.source?.id);
+      if (!sameRecord) {
+        throw dossierError(500, "DOSSIER_DUPLICATE_EVIDENCE", `Evidencia duplicada en el expediente: ${item.evidenceId}`);
+      }
+      index.set(item.evidenceId, { ...existing, ...item });
+      return;
     }
     index.set(item.evidenceId, item);
   };

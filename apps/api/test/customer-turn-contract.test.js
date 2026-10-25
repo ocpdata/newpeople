@@ -3012,17 +3012,18 @@ describe("Customer turn contract", () => {
     expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("Asunto:");
     expect(generateWithAI.mock.calls[1][0].systemPrompt).toContain("exige asunto");
   });
-  it("asks for email purpose instead of inventing context or commitments", async () => {
-    const generateWithAI = vi.fn();
+  it("drafts an email without a stated purpose using placeholders instead of asking or inventing commitments", async () => {
+    const generateWithAI = vi.fn().mockResolvedValueOnce({ answer: "Asunto: Seguimiento\n\nHola Kimberly, [contexto por definir]." })
+      .mockResolvedValueOnce({ approved: "yes" });
     const result = await generateCustomerContent({
       component: component("content.email_draft"),
       question: "Solo redacta el correo a Kimberly; no lo envíes",
       readToolResults: [], history: [], user: { id: 0 }, generateWithAI,
     });
-    expect(result.responseType).toBe("clarification");
-    expect(result.answer).toContain("Qué quieres comunicarle");
-    expect(result.answer).toContain("No he redactado ni enviado nada");
-    expect(generateWithAI).not.toHaveBeenCalled();
+    expect(result.responseType).not.toBe("clarification");
+    expect(generateWithAI).toHaveBeenCalled();
+    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("[contexto por definir]");
+    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("sin inventar proyectos, reuniones, seguimientos ni compromisos");
   });
   it("keeps summaries and rewrites grounded only in supplied user material", async () => {
     const generateWithAI = vi.fn().mockResolvedValueOnce({ answer: "Resumen del texto aportado" })

@@ -29,6 +29,7 @@ export const evaluationRequestSchema = z.object({
   parentId: z.string().uuid().optional(),
 }).strict();
 
+const EVALUATION_LOCK_KEEPALIVE_MS = 60000;
 export const evaluationError = (status, message) => Object.assign(new Error(message), { status });
 const parse = (value) => typeof value === "string" ? JSON.parse(value) : value;
 function canonical(value) {
@@ -54,13 +55,19 @@ function requireChat(user) {
     if (!user.permissionSet.has(permission)) throw evaluationError(403, `Falta ${permission}`);
   }
 }
+const isoDay = (value) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value).slice(0, 10) : date.toISOString().slice(0, 10);
+};
 function reference(snapshot) {
   const metrics = getCustomerSnapshotQueryMetrics(snapshot);
   if (metrics.some((item) => item.errorCode)) throw evaluationError(502, "Falló una lectura de referencia; no se compararán datos incompletos como si fueran ausencia.");
+  const opportunities = [...(snapshot.opportunities || []), ...(snapshot.inactiveOpportunities || [])];
   return safeEvidence({
     account: { id: snapshot.account?.id, name: snapshot.account?.name },
     opportunities: snapshot.opportunities?.map((item) => ({
-      id: item.id, name: item.name, amountUsd: item.amountUsd, closeDate: item.closeDate,
+      id: item.id, name: item.name, amountUsd: item.amountUsd, closeDate: isoDay(item.closeDate),
       stageName: item.stageName, commercialStatusCode: item.commercialStatusCode,
       activationStatusCode: item.activationStatusCode, lifecycle: item.lifecycle,
       contactId: item.contactId,
@@ -70,6 +77,11 @@ function reference(snapshot) {
       id: item.id, opportunityId: item.opportunityId || item.opportunity_id, title: item.title,
       status: item.status, scheduledAt: item.scheduledAt || item.scheduled_at, updatedAt: item.updatedAt || item.updated_at,
     })),
+    // Opportunity activities (all statuses) let content checks verify history and pending answers.
+    workspaceActions: opportunities.flatMap((opportunity) => (opportunity.workspace?.actions || []).map((action) => ({
+      id: action.id, opportunityId: opportunity.id, opportunityName: opportunity.name, title: action.title,
+      status: action.status, dueDate: isoDay(action.dueDate),
+    }))),
     coverage: metrics,
   });
 }
@@ -83,7 +95,7 @@ async function configurationFor(user) {
   return { model: config.openai.model, rules: safeEvidence(rules), permissions: [...user.permissionSet].sort(),
     classifier: { version: classifier.version, hash: digest(classifier.instruction) },
     planner: { version: planner.version, hash: digest(planner.instruction) },
-    intentsHash: digest(intents), evaluatorVersion: "5",
+    intentsHash: digest(intents), evaluatorVersion: "6",
     turnContractProviderVersion: CUSTOMER_TURN_PROVIDER_VERSION,
     conversationalResponseEnabled: config.features?.customerConversationalResponseEnabled === true,
     applicationRevision: process.env.GIT_COMMIT || null };
@@ -393,10 +405,17 @@ export async function processPendingEvaluations() {
   const conn = await pool.getConnection();
   const workerId = randomUUID();
   let locked = false;
+  let lockKeepAlive = null;
   try {
     const [locks] = await conn.query("SELECT GET_LOCK('newpeople_customer_chat_evaluation',0) AS acquired");
     if (!Number(locks[0].acquired)) return;
     locked = true;
+    // The lock lives in this session; an idle remote connection is dropped by the network after a few
+    // minutes, which releases the lock and lets the next tick mark the active run as interrupted.
+    lockKeepAlive = setInterval(() => {
+      conn.query("SELECT 1").catch((error) =>
+        console.error("[customer-chat-evaluation] Lock keepalive failed", { message: error.message }));
+    }, EVALUATION_LOCK_KEEPALIVE_MS);
     await query(`UPDATE customer_chat_evaluation_cases c INNER JOIN customer_chat_evaluation_runs r ON r.id=c.run_id
       SET c.result_json=JSON_OBJECT('reason','Evidencia expirada: retención de 30 días')
       WHERE r.finished_at < DATE_SUB(NOW(),INTERVAL 30 DAY)
@@ -418,8 +437,9 @@ export async function processPendingEvaluations() {
       await query("UPDATE customer_chat_evaluation_runs SET status='failed',finished_at=NOW(3),error_message=? WHERE id=? AND worker_id=?", [error.message, run.id, workerId]);
     }
   } finally {
+    if (lockKeepAlive) clearInterval(lockKeepAlive);
     try { if (locked) await conn.query("SELECT RELEASE_LOCK('newpeople_customer_chat_evaluation')"); }
     finally { conn.release(); }
   }
 }
-export { terminal };
+export { terminal, reference as buildEvaluationReference };

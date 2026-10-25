@@ -200,6 +200,21 @@ describe("expediente de cuenta", () => {
     expect(dossier.sections.pendingActivities.items[0]).toMatchObject({ evidenceId: "act51", status: "pending" });
     expect(dossier.sections.pendingActivities.items[0].meanings.status).toMatch(/no la marca como realizada/);
   });
+
+  it("incluye actividades de la cuenta en todos los estados y admite el mismo registro en dos secciones", async () => {
+    const { run, calls } = makeRun({ "FROM opportunities o\n       INNER JOIN": () => [] });
+    const dossier = await buildAccountDossier({ user: userWith(["cuentas.read", "oportunidades.read", "desarrollo_comercial.read"], 9),
+      accountId: 163, governance, run });
+    const allStatuses = calls.filter((item) => item.sql.includes("FROM opportunity_workspace_actions a") &&
+      !item.sql.includes("a.status IN ('pending', 'rescheduled')"));
+    expect(allStatuses).toHaveLength(1);
+    expect(allStatuses[0].sql).toContain("DESC");
+    expect(dossier.sections.accountActivities).toMatchObject({ status: "loaded", total: 1 });
+    expect(indexDossierEvidence(dossier).get("act51")).toMatchObject({ status: "pending" });
+    const clash = { ...dossier, sections: { ...dossier.sections, accountActivities: { ...dossier.sections.accountActivities,
+      items: [{ ...dossier.sections.accountActivities.items[0], source: { table: "commercial_calendar_activities", id: 51 } }] } } };
+    expect(() => indexDossierEvidence(clash)).toThrow(/Evidencia duplicada/);
+  });
 });
 
 describe("cobertura del banco en el expediente", () => {

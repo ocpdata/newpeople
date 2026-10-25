@@ -776,6 +776,11 @@ export async function runCustomerContractTurn({
       result = empty(FINANCIAL_UNAVAILABLE, "informational", { capabilityStatus: "unavailable" });
     } else if (component.category === "report.hypothesis") {
       result = empty(customerReportAcknowledgement(component), "informational");
+    } else if (component.category === "query.document_content" && !effectiveReferenceMaterial?.text &&
+        (component.documentSpec?.source || (component.object === "document" ? "provided_document" : "")) === "provided_document") {
+      // A missing attachment is a request for the file, not an unavailable capability or a cue to use other sources.
+      result = empty("No veo ningún archivo adjunto en esta conversación. Adjunta el archivo y vuelvo a resumirlo; no lo sustituiré por la biblioteca ni por otros registros.",
+        "clarification");
     } else if (!capability.available) {
       result = empty(
         component.category === "query.system_help"
@@ -1209,17 +1214,6 @@ export async function associateCustomerReport({
   );
 }
 
-export function customerEmailPurposeClarification(component, question) {
-  const emailPurposeProvided =
-    /\b(?:informar|solicitar|confirmar|agradecer|invitar|proponer|coordinar|retomar|preguntar|compartir|presentar|pedir|dar seguimiento|hacer seguimiento)\b/i
-      .test(String(question || ""));
-  return component.category === "content.email_draft" && String(question || "").trim() && !emailPurposeProvided
-    ? response(
-      `¿Qué quieres comunicarle${component.object === "contact" && component.reference ? ` a ${component.reference}` : " al destinatario"}${component.object === "opportunity" && component.reference ? ` sobre ${component.reference}` : ""}? Dime el propósito o los puntos que debe incluir el correo. No he redactado ni enviado nada.`,
-      "clarification",
-    ) : null;
-}
-
 export async function generateCustomerContent({
   component, readToolResults, history, dependencyResults = [], user, jobId, signal,
   referenceMaterial = null, question = "",
@@ -1277,8 +1271,6 @@ export async function generateCustomerContent({
       (component.object !== "general" && (queryErrors.length || unqueriedTools.length))) {
     return response("No pude preparar contenido respaldado por el CRM porque una consulta falló. No se envió ni guardó nada.", "error");
   }
-  const purposeClarification = customerEmailPurposeClarification(component, question);
-  if (purposeClarification) return purposeClarification;
   const categoryGuidance = ({
     "content.explanation": "Explica solo lo respaldado por evidence. Una respuesta guardada en una pregunta de etapa no acredita quién la redactó ni si procede de una declaración del cliente, una propuesta comercial o análisis automático. Si la autoría no está verificada, conserva ese límite: no la atribuyas al equipo comercial ni al cliente por intuición. Los resúmenes de interacción tampoco son citas textuales. Distingue procedencia del registro y autoría de las afirmaciones; para una atribución literal se necesita el documento con las intervenciones.",
     "query.document_content": "Responde exclusivamente la consulta documental de component usando documentKnowledge. No uses conocimientos de memoria como si estuvieran documentados. Identifica si los fragmentos corresponden al fabricante o tema solicitado: contenido de otro fabricante no respalda esta respuesta. Si faltan datos pertinentes, dilo expresamente en vez de inventar capacidades. No pidas una oportunidad, cotización o adjunto para consultar la biblioteca. No inventes títulos, URLs, citas ni nombres de documentos. Puedes referirte a los fragmentos por su posición en documentKnowledge. No atribuyas productos, necesidades, compras ni configuraciones al cliente.",

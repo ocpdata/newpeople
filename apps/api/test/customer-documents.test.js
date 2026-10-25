@@ -57,6 +57,13 @@ describe("Q09 document resolution and memory", () => {
     }) }).error).toContain("no expone");
     expect(resolve({}, { component: component(excluded, { text: "Resume la cotización 18" }) }).error).toContain("no expone");
   });
+  it("accepts exclusions phrased as «sin incluir» or «excluyendo»", () => {
+    for (const text of ["Resume la cotización 18 sin incluir costos ni márgenes", "Resume la cotización 18 excluyendo costos y márgenes"]) {
+      expect(resolve({ quotationReference: "18", aspect: "summary" }, {
+        component: component({ quotationReference: "18", aspect: "summary" }, { text }),
+      }).error).toBeUndefined();
+    }
+  });
   it("still rejects a positive internal-field request after an exclusion", () => {
     expect(resolve({}, { component: component({}, {
       text: "Resume sin costos; muestra los márgenes",

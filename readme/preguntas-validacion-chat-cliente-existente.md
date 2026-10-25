@@ -493,9 +493,9 @@ de ejecución o un reloj controlado; no exigir siempre el resultado de octubre.
 | Referencia | Dato comprobado | Uso |
 | --- | --- | --- |
 | T | Totalplay, ID 22; ciudad y estado: Ciudad de México. | Contexto principal. La descripción registrada la identifica como empresa de telecomunicaciones; no equivale a investigación pública actualizada. |
-| T-registros | 14 oportunidades, 13 contactos, 14 cotizaciones y 10 acciones de oportunidad. | Conjunto de referencia, sujeto a permisos y filtros. |
-| T-estados | 8 oportunidades «En proceso» y 6 «Ganada»; las 14 están activadas. | No confundir activación, etapa y estado comercial. |
-| T-importes | Suma de importes de las 8 «En proceso»: USD 4.510.000,00. | Monto de oportunidades, no ingresos, facturación ni probabilidad ponderada. |
+| T-registros | 13 oportunidades (verificado el 2026-10-24), 13 contactos, 14 cotizaciones y 10 acciones de oportunidad. | Conjunto de referencia, sujeto a permisos y filtros. |
+| T-estados | 6 oportunidades «En proceso» y 7 «Ganada»; las 13 están activadas (verificado el 2026-10-24). | No confundir activación, etapa y estado comercial. |
+| T-importes | Suma de importes de las 6 «En proceso»: USD 4.310.000,00 (verificado el 2026-10-24). | Monto de oportunidades, no ingresos, facturación ni probabilidad ponderada. |
 | T-historial | 0 interacciones directas de cuenta y 2 registros de interacción/lead, IDs 105 y 106. | No concluir «nunca hubo contacto»: existen otras fuentes, como actividades. |
 | T-leads | ID 105, título «Totalplay»; ID 106, título «TotalPlay». Ambos con análisis `lead_assigned` y procesamiento `analyzed`; sin siguiente fecha de acción informada. | «El lead de Totalplay» no identifica uno solo. No traducir esos códigos en elegibilidad de escritura sin revisar la política. |
 | E | Grupo Hotelero Santa Fe, ID 65, corregido contra la cuenta mostrada en la instancia actual. Los conteos previamente atribuidos al ID 2 no acreditan los datos del ID 65. | Variante de ausencia de oportunidades, previa comprobación de acceso y de que el conjunto autorizado no tenga oportunidades. |
@@ -670,7 +670,7 @@ pendientes y recomendaciones.
 
 | Caso | Pregunta | Respuesta esperada y aprobación |
 | --- | --- | --- |
-| Q01-01 | «Ponme al día con Totalplay en cinco puntos». | Exactamente cinco puntos útiles con cuenta, situación de oportunidades, contactos relevantes y pendientes. Cada cifra o hecho debe coincidir con el conjunto visible; no presentar USD 4.510.000 como ventas realizadas. |
+| Q01-01 | «Ponme al día con Totalplay en cinco puntos». | Exactamente cinco puntos útiles con cuenta, situación de oportunidades, contactos relevantes y pendientes. Cada cifra o hecho debe coincidir con el conjunto visible; no presentar los USD 4.310.000 en proceso como ventas realizadas. |
 | Q01-02 | «Tengo dos minutos antes de llamar; ¿qué debo saber del cliente?». | Resumen breve, no una lista completa de 14 oportunidades. Señalar seguimiento pendiente y necesidad de actualizar información fechada; no inventar el motivo de la llamada. |
 | Q01-03 | Con E seleccionada: «Resume esta cuenta y sus oportunidades». | Identificar Grupo Hotelero Santa Fe y ausencia de oportunidades en el conjunto autorizado. Describir sus contactos como contactos de la cuenta, sin asociarlos a oportunidades inexistentes. No decir «no tiene contactos», «no hubo relación» ni «está perdida». |
 

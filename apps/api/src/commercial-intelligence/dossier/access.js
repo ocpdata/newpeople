@@ -26,6 +26,7 @@ export const SECTION_CHANNEL_TOOLS = Object.freeze({
   contacts: "searchContacts",
   activities: "getOpportunityActivities",
   pendingActivities: "getOpportunityActivities",
+  accountActivities: "getOpportunityActivities",
   calendarActivities: "getOpportunityActivities",
   opportunityNotes: "getOpportunityNotes",
   quotations: "getOpportunityQuotation",
@@ -60,6 +61,7 @@ export function sectionPermissions(user, governance = null) {
     history: base,
   };
   permissions.pendingActivities = permissions.activities;
+  permissions.accountActivities = permissions.activities;
   for (const key of Object.keys(permissions)) {
     permissions[key] = permissions[key] && channelAllows(governance, key);
   }

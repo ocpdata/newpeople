@@ -75,6 +75,10 @@ con su componentId. No uses "none" para un componente agregado.
 Ejemplo: "Redacta un correo para pedir una reunión" respalda redactar, NO programar una reunión.
 Si hay borrador Y programación, sobra programación; si solo hay programación, la categoría es incorrecta
 y falta redactar. No rechaces lecturas de soporte: aquí se revisan componentes pedidos, no herramientas internas.
+Revisas la interpretación, NO si el chat puede ejecutarla: action.remove_record (eliminar, borrar,
+cancelar o desactivar), action.send_communication (enviar) y query.system_help son interpretaciones
+correctas cuando se piden, aunque el servidor no las ejecute; él responde el límite. No las marques
+UNSUPPORTED_TASK por no estar disponibles ni pidas sustituirlas por otra tarea.
 3. FIDELIDAD: compara entidad literal, cantidad, alcance, fuente, exclusiones, condiciones,
 atribución e incertidumbre. "El cliente sospecha" no significa hecho confirmado. "Si corresponde"
 no autoriza una acción incondicional. No transformes "solo monto" en una ficha completa.
@@ -268,8 +272,21 @@ export async function interpretReviewedCustomerTurn(input, {
   };
   const deadlineAt = input.deadlineAt == null ? Date.now() + 45000 : new Date(input.deadlineAt).getTime();
   remainingTimeout(deadlineAt);
-  let contract = customerTurnContractSchema.parse(initialContract ||
-    await interpret({ ...input, deadlineAt }));
+  const interpretOnce = async () => {
+    try {
+      return await interpret({ ...input, deadlineAt });
+    } catch (error) {
+      if (error?.code !== "CUSTOMER_REPORT_TEXT_CHANGED") throw error;
+      // A paraphrased report is a fixable interpretation error; retry once with the concrete rule.
+      console.warn("[customer-turn] Retrying interpretation with non-literal report text once", { code: error.code });
+      remainingTimeout(deadlineAt);
+      return interpret({ ...input, deadlineAt, interpretationFeedback: {
+        issues: [{ code: error.code, problem: error.message }],
+        instruction: "Un componente report.* debe copiar literalmente en text el fragmento del mensaje que se reporta. Si el usuario pide redactar o escribir un texto con ese contenido y no guardarlo, la tarea es content.* (redacción), no un reporte. Preserva todas las tareas y restricciones del mensaje original.",
+      } });
+    }
+  };
+  let contract = customerTurnContractSchema.parse(initialContract || await interpretOnce());
   const initial = contract;
   const checks = [];
   const validationFailures = [];

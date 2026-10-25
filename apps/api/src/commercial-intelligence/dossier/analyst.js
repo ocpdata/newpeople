@@ -4,7 +4,7 @@ import { runStructuredTextResearch } from "../../structuredWebResearch.js";
 import { SECTION_TITLES } from "./opportunity-dossier.js";
 
 export const CLAIM_KINDS = ["registered", "inference", "recommendation", "to_confirm", "absence"];
-export const VALUE_TYPES = ["date", "amount", "status", "person"];
+export const VALUE_TYPES = ["date", "amount", "status", "person", "count", "amount_total"];
 export const SECTION_KEYS = Object.keys(SECTION_TITLES);
 
 export const ANALYST_SYSTEM_PROMPT = `Eres el analista comercial del chat de Cliente existente de un CRM. Ayudas a un vendedor a
@@ -23,11 +23,16 @@ Afirmaciones (claims)
 - kind: registered (consta en el CRM), inference (deducción tuya), recommendation (sugerencia),
   to_confirm (falta confirmarlo con el cliente o en el CRM), absence (no existe en las secciones revisadas).
 - registered y absence siempre citan evidencia; absence indica en sectionKeys las secciones revisadas.
-- evidenceIds contiene solo valores de evidenceId de registros (por ejemplo opp121, act51, qv139); los
-  nombres de secciones nunca van en evidenceIds, sino en sectionKeys.
+- Cada elemento de evidenceIds es exactamente UN evidenceId copiado tal cual (por ejemplo opp121, act51,
+  qv139), sin texto adicional. Los nombres de secciones nunca van en evidenceIds, sino en sectionKeys.
+- Una ausencia (por ejemplo, una persona que no figura entre los contactos) cita la sección completa
+  revisada en sectionKeys (por ejemplo contacts) y no necesita citar registros ajenos.
 - values: solo para valores copiados de campos estructurados del registro citado: date (AAAA-MM-DD),
   amount (número sin separadores), status (estado o etapa tal como figura) y person (nombre). No declares
   values para datos que provienen de textos libres como notas o respuestas.
+- Para totales y conteos: count (cuántos registros) y amount_total (suma de amountUsd, número sin
+  separadores). Cita en evidenceIds exactamente los registros contados o sumados, ni uno más ni uno menos;
+  si son más de los que caben, divide la afirmación en grupos más pequeños.
 
 Bloques
 - Un bloque por obligación, con su obligationId. status=answered, partial o cannot_answer; si no es
@@ -42,7 +47,14 @@ answerText
 - Respuesta final en español para el vendedor, clara y útil, coherente con los bloques.
 - Empieza por lo importante. Usa viñetas o secciones breves cuando ayuden.
 - Distingue lo registrado, lo inferido y lo que falta confirmar. Menciona los límites relevantes.
-- No muestres IDs internos, nombres de secciones ni jerga técnica. No afirmes haber ejecutado acciones.`;
+- En historiales y listas de actividades, cada actividad lleva su fecha registrada (vencimiento o
+  programación), su estado (realizada, cancelada, pendiente) y su oportunidad. Si esa fecha no acredita
+  cuándo ocurrió, dilo, pero no la omitas ni la sustituyas por un rango de fechas de creación o actualización.
+- No muestres IDs internos, nombres de secciones ni jerga técnica: nunca escribas «expediente»; di
+  «registros del CRM». No afirmes haber ejecutado acciones.
+- Longitud según responseLength: brief = el vendedor tiene poco tiempo o pidió algo breve: máximo
+  ~150 palabras (menos de 1100 caracteres), sin títulos, solo lo esencial y accionable (situación, pendiente
+  principal y siguiente paso). detailed = puede extenderse con secciones. standard = lo necesario.`;
 
 export function buildAnalystFields(obligations) {
   const ids = obligations.map((item) => item.id);
@@ -58,7 +70,7 @@ export function buildAnalystFields(obligations) {
       { key: "claims", type: "array", maxItems: 14, items: { type: "object", fields: [
         { key: "text", type: "string" },
         { key: "kind", type: "enum", enum: CLAIM_KINDS },
-        { key: "evidenceIds", type: "array", maxItems: 8, items: { type: "string" } },
+        { key: "evidenceIds", type: "array", maxItems: 16, items: { type: "string" } },
         { key: "sectionKeys", type: "array", maxItems: 6, items: { type: "enum", enum: SECTION_KEYS } },
         { key: "values", type: "array", maxItems: 6, items: { type: "object", fields: [
           { key: "type", type: "enum", enum: VALUE_TYPES },
@@ -79,7 +91,7 @@ const analysisSchema = z.object({
     claims: z.array(z.object({
       text: z.string(),
       kind: z.enum(CLAIM_KINDS),
-      evidenceIds: z.array(z.string()).max(8),
+      evidenceIds: z.array(z.string()).max(16),
       sectionKeys: z.array(z.enum(SECTION_KEYS)).max(6),
       values: z.array(z.object({ type: z.enum(VALUE_TYPES), value: z.string() }).strict()).max(6),
     }).strict()).max(14),
@@ -104,6 +116,7 @@ export function buildAnalystContext({ question, route, dossiers, history, today,
     timezone,
     question,
     obligations: route.obligations,
+    responseLength: route.responseLength || "standard",
     recordFilters: route.recordFilters,
     focus: { level: route.focusLevel, opportunityIds: route.opportunityIds },
     dossiers,

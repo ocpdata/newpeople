@@ -4069,6 +4069,14 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       code: error.code, durationMs: error.durationMs, timeoutMs: error.timeoutMs, contractVersion: error.contractVersion,
       ...(error.reviewFailure ? { reviewFailure: error.reviewFailure } : {}),
     } : null;
+    // The engine wraps provider and runtime errors; keep a short, credential-free cause for diagnosis.
+    const dossierFailure = String(error?.code || "").startsWith("DOSSIER_") ? {
+      code: error.code,
+      causeName: error.cause ? String(error.cause.name || "Error").slice(0, 80) : null,
+      causeCode: error.cause?.code ? String(error.cause.code).slice(0, 80) : null,
+      cause: error.cause ? String(error.cause.message || "").replace(/\s+/g, " ")
+        .replace(/(sk|key|token)[-_][A-Za-z0-9_-]{8,}/gi, "[redactado]").slice(0, 300) : null,
+    } : null;
     console.error("[account-chat] Preparation failed", {
       jobId, stage: preparationStage, code: error?.code || "chat_preparation_failed",
       message: error?.message, ...(contractFailure || {}),
@@ -4107,6 +4115,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           failureStage: preparationStage,
           ...(contractFailure ? { contractFailure } : {}),
           ...(classificationFailure ? { classificationFailure } : {}),
+          ...(dossierFailure ? { dossierFailure } : {}),
           agentMetrics: [],
           snapshotMetrics: Array.isArray(error?.customerSnapshotQueryMetrics)
             ? error.customerSnapshotQueryMetrics
@@ -4153,7 +4162,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
         accountId: Number(job.account_id || 0) || null,
         questionLength: String(request?.question || "").length,
         diagnostics: { failureStage: preparationStage, ...(contractFailure ? { contractFailure } : {}),
-          ...(classificationFailure ? { classificationFailure } : {}) },
+          ...(classificationFailure ? { classificationFailure } : {}), ...(dossierFailure ? { dossierFailure } : {}) },
       },
       nextTurn: null,
     };

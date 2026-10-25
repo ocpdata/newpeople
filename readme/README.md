@@ -6,6 +6,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 
 - [Registro de correcciones y decisiones vigentes](./registro-de-correcciones.md)
 - [Diseño: consultas de Cliente existente con expediente y analista con citas](./diseno-consultas-expediente-cliente-existente.md)
+- [Diseño: migración completa del chat de Cliente existente al motor de expedientes](./diseno-migracion-total-motor-expedientes.md)
 - [Logica de negocio](./logica-negocio.md)
 - [Uso de IA](./ia.md)
 - [Usuarios](./usuarios.md)

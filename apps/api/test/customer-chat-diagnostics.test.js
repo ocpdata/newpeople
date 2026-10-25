@@ -197,6 +197,18 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
     expect(createCustomerAccountAdapter).not.toHaveBeenCalled();
   });
 
+  it("persists the cause of a dossier engine failure without exposing it to the seller", async () => {
+    config.features.customerDossierEngineMode = "on";
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await processCustomerAccountChatJob({ jobId: 1, user, deadlineAt: Date.now() + 5000 })).toBeNull();
+    consoleError.mockRestore();
+    const failureWrite = writes.find(({ sql }) => sql.includes("status = 'failed'"));
+    expect(failureWrite.params[0]).toBe("No pude completar la consulta con los registros del CRM. Intenta nuevamente.");
+    const result = JSON.parse(failureWrite.params[1]);
+    expect(result.debug.currentTurn.diagnostics).toMatchObject({ failureStage: "dossier_engine",
+      dossierFailure: { code: "DOSSIER_ENGINE_FAILED", causeName: expect.any(String), cause: expect.any(String) } });
+  });
+
   it.each([
     ["report_destination_validated", "informational", "success", "pass", "Destino del reporte validado"],
     ["report_destination_clarification", "clarification", "warning", "warning", "El destino del reporte necesita una precisión"],

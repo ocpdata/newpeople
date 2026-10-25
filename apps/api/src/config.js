@@ -109,6 +109,11 @@ export const config = {
     password: process.env.DB_PASSWORD || "",
     database: process.env.DB_NAME || "newpeople_crm",
     connectionLimit: Number(process.env.DB_POOL_SIZE || 10),
+    // Idle connections to a remote database are dropped by the network; keepalive prevents ETIMEDOUT on reuse.
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
+    maxIdle: Number(process.env.DB_POOL_MAX_IDLE || 5),
+    idleTimeout: Number(process.env.DB_POOL_IDLE_TIMEOUT_MS || 60000),
   },
   documents: {
     storage: {
@@ -193,7 +198,10 @@ export const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    routerModel: process.env.OPENAI_ROUTER_MODEL || process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    // The cheaper default model applied the routing rules inconsistently in the Pruebas catalog.
+    routerModel: process.env.OPENAI_ROUTER_MODEL || "gpt-6.1-sol",
+    routerReasoningEffort: process.env.OPENAI_ROUTER_REASONING_EFFORT ??
+      (process.env.OPENAI_ROUTER_MODEL ? "" : "low"),
     analystModel: process.env.OPENAI_ANALYST_MODEL || "gpt-6.1-sol",
     analystReasoningEffort: process.env.OPENAI_ANALYST_REASONING_EFFORT || "low",
     transcriptionModel:

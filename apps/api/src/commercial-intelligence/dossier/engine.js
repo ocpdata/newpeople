@@ -1,10 +1,10 @@
 import { pool } from "../../db.js";
 import { config } from "../../config.js";
 import { dossierError, withReadOnlyConnection } from "./access.js";
-import { buildAccountDossier, buildOpportunityDossier, indexDossierEvidence } from "./opportunity-dossier.js";
+import { buildAccountDossier, buildOpportunityDossier } from "./opportunity-dossier.js";
 import { buildRouterContext, DELEGATED_MODES, routeCustomerTurn } from "./router.js";
 import { analyzeCustomerTurn, buildAnalystContext } from "./analyst.js";
-import { verifyAnalysis } from "./verifier.js";
+import { buildEvidenceIndex, normalizeAnalysisEvidence, verifyAnalysis } from "./verifier.js";
 
 // "off" is only an operational kill switch; any other value serves every user.
 export function customerDossierEngineEnabled(features) {
@@ -75,6 +75,17 @@ export function describeCitation(item) {
 function sectionSummary(dossier) {
   return Object.values(dossier.sections).map((section) => ({
     key: section.key, status: section.status, total: section.total ?? null, ...(section.errorCode ? { errorCode: section.errorCode } : {}),
+  }));
+}
+
+// Which CRM sources were read and whether they were complete; lets reviewers audit absences.
+function dossierSources(dossiers) {
+  return dossiers.map((dossier) => ({
+    kind: dossier.kind,
+    id: dossier.opportunity?.id || dossier.account.id,
+    sections: Object.values(dossier.sections).map((section) => ({
+      key: section.key, status: section.status, total: section.total ?? null,
+    })),
   }));
 }
 
@@ -155,6 +166,7 @@ async function executeCustomerDossierTurn({
   }));
   diagnostics.route = {
     mode: routed.route.mode, focusLevel: routed.route.focusLevel, opportunityIds: routed.route.opportunityIds,
+    responseLength: routed.route.responseLength || "standard",
     obligations: routed.route.obligations, recordFilters: routed.route.recordFilters,
     droppedFilters: routed.droppedFilters, reason: routed.route.reason, attempts: routed.attempts,
   };
@@ -192,26 +204,34 @@ async function executeCustomerDossierTurn({
   }));
 
   const obligations = routed.route.obligations;
+  const responseLength = routed.route.responseLength || "standard";
+  const index = buildEvidenceIndex(dossiers);
+  const check = (raw) => {
+    const normalized = normalizeAnalysisEvidence(raw, index);
+    diagnostics.repairedEvidenceIds = (diagnostics.repairedEvidenceIds || 0) + normalized.repaired;
+    return { analysis: normalized.analysis,
+      verification: verifyAnalysis({ analysis: normalized.analysis, obligations, dossiers, responseLength }) };
+  };
   const context = buildAnalystContext({ question, route: routed.route, dossiers, history, today, timezone });
-  let analysis = await timed("analyst", () => withOneTransientRetry(
+  let { analysis, verification } = check(await timed("analyst", () => withOneTransientRetry(
     () => analyze({ context, obligations, userId: user.id, jobId, signal: remainingSignal(deadlineAt) }),
-    { deadlineAt, diagnostics, name: "analyst" }));
-  let verification = verifyAnalysis({ analysis, obligations, dossiers });
-  diagnostics.verification = [{ ok: verification.ok, failures: verification.failures }];
-  if (!verification.ok) {
-    analysis = await timed("analyst_repair", () => withOneTransientRetry(() => analyze({
+    { deadlineAt, diagnostics, name: "analyst" })));
+  diagnostics.verification = [{ ok: verification.ok, failures: verification.failures,
+    presentationIssues: verification.presentationIssues }];
+  if (!verification.ok || verification.presentationIssues.length) {
+    const first = { analysis, verification };
+    const repaired = check(await timed("analyst_repair", () => withOneTransientRetry(() => analyze({
       context: buildAnalystContext({ question, route: routed.route, dossiers, history, today, timezone, repair: {
-        previousAnalysis: analysis, failures: verification.failures,
-        instruction: "Corrige solo los fallos indicados usando la misma evidencia. Si un dato no está en los expedientes, no lo afirmes: indícalo como límite o como pendiente de confirmar.",
+        previousAnalysis: analysis, failures: [...verification.failures, ...verification.presentationIssues],
+        instruction: "Corrige solo los fallos indicados usando la misma evidencia. Si un dato no está en los registros del CRM, no lo afirmes: indícalo como límite o como pendiente de confirmar.",
       } }),
       obligations, userId: user.id, jobId, signal: remainingSignal(deadlineAt),
-    }), { deadlineAt, diagnostics, name: "analyst_repair" }));
-    verification = verifyAnalysis({ analysis, obligations, dossiers });
-    diagnostics.verification.push({ ok: verification.ok, failures: verification.failures });
+    }), { deadlineAt, diagnostics, name: "analyst_repair" })));
+    diagnostics.verification.push({ ok: repaired.verification.ok, failures: repaired.verification.failures,
+      presentationIssues: repaired.verification.presentationIssues });
+    // A repair that only fixes presentation must not lose factual verification the first answer had.
+    if (repaired.verification.ok || !first.verification.ok) ({ analysis, verification } = repaired);
   }
-
-  const index = new Map();
-  for (const dossier of dossiers) for (const [id, item] of indexDossierEvidence(dossier)) index.set(id, item);
   const citations = verification.citedEvidenceIds.slice(0, 40).map((id) => describeCitation(index.get(id)));
   const answer = verification.ok ? analysis.answerText.trim() : `${analysis.answerText.trim()}${unverifiedNotice(verification.failures, obligations)}`;
   diagnostics.blocks = analysis.blocks.map((block) => ({
@@ -228,6 +248,7 @@ async function executeCustomerDossierTurn({
         ? { status: "completed", engine: "dossier" }
         : { status: "degraded", engine: "dossier", reasonCode: "DOSSIER_VERIFICATION_INCOMPLETE" },
       dossierCitations: citations,
+      dossierSources: dossierSources(dossiers),
     },
     memory: {
       level: routed.route.focusLevel, focusOpportunityIds: focusIds,

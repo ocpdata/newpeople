@@ -143,9 +143,14 @@ Cada elemento tiene un ID estable y legible para citar, por ejemplo
 
 ### 6.2 Expediente de cuenta
 
-Ficha de la cuenta, lista de oportunidades con su ficha resumida y conteos
-por sección. El analista puede **abrir el expediente** de una oportunidad
-concreta mediante una herramienta con límite de usos por turno.
+Ficha de la cuenta, lista de oportunidades con su ficha resumida, contactos,
+actividades pendientes (`pendingActivities`) y actividades en todos los
+estados (`accountActivities`: realizadas, canceladas y pendientes, las más
+recientes primero, hasta 150) para preguntas de historial de toda la cuenta.
+Un mismo registro puede aparecer en dos secciones; dos registros distintos
+nunca comparten un ID de evidencia. El analista puede **abrir el expediente**
+de una oportunidad concreta mediante una herramienta con límite de usos por
+turno.
 
 ### 6.3 Tamaño
 
@@ -323,7 +328,8 @@ tipo de error que el código no puede detectar.
 | Variable | Uso | Valor por defecto |
 | --- | --- | --- |
 | `CUSTOMER_DOSSIER_ENGINE_MODE` | `on` para todos los usuarios; `off` solo como interruptor de emergencia | `on` |
-| `OPENAI_ROUTER_MODEL` | Modelo del enrutador | `OPENAI_MODEL` |
+| `OPENAI_ROUTER_MODEL` | Modelo del enrutador | `gpt-6.1-sol` |
+| `OPENAI_ROUTER_REASONING_EFFORT` | Esfuerzo del enrutador (vacío para modelos sin razonamiento) | `low` con el modelo por defecto |
 | `OPENAI_ANALYST_MODEL` | Modelo del analista | `gpt-6.1-sol` |
 | `OPENAI_ANALYST_REASONING_EFFORT` | Esfuerzo de razonamiento del analista | `low` |
 
@@ -347,24 +353,42 @@ restringida y no se lee: oportunidades (`searchOpportunities`), contactos
 2. Se construye el expediente de cuenta. Si la lista de oportunidades no se
    leyó completa, el turno falla de forma explícita en lugar de suponer el
    foco. Una oportunidad seleccionada que no pertenece a la cuenta se rechaza.
-3. El enrutador decide el modo, el foco y las obligaciones. Acciones,
-   redacción de textos, contenido de documentos y temas fuera de alcance
-   pasan al recorrido actual. Los identificadores de obligación los asigna
+3. El enrutador decide el modo, el foco y las obligaciones. Acciones
+   (también preparar una actividad aunque diga «no guardes»), redacción de
+   textos (también preguntas generales sin datos del cliente), contenido de
+   documentos, biblioteca, manuales y partidas de cotizaciones, y temas fuera
+   de alcance pasan al recorrido actual. Las preguntas de principio se
+   responden a nivel de cuenta sin pedir oportunidad. El enrutador usa
+   `gpt-6.1-sol` con esfuerzo bajo: con `gpt-4.1-mini` aplicaba estas reglas
+   de forma inconsistente. Los identificadores de obligación los asigna
    el código; un enrutamiento inválido recibe un único reintento con los
    problemas concretos.
 4. Se construyen hasta tres expedientes de oportunidad en una transacción
    de solo lectura.
-5. El analista responde. La verificación por código revisa citas, valores,
-   ausencias, cobertura y cantidad de puntos. Si falla, hay **una**
-   reparación con los fallos concretos; si persisten, la respuesta se
-   muestra marcada como no verificada por completo.
+5. El analista responde. Antes de verificar, el código limpia los IDs de
+   evidencia con texto pegado (`opp94 trunc` → `opp94`) conservando solo
+   IDs que existen. La verificación por código revisa citas, valores,
+   conteos y sumas (`count`, `amount_total`: exactamente los registros
+   citados), ausencias, cobertura y cantidad de puntos. Si falla, hay
+   **una** reparación con los fallos concretos; si persisten, la respuesta
+   se muestra marcada como no verificada por completo.
+   La presentación también se revisa: sin términos internos («expediente»,
+   IDs) y, cuando el enrutador marca `responseLength=brief` (el vendedor
+   tiene poco tiempo o pide algo breve), menos de 1.100 caracteres y sin
+   títulos. Estos problemas entran en la misma reparación, pero no marcan
+   la respuesta como no verificada; si la reparación pierde la
+   verificación factual, se conserva la respuesta original.
+   La respuesta incluye `dossierSources`: fuentes leídas y su estado, para
+   auditar ausencias (por ejemplo, contactos leídos completos).
 6. Ante un error 5xx o 429 del proveedor, el analista se reintenta una sola
    vez si quedan al menos 20 s.
 
 **Errores.** Los errores propios del motor y los de saldo o permisos llegan
 al usuario con su mensaje. Los fallos técnicos se muestran como «No pude
 completar la consulta con los registros del CRM» y se registran en el log
-del servidor con su detalle.
+del servidor con su detalle. La traza del turno guarda además
+`dossierFailure` (código y causa resumida, sin credenciales) para
+diagnosticar fallos como respuestas 504 de un firewall intermedio.
 
 **Memoria y continuidad.** Cada turno guarda en `dossierMemory` el nivel y
 las oportunidades en foco, las obligaciones y las evidencias citadas,

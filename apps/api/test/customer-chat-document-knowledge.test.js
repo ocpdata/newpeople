@@ -5,6 +5,18 @@ import {
 } from "../src/commercial-intelligence/customer-chat-document-knowledge.js";
 
 describe("customer chat document knowledge policy", () => {
+  it("does not retrieve when the seller explicitly excludes the library", () => {
+    const turnContract = { resolution: "resolved", components: [{ category: "content.discovery_questions", object: "general" }] };
+    for (const question of [
+      "Dame exactamente tres preguntas generales de diagnóstico sobre DNS, sin consultar la biblioteca ni datos del cliente",
+      "Ahora dame solo dos preguntas generales sobre DNS, sin usar la biblioteca",
+      "No uses la biblioteca. Prepara tres preguntas",
+    ]) expect(shouldRetrieveCustomerDocumentKnowledge({ question, turnContract })).toBe(false);
+    expect(shouldRetrieveCustomerDocumentKnowledge({
+      question: "Según la biblioteca interna, prepara tres preguntas sobre BlueCat", turnContract,
+    })).toBe(true);
+  });
+
   it("removes selected CRM names and numeric record references from the Pinecone query", () => {
     const query = buildCustomerDocumentKnowledgeQuery({
       question: "¿Qué estrategia recomiendas para Acme y la oportunidad #123?",

@@ -64,11 +64,20 @@ export function buildCustomerDocumentKnowledgeQuery({
     "conocimiento comercial general";
 }
 
+// An explicit instruction not to use the library overrides the categories that normally retrieve it.
+const LIBRARY_EXCLUDED =
+  /\b(?:sin\s+(?:consultar|usar|utilizar|revisar)\s+(?:la\s+)?(?:biblioteca|documentaci[oó]n\s+interna)|no\s+(?:uses|consultes|utilices|revises|uses\s+la|consultes\s+la)\s+(?:la\s+)?(?:biblioteca|documentaci[oó]n\s+interna)|sin\s+biblioteca)\b/i;
+
+export function customerQuestionExcludesLibrary(question) {
+  return LIBRARY_EXCLUDED.test(String(question || "").normalize("NFC"));
+}
+
 export function shouldRetrieveCustomerDocumentKnowledge({
   question,
   routing = null,
   turnContract = null,
 }) {
+  if (customerQuestionExcludesLibrary(question)) return false;
   const components = contractComponents(turnContract);
   if (turnContract && turnContract.resolution !== "resolved") return false;
   if (components.length) {

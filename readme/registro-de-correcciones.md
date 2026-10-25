@@ -35,6 +35,8 @@ No incluir secretos, credenciales ni datos personales innecesarios.
 | COR-001 | Ingreso | La contrasena comienza oculta. El icono permite mostrarla y ocultarla sin enviar el formulario ni cambiar su valor. | Implementada; compilacion verificada; interaccion en navegador pendiente. |
 | COR-010 | Consultas de Cliente existente | Las consultas y analisis se responden desde un expediente de evidencia con citas verificables; las acciones conservan sus contratos estrictos. COR-002 a COR-009 quedan descartadas. | Decision aprobada; fases 0, 1 y 2 completadas; motor activo para todos los usuarios. |
 | COR-011 | Acciones de actividad en Cliente existente | Una respuesta breve a «¿a qué oportunidad?» o la fecha/hora de un borrador abierto completan la actividad recordada sin reinterpretarse como solicitud nueva. La oportunidad del selector es el destino de la acción. Si falta la oportunidad, se ofrecen opciones. | Implementada; pruebas unitarias y conversaciones reales verificadas. |
+| COR-012 | Pestaña Pruebas y verificación del motor de consultas | Las respuestas del motor de expedientes se evalúan por su verificación propia y su contenido, no por el formato del chat anterior. IDs de evidencia con texto pegado se limpian sin aceptar IDs inexistentes; totales y conteos se verifican; no se muestran términos internos; las peticiones breves se respetan. | Implementada; 8 de 9 casos Q01–Q03 en revisión humana y el noveno corregido en el evaluador. |
+| COR-013 | Catálogo completo de la pestaña Pruebas | Las consultas se enrutan con un modelo capaz; la cuenta incluye actividades en todos los estados; los correos solos se redactan y en pedidos de varias tareas se pregunta el propósito; la biblioteca excluida no se consulta; el adjunto faltante se pide; eliminar o enviar se reconocen como límite; «sin incluir costos» es una exclusión. El evaluador verifica el motor nuevo por contenido. | Implementada; verificada en vivo salvo 4 casos del recorrido anterior (ver entrada). |
 
 ## Registro de correcciones
 
@@ -214,6 +216,107 @@ Agregar nuevas entradas sin eliminar las anteriores.
   fija el motor de consultas en `off` porque prueba el recorrido heredado.
   Los borradores creados en las pruebas se cancelaron.
 - **Estado:** implementada.
+
+### COR-012 - Pestaña Pruebas con el motor de expedientes (2026-10-24)
+
+- **Problema observado:** los casos Q01-01 a Q03-03 de la pestaña Pruebas
+  salían fallidos aunque el chat respondía.
+- **Causas:**
+  - El evaluador exigía la redacción auditada por B10, la evidencia
+    `searchContacts` y frases literales del chat anterior; el motor nuevo no
+    produce ese formato.
+  - Los avisos «No pude verificar por completo» venían de IDs de evidencia
+    con texto pegado por el modelo (`opp94 trunc`, `contact139 ponder`,
+    `contact139殊contact109`); la reparación repetía el fallo.
+  - Respuestas con la palabra «expediente» y un brief demasiado largo para
+    «tengo dos minutos».
+  - La referencia de Totalplay estaba desactualizada (decía 8 «En proceso»
+    por USD 4.510.000; hoy son 6 por USD 4.310.000 y 7 «Ganada»).
+- **Cambio:**
+  - Verificador: limpieza de IDs (solo conserva IDs existentes), valores
+    `count` y `amount_total`, revisión de presentación (términos internos,
+    longitud y títulos si `responseLength=brief`).
+  - Enrutador: campo `responseLength` (brief, standard, detailed).
+  - Analista: reglas de IDs, ausencias por sección, totales, brevedad y
+    vocabulario.
+  - Motor: la reparación de presentación no degrada la respuesta ni pierde
+    la verificación factual; la respuesta incluye `dossierSources`.
+  - Evaluador (`checks.js`): para el motor nuevo, «Respuesta verificada con
+    registros del CRM» sustituye a la de B10; la búsqueda de contactos se
+    acredita con la lectura completa de contactos; Q01-01 y Q01-02 se
+    evalúan por contenido (contacto real, ganadas frente a en proceso, sin
+    presentar oportunidades abiertas como ventas, pendiente, siguiente paso,
+    longitud); «no figura» y «no consta» cuentan como ausencia; la
+    protección contra cargos inventados solo detecta un campo «Cargo:» al
+    inicio de línea. Las revisiones del chat anterior no cambian.
+  - Referencia de Totalplay actualizada en
+    `preguntas-validacion-chat-cliente-existente.md`.
+- **Validacion:** pruebas nuevas del verificador, del motor y del
+  evaluador. Corrida real de los 9 casos: 8 en revisión humana a la
+  primera; Q03-03 falló solo por la regla de «cargo:», que se corrigió, y al
+  volver a evaluar la misma respuesta queda en revisión humana. Las suites
+  relacionadas solo conservan las 2 fallas previas de «B3 timeout».
+- **Pendientes:** los demás casos del catálogo que dependen de componentes
+  o campos del chat anterior pueden necesitar la misma adaptación.
+- **Estado:** implementada.
+
+### COR-013 - Revisión del catálogo completo de Pruebas (2026-10-24/25)
+
+- **Solicitud:** revisar los 203 casos restantes de la pestaña Pruebas y
+  corregir el evaluador (A), el motor nuevo (B) y el recorrido anterior (C).
+- **Hallazgos de entorno:**
+  - Una instancia en la nube (`newpip.digitalvs.com`) usa la misma base de
+    datos con código anterior; su worker tomaba y cortaba las corridas.
+  - Las conexiones inactivas a MySQL (remoto en AWS) se cortaban; el worker
+    perdía el bloqueo `GET_LOCK` y la corrida se marcaba interrumpida.
+  - Se activó keepalive y reciclaje de conexiones inactivas en el pool
+    (`config.js`), y el worker mantiene viva la sesión del bloqueo.
+  - Algunas llamadas a OpenAI devolvieron 504 con la página de bloqueo de un
+    firewall F5 intermedio.
+- **Motor nuevo (B):**
+  - Enrutador con `gpt-6.1-sol` (esfuerzo bajo): con `gpt-4.1-mini` aplicaba
+    las reglas de forma inconsistente. Reglas: biblioteca, manuales y
+    partidas de cotización van al lector de documentos; preguntas generales
+    sin datos del cliente van a contenido; preparar una actividad aunque diga
+    «no guardes» es acción; los principios se responden sin pedir oportunidad.
+  - Expediente de cuenta con `accountActivities` (todos los estados). Un
+    mismo registro puede aparecer en dos secciones del índice de evidencia.
+  - La traza guarda `dossierFailure` con la causa resumida del fallo.
+- **Recorrido anterior (C):**
+  - Correo solo: se redacta (con marcadores si falta el propósito). En un
+    pedido de varias tareas, sin propósito, se pregunta para no agotar el
+    presupuesto de lecturas compartido (caso MIX04).
+  - La biblioteca no se consulta si el vendedor la excluye explícitamente.
+  - Un adjunto faltante se pide en lugar de declarar la capacidad no
+    disponible.
+  - El revisor de B3 ya no rechaza eliminar o enviar por no ser ejecutables.
+  - Un reporte parafraseado por B3 recibe un reintento con la regla concreta.
+  - B3: las preguntas basadas en la biblioteca no llevan componentes de
+    apoyo; los manuales del sistema son ayuda del sistema.
+- **Evaluador (A):** verificaciones por contenido para el motor nuevo (Q06,
+  Q07, Q08-02, Q08-03, Q10-01, notas/detalle/campo), fechas en rangos o días
+  sueltos, equivalentes de significado (Q10-02, Q08-03), A10-03 como control
+  de redacción y L06 bloqueado por datos vigentes (ya no hay Waiting «En
+  proceso»). La referencia guarda las actividades de cada oportunidad con
+  fechas ISO (`evaluatorVersion` 6).
+- **Ajustes finales:** el analista conserva la fecha registrada de cada
+  actividad en historiales (Q06-02); el lector de cotizaciones reconoce
+  «sin incluir», «excluyendo» y «omitiendo» como exclusión de costos (MIX07).
+- **Resultados:** corrida completa de 212 casos tras B: 185 en revisión
+  humana, 11 fallidos (antes 28). Verificación dirigida de 29 casos tras A y
+  C (repetida con crédito en OpenAI): 23 en revisión humana; tras los
+  ajustes finales también pasan Q06-02 y MIX07.
+- **Pendientes del recorrido anterior (B3, no deterministas):**
+  - Q09-01: B3 a veces clasifica la pregunta de cantidades como resumen; la
+    respuesta es correcta, pero sin el desglose determinista por partida.
+  - Q11-02: B3 sigue tratando el manual de Mi Coach como consulta a la
+    biblioteca pese a la regla de ayuda del sistema.
+  - MIX09: categorías correctas, pero las preguntas no pasan por la
+    validación de cantidad.
+  - SEQ15 (paso 2): B3 pierde «solo dos» y «sin biblioteca» al reescribir la
+    tarea; el revisor la rechaza y se pide aclaración. Una regla adicional en
+    B3 no lo resolvió y se revirtió.
+- **Estado:** implementada; verificada salvo los pendientes indicados.
 
 ### Plantilla para la siguiente correccion
 

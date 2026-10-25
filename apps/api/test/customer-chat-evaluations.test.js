@@ -139,6 +139,114 @@ describe("Customer chat evaluation checks", () => {
     expect(evaluate({ answer: `${result.answer}\nCargo: Director` }).outcome).toBe("failed");
     expect(evaluate({ operations: [{ kind: "contact_field", accountId: 22 }] }).outcome).toBe("failed");
   });
+  describe("respuestas del motor de expedientes", () => {
+    const dossierSources = (status = "loaded") => [{ kind: "account", id: 22, sections: [{ key: "contacts", status, total: 9 }] }];
+    const dossierResult = (patch = {}) => ({ responseType: "informational", operations: [], entities: { accountId: 22 },
+      evidence: [], presentation: { status: "completed", engine: "dossier" }, dossierSources: dossierSources(), ...patch });
+
+    it.each(["Q02-02", "Q03-03"])("acredita la ausencia de contacto con la lectura completa de contactos: %s", (id) => {
+      const reference = { contacts: [{ id: 232, name: "Luis Becerra" }] };
+      const evaluate = (patch) => evaluateResponse({ definition: { id }, reference, accountId: 22, result: dossierResult({
+        answer: "Alejandro Ruiz no figura entre los contactos registrados de Totalplay.", ...patch }) });
+      expect(evaluate().outcome).toBe("human_review");
+      expect(evaluate({ answer: "No puedo confirmar su cargo: Alejandro Ruiz no figura entre los contactos de Totalplay." }).outcome)
+        .toBe("human_review");
+      expect(evaluate({ answer: "Alejandro Ruiz no figura entre los contactos de Totalplay.\n- **Cargo:** Director" }).outcome).toBe("failed");
+      expect(evaluate({ dossierSources: dossierSources("restricted") }).outcome).toBe("failed");
+      expect(evaluate({ answer: "Alejandro Ruiz no figura entre los contactos registrados de Totalplay.\n\nNo pude verificar por completo con los registros del CRM:\n- x" }).outcome).toBe("failed");
+      expect(evaluate({ presentation: { status: "degraded", engine: "dossier" } }).outcome).toBe("failed");
+    });
+
+    it("evalúa el resumen de cinco puntos por contenido, sin frases literales", () => {
+      const reference = { contacts: [{ id: 109, name: "Rene Negrete" }] };
+      const answer = ["1. Totalplay tiene 7 oportunidades ganadas y 6 en proceso.", "2. Las abiertas están en Contacto Inicial.",
+        "3. El contacto principal es Rene Negrete.", "4. Hay cierres registrados en 2027.", "5. Hay cuatro actividades pendientes de seguimiento."].join("\n");
+      const evaluate = (text) => evaluateResponse({ definition: { id: "Q01-01" }, reference, accountId: 22,
+        result: dossierResult({ answer: text }) }).outcome;
+      expect(evaluate(answer)).toBe("human_review");
+      expect(evaluate(answer.replace("Rene Negrete", "el gerente"))).toBe("failed");
+      expect(evaluate(answer.replace("6 en proceso.", "6 en proceso, que ya son ventas logradas."))).toBe("failed");
+      expect(evaluate(answer.replace("6 en proceso.", "6 en proceso, que no son ventas realizadas."))).toBe("human_review");
+    });
+
+    const reference = {
+      opportunities: [{ id: 36, name: "Hardware Refresh", stageName: "Contacto Inicial", contactId: 82 },
+        { id: 7, name: "Vrf 2027", stageName: "Waiting", commercialStatusCode: "ganada" }],
+      contacts: [{ id: 82, name: "Kimberly Lidia Rodriguez Mejia" }, { id: 90, name: "Moises Abraham Vargas Dominguez" }],
+      workspaceActions: [
+        { id: 30, opportunityId: 36, status: "done", dueDate: "2026-06-18", title: "Hablar con Kimberly" },
+        { id: 40, opportunityId: 36, status: "pending", dueDate: "2026-07-01", title: "Compartir cotización" },
+        { id: 25, opportunityId: 13, status: "cancelled", dueDate: "2026-06-22", title: "Hablar con Juan Carlos" },
+        { id: 21, opportunityId: 51, status: "pending", dueDate: "2026-06-21", title: "Siguiente paso" },
+      ],
+    };
+    const sources = (extra = []) => [{ kind: "account", id: 22, sections: [
+      { key: "contacts", status: "loaded" }, { key: "pendingActivities", status: "loaded" }, { key: "accountActivities", status: "loaded" }] },
+    { kind: "opportunity", id: 36, sections: [{ key: "activities", status: "loaded" }, { key: "stageRequirements", status: "loaded" },
+      { key: "opportunityNotes", status: "empty" }, ...extra] }];
+    const evaluateDossier = (id, answer, patch = {}) => evaluateResponse({ definition: { id, category: id.slice(0, 3) },
+      reference, accountId: 22, result: dossierResult({ answer, dossierSources: sources(), ...patch }) });
+
+    it("evalúa historial y pendientes por contenido contra las actividades de referencia", () => {
+      expect(evaluateDossier("Q06-01", "Hubo una llamada realizada, con fecha programada el 18 de junio de 2026.").outcome).toBe("human_review");
+      expect(evaluateDossier("Q06-01", "Hubo una llamada realizada.").outcome).toBe("failed");
+      const june = "Del 18/06 hay una llamada realizada; el 21 y 22 de junio hay una pendiente y una cancelada.";
+      expect(evaluateDossier("Q06-02", june).outcome).toBe("human_review");
+      expect(evaluateDossier("Q06-02", june.replace("y una cancelada", "")).outcome).toBe("failed");
+      expect(evaluateDossier("Q06-02", june, { dossierSources: sources().map((source) => source.kind === "account"
+        ? { ...source, sections: source.sections.filter((section) => section.key !== "accountActivities") } : source) }).outcome)
+        .toBe("failed");
+      expect(evaluateDossier("Q07-01", "Pendientes: 21/06/2026 y 01/07/2026.").outcome).toBe("human_review");
+      expect(evaluateDossier("Q07-01", "Pendiente: 01/07/2026.").outcome).toBe("failed");
+      expect(evaluateDossier("Q07-03", "Pendiente: compartir la cotización, vence el 1 de julio.").outcome).toBe("human_review");
+    });
+
+    it("verifica asociación, firma y preparación de etapa con las fuentes leídas", () => {
+      expect(evaluateDossier("Q08-02", "No. El contacto asociado es Kimberly Lidia Rodriguez Mejia; Moises figura en la cuenta.").outcome)
+        .toBe("human_review");
+      expect(evaluateDossier("Q08-02", "Sí, Moises Abraham es el contacto.").outcome).toBe("failed");
+      expect(evaluateDossier("Q08-03", "No está confirmado quién puede firmar la compra; el cargo no acredita la firma.").outcome)
+        .toBe("human_review");
+      expect(evaluateDossier("Q10-01", "La etapa actual es Contacto Inicial y falta responder la necesidad.").outcome).toBe("human_review");
+      expect(evaluateDossier("Q10-01", "Falta responder la necesidad.").outcome).toBe("failed");
+    });
+
+    it("acepta fechas en rangos o días sueltos y equivalentes de significado", () => {
+      const june = "En junio de 2026: llamada realizada el día 18; el 21 queda pendiente y el 22 hubo una cancelada.";
+      expect(evaluateDossier("Q06-02", june).outcome).toBe("human_review");
+      expect(evaluateDossier("Q06-02", "Del 18–22 de junio: una realizada, otra pendiente el 21 de junio y una cancelada.").outcome)
+        .toBe("human_review");
+      expect(evaluateDossier("Q08-03", "No hay un firmante autorizado identificado; el cargo no acredita la firma.").outcome)
+        .toBe("human_review");
+      expect(evaluateResponse({ definition: { id: "Q10-02" }, reference: {}, accountId: 22, result: dossierResult({
+        answer: "No: una cotización por sí sola no acredita la necesidad del cliente." }) }).outcome).toBe("human_review");
+    });
+
+    it("trata A10-03 como redacción y no exige el límite de envío", () => {
+      const draft = { answer: "Asunto: Seguimiento\n\nHola Kimberly,", responseType: "informational", operations: [],
+        components: [{ category: "content.email_draft", status: "completed" }] };
+      expect(evaluateResponse({ definition: { id: "A10-03", category: "A10" }, result: draft, accountId: 22 }).outcome)
+        .toBe("human_review");
+      expect(evaluateResponse({ definition: { id: "A10-03", category: "A10" }, accountId: 22, result: { ...draft,
+        components: [...draft.components, { category: "action.send_communication", status: "unavailable" }] } }).outcome)
+        .toBe("failed");
+    });
+
+    it("bloquea L06 cuando la referencia ya no tiene Waiting en ambos estados", () => {
+      expect(evaluationReferenceBlockReason({ id: "L06" }, reference)).toMatch(/Precondición incumplida/);
+      expect(evaluationReferenceBlockReason({ id: "L06" }, { opportunities: [...reference.opportunities,
+        { id: 8, name: "D", stageName: "Waiting", commercialStatusCode: "en_proceso" }] })).toBeNull();
+    });
+
+    it("exige un brief corto, con pendiente y siguiente paso", () => {
+      const brief = "Totalplay: 7 oportunidades ganadas y 6 en proceso. Pendiente desde julio: la cotización de Hardware Refresh. Siguiente paso: confirma si se envió.";
+      const evaluate = (text) => evaluateResponse({ definition: { id: "Q01-02" }, reference: {}, accountId: 22,
+        result: dossierResult({ answer: text }) }).outcome;
+      expect(evaluate(brief)).toBe("human_review");
+      expect(evaluate(`${brief} ${"Detalle adicional. ".repeat(80)}`)).toBe("failed");
+      expect(evaluate(brief.replace("Pendiente desde julio", "Desde julio"))).toBe("failed");
+    });
+  });
   it.each(["Q02-02", "Q03-03"])("evaluates duplicate contacts without choosing one: %s", (id) => {
     const reference = { contacts: [500, 501].map((contactId) => ({ id: contactId, name: "Alejandro Ruiz" })) };
     const result = { answer: "Encontré dos contactos Alejandro Ruiz en Totalplay. ¿Cuál deseas consultar?",

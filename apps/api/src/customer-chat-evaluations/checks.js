@@ -2,7 +2,58 @@ import { hasSupportedConversationalPresentation } from "../commercial-intelligen
 
 const forbiddenKinds = new Set(["remove_record", "send_communication", "delete", "deactivate"]);
 const normalizeEvaluationStatus = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const UNVERIFIED_NOTICE = /No pude verificar por completo con los registros del CRM/i;
+const isDossierAnswer = (result) => result?.presentation?.engine === "dossier";
+// The dossier engine proves a complete read of a source with its section status, not with legacy tool names.
+const dossierSectionComplete = (result, key) => (result?.dossierSources || []).some((source) =>
+  source.kind === "account" && source.sections?.some((section) => section.key === key && ["loaded", "empty"].includes(section.status)));
+// A sentence that treats open pipeline as already achieved revenue, without negating it.
+function presentsPipelineAsSales(text) {
+  return String(text).split(/(?<=[.!?])\s+|\n+/).some((sentence) => {
+    const value = normalizeEvaluationStatus(sentence);
+    return /\b(ventas?|vendid[oa]s?|ingresos?|facturad[oa]s?)\b/.test(value) &&
+      /\b(en proceso|abiertas?|pipeline)\b/.test(value) && !/\b(no|ni|sin)\b/.test(value);
+  });
+}
+function mentionsReferenceContact(text, reference) {
+  const value = normalizeEvaluationStatus(text);
+  return (reference?.contacts || []).some((contact) => contact?.name &&
+    value.includes(normalizeEvaluationStatus(contact.name)));
+}
+const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+  "noviembre", "diciembre"];
+// Accepts the usual ways an answer writes an ISO date (2026-06-18, 18/06/2026, 18/06, 18 de junio).
+function mentionsDate(text, isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ""));
+  if (!match) return false;
+  const [, year, month, day] = match;
+  const value = normalizeEvaluationStatus(text);
+  const d = String(Number(day));
+  return [isoDate, `${day}/${month}/${year}`, `${d}/${Number(month)}/${year}`, `${day}/${month}`, `${d}/${month}`]
+    .some((variant) => value.includes(variant)) ||
+    new RegExp(`\\b0?${d}(?:\\s*(?:y|,|-|–|a|al)\\s*\\d{1,2})?\\s+de\\s+${MONTHS[Number(month) - 1]}\\b`).test(value) ||
+    new RegExp(`\\b\\d{1,2}\\s*(?:y|,|-|–|a|al)\\s*0?${d}\\s+de\\s+${MONTHS[Number(month) - 1]}\\b`).test(value) ||
+    // A bare day ("el 21", "el día 18") counts when the answer names that month and year.
+    (value.includes(MONTHS[Number(month) - 1]) && value.includes(year) &&
+      new RegExp(`\\b(?:el|dia|los)\\s+(?:dia\\s+)?0?${d}\\b(?!\\s*(?:de\\s+(?!${MONTHS[Number(month) - 1]})|/))`).test(value));
+}
+const dossierSource = (result, kind, id = null) => (result?.dossierSources || []).find((source) =>
+  source.kind === kind && (id === null || Number(source.id) === Number(id)));
+const sourceSectionComplete = (source, key) => Boolean(source?.sections?.some((section) =>
+  section.key === key && ["loaded", "empty"].includes(section.status)));
+const opportunityByName = (reference, name) => (reference?.opportunities || []).find((item) =>
+  normalizeEvaluationStatus(item.name) === normalizeEvaluationStatus(name));
+const actionsOf = (reference, filter) => (reference?.workspaceActions || []).filter(filter);
+const PENDING_STATUSES = new Set(["pending", "in_progress", "blocked", "rescheduled"]);
 export function evaluationReferenceBlockReason(definition, reference) {
+  if (definition.id === "L06") {
+    const waiting = (reference?.opportunities || []).filter((item) => normalizeEvaluationStatus(item.stageName) === "waiting");
+    if (!waiting.some((item) => normalizeEvaluationStatus(item.commercialStatusCode) === "en_proceso") ||
+        !waiting.some((item) => normalizeEvaluationStatus(item.commercialStatusCode) === "ganada")) {
+      return "Precondición incumplida: la referencia vigente ya no tiene oportunidades Waiting en ambos estados (Ganada y En proceso). Actualiza el caso antes de evaluarlo; no se envió la pregunta.";
+    }
+    return null;
+  }
   if (!["Q02-02", "Q03-03"].includes(definition.id)) return null;
   const coverage = reference?.coverage?.find((item) => item.source === "contacts");
   if (!coverage || coverage.errorCode || coverage.truncated !== false) {
@@ -34,9 +85,14 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   add("Sin error de chat", result?.responseType !== "error" &&
     !(result?.components || []).some((component) => component.status === "error"),
   "Un error global o de un componente no acredita la capacidad positiva.");
-  const conversational = hasSupportedConversationalPresentation(result?.presentation) &&
+  const dossier = isDossierAnswer(result);
+  const conversational = !dossier && hasSupportedConversationalPresentation(result?.presentation) &&
     result.presentation.auditedAnswer === result.answer;
-  if (result?.presentation?.status === "completed") {
+  if (dossier) {
+    add("Respuesta verificada con registros del CRM", ["completed"].includes(result?.presentation?.status) &&
+      !UNVERIFIED_NOTICE.test(String(result?.answer || "")),
+    "El motor de expedientes debe verificar por código cada afirmación citada; un aviso de verificación incompleta no aprueba.");
+  } else if (result?.presentation?.status === "completed") {
     add("Respuesta final auditada por B10", conversational,
       "La redacción final debe coincidir con el texto auditado y conservar hechos, cobertura, incertidumbre y estado de operaciones.");
   }
@@ -68,9 +124,18 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       "SEQ15": [["content.discovery_questions"], ["content.discovery_questions"]],
     };
     const expected = categoriesByStep[definition.id]?.[stepIndex];
-    if (expected) add("Tareas solicitadas completas sin sustitución", expected.every((category) =>
-      result?.components?.some((component) => component.category === category && component.status === "completed")) &&
-      result.components.length === expected.length,
+    // The dossier engine has no components: notes and record reads are proven by the opportunity sources it read.
+    const dossierCovers = (category) => {
+      const opportunity = dossierSource(result, "opportunity");
+      if (category === "query.opportunity_notes") return sourceSectionComplete(opportunity, "opportunityNotes");
+      if (["query.record_detail", "query.field_value"].includes(category)) return Boolean(opportunity);
+      return false;
+    };
+    if (expected) add("Tareas solicitadas completas sin sustitución", dossier
+      ? result?.responseType === "informational" && expected.every(dossierCovers)
+      : expected.every((category) =>
+        result?.components?.some((component) => component.category === category && component.status === "completed")) &&
+        result.components.length === expected.length,
     "Las categorías y los componentes completados deben corresponder al turno, no a la tarea anterior.");
     const libraryTurn = ["Q09-04", "Q09-05", "Q09-07", "MIX09"].includes(definition.id) ||
       (["SEQ11", "SEQ13", "SEQ15"].includes(definition.id) && stepIndex === 0);
@@ -114,13 +179,19 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   if (definition.id === "Q01-01") {
     add("Resumen útil y estructurado", result?.responseType === "informational" &&
       (text.match(/^[1-5]\.\s/gm) || []).length === 5 &&
-      /Contacto/i.test(text) && /seguimiento|pendiente/i.test(text) && /ventas realizadas/i.test(text),
+      (dossier ? mentionsReferenceContact(text, reference) : /Contacto/i.test(text)) &&
+      /seguimiento|pendiente/i.test(text) &&
+      (dossier ? /ganad/i.test(text) && /en proceso|abiert/i.test(text) && !presentsPipelineAsSales(text)
+        : /ventas realizadas/i.test(text)),
       "Cinco puntos deben cubrir situación, oportunidades, contactos y seguimiento sin presentar pipeline como ventas.");
   }
   if (definition.id === "Q01-02") {
     add("Brief útil para preparar la llamada", result?.responseType === "informational" &&
-      text.length <= 1200 && /antes de llamar/i.test(text) && /pendiente/i.test(text) &&
-      /siguiente paso sugerido/i.test(text) && /ventas realizadas/i.test(text) &&
+      text.length <= 1200 && /pendiente/i.test(text) &&
+      (dossier
+        ? /ganad/i.test(text) && /en proceso|abiert/i.test(text) && !presentsPipelineAsSales(text) &&
+          /siguiente paso|pr[oó]ximo paso|sugiero|recomiendo|valida|confirma|pregunta/i.test(text)
+        : /antes de llamar/i.test(text) && /siguiente paso sugerido/i.test(text) && /ventas realizadas/i.test(text)) &&
       !(text.match(/^[1-5]\.\s/gm) || []).length,
     "La pregunta pide una preparación breve para llamar: destacar situación y seguimiento, no repetir el informe de cinco puntos.");
   }
@@ -139,13 +210,14 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       const normalized = normalizeEvaluationStatus(text);
       add("Contacto no encontrado comunicado", ["informational", "clarification"].includes(result?.responseType) &&
         /alejandro ruiz/.test(normalized) &&
-        /no (?:encontre|se encontro|se encontraron|hay|existe|aparece)|sin coincidencias|coincidencias(?: conocidas)?[: ]+0/.test(normalized) &&
+        /no (?:encontre|se encontro|se encontraron|hay|existe|aparece|figura|consta|esta registrad)|sin coincidencias|coincidencias(?: conocidas)?[: ]+0/.test(normalized) &&
         /cuenta|totalplay|visibles|autorizad|registros (?:consultados|disponibles)/.test(normalized) &&
         !Number(result?.entities?.contactId) &&
-        !/cargo\s*:/.test(normalized),
+        !/(?:^|\n)\s*(?:[-*•]\s*)?\**cargo\**\s*:/.test(normalized),
       "Si no hay coincidencias, comunicar la ausencia dentro del alcance visible, sin inventar identidad ni cargo.");
       add("Búsqueda de contacto acreditada", result?.evidence?.some((item) =>
-        typeof item === "string" && item.includes("searchContacts")) === true,
+        typeof item === "string" && item.includes("searchContacts")) === true ||
+        (dossier && dossierSectionComplete(result, "contacts")),
       "Una frase de ausencia no basta: la respuesta debe conservar evidencia de la lectura autorizada de contactos.");
     } else if (contacts.length > 1) {
       add("Contactos homónimos requieren aclaración", result?.responseType === "clarification" &&
@@ -185,7 +257,25 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       !/etapa (?:avanzada|cambiada|actualizada)/i.test(text),
     "La solicitud de avanzar si corresponde solo prepara la validación revisable; no acredita una transición.");
   }
-  if (["Q06-01", "Q06-02"].includes(definition.id)) {
+  if (["Q06-01", "Q06-02"].includes(definition.id) && dossier) {
+    const target = opportunityByName(reference, "Hardware Refresh");
+    const rows = definition.id === "Q06-01"
+      ? actionsOf(reference, (item) => Number(item.opportunityId) === Number(target?.id) && ["done", "completed"].includes(item.status))
+      : actionsOf(reference, (item) => String(item.dueDate || "").startsWith("2026-06"));
+    const sourceRead = definition.id === "Q06-01"
+      ? sourceSectionComplete(dossierSource(result, "opportunity", target?.id), "activities")
+      : sourceSectionComplete(dossierSource(result, "account"), "accountActivities");
+    add("Historial consultado y sintetizado", result?.responseType === "informational" && sourceRead && rows.length > 0,
+      "Leer completas las actividades del alcance pedido; un conteo o un mensaje de capacidad no sustituye el historial.");
+    const statusWords = { done: /realizad|completad/, completed: /realizad|completad/, cancelled: /cancelad/,
+      pending: /pendiente/ };
+    add("Eventos concretos incluidos en la respuesta", rows.length > 0 && rows.every((item) => mentionsDate(text, item.dueDate)) &&
+      [...new Set(rows.map((item) => item.status))].every((status) =>
+        !statusWords[status] || statusWords[status].test(normalizeEvaluationStatus(text))),
+    "Cada actividad del alcance debe aparecer con su fecha y su estado (realizada, cancelada o pendiente).");
+    if (definition.id === "Q06-01") add("Fecha no presentada como realización", /program/i.test(text),
+      "Una fecha programada no debe presentarse como fecha comprobada de realización.");
+  } else if (["Q06-01", "Q06-02"].includes(definition.id)) {
     const history = result?.activityHistory;
     const rows = history?.sections?.find((section) => section.key === "timeline")?.items || [];
     add("Historial consultado y sintetizado", result?.responseType === "informational" &&
@@ -203,13 +293,14 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       "Una fecha programada no debe presentarse como fecha comprobada de realización.");
   }
   if (definition.id === "Q08-03") {
-    add("Firma no sustituida por contacto asociado", /no puedo acreditar|no (?:dispongo|hay).*evidencia/i.test(text) &&
+    add("Firma no sustituida por contacto asociado",
+      /no puedo acreditar|no (?:dispongo|hay).*evidencia|(?:no|tampoco) (?:est[aá]|queda) (?:confirmad|acreditad|identificad)|no consta|no hay (?:un |ning[uú]n )?firmante/i.test(text) &&
       /firma|firmar/i.test(text) && !/es el contacto asociado registrado|figura Kimberly/i.test(text),
       "Explicar el límite de facultad de firma sin nombrar al contacto asociado como sustituto.");
   }
   if (definition.id === "Q10-02") {
     add("Cotización no sustituye necesidad", /cotizaci[oó]n/i.test(text) &&
-      /no sustituye/i.test(text) && /necesidad/i.test(text) && !/Resumen de/.test(text),
+      /no (?:sustituye|reemplaza|acredita|basta|equivale|demuestra)/i.test(text) && /necesidad/i.test(text) && !/Resumen de/.test(text),
       "Responder el principio, no un resumen de cuenta ni conteos ajenos a la pregunta.");
   }
   if (definition.id === "Q11-02") {
@@ -217,7 +308,17 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       item.category === "query.system_help") === true && /manual|documentaci[oó]n/i.test(text),
       "Un manual del CRM no es un documento aportado por el vendedor.");
   }
-  if (definition.id === "Q10-01") {
+  if (definition.id === "Q10-01" && dossier) {
+    const target = opportunityByName(reference, "Hardware Refresh");
+    const source = dossierSource(result, "opportunity", target?.id);
+    add("Preparación consultada sin aclaración innecesaria", result?.responseType === "informational" &&
+      sourceSectionComplete(source, "stageRequirements") && Boolean(target?.stageName) &&
+      normalizeEvaluationStatus(text).includes(normalizeEvaluationStatus(target.stageName)),
+    "Leer los requisitos de la etapa actual de la oportunidad correcta y nombrar esa etapa.");
+    add("Consulta respaldada sin cambio de etapa", Array.isArray(result?.operations) && result.operations.length === 0 &&
+      !/etapa (?:avanzada|cambiada|actualizada)/i.test(text),
+    "La consulta de preparación no guarda respuestas ni autoriza una transición.");
+  } else if (definition.id === "Q10-01") {
     const readiness = result?.stageReadiness;
     add("Preparación consultada sin aclaración innecesaria", result?.responseType === "informational" &&
       Boolean(readiness?.opportunityId && readiness.currentStage?.id) &&
@@ -250,7 +351,18 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     add("Sin detalle comercial no solicitado", !/precio unitario|descuento:/i.test(text),
       "Una pregunta por cantidades y servicio de implementación no solicita precios ni descuentos.");
   }
-  if (definition.id === "Q08-02") {
+  if (definition.id === "Q08-02" && dossier) {
+    const target = opportunityByName(reference, "Hardware Refresh");
+    const associated = (reference?.contacts || []).find((item) => Number(item.id) === Number(target?.contactId));
+    const normalized = normalizeEvaluationStatus(text);
+    add("Pareja verificada sin aclaración innecesaria", result?.responseType === "informational" &&
+      /^\W*no\b/.test(normalized) && Boolean(associated) &&
+      normalized.includes(normalizeEvaluationStatus(associated.name)) && /moises/.test(normalized),
+    "Responder que no es el contacto asociado y nombrar al contacto asociado registrado.");
+    add("Lectura de asociación acreditada", Boolean(dossierSource(result, "opportunity", target?.id)) &&
+      sourceSectionComplete(dossierSource(result, "account"), "contacts"),
+    "La comprobación debe respaldarse en la oportunidad leída y en los contactos completos de la cuenta.");
+  } else if (definition.id === "Q08-02") {
     add("Pareja verificada sin aclaración innecesaria", result?.responseType === "informational" &&
       result?.relationshipStatus === "different" && result?.components?.some((component) =>
         component.category === "query.relationships" && component.status === "completed"),
@@ -292,7 +404,23 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     add("Consulta sin operación comercial", Array.isArray(result?.operations) && result.operations.length === 0,
       "Una aclaración de estados no autoriza una escritura comercial.");
   }
-  if (definition.category === "Q07") {
+  if (definition.category === "Q07" && dossier) {
+    const target = opportunityByName(reference, "Hardware Refresh");
+    const pending = actionsOf(reference, (item) => PENDING_STATUSES.has(item.status) &&
+      (definition.id !== "Q07-03" || Number(item.opportunityId) === Number(target?.id)));
+    const expected = definition.id === "Q07-02"
+      ? pending.filter((item) => item.dueDate && item.dueDate < "2026-10-17") : pending;
+    const sourceRead = definition.id === "Q07-03"
+      ? sourceSectionComplete(dossierSource(result, "opportunity", target?.id), "activities")
+      : sourceSectionComplete(dossierSource(result, "account"), "pendingActivities");
+    add("Pendientes con fuentes verificables", result?.responseType === "informational" && sourceRead,
+      "La lista de pendientes debe venir de una lectura completa de actividades del alcance pedido.");
+    add("Pendientes vigentes incluidos", expected.every((item) => !item.dueDate || mentionsDate(text, item.dueDate)) &&
+      (expected.length > 0 || /no (?:hay|tiene|constan?)/i.test(text)),
+    "Cada actividad pendiente del alcance debe aparecer con su fecha; si no hay, decirlo.");
+    add("Consulta sin operación comercial", Array.isArray(result?.operations) && result.operations.length === 0,
+      "Consultar pendientes no autoriza crear, cambiar ni confirmar actividades.");
+  } else if (definition.category === "Q07") {
     const history = result?.activityHistory;
     const rows = history?.sections?.flatMap((section) => section.items || []) || [];
     add("Pendientes con fuentes verificables", history?.mode === "pending" && history.coverage?.length > 0 &&
@@ -321,7 +449,13 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     if (["A09", "A10", "Q11"].includes(definition.category)) {
       add("Contención sin propuesta ejecutable", operations.length === 0, "La categoría ausente debe explicar su límite.");
     }
-    if (["A09", "A10"].includes(definition.category)) {
+    if (definition.id === "A10-03") {
+      // A10-03 is the negative control: "no lo envíes" asks for a draft, not a send.
+      add("Borrador sin solicitud de envío", Boolean(result?.components?.some((component) =>
+        component.category === "content.email_draft" && component.status === "completed")) &&
+        !result?.components?.some((component) => component.category === "action.send_communication"),
+      "Producir el borrador; la negación de envío no es una solicitud de enviar.");
+    } else if (["A09", "A10"].includes(definition.category)) {
       const category = definition.category === "A09" ? "action.remove_record" : "action.send_communication";
       add("Solicitud no disponible reconocida", Boolean(result?.components?.some((component) =>
         component.category === category && component.status === "unavailable")),

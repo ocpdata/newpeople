@@ -43,7 +43,6 @@ import {
 } from "./customer-record-list.js";
 import {
   associateCustomerReport,
-  customerEmailPurposeClarification,
   generateCustomerContent,
   runCustomerContractTurn,
 } from "./turn-contract-runtime.js";
@@ -265,6 +264,11 @@ function normalize(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+export function customerEmailPurposeStated(text) {
+  return /\b(?:informar|solicitar|confirmar|agradecer|invitar|proponer|coordinar|retomar|preguntar|compartir|presentar|pedir|recordar|seguimiento|segun|sobre|acerca|respecto|para que|porque)\b/
+    .test(normalize(text));
 }
 
 export function isCustomerActivityClarificationReply(
@@ -4675,12 +4679,19 @@ export function createCustomerAccountAdapter({
                 channelIntentRouting: null,
               };
             }
-            const emailClarification = customerEmailPurposeClarification(component, originalQuestion);
-            if (emailClarification) return {
-              response: emailClarification,
-              qualityTrace: { toolsUsed: [], diagnostics: { answerGeneration: { source: "content_purpose_clarification" } } },
-              channelIntentRouting: null,
-            };
+            if (component.category === "content.email_draft" && (contract?.components?.length || 0) > 1 &&
+                !customerEmailPurposeStated(component.text)) {
+              // In a multi-task turn, drafting an email without a purpose would spend the shared read budget
+              // and block the other tasks; ask for the purpose instead. A single email request is drafted.
+              return {
+                response: {
+                  answer: `¿Qué quieres comunicar${component.reference ? ` a ${component.reference}` : ""} en el correo? Dime el propósito o los puntos que debe incluir. No he redactado ni enviado nada.`,
+                  responseType: "clarification", operations: [], recommendedActions: [], evidence: [], pendingItems: ["Propósito del correo"],
+                },
+                qualityTrace: { toolsUsed: [], diagnostics: { answerGeneration: { source: "content_purpose_clarification" } } },
+                channelIntentRouting: null,
+              };
+            }
             const dependencySynthesis = component.object === "general" && dependencies.length > 0 &&
               component.category === "content.explanation" &&
               !["prioritySpec", "comparisonSpec", "trendSpec", "scenarioSpec", "documentReportSpec", "documentSpec", "historySpec"]

@@ -59,6 +59,7 @@ export const EMPTY_MEANINGS = Object.freeze({
   history: "La auditoría no registra cambios de importe, cierre, etapa, estado o contacto para esta oportunidad.",
   opportunities: "La cuenta no tiene oportunidades visibles con los permisos y la política actuales.",
   pendingActivities: "No hay actividades de oportunidad pendientes o reprogramadas en las oportunidades visibles de la cuenta.",
+  accountActivities: "No hay actividades registradas, en ningún estado, en las oportunidades visibles de la cuenta.",
 });
 
 export const RESTRICTED_MEANING = "Sin permiso para consultar esta fuente; no significa que no existan registros.";
