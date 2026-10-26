@@ -291,10 +291,17 @@ async function interpretWithPlan(input, plan, interpret, deadlineAt) {
     comparison = comparePlanAndContract(plan, contract, { question: input.question });
     attempts.push({ issues: comparison.issues.map((issue) => issue.code) });
   }
-  const aligned = comparison.issues.length ? alignContractWithPlan(plan, contract, { question: input.question }) : { contract, adjustments: null };
+  let aligned = comparison.issues.length ? alignContractWithPlan(plan, contract, { question: input.question }) : { contract, adjustments: null };
+  let status = "plan_aligned";
+  // Never leave the turn without components: B3's own contract is safer than an empty one.
+  if (!aligned.contract.components.length && contract.components.length) {
+    aligned = { contract, adjustments: { ...aligned.adjustments, keptUnaligned: true } };
+    status = "plan_unaligned";
+    console.warn("[account-chat] Plan alignment kept the B3 contract", { issues: comparison.issues.map((issue) => issue.code) });
+  }
   return {
     contract: customerTurnContractSchema.parse(aligned.contract),
-    review: { status: "plan_aligned", attempts: attempts.length, checks: attempts, adjustments: aligned.adjustments,
+    review: { status, attempts: attempts.length, checks: attempts, adjustments: aligned.adjustments,
       reviewRequests: 0, validationFailures: [] },
   };
 }

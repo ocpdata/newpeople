@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readOpportunityCommercialHistory, readOpportunityScenarioBasis } from "./opportunity-history-store.js";
 import { readFile } from "node:fs/promises";
 import { pool, query, withTransaction } from "../db.js";
 import { logAuditEvent } from "../audit.js";
@@ -9,12 +8,11 @@ import { buildCustomerExtractedMaterial } from "./customer-documents.js";
 import { config } from "../config.js";
 import { describeCustomerEvidenceStatus } from "./customer-chat-evidence.js";
 import {
-  customerTurnContractEnabled,
   customerComponentCapability,
   CUSTOMER_TURN_PROVIDER_VERSION,
 } from "./turn-contract.js";
 import { interpretReviewedCustomerTurn } from "./turn-contract-review.js";
-import { buildDossierQualityTrace, customerDossierEngineEnabled, runCustomerDossierTurn } from "./dossier/engine.js";
+import { buildDossierQualityTrace, combineDossierAndActionResponse, runCustomerDossierTurn } from "./dossier/engine.js";
 import { enabledChannelTools, withReadOnlyConnection } from "./dossier/access.js";
 import { buildAccountDossier } from "./dossier/opportunity-dossier.js";
 import { composeCustomerConversationalResponse } from "./customer-conversational-response.js";
@@ -55,16 +53,8 @@ import { ensureCommercialCalendarActivitiesSchema } from "./calendar-activities-
 import { ensureLandingSchema } from "../landing/schema.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
-import {
-  loadSemanticClassifierPrompt,
-  buildCustomerSemanticClassifierPrompt,
-} from "../coach/semantic-classifier-prompts.js";
+import { loadSemanticClassifierPrompt } from "../coach/semantic-classifier-prompts.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
-import {
-  classifyCustomerRequestB3,
-  isGeneralCustomerSalesProcessQuestion,
-  resolveCustomerIntentB3,
-} from "./customer-intent-classification.js";
 import {
   appendCustomerAccountChatHistory,
   buildCustomerEvidenceFailureResponse,
@@ -227,264 +217,38 @@ export async function classifyCustomerSnapshotDataNeeds({
   );
 }
 
-const CUSTOMER_INTENT_CONFIDENCE = Object.freeze({
-  high: 0.95,
-  medium: 0.75,
-  low: 0.35,
-});
-
-async function classifyCustomerIntentSemantically({
-  question = "",
-  conversationHistory = [],
-  selectedContext = {},
-  conversationContext = null,
-  snapshot = null,
-  classifierPrompt,
-  intents = [],
-  user,
-  jobId,
-  classifyWithAI = runStructuredTextResearch,
-} = {}) {
-  const availableIntents = (Array.isArray(intents) ? intents : [])
-    .filter((intent) => intent?.enabled !== false && intent?.code)
-    .map((intent) => ({
-      code: String(intent.code),
-      label: String(intent.label || intent.code),
-      description: String(intent.description || ""),
-    }));
-  const clarification = (reason, confidence = 0, questionText = "") => ({
-    intent: "clarify_needed",
-    confidence,
-    reason: String(reason || "intent_uncertain").slice(0, 300),
-    clarificationQuestion:
-      String(questionText || "").trim().slice(0, 500) ||
-      "¿Quieres redactar contenido, consultar la cuenta o preparar una operación en el CRM/Calendario?",
-    requiresClarification: true,
-  });
-  if (!String(question || "").trim() || !availableIntents.length) {
-    return clarification("missing_question_or_intents");
-  }
-
-  const reference = (entity) => entity ? { id: entity.id, name: entity.name } : null;
-  const conversationalOpportunity = [
-    ...(snapshot?.opportunities || []),
-    ...(snapshot?.inactiveOpportunities || []),
-    ...(snapshot?.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
-  ].find((item) => Number(item.id) === Number(conversationContext?.opportunityId));
-  const conversationalContact = (snapshot?.contacts || []).find(
-    (item) => Number(item.id) === Number(conversationContext?.contactId),
-  );
-  let plan;
-  try {
-    plan = await classifyWithAI({
-      schemaName: "customer_account_request_intent",
-      systemPrompt: buildCustomerSemanticClassifierPrompt(classifierPrompt),
-      subject: "Intención del vendedor en Cliente existente",
-      context: {
-        question: String(question).trim().slice(0, 2000),
-        recentConversation: (Array.isArray(conversationHistory)
-          ? conversationHistory
-          : []
-        )
-          .slice(-6)
-          .map((message) => ({
-            role: message?.role === "assistant" ? "assistant" : "user",
-            text: String(message?.text || "").slice(0, 600),
-          })),
-        validatedContinuation: conversationContext
-          ? {
-              intents: Array.isArray(conversationContext.intents)
-                ? conversationContext.intents.slice(0, 8)
-                : [],
-              entities: {
-                account: reference(snapshot?.account),
-                opportunity: reference(conversationalOpportunity),
-                contact: reference(conversationalContact),
-              },
-              hasPendingActivity: Boolean(conversationContext.pendingActivity),
-              pendingActivity: conversationContext.pendingActivity
-                ? {
-                    title: String(
-                      conversationContext.pendingActivity.operation?.title || "",
-                    ).slice(0, 200),
-                    actionType: String(
-                      conversationContext.pendingActivity.operation?.actionType || "",
-                    ).slice(0, 40),
-                    missingFields: Array.isArray(
-                      conversationContext.pendingActivity.operation?.missingFields,
-                    )
-                      ? conversationContext.pendingActivity.operation.missingFields.slice(0, 8)
-                      : [],
-                  }
-                : null,
-            }
-          : null,
-        selectedContext: {
-          accountSelected: Boolean(selectedContext.accountId),
-          opportunitySelected: Boolean(selectedContext.opportunityId),
-          contactSelected: Boolean(selectedContext.contactId),
-        },
-        availableIntents,
-      },
-      currentValues: {},
-      fields: [
-        {
-          key: "intent",
-          type: "enum",
-          enum: [...availableIntents.map((intent) => intent.code), "clarify_needed"],
-          example: "clarify_needed",
-        },
-        {
-          key: "confidence",
-          type: "enum",
-          enum: ["high", "medium", "low"],
-          example: "medium",
-        },
-        { key: "reason", type: "string", example: "" },
-        { key: "clarificationQuestion", type: "string", example: "" },
-      ],
-      aiUsageContext: {
-        userId: Number(user?.id || 0),
-        featureCode: "commercial_intelligence.account_chat.intent",
-        jobType: "account_chat",
-        jobId,
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch {
-    return clarification("intent_classifier_unavailable");
-  }
-
-  const confidence = CUSTOMER_INTENT_CONFIDENCE[plan?.confidence] || 0;
-  const intent = String(plan?.intent || "").trim();
-  const reason = String(plan?.reason || "semantic_classification").slice(0, 300);
-  if (intent === "clarify_needed") {
-    return clarification(
-      reason,
-      confidence,
-      plan?.clarificationQuestion,
-    );
-  }
-  if (
-    confidence < 0.68 ||
-    !availableIntents.some((item) => item.code === intent)
-  ) {
-    return clarification("invalid_or_low_confidence_intent", confidence);
-  }
-  return {
-    intent,
-    confidence,
-    reason,
-    clarificationQuestion: "",
-    requiresClarification: false,
-  };
+// An open activity draft or remembered activity intent, as the router sees it: what kind and about what.
+function describePendingAction(context) {
+  const pending = context?.pendingActivity?.operation;
+  if (pending) return { kind: "activity_draft", title: String(pending.title || "").slice(0, 200),
+    missingFields: (pending.missingFields || []).slice(0, 8) };
+  const intent = context?.pendingActivityIntent;
+  if (intent) return { kind: "activity_intent", title: String(intent.title || intent.notes || "").slice(0, 200), missingFields: [] };
+  return null;
 }
 
+// Only action turns reach this point: the dossier engine answers everything else and passes an action-only plan.
 export async function classifyCustomerIntent(input = {}) {
   const classifierPrompt = await loadSemanticClassifierPrompt({
     channel: "customer_account",
   });
-  const hasGuidanceIntent = (Array.isArray(input.intents) ? input.intents : [])
-    .some((intent) => intent?.code === "opportunity_guidance" && intent.enabled !== false);
-  if (!input.plan?.tasks?.length && hasGuidanceIntent && isGeneralCustomerSalesProcessQuestion(input.question)) {
-    const turnContractEnabled = customerTurnContractEnabled(
-      config.features,
-      input.user?.id,
-    );
-    const proposedContract = turnContractEnabled
-      ? {
-          version: 1,
-          movement: "new_request",
-          resolution: "resolved",
-          clarificationQuestion: "",
-          confidence: "high",
-          components: [{
-            id: "c1",
-            category: "guidance.strategy",
-            text: String(input.question).trim(),
-            object: "general",
-            topic: "",
-            scope: "none",
-            reference: "",
-            attribution: "none",
-            certainty: "unspecified",
-            explicitAction: false,
-            dependsOn: [],
-            continuationOf: "none",
-          }],
-        }
-      : null;
-    const reviewed = proposedContract
-      ? await interpretReviewedCustomerTurn({ ...input, classifierPrompt }, {
-        initialContract: proposedContract, reviewWithAI: input.reviewWithAI,
-      })
-      : null;
-    const turnContract = reviewed?.contract;
-    const primary = turnContract?.components[0] ? customerComponentCapability(turnContract.components[0]) : null;
-    return {
-      intent: turnContract
-        ? (turnContract.resolution === "clarification" ? "clarify_needed" : primary?.intent || "clarify_needed")
-        : "opportunity_guidance",
-      confidence: turnContract
-        ? (turnContract.confidence === "high" ? 0.95 : turnContract.confidence === "medium" ? 0.75 : 0.35)
-        : 0.95,
-      requiresClarification: turnContract?.resolution === "clarification" || false,
-      clarificationQuestion: turnContract?.clarificationQuestion || "",
-      reason: reviewed ? "Contrato revisado de B3 a partir de la consulta sobre el proceso de ventas"
-        : "Consulta general explícita sobre el proceso de ventas",
-      ...(turnContract ? { turnContract } : {}),
-      source: {
-        resolver: "deterministic_sales_process_question",
-        ...(turnContractEnabled
-          ? { providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION, coherenceReview: reviewed.review }
-          : {}),
-        classifierPrompt: {
-          channel: classifierPrompt.channel,
-          version: classifierPrompt.version,
-          source: classifierPrompt.source,
-        },
-      },
-    };
-  }
-  if (customerTurnContractEnabled(config.features, input.user?.id)) {
-    const { plan, ...interpretInput } = input;
-    const { contract, review } = await interpretReviewedCustomerTurn({ ...interpretInput, classifierPrompt }, {
-      reviewWithAI: input.reviewWithAI, plan,
-    });
-    const primary = contract.components[0] ? customerComponentCapability(contract.components[0]) : null;
-    return {
-      intent: primary?.intent || "clarify_needed",
-      confidence: contract.confidence === "high" ? 0.95 : contract.confidence === "medium" ? 0.75 : 0.35,
-      requiresClarification: contract.resolution === "clarification",
-      clarificationQuestion: contract.clarificationQuestion,
-      reason: plan?.tasks?.length ? "Contrato de B3 alineado al plan del enrutador" : "Contrato estructurado de B3",
-      turnContract: contract,
-      source: {
-        resolver: plan?.tasks?.length ? "dossier_plan_v1" : "turn_contract_v1",
-        coherenceReview: review,
-        providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION,
-        classifierPrompt: { channel: classifierPrompt.channel, version: classifierPrompt.version, source: classifierPrompt.source },
-      },
-    };
-  }
-  const preDecision = classifyCustomerRequestB3(input.question || "");
-  const semanticDecision = await classifyCustomerIntentSemantically({
-    ...input, classifierPrompt,
+  const { plan, ...interpretInput } = input;
+  const { contract, review } = await interpretReviewedCustomerTurn({ ...interpretInput, classifierPrompt }, {
+    reviewWithAI: input.reviewWithAI, plan,
   });
-  const decision = resolveCustomerIntentB3({
-    preDecision,
-    semanticDecision,
-    availableIntents: input.intents,
-  });
+  const primary = contract.components[0] ? customerComponentCapability(contract.components[0]) : null;
   return {
-    ...decision,
+    intent: primary?.intent || "clarify_needed",
+    confidence: contract.confidence === "high" ? 0.95 : contract.confidence === "medium" ? 0.75 : 0.35,
+    requiresClarification: contract.resolution === "clarification",
+    clarificationQuestion: contract.clarificationQuestion,
+    reason: plan?.tasks?.length ? "Contrato de B3 alineado al plan del enrutador" : "Contrato estructurado de B3",
+    turnContract: contract,
     source: {
-      ...decision.source,
-      classifierPrompt: {
-        channel: classifierPrompt.channel,
-        version: classifierPrompt.version,
-        source: classifierPrompt.source,
-      },
+      resolver: plan?.tasks?.length ? "dossier_plan_v1" : "turn_contract_v1",
+      coherenceReview: review,
+      providerContractVersion: CUSTOMER_TURN_PROVIDER_VERSION,
+      classifierPrompt: { channel: classifierPrompt.channel, version: classifierPrompt.version, source: classifierPrompt.source },
     },
   };
 }
@@ -3272,7 +3036,6 @@ export async function createCustomerAccountChatSession({ user, payload }) {
 }
 
 export async function getCustomerChatFocusOptions({ user, accountId }) {
-  if (!customerDossierEngineEnabled(config.features)) return { enabled: false, opportunities: [] };
   const governance = {
     ...(await getMiCoachGovernanceSettings()),
     channelTools: enabledChannelTools(await loadChannelIntentConfigurations({ channel: "customer_account" })),
@@ -3944,8 +3707,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       // The opportunity chosen in the chat selector is the explicit target for actions too.
       snapshot = { ...snapshot, selectedOpportunity: focusOpportunity };
     }
-    if (!directActivityTurn && customerDossierEngineEnabled(config.features) &&
-        !conversationContext?.pendingActivity && !conversationContext?.pendingActivityIntent) {
+    if (!directActivityTurn) {
       preparationStage = "dossier_engine";
       const governance = {
         ...(await getMiCoachGovernanceSettings()),
@@ -3970,7 +3732,8 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
           question: request.question,
           history: conversationHistory,
           memory: conversationContext?.dossierMemory || null,
-          hasAttachment: Boolean(request.attachment),
+          attachment: request.attachment || null,
+          pendingAction: describePendingAction(conversationContext),
           governance,
           jobId,
           timezone: snapshot.businessTimezone,
@@ -4208,38 +3971,6 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     },
     conversationContext: continuationContext,
     snapshotQueryMetrics: getCustomerSnapshotQueryMetrics(snapshot),
-    loadHistorySnapshot: async ({ sources, request: historyRequest, signal }) => {
-      signal.throwIfAborted();
-      const historySnapshot = await buildAuthorizedCustomerSnapshot({
-        user, accountId: snapshot.account.id,
-        opportunityId: historyRequest.memory.object === "opportunity" && historyRequest.target.lifecycle !== "inactive"
-          ? historyRequest.memory.targetId : null,
-        contactId: historyRequest.memory.object === "contact" && historyRequest.target.activationStatusCode === "activado"
-          ? historyRequest.memory.targetId : null,
-        includeContactHistory: historyRequest.memory.object === "contact",
-        includeProviderCatalog: false, historySources: sources, historyRequest,
-      });
-      signal.throwIfAborted();
-      return { snapshot: historySnapshot, metrics: getCustomerSnapshotQueryMetrics(historySnapshot) };
-    },
-    loadTrendHistory: async ({ signal }) => {
-      signal.throwIfAborted();
-      await getAccessibleAccount({ user, accountId: snapshot.account.id });
-      const data = await readOpportunityCommercialHistory({
-        user, accountId: snapshot.account.id, governance: await getMiCoachGovernanceSettings(), signal,
-      });
-      signal.throwIfAborted();
-      return data;
-    },
-    loadScenarioBasis: async ({ signal }) => {
-      signal.throwIfAborted();
-      await getAccessibleAccount({ user, accountId: snapshot.account.id });
-      const data = await readOpportunityScenarioBasis({
-        user, accountId: snapshot.account.id, governance: await getMiCoachGovernanceSettings(), signal,
-      });
-      signal.throwIfAborted();
-      return data;
-    },
     agents,
     jobId,
     executionTrace,
@@ -4564,34 +4295,6 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       }, snapshot, snapshot.account.id);
       conversationContextUpdated = true;
     }
-    if (Object.hasOwn(response, "historyMemory") || continuationContext?.historyMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || {
-          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
-        }),
-        historyMemory: Object.hasOwn(response, "historyMemory") ? response.historyMemory : continuationContext.historyMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
-    if (Object.hasOwn(response, "pendingMemory") || continuationContext?.pendingMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || {
-          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
-        }),
-        pendingMemory: Object.hasOwn(response, "pendingMemory") ? response.pendingMemory : continuationContext.pendingMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
-    if (Object.hasOwn(response, "relationshipMemory") || continuationContext?.relationshipMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || {
-          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
-        }),
-        relationshipMemory: Object.hasOwn(response, "relationshipMemory")
-          ? response.relationshipMemory : continuationContext.relationshipMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
     if (Object.hasOwn(response, "documentMemory") || continuationContext?.documentMemory) {
       nextConversationContext = validateCustomerConversationContext({
         ...(nextConversationContext || continuationContext || {
@@ -4653,38 +4356,6 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       }, snapshot, snapshot.account.id);
       conversationContextUpdated = true;
     }
-    if (Object.hasOwn(response, "scenarioMemory") || continuationContext?.scenarioMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
-        scenarioMemory: Object.hasOwn(response, "scenarioMemory") ? response.scenarioMemory : continuationContext.scenarioMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
-    if (Object.hasOwn(response, "trendMemory") || continuationContext?.trendMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
-        trendMemory: Object.hasOwn(response, "trendMemory") ? response.trendMemory : continuationContext.trendMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
-    if (Object.hasOwn(response, "comparisonMemory") || continuationContext?.comparisonMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || {
-          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
-        }),
-        comparisonMemory: Object.hasOwn(response, "comparisonMemory") ? response.comparisonMemory : continuationContext.comparisonMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
-    if (Object.hasOwn(response, "priorityMemory") || continuationContext?.priorityMemory) {
-      nextConversationContext = validateCustomerConversationContext({
-        ...(nextConversationContext || continuationContext || {
-          version: 1, accountId: snapshot.account.id, intents: [], filters: {},
-        }),
-        priorityMemory: Object.hasOwn(response, "priorityMemory") ? response.priorityMemory : continuationContext.priorityMemory,
-      }, snapshot, snapshot.account.id);
-      conversationContextUpdated = true;
-    }
   } catch (error) {
     console.error("[account-chat] Adapter execution failed", {
       jobId: Number(jobId),
@@ -4728,6 +4399,15 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       },
     };
   }
+  // Mixed turn: the dossier engine answered the non-action tasks and the executors prepared the actions.
+  if (!dossierTurn?.handled && dossierTurn?.partial) {
+    response = combineDossierAndActionResponse(dossierTurn.partial.response, response);
+    nextConversationContext = validateCustomerConversationContext({
+      ...(nextConversationContext || continuationContext || { version: 1, accountId: snapshot.account.id, intents: [], filters: {} }),
+      dossierMemory: dossierTurn.partial.memory,
+    }, snapshot, snapshot.account.id);
+    conversationContextUpdated = true;
+  }
   response = {
     ...response,
     entities: sanitizeCustomerResponseEntities(
@@ -4767,29 +4447,11 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
         .filter(Boolean)
         .slice(0, 20)
     : [];
-  const isSingleRecordList = response.components?.length === 1 &&
-    ["query.record_list", "query.record_search", "query.relationships"].includes(response.components[0].category) && response.listMetadata;
-  const isSingleDocumentQuery = response.components?.length === 1 &&
-    response.components[0].category === "query.document_content" && response.documentCoverage;
   const documentPartialSources = response.documentCoverage?.partial
     ? [`documento:${response.documentCoverage.source || "cobertura_parcial"}`] : [];
-  const isSinglePriority = response.components?.length === 1 &&
-    response.components[0].category === "guidance.prioritization" && response.priorityMetadata;
-  const isSingleComparison = response.components?.length === 1 &&
-    response.components[0].category === "guidance.comparison" && response.comparisonMetadata;
-  const isSingleTrend = response.components?.length === 1 &&
-    response.components[0].category === "guidance.trend_analysis" && response.trendMetadata;
-  const isSingleScenario = response.components?.length === 1 &&
-    response.components[0].category === "guidance.scenario_analysis" && response.scenarioMetadata;
   const isSingleDocumentReport = response.components?.length === 1 &&
     response.components[0].category === "report.document_evidence" && response.documentReportMetadata?.length;
-  const partialResultSources = dossierTurn?.handled ? [] : isSingleRecordList
-    ? response.listMetadata.partialReasons
-    : isSingleDocumentQuery ? documentPartialSources
-    : isSinglePriority ? response.priorityMetadata.partial ? ["priorizacion:recuperacion_parcial"] : []
-    : isSingleComparison ? response.comparisonMetadata.partialReasons
-    : isSingleTrend ? response.trendMetadata.partial ? response.trendMetadata.reasons : []
-    : isSingleScenario ? response.scenarioMetadata.reasons
+  const partialResultSources = dossierTurn?.handled ? []
     : isSingleDocumentReport ? response.documentReportMetadata.some((item) => item.partial)
       ? ["reporte_documental:cobertura_parcial_o_fuente_no_disponible"] : []
     : [
@@ -4797,7 +4459,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
         ...unqueriedAuthorizedTools.map((toolName) => `consulta:${toolName}`),
         ...documentPartialSources,
       ];
-  const partialResultsWarning = !isSingleRecordList && !isSingleDocumentQuery && !isSinglePriority && !isSingleComparison && !isSingleTrend && !isSingleScenario && partialResultSources.length
+  const partialResultsWarning = partialResultSources.length
     ? ` La verificación alcanzó límites de consulta (${partialResultSources.join(", ")}); los resultados pueden estar incompletos.`
     : "";
   response = {
@@ -4834,19 +4496,29 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     })),
     publicSources,
   };
+  const mixedPresentation = response.presentation?.engine === "mixed" ? response.presentation : null;
   if (config.features?.customerConversationalResponseEnabled && authoritativeIntent?.turnContract) {
     const conversational = await executionTrace.span({
       from: "B9", to: "B10", label: "Redactar y auditar respuesta conversacional",
       input: { responseType: response.responseType, componentCount: response.components?.length || 0 },
     }, () => composeCustomerConversationalResponse({
-      response, contract: authoritativeIntent.turnContract, question: request.question,
+      // In a mixed turn B10 only presents the action part; the dossier part is already verified.
+      response: mixedPresentation ? { ...response, answer: mixedPresentation.actionAnswer,
+        presentation: { ...response.presentation, engine: undefined } } : response,
+      contract: authoritativeIntent.turnContract, question: request.question,
       history: conversationHistory, userId: user.id, jobId,
       alreadyGeneratedAndAudited: qualityTrace?.diagnostics?.answerGeneration?.source === "structured_answer_model" &&
         qualityTrace?.diagnostics?.answerAudit?.status === "supported",
       deadlineAt: Math.min(deadlineAt ? new Date(deadlineAt).getTime() : turnStartedAt + 90000, Date.now() + 20000),
     }), (value) => ({ status: value.diagnostics.status, calls: value.diagnostics.calls,
       reasonCode: value.diagnostics.reasonCode || null }));
-    response = conversational.response;
+    response = mixedPresentation ? {
+      ...conversational.response,
+      answer: [mixedPresentation.dossierAnswer, conversational.response.answer].filter(Boolean).join("\n\n"),
+      presentation: { ...conversational.response.presentation, engine: "mixed",
+        actionAnswer: conversational.response.answer, dossierAnswer: mixedPresentation.dossierAnswer,
+        dossierPart: mixedPresentation.dossierPart },
+    } : conversational.response;
     qualityTrace = { ...qualityTrace, diagnostics: {
       ...qualityTrace?.diagnostics, conversationalPresentation: conversational.diagnostics,
     } };

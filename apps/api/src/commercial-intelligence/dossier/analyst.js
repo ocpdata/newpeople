@@ -2,6 +2,7 @@ import { z } from "zod";
 import { config } from "../../config.js";
 import { runStructuredTextResearch } from "../../structuredWebResearch.js";
 import { SECTION_TITLES } from "./opportunity-dossier.js";
+import { CALCULATION_FIELDS, CALCULATION_OPERATIONS } from "./verifier.js";
 
 export const CLAIM_KINDS = ["registered", "inference", "recommendation", "to_confirm", "absence"];
 export const VALUE_TYPES = ["date", "amount", "status", "person", "count", "amount_total"];
@@ -34,6 +35,32 @@ Afirmaciones (claims)
   separadores). Cita en evidenceIds exactamente los registros contados o sumados, ni uno más ni uno menos;
   si son más de los que caben, divide la afirmación en grupos más pequeños.
 
+Fuentes documentales (dossier de kind=sources, solo si el turno las necesita)
+- quotationContent: partidas (qitem) y condiciones (qterms) de la versión vigente de cada cotización. Da las
+  cantidades por partida y no sumes partidas distintas; distingue productos de servicios. Si no aparecen
+  precios es porque el vendedor los excluyó o no están autorizados: no los menciones.
+- attachment y crmDocumentContent: fragmentos del texto de un archivo; cita los fragmentos que usas. Lo que dice
+  un documento no es un dato confirmado del CRM. Si la sección es parcial, dilo; si está vacía, pide el
+  archivo o indica que no hay texto legible.
+- library: conocimiento general de productos o del proceso comercial; cítalo con kind=inference o
+  recommendation y nunca lo presentes como un hecho o necesidad del cliente. Si está vacía o falló, dilo.
+- No inventes contenido de documentos que no están en estas secciones.
+
+Cálculos
+- Si calculas algo con registros (diferencia o proporción entre importes, aplicar un porcentaje, desplazar una
+  fecha por meses o días, ordenar por importe o por fecha), declara calculation en la afirmación: operation,
+  field (amountUsd o closeDate), parameter (porcentaje como -10, meses o días como 1) y result (número sin
+  separadores o fecha AAAA-MM-DD). Los registros de entrada van en evidenceIds en el orden usado; para ordenar,
+  en el orden resultante. El código recalcula y rechaza resultados incorrectos. Si no calculas, operation=none.
+- Un escenario ("si se retrasa un mes", "si baja 10 %") es hipotético: kind=inference y dilo en el texto; no
+  modifica el CRM.
+- Facturación, ingresos contables, cobros y saldos no están en estos registros: no los derives de importes de
+  oportunidades.
+
+Alcance
+- Responde SOLO tus obligaciones. tasksHandledElsewhere son partes del mensaje que se resuelven aparte
+  (redacciones, acciones o límites): no las respondas, no prepares borradores de acciones ni las anuncies.
+
 Bloques
 - Un bloque por obligación, con su obligationId. status=answered, partial o cannot_answer; si no es
   answered, explica el motivo en reason.
@@ -56,6 +83,16 @@ answerText
   ~150 palabras (menos de 1100 caracteres), sin títulos, solo lo esencial y accionable (situación, pendiente
   principal y siguiente paso). detailed = puede extenderse con secciones. standard = lo necesario.`;
 
+export const CALCULATION_FIELDS_SCHEMA = [
+  { key: "operation", type: "enum", enum: CALCULATION_OPERATIONS },
+  { key: "field", type: "enum", enum: CALCULATION_FIELDS },
+  { key: "parameter", type: "string" },
+  { key: "result", type: "string" },
+];
+export const calculationSchema = z.object({
+  operation: z.enum(CALCULATION_OPERATIONS), field: z.enum(CALCULATION_FIELDS), parameter: z.string(), result: z.string(),
+}).strict();
+
 export function buildAnalystFields(obligations) {
   const ids = obligations.map((item) => item.id);
   return [
@@ -76,6 +113,7 @@ export function buildAnalystFields(obligations) {
           { key: "type", type: "enum", enum: VALUE_TYPES },
           { key: "value", type: "string" },
         ] } },
+        { key: "calculation", type: "object", fields: CALCULATION_FIELDS_SCHEMA },
       ] } },
     ] } },
     { key: "answerText", type: "string" },
@@ -94,6 +132,7 @@ const analysisSchema = z.object({
       evidenceIds: z.array(z.string()).max(16),
       sectionKeys: z.array(z.enum(SECTION_KEYS)).max(6),
       values: z.array(z.object({ type: z.enum(VALUE_TYPES), value: z.string() }).strict()).max(6),
+      calculation: calculationSchema.optional(),
     }).strict()).max(14),
   }).strict()),
   answerText: z.string(),
@@ -111,11 +150,15 @@ export function parseAnalysis(raw, obligations) {
 }
 
 export function buildAnalystContext({ question, route, dossiers, history, today, timezone, repair = null }) {
+  const answered = new Set(route.obligations.map((item) => item.taskId));
+  const handledElsewhere = (route.plan?.tasks || []).filter((task) => !answered.has(task.id))
+    .map((task) => ({ type: task.type, ask: task.ask }));
   return {
     today,
     timezone,
     question,
     obligations: route.obligations,
+    ...(handledElsewhere.length ? { tasksHandledElsewhere: handledElsewhere } : {}),
     responseLength: route.responseLength || "standard",
     recordFilters: route.recordFilters,
     focus: { level: route.focusLevel, opportunityIds: route.opportunityIds },
@@ -138,6 +181,8 @@ export async function analyzeCustomerTurn({ context, obligations, userId, jobId,
     schemaName: "customer_account_dossier_analysis",
     model,
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    maxDurationMs: 50000,
+    maxOutputTokens: 8000,
     systemPrompt: ANALYST_SYSTEM_PROMPT,
     subject: "Respuesta del analista comercial basada en expedientes del CRM",
     context,

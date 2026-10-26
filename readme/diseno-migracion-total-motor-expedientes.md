@@ -1,6 +1,6 @@
 # Diseño: migración completa del chat de Cliente existente al motor de expedientes
 
-Estado: **aprobado**; fases A, A1, B y C implementadas. Fecha: 2026-10-25.
+Estado: **aprobado**; fases A a F implementadas (E y F con alcance acotado). Fecha: 2026-10-25.
 
 Documentos relacionados:
 [diseño de consultas con expediente](./diseno-consultas-expediente-cliente-existente.md),
@@ -459,8 +459,9 @@ Implementada en `dossier/composer.js`:
 - **Streaming del proveedor de IA:** el gateway `OPENAI_BASE_URL` corta a
   los ~30 s las peticiones sin respuesta. Las llamadas se piden en streaming
   (`OPENAI_STREAM_RESPONSES`, activo por defecto); turnos grandes como MIX05
-  ya no fallan con 504. Un flujo que deja de enviar datos 60 s
-  (`OPENAI_STREAM_IDLE_TIMEOUT_MS`) se aborta como fallo transitorio y se
+  ya no fallan con 504. Un flujo que deja de enviar datos 40 s
+  (`OPENAI_STREAM_IDLE_TIMEOUT_MS`) o que no responde en 30 s
+  (`OPENAI_STREAM_HEADER_TIMEOUT_MS`) se aborta como fallo transitorio y se
   reintenta una vez; el enrutador también tiene ese reintento.
 - **Resultado:** 34 casos (C01-C09, L09, L10, MIX04, MIX05, SEQ06, A10-03):
   todos en revisión humana tras repetir MIX05 con streaming. SEQ06
@@ -478,6 +479,46 @@ Implementada en `dossier/composer.js`:
 - **Casos objetivo:** Q09, Q11, R01-R06, G01-G08, K, L.
 - **Retira:** lectores documentales y de calculadoras del adaptador anterior.
 
+#### Estado de la fase D (2026-10-25)
+
+Implementada en `dossier/sources.js` y en el verificador:
+
+- **Fuentes del turno**, en un expediente adicional que solo se lee si una
+  tarea del plan lo necesita: partidas y condiciones de la versión vigente
+  de cada cotización (`qitem`, `qterms`; precios ocultos si el vendedor
+  excluye precios, costos o márgenes), archivo adjunto (`att`), texto de
+  documentos del CRM habilitados para IA (`dtext`, máximo 3 documentos y
+  12.000 caracteres) y biblioteca documental (`lib`, conocimiento general,
+  nunca hecho del cliente). Comparten índice de evidencia, verificación,
+  citas y trazas con el resto del expediente.
+- Una cotización nombrada solo por número se ubica, por código, en su
+  oportunidad dentro de la cuenta.
+- Si todas las tareas dependen de un adjunto que no llegó, el motor pide el
+  archivo sin llamar al analista.
+- **Calculadoras como verificación:** el analista y el redactor declaran sus
+  cálculos (diferencia, proporción, cambio porcentual, desplazamiento de
+  fecha por meses o días, orden por importe o fecha) con los registros de
+  entrada, y el código los recalcula; un resultado incorrecto se repara o se
+  marca. Se eligió así en lugar de portar las calculadoras del recorrido
+  anterior, que dependen de especificaciones de B3.
+- Nuevos límites con texto fijo: `financial_data` (facturación, ingresos,
+  cobros) e `internal_costs` (costos, márgenes, descuentos máximos).
+- La procedencia (`contentSource`) se calcula de lo citado: biblioteca,
+  material aportado, CRM o mezcla.
+- **Solo las acciones se delegan** al recorrido anterior.
+- Llamadas al proveedor: si no hay cabeceras en 30 s o el flujo calla 40 s,
+  se aborta como fallo transitorio y se reintenta una vez.
+- **Resultado:** 80 casos dirigidos (Q09, Q11, G, R, K, L06-L08, MIX07,
+  MIX09, SEQ11/13/15, C05-02, C08-03): todos en revisión humana salvo 10
+  casos K omitidos por diseño del catálogo (requieren preparar permisos o
+  inyectar fallos) y L06 sin precondición vigente. Banco de consultas 21/23:
+  los dos fallos son omisiones de detalle del analista en R1 y R2 (versión en
+  borrador anterior y cargo del decisor), sin datos falsos.
+- **Retiro diferido a la fase F:** los lectores documentales y las
+  calculadoras del recorrido anterior ya no atienden consultas ni
+  redacciones; solo serían alcanzables desde turnos con acciones. Se
+  eliminarán en la fase F junto con B3, en un solo borrado verificado.
+
 ### Fase E — Acciones
 
 - Proponente por tipo de acción → ejecutor existente → confirmación.
@@ -488,6 +529,44 @@ Implementada en `dossier/composer.js`:
   automáticas y revisión manual de 20 acciones reales en desarrollo. Sin modo
   sombra (decisión 11.1.5).
 
+#### Estado de la fase E (2026-10-25)
+
+Implementada con el **alcance acotado** que eligió el usuario (decisión
+11.1.6): los ejecutores, borradores, confirmaciones y memorias por tipo de
+acción del recorrido anterior se conservan; COR-011 sigue siendo la lógica
+de respuestas cortas a una actividad pendiente.
+
+- **Proponente acotado:** B3 recibe solo las tareas de acción del plan y un
+  esquema restringido a sus categorías (por ejemplo, solo
+  `action.schedule_activity`), en lugar de las 46.
+- **Turnos mixtos divididos:** el motor nuevo responde la parte de consulta,
+  documento, redacción o límite; solo las acciones van a los ejecutores. La
+  respuesta combina ambas partes y B10 solo presenta la parte de acciones.
+  Antes, un turno con una acción iba completo al recorrido anterior.
+- **Borradores pendientes:** el motor corre aunque haya un borrador de
+  actividad abierto. Si el mensaje lo continúa o pide una acción, el turno se
+  delega completo como antes; si es una consulta o redacción, la responde el
+  motor y el borrador se conserva. El enrutador recibe el borrador pendiente.
+- El analista y el redactor reciben las tareas que se resuelven en otra
+  parte para no duplicarlas.
+- Un cambio sobre una oportunidad cerrada se explica como regla de negocio
+  (informativo), no como error técnico.
+- **Estabilidad del proveedor de IA:** la causa de los turnos que agotaban el
+  tiempo era una generación desbocada del modelo (miles de fragmentos sin
+  terminar). Cada llamada tiene ahora tiempo máximo (enrutador 30 s,
+  analista 50 s, redactor 45 s) y límite de tokens de salida (2.500, 8.000 y
+  4.000; entre 2 y 4 veces el máximo observado). Al superarlos se reintenta
+  una vez. Las lecturas del expediente tienen 15 s por consulta y 10 s para
+  obtener conexión.
+- **Resultado:** casos A01-A11, R01-R06, SEQ01-SEQ10, K08 y MIX01-MIX09:
+  todos en revisión humana en las corridas de la fase, salvo los omitidos
+  por el catálogo (A08-09 a A08-12 y SEQ08). La última corrida completa se
+  detuvo en SEQ04 por saldo de IA agotado; SEQ04-SEQ10 y MIX01-MIX08 habían
+  pasado en la corrida anterior de la fase.
+- **Pendientes:** corregir un borrador abierto con una frase libre («mejor a
+  las 11:00») sigue fallando en el recorrido anterior, igual que antes de la
+  fase; la revisión manual de 20 acciones reales queda a cargo del usuario.
+
 ### Fase F — Retiro del recorrido anterior
 
 - Se eliminan B3 (`turn-contract*.js`), el planificador de B4, la
@@ -495,6 +574,51 @@ Implementada en `dossier/composer.js`:
   `customer-chat-adapter.js` y `service.js`.
 - **Ganancia esperada:** 4-7 s menos por turno y una sola base de reglas.
 - **Criterio:** dos corridas completas consecutivas sin regresiones.
+
+**Estado del alcance A (2026-10-25):** el motor de expedientes y el contrato
+B3 son obligatorios; se retiraron `CUSTOMER_DOSSIER_ENGINE_MODE`,
+`CUSTOMER_TURN_CONTRACT_MODE` y `CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`, la
+clasificación semántica anterior, las ramas de consulta, guía y contenido de
+`executeComponent` (una categoría que no sea de acción devuelve una respuesta
+informativa sin operaciones), la agregación de consultas del runtime, las
+memorias de priorización, comparación, tendencia, escenario, relación,
+historial y pendientes, y los módulos que solo las servían. Se conservan B3,
+el planificador de B4 y el modelo de lectura porque las acciones sin rama
+propia (agendar, respuesta de etapa, reportes) los usan mediante un adaptador
+anidado con `contractComponent`.
+
+Ajustes posteriores al borrado:
+
+- La continuación de un borrador abierto («sí», «mejor a las 11:00») se
+  convierte en una tarea de acción explícita, así que los ejecutores siempre
+  reciben un plan restringido a acciones. Corregir la hora de un borrador
+  abierto, que antes fallaba, ahora funciona.
+- Un cambio de etapa condicionado a una revisión del mismo turno («comprueba
+  si puede avanzar y avánzala si puede») no se prepara: el ejecutor no evalúa
+  la preparación y contradecía la revisión verificada. Se explica que la
+  solicitud se prepara si el vendedor la pide explícitamente.
+- **Causa raíz de las generaciones desbocadas:** con salida JSON estricta, el
+  modelo a veces emite espacios y tabuladores sin fin. El flujo se corta al
+  detectar más de 400 caracteres de espacio seguidos o el mismo fragmento
+  repetido más de 200 veces, y se reintenta. El enrutador tiene 20 s por
+  llamada y hasta dos reintentos.
+- El crédito agotado de OpenAI (`credit_balance_exhausted`) se trata como
+  cuota agotada, sin reintentos.
+
+**Verificación (2026-10-25):**
+
+- Suite de pruebas sin regresiones (unas 750 pruebas eliminadas junto con el
+  código que cubrían).
+- Corrida completa 1 (212 casos): 193 en revisión humana, 15 omitidos por el
+  catálogo, L06 sin precondición vigente, Q01-02 y Q10-03 fallidos y SEQ09
+  con error de entorno. Q10-03 y SEQ09 se corrigieron después.
+- Corrida completa 2: 196 en revisión humana (186 en la corrida y 10 casos,
+  MIX06-MIX08 y L01-L08 salvo L06, completados después de que la cuenta de
+  OpenAI de la organización agotara su crédito y su límite de gasto). Q01-02
+  vuelve a fallar por una comprobación literal del evaluador («en proceso» o
+  «abierta») con una respuesta correcta.
+- Criterio de dos corridas completas cumplido, salvo Q01-02 (evaluador) y
+  los casos omitidos por el catálogo.
 
 ### Estimación orientativa
 
@@ -599,5 +723,10 @@ aparte.
 5. **Sin modo sombra en acciones.** La fase E se valida con pruebas
    automáticas de cada proponente y ejecutor y con la revisión manual de 20
    acciones reales en desarrollo.
+
+6. **Fase E con alcance acotado (2026-10-25).** Se conservan los ejecutores,
+   borradores, confirmaciones y memorias de acciones y la lógica de COR-011; el
+   proponente es B3 restringido a las categorías de acción del plan y los turnos
+   mixtos se dividen. El estado unificado completo queda descartado por ahora.
 
 No quedan decisiones pendientes para iniciar la fase A.

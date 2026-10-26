@@ -3,7 +3,7 @@ import {
   alignContractWithPlan, comparePlanAndContract, plannedTasksForInterpretation,
 } from "../src/commercial-intelligence/dossier/plan-alignment.js";
 import { interpretReviewedCustomerTurn } from "../src/commercial-intelligence/turn-contract-review.js";
-import { customerTurnContractSchema } from "../src/commercial-intelligence/turn-contract.js";
+import { customerTurnContractSchema, getCustomerTurnProviderVariants } from "../src/commercial-intelligence/turn-contract.js";
 
 const question = "Redacta un correo para Daniel sin incluir costos y agenda una llamada el jueves.";
 const constraints = (extra = {}) => ({ count: 0, durationMinutes: 0, length: "standard", format: "free",
@@ -75,6 +75,16 @@ describe("alineación del contrato de B3 con el plan", () => {
   });
 });
 
+describe("proponente de acciones acotado", () => {
+  it("restringe el esquema a las categorías permitidas por el plan", () => {
+    const categories = (variants) => variants[0].find((field) => field.key === "components").items.variants
+      .flatMap((variant) => variant.fields.find((field) => field.key === "category").enum);
+    expect(categories(getCustomerTurnProviderVariants())).toHaveLength(46);
+    expect(categories(getCustomerTurnProviderVariants(undefined, ["action.schedule_activity", "action.update_fields"])).sort())
+      .toEqual(["action.schedule_activity", "action.update_fields"]);
+  });
+});
+
 describe("B3 guiado por el plan", () => {
   const input = { question, classifierPrompt: { instruction: "" }, user: { id: 0 } };
 
@@ -88,6 +98,17 @@ describe("B3 guiado por el plan", () => {
     expect(result.review).toMatchObject({ status: "plan_aligned", attempts: 1, adjustments: null });
     expect(interpret.mock.calls[0][0].plannedTasks.map((item) => item.id)).toEqual(["t1", "t2"]);
     expect(reviewWithAI).not.toHaveBeenCalled();
+  });
+
+  it("conserva el contrato de B3 si alinearlo lo dejaría sin componentes", async () => {
+    const outcome = task("t1", "action", "record_outcome");
+    const report = contract([component("c1", "report.interaction_outcome", { text: question, explicitAction: false })]);
+    const interpret = vi.fn().mockResolvedValue(report);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await interpretReviewedCustomerTurn(input, { plan: plan([outcome]), interpret, reviewWithAI: vi.fn() });
+    expect(result.contract).toEqual(report);
+    expect(result.review).toMatchObject({ status: "plan_unaligned", adjustments: { keptUnaligned: true } });
+    warn.mockRestore();
   });
 
   it("reinterpreta una vez con los problemas y luego alinea por código", async () => {

@@ -1,10 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import mysql from "mysql2/promise";
 import { installOpportunityCommercialHistory, readOpportunityCommercialHistory, readOpportunityScenarioBasis } from "../src/commercial-intelligence/opportunity-history-store.js";
-import { buildCustomerScenarioResponse, resolveCustomerScenarioRequest } from "../src/commercial-intelligence/customer-scenarios.js";
-import { buildCustomerTrendResponse, resolveCustomerTrendRequest } from "../src/commercial-intelligence/customer-trends.js";
 import { mutateAuditedOpportunity } from "../src/opportunity-audit.js";
-import { prepareCustomerCommercialHistory } from "../src/commercial-intelligence/customer-trends.js";
 
 describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("G06 isolated MySQL transactional acceptance", () => {
   let connection;
@@ -51,25 +48,13 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("G06 isolated MySQL transact
   });
   const mutate = (opportunityId, statement, args = []) => transact((conn) =>
     mutateAuditedOpportunity({ connection: conn, opportunityId, actor: { id: 7, full_name: "Vendedor" } }, statement, args));
-  it("G07 reads current data before G06 installation and simulates without opportunity or audit writes", async () => {
+  it("G07 reads current data before G06 installation without opportunity or audit writes", async () => {
     const before = await sql("SELECT * FROM opportunities"), audits = await sql("SELECT * FROM audit_log");
     const user = { id: 7, permissionSet: new Set(["cuentas.read", "oportunidades.read"]) };
     const data = await readOpportunityScenarioBasis({ user, accountId: 1, governance: {}, transact });
     expect(data.opportunities).toHaveLength(1);
     expect(data.opportunities[0].activation_status_code).toBe("activada");
     expect(data.opportunities[0].stage_code).toBe("inicio");
-    const request = resolveCustomerScenarioRequest({
-      component: { object: "account", reference: "", scenarioSpec: {
-        set: "account", references: [], alternatives: [{ name: "A", assumptions: [], changes: [
-          { kind: "amount_percent", value: -10, unit: "percent", date: "", status: "en_proceso", references: [] },
-          { kind: "close_shift", value: 1, unit: "months", date: "", status: "en_proceso", references: [] },
-        ] }],
-      } }, snapshot: { account: { id: 1 } }, context: { accountId: 1 }, movement: "new_request", now: new Date(),
-    });
-    const result = buildCustomerScenarioResponse({ request, data });
-    expect(result.scenarioMetadata.tables[0].rows[0].slice(2, 7)).toEqual([
-      "USD 500.00", "USD 450.00", "-USD 50.00", "2027-01-31", "2027-02-28",
-    ]);
     expect(await readOpportunityScenarioBasis({ user: { ...user, id: 999 }, accountId: 1, governance: {}, transact }))
       .toMatchObject({ opportunities: [] });
     expect(await sql("SELECT * FROM opportunities")).toEqual(before);
@@ -106,21 +91,13 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("G06 isolated MySQL transact
     expect((await sql("SELECT COUNT(*) AS total FROM audit_log WHERE entity_id=2"))[0].total).toBe(2);
     await sql("ALTER TABLE audit_log DROP CHECK g06_test_audit_failure");
   });
-  it("reads the full authorized source and produces verified current cuts", async () => {
+  it("reads the full authorized source", async () => {
     const data = await readOpportunityCommercialHistory({
       user: { id: 7, permissionSet: new Set(["cuentas.read", "oportunidades.read"]) },
       accountId: 1, governance: { includeWonOpportunities: true }, transact,
     });
     expect(data.opportunities).toHaveLength(2);
     expect(data.events).toHaveLength(4);
-    const now = new Date(), day = now.toISOString().slice(0, 10);
-    const request = resolveCustomerTrendRequest({
-      component: { object: "account", reference: "", trendSpec: { metric: "pipeline", period: { mode: "absolute", startDate: day, endDate: day } } },
-      context: { accountId: 1 }, snapshot: { account: { id: 1, name: "Cuenta" } }, movement: "new_request", now, timezone: "UTC",
-    });
-    const result = buildCustomerTrendResponse({ request, data });
-    expect(result.trendMetadata.table.rows[0][2]).toBe("2");
-    expect(result.trendMetadata.table.rows[0][3]).toBe("USD 1,200.00");
   });
   it("serializes concurrent application changes into a continuous audit chain", async () => {
     const other = await mysql.createConnection({ user: "root", socketPath: process.env.G06_MYSQL_TEST_SOCKET, database });
@@ -141,13 +118,5 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("G06 isolated MySQL transact
       await other.rollback();
       await other.end();
     }
-  });
-  it("does not certify an unaudited direct SQL change", async () => {
-    await sql("UPDATE opportunities SET amount_usd=901 WHERE id=2");
-    const data = await readOpportunityCommercialHistory({
-      user: { id: 7, permissionSet: new Set(["cuentas.read", "oportunidades.read"]) },
-      accountId: 1, governance: {}, transact,
-    });
-    expect(prepareCustomerCommercialHistory(data).find((item) => item.opportunity.id === 2).continuous).toBe(false);
   });
 });

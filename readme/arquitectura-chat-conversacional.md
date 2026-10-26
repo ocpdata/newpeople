@@ -216,8 +216,7 @@ en vez de asumir que toda mención de biblioteca es una petición de consultarla
 **Barrera de coherencia antes de ejecutar:** después de interpretar y normalizar
 el contrato, B3 aplica comprobaciones deterministas de fuente/objeto documental y
 referencias de continuidad, y una llamada semántica independiente. También revisa
-el contrato del atajo determinista de preguntas sobre el proceso de ventas cuando
-la ruta estructurada está habilitada. La ruta legacy (`off`) no cambia.
+el contrato de cada turno de acción.
 
 El revisor contrasta mensaje actual, mensajes seleccionados (seis recientes y hasta
 dos antecedentes de tareas pendientes), contexto validado,
@@ -499,14 +498,11 @@ interpretación y restricciones) y `turn-contract-runtime.js` (continuidad,
 coordinación y verificadores de reporte/contenido), conectados por el servicio y
 `customer-chat-adapter.js`.
 
-**Activación:** `CUSTOMER_TURN_CONTRACT_MODE=on` es el valor predeterminado del
-código y de las plantillas local/nube en todos los entornos. `off` conserva la
-ruta anterior; `pilot` limita la nueva ruta a
-`CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`. Las variables explícitas prevalecen
-sobre el valor predeterminado. Un servidor remoto necesita recibir esta versión,
-ajustar cualquier override y reiniciar su API; cambiar el repositorio no despliega
-ni reinicia otros entornos. El rollback es `off` más reinicio, sin migraciones ni
-cambios de permisos.
+**Activación:** el contrato es obligatorio. El motor de expedientes responde
+consultas, documentos, biblioteca, cálculos, composición y límites; solo los
+turnos de acción llegan a B3 con un plan restringido a categorías de acción. Ya
+no existen `CUSTOMER_TURN_CONTRACT_MODE`, `CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`
+ni una ruta anterior a la que volver.
 
 
 **Cliente existente · 3. Ejecución del job**

@@ -697,12 +697,6 @@ function normalizeCustomerCollectionPurpose(contract, { question } = {}) {
   };
 }
 
-export function customerTurnContractEnabled(features, userId) {
-  return features.customerTurnContractMode === "on" ||
-    (features.customerTurnContractMode === "pilot" &&
-      features.customerTurnContractPilotUserIds.includes(Number(userId)));
-}
-
 export function customerComponentCapability(component, { hasReferenceMaterial = false } = {}) {
   const definition = CUSTOMER_TURN_CATEGORIES.find((item) => item.code === component.category);
   let intent = definition?.legacyIntent;
@@ -1083,13 +1077,15 @@ const categorySpecifications = {
   "content.explanation": ["prioritySpec", "comparisonSpec", "trendSpec", "scenarioSpec", "documentReportSpec", "documentSpec", "historySpec"],
 };
 
-export function getCustomerTurnProviderVariants(fields = getCustomerTurnContractFields()) {
+export function getCustomerTurnProviderVariants(fields = getCustomerTurnContractFields(), allowedCategories = null) {
   const componentFields = fields.find((field) => field.key === "components").items.fields;
   const commonKeys = new Set(["id", "text", "object", "topic", "scope", "reference", "attribution", "certainty", "dependsOn", "continuationOf"]);
   const examples = { id: "c1", text: "Resume la cuenta", object: "account", topic: "resumen", scope: "single",
     attribution: "none", certainty: "unspecified", continuationOf: "none" };
   const groups = new Map();
-  for (const category of categoryCodes) {
+  // An action proposer only receives the variants of the categories its plan allows.
+  const categories = allowedCategories?.length ? categoryCodes.filter((code) => allowedCategories.includes(code)) : categoryCodes;
+  for (const category of categories) {
     const keys = [...(categorySpecifications[category] || [])];
     if (["query.record_detail", "query.field_value"].includes(category)) keys.push("requestedFields", "listPosition");
     const signature = JSON.stringify(keys);
@@ -1966,7 +1962,9 @@ export async function interpretCustomerTurn({
   conversationHistory = preparedContext.previousMessages;
   conversationContext = preparedContext.validatedContinuation;
   const fields = getCustomerTurnContractFields();
-  const responseVariants = getCustomerTurnProviderVariants(fields);
+  const allowedCategories = plannedTasks?.length
+    ? [...new Set(plannedTasks.flatMap((task) => task.allowedCategories || []))] : null;
+  const responseVariants = getCustomerTurnProviderVariants(fields, allowedCategories);
   const startedAt = Date.now();
   const timeoutMs = Math.min(30000, deadlineAt != null ? new Date(deadlineAt).getTime() - startedAt : 30000);
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {

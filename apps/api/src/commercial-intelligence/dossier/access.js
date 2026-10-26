@@ -9,14 +9,48 @@ export function dossierError(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
-export async function withReadOnlyConnection(pool, work) {
-  const connection = await pool.getConnection();
+export const READ_QUERY_TIMEOUT_MS = 15000;
+export const CONNECTION_ACQUIRE_TIMEOUT_MS = 10000;
+
+function withTimeout(promise, ms, code, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(message), { code })), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+// Each read has a time limit: a stalled remote connection fails one section instead of the whole turn.
+export async function withReadOnlyConnection(pool, work, { queryTimeoutMs = READ_QUERY_TIMEOUT_MS,
+  acquireTimeoutMs = CONNECTION_ACQUIRE_TIMEOUT_MS } = {}) {
+  const acquiring = pool.getConnection();
+  let connection;
   try {
-    await connection.query("START TRANSACTION READ ONLY");
-    return await work(async (sql, params) => (await connection.query(sql, params))[0]);
+    connection = await withTimeout(acquiring, acquireTimeoutMs, "DOSSIER_DB_ACQUIRE_TIMEOUT",
+      "No se obtuvo una conexión a la base de datos a tiempo.");
+  } catch (error) {
+    acquiring.then((late) => late.release()).catch(() => {});
+    throw error;
+  }
+  let broken = false;
+  const run = async (sql, params) => {
+    try {
+      return (await connection.query({ sql, timeout: queryTimeoutMs }, params))[0];
+    } catch (error) {
+      if (["PROTOCOL_SEQUENCE_TIMEOUT", "PROTOCOL_CONNECTION_LOST", "ECONNRESET"].includes(error?.code)) broken = true;
+      throw error;
+    }
+  };
+  try {
+    await run("START TRANSACTION READ ONLY");
+    return await work(run);
   } finally {
-    await connection.rollback();
-    connection.release();
+    if (broken) {
+      connection.destroy();
+    } else {
+      await connection.rollback().catch(() => { broken = true; });
+      if (broken) connection.destroy(); else connection.release();
+    }
   }
 }
 

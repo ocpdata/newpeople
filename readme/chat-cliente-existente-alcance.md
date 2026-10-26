@@ -1187,20 +1187,11 @@ tareas componen el mensaje. No es un contrato comercial ni una autorización
 para ejecutar acciones. Reconocer una categoría no significa poder atenderla:
 el servidor comprueba capacidad, configuración, elegibilidad y permisos.
 
-La ruta de interpretación se selecciona en B3 con `CUSTOMER_TURN_CONTRACT_MODE`:
-
-| Valor | Efecto |
-| --- | --- |
-| `off` | Conserva la ruta anterior, sin llamadas nuevas del contrato. |
-| `pilot` | Solo habilita los IDs de usuario separados por comas en `CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`. |
-| `on` (predeterminado en todos los entornos) | Habilita el contrato para todos los usuarios autorizados del canal. No amplía permisos. |
-
-`pilot` es un valor técnico existente de la configuración, no el enfoque de
-aceptación de esta aplicación. La configuración efectiva del entorno debe
-verificarse: el valor predeterminado del código no demuestra cuál está activo
-en un despliegue. Este documento no cambia variables ni habilita usuarios.
-Para utilizar la ruta anterior se configura `off` y se reinicia la API;
-la memoria del contrato estructurado no se reutiliza en esa ruta.
+El contrato de B3 es obligatorio y solo interpreta turnos de acción: el motor de
+expedientes responde el resto y entrega a B3 un plan restringido a categorías de
+acción. Las variables `CUSTOMER_TURN_CONTRACT_MODE` y
+`CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS` fueron retiradas junto con la ruta
+anterior; no hay interruptor para volver a ella.
 
 ### Responsabilidades por bloque
 

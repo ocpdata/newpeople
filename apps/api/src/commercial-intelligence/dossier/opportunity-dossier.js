@@ -16,6 +16,7 @@ export const DOSSIER_LIMITS = Object.freeze({
   accountProfile: 1, stakeholders: 30, weaknesses: 30, criterionAssessments: 50, deliverables: 30,
   recommendedStrategy: 3, themeEntries: 50, manufacturerRegistrations: 10, proposals: 10, proposalDocuments: 10,
   accountInteractions: 30, leads: 30, campaignInteractions: 20, accountCalendar: 50,
+  quotationContent: 150,
 });
 export const SECTION_TITLES = Object.freeze({
   stageAnswers: "Respuestas de todas las etapas",
@@ -46,6 +47,10 @@ export const SECTION_TITLES = Object.freeze({
   leads: "Interacciones y leads de la cuenta sin oportunidad",
   campaignInteractions: "Campañas de la cuenta",
   accountCalendar: "Calendario de la cuenta sin oportunidad",
+  quotationContent: "Partidas y condiciones de las cotizaciones vigentes",
+  attachment: "Archivo adjunto al mensaje",
+  crmDocumentContent: "Contenido de documentos del CRM",
+  library: "Biblioteca documental (conocimiento general)",
 });
 const TEXT_LIMIT = 4000;
 

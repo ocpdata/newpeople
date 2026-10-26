@@ -3,7 +3,7 @@ import { routeCustomerTurn, validateRoute } from "../src/commercial-intelligence
 import { analyzeCustomerTurn, parseAnalysis } from "../src/commercial-intelligence/dossier/analyst.js";
 import { buildEvidenceIndex, normalizeAnalysisEvidence, presentationIssues, verifyAnalysis } from "../src/commercial-intelligence/dossier/verifier.js";
 import { channelAllows, enabledChannelTools, sectionPermissions } from "../src/commercial-intelligence/dossier/access.js";
-import { buildDossierQualityTrace, customerDossierEngineEnabled, describeCitation, limitAnswer, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
+import { actionOnlyPlan, buildDossierQualityTrace, combineDossierAndActionResponse, describeCitation, limitAnswer, runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 import { appendCustomerAccountChatHistory } from "../src/commercial-intelligence/customer-chat-adapter.js";
 
@@ -77,13 +77,6 @@ let consoleError;
 beforeEach(() => { consoleError = vi.spyOn(console, "error").mockImplementation(() => {}); });
 afterEach(() => consoleError.mockRestore());
 
-describe("interruptor del motor de expedientes", () => {
-  it("está activo para todos los usuarios salvo el interruptor de emergencia off", () => {
-    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "on" })).toBe(true);
-    expect(customerDossierEngineEnabled({ customerDossierEngineMode: "off" })).toBe(false);
-  });
-});
-
 describe("gobernanza del canal en el expediente", () => {
   const user = { permissionSet: new Set(["cuentas.read", "oportunidades.read", "contactos.read",
     "desarrollo_comercial.read", "calendario_comercial.read", "interacciones.read", "cotizaciones.read"]) };
@@ -141,10 +134,11 @@ describe("enrutador", () => {
     const limit = (kind) => planTask({ type: "limit", kind, focusLevel: "none", opportunityIds: [] });
     expect(mode([planTask({ type: "compose", kind: "email" })])).toBe("compose");
     expect(mode([planTask(), planTask({ type: "compose", kind: "translation", material: "previous_answer" })])).toBe("compose");
-    expect(mode([planTask({ type: "compose", kind: "questions", material: "library" })])).toBe("content");
-    expect(mode([planTask({ type: "compose", kind: "summary", material: "attachment" })])).toBe("content");
+    expect(mode([planTask({ type: "compose", kind: "questions", material: "library" })])).toBe("compose");
+    expect(mode([planTask({ type: "compose", kind: "summary", material: "attachment" })])).toBe("compose");
     expect(mode([planTask(), planTask({ type: "action", kind: "schedule_activity" })])).toBe("action");
-    expect(mode([planTask({ type: "document", kind: "quotation" })])).toBe("document");
+    expect(mode([planTask({ type: "document", kind: "quotation" })])).toBe("consult");
+    expect(mode([planTask({ type: "limit", kind: "financial_data", focusLevel: "none", opportunityIds: [] })])).toBe("limit");
     expect(mode([limit("remove_record")])).toBe("limit");
     expect(mode([limit("out_of_scope")])).toBe("out_of_scope");
     expect(mode([], { clarification: { question: "¿Cuál oportunidad?", options: [{ label: "Sealpath", opportunityId: 121 }] } })).toBe("clarify");
@@ -318,10 +312,8 @@ describe("motor de expedientes", () => {
   const base = { user, accountId: 163, question: "¿Cuánto vale Sealpath y qué cotización tiene?", governance, jobId: 9,
     now: new Date("2026-10-23T18:00:00Z"), timezone: "America/Mexico_City" };
 
-  it("delega adjuntos y acciones al recorrido actual sin llamar al analista", async () => {
+  it("delega solo las acciones al recorrido actual sin llamar al analista", async () => {
     const analyze = vi.fn();
-    expect(await runCustomerDossierTurn({ ...base, hasAttachment: true, withConnection: withConnection(), analyze }))
-      .toMatchObject({ handled: false, reason: "attachment" });
     const delegatedTurn = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze,
       route: async () => ({ route: route({ mode: "action" }), droppedFilters: [], attempts: [] }) });
     expect(delegatedTurn).toMatchObject({ handled: false, reason: "mode_action" });
@@ -333,8 +325,8 @@ describe("motor de expedientes", () => {
     const limit = planTask({ type: "limit", kind: "remove_record", ask: "Eliminar Correo", focusLevel: "none", opportunityIds: [] });
     const analyze = vi.fn(async () => analysis());
     const delegatedTurn = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze,
-      route: routed(rawPlan({ tasks: [planTask({ type: "compose", kind: "questions", material: "library" })] })) });
-    expect(delegatedTurn).toMatchObject({ handled: false, reason: "mode_content", plan: { tasks: [{ id: "t1", type: "compose" }] } });
+      route: routed(rawPlan({ tasks: [planTask({ type: "action", kind: "schedule_activity" })] })) });
+    expect(delegatedTurn).toMatchObject({ handled: false, reason: "mode_action", plan: { tasks: [{ id: "t1", type: "action" }] } });
     const limitOnly = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze, route: routed(rawPlan({ tasks: [limit] })) });
     expect(limitOnly.response.answer).toBe(limitAnswer("remove_record"));
     expect(limitOnly.response.turnTasks).toEqual([expect.objectContaining({ type: "limit", kind: "remove_record", status: "unavailable" })]);
@@ -362,6 +354,67 @@ describe("motor de expedientes", () => {
     expect(result.response.turnTasks.map((task) => `${task.type}:${task.kind}:${task.status}`))
       .toEqual(["consult:detail:completed", "compose:email:completed"]);
     expect(result.memory.obligations.map((item) => item.id)).toEqual(["o1", "t2"]);
+  });
+
+  it("pide el archivo cuando la tarea depende de un adjunto que no llegó", async () => {
+    const analyze = vi.fn();
+    const routed = async () => ({ ...validateRoute(rawPlan({ tasks: [planTask({ type: "document", kind: "attachment",
+      focusLevel: "none", opportunityIds: [] })] }), { question: base.question, opportunityIds: [121, 117] }), attempts: [] });
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routed, analyze });
+    expect(result.response).toMatchObject({ responseType: "clarification", turnTasks: [{ type: "document", status: "needs_input" }] });
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("responde cotizaciones con sus partidas citadas y los límites de facturación con texto fijo", async () => {
+    const routed = (tasks) => async () => ({ ...validateRoute(rawPlan({ tasks }), { question: base.question, opportunityIds: [121, 117] }), attempts: [] });
+    const items = { "FROM quotation_versions v WHERE": () => [{ id: 139, currency_code: "USD", payment_terms: "30 días" }],
+      "FROM quotation_sections s": () => [{ id: 900, quotation_version_id: 139, section_title: "Licencias", inclusion_name: "Incluida",
+        product_code: "SP-35", product_description: "Licencias Sealpath", item_type: "producto", is_renewal: 0, quantity: "35.00",
+        original_currency_code: "USD", list_price_unit: "110.00", final_discount_pct: "0" }] };
+    const analyze = vi.fn(async ({ context }) => {
+      expect(context.dossiers.at(-1)).toMatchObject({ kind: "sources" });
+      return analysis({ answerText: "La cotización incluye 35 licencias.", blocks: [{ obligationId: "o1", status: "answered", reason: "", items: [],
+        claims: [claim({ text: "35 licencias", evidenceIds: ["qitem900"], values: [] })] }] });
+    });
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(items), analyze,
+      route: routed([planTask({ type: "document", kind: "quotation" }),
+        planTask({ type: "limit", kind: "financial_data", focusLevel: "none", opportunityIds: [] })]) });
+    expect(result.response.presentation.status).toBe("completed");
+    expect(result.response.dossierCitations.map((citation) => citation.label)).toEqual(["Cotización 78 · versión 1 · partida"]);
+    expect(result.response.answer).toContain("aún no está disponible en este chat");
+    expect(result.response.turnTasks.map((task) => `${task.type}:${task.kind}`)).toEqual(["document:quotation", "limit:financial_data"]);
+  });
+
+  it("responde la parte no ejecutable de un turno mixto y delega solo las acciones", async () => {
+    const plan = rawPlan({ tasks: [planTask(), planTask({ type: "action", kind: "schedule_activity", dependsOn: [1] })] });
+    const routed = async () => ({ ...validateRoute(plan, { question: base.question, opportunityIds: [121, 117] }), attempts: [] });
+    const analyze = vi.fn(async () => analysis());
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routed, analyze });
+    expect(result).toMatchObject({ handled: false, reason: "mode_action",
+      plan: { tasks: [{ id: "t2", type: "action", dependsOn: [] }] },
+      partial: { handled: true, response: { answer: analysis().answerText, turnTasks: [{ type: "consult" }] } } });
+    expect(actionOnlyPlan(null)).toBeNull();
+    const combined = combineDossierAndActionResponse(result.partial.response, {
+      answer: "Preparé la llamada; confírmala para guardarla.", responseType: "operation", operations: [{ kind: "activity" }],
+      presentation: { status: "completed", auditedAnswer: "Preparé la llamada; confírmala para guardarla." },
+      components: [{ id: "c1", category: "action.schedule_activity", status: "completed" }] });
+    expect(combined).toMatchObject({ responseType: "operation", operations: [{ kind: "activity" }],
+      answer: `${analysis().answerText}\n\nPreparé la llamada; confírmala para guardarla.`,
+      presentation: { engine: "mixed", actionAnswer: "Preparé la llamada; confírmala para guardarla.", dossierPart: { status: "completed" } } });
+    expect(combined.turnTasks.map((task) => task.type)).toEqual(["consult", "action"]);
+  });
+
+  it("no prepara un cambio de etapa condicionado a la revisión del mismo turno", async () => {
+    const plan = rawPlan({ tasks: [planTask({ kind: "readiness" }), planTask({ type: "action", kind: "change_stage", dependsOn: [1] })] });
+    const routed = async () => ({ ...validateRoute(plan, { question: base.question, opportunityIds: [121, 117] }), attempts: [] });
+    const result = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), route: routed, analyze: vi.fn(async () => analysis()) });
+    expect(result.handled).toBe(true);
+    expect(result.response.answer).toContain("No preparé la solicitud de cambio de etapa");
+    expect(result.response.turnTasks.map((task) => `${task.type}:${task.status}`)).toEqual(["consult:completed", "action:deferred"]);
+    const explicit = rawPlan({ tasks: [planTask({ kind: "readiness" }), planTask({ type: "action", kind: "change_stage" })] });
+    const both = await runCustomerDossierTurn({ ...base, withConnection: withConnection(), analyze: vi.fn(async () => analysis()),
+      route: async () => ({ ...validateRoute(explicit, { question: base.question, opportunityIds: [121, 117] }), attempts: [] }) });
+    expect(both).toMatchObject({ handled: false, plan: { tasks: [{ type: "action", kind: "change_stage" }] } });
   });
 
   it("rechaza un foco que no pertenece a la cuenta", async () => {

@@ -130,10 +130,14 @@ function extractResponseOutputText(data) {
   return contentText || "";
 }
 
-const STREAM_ERROR_STATUS = { rate_limit_exceeded: 429, server_error: 500, insufficient_quota: 429 };
+const STREAM_ERROR_STATUS = { rate_limit_exceeded: 429, server_error: 500, insufficient_quota: 429, credit_balance_exhausted: 429 };
 
 /** Reads a Responses API event stream and returns the final response object, like the non-streamed body. */
-async function readStreamedResponse(response) {
+const DEGENERATE_WHITESPACE = 400;
+const DEGENERATE_REPEATS = 200;
+
+async function readStreamedResponse(response, stats = { events: 0, bytes: 0 }) {
+  Object.assign(stats, { tail: stats.tail || "", whitespaceRun: 0, repeats: 0, lastDelta: null });
   const decoder = new TextDecoder();
   let buffer = "";
   let final = null;
@@ -141,10 +145,22 @@ async function readStreamedResponse(response) {
     const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
     if (!data || data === "[DONE]") return;
     const event = JSON.parse(data);
+    stats.events += 1;
+    stats.lastType = event.type;
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      stats.tail = (stats.tail + event.delta).slice(-200);
+      stats.whitespaceRun = /^\s*$/.test(event.delta) ? stats.whitespaceRun + event.delta.length : 0;
+      stats.repeats = event.delta === stats.lastDelta ? stats.repeats + 1 : 0;
+      stats.lastDelta = event.delta;
+      // Strict JSON output sometimes degenerates into endless whitespace or one repeated token; stop it early.
+      if (stats.whitespaceRun > DEGENERATE_WHITESPACE || stats.repeats > DEGENERATE_REPEATS) {
+        throw new Error(`OpenAI web search failed: 502 Salida degenerada del modelo (eventos ${stats.events}, final ${JSON.stringify(stats.tail.slice(-60))}).`);
+      }
+    }
     if (["response.completed", "response.incomplete"].includes(event.type)) final = event.response;
     if (event.type === "response.failed" || event.type === "error") {
       const error = event.response?.error || event.error || event;
-      const status = STREAM_ERROR_STATUS[error?.code] || 500;
+      const status = STREAM_ERROR_STATUS[error?.code] || STREAM_ERROR_STATUS[error?.type] || 500;
       throw new Error(`OpenAI web search failed: ${status} ${JSON.stringify({ error })}`);
     }
   };
@@ -166,6 +182,7 @@ async function readStreamedResponse(response) {
       clearTimeout(timer);
     }
     if (read.done) break;
+    stats.bytes += read.value.length;
     buffer += decoder.decode(read.value, { stream: true });
     let separator;
     while ((separator = buffer.indexOf("\n\n")) >= 0) {
@@ -193,6 +210,8 @@ export async function runStructuredWebResearch({
   responseVariants = null,
   model = null,
   reasoningEffort = null,
+  maxDurationMs = null,
+  maxOutputTokens = null,
 }) {
   if (
     !config.openai.apiKey ||
@@ -216,6 +235,7 @@ export async function runStructuredWebResearch({
     model: resolvedModel,
     ...(temperature === null ? {} : { temperature }),
     ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
+    ...(maxOutputTokens ? { max_output_tokens: maxOutputTokens } : {}),
     ...(useWebSearchTool ? { tools: [{ type: "web_search_preview" }] } : {}),
     text: {
       format: {
@@ -244,7 +264,25 @@ export async function runStructuredWebResearch({
   };
 
   const startedAt = new Date();
-  const response = await fetch(
+  // A streamed call answers with headers at once; waiting longer means the gateway or provider stalled.
+  const headerTimeout = config.openai.streamResponses ? new AbortController() : null;
+  const headerTimer = headerTimeout
+    ? setTimeout(() => headerTimeout.abort(new Error("header timeout")), config.openai.streamHeaderTimeoutMs) : null;
+  // A call that keeps streaming without finishing would otherwise hold the whole turn; it is retried instead.
+  const callTimeout = maxDurationMs ? new AbortController() : null;
+  const callTimer = callTimeout ? setTimeout(() => callTimeout.abort(new Error("call timeout")), maxDurationMs) : null;
+  const signals = [signal, headerTimeout?.signal, callTimeout?.signal].filter(Boolean);
+  const requestSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0] || null;
+  const stats = { events: 0, bytes: 0 };
+  const callTimedOut = (error) => {
+    if (callTimeout?.signal.aborted && !signal?.aborted) {
+      return new Error(`OpenAI web search failed: 504 La llamada superó ${maxDurationMs} ms (eventos ${stats.events}, bytes ${stats.bytes}, último ${stats.lastType || "ninguno"}, final ${JSON.stringify(String(stats.tail || "").slice(-60))}).`);
+    }
+    return error;
+  };
+  let response;
+  try {
+    response = await fetch(
     `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
     {
       method: "POST",
@@ -253,20 +291,39 @@ export async function runStructuredWebResearch({
         Authorization: `Bearer ${config.openai.apiKey}`,
       },
       body: JSON.stringify(config.openai.streamResponses ? { ...payload, stream: true } : payload),
-      ...(signal ? { signal } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
     },
   );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `OpenAI web search failed: ${response.status} ${errorText}`,
-    );
+  } catch (error) {
+    clearTimeout(callTimer);
+    if (headerTimeout?.signal.aborted && !signal?.aborted && !callTimeout?.signal.aborted) {
+      throw new Error(`OpenAI web search failed: 504 El proveedor no respondió en ${config.openai.streamHeaderTimeoutMs} ms.`);
+    }
+    throw callTimedOut(error);
+  } finally {
+    clearTimeout(headerTimer);
   }
 
-  const data = String(response.headers?.get?.("content-type") || "").includes("text/event-stream")
-    ? await readStreamedResponse(response)
-    : await response.json();
+  let data;
+  try {
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `OpenAI web search failed: ${response.status} ${errorText}`,
+      );
+    }
+    data = String(response.headers?.get?.("content-type") || "").includes("text/event-stream")
+      ? await readStreamedResponse(response, stats)
+      : await response.json();
+  } catch (error) {
+    throw callTimedOut(error);
+  } finally {
+    clearTimeout(callTimer);
+  }
+  // A runaway generation stops at the output limit; it is retried like a transient failure, never parsed.
+  if (maxOutputTokens && data?.status === "incomplete" && data?.incomplete_details?.reason === "max_output_tokens") {
+    throw new Error(`OpenAI web search failed: 502 La respuesta superó el límite de ${maxOutputTokens} tokens de salida.`);
+  }
 
   if (typeof onResponseMetadata === "function") {
     try {

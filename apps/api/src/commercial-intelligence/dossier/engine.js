@@ -1,16 +1,14 @@
 import { pool } from "../../db.js";
 import { config } from "../../config.js";
-import { dossierError, withReadOnlyConnection } from "./access.js";
+import { dossierError, sectionPermissions, withReadOnlyConnection } from "./access.js";
+import { buildTurnSourcesDossier, quotationOpportunityIds } from "./sources.js";
+import { describeTurnTasks } from "./observed-tasks.js";
+import { DEFAULT_CONSTRAINTS } from "./turn-plan.js";
 import { buildAccountDossier, buildOpportunityDossier } from "./opportunity-dossier.js";
 import { buildRouterContext, DELEGATED_MODES, routeCustomerTurn } from "./router.js";
 import { analyzeCustomerTurn, buildAnalystContext } from "./analyst.js";
 import { buildComposerContext, composeCustomerTurn, renderComposition, verifyComposition } from "./composer.js";
 import { buildEvidenceIndex, normalizeAnalysisEvidence, verifyAnalysis } from "./verifier.js";
-
-// "off" is only an operational kill switch; any other value serves every user.
-export function customerDossierEngineEnabled(features) {
-  return features.customerDossierEngineMode !== "off";
-}
 
 function businessDate(now, timezone) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -24,22 +22,24 @@ function remainingSignal(deadlineAt) {
 
 const TRANSIENT_PROVIDER_ERROR = /failed: (?:5\d\d|429)\b/;
 // Quota and spend-limit rejections also arrive as 429, but retrying cannot succeed.
-const PROVIDER_QUOTA_ERROR = /insufficient_quota|spend_limit_exceeded|billing_hard_limit/;
+const PROVIDER_QUOTA_ERROR = /insufficient_quota|spend_limit_exceeded|billing_hard_limit|credit_balance_exhausted/;
 const MIN_RETRY_WINDOW_MS = 20000;
 
 export function isProviderQuotaError(error) {
   return PROVIDER_QUOTA_ERROR.test(String(error?.message || ""));
 }
 
-async function withOneTransientRetry(work, { deadlineAt, diagnostics, name }) {
-  try {
-    return await work();
-  } catch (error) {
-    if (!TRANSIENT_PROVIDER_ERROR.test(String(error?.message || "")) || isProviderQuotaError(error) ||
-        deadlineAt - Date.now() < MIN_RETRY_WINDOW_MS) throw error;
-    console.warn("[dossier] Retrying transient provider failure once", { call: name, message: String(error.message).slice(0, 120) });
-    diagnostics.transientRetries = [...(diagnostics.transientRetries || []), name];
-    return work();
+async function withOneTransientRetry(work, { deadlineAt, diagnostics, name, retries = 1 }) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await work();
+    } catch (error) {
+      if (attempt >= retries || !TRANSIENT_PROVIDER_ERROR.test(String(error?.message || "")) || isProviderQuotaError(error) ||
+          deadlineAt - Date.now() < MIN_RETRY_WINDOW_MS) throw error;
+      console.warn("[dossier] Retrying transient provider failure", { call: name, attempt: attempt + 1,
+        message: String(error.message).slice(0, 120) });
+      diagnostics.transientRetries = [...(diagnostics.transientRetries || []), name];
+    }
   }
 }
 
@@ -48,6 +48,13 @@ const excerpt = (value, limit = 240) => (value ? String(value).replace(/\s+/g, "
 export function describeCitation(item) {
   const id = item.evidenceId;
   const base = { evidenceId: id, table: item.source?.table || null };
+  if (id.startsWith("qitem")) return { ...base, label: `Cotización ${item.quotationId} · versión ${item.versionNumber} · partida`,
+    excerpt: excerpt([item.productCode, item.description, item.quantity != null && `cantidad ${item.quantity}`].filter(Boolean).join(" · ")) };
+  if (id.startsWith("qterms")) return { ...base, label: `Cotización ${item.quotationId} · versión ${item.versionNumber} · condiciones`,
+    excerpt: excerpt([item.paymentTerms, item.deliveryTime, item.validity, item.warranty].filter(Boolean).join(" · ")) };
+  if (id.startsWith("att")) return { ...base, label: `Archivo adjunto ${item.fileName || ""}`.trim(), excerpt: excerpt(item.text) };
+  if (id.startsWith("dtext")) return { ...base, label: `Documento ${item.fileName || ""}`.trim(), excerpt: excerpt(item.text) };
+  if (id.startsWith("lib")) return { ...base, label: "Biblioteca documental (conocimiento general)", excerpt: excerpt(item.text) };
   if (id.startsWith("acct")) return { ...base, label: `Cuenta ${item.name}`,
     excerpt: [item.accountType, item.economicSector, item.city, item.ownerNames && `responsables: ${item.ownerNames}`]
       .filter(Boolean).join(" · ") || null };
@@ -115,6 +122,8 @@ function dossierSources(dossiers) {
 const LIMIT_ANSWERS = Object.freeze({
   remove_record: "No puedo eliminar, cancelar ni desactivar registros desde este chat. No se eliminó ni modificó ningún registro. Los nombres similares no demuestran que sean duplicados; puedo ayudarte a consultar sus diferencias sin borrar ni fusionar.",
   send_communication: "No puedo enviar correos ni mensajes desde este chat. No se envió ninguna comunicación. Puedo ayudarte a preparar un borrador para que lo revises y lo envíes por tu canal habitual.",
+  financial_data: "La opción de consultar y analizar facturación, ingresos contables, cobros, pagos y saldos por cobrar aún no está disponible en este chat. Los importes y cierres comerciales de oportunidades no sustituyen esa información.",
+  internal_costs: "Este chat no muestra costos internos, márgenes, rentabilidad ni límites de descuento, y no voy a estimarlos ni a buscarlos en documentos. Para un descuento, consulta la política comercial con tu responsable o con el área que aprueba cotizaciones. Puedo ayudarte a revisar el contenido comercial autorizado de una cotización (partidas, cantidades y condiciones).",
   out_of_scope: "Esa solicitud no se relaciona con esta cuenta ni con el CRM. Puedo ayudarte con información, análisis, redacción o acciones sobre la cuenta seleccionada.",
 });
 
@@ -128,6 +137,59 @@ export function limitAnswer(kind, ask = "", documentationUrl = config.app?.syste
   return documentationUrl
     ? `${base} Puedes consultar la documentación de la aplicación en ${documentationUrl}.`
     : `${base} Solicita la documentación vigente al administrador.`;
+}
+
+/** Provenance label shown by the chat: library knowledge and seller-provided material are never CRM facts. */
+export function contentSourceFor(citedEvidenceIds, compositions = []) {
+  const library = citedEvidenceIds.some((id) => /^lib\d+$/.test(id));
+  const provided = citedEvidenceIds.some((id) => /^att\d+$/.test(id)) ||
+    compositions.some((task) => ["message_text", "previous_answer", "attachment"].includes(task.material));
+  const crm = citedEvidenceIds.some((id) => !/^(?:lib|att)\d+$/.test(id));
+  if (library) return crm || provided ? "mixed_knowledge" : "knowledge_library";
+  if (provided) return crm ? "mixed_document" : "user_provided";
+  return null;
+}
+
+export function pendingActionTask(question, index = 0) {
+  return { id: `t${index + 1}`, type: "action", kind: "schedule_activity", ask: String(question).slice(0, 600),
+    evidence: String(question).slice(0, 600), focusLevel: "none", opportunityIds: [], dependsOn: [],
+    itemsNeedConfirmation: false, material: "none", constraints: { ...DEFAULT_CONSTRAINTS } };
+}
+
+export const DEFERRED_STAGE_CHANGE = "No preparé la solicitud de cambio de etapa porque dependía de esta revisión; la etapa todavía no cambió. Si con lo anterior quieres solicitar el avance, pídelo de forma explícita y prepararé la solicitud para su validación.";
+
+/** Stage changes conditioned on a non-action task of the same turn. */
+export function deferredStageChanges(plan) {
+  const nonAction = new Set((plan?.tasks || []).filter((task) => task.type !== "action").map((task) => task.id));
+  return (plan?.tasks || []).filter((task) => task.type === "action" && task.kind === "change_stage" &&
+    task.dependsOn.some((id) => nonAction.has(id)));
+}
+
+/** The plan restricted to its action tasks, for the executors of the previous flow (migration phase E). */
+export function actionOnlyPlan(plan, excluded = []) {
+  if (!plan) return null;
+  const skip = new Set(excluded.map((task) => task.id));
+  const tasks = plan.tasks.filter((task) => task.type === "action" && !skip.has(task.id));
+  const ids = new Set(tasks.map((task) => task.id));
+  return { ...plan, tasks: tasks.map((task) => ({ ...task, dependsOn: task.dependsOn.filter((id) => ids.has(id)) })) };
+}
+
+/**
+ * Combines the verified dossier answer of a mixed turn with the executors' answer for its actions. The
+ * action part keeps its own presentation, operations and confirmation flow.
+ */
+export function combineDossierAndActionResponse(dossierResponse, actionResponse) {
+  const actionAnswer = String(actionResponse?.answer || "").trim();
+  return {
+    ...actionResponse,
+    answer: [String(dossierResponse.answer || "").trim(), actionAnswer].filter(Boolean).join("\n\n"),
+    turnTasks: [...(dossierResponse.turnTasks || []), ...describeTurnTasks(actionResponse)],
+    dossierCitations: dossierResponse.dossierCitations || [],
+    dossierSources: dossierResponse.dossierSources || [],
+    ...(!actionResponse?.contentSource && dossierResponse.contentSource ? { contentSource: dossierResponse.contentSource } : {}),
+    presentation: { ...(actionResponse?.presentation || {}), engine: "mixed", actionAnswer,
+      dossierAnswer: String(dossierResponse.answer || "").trim(), dossierPart: dossierResponse.presentation },
+  };
 }
 
 function delegated(reason, extra = {}) {
@@ -144,8 +206,9 @@ function unverifiedNotice(failures, obligations) {
 }
 
 export async function runCustomerDossierTurn(input) {
+  const progress = { stage: "start", calls: [] };
   try {
-    return await executeCustomerDossierTurn(input);
+    return await executeCustomerDossierTurn({ ...input, progress });
   } catch (error) {
     if (String(error?.code || "").startsWith("DOSSIER_")) throw error;
     // Client-facing errors (for example, an exhausted AI budget) already carry an actionable message.
@@ -153,7 +216,8 @@ export async function runCustomerDossierTurn(input) {
     const timeout = ["TimeoutError", "AbortError"].includes(error?.name);
     const quota = isProviderQuotaError(error);
     console.error("[dossier] Turn failed", {
-      jobId: input.jobId || null, errorName: String(error?.name || "Error").slice(0, 80),
+      jobId: input.jobId || null, stage: progress.stage, calls: progress.calls,
+      errorName: String(error?.name || "Error").slice(0, 80),
       errorCode: String(error?.code || "").slice(0, 80) || null, errorMessage: String(error?.message || "").slice(0, 500),
     });
     if (quota) {
@@ -172,15 +236,17 @@ export async function runCustomerDossierTurn(input) {
 }
 
 async function executeCustomerDossierTurn({
-  user, accountId, focusOpportunityId = null, question, history = [], memory = null, hasAttachment = false,
+  user, accountId, focusOpportunityId = null, question, history = [], memory = null, attachment = null, pendingAction = null,
   governance, jobId = null, timezone = config.app?.businessTimezone || "America/Mexico_City", now = new Date(),
   deadlineAt = Date.now() + 120000,
   withConnection = (work) => withReadOnlyConnection(pool, work),
-  route = routeCustomerTurn, analyze = analyzeCustomerTurn, compose = composeCustomerTurn,
+  route = routeCustomerTurn, analyze = analyzeCustomerTurn, compose = composeCustomerTurn, sourceReaders = {},
+  progress = { stage: "start", calls: [] },
 }) {
   const startedAt = Date.now();
-  const diagnostics = { engine: "dossier", calls: [], focusOpportunityId: focusOpportunityId || null };
+  const diagnostics = { engine: "dossier", calls: progress.calls, focusOpportunityId: focusOpportunityId || null };
   const timed = async (name, work) => {
+    progress.stage = name;
     const callStartedAt = Date.now();
     try {
       return await work();
@@ -188,9 +254,8 @@ async function executeCustomerDossierTurn({
       diagnostics.calls.push({ name, durationMs: Date.now() - callStartedAt });
     }
   };
-  if (hasAttachment) return delegated("attachment", { diagnostics });
-
-  const accountDossier = await withConnection((run) => buildAccountDossier({ user, accountId, governance, run, now }));
+  const accountDossier = await timed("account_dossier",
+    () => withConnection((run) => buildAccountDossier({ user, accountId, governance, run, now })));
   const opportunitiesSection = accountDossier.sections.opportunities;
   if (!["loaded", "empty"].includes(opportunitiesSection.status)) {
     throw dossierError(opportunitiesSection.status === "restricted" ? 403 : 502, "DOSSIER_ACCOUNT_OPPORTUNITIES_UNAVAILABLE",
@@ -202,9 +267,10 @@ async function executeCustomerDossierTurn({
   }
   const today = businessDate(now, timezone);
   const routed = await timed("router", () => withOneTransientRetry(() => route({
-    context: buildRouterContext({ question, history, selectedOpportunityId: focusOpportunityId, accountDossier, memory, today }),
+    context: buildRouterContext({ question, history, selectedOpportunityId: focusOpportunityId, accountDossier, memory, today,
+      attachmentName: attachment?.text ? attachment.name || "Archivo adjunto" : null, pendingAction }),
     question, opportunityIds, userId: user.id, jobId, signal: remainingSignal(deadlineAt),
-  }), { deadlineAt, diagnostics, name: "router" }));
+  }), { deadlineAt, diagnostics, name: "router", retries: 2 }));
   diagnostics.route = {
     mode: routed.route.mode, focusLevel: routed.route.focusLevel, opportunityIds: routed.route.opportunityIds,
     responseLength: routed.route.responseLength || "standard",
@@ -212,10 +278,35 @@ async function executeCustomerDossierTurn({
     droppedFilters: routed.droppedFilters, reason: routed.route.reason, attempts: routed.attempts,
     plan: routed.route.plan || null, softIssues: routed.softIssues || [],
   };
+  // A reply that only continues an open activity draft ("sí", "a las 11") becomes an explicit action task, so the
+  // executors always receive a plan restricted to actions.
+  if (pendingAction && routed.route.plan?.continuation.kind === "pending_action" &&
+      !routed.route.plan.tasks.some((task) => task.type === "action")) {
+    routed.route.plan = { ...routed.route.plan, tasks: [...routed.route.plan.tasks, pendingActionTask(question, routed.route.plan.tasks.length)] };
+    routed.route.mode = "action";
+    diagnostics.route.plan = routed.route.plan;
+  }
   // The plan is the single interpretation: delegated turns carry it so the legacy executors follow it.
-  if (DELEGATED_MODES.has(routed.route.mode)) {
+  // Only action tasks are delegated; the rest of a mixed turn is answered here and combined afterwards.
+  // A stage change that depends on a check of this same turn ("check if it can advance and advance it") is not
+  // prepared: the executor does not evaluate readiness, so it could contradict the verified check.
+  const deferredTasks = deferredStageChanges(routed.route.plan);
+  const actionPlan = actionOnlyPlan(routed.route.plan, deferredTasks);
+  const answersHere = (routed.route.plan?.tasks || []).some((task) => task.type !== "action");
+  if (DELEGATED_MODES.has(routed.route.mode) && !answersHere) {
     return delegated(`mode_${routed.route.mode}`, { diagnostics, plan: routed.route.plan || null });
   }
+  const delegates = DELEGATED_MODES.has(routed.route.mode) && actionPlan.tasks.length > 0;
+  const finish = (result) => {
+    if (deferredTasks.length && result.response) {
+      result.response.answer = `${result.response.answer}\n\n${DEFERRED_STAGE_CHANGE}`;
+      result.response.turnTasks = [...(result.response.turnTasks || []), ...deferredTasks.map((task) => ({
+        id: task.id, type: "action", kind: task.kind, status: "deferred", engine: "dossier", category: null, validation: null }))];
+    }
+    return delegates
+      ? delegated(`mode_${routed.route.mode}`, { diagnostics: result.diagnostics, plan: actionPlan, partial: result })
+      : result;
+  };
 
   const baseMemory = {
     level: memory?.level || "account", focusOpportunityIds: memory?.focusOpportunityIds || [],
@@ -251,15 +342,36 @@ async function executeCustomerDossierTurn({
     };
   }
 
-  const focusIds = routed.route.opportunityIds.slice(0, 3);
-  const opportunityDossiers = focusIds.length
-    ? await withConnection(async (run) => {
-      const built = [];
-      for (const opportunityId of focusIds) built.push(await buildOpportunityDossier({ user, opportunityId, governance, run, now }));
-      return built;
-    })
-    : [];
-  const dossiers = [accountDossier, ...opportunityDossiers];
+  const planTasks = (routed.route.plan?.tasks || []).filter((task) => !["limit", "action"].includes(task.type));
+  const needsAttachment = (task) => (task.type === "document" && task.kind === "attachment") || task.material === "attachment";
+  if (!attachment?.text && planTasks.length && planTasks.every(needsAttachment)) {
+    return finish({
+      handled: true,
+      response: {
+        answer: "No recibí ningún archivo en este mensaje. Adjunta el archivo o pega su texto y lo reviso; no voy a suponer su contenido ni a usar otros documentos en su lugar.",
+        responseType: "clarification", components: [], operations: [], evidence: [], inferences: [],
+        presentation: { status: "completed", engine: "dossier" }, dossierCitations: [],
+        turnTasks: planTasks.map((task) => ({ id: task.id, type: task.type, kind: task.kind, status: "needs_input",
+          engine: "dossier", category: null, validation: null })),
+      },
+      memory: baseMemory,
+      diagnostics: { ...diagnostics, durationMs: Date.now() - startedAt },
+    });
+  }
+
+  let focusIds = routed.route.opportunityIds.slice(0, 3);
+  const { opportunityDossiers, sourcesDossier } = await timed("opportunity_dossiers", () => withConnection(async (run) => {
+    const quotationOwners = await quotationOpportunityIds({ plan: routed.route.plan, run, visibleOpportunityIds: opportunityIds });
+    focusIds = [...new Set([...focusIds, ...quotationOwners])].slice(0, 3);
+    const built = [];
+    for (const opportunityId of focusIds) built.push(await buildOpportunityDossier({ user, opportunityId, governance, run, now }));
+    // Documents, the attachment and the library are read only when a task of the plan needs them.
+    const sources = await timed("sources", () => buildTurnSourcesDossier({ plan: routed.route.plan, user, accountDossier,
+      opportunityDossiers: built, permissions: sectionPermissions(user, governance), attachment, run,
+      signal: remainingSignal(deadlineAt), ...sourceReaders }));
+    return { opportunityDossiers: built, sourcesDossier: sources };
+  }));
+  const dossiers = [accountDossier, ...opportunityDossiers, ...(sourcesDossier ? [sourcesDossier] : [])];
   diagnostics.dossiers = dossiers.map((dossier) => ({
     kind: dossier.kind, id: dossier.opportunity?.id || dossier.account.id, size: dossier.size, sections: sectionSummary(dossier),
   }));
@@ -325,7 +437,7 @@ async function executeCustomerDossierTurn({
         diagnostics.repairedEvidenceIds = (diagnostics.repairedEvidenceIds || 0) + normalized.repaired;
         const output = { ...raw, deliverables: normalized.analysis.blocks };
         return { output, verification: verifyComposition({ composition: output, tasks: compositions, dossiers, question,
-          history, responseLength }) };
+          history, responseLength, attachmentText: attachment?.text || "" }) };
       },
     });
     ({ output: composition, verification: compositionCheck } = result);
@@ -359,7 +471,7 @@ async function executeCustomerDossierTurn({
   }
   diagnostics.durationMs = Date.now() - startedAt;
   const failedTask = (id) => allFailures.some((failure) => failure.obligationId === id);
-  return {
+  return finish({
     handled: true,
     response: {
       answer,
@@ -370,11 +482,12 @@ async function executeCustomerDossierTurn({
         : { status: "degraded", engine: "dossier", reasonCode: "DOSSIER_VERIFICATION_INCOMPLETE" },
       dossierCitations: citations,
       dossierSources: dossierSources(dossiers),
+      ...(contentSourceFor(citedEvidenceIds, compositions) ? { contentSource: contentSourceFor(citedEvidenceIds, compositions) } : {}),
       turnTasks: [
         ...obligations.map((obligation) => {
           const task = routed.route.plan?.tasks.find((item) => item.id === obligation.taskId);
           return {
-            id: obligation.taskId || obligation.id, type: "consult",
+            id: obligation.taskId || obligation.id, type: task?.type || "consult",
             kind: task?.kind || (obligation.form === "exact_items" ? "list" : "summary"),
             status: "completed", engine: "dossier", category: null,
             validation: failedTask(obligation.id) ? { reasonCode: "verification_incomplete" } : null,
@@ -402,7 +515,7 @@ async function executeCustomerDossierTurn({
       presentationIssues: [...(verification?.presentationIssues || []), ...(compositionCheck?.presentationIssues || [])],
       citedEvidenceIds },
     diagnostics,
-  };
+  });
 }
 
 export function buildDossierQualityTrace(result) {

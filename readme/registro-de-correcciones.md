@@ -41,6 +41,9 @@ No incluir secretos, credenciales ni datos personales innecesarios.
 | COR-015 | Migración total: fase A1 | El expediente incluye perfil y responsables de la cuenta, espacio de trabajo de la oportunidad, interacciones de cuenta, leads, campañas, calendario de cuenta, registros ante el fabricante y propuestas, con permisos y gobernanza por fuente. | Implementada; banco 22/23 con 0 afirmaciones prohibidas. |
 | COR-016 | Migración total: fase B | El enrutador es la única interpretación del turno: consultas y límites en el motor nuevo; redacción, documentos y acciones llevan el plan al recorrido anterior, donde B3 solo completa especificaciones y el código alinea el contrato con el plan, sin revisor de IA. | Implementada; banco 21/23 y las 2 conversaciones fallidas pasan al repetirlas; Pruebas dirigidas 58/70 en la primera corrida, pendientes asignados a fases C y D y casos de biblioteca bloqueados por el límite mensual de Pinecone. |
 | COR-017 | Migración total: fase C | Las redacciones sin biblioteca ni adjunto las prepara el redactor del motor nuevo; el código arma el texto y verifica asunto, saludo, duración de agendas, cantidad de preguntas, fidelidad al texto aportado, incertidumbre, exclusión de precios y que no se afirmen envíos. Las llamadas al proveedor de IA usan streaming para no ser cortadas por el gateway. | Implementada; 34/34 casos de redacción y 29/29 de acciones y mezclas en revisión humana; banco 22/23. |
+| COR-018 | Migración total: fase D | Cotizaciones (partidas y condiciones), adjunto, documentos del CRM y biblioteca son fuentes del motor nuevo, leídas solo cuando una tarea las necesita; los cálculos se recalculan por código; facturación y costos internos son límites fijos. Solo las acciones siguen en el recorrido anterior. | Implementada; casos dirigidos en revisión humana salvo los omitidos por diseño; banco 21/23 por omisiones de detalle. |
+| COR-019 | Migración total: fase E (alcance acotado) | Las acciones conservan sus ejecutores y confirmaciones; B3 recibe solo las acciones del plan con un esquema restringido; los turnos mixtos se dividen entre el motor nuevo y los ejecutores; el motor responde consultas aunque haya un borrador abierto; las llamadas a IA tienen tiempo y tokens máximos contra generaciones desbocadas. | Implementada; casos de acciones, reportes, secuencias y mezclas en revisión humana; última corrida detenida por saldo de IA. |
+| COR-020 | Migración total: fase F (alcance A) | Se retiró el código del recorrido anterior que ya no se alcanza (consultas, redacción, calculadoras, clasificación semántica e interruptores); el motor de expedientes y el contrato de B3 son obligatorios; se conservan B3 como proponente de acciones, los ejecutores, el planificador B4 que usan las acciones anidadas y B10. Se detectan las salidas degeneradas del modelo. | Implementada; dos corridas completas con 193 y 196 casos en revisión humana; Q01-02 pendiente por una comprobación literal del evaluador. |
 
 ## Registro de correcciones
 
@@ -400,14 +403,90 @@ Agregar nuevas entradas sin eliminar las anteriores.
 - **Infraestructura:** el gateway de OpenAI configurado corta a ~30 s las
   peticiones sin primer byte; las llamadas se piden en streaming
   (`OPENAI_STREAM_RESPONSES=true` por defecto) y se lee el evento final. Un
-  flujo sin datos durante 60 s se aborta como fallo transitorio
-  (`OPENAI_STREAM_IDLE_TIMEOUT_MS`) y el enrutador lo reintenta una vez.
+  flujo sin datos durante 40 s se aborta como fallo transitorio
+  (`OPENAI_STREAM_IDLE_TIMEOUT_MS`; ajustado en COR-018) y el enrutador lo reintenta una vez.
 - **Validación:** pruebas del redactor, del motor con redacción y consulta en
   el mismo turno, y del streaming; sin regresiones frente a HEAD. Pruebas
   dirigidas: 34/34 en revisión humana (MIX05 tras activar streaming) y 29/29
   acciones, límites, secuencias y mezclas. Banco 22/23 (R1, omisión del
   analista sobre cotizaciones).
 - **Pendientes:** retirar B9 y su auditor con la fase D.
+
+### COR-018 - Migración total: fase D, fuentes documentales y cálculos (2026-10-25)
+
+- **Problema:** cotizaciones, adjuntos, documentos y biblioteca solo los leía
+  el recorrido anterior, con sus propios lectores, calculadoras y auditor;
+  los costos internos y la facturación no tenían un límite claro.
+- **Corrección:** expediente de fuentes del turno (`dossier/sources.js`) con
+  evidencia citable y verificada (`qitem`, `qterms`, `att`, `dtext`, `lib`);
+  cotizaciones nombradas por número se ubican en su oportunidad; petición
+  determinista del adjunto faltante; cálculos declarados y recalculados por
+  código; límites `financial_data` e `internal_costs`; procedencia del
+  contenido según lo citado. Solo las acciones se delegan. En la alineación
+  con B3, si el plan dejara el contrato vacío se conserva el de B3
+  (`plan_unaligned`); el enrutador distingue relatos del vendedor
+  (`stage_answer`) del resultado de llamadas a leads (`record_outcome`).
+- **Proveedor de IA:** tiempo máximo para recibir cabeceras en streaming
+  (30 s) y tiempo sin datos reducido a 40 s, para que el reintento quepa en
+  el turno.
+- **Evaluador:** reconoce tareas de documento, biblioteca y partidas de
+  cotización del motor nuevo; L07 acepta una negación inicial.
+- **Validación:** pruebas de fuentes, cálculos, procedencia, adjunto
+  faltante, cotizaciones y límites; suite completa sin regresiones frente a
+  HEAD (una prueba de temporizadores de B10 falla solo bajo carga y pasa
+  aislada). Casos dirigidos de la fase D en revisión humana salvo 10 K
+  omitidos por el catálogo y L06 sin precondición. Banco 21/23.
+- **Pendientes:** retirar lectores y calculadoras del recorrido anterior en
+  la fase F; omisiones de detalle del analista en R1 y R2.
+
+### COR-019 - Migración total: fase E, acciones con alcance acotado (2026-10-25)
+
+- **Decisión del usuario:** opción acotada; se conservan ejecutores,
+  borradores, confirmaciones, memorias por tipo de acción y COR-011.
+- **Corrección:** B3 interpreta solo las tareas de acción del plan, con el
+  esquema limitado a sus categorías. Los turnos mixtos se dividen: el motor
+  nuevo responde lo demás y el servicio combina ambas respuestas; B10 solo
+  presenta la parte de acciones. El motor ya no se omite con un borrador
+  abierto: delega solo si el mensaje lo continúa o pide una acción. El
+  analista y el redactor no responden tareas que se resuelven aparte. El
+  rechazo por oportunidad cerrada es informativo.
+- **Causa de los turnos que agotaban el tiempo:** generaciones desbocadas del
+  modelo (más de 7.000 fragmentos en 50 s). Se limitaron la duración y los
+  tokens de salida de cada llamada, con un reintento; las lecturas de base
+  de datos tienen tiempo máximo y la etapa del fallo queda registrada.
+- **Validación:** pruebas de división, combinación, esquema restringido,
+  límites de llamada y conexión; suite completa sin regresiones frente a
+  HEAD. Casos de la fase en revisión humana; la última corrida se detuvo por
+  saldo de IA agotado en el CRM (unos 24 USD consumidos en 24 h de
+  corridas).
+- **Pendientes:** corrección libre de un borrador abierto (limitación previa
+  del recorrido anterior); revisión manual de 20 acciones reales.
+
+### COR-020 - Migración total: fase F, retiro del recorrido anterior (2026-10-25)
+
+- **Decisión del usuario:** alcance A, retirar lo inalcanzable y conservar lo
+  que usan las acciones; el interruptor de emergencia deja de existir.
+- **Corrección:** el motor de expedientes y el contrato de B3 son
+  obligatorios (se retiraron `CUSTOMER_DOSSIER_ENGINE_MODE`,
+  `CUSTOMER_TURN_CONTRACT_MODE` y `CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS`).
+  Se eliminaron la clasificación semántica anterior, las ramas de consulta,
+  guía y contenido del adaptador y del runtime, `generateCustomerContent` y
+  su auditor, las memorias de consulta y ocho módulos (priorización,
+  comparación, tendencias, escenarios, relaciones, documentos del CRM,
+  clasificación de intención y validación de contenido), con sus pruebas.
+  Una categoría que no sea de acción que llegue al adaptador devuelve una
+  respuesta informativa sin operaciones. Se conservan B3, los ejecutores, el
+  planificador B4 (las acciones lo usan mediante adaptadores anidados) y B10.
+- **Ajustes:** continuación de borradores como tarea de acción explícita;
+  cambio de etapa condicionado a una revisión del mismo turno no se prepara;
+  detección de salidas degeneradas (espacios o fragmentos repetidos) con
+  reintento; más reintentos y menor tiempo para el enrutador; crédito agotado
+  de OpenAI tratado como cuota.
+- **Validación:** suite sin regresiones; corridas completas con 193 y 196
+  casos en revisión humana (frente a 185 antes de la migración); los 10 casos
+  que el crédito agotado de OpenAI dejó sin correr pasaron después.
+  Pendientes: la comprobación literal de Q01-02 y la revisión manual de 20
+  acciones.
 ### Plantilla para la siguiente correccion
 
 Copiar estos campos en una nueva entrada con su ID definitivo:

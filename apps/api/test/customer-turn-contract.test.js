@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CUSTOMER_TURN_CATEGORIES, CUSTOMER_DIALOGUE_MOVEMENTS, CUSTOMER_TURN_INTERPRETATION_RULES, customerTurnContractSchema,
-  customerTurnContractEnabled, customerComponentCapability, constrainCustomerComponentPlan,
+  customerComponentCapability, constrainCustomerComponentPlan,
   customerComponentAnswerRules, customerComponentVerificationRules,
   interpretCustomerTurn,
   getCustomerTurnProviderVariants, CUSTOMER_TURN_PROVIDER_VERSION,
 } from "../src/commercial-intelligence/turn-contract.js";
 import {
-  associateCustomerReport, generateCustomerContent, resolveCustomerContinuation,
+  associateCustomerReport, resolveCustomerContinuation,
   runCustomerContractTurn, validateCustomerTurnMemory,
 } from "../src/commercial-intelligence/turn-contract-runtime.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
@@ -156,36 +156,6 @@ describe("Customer turn contract", () => {
     expect(result).toEqual(proposed);
   });
   it.each([
-    "Compara Alfa, Alfa 3 Años y Beta por preparación comercial: qué sabemos y qué falta confirmar.",
-    "¿Cuál está más madura y qué necesita cada una para avanzar: Alfa, Alfa 3 Años y Beta?",
-  ])("coordinates independent readiness queries rather than a field comparison: %s", async (question) => {
-    const names = ["Alfa", "Alfa 3 Años", "Beta"];
-    const parts = names.map((reference, index) => component("query.stage_readiness", {
-      id: `c${index + 1}`, reference, scope: "single", dependsOn: [],
-      text: `Consulta lo documentado, faltantes y siguiente paso sugerido de ${reference}.`,
-      stageReadinessSpec: { purpose: "requirements" },
-    }));
-    const classifyWithAI = vi.fn().mockResolvedValue(contract(parts));
-    const interpreted = await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" }, classifyWithAI });
-    expect(interpreted.components.map((part) => part.reference)).toEqual(names);
-    expect(interpreted.components.every((part) => part.category === "query.stage_readiness")).toBe(true);
-    expect(classifyWithAI.mock.calls[0][0].systemPrompt).toContain("Selecciona la capacidad por el objetivo comercial");
-    const executeComponent = vi.fn(async ({ component: part }) =>
-      part.reference === "Alfa 3 Años" ? engine("No se pudo consultar esta oportunidad.", "error")
-        : engine(`${part.reference}: necesidad documentada; confirmar alcance.`, "informational", {
-          stageReadiness: { opportunityId: part.reference === "Alfa" ? 1 : 3 },
-        }));
-    const result = await runCustomerContractTurn({ contract: interpreted, question, executeComponent });
-    expect(executeComponent).toHaveBeenCalledTimes(3);
-    expect(result.response.components.map((part) => part.status)).toEqual(["completed", "error", "completed"]);
-    expect(result.response.stageReadiness).toBeNull();
-    expect(result.response.stageReadinessResults.map((part) => part.reference)).toEqual(names);
-    expect(result.response.stageReadinessResults[1].readiness).toBeNull();
-    expect(result.response.answer).toContain("Alfa: necesidad documentada");
-    expect(result.response.answer).toContain("Beta: necesidad documentada");
-    expect(result.response.operations).toEqual([]);
-  });
-  it.each([
     { failedId: "c1", reason: "CRM access denied" },
     { failedId: "c2", reason: "RAG retrieval error" },
   ])("does not synthesize a briefing after $reason", async ({ failedId }) => {
@@ -206,72 +176,6 @@ describe("Customer turn contract", () => {
     expect(result.response.components[2].status).toBe("clarification");
     expect(result.response.operations).toEqual([]);
   });
-  it.each([false, true])("retains CRM evidence with missing RAG support, including bounded repair: %s", async (needsRepair) => {
-    const generateWithAI = vi.fn();
-    if (needsRepair) generateWithAI.mockResolvedValueOnce({ answer: "[[deliverable:c1]]\nCapacidades sin respaldo" })
-      .mockResolvedValueOnce({ approved: "no", reasonCode: "insufficient_document_support",
-        feedback: "No hay fragmentos para respaldar capacidades; declara ese limite." });
-    generateWithAI.mockResolvedValueOnce({
-      answer: "[[deliverable:c1]]\nNo hay fragmentos pertinentes para respaldar capacidades; falta validar necesidades.",
-    }).mockResolvedValueOnce({ approved: "yes", reasonCode: "supported",
-      sourceChecks: { crmFacts: true, documentedNeeds: true, scope: true, hypotheses: true } });
-    const result = await generateCustomerContent({
-      component: component("content.meeting_preparation", { object: "general", reference: "" }),
-      readToolResults: [], history: [], user: { id: 0 }, question: "Prepara el briefing con respaldo documental",
-      dependencyResults: [{ category: "query.account_summary", answer: "Contexto disponible",
-        verifiedEvidence: { source: "crm", componentId: "c1", answer: "Contexto disponible", evidence: [] } },
-      { category: "query.document_content", answer: "Sin fragmentos",
-        verifiedEvidence: { source: "knowledge_library", componentId: "c2", answer: "Sin fragmentos", evidence: [] } }],
-      documentKnowledge: { status: "no_results", snippets: [] }, generateWithAI,
-    });
-    expect(result.responseType).toBe("informational");
-    expect(result.contentSource).toBeUndefined();
-    expect(result.answer).toContain("Contexto disponible");
-    expect(generateWithAI.mock.calls[1][0].context.draft).toContain("Contexto disponible");
-    expect(generateWithAI.mock.calls[1][0].context.draft).not.toContain("[[deliverable:");
-    expect(generateWithAI.mock.calls[0][0].context.evidence[0].toolName).toBe("verifiedComponentResult");
-    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("declara ese límite");
-    expect(generateWithAI.mock.calls[1][0].context.evidence).toEqual(generateWithAI.mock.calls[0][0].context.evidence);
-    expect(generateWithAI.mock.calls[1][0].systemPrompt).toContain("también las negativas");
-    expect(generateWithAI.mock.calls[1][0].systemPrompt).toContain("unsupported_crm_claim");
-    for (const [request] of generateWithAI.mock.calls) {
-      expect(request.context.evidence).toHaveLength(1);
-      expect(request.context.evidence[0].result.componentId).toBe("c1");
-    }
-    expect(generateWithAI).toHaveBeenCalledTimes(needsRepair ? 4 : 2);
-    if (needsRepair) expect(generateWithAI.mock.calls[2][0].context.correction.feedback)
-      .toBe("No hay fragmentos para respaldar capacidades; declara ese limite.");
-  });
-  it.each([undefined, { crmFacts: true, documentedNeeds: false, scope: true, hypotheses: true }])(
-    "does not approve integrated content with missing or failed source checks: %j", async (checks) => {
-      const generateWithAI = vi.fn(async (request) => request.schemaName === "customer_account_content"
-        ? { answer: "[[deliverable:c1]]\nNecesidades documentadas: las habituales del sector." }
-        : { approved: "yes", reasonCode: "supported", sourceChecks: checks,
-          feedback: "Las pautas del sector no demuestran necesidades documentadas." });
-      const result = await generateCustomerContent({
-        component: component("content.meeting_preparation", { object: "general", reference: "" }),
-        readToolResults: [], history: [], user: { id: 0 },
-        dependencyResults: [{ verifiedEvidence: { componentId: "c1", source: "crm", answer: "Contacto visible" } }],
-        generateWithAI,
-      });
-      expect(result.responseType).toBe("error");
-      expect(result.answer).not.toContain("las habituales");
-      expect(result.contentDiagnostics).toMatchObject({ attempts: 2, reasonCode: "unsupported_crm_claim" });
-      expect(generateWithAI).toHaveBeenCalledTimes(4);
-    });
-  it.each(["Briefing sin marcador", "[[deliverable:c1]][[deliverable:c1]]", "[[deliverable:c1]][[deliverable:unknown]]"])(
-    "rejects omitted, duplicated or unknown CRM placeholders before auditing: %s", async (answer) => {
-      const generateWithAI = vi.fn().mockResolvedValue({ answer });
-      const result = await generateCustomerContent({
-        component: component("content.meeting_preparation", { object: "general", reference: "" }),
-        readToolResults: [], history: [], user: { id: 0 },
-        dependencyResults: [{ verifiedEvidence: { componentId: "c1", source: "crm", answer: "Contexto verificado" } }],
-        generateWithAI,
-      });
-      expect(result.responseType).toBe("error");
-      expect(result.contentDiagnostics).toMatchObject({ stage: "format", reasonCode: "crm_evidence_changed", attempts: 2 });
-      expect(generateWithAI).toHaveBeenCalledTimes(2);
-    });
   it("sends dimension criteria and contrasts without replacing the saved classifier guidance or schema", async () => {
     const question = "Muéstrame la ficha de Renovación Alfa";
     const classifyWithAI = vi.fn().mockResolvedValue(contract([component("query.record_detail")]));
@@ -492,172 +396,6 @@ describe("Customer turn contract", () => {
     expect(result.components[0].object).toBe("general");
   });
 
-  it("keeps library provenance separate in a mixed library and CRM answer", async () => {
-    const result = await runCustomerContractTurn({
-      contract: contract([
-        component("query.document_content", { object: "general", documentSpec: { source: "knowledge_library" } }),
-        component("query.account_summary", { id: "c2", object: "account" }),
-      ]),
-      question: "Explica BlueCat y resume la cuenta", context: { accountId: 1 },
-      executeComponent: vi.fn()
-        .mockResolvedValueOnce(engine("BlueCat permite gestionar DDI.", "informational", { contentSource: "knowledge_library" }))
-        .mockResolvedValueOnce(engine("Resumen CRM autorizado")),
-    });
-    expect(result.response.contentSource).toBe("mixed_knowledge");
-  });
-
-  it.each([
-    ["no_documents", "informational", "No hay documentos activos"],
-    ["no_results", "informational", "no devolvió fragmentos"],
-    ["not_configured", "error", "no está configurada"],
-    ["error", "error", "Falló la consulta"],
-  ])("reports library status %s without inventing an answer", async (status, responseType, text) => {
-    const generateWithAI = vi.fn();
-    const result = await generateCustomerContent({
-      component: component("query.document_content", {
-        object: "general", documentSpec: { source: "knowledge_library" },
-      }),
-      readToolResults: [], history: [], documentKnowledge: { status, snippets: [] },
-      user: { id: 1 }, jobId: 0, generateWithAI,
-    });
-    expect(result).toMatchObject({
-      responseType, contentSource: "knowledge_library",
-      contentDiagnostics: { stage: "retrieval", reasonCode: status },
-    });
-    expect(result.answer).toContain(text);
-    expect(generateWithAI).not.toHaveBeenCalled();
-  });
-
-  it("repairs a rejected RAG draft once and audits the corrected answer", async () => {
-    const generateWithAI = vi.fn()
-      .mockResolvedValueOnce({ answer: "BlueCat ya está instalado en esta cuenta." })
-      .mockResolvedValueOnce({ approved: "no", reasonCode: "unsupported_crm_claim" })
-      .mockResolvedValueOnce({ answer: "La documentación describe gestión DDI; no confirma su uso en esta cuenta." })
-      .mockResolvedValueOnce({ approved: "yes", reasonCode: "supported" });
-    const result = await generateCustomerContent({
-      component: component("query.document_content", {
-        object: "general", text: "¿Qué resuelve BlueCat?", documentSpec: { source: "knowledge_library" },
-      }),
-      question: "¿Qué resuelve BlueCat?", readToolResults: [], history: [],
-      documentKnowledge: { status: "results", snippets: [{ content: "BlueCat permite gestionar DDI." }] },
-      user: { id: 1 }, jobId: 0, generateWithAI,
-    });
-    expect(result).toMatchObject({
-      responseType: "informational", contentSource: "knowledge_library",
-      contentDiagnostics: { stage: "audit", reasonCode: "approved", repaired: true },
-      operations: [],
-    });
-    expect(generateWithAI).toHaveBeenCalledTimes(4);
-    expect(generateWithAI.mock.calls[2][0].context.correction.reasonCode).toBe("unsupported_crm_claim");
-  });
-
-  it("does not bypass the audit when a RAG repair is also rejected", async () => {
-    const generateWithAI = vi.fn().mockImplementation(async ({ schemaName }) =>
-      schemaName === "customer_account_content"
-        ? { answer: "Una afirmación sin respaldo" }
-        : { approved: "no", reasonCode: "insufficient_document_support" });
-    const result = await generateCustomerContent({
-      component: component("content.discovery_questions", { object: "general" }),
-      readToolResults: [], history: [], user: { id: 1 }, jobId: 0, generateWithAI,
-      documentKnowledge: { status: "results", snippets: [{ content: "Otro tema" }] },
-    });
-    expect(result).toMatchObject({
-      responseType: "error",
-      contentDiagnostics: { stage: "audit", reasonCode: "insufficient_document_support", repaired: true },
-    });
-    expect(generateWithAI).toHaveBeenCalledTimes(4);
-  });
-
-  it.each([
-    ["customer_account_content", "CUSTOMER_CONTENT_GENERATION_FAILED"],
-    ["customer_account_content_audit", "CUSTOMER_CONTENT_AUDIT_FAILED"],
-  ])("identifies provider failure at %s", async (failureSchema, code) => {
-    const generateWithAI = vi.fn().mockImplementation(async ({ schemaName }) => {
-      if (schemaName === failureSchema) throw new Error("Provider unavailable");
-      return { answer: "Contenido" };
-    });
-    await expect(generateCustomerContent({
-      component: component("content.discovery_questions"), readToolResults: [], history: [],
-      user: { id: 1 }, jobId: 0, generateWithAI,
-    })).rejects.toMatchObject({ code });
-  });
-
-  it("retries a 19-minute agenda requested as 20 minutes and renders only validated block durations", async () => {
-    const generateWithAI = vi.fn()
-      .mockResolvedValueOnce({ blocks: [{ title: "Revisión", durationMinutes: 19, description: "Validar necesidades." }] })
-      .mockResolvedValueOnce({ blocks: [
-        { title: "Revisión", durationMinutes: 15, description: "Validar necesidades." },
-        { title: "Cierre", durationMinutes: 5, description: "Acordar próximos pasos." },
-      ] })
-      .mockResolvedValueOnce({ approved: "yes" });
-    const result = await generateCustomerContent({
-      component: component("content.meeting_preparation", { text: "Prepara una agenda de 20 minutos" }),
-      question: "Prepara una agenda de 20 minutos", readToolResults: [], history: [], user: { id: 1 }, jobId: 0, generateWithAI,
-    });
-    expect(result.answer).toContain("Revisión (15 minutos)");
-    expect(result.answer).toContain("Cierre (5 minutos)");
-    expect(result.answer).not.toContain("19 minutos");
-    expect(generateWithAI).toHaveBeenCalledTimes(3);
-  });
-  it("does not approve an agenda that still violates the requested total after a bounded retry", async () => {
-    const generateWithAI = vi.fn().mockResolvedValue({
-      blocks: [{ title: "Revisión", durationMinutes: 19, description: "Validar necesidades." }],
-    });
-    await expect(generateCustomerContent({
-      component: component("content.meeting_preparation", { text: "Prepara una agenda de 20 minutos" }),
-      question: "Prepara una agenda de 20 minutos", readToolResults: [], history: [], user: { id: 1 }, jobId: 0, generateWithAI,
-    })).rejects.toMatchObject({ code: "CUSTOMER_AGENDA_DURATION_INVALID" });
-    expect(generateWithAI).toHaveBeenCalledTimes(2);
-  });
-  it("audits discovery questions against the same prior deliverable used to draft them", async () => {
-    const dependencyResults = [{ category: "query.document_content", answer: "Cotización 18: cuatro servidores, entrega en 45 días." }];
-    const generateWithAI = vi.fn().mockResolvedValueOnce({
-      questions: ["¿Los cuatro servidores cubren sus necesidades?", "¿El plazo de 45 días es adecuado?"],
-    }).mockResolvedValueOnce({ approved: "yes" });
-    const result = await generateCustomerContent({
-      component: component("content.discovery_questions", { object: "general", text: "Prepara dos preguntas para Kimberly" }),
-      question: "Resume la cotización 18; luego prepara dos preguntas para Kimberly",
-      readToolResults: [], history: [], dependencyResults, user: { id: 1 }, jobId: 0, generateWithAI,
-    });
-    expect(result.responseType).toBe("informational");
-    expect(generateWithAI.mock.calls[0][0].context.dependencyResults).toEqual(dependencyResults);
-    expect(generateWithAI.mock.calls[1][0].context.dependencyResults).toEqual(dependencyResults);
-  });
-  it("keeps retrieved document fragments separate from CRM evidence in content generation and audit", async () => {
-    const documentKnowledge = {
-      status: "results",
-      snippets: [{ content: "La solución incluye protección de APIs.", score: 0.9 }],
-    };
-    const readToolResults = [{
-      toolName: "getOpportunityQuotation",
-      result: { products: ["WAF"] },
-    }];
-    const generateWithAI = vi.fn()
-      .mockResolvedValueOnce({ answer: "La solución puede ayudar a proteger APIs; validemos el alcance para esta oportunidad." })
-      .mockResolvedValueOnce({ approved: "yes" });
-
-    await generateCustomerContent({
-      component: component("content.value_argument", { text: "Prepara un argumento de valor" }),
-      question: "Prepara un argumento de valor para esta oportunidad",
-      readToolResults,
-      history: [],
-      documentKnowledge,
-      user: { id: 1 },
-      jobId: 0,
-      generateWithAI,
-    });
-
-    for (const [request] of generateWithAI.mock.calls) {
-      expect(request.context.evidence).toEqual(readToolResults);
-      expect(request.context.documentKnowledge).toEqual(documentKnowledge);
-      expect(request.systemPrompt).toContain("documentKnowledge");
-      expect(request.systemPrompt).toContain(
-        request.schemaName === "customer_account_content_audit"
-          ? "no hechos de cuenta"
-          : "nunca su adopción",
-      );
-    }
-  });
   it("keeps a quotation summary separate from discovery questions in a mixed request", async () => {
     const result = await interpretCustomerTurn({
       question: "Resume la cotización 18, pero no incluyas costos ni márgenes; luego prepara dos preguntas para Kimberly",
@@ -1543,16 +1281,6 @@ describe("Customer turn contract", () => {
     })], { movement: "answer_clarification" }), { contract: previous, pendingComponentIds: ["c1"] });
     expect(result.components[0].trendSpec.metric).toBe("created");
   });
-  it("answers financial limits even when the source is not installed and does not execute a component", async () => {
-    const executeComponent = vi.fn();
-    const result = await runCustomerContractTurn({
-      contract: contract([component("guidance.trend_analysis", { trendSpec: { metric: "financial" } })]),
-      question: "Cobros", context: { accountId: 9001 }, executeComponent,
-    });
-    expect(result.response.answer).toContain("aún no está disponible");
-    expect(result.response.components[0].status).toBe("unavailable");
-    expect(executeComponent).not.toHaveBeenCalled();
-  });
   it("routes an explicit report-registration request through the reviewable stage-draft flow", async () => {
     const text = "En Hardware Refresh observé que Compras pidió más detalle del alcance";
     const question = `Registra esta observación en la respuesta de etapa de Hardware Refresh: ${text}`;
@@ -1760,14 +1488,6 @@ describe("Customer turn contract", () => {
     expect(result.components[0].comparisonSpec.references).toEqual(["Gamma", "Delta"]);
     expect(result.components[0].comparisonSpec.calculations).toBeUndefined();
   });
-  it("clears comparison memory on an explicitly new unrelated request", async () => {
-    const result = await runCustomerContractTurn({
-      contract: contract([component("query.record_list")]), question: "Lista nueva",
-      conversationContext: { comparisonMemory: { accountId: 9001 } },
-      executeComponent: vi.fn().mockResolvedValue(engine("Lista nueva")),
-    });
-    expect(result.response.comparisonMemory).toBeNull();
-  });
   it("exposes G04 criteria and nested list filters without applying provider placeholders", async () => {
     const classifyWithAI = vi.fn().mockResolvedValue(contract([
       component("guidance.prioritization", { reference: "", prioritySpec: {
@@ -1824,31 +1544,6 @@ describe("Customer turn contract", () => {
       reference: "", prioritySpec: { references: ["Beta"] },
     })], { movement: "correct" }), { contract: previous, pendingComponentIds: ["c1"] });
     expect(result.components[0].prioritySpec).toEqual({ criterion: "amountUsd", references: ["Beta"] });
-  });
-  it("validates G04 memory and ranking lists through the conversation context", async () => {
-    const { buildCustomerPriorityResponse, resolveCustomerPriorityRequest } = await import("../src/commercial-intelligence/customer-prioritization.js");
-    const record = snapshot.opportunities[0];
-    const request = resolveCustomerPriorityRequest({
-      component: component("guidance.prioritization", { reference: "", prioritySpec: { criterion: "amountUsd" } }),
-      movement: "new_request", snapshot, context: { accountId: 9001 },
-    });
-    const result = buildCustomerPriorityResponse({
-      request, snapshot, read: { toolName: "searchOpportunities", result: [record] },
-      metrics: [], now: new Date("2026-10-17T18:00:00Z"), timezone: "America/Mexico_City",
-    });
-    const context = validateCustomerConversationContext({
-      accountId: 9001, priorityMemory: result.priorityMemory, recordList: result.recordList,
-    }, snapshot, 9001);
-    expect(context.priorityMemory).toEqual(result.priorityMemory);
-    expect(context.recordList).toEqual(result.recordList);
-  });
-  it("clears a previous ranking memory for an explicitly new request in another category", async () => {
-    const result = await runCustomerContractTurn({
-      contract: contract([component("query.record_list")]), question: "Lista nueva",
-      conversationContext: { priorityMemory: { accountId: 9001 } },
-      executeComponent: vi.fn().mockResolvedValue(engine("Lista nueva")),
-    });
-    expect(result.response.priorityMemory).toBeNull();
   });
   it("exposes Q09 source, commercial identity and version while stripping unused provider placeholders", async () => {
     const classifyWithAI = vi.fn().mockResolvedValue(contract([
@@ -2183,14 +1878,6 @@ describe("Customer turn contract", () => {
     expect(customerTurnContractSchema.safeParse(contract([component(), component()])).success).toBe(false);
     expect(customerTurnContractSchema.safeParse(contract([component("query.record_list", { dependsOn: ["c2"] })])).success).toBe(false);
     expect(customerTurnContractSchema.safeParse(contract(undefined, { resolution: "clarification" })).success).toBe(false);
-  });
-  it("enables all users in on mode and preserves rollback and pilot isolation", () => {
-    expect(customerTurnContractEnabled({ customerTurnContractMode: "on" }, 1)).toBe(true);
-    expect(customerTurnContractEnabled({ customerTurnContractMode: "on" }, 999999)).toBe(true);
-    expect(customerTurnContractEnabled({ customerTurnContractMode: "off", customerTurnContractPilotUserIds: [1] }, 1)).toBe(false);
-    expect(customerTurnContractEnabled({ customerTurnContractMode: "pilot", customerTurnContractPilotUserIds: [1] }, 1)).toBe(true);
-    expect(customerTurnContractEnabled({ customerTurnContractMode: "pilot", customerTurnContractPilotUserIds: [1] }, 2)).toBe(false);
-    expect(customerTurnContractEnabled({ customerTurnContractMode: "invalid", customerTurnContractPilotUserIds: [] }, 1)).toBe(false);
   });
   it("does not confuse unavailable CRM objects with implemented actions", () => {
     expect(customerComponentCapability(component("action.create_record", { object: "account" })).available).toBe(false);
@@ -2850,20 +2537,6 @@ describe("Customer turn contract", () => {
     expect(result.response.answer).toContain("no incluye el historial de auditoría");
     expect(executeComponent).not.toHaveBeenCalled();
   });
-  it.each([
-    ["¿Dónde configuro los permisos del chat?", "verifique tu acceso a Mi Coach"],
-    ["Muéstrame el manual oficial completo", "consultar o mostrar el manual oficial completo"],
-    ["No quiero datos del cliente: necesito ayuda sobre cómo usar el CRM", "Dime qué tarea concreta quieres hacer"],
-  ])("keeps system-help limits accurate and makes the fallback relevant: %s", async (question, expected) => {
-    const executeComponent = vi.fn();
-    const result = await runCustomerContractTurn({
-      contract: contract([component("query.system_help", { object: "general", scope: "none", text: question })]),
-      question, executeComponent,
-    });
-    expect(result.response.answer).toContain(expected);
-    expect(result.response.answer).not.toContain("No he consultado documentación");
-    expect(executeComponent).not.toHaveBeenCalled();
-  });
   it("report association only matches a destination, including unanswered questions", async () => {
     const classifyWithAI = vi.fn().mockResolvedValue({ match: "matched", questionIds: [9201], reason: "motivación" });
     const result = await associateCustomerReport({ ...reportArgs(), classifyWithAI });
@@ -3003,53 +2676,6 @@ describe("Customer turn contract", () => {
     const closed = { ...snapshot, opportunities: [{ ...snapshot.opportunities[0], commercialStatusCode: "ganada" }] };
     expect((await associateCustomerReport({ ...args, snapshot: closed, classifyWithAI })).responseType).toBe("clarification");
     expect(classifyWithAI).not.toHaveBeenCalled();
-  });
-  it("uses content-specific generation and fails explicitly when its audit rejects", async () => {
-    const generateWithAI = vi.fn().mockResolvedValueOnce({ answer: "Borrador sintético" }).mockResolvedValueOnce({ approved: "no" });
-    const result = await generateCustomerContent({ component: component("content.email_draft"), readToolResults: [], history: [], user: { id: 0 }, generateWithAI });
-    expect(result.responseType).toBe("error");
-    expect(result.operations).toEqual([]);
-    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("Asunto:");
-    expect(generateWithAI.mock.calls[1][0].systemPrompt).toContain("exige asunto");
-  });
-  it("drafts an email without a stated purpose using placeholders instead of asking or inventing commitments", async () => {
-    const generateWithAI = vi.fn().mockResolvedValueOnce({ answer: "Asunto: Seguimiento\n\nHola Kimberly, [contexto por definir]." })
-      .mockResolvedValueOnce({ approved: "yes" });
-    const result = await generateCustomerContent({
-      component: component("content.email_draft"),
-      question: "Solo redacta el correo a Kimberly; no lo envíes",
-      readToolResults: [], history: [], user: { id: 0 }, generateWithAI,
-    });
-    expect(result.responseType).not.toBe("clarification");
-    expect(generateWithAI).toHaveBeenCalled();
-    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("[contexto por definir]");
-    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("sin inventar proyectos, reuniones, seguimientos ni compromisos");
-  });
-  it("keeps summaries and rewrites grounded only in supplied user material", async () => {
-    const generateWithAI = vi.fn().mockResolvedValueOnce({ answer: "Resumen del texto aportado" })
-      .mockResolvedValueOnce({ approved: "yes" });
-    const question = "Resume este texto: El cliente revisará el alcance.";
-    await generateCustomerContent({
-      component: component("content.summary", { object: "general", text: question }),
-      readToolResults: [], history: [], question, user: { id: 0 }, generateWithAI,
-    });
-    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("transforma exclusivamente ese material");
-    expect(generateWithAI.mock.calls[0][0].systemPrompt).toContain("no añadas datos del CRM");
-    expect(generateWithAI.mock.calls[1][0].systemPrompt).toContain("texto aportado");
-    expect(generateWithAI.mock.calls[0][0].context.originalRequest).toBe(question);
-    expect(generateWithAI.mock.calls[1][0].context.originalRequest).toBe(question);
-  });
-  it("does not invent an unsupported return-on-investment promise", async () => {
-    const generateWithAI = vi.fn();
-    const result = await generateCustomerContent({
-      component: component("content.value_argument", { object: "general" }),
-      question: "Afirma que recuperarán la inversión en seis meses",
-      readToolResults: [], history: [], user: { id: 0 }, generateWithAI,
-    });
-    expect(result.responseType).toBe("informational");
-    expect(result.answer).toContain("no la afirmaría como un hecho");
-    expect(result.answer).toContain("hipótesis");
-    expect(generateWithAI).not.toHaveBeenCalled();
   });
   it.each(["action.send_communication", "action.remove_record"])("recognizes %s without planning an unavailable operation", async (category) => {
     const classifyWithAI = vi.fn().mockResolvedValue(contract([component(category)]));

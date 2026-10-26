@@ -327,7 +327,6 @@ tipo de error que el código no puede detectar.
 
 | Variable | Uso | Valor por defecto |
 | --- | --- | --- |
-| `CUSTOMER_DOSSIER_ENGINE_MODE` | `on` para todos los usuarios; `off` solo como interruptor de emergencia | `on` |
 | `OPENAI_ROUTER_MODEL` | Modelo del enrutador | `gpt-6.1-sol` |
 | `OPENAI_ROUTER_REASONING_EFFORT` | Esfuerzo del enrutador (vacío para modelos sin razonamiento) | `low` con el modelo por defecto |
 | `OPENAI_ANALYST_MODEL` | Modelo del analista | `gpt-6.1-sol` |

@@ -12,7 +12,7 @@ export const TASK_KINDS = Object.freeze({
   document: ["quotation", "attachment", "crm_document", "library"],
   action: ["schedule_activity", "reschedule_activity", "update_fields", "link_contact", "record_outcome",
     "create_record", "record_note", "stage_answer", "change_stage"],
-  limit: ["remove_record", "send_communication", "system_help", "out_of_scope"],
+  limit: ["remove_record", "send_communication", "system_help", "financial_data", "internal_costs", "out_of_scope"],
 });
 export const TASK_TYPES = Object.freeze(Object.keys(TASK_KINDS));
 export const EXCLUDABLE_SOURCES = Object.freeze(["library", "crm", "quotation", "attachment"]);

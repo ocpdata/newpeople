@@ -17,11 +17,25 @@ vi.mock("../src/commercial-intelligence/activity-draft-persistence.js", () => ({
 vi.mock("../src/commercial-intelligence/customer-chat-adapter.js", async (original) => ({
   ...(await original()), createCustomerAccountAdapter: vi.fn(),
 }));
+// The dossier engine answers consultations; these cases exercise diagnostics of the action path behind it.
+const real = vi.hoisted(() => ({}));
+vi.mock("../src/commercial-intelligence/dossier/engine.js", async (original) => {
+  const actual = await original();
+  real.runCustomerDossierTurn = actual.runCustomerDossierTurn;
+  return { ...actual, runCustomerDossierTurn: vi.fn() };
+});
+vi.mock("../src/commercial-intelligence/turn-contract-review.js", async (original) => {
+  const actual = await original();
+  real.interpretReviewedCustomerTurn = actual.interpretReviewedCustomerTurn;
+  return { ...actual, interpretReviewedCustomerTurn: vi.fn() };
+});
 
 import { query, withTransaction } from "../src/db.js";
 import { config } from "../src/config.js";
 import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
 import { createCustomerAccountAdapter } from "../src/commercial-intelligence/customer-chat-adapter.js";
+import { runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
+import { interpretReviewedCustomerTurn } from "../src/commercial-intelligence/turn-contract-review.js";
 import {
   getCustomerAccountChatSession,
   getCustomerIntelligenceJob,
@@ -29,18 +43,24 @@ import {
 } from "../src/commercial-intelligence/service.js";
 
 const originalEnvironment = config.nodeEnv;
-const originalContractMode = config.features.customerTurnContractMode;
-const originalDossierEngineMode = config.features.customerDossierEngineMode;
+const actionContract = {
+  version: 1, movement: "new_request", resolution: "resolved", clarificationQuestion: "", confidence: "high",
+  components: [{
+    id: "c1", category: "action.record_note", text: "Registra la nota", object: "opportunity", topic: "",
+    scope: "single", reference: "", attribution: "none", certainty: "unspecified", explicitAction: true,
+    dependsOn: [], continuationOf: "none",
+  }],
+};
+const useRealB3 = () => interpretReviewedCustomerTurn.mockImplementation(real.interpretReviewedCustomerTurn);
 const originalConversationalEnabled = config.features.customerConversationalResponseEnabled;
 const user = { id: 31, permissionSet: new Set(["cuentas.read"]) };
 let writes;
 
 beforeEach(() => {
-  config.features.customerTurnContractMode = "off";
-  // These cases exercise diagnostics of the legacy adapter path.
-  config.features.customerDossierEngineMode = "off";
   config.features.customerConversationalResponseEnabled = false;
   vi.clearAllMocks();
+  runCustomerDossierTurn.mockResolvedValue({ handled: false, reason: "action_task", plan: null });
+  interpretReviewedCustomerTurn.mockResolvedValue({ contract: actionContract, review: { status: "approved" } });
   writes = [];
   query.mockImplementation(async (sql, params) => {
     if (sql.startsWith("SELECT * FROM customer_intelligence_jobs")) return [{
@@ -67,8 +87,6 @@ beforeEach(() => {
 
 afterEach(() => {
   config.nodeEnv = originalEnvironment;
-  config.features.customerTurnContractMode = originalContractMode;
-  config.features.customerDossierEngineMode = originalDossierEngineMode;
   config.features.customerConversationalResponseEnabled = originalConversationalEnabled;
 });
 
@@ -184,7 +202,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
   });
 
   it("persists explicit B3 timeout metadata without executing the business pipeline", async () => {
-    config.features.customerTurnContractMode = "on";
+    useRealB3();
     runStructuredTextResearch.mockRejectedValueOnce(Object.assign(new Error("Request aborted"), { name: "TimeoutError" }));
     expect(await processCustomerAccountChatJob({ jobId: 1, user, deadlineAt: Date.now() + 2000 })).toBeNull();
     const failureWrite = writes.find(({ sql }) => sql.includes("status = 'failed'"));
@@ -198,7 +216,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
   });
 
   it("persists the cause of a dossier engine failure without exposing it to the seller", async () => {
-    config.features.customerDossierEngineMode = "on";
+    runCustomerDossierTurn.mockImplementationOnce(real.runCustomerDossierTurn);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await processCustomerAccountChatJob({ jobId: 1, user, deadlineAt: Date.now() + 5000 })).toBeNull();
     consoleError.mockRestore();
@@ -273,7 +291,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
   });
 
   it("blocks execution and persists a review failure in B3 diagnostics", async () => {
-    config.features.customerTurnContractMode = "on";
+    useRealB3();
     runStructuredTextResearch.mockImplementation(async (request) => {
       if (request.schemaName === "customer_account_turn_contract") return {
         version: 1, movement: "new_request", resolution: "resolved", clarificationQuestion: "", confidence: "high",
@@ -306,7 +324,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
   });
 
   it("includes successful coherence review in the persisted classification trace", async () => {
-    config.features.customerTurnContractMode = "on";
+    useRealB3();
     runStructuredTextResearch.mockImplementation(async (request) => {
       if (request.schemaName === "customer_account_turn_contract") return {
         version: 1, movement: "new_request", resolution: "resolved", clarificationQuestion: "", confidence: "high",
@@ -338,7 +356,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
   });
 
   it.each([true, false])("persists the final B10 answer and its audit/degradation status: supported=%s", async (supported) => {
-    config.features.customerTurnContractMode = "on";
+    useRealB3();
     config.features.customerConversationalResponseEnabled = true;
     const natural = "Totalplay tiene la información disponible para revisar.";
     runStructuredTextResearch.mockImplementation(async (request) => {

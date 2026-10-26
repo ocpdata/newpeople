@@ -29,7 +29,7 @@ function valueMatches(value, item) {
 
 const EVIDENCE_TOKEN = /[a-z]+\d+(?:\.\d+)?/gi;
 // Internal vocabulary and record IDs must never reach the seller.
-const INTERNAL_TERMS = /\bexpedientes?\b|\bevidence(?:Id|Ids)?\b|\bsectionKeys?\b|\b(?:opp|acct|contact|ans|act|cal|qv|quote|note|po|doc|int|audit|aint|stk|wk|crit|dlv|strat|thm|reg|regr|prop|pdoc|camp)\d+\b/i;
+const INTERNAL_TERMS = /\bexpedientes?\b|\bevidence(?:Id|Ids)?\b|\bsectionKeys?\b|\b(?:opp|acct|contact|ans|act|cal|qv|quote|note|po|doc|int|audit|aint|stk|wk|crit|dlv|strat|thm|reg|regr|prop|pdoc|camp|qitem|qterms|att|lib)\d+\b|\bdtext\d+x\d+\b/i;
 export const BRIEF_MAX_CHARS = 1100;
 
 export function buildEvidenceIndex(dossiers) {
@@ -70,6 +70,61 @@ function aggregateMatches(value, items) {
   const amounts = distinct.filter((item) => item.amountUsd !== undefined && item.amountUsd !== null);
   const total = amounts.reduce((sum, item) => sum + Number(item.amountUsd), 0);
   return { ok: amounts.length === distinct.length && Math.abs(total - number) < 0.01 };
+}
+
+export const CALCULATION_OPERATIONS = ["none", "difference", "ratio", "percent_change", "add_months", "add_days",
+  "order_desc", "order_asc"];
+export const CALCULATION_FIELDS = ["none", "amountUsd", "closeDate"];
+
+function shiftDay(day, { months = 0, days = 0 }) {
+  const [year, month, date] = day.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(date, lastDay) + days);
+  return target.toISOString().slice(0, 10);
+}
+
+/** Recomputes a declared calculation from the cited records, in the order they were cited. */
+export function checkCalculation(calculation, items) {
+  const { operation, field } = calculation;
+  if (!calculation || operation === "none") return { ok: true };
+  if (field === "none" || !items.length) return { ok: false, detail: "El cálculo no indica el campo o los registros de entrada." };
+  const values = items.map((item) => item[field]);
+  if (values.some((value) => value === null || value === undefined || value === "")) {
+    return { ok: false, detail: `Algún registro citado no tiene ${field}.` };
+  }
+  const number = (value) => Number(String(value).replace(/[^\d.-]/g, ""));
+  const parameter = number(calculation.parameter);
+  const result = String(calculation.result || "").trim();
+  const sameNumber = (expected, tolerance = 0.01) => Number.isFinite(number(result)) && Math.abs(number(result) - expected) <= tolerance;
+  if (operation === "order_desc" || operation === "order_asc") {
+    const keys = values.map((value) => (field === "amountUsd" ? number(value) : String(value)));
+    const sorted = keys.every((key, index) => index === 0 ||
+      (operation === "order_desc" ? keys[index - 1] >= key : keys[index - 1] <= key));
+    return sorted ? { ok: true } : { ok: false, detail: `Los registros citados no están ordenados por ${field} (${operation}).` };
+  }
+  if (field === "closeDate") {
+    if (!["add_months", "add_days"].includes(operation) || items.length !== 1 || !Number.isInteger(parameter)) {
+      return { ok: false, detail: "Con fechas solo se admite desplazar una fecha por meses o días enteros." };
+    }
+    const expected = shiftDay(String(values[0]).slice(0, 10), operation === "add_months" ? { months: parameter } : { days: parameter });
+    return result === expected ? { ok: true } : { ok: false, detail: `El resultado debería ser ${expected}.` };
+  }
+  const amounts = values.map(number);
+  if (operation === "difference" && amounts.length === 2) {
+    const expected = Math.abs(amounts[0] - amounts[1]);
+    return sameNumber(expected) || sameNumber(-expected) ? { ok: true } : { ok: false, detail: `La diferencia es ${expected}.` };
+  }
+  if (operation === "ratio" && amounts.length === 2 && amounts.every(Boolean)) {
+    const options = [amounts[0] / amounts[1], amounts[1] / amounts[0]];
+    return options.some((expected) => sameNumber(expected, Math.max(0.01, expected * 0.005)))
+      ? { ok: true } : { ok: false, detail: `La proporción es ${options.map((value) => value.toFixed(2)).join(" o ")}.` };
+  }
+  if (operation === "percent_change" && amounts.length === 1 && Number.isFinite(parameter)) {
+    const expected = amounts[0] * (1 + parameter / 100);
+    return sameNumber(expected) ? { ok: true } : { ok: false, detail: `Aplicar ${parameter} % da ${expected}.` };
+  }
+  return { ok: false, detail: `No se puede comprobar ${operation} con ${items.length} registros de ${field}.` };
 }
 
 export function presentationIssues({ answerText, responseLength = "standard" }) {
@@ -121,6 +176,10 @@ export function verifyClaims({ claims, obligationId, index, sections, fail, cite
             `La sección ${key} está ${incomplete.map((section) => section.status).join("/")}; no permite afirmar ausencia.`, claim);
         }
       }
+    }
+    if (claim.calculation && claim.calculation.operation !== "none") {
+      const checked = checkCalculation(claim.calculation, items);
+      if (!checked.ok) fail("CALCULATION_MISMATCH", obligationId, `Cálculo no verificable: ${checked.detail}`, claim);
     }
     for (const value of claim.values) {
       if (["count", "amount_total"].includes(value.type)) {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { config } from "../../config.js";
 import { runStructuredTextResearch } from "../../structuredWebResearch.js";
-import { CLAIM_KINDS, SECTION_KEYS, VALUE_TYPES } from "./analyst.js";
+import { CALCULATION_FIELDS_SCHEMA, calculationSchema, CLAIM_KINDS, SECTION_KEYS, VALUE_TYPES } from "./analyst.js";
 import { buildEvidenceIndex, presentationIssues, sectionsByKey, verifyClaims } from "./verifier.js";
 
 // Composer of the dossier engine (migration phase C, design §4.5). The model returns structured deliverables;
@@ -31,7 +31,11 @@ Entregables
 Fuentes
 - material=message_text: trabaja SOLO con el texto que el vendedor pegó en context.question; no añadas datos
   del CRM ni cifras, nombres o fechas que no estén en ese texto. material=previous_answer: transforma SOLO
-  context.previousAnswer con la misma regla.
+  context.previousAnswer con la misma regla. material=attachment: trabaja SOLO con los fragmentos del archivo
+  adjunto (sección attachment), citándolos; si la sección está vacía, status=cannot_do y pide el archivo.
+- material=library: usa los fragmentos de la sección library como conocimiento general de productos,
+  citándolos en claims (kind=inference o recommendation); nunca los presentes como hechos del cliente. Si la
+  sección está vacía o falló, dilo en notes y no inventes contenido documental.
 - En las demás tareas, los hechos del cliente salen de los registros del CRM (context.dossiers) y cada uno va
   en claims citando evidenceIds, igual que en un análisis: registered (consta), inference, recommendation,
   to_confirm (falta confirmarlo). Las capacidades generales de un producto o buenas prácticas no son hechos
@@ -56,7 +60,9 @@ Reglas
 - Respeta las exclusiones de constraints (excludedFields: no menciones precios, costos, márgenes ni
   descuentos si están excluidos) y la longitud pedida.
 - No afirmes que enviaste, guardaste o agendaste nada. No uses IDs internos ni la palabra «expediente».
-- Escribe en el idioma pedido (por defecto, español).`;
+- Escribe en el idioma pedido (por defecto, español).
+- Prepara solo las tareas de context.tasks: las acciones del CRM (agendar, actualizar, registrar) se preparan
+  aparte; no las redactes ni las anuncies.`;
 
 const claimFields = [
   { key: "text", type: "string" },
@@ -67,6 +73,7 @@ const claimFields = [
     { key: "type", type: "enum", enum: VALUE_TYPES },
     { key: "value", type: "string" },
   ] } },
+  { key: "calculation", type: "object", fields: CALCULATION_FIELDS_SCHEMA },
 ];
 
 export function buildComposerFields(tasks) {
@@ -103,6 +110,7 @@ const compositionSchema = z.object({
       evidenceIds: z.array(z.string()).max(16),
       sectionKeys: z.array(z.enum(SECTION_KEYS)).max(6),
       values: z.array(z.object({ type: z.enum(VALUE_TYPES), value: z.string() }).strict()).max(6),
+      calculation: calculationSchema.optional(),
     }).strict()).max(14),
   }).strict()),
 }).strict();
@@ -124,7 +132,7 @@ export function previousAnswer(history = []) {
 }
 
 export function buildComposerContext({ question, tasks, dossiers, history, today, timezone, analystAnswer = "", repair = null }) {
-  const usesCrm = tasks.some((task) => !["message_text", "previous_answer"].includes(task.material) &&
+  const usesCrm = tasks.some((task) => !["message_text", "previous_answer", "attachment"].includes(task.material) &&
     !task.constraints.excludedSources.includes("crm"));
   return {
     today,
@@ -134,7 +142,7 @@ export function buildComposerContext({ question, tasks, dossiers, history, today
       opportunityIds: task.opportunityIds, constraints: task.constraints })),
     previousAnswer: tasks.some((task) => task.material === "previous_answer") ? previousAnswer(history) : "",
     // Material-only turns do not receive CRM records, so nothing from the CRM can leak into the transformed text.
-    dossiers: usesCrm ? dossiers : [],
+    dossiers: dossiers.filter((dossier) => dossier.kind === "sources" || usesCrm),
     ...(analystAnswer ? { analysisOfThisTurn: analystAnswer } : {}),
     conversationForContinuityOnly: history.slice(-6).map((message) => ({
       role: message.role, text: String(message.text || "").slice(0, 1200),
@@ -154,6 +162,8 @@ export async function composeCustomerTurn({ context, tasks, userId, jobId, signa
     schemaName: "customer_account_dossier_composition",
     model,
     ...(reasoningEffort ? { reasoningEffort } : {}),
+    maxDurationMs: 45000,
+    maxOutputTokens: 4000,
     systemPrompt: COMPOSER_SYSTEM_PROMPT,
     subject: "Textos comerciales preparados con registros del CRM",
     context,
@@ -202,7 +212,8 @@ const numbers = (text) => new Set((String(text).match(/\d[\d.,]*\d|\d{2,}/g) || 
   .filter((token) => token.length >= 2));
 
 /** Code checks of design §4.5 for each deliverable, plus the shared claim verification. */
-export function verifyComposition({ composition, tasks, dossiers, question, history = [], responseLength = "standard" }) {
+export function verifyComposition({ composition, tasks, dossiers, question, history = [], responseLength = "standard",
+  attachmentText = "" }) {
   const index = buildEvidenceIndex(dossiers);
   const sections = sectionsByKey(dossiers);
   const failures = [];
@@ -249,10 +260,11 @@ export function verifyComposition({ composition, tasks, dossiers, question, hist
     if (task.constraints.count > 0 && !["agenda"].includes(task.kind) && items.length !== task.constraints.count) {
       fail("ITEM_COUNT", task.id, `Se pidieron ${task.constraints.count} elementos y hay ${items.length}.`);
     }
-    if (["message_text", "previous_answer"].includes(task.material)) {
-      const source = task.material === "previous_answer" ? previousAnswer(history) : question;
+    if (["message_text", "previous_answer", "attachment"].includes(task.material)) {
+      const source = task.material === "previous_answer" ? previousAnswer(history)
+        : task.material === "attachment" ? attachmentText : question;
       if (!source.trim()) fail("MATERIAL_MISSING", task.id, "No hay un texto anterior para transformar.");
-      if (deliverable.claims.some((claim) => claim.evidenceIds.length)) {
+      if (deliverable.claims.some((claim) => claim.evidenceIds.some((id) => !/^att\d+$/.test(id)))) {
         fail("MATERIAL_WITH_CRM", task.id, "Una transformación de texto aportado no cita registros del CRM.");
       }
       const allowed = numbers(source);

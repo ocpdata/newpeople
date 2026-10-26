@@ -1,15 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/coach/quotation-read-service.js", () => ({
   getAuthorizedCoachQuotationContent: vi.fn(),
-}));
-vi.mock("../src/coach/customer-note-access.js", async (importOriginal) => ({
-  ...(await importOriginal()),
-  readCustomerOpportunityForNotes: vi.fn(),
-}));
-vi.mock("../src/opportunity-workspace/service.js", async (importOriginal) => ({
-  ...(await importOriginal()),
-  listOpportunityNotes: vi.fn(),
 }));
 vi.mock("../src/structuredWebResearch.js", () => ({
   runStructuredTextResearch: vi.fn(),
@@ -39,8 +31,6 @@ vi.mock("../src/coach/semantic-classifier-prompts.js", async (importOriginal) =>
 });
 
 import { getAuthorizedCoachQuotationContent } from "../src/coach/quotation-read-service.js";
-import { readCustomerOpportunityForNotes } from "../src/coach/customer-note-access.js";
-import { listOpportunityNotes } from "../src/opportunity-workspace/service.js";
 import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
 import { retrieveCustomerChatDocumentKnowledge } from "../src/documentacion-rag/service.js";
 import { loadPlannerPrompt } from "../src/coach/planner-prompts.js";
@@ -67,7 +57,6 @@ import {
   normalizeCustomerResponse,
 } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import { getCoachBusinessRules } from "../src/coach/business-rules.js";
-import { config } from "../src/config.js";
 import { normalizeActivityOperation } from "../src/coach/operation-contract.js";
 import { enforceCoachBusinessEvidence } from "../src/coach/conversation-engine.js";
 import {
@@ -84,11 +73,7 @@ import {
 } from "../src/coach/semantic-classifier-prompts.js";
 
 describe("Customer account chat adapter", () => {
-  let previousContractMode;
-
   beforeEach(() => {
-    previousContractMode = config.features.customerTurnContractMode;
-    config.features.customerTurnContractMode = "off";
     vi.restoreAllMocks();
     vi.clearAllMocks();
     retrieveCustomerChatDocumentKnowledge.mockResolvedValue({
@@ -108,10 +93,6 @@ describe("Customer account chat adapter", () => {
       version: 0,
       source: "default",
     });
-  });
-
-  afterEach(() => {
-    config.features.customerTurnContractMode = previousContractMode;
   });
 
   it.each([
@@ -176,37 +157,28 @@ describe("Customer account chat adapter", () => {
     expect(prompt).toContain("no guardar cambios");
   });
 
-  it("uses the complete turn contract only for the configured pilot user", async () => {
-    const previousMode = config.features.customerTurnContractMode;
-    const previousUsers = config.features.customerTurnContractPilotUserIds;
-    try {
-      config.features.customerTurnContractMode = "pilot";
-      config.features.customerTurnContractPilotUserIds = [31];
-      runStructuredTextResearch.mockResolvedValueOnce({
-        version: 1, movement: "new_request", resolution: "resolved",
-        clarificationQuestion: "", confidence: "high",
-        components: [{
-          id: "c1", category: "query.record_list", text: "Lista las oportunidades.",
-          object: "opportunity", topic: "", scope: "collection", reference: "",
-          attribution: "none", certainty: "unspecified",
-          dependsOn: [], continuationOf: "none",
-        }],
-      }).mockResolvedValueOnce({
-        status: "approved", clarificationQuestion: "", issues: [],
-      });
-      const classified = await classifyCustomerIntent({
-        question: "Lista las oportunidades.", user: { id: 31 }, snapshot,
-        intents: getChannelIntentDefaults("customer_account"),
-      });
-      expect(classified.source.resolver).toBe("turn_contract_v1");
-      expect(classified.turnContract.components[0].category).toBe("query.record_list");
-      expect(runStructuredTextResearch.mock.calls[0][0].schemaName).toBe("customer_account_turn_contract");
-      expect(runStructuredTextResearch.mock.calls[1][0].schemaName).toBe("customer_account_turn_coherence");
-      expect(classified.source.coherenceReview.status).toBe("approved");
-    } finally {
-      config.features.customerTurnContractMode = previousMode;
-      config.features.customerTurnContractPilotUserIds = previousUsers;
-    }
+  it("classifies every user through the complete turn contract", async () => {
+    runStructuredTextResearch.mockResolvedValueOnce({
+      version: 1, movement: "new_request", resolution: "resolved",
+      clarificationQuestion: "", confidence: "high",
+      components: [{
+        id: "c1", category: "query.record_list", text: "Lista las oportunidades.",
+        object: "opportunity", topic: "", scope: "collection", reference: "",
+        attribution: "none", certainty: "unspecified",
+        dependsOn: [], continuationOf: "none",
+      }],
+    }).mockResolvedValueOnce({
+      status: "approved", clarificationQuestion: "", issues: [],
+    });
+    const classified = await classifyCustomerIntent({
+      question: "Lista las oportunidades.", user: { id: 31 }, snapshot,
+      intents: getChannelIntentDefaults("customer_account"),
+    });
+    expect(classified.source.resolver).toBe("turn_contract_v1");
+    expect(classified.turnContract.components[0].category).toBe("query.record_list");
+    expect(runStructuredTextResearch.mock.calls[0][0].schemaName).toBe("customer_account_turn_contract");
+    expect(runStructuredTextResearch.mock.calls[1][0].schemaName).toBe("customer_account_turn_coherence");
+    expect(classified.source.coherenceReview.status).toBe("approved");
   });
 
   it("surfaces planner prompt storage errors without invoking B6 or proposing operations", async () => {
@@ -1496,95 +1468,6 @@ describe("Customer account chat adapter", () => {
     accountHealth: { status: "healthy", score: 80 },
   };
 
-  it.each([
-    ["BlueCat", "query.document_content"],
-    ["F5", "query.document_content"],
-    ["proceso comercial", "query.document_content"],
-    ["BlueCat", "content.discovery_questions"],
-    ["BlueCat", "content.discovery_questions", true],
-  ])("answers %s through %s without reading CRM or selecting a quotation", async (topic, category, withReference) => {
-    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
-      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
-    );
-    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
-    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
-      getChannelIntentDefaults("customer_account"),
-    );
-    const question = `Según nuestra documentación interna, explica ${topic}`;
-    retrieveCustomerChatDocumentKnowledge.mockResolvedValue({
-      status: "results", snippets: [{ content: `Documentación de ${topic}`, score: 0.9 }],
-    });
-    runStructuredTextResearch.mockImplementation(async ({ schemaName }) => {
-      if (schemaName === "customer_account_content") return { answer: `Según la biblioteca: ${topic}` };
-      if (schemaName === "customer_account_content_audit") return { approved: "yes", reasonCode: "supported" };
-      throw new Error(`Unexpected AI request: ${schemaName}`);
-    });
-    const adapter = createCustomerAccountAdapter({
-      user: { id: 31, permissionSet: new Set(["cuentas.read"]) }, snapshot,
-      referenceMaterial: withReference
-        ? { name: "Notas de reunión", text: "Validar DNS sin asumir necesidades confirmadas." } : null,
-      authoritativeIntent: {
-        turnContract: {
-          version: 1, movement: "new_request", resolution: "resolved",
-          clarificationQuestion: "", confidence: "high",
-          components: [{
-            id: "c1", category, text: question, object: "general",
-            scope: "none", reference: "", topic, attribution: "none", certainty: "unspecified",
-            explicitAction: false, dependsOn: [], continuationOf: "none",
-            ...(category === "query.document_content"
-              ? { documentSpec: { source: "knowledge_library", changed: ["source"] } } : {}),
-          }],
-        },
-      },
-      agents: [], jobId: 10,
-    });
-    const result = await adapter.runTurn({ question, context: { accountId: 7 } });
-    expect(result.response).toMatchObject({
-      responseType: "informational", contentSource: withReference ? "mixed_knowledge" : "knowledge_library", operations: [],
-    });
-    expect(result.response.answer).toContain(topic);
-    if (category === "query.document_content") expect(result.response.documentMemory).toBeNull();
-    expect(result.qualityTrace.toolsUsed).toEqual([]);
-    expect(result.qualityTrace.diagnostics.content).toMatchObject({ reasonCode: "approved" });
-    expect(retrieveCustomerChatDocumentKnowledge).toHaveBeenCalledTimes(1);
-    expect(getAuthorizedCoachQuotationContent).not.toHaveBeenCalled();
-    if (withReference) {
-      expect(runStructuredTextResearch.mock.calls[0][0].context.referenceMaterial.text)
-        .toContain("Validar DNS");
-    }
-    const history = appendCustomerAccountChatHistory([], question, result.response.answer, {
-      contentSource: result.response.contentSource,
-    });
-    expect(history.at(-1).contentSource).toBe(withReference ? "mixed_knowledge" : "knowledge_library");
-  });
-
-  it("does not answer a library query when its channel intent is disabled", async () => {
-    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
-      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
-    );
-    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
-    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
-      getChannelIntentDefaults("customer_account").map((intent) =>
-        intent.code === "account_overview" ? { ...intent, enabled: false } : intent),
-    );
-    const adapter = createCustomerAccountAdapter({
-      user: { id: 31, permissionSet: new Set(["cuentas.read"]) }, snapshot,
-      authoritativeIntent: { turnContract: {
-        version: 1, movement: "new_request", resolution: "resolved",
-        clarificationQuestion: "", confidence: "high",
-        components: [{
-          id: "c1", category: "query.document_content", text: "Consulta BlueCat", object: "general",
-          scope: "none", reference: "", topic: "BlueCat", attribution: "none", certainty: "unspecified",
-          explicitAction: false, dependsOn: [], continuationOf: "none",
-          documentSpec: { source: "knowledge_library", changed: ["source"] },
-        }],
-      } }, agents: [], jobId: 10,
-    });
-    const result = await adapter.runTurn({ question: "Consulta BlueCat", context: { accountId: 7 } });
-    expect(result.response.capabilityStatus).toBe("disabled");
-    expect(runStructuredTextResearch).not.toHaveBeenCalled();
-  });
-
   it("mantiene cuenta fija y operaciones confirmables", () => {
     const adapter = createCustomerAccountAdapter({
       user: { id: 31, permissionSet: new Set(["cuentas.read"]) },
@@ -1804,87 +1687,6 @@ describe("Customer account chat adapter", () => {
     });
     expect(result.response.answer).toContain("¿Qué texto exacto quieres registrar");
     expect(result.response.answer).toContain("en cuál oportunidad");
-  });
-
-  it("lee únicamente las notas de la oportunidad autorizada y conserva su atribución", async () => {
-    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
-      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
-    );
-    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
-    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
-      getChannelIntentDefaults("customer_account"),
-    );
-    readCustomerOpportunityForNotes.mockResolvedValue({
-      id: 11,
-      accountId: 7,
-      opportunityName: "Proyecto abierto",
-    });
-    listOpportunityNotes.mockResolvedValue({
-      id: 11,
-      accountId: 7,
-      opportunityName: "Proyecto abierto",
-      items: [{
-        id: 88,
-        createdAt: "2026-09-30T12:00:00.000Z",
-        noteText: "El cliente quizá lo confirme; no lo confirmó.",
-        attribution: "client",
-        certainty: "suspected",
-      }],
-      nextBeforeId: null,
-    });
-    const adapter = createCustomerAccountAdapter({
-      user: {
-        id: 31,
-        permissionSet: new Set(["cuentas.read", "oportunidades.read"]),
-      },
-      snapshot,
-      authoritativeIntent: {
-        turnContract: {
-          version: 1,
-          movement: "new_request",
-          resolution: "resolved",
-          clarificationQuestion: "",
-          confidence: "high",
-          components: [{
-            id: "c1",
-            category: "query.opportunity_notes",
-            text: "Lee las notas de Proyecto abierto.",
-            object: "opportunity",
-            topic: "notas",
-            scope: "single",
-            reference: "Proyecto abierto",
-            attribution: "none",
-            certainty: "unspecified",
-            explicitAction: false,
-            dependsOn: [],
-            continuationOf: "none",
-          }],
-        },
-      },
-      agents: [],
-      jobId: 11,
-    });
-
-    const result = await adapter.runTurn({
-      question: "Lee las notas de Proyecto abierto.",
-      context: { accountId: 7 },
-    });
-
-    expect(readCustomerOpportunityForNotes).toHaveBeenCalledWith({
-      user: expect.objectContaining({ id: 31 }),
-      accountId: 7,
-      opportunityId: 11,
-    });
-    expect(listOpportunityNotes).toHaveBeenCalledWith({
-      opportunityId: 11,
-      limit: 50,
-    });
-    expect(result.response).toMatchObject({
-      responseType: "informational",
-      operations: [],
-    });
-    expect(result.response.answer).toContain("El cliente quizá lo confirme; no lo confirmó.");
-    expect(result.response.answer).toContain("[client; suspected]");
   });
 
   it("normaliza operaciones controladas y descarta referencias fuera de la cuenta fija", () => {
@@ -2964,179 +2766,6 @@ describe("Customer account chat adapter", () => {
         status: "pending",
       }),
     ]);
-  });
-
-  it("carries B3 factual follow-up classification through B6 into a scoped empty activity read", async () => {
-    runStructuredTextResearch.mockReset();
-    loadPlannerPrompt.mockResolvedValue({
-      channel: "customer_account",
-      process: "default",
-      instruction: "Convierte todas las consultas de actividades en operaciones.",
-      version: 3,
-      source: "custom",
-    });
-    const businessRules = getCoachBusinessRules({
-      channel: "customer_account",
-      process: "account_chat",
-    });
-    vi.spyOn(
-      coachBusinessRulesModule,
-      "loadCoachBusinessRules",
-    ).mockResolvedValue(businessRules);
-    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue(
-      [],
-    );
-    vi.spyOn(
-      channelIntentGovernanceModule,
-      "loadChannelIntentConfigurations",
-    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
-    runStructuredTextResearch
-      .mockResolvedValueOnce({
-        objective: "Preparar una actividad para la oportunidad en contexto",
-        queries: ["crm_operation"],
-        entities: { opportunityReference: "opportunity_1" },
-        referenceResolution: {
-          targetType: "opportunity",
-          cardinality: "single",
-          source: "conversation_history",
-          candidateKeys: ["opportunity_1"],
-        },
-        filters: {},
-        operationKind: "activity",
-        activityDraft: { action: "prepare", actionType: "other" },
-        ambiguity: {
-          reason: "none",
-          requiresClarification: "no",
-          missingContext: [],
-          question: "",
-        },
-        mode: "operation",
-        confidence: "high",
-      })
-      .mockResolvedValueOnce({
-        status: "no_results",
-        missingQueries: [],
-        missingFacts: ["actividades pendientes"],
-      })
-      .mockResolvedValueOnce({
-        answer:
-          "No hay actividades pendientes registradas para Vrf 2027 en Totalplay.",
-        evidence: [
-          "getOpportunityActivities consultó Vrf 2027 y no devolvió actividades pendientes.",
-        ],
-        inferences: [],
-        confidence: "medium",
-        pendingItems: [],
-        recommendedActions: [],
-        operations: [],
-      })
-      .mockResolvedValueOnce({ status: "supported", unsupportedClaims: [] });
-
-    const opportunity = {
-      ...snapshot.opportunities[0],
-      name: "Vrf 2027",
-      accountId: 7,
-      lifecycle: "open",
-      amountUsd: 2000000,
-    };
-    const conversationContext = {
-      version: 1,
-      accountId: 7,
-      opportunityId: 11,
-      contactId: null,
-      leadId: null,
-      intents: ["opportunity_status"],
-      filters: {},
-    };
-    const history = [
-      { role: "user", text: "¿Cuál es el monto de Vrf 2027?" },
-      { role: "assistant", text: "El monto de Vrf 2027 es 2,000,000 USD." },
-      { role: "user", text: "¿Y en qué etapa está?" },
-      { role: "assistant", text: "Vrf 2027 está en Contacto Inicial." },
-    ];
-    const authoritativeIntent = await classifyCustomerIntent({
-      question: "¿Qué actividad pendiente tiene?",
-      conversationHistory: history,
-      selectedContext: { accountId: 7 },
-      conversationContext,
-      snapshot: {
-        ...snapshot,
-        account: { id: 7, name: "Totalplay" },
-        opportunities: [opportunity],
-      },
-      intents: getChannelIntentDefaults("customer_account"),
-      classifyWithAI: async (request) => {
-        expect(request.context.validatedContinuation.entities.opportunity)
-          .toEqual({ id: 11, name: "Vrf 2027" });
-        expect(request.systemPrompt).toContain("No exijas tipo de actividad, fecha u hora");
-        return { intent: "account_activity_history", confidence: "high" };
-      },
-    });
-    const adapter = createCustomerAccountAdapter({
-      user: {
-        id: 31,
-        permissionSet: new Set([
-          "cuentas.read",
-          "oportunidades.read",
-          "desarrollo_comercial.read",
-          "interacciones.read",
-        ]),
-      },
-      snapshot: {
-        ...snapshot,
-        account: { id: 7, name: "Totalplay" },
-        opportunities: [opportunity],
-        interactions: [],
-        activities: [],
-      },
-      conversationContext,
-      authoritativeIntent,
-      agents: [],
-      jobId: 906,
-    });
-
-    const result = await adapter.runTurn({
-      question: "¿Qué actividad pendiente tiene?",
-      context: { accountId: 7 },
-      history,
-    });
-
-    const synthesisContext = runStructuredTextResearch.mock.calls[2][0].context;
-    const auditContext = runStructuredTextResearch.mock.calls[3][0].context;
-    expect(result.response.answer).toContain("No hay actividades pendientes");
-    expect(result.response.answer).toContain("Vrf 2027");
-    expect(result.response.responseType).toBe("informational");
-    expect(result.response.evidence).not.toHaveLength(0);
-    expect(result.response.operations).toEqual([]);
-    expect(runStructuredTextResearch.mock.calls[0][0].systemPrompt).toContain(
-      "Convierte todas las consultas de actividades en operaciones.",
-    );
-    expect(result.qualityTrace.diagnostics.plannerInput.plannerPrompt).toMatchObject({
-      channel: "customer_account",
-      version: 3,
-      source: "custom",
-    });
-    expect(result.response.channelIntentRouting.intents).toEqual([
-      "account_activity_history",
-    ]);
-    expect(result.qualityTrace.diagnostics.answerGeneration.source).not.toBe(
-      "deterministic_activity_draft",
-    );
-    expect(synthesisContext.evidenceVerification).toBe("no_results");
-    expect(synthesisContext.verifiedEmptyResults).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          toolName: "getOpportunityActivities",
-          scopeName: "Vrf 2027",
-          resultCount: 0,
-          completed: true,
-        }),
-      ]),
-    );
-    expect(auditContext.verifiedEmptyResults).toEqual(
-      synthesisContext.verifiedEmptyResults,
-    );
-    expect(result.qualityTrace.toolsUsed).toContain("getOpportunityActivities");
   });
 
   it("prioriza el periodo explícito del seguimiento sobre el periodo recordado", async () => {

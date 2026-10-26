@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCustomerHistoryReadFilter, buildCustomerHistoryResponse, customerHistoryDate, getCustomerHistorySourceAccess,
-  resolveCustomerHistoryPeriod, resolveCustomerHistoryRequest, validateCustomerHistoryMemory,
+  resolveCustomerHistoryPeriod, resolveCustomerHistoryRequest,
 } from "../src/commercial-intelligence/customer-history.js";
-import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 
 const now = new Date("2026-10-17T05:30:00Z");
 const timezone = "America/Mexico_City";
@@ -198,14 +197,6 @@ describe("Q06 entity and filter continuity", () => {
     expect(resolve({}, { previous }).spec.statuses).toEqual([]);
     expect(resolve({}, { previous, movement: "continue",
       component: { object: "opportunity", reference: "Hardware Refresh" } }).spec.statuses).toEqual([]);
-  });
-  it("persists only valid history memory for this account and visible entity", () => {
-    const memory = resolve({ period }).memory;
-    expect(validateCustomerHistoryMemory(memory, snapshot)).toEqual(memory);
-    expect(validateCustomerHistoryMemory({ ...memory, accountId: 99 }, snapshot)).toBeNull();
-    expect(validateCustomerHistoryMemory({ ...memory, object: "contact", targetId: 999 }, snapshot)).toBeNull();
-    const context = validateCustomerConversationContext({ accountId: 22, historyMemory: memory }, snapshot, 22);
-    expect(context.historyMemory).toEqual(memory);
   });
 });
 

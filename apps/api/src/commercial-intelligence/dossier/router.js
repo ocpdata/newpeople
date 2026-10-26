@@ -6,10 +6,9 @@ import {
   TASK_TYPES, validateTurnPlan,
 } from "./turn-plan.js";
 
-export const ROUTER_MODES = ["consult", "compose", "action", "content", "document", "limit", "clarify", "out_of_scope"];
-// Materials the composer handles itself; attachments and the library are still read by the previous flow (phase D).
-export const COMPOSER_MATERIALS = new Set(["none", "message_text", "previous_answer"]);
-export const DELEGATED_MODES = new Set(["action", "content", "document"]);
+export const ROUTER_MODES = ["consult", "compose", "action", "limit", "clarify", "out_of_scope"];
+// Only actions still run in the previous flow (phase E); consultations, documents and texts run here.
+export const DELEGATED_MODES = new Set(["action"]);
 export const RESPONSE_LENGTHS = ["brief", "standard", "detailed"];
 const ALL_KINDS = [...new Set(Object.values(TASK_KINDS).flat())];
 
@@ -34,7 +33,10 @@ type y kind:
   el vendedor cuenta del cliente, como respuesta de etapa), change_stage.
 - limit: algo que este chat no hace. kind: remove_record (eliminar, cancelar o desactivar registros),
   send_communication (enviar correos o mensajes), system_help (manual, configuración o ayuda del CRM o de
-  Mi Coach), out_of_scope (no se relaciona con la cuenta ni con el CRM).
+  Mi Coach), financial_data (facturación, ingresos contables, cobros, pagos, saldos o crecimiento de ingresos;
+  los importes de oportunidades no los sustituyen), internal_costs (costos internos, márgenes, rentabilidad o
+  descuento máximo permitido, aunque pida sacarlos de un documento), out_of_scope (no se relaciona con la
+  cuenta ni con el CRM).
 
 Reglas de interpretación:
 - Una orden citada dentro de un texto a redactar no es una acción: "redacta que según Kimberly quizá revisen
@@ -46,6 +48,10 @@ Reglas de interpretación:
   compose/agenda, no una acción: "prepara la reunión como si ya hubieran aceptado" es compose/agenda.
 - Lo que el vendedor cuenta del cliente ("Kimberly me dijo que...") es action/stage_answer si pide guardarlo;
   si solo lo comenta y pide análisis, es consult.
+- Lo que el vendedor relata que pasó con una oportunidad ("no logré hablar con Kimberly", "la llamada salió
+  bien", "acordamos revisar el alcance", "me comprometí a enviar...") es action/stage_answer: se propone
+  registrarlo con su atribución. action/record_outcome es solo el resultado de una llamada a un lead
+  (interacción sin oportunidad).
 - Preguntas generales sin datos del cliente ni biblioteca son compose/questions con excludedSources.
 - Preguntas "según la biblioteca" son compose/questions si pide preguntas; document/library si pide qué dice.
 - Qué cotización tiene una oportunidad, su versión, estado, importe o si fue enviada o aceptada es consult
@@ -76,7 +82,8 @@ Foco (por tarea):
 material: sobre qué texto trabaja la tarea además del CRM. message_text si el vendedor pega en el mensaje el
 texto a resumir, reescribir, traducir o usar; previous_answer si transforma la respuesta anterior del asistente
 ("más breve", "tradúcelo", "hazlo más formal"); attachment si se refiere a un archivo ("el documento que te
-mandé", "el archivo"); library si pide usar la biblioteca o documentación interna; none en otro caso.
+mandé", "el archivo", o attachedFile no es null y la tarea trata sobre ese archivo); library si pide usar la
+biblioteca o documentación interna; none en otro caso.
 
 evidence: fragmento literal del mensaje que pide la tarea. ask: lo pedido, con las palabras del vendedor.
 
@@ -88,6 +95,9 @@ promete algo que este chat no hace (responder por el cliente, enviar, eliminar).
 
 continuation: clarification_reply si el mensaje responde una pregunta del asistente; pending_action si completa
 una acción pendiente; previous_task si continúa la tarea anterior; none en otro caso. previousTaskIndex=0 si no aplica.
+Si pendingAction no es null hay un borrador abierto: si el mensaje lo confirma, lo descarta, lo corrige o completa
+un dato (fecha, hora, oportunidad, contacto, "sí", "guárdala", "cámbiala a las 11"), la tarea es action del mismo
+tipo con continuation=pending_action. Si el mensaje pide otra cosa, interprétalo normalmente.
 
 recordFilters: solo cuando el vendedor restringe QUÉ registros considerar ("actividades que vencen esta semana");
 quote es un fragmento literal. Las fechas de hechos narrados NO son filtros.
@@ -148,16 +158,13 @@ export function routeFromPlan(plan, opportunityIds = []) {
   const types = new Set(plan.tasks.map((task) => task.type));
   const outOfScope = plan.tasks.length > 0 && plan.tasks.every((task) => task.type === "limit" && task.kind === "out_of_scope");
   const composeTasks = plan.tasks.filter((task) => task.type === "compose");
-  const composable = composeTasks.every((task) => COMPOSER_MATERIALS.has(task.material || "none")) &&
-    [...types].every((type) => ["consult", "compose", "limit"].includes(type));
   const mode = clarifying && !plan.tasks.length ? "clarify"
     : outOfScope ? "out_of_scope"
-      : types.size === 1 && types.has("consult") ? "consult"
-        : [...types].every((type) => type === "limit") ? "limit"
-          : types.has("action") ? "action"
-            : types.has("compose") ? (composable ? "compose" : "content")
-              : types.has("document") ? "document" : "consult";
-  const consultTasks = plan.tasks.filter((task) => task.type === "consult");
+      : [...types].every((type) => type === "limit") ? "limit"
+        : types.has("action") ? "action"
+          : types.has("compose") ? "compose" : "consult";
+  // Document tasks are consultations over a document source; the analyst answers them with citations.
+  const consultTasks = plan.tasks.filter((task) => ["consult", "document"].includes(task.type));
   const ids = [...new Set([...consultTasks, ...composeTasks].flatMap((task) => task.opportunityIds))]
     .filter((id) => known.has(id)).slice(0, 3);
   const lengths = consultTasks.map((task) => task.constraints.length);
@@ -174,7 +181,7 @@ export function routeFromPlan(plan, opportunityIds = []) {
     responseLength: lengths.length
       ? lengths.sort((a, b) => LENGTH_ORDER[a] - LENGTH_ORDER[b])[0]
       : "standard",
-    compositions: mode === "compose" ? composeTasks : [],
+    compositions: composeTasks,
     recordFilters: plan.recordFilters,
     clarificationQuestion: plan.clarification.question,
     clarificationOptions: plan.clarification.options,
@@ -189,7 +196,8 @@ export function validateRoute(raw, { question, opportunityIds, hasPendingAction 
   return { issues: validated.issues, route: routeFromPlan(validated.plan, opportunityIds), droppedFilters: validated.droppedFilters };
 }
 
-export function buildRouterContext({ question, history, selectedOpportunityId, accountDossier, memory, today }) {
+export function buildRouterContext({ question, history, selectedOpportunityId, accountDossier, memory, today, attachmentName = null,
+  pendingAction = null }) {
   const opportunities = accountDossier.sections.opportunities.items;
   const selected = opportunities.find((item) => item.id === Number(selectedOpportunityId || 0));
   return {
@@ -200,6 +208,8 @@ export function buildRouterContext({ question, history, selectedOpportunityId, a
     })),
     account: { id: accountDossier.account.id, name: accountDossier.account.name },
     selectedOpportunity: selected ? { id: selected.id, name: selected.name } : null,
+    attachedFile: attachmentName,
+    pendingAction,
     previousFocus: memory?.focusOpportunityIds?.length
       ? { level: memory.level, opportunityIds: memory.focusOpportunityIds }
       : null,
@@ -213,6 +223,7 @@ export function buildRouterContext({ question, history, selectedOpportunityId, a
 export async function routeCustomerTurn({ context, question, opportunityIds, userId, jobId, signal,
   call = runStructuredTextResearch, model = config.openai.routerModel,
   reasoningEffort = config.openai.routerReasoningEffort }) {
+  const hasPendingAction = Boolean(context?.pendingAction);
   const request = (feedback) => call({
     schemaName: "customer_account_dossier_route",
     model,
@@ -223,6 +234,8 @@ export async function routeCustomerTurn({ context, question, opportunityIds, use
     fields: ROUTER_FIELDS,
     // Reasoning models do not accept temperature; they take an effort level instead.
     ...(reasoningEffort ? { reasoningEffort } : { temperature: 0 }),
+    maxDurationMs: 20000,
+    maxOutputTokens: 2500,
     signal,
     aiUsageContext: { userId: Number(userId), featureCode: "commercial_intelligence.account_chat.dossier_router",
       jobType: "account_chat", jobId },
@@ -230,12 +243,12 @@ export async function routeCustomerTurn({ context, question, opportunityIds, use
   const attempts = [];
   let raw = await request(null);
   if (!raw) throw Object.assign(new Error("El proveedor de IA no está configurado."), { code: "DOSSIER_PROVIDER_UNAVAILABLE" });
-  let validated = validateRoute(raw, { question, opportunityIds });
+  let validated = validateRoute(raw, { question, opportunityIds, hasPendingAction });
   attempts.push({ issues: validated.issues });
   if (validated.issues.length) {
     raw = await request({ previousRoute: raw, issues: validated.issues,
       instruction: "Corrige únicamente los problemas indicados; conserva las tareas, restricciones y el foco del mensaje." });
-    validated = validateRoute(raw, { question, opportunityIds });
+    validated = validateRoute(raw, { question, opportunityIds, hasPendingAction });
     attempts.push({ issues: validated.issues });
   }
   // After the retry, quoting mismatches (punctuation, accents) do not justify failing the whole turn.

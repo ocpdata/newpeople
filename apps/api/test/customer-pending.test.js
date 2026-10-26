@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCustomerPendingReadFilter, buildCustomerPendingResponse, resolveCustomerPendingRequest,
-  validateCustomerPendingMemory } from "../src/commercial-intelligence/customer-pending.js";
+import { buildCustomerPendingReadFilter, buildCustomerPendingResponse, resolveCustomerPendingRequest } from "../src/commercial-intelligence/customer-pending.js";
 import { getCustomerHistorySourceAccess } from "../src/commercial-intelligence/customer-history.js";
-import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
 
 const now = new Date("2026-10-17T05:30:00Z"), timezone = "America/Mexico_City";
 const ids = [21, 27, 40, 41, 67, 68, 75];
@@ -117,20 +115,6 @@ describe("Q07 deterministic pending activities", () => {
     const result = render({ limit: 2 });
     expect(result.activityHistory.metadata).toMatchObject({ matched: 7, shown: 2, presentationLimited: true });
     expect(result.answer).toContain("sin paginación");
-  });
-  it("preserves effective filters in validated context and continuation while isolating new requests", () => {
-    const first = resolve({ opportunityReference: "Hardware Refresh", sources: ["opportunityActivities"], includeUndated: false });
-    expect(validateCustomerPendingMemory(first.memory, snapshot)).toEqual(first.memory);
-    const context = validateCustomerConversationContext({ accountId: 22, pendingMemory: first.memory }, snapshot, 22);
-    expect(context.pendingMemory).toEqual(first.memory);
-    const next = resolve({ changed: ["mode"], mode: "overdue", sources: [] }, {
-      previous: first.memory, movement: "continue",
-    });
-    expect(next.memory.targetId).toBe(36);
-    expect(next.spec.sources).toEqual(["opportunityActivities"]);
-    expect(next.spec.includeUndated).toBe(false);
-    expect(resolve({}, { previous: first.memory }).spec.sources).toHaveLength(2);
-    expect(validateCustomerPendingMemory({ ...first.memory, accountId: 99 }, snapshot)).toBeNull();
   });
   it.each([{ clarification: "¿De qué año?" }, { unsupported: ["correos"] }, { asOf: "2026-02-30" },
     { accountReference: "Otra cuenta" }, { opportunityReference: "No visible" },

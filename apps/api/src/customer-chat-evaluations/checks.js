@@ -42,6 +42,10 @@ const dossierSource = (result, kind, id = null) => (result?.dossierSources || []
   source.kind === kind && (id === null || Number(source.id) === Number(id)));
 const sourceSectionComplete = (source, key) => Boolean(source?.sections?.some((section) =>
   section.key === key && ["loaded", "empty"].includes(section.status)));
+// Turn sources (quotation content, attachment, CRM documents, library) of the dossier engine.
+const turnSourceSection = (result, key) => dossierSource(result, "sources")?.sections?.find((section) => section.key === key) || null;
+const citationsMatching = (result, label, pattern) => (result?.dossierCitations || []).filter((citation) =>
+  label.test(String(citation.label || "")) && pattern.test(`${citation.label} ${citation.excerpt || ""}`));
 const opportunityByName = (reference, name) => (reference?.opportunities || []).find((item) =>
   normalizeEvaluationStatus(item.name) === normalizeEvaluationStatus(name));
 const actionsOf = (reference, filter) => (reference?.workspaceActions || []).filter(filter);
@@ -91,9 +95,18 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     !tasks.some((task) => task.status === "error"),
   "Un error global o de un componente no acredita la capacidad positiva.");
   const dossier = isDossierAnswer(result);
+  const mixed = result?.presentation?.engine === "mixed";
   const conversational = !dossier && hasSupportedConversationalPresentation(result?.presentation) &&
-    result.presentation.auditedAnswer === result.answer;
-  if (dossier) {
+    result.presentation.auditedAnswer === (mixed ? result.presentation.actionAnswer : result.answer);
+  if (mixed) {
+    add("Parte de consulta verificada con registros del CRM", result.presentation.dossierPart?.status === "completed" &&
+      !UNVERIFIED_NOTICE.test(String(result?.answer || "")),
+    "En un turno mixto, la parte resuelta por el motor de expedientes debe quedar verificada por código.");
+    if (result.presentation.status === "completed") {
+      add("Respuesta final auditada por B10", conversational,
+        "La parte de acciones debe coincidir con el texto auditado y conservar el estado de operaciones.");
+    }
+  } else if (dossier) {
     add("Respuesta verificada con registros del CRM", ["completed"].includes(result?.presentation?.status) &&
       !UNVERIFIED_NOTICE.test(String(result?.answer || "")),
     "El motor de expedientes debe verificar por código cada afirmación citada; un aviso de verificación incompleta no aprueba.");
@@ -101,7 +114,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     add("Respuesta final auditada por B10", conversational,
       "La redacción final debe coincidir con el texto auditado y conservar hechos, cobertura, incertidumbre y estado de operaciones.");
   }
-  const text = String(conversational ? result.presentation.verifiedAnswer : result?.answer || "");
+  const text = String(conversational && !mixed ? result.presentation.verifiedAnswer : result?.answer || "");
   if (definition.readOnlyRegression) {
     const questionCounts = { "Q09-05": [3], "L10": [3], "MIX09": [3], "SEQ15": [3, 2] };
     const expectedQuestions = questionCounts[definition.id]?.[stepIndex];
@@ -132,7 +145,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     // Dossier consultations do not classify kinds yet: notes and record reads are proven by the opportunity sources read.
     const dossierCovers = ([type, kind]) => {
       const opportunity = dossierSource(result, "opportunity");
-      if (type === "compose") return completedTask(type, kind);
+      if (["compose", "document"].includes(type)) return completedTask(type, kind);
       if (type !== "consult") return false;
       if (kind === "notes") return sourceSectionComplete(opportunity, "opportunityNotes");
       if (["detail", "field"].includes(kind)) return Boolean(opportunity);
@@ -146,8 +159,11 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
       (["SEQ11", "SEQ13", "SEQ15"].includes(definition.id) && stepIndex === 0);
     const retrieval = result?.debug?.flow?.find((block) => block.block === "B12");
     if (libraryTurn) {
-      add("Recuperación RAG acreditada por B12", retrieval?.output?.status === "results" &&
-        Number.isSafeInteger(retrieval.output.snippetsCount) && retrieval.output.snippetsCount > 0,
+      const library = turnSourceSection(result, "library");
+      add("Recuperación RAG acreditada por B12", dossier
+        ? library?.status === "loaded" && library.total > 0
+        : retrieval?.output?.status === "results" &&
+          Number.isSafeInteger(retrieval.output.snippetsCount) && retrieval.output.snippetsCount > 0,
       "Exigir fragmentos recuperados, no solo una etiqueta o un texto que parezca documental; la pertinencia sigue en revisión humana.");
       add("Procedencia de biblioteca declarada", ["knowledge_library", "mixed_knowledge"].includes(result?.contentSource),
         "La etiqueta no basta para aprobar: revisar fragmentos pertinentes y atribución en las trazas.");
@@ -178,7 +194,9 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   }
   if (definition.id === "MIX07") {
     add("Resumen y preguntas como entregables separados", completedTask("document", "quotation") &&
-      completedTask("compose", "questions") && Number(result?.documentMemory?.quotationId) === 18,
+      completedTask("compose", "questions") && (dossier
+        ? citationsMatching(result, /^Cotización 18 · /, /./).length > 0
+        : Number(result?.documentMemory?.quotationId) === 18),
     "La consulta de cotización y las preguntas deben completarse por separado; una limitación o un componente bloqueado no sustituye el resumen comercial.");
   }
   if (definition.id === "Q01-01") {
@@ -253,9 +271,13 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   if (definition.id === "Q10-03") {
     const readiness = result?.stageReadiness;
     const statesNoTransition = /(?:sin (?:iniciar|ejecutar|validar|cambiar|avanzar)|no (?:se ha )?(?:iniciado|ejecutado|validado|cambiado|avanzado)|no guarda respuestas ni cambia la etapa|no guard[eé] respuestas y la etapa no cambi[oó]|la etapa todav[ií]a no cambi[oó])/i.test(text);
-    add("Evaluación de preparación separada de la validación", Boolean(readiness?.currentStage?.name) &&
-      Array.isArray(readiness.pendingItems) && readiness.pendingItems.every((item) =>
-        item.title && text.includes(item.title)) && statesNoTransition,
+    // The dossier engine proves the readiness read with the current stage requirements it loaded.
+    add("Evaluación de preparación separada de la validación", (dossier
+      ? sourceSectionComplete(dossierSource(result, "opportunity"), "stageRequirements") &&
+        completedTask("consult")
+      : Boolean(readiness?.currentStage?.name) &&
+        Array.isArray(readiness.pendingItems) && readiness.pendingItems.every((item) =>
+          item.title && text.includes(item.title))) && statesNoTransition,
     "Informar los criterios consultados y dejar claro que no se inició la validación ni se cambió la etapa.");
     add("No afirma avance ejecutado", !(result?.operations || []).some((item) => item.status === "completed") &&
       !/etapa (?:avanzada|cambiada|actualizada)/i.test(text),
@@ -339,9 +361,18 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   }
   if (definition.id === "Q09-01") {
     add("Contenido de cotización consultado", result?.responseType === "informational" &&
-      result?.documentCoverage?.source === "quotation" &&
+      (dossier ? turnSourceSection(result, "quotationContent")?.status === "loaded" : result?.documentCoverage?.source === "quotation") &&
       completedTask("document", "quotation"),
       "Una aclaración o un listado de candidatos no acredita haber leído las partidas comerciales.");
+    if (dossier) {
+      const equipment = citationsMatching(result, /partida/, /BAM\s*8500/i)
+        .filter((citation) => !/implementaci[oó]n|configuraci[oó]n|soporte/i.test(citation.excerpt || "") &&
+          /cantidad \d/.test(citation.excerpt || ""));
+      const service = citationsMatching(result, /partida/, /implementaci[oó]n|configuraci[oó]n/i)
+        .filter((citation) => /cantidad \d/.test(citation.excerpt || ""));
+      add("Cantidades separadas y respaldadas por partida", equipment.length > 0 && service.length > 0,
+        "Se exige citar la partida de equipos y la del servicio por separado, cada una con su cantidad.");
+    }
     const evidence = Array.isArray(result?.documentEvidence) ? result.documentEvidence : [];
     const equipment = evidence.find((item) => typeof item === "string" &&
       /\[item-\d+-\d+\]/.test(item) && /BAM\s*8500|8500.*BlueCat/i.test(item) &&
@@ -349,7 +380,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
     const service = evidence.find((item) => typeof item === "string" &&
       /\[item-\d+-\d+\]/.test(item) && /implementaci[oó]n|configuraci[oó]n/i.test(item) &&
       /BAM\s*8500/i.test(item) && /Cantidad:\s*\d/.test(item));
-    add("Cantidades separadas y respaldadas por partida", Boolean(equipment && service && equipment !== service) &&
+    if (!dossier) add("Cantidades separadas y respaldadas por partida", Boolean(equipment && service && equipment !== service) &&
       /Cantidades por partida; no se sumaron equipos y servicios/.test(text),
       "Se exige evidencia de equipos y del servicio por separado. Cantidades y alcance deben contrastarse con el contenido vigente en revisión humana.");
     add("Sin detalle comercial no solicitado", !/precio unitario|descuento:/i.test(text),
@@ -400,7 +431,7 @@ export function evaluateResponse({ definition, result, accountId, reference, ste
   if (definition.id === "L07") {
     add("Distingue estado de actividad y estado comercial",
       result?.responseType === "informational" &&
-      /no\s+(?:significa|equivale|quiere decir|implica|indica)/i.test(text) &&
+      (/no\s+(?:significa|equivale|quiere decir|implica|indica)/i.test(text) || /^\W*no\b/i.test(text)) &&
       /pendiente/i.test(text) && /perdid[ao]/i.test(text) &&
       /actividad/i.test(text) && /oportunidad/i.test(text),
       "Pendiente describe una actividad y Perdida es un estado comercial de oportunidad; no se exige un ejemplo CRM para responder esta definición.");

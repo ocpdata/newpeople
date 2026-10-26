@@ -454,7 +454,7 @@ la nueva evaluación.
 | Selección de datos opcionales | Llamada previa con timeout de cinco segundos. | Medir errores y dominios seleccionados incorrectamente; no asumir que debe fusionarse con B3. |
 | Lecturas y rondas | Hasta 8 lecturas, hasta 2 rondas adicionales según la política. | Medir límites agotados y lecturas innecesarias; no aumentarlos para ocultar planes imprecisos. |
 | Tiempo máximo del turno | Hasta 45 segundos según política de servidor. | Revisar latencia por etapa y la espera configurada en la interfaz antes de modificarlo. |
-| `CUSTOMER_TURN_CONTRACT_MODE` | El valor predeterminado del código es `on`; también existen `off` y `pilot`. | Confirmar la configuración efectiva en cada entorno; el valor local por defecto no certifica el despliegue. |
+| Contrato de turno B3 | Obligatorio para los turnos de acción; la variable `CUSTOMER_TURN_CONTRACT_MODE` fue retirada. | No hay interruptor que verificar por entorno. |
 
 ## Matriz de alcance y aceptación
 

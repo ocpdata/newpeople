@@ -9,10 +9,11 @@ API:
 - Base local: `apps/api/.env.example`
 - Base nube/S3: `apps/api/.env.aws-s3.example`
 - Validacion runtime: `apps/api/src/validateConfig.js`
-- Chat de Cliente existente: `CUSTOMER_TURN_CONTRACT_MODE=on` por defecto en
-  todos los entornos, sin ampliar permisos ni omitir confirmaciones. Al actualizar
-  un despliegue existente, cambiar cualquier valor explicito `off` o `pilot` a
-  `on` y reiniciar la API. Para rollback, usar `off` y reiniciar.
+- Chat de Cliente existente: el motor de expedientes y el contrato de turno B3
+  para acciones son obligatorios; no hay variables para desactivarlos ni ruta
+  anterior de respaldo. Las variables retiradas `CUSTOMER_TURN_CONTRACT_MODE`,
+  `CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS` y `CUSTOMER_DOSSIER_ENGINE_MODE` ya no
+  se leen y pueden eliminarse de los entornos.
 - Redaccion conversacional B10 de Cliente existente:
   `CUSTOMER_CONVERSATIONAL_RESPONSE_ENABLED=true` por defecto, efectiva solo
   en turnos con contrato B3. Usa el proveedor y presupuesto de IA configurados.

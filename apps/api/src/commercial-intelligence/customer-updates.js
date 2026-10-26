@@ -169,7 +169,12 @@ export async function buildCustomerUpdateResponse({
   if (spec.clarification) return stop(spec.clarification, memory);
   if (!memory.items.length) return stop("¿Qué quieres actualizar: registrar lo comentado como nota, revisar una respuesta de etapa o cambiar un campo concreto? No preparé ningún cambio.", memory);
   const target = unique.find((record) => Number(record.id) === memory.targetId);
-  if (memory.object === "opportunity" && ["ganada", "perdida", "anulada"].includes(target.commercialStatusCode)) return stop("No puedes modificar una oportunidad cerrada.", memory, "error");
+  // A closed opportunity is a business rule, not a technical failure: explain it without preparing a change.
+  if (memory.object === "opportunity" && ["ganada", "perdida", "anulada"].includes(target.commercialStatusCode)) {
+    const status = { ganada: "Ganada", perdida: "Perdida", anulada: "Anulada" }[target.commercialStatusCode];
+    return stop(`${target.name} está ${status}: una oportunidad cerrada no se puede modificar desde el chat. No preparé ningún cambio.`,
+      memory, "informational");
+  }
   const active = memory.items.find((item) => item.status === "pending");
   const metadata = {
     draftId: memory.draftId, revision: memory.revision, object: memory.object,

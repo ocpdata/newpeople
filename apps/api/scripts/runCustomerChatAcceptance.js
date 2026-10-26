@@ -23,7 +23,7 @@ const USAGE = `Banco de aceptación del chat de Cliente existente.
   --judge-model <modelo>        Evalúa las respuestas con ese modelo (requiere tarifa registrada).
   --regrade <reporte.json>      Vuelve a evaluar un reporte existente sin ejecutar el chat.
   --conversation <A,B>          Limita las conversaciones.
-  --engine <legacy|dossier>     Motor de chat a medir (dossier activa el motor solo en este proceso).
+  --engine dossier              Motor de chat a medir (el motor de expedientes es el único disponible).
   --analyst-model <modelo>      Modelo del analista para --engine dossier.
   --analyst-effort <nivel>      Esfuerzo de razonamiento opcional del analista (low, medium, high).
   --out <directorio>            Destino de los reportes (por defecto acceptance-runs/).
@@ -174,18 +174,13 @@ async function main() {
   if (factCheck.failed.length && !flag("--allow-drift")) {
     throw new Error("Los hechos del banco no coinciden con la base. Actualiza el banco o usa --allow-drift.");
   }
-  const engine = option("--engine", "legacy");
-  if (!["legacy", "dossier"].includes(engine)) throw new Error(`Motor desconocido: ${engine}`);
-  if (engine === "dossier") {
-    config.features.customerDossierEngineMode = "on";
-    config.openai.analystModel = option("--analyst-model", config.openai.analystModel);
-    config.openai.analystReasoningEffort = option("--analyst-effort", config.openai.analystReasoningEffort);
-    if (!config.openai.analystModel) throw new Error("--engine dossier requiere --analyst-model o OPENAI_ANALYST_MODEL.");
-    for (const model of new Set([config.openai.analystModel, config.openai.routerModel])) {
-      await withReadOnlyConnection(pool, (run) => assertModelPriced(run, model));
-    }
-  } else {
-    config.features.customerDossierEngineMode = "off";
+  const engine = option("--engine", "dossier");
+  if (engine !== "dossier") throw new Error(`Motor desconocido: ${engine}. El flujo anterior fue retirado.`);
+  config.openai.analystModel = option("--analyst-model", config.openai.analystModel);
+  config.openai.analystReasoningEffort = option("--analyst-effort", config.openai.analystReasoningEffort);
+  if (!config.openai.analystModel) throw new Error("--engine dossier requiere --analyst-model o OPENAI_ANALYST_MODEL.");
+  for (const model of new Set([config.openai.analystModel, config.openai.routerModel])) {
+    await withReadOnlyConnection(pool, (run) => assertModelPriced(run, model));
   }
   const report = {
     bankVersion: bank.version, engine, startedAt: new Date().toISOString(), gitRevision: gitRevision(),

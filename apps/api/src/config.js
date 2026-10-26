@@ -41,15 +41,6 @@ export const config = {
   features: {
     customerConversationalResponseEnabled:
       String(process.env.CUSTOMER_CONVERSATIONAL_RESPONSE_ENABLED || "true") === "true",
-    customerTurnContractMode: String(
-      process.env.CUSTOMER_TURN_CONTRACT_MODE || "on",
-    ).trim().toLowerCase(),
-    customerTurnContractPilotUserIds: String(
-      process.env.CUSTOMER_TURN_CONTRACT_PILOT_USER_IDS || "",
-    ).split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0),
-    customerDossierEngineMode: String(
-      process.env.CUSTOMER_DOSSIER_ENGINE_MODE || "on",
-    ).trim().toLowerCase(),
     opportunityStageAnswerSuggestionsEnabled:
       String(
         process.env.OPPORTUNITY_STAGE_ANSWER_SUGGESTIONS_ENABLED || "true",
@@ -212,7 +203,8 @@ export const config = {
     // Streaming returns headers at once, so gateways that cut requests without a first byte after ~30 s
     // do not abort long model calls.
     streamResponses: String(process.env.OPENAI_STREAM_RESPONSES || "true") !== "false",
-    streamIdleTimeoutMs: Number(process.env.OPENAI_STREAM_IDLE_TIMEOUT_MS || 60000),
+    streamIdleTimeoutMs: Number(process.env.OPENAI_STREAM_IDLE_TIMEOUT_MS || 40000),
+    streamHeaderTimeoutMs: Number(process.env.OPENAI_STREAM_HEADER_TIMEOUT_MS || 30000),
     enableWebSearch:
       String(process.env.OPENAI_ENABLE_WEB_SEARCH || "false") === "true",
   },
