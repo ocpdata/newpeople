@@ -6,6 +6,8 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "../ai-usage/service.js";
 import { config } from "../config.js";
+import { aiFetch } from "../ai-services/client.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { query, withTransaction } from "../db.js";
 import {
   cleanupTempFiles,
@@ -25,7 +27,9 @@ const storage = createDocumentStorage();
 const INTAKE_TTL_HOURS = 24;
 const MAX_EXTRACTION_PREVIEW_CHARS = 6000;
 const MAX_ANALYSIS_TEXT_CHARS = 18000;
-const ANALYSIS_MODEL = config.openai.model || "gpt-4.1-mini";
+function analysisModelFor(featureCode) {
+  return aiModelFor(featureCode, "fast") || "gpt-4.1-mini";
+}
 const MAX_SUMMARY_SOURCE_TEXT_CHARS = 12000;
 const MAX_SUMMARY_OUTPUT_CHARS = 900;
 
@@ -412,47 +416,46 @@ async function requestOpenAiSummarySuggestion({
   const aiUsageInternalRequestId =
     aiUsageContext?.internalRequestId || randomUUID();
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "commercial_enablement.intake_summary") || "commercial_enablement.intake_summary";
+  const analysisModel = analysisModelFor(aiFeatureCode);
   if (aiUsageUserId) {
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: ANALYSIS_MODEL,
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text: "Resume un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Escribe summary siempre en espanol, aunque el documento fuente este en otro idioma. El summary debe explicar de forma breve y concreta que contiene el documento, para que sirve y que valor o utilidad practica aporta. Evita frases genericas como 'material comercial orientado a'. No inventes beneficios, promesas ni detalles no presentes en el texto. Devuelve solo {\"summary\": string}.",
-              },
-            ],
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: JSON.stringify({
-                  fileName,
-                  hint,
-                  text: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS),
-                }),
-              },
-            ],
-          },
-        ],
-      }),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      model: analysisModel,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: "Resume un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Escribe summary siempre en espanol, aunque el documento fuente este en otro idioma. El summary debe explicar de forma breve y concreta que contiene el documento, para que sirve y que valor o utilidad practica aporta. Evita frases genericas como 'material comercial orientado a'. No inventes beneficios, promesas ni detalles no presentes en el texto. Devuelve solo {\"summary\": string}.",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: JSON.stringify({
+                fileName,
+                hint,
+                text: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS),
+              }),
+            },
+          ],
+        },
+      ],
+    }),
+  });
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -468,11 +471,8 @@ async function requestOpenAiSummarySuggestion({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(
-          aiUsageContext?.featureCode || "commercial_enablement.intake_summary",
-        ) || "commercial_enablement.intake_summary",
-      model: ANALYSIS_MODEL,
+      featureCode: aiFeatureCode,
+      model: analysisModel,
       openAiResponse: payload,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,
@@ -502,7 +502,7 @@ async function requestOpenAiSummarySuggestion({
           aiRun: {
             used: true,
             provider: "openai",
-            model: ANALYSIS_MODEL,
+            model: analysisModel,
             requestId,
             latencyMs: Date.now() - requestStartedAt,
             inputChars: summarizeText(text, MAX_SUMMARY_SOURCE_TEXT_CHARS)
@@ -934,63 +934,62 @@ async function requestOpenAiPrefill({
   const aiUsageInternalRequestId =
     aiUsageContext?.internalRequestId || randomUUID();
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "commercial_enablement.intake_prefill") || "commercial_enablement.intake_prefill";
+  const analysisModel = analysisModelFor(aiFeatureCode);
   if (aiUsageUserId) {
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: ANALYSIS_MODEL,
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text: "Analiza un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Los campos summary e internalDescription siempre deben redactarse en espanol, aunque el documento fuente este en otro idioma. El campo summary debe explicar brevemente que contiene el documento, para que sirve y que valor o utilidad practica aporta. Evita frases genericas como 'material comercial orientado a'. Identifica languageCode como 'es' o 'en'. Nunca decidas status ni visibilityLevel; siempre deben quedar como decisionRequired=true y value=null. Usa solo codigos existentes cuando clasifiques assetTypeCode, manufacturerCodes, solutionCodes, industryCodes y audienceCode.",
-              },
-            ],
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: JSON.stringify({
-                  fileName,
-                  hint,
-                  text: summarizeText(text, MAX_ANALYSIS_TEXT_CHARS),
-                  catalogs: {
-                    assetTypeCodes: (catalogs.asset_type || []).map(
-                      (entry) => entry.code,
-                    ),
-                    manufacturerCodes: (catalogs.manufacturer || []).map(
-                      (entry) => ({ code: entry.code, name: entry.name }),
-                    ),
-                    solutionCodes: (catalogs.solution || []).map((entry) => ({
-                      code: entry.code,
-                      name: entry.name,
-                    })),
-                    industryCodes: (catalogs.industry || []).map((entry) => ({
-                      code: entry.code,
-                      name: entry.name,
-                    })),
-                  },
-                }),
-              },
-            ],
-          },
-        ],
-      }),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      model: analysisModel,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: "Analiza un documento de biblioteca comercial y devuelve exclusivamente JSON valido. Los campos summary e internalDescription siempre deben redactarse en espanol, aunque el documento fuente este en otro idioma. El campo summary debe explicar brevemente que contiene el documento, para que sirve y que valor o utilidad practica aporta. Evita frases genericas como 'material comercial orientado a'. Identifica languageCode como 'es' o 'en'. Nunca decidas status ni visibilityLevel; siempre deben quedar como decisionRequired=true y value=null. Usa solo codigos existentes cuando clasifiques assetTypeCode, manufacturerCodes, solutionCodes, industryCodes y audienceCode.",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: JSON.stringify({
+                fileName,
+                hint,
+                text: summarizeText(text, MAX_ANALYSIS_TEXT_CHARS),
+                catalogs: {
+                  assetTypeCodes: (catalogs.asset_type || []).map(
+                    (entry) => entry.code,
+                  ),
+                  manufacturerCodes: (catalogs.manufacturer || []).map(
+                    (entry) => ({ code: entry.code, name: entry.name }),
+                  ),
+                  solutionCodes: (catalogs.solution || []).map((entry) => ({
+                    code: entry.code,
+                    name: entry.name,
+                  })),
+                  industryCodes: (catalogs.industry || []).map((entry) => ({
+                    code: entry.code,
+                    name: entry.name,
+                  })),
+                },
+              }),
+            },
+          ],
+        },
+      ],
+    }),
+  });
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -1006,11 +1005,8 @@ async function requestOpenAiPrefill({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(
-          aiUsageContext?.featureCode || "commercial_enablement.intake_prefill",
-        ) || "commercial_enablement.intake_prefill",
-      model: ANALYSIS_MODEL,
+      featureCode: aiFeatureCode,
+      model: analysisModel,
       openAiResponse: payload,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,
@@ -1026,7 +1022,7 @@ async function requestOpenAiPrefill({
         aiRun: {
           used: true,
           provider: "openai",
-          model: ANALYSIS_MODEL,
+          model: analysisModel,
           requestId,
           latencyMs: Date.now() - requestStartedAt,
           inputChars: summarizeText(text, MAX_ANALYSIS_TEXT_CHARS).length,
@@ -1067,70 +1063,69 @@ async function requestOpenAiClassificationSuggestion({
   const aiUsageInternalRequestId =
     aiUsageContext?.internalRequestId || randomUUID();
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "commercial_enablement.intake_classification") || "commercial_enablement.intake_classification";
+  const analysisModel = analysisModelFor(aiFeatureCode);
   if (aiUsageUserId) {
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: ANALYSIS_MODEL,
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text: 'Devuelve exclusivamente JSON valido con clasificacion comercial. Usa solo codigos del catalogo provisto. No inventes codigos. Responde con: {"assetTypeCode": string|null, "audienceCode": string|null, "manufacturerCodes": string[], "solutionCodes": string[], "industryCodes": string[], "stageCodes": string[]}',
-              },
-            ],
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: JSON.stringify({
-                  fileName,
-                  hint,
-                  summary,
-                  text: summarizeText(text, 12000),
-                  catalogs: {
-                    assetTypeCodes: (catalogs.asset_type || []).map(
-                      (entry) => entry.code,
-                    ),
-                    audienceCodes: (catalogs.audience || []).map(
-                      (entry) => entry.code,
-                    ),
-                    manufacturerCodes: (catalogs.manufacturer || []).map(
-                      (entry) => ({ code: entry.code, name: entry.name }),
-                    ),
-                    solutionCodes: (catalogs.solution || []).map((entry) => ({
-                      code: entry.code,
-                      name: entry.name,
-                    })),
-                    industryCodes: (catalogs.industry || []).map((entry) => ({
-                      code: entry.code,
-                      name: entry.name,
-                    })),
-                    stageCodes: (catalogs.stage || []).map((entry) => ({
-                      code: entry.code,
-                      name: entry.name,
-                    })),
-                  },
-                }),
-              },
-            ],
-          },
-        ],
-      }),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      model: analysisModel,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: 'Devuelve exclusivamente JSON valido con clasificacion comercial. Usa solo codigos del catalogo provisto. No inventes codigos. Responde con: {"assetTypeCode": string|null, "audienceCode": string|null, "manufacturerCodes": string[], "solutionCodes": string[], "industryCodes": string[], "stageCodes": string[]}',
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: JSON.stringify({
+                fileName,
+                hint,
+                summary,
+                text: summarizeText(text, 12000),
+                catalogs: {
+                  assetTypeCodes: (catalogs.asset_type || []).map(
+                    (entry) => entry.code,
+                  ),
+                  audienceCodes: (catalogs.audience || []).map(
+                    (entry) => entry.code,
+                  ),
+                  manufacturerCodes: (catalogs.manufacturer || []).map(
+                    (entry) => ({ code: entry.code, name: entry.name }),
+                  ),
+                  solutionCodes: (catalogs.solution || []).map((entry) => ({
+                    code: entry.code,
+                    name: entry.name,
+                  })),
+                  industryCodes: (catalogs.industry || []).map((entry) => ({
+                    code: entry.code,
+                    name: entry.name,
+                  })),
+                  stageCodes: (catalogs.stage || []).map((entry) => ({
+                    code: entry.code,
+                    name: entry.name,
+                  })),
+                },
+              }),
+            },
+          ],
+        },
+      ],
+    }),
+  });
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -1146,12 +1141,8 @@ async function requestOpenAiClassificationSuggestion({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(
-          aiUsageContext?.featureCode ||
-            "commercial_enablement.intake_classification",
-        ) || "commercial_enablement.intake_classification",
-      model: ANALYSIS_MODEL,
+      featureCode: aiFeatureCode,
+      model: analysisModel,
       openAiResponse: payload,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,
@@ -1167,7 +1158,7 @@ async function requestOpenAiClassificationSuggestion({
         aiRun: {
           used: true,
           provider: "openai",
-          model: ANALYSIS_MODEL,
+          model: analysisModel,
           requestId,
           latencyMs: Date.now() - requestStartedAt,
           inputChars: summarizeText(text, 12000).length,
@@ -1285,7 +1276,7 @@ export async function reanalyzeCommercialEnablementAssetSummary({
       aiRun: {
         used: false,
         provider: "openai",
-        model: ANALYSIS_MODEL,
+        model: analysisModelFor("commercial_enablement.asset_summary_reanalysis"),
         requestId: null,
         latencyMs: null,
         inputChars: summarizeText(sourceText, MAX_SUMMARY_SOURCE_TEXT_CHARS)
@@ -1681,7 +1672,7 @@ async function analyzeIntakeSessionInternal({
          updated_at = NOW(3)
      WHERE id = ?`,
     [
-      summaryAiRun?.model || aiResult.aiRun?.model || ANALYSIS_MODEL,
+      summaryAiRun?.model || aiResult.aiRun?.model || analysisModelFor("commercial_enablement.intake_prefill"),
       String(hint || sessionRow.source_hint || "").trim(),
       JSON.stringify(draftPayload),
       JSON.stringify(warnings),

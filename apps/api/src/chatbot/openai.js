@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { aiFetch } from "../ai-services/client.js";
 import { getChatbotSettings } from "../settings.js";
 
 export async function fetchChatbotCompletion(payload, purpose = "chatbot") {
@@ -10,18 +10,14 @@ export async function fetchChatbotCompletion(payload, purpose = "chatbot") {
     : null;
 
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.openai.apiKey}`,
-        },
-        body: JSON.stringify(payload),
-        ...(controller ? { signal: controller.signal } : {}),
+    const response = await aiFetch("chatbot.assistant", "/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(payload),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -55,18 +51,14 @@ export async function fetchChatbotEmbedding({
     : null;
 
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/embeddings`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.openai.apiKey}`,
-        },
-        body: JSON.stringify({ model, input }),
-        ...(controller ? { signal: controller.signal } : {}),
+    const response = await aiFetch("chatbot.assistant", "/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({ model, input }),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();

@@ -1,4 +1,5 @@
 import { config } from "../../config.js";
+import { aiModelFor } from "../../ai-services/state.js";
 import { runStructuredTextResearch } from "../../structuredWebResearch.js";
 
 import {
@@ -221,7 +222,7 @@ export function buildRouterContext({ question, history, selectedOpportunityId, a
 }
 
 export async function routeCustomerTurn({ context, question, opportunityIds, userId, jobId, signal,
-  call = runStructuredTextResearch, model = config.openai.routerModel,
+  call = runStructuredTextResearch, model = aiModelFor("commercial_intelligence.account_chat.dossier_router", "advanced"),
   reasoningEffort = config.openai.routerReasoningEffort }) {
   const hasPendingAction = Boolean(context?.pendingAction);
   const request = (feedback) => call({

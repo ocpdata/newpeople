@@ -25,6 +25,8 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { query } from "./db.js";
 import { ensureCommercialExecutionSchema } from "./commercial-execution/schema.js";
 import {
@@ -1476,8 +1478,11 @@ async function requestOpportunityNarrativesWithAi(
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
+  const aiFeatureCode =
+    aiUsageContext?.featureCode ||
+    "commercial_development.opportunity_narrative";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     input: [
       {
         role: "system",
@@ -1727,17 +1732,13 @@ async function requestOpportunityNarrativesWithAi(
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1752,10 +1753,8 @@ async function requestOpportunityNarrativesWithAi(
         aiUsageContext?.internalRequestId ||
         `cn_${Date.now().toString(36)}_${randomUUID().replace(/-/g, "").slice(0, 10)}`,
       userId: aiUsageUserId,
-      featureCode:
-        aiUsageContext?.featureCode ||
-        "commercial_development.opportunity_narrative",
-      model: config.openai.model,
+      featureCode: aiFeatureCode,
+      model: payload.model,
       openAiResponse: data,
       jobType: aiUsageContext?.jobType || "commercial_narrative",
       jobId: aiUsageContext?.jobId || null,
@@ -7182,8 +7181,13 @@ async function requestCommercialAttachmentSuggestionsWithAi({
     }))
     .filter((file) => file.id);
 
+  const aiFeatureCode =
+    String(
+      aiUsageContext?.featureCode ||
+        "commercial_development.email_attachment_suggestions",
+    ) || "commercial_development.email_attachment_suggestions";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     input: [
       {
         role: "system",
@@ -7210,17 +7214,13 @@ async function requestCommercialAttachmentSuggestionsWithAi({
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -7232,12 +7232,8 @@ async function requestCommercialAttachmentSuggestionsWithAi({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(
-          aiUsageContext?.featureCode ||
-            "commercial_development.email_attachment_suggestions",
-        ) || "commercial_development.email_attachment_suggestions",
-      model: String(payload?.model || config.openai.model || "").trim(),
+      featureCode: aiFeatureCode,
+      model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
       openAiResponse: data,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,
@@ -7420,8 +7416,12 @@ async function requestCommercialEmailSuggestionWithAi({
       summary: String(attachment.summary || "").trim(),
       assetTypeLabel: String(attachment.assetTypeLabel || "").trim(),
     }));
+  const aiFeatureCode =
+    String(
+      aiUsageContext?.featureCode || "commercial_development.email_suggestion",
+    ) || "commercial_development.email_suggestion";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     temperature: 0.2,
     response_format: {
       type: "json_schema",
@@ -7492,17 +7492,13 @@ async function requestCommercialEmailSuggestionWithAi({
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -7515,12 +7511,8 @@ async function requestCommercialEmailSuggestionWithAi({
       await recordAiUsageFromOpenAiResponse({
         internalRequestId: aiUsageInternalRequestId,
         userId: aiUsageUserId,
-        featureCode:
-          String(
-            aiUsageContext?.featureCode ||
-              "commercial_development.email_suggestion",
-          ) || "commercial_development.email_suggestion",
-        model: String(payload?.model || config.openai.model || "").trim(),
+        featureCode: aiFeatureCode,
+        model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
         openAiResponse: data,
         jobType: aiUsageContext?.jobType || null,
         jobId: aiUsageContext?.jobId || null,

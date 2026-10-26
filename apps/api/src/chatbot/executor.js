@@ -804,7 +804,7 @@ export async function executeChatbotPlan({
     ? await searchInternalAppKnowledge({ user, prompt, limit: 6 })
     : [];
   const ragContext = String(prompt || "").trim()
-    ? await retrieveDocumentacionRagEvidence({ prompt })
+    ? await retrieveDocumentacionRagEvidence({ prompt, userId: user?.id })
     : [];
 
   if (resolverOutput?.resolutionStatus === "resolved") {

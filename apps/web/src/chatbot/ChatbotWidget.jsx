@@ -564,7 +564,7 @@ export default function ChatbotWidget({ currentUser }) {
               )}
             </div>
             <div className="chatbot-header-actions">
-              {walletSummary ? (
+              {walletSummary?.limited ? (
                 <div
                   className={`chatbot-credit-badge is-${getBalanceIndicatorClass(walletSummary)}`}
                   title="Disponibilidad de crédito de IA"

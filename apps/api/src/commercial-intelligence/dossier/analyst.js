@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { config } from "../../config.js";
+import { aiModelFor } from "../../ai-services/state.js";
 import { runStructuredTextResearch } from "../../structuredWebResearch.js";
 import { SECTION_TITLES } from "./opportunity-dossier.js";
 import { CALCULATION_FIELDS, CALCULATION_OPERATIONS } from "./verifier.js";
@@ -171,7 +172,7 @@ export function buildAnalystContext({ question, route, dossiers, history, today,
 }
 
 export async function analyzeCustomerTurn({ context, obligations, userId, jobId, signal,
-  call = runStructuredTextResearch, model = config.openai.analystModel,
+  call = runStructuredTextResearch, model = aiModelFor("commercial_intelligence.account_chat.dossier_analyst", "advanced"),
   reasoningEffort = config.openai.analystReasoningEffort }) {
   if (!model) {
     throw Object.assign(new Error("Falta configurar OPENAI_ANALYST_MODEL para el motor de expedientes."),

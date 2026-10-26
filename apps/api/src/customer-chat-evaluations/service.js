@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import { pool, query, withTransaction } from "../db.js";
 import { config } from "../config.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { getUserAuthContext } from "../auth.js";
 import { getEvaluationCatalog, SMOKE_CASE_IDS } from "./catalog.js";
 import { businessImpactForCase } from "./business-impact.js";
@@ -92,7 +93,7 @@ async function configurationFor(user) {
     loadPlannerPrompt({ channel: "customer_account" }),
     loadChannelIntentConfigurations({ channel: "customer_account" }),
   ]);
-  return { model: config.openai.model, rules: safeEvidence(rules), permissions: [...user.permissionSet].sort(),
+  return { model: aiModelFor("commercial_intelligence.account_chat", "fast"), rules: safeEvidence(rules), permissions: [...user.permissionSet].sort(),
     classifier: { version: classifier.version, hash: digest(classifier.instruction) },
     planner: { version: planner.version, hash: digest(planner.instruction) },
     intentsHash: digest(intents), evaluatorVersion: "6",
@@ -114,7 +115,7 @@ export async function preflightEvaluation(user) {
       checks.push({ accountId, ready: false, message: error.message });
     }
   }
-  return { instance: "Instancia actual", userId: Number(user.id), model: config.openai.model,
+  return { instance: "Instancia actual", userId: Number(user.id), model: aiModelFor("commercial_intelligence.account_chat", "fast"),
     providerReady: Boolean(config.openai.apiKey), catalogVersion: catalog.version,
     cases: catalog.cases.length, accounts: checks, library: await getEvaluationLibraryReadiness(), businessWrites: false,
     warning: "Llamadas reales de IA con costo. Se guardarán sesiones y resultados, sin confirmar cambios de negocio.",

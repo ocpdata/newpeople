@@ -32,6 +32,13 @@ Concentrar parametros globales de operacion (empresa, branding, IA, chatbot y co
   - AI parameters config
   - chatbot settings
   - commercial settings
+- Crédito IA (servicios de IA):
+  - `GET /api/admin/ai/services` (resumen; `?refreshTavily=true` relee el uso de Tavily)
+  - `PUT /api/admin/ai/services/settings` (proveedor por módulo, modelos, límites; requiere `expectedVersion`)
+  - `GET /api/admin/ai/services/usage?fromUtc&toUtc` (monitoreo)
+  - `GET /api/ai/services/alerts` y `POST /api/ai/services/alerts/:id/acknowledge` (avisos)
+  - `GET/PUT /api/admin/ai/allocations` (porcentaje del saldo capturado por usuario activo)
+  - Acceso directo: `/settings?section=ai_budget`
 
 ## Reglas operativas
 

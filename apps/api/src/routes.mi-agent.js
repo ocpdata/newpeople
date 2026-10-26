@@ -8,6 +8,8 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { query } from "./db.js";
 import { checkCustomerCreationAccess } from "./coach/customer-creation-access.js";
 import { checkCustomerLinkAccess } from "./coach/customer-link-access.js";
@@ -2701,7 +2703,7 @@ export function normalizeAnalysis(payload, snapshot, developmentPlan = null) {
     meta: {
       generatedAt: new Date().toISOString(),
       provider: "openai",
-      model: String(config.openai.model || "").trim(),
+      model: String(aiModelFor(MI_AGENT_FEATURE_CODE, "fast") || "").trim(),
     },
   };
 }
@@ -3052,7 +3054,7 @@ function buildDevelopmentPlanPrompt(snapshot) {
     })),
   };
   return {
-    model: config.openai.model,
+    model: aiModelFor(MI_AGENT_FEATURE_CODE, "fast"),
     temperature: 0.1,
     input: [
       {
@@ -3129,7 +3131,7 @@ function buildActionPrompt(snapshot, developmentPlan) {
     alerts: buildSalesAlerts(snapshot, developmentPlan),
   };
   return {
-    model: config.openai.model,
+    model: aiModelFor(MI_AGENT_FEATURE_CODE, "fast"),
     temperature: 0.1,
     input: [
       {
@@ -3386,18 +3388,14 @@ async function requestMiAgentJson({
     : payload;
   let response;
   try {
-    response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.openai.apiKey}`,
-        },
-        body: JSON.stringify(requestPayload),
-        signal: controller.signal,
+    response = await aiFetch(featureCode, "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal,
+    });
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new Error(`Mi agente excedio el tiempo en la fase ${phase}`);
@@ -3420,7 +3418,7 @@ async function requestMiAgentJson({
     internalRequestId: randomUUID(),
     userId: Number(user.id),
     featureCode,
-    model: String(config.openai.model || "").trim(),
+    model: String(requestPayload?.model || aiModelFor(featureCode, "fast") || "").trim(),
     openAiResponse: responsePayload,
     jobType,
     jobId,
@@ -3446,7 +3444,7 @@ function buildCoachPrompt(
         .map((rule) => `- ${rule.title}: ${rule.instruction}`)
     : [];
   return {
-    model: config.openai.model,
+    model: aiModelFor(MI_COACH_FEATURE_CODE, "fast"),
     temperature: 0.2,
     input: [
       {
@@ -4043,7 +4041,7 @@ async function executeInteractionJob({
       throw new Error("Oportunidad no encontrada o fuera de alcance");
     const result = await requestMiAgentJson({
       payload: {
-        model: config.openai.model,
+        model: aiModelFor(MI_AGENT_FEATURE_CODE, "fast"),
         temperature: 0.1,
         input: [
           {
@@ -4262,7 +4260,7 @@ router.post(
     const modelResult = await requestMiAgentJson({
       payload: {
         ...buildCoachIntentPreviewPrompt(parsed.data.question, catalog),
-        model: config.openai.model,
+        model: aiModelFor(MI_COACH_FEATURE_CODE, "fast"),
       },
       user: req.user,
       jobId: null,
@@ -4479,7 +4477,7 @@ router.post(
         requestMiAgentJson({
           payload: {
             ...buildCoachIntentPreviewPrompt(routingQuestion, catalog),
-            model: config.openai.model,
+            model: aiModelFor(MI_COACH_FEATURE_CODE, "fast"),
           },
           user: routingUser,
           jobId: routingJobId,

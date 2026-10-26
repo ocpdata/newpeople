@@ -1036,7 +1036,7 @@ async function runProspectExternalResearch({ session, user, queryText }) {
   const trackResults = await Promise.all(
     tracks.map(async (track) => ({
       ...track,
-      search: await searchTavily({ query: track.query }),
+      search: await searchTavily({ query: track.query, featureCode: "prospect_research.external", userId: user?.id }),
     })),
   );
   const tavilyResults = trackResults.flatMap((track) =>

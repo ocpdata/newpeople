@@ -6,6 +6,8 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { query, withTransaction } from "./db.js";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
@@ -364,8 +366,10 @@ async function analyzeContactDuplicateReview({
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "contacts.duplicate_review") || "contacts.duplicate_review";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     input: [
       {
         role: "system",
@@ -406,17 +410,13 @@ async function analyzeContactDuplicateReview({
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.openai.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -428,10 +428,8 @@ async function analyzeContactDuplicateReview({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(aiUsageContext?.featureCode || "contacts.duplicate_review") ||
-        "contacts.duplicate_review",
-      model: String(payload?.model || config.openai.model || "").trim(),
+      featureCode: aiFeatureCode,
+      model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
       openAiResponse: responseData,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,

@@ -14,7 +14,10 @@ import {
   uploadRagFile,
 } from "./pinecone.js";
 import { importRagSourceUrl } from "./url-import.js";
+import { isAiServiceEnabledFor } from "../ai-services/state.js";
 
+const CHATBOT_FEATURE_CODE = "chatbot.assistant";
+const CUSTOMER_CHAT_LIBRARY_FEATURE_CODE = "commercial_intelligence.account_chat.library";
 const ALLOWED_EXTENSIONS = new Set([".docx", ".json", ".md", ".pdf", ".txt"]);
 const MAX_FILE_SIZE_BYTES = Number(config.pinecone.maxFileBytes);
 const refreshLocks = new Map();
@@ -78,6 +81,21 @@ async function loadDocument(documentPublicId) {
   return rows[0] || null;
 }
 
+// Pinecone reports the ingestion units of a completed upload; they count against the plan's monthly quota.
+function recordIngestionUnits(operation, userId) {
+  const units = Number(operation?.ingestion_units);
+  if (!Number.isFinite(units) || units <= 0) return;
+  import("../ai-services/store.js")
+    .then(({ recordAiServiceUsage }) => recordAiServiceUsage({
+      provider: "pinecone",
+      metric: "ingestion_units",
+      units,
+      userId,
+      featureCode: "documentacion_rag.ingestion",
+    }))
+    .catch(() => {});
+}
+
 async function updateSummary(documentId) {
   const lockKey = `summary:${documentId}`;
   if (refreshLocks.has(lockKey)) return refreshLocks.get(lockKey);
@@ -103,6 +121,7 @@ async function updateSummary(documentId) {
         fileName: document.original_file_name,
         documentId: document.public_id,
         versionId: document.active_version_id,
+        userId: document.uploaded_by_user_id,
       });
       if (!summary) {
         throw new Error("Pinecone no devolvió un resumen para el documento");
@@ -269,6 +288,7 @@ async function refreshDocument(document) {
         ],
       );
       if (!activated?.affectedRows) return;
+      recordIngestionUnits(operation, current.uploaded_by_user_id);
 
       if (previousFileId && previousFileId !== pendingFileId) {
         try {
@@ -804,8 +824,9 @@ export async function updateDocumentacionRagSummary({
   }
 }
 
-export async function retrieveDocumentacionRagEvidence({ prompt }) {
+export async function retrieveDocumentacionRagEvidence({ prompt, userId = null }) {
   if (!isPineconeConfigured()) return [];
+  if (!isAiServiceEnabledFor("pinecone", CHATBOT_FEATURE_CODE)) return [];
   await ensureDocumentacionRagSchema();
   const rows = await query(
     `SELECT d.public_id, d.active_version_id
@@ -827,7 +848,13 @@ export async function retrieveDocumentacionRagEvidence({ prompt }) {
       ],
     })),
   };
-  const snippets = await retrieveRagContext({ query: prompt, filter, topK: 6 });
+  const snippets = await retrieveRagContext({
+    query: prompt,
+    filter,
+    topK: 6,
+    featureCode: CHATBOT_FEATURE_CODE,
+    userId,
+  });
   return snippets
     .map((snippet) => ({
       content: String(snippet?.content || "").trim().slice(0, 5000),
@@ -836,9 +863,12 @@ export async function retrieveDocumentacionRagEvidence({ prompt }) {
     .filter((snippet) => snippet.content);
 }
 
-export async function retrieveCustomerChatDocumentKnowledge({ prompt }) {
+export async function retrieveCustomerChatDocumentKnowledge({ prompt, userId = null }) {
   if (!isPineconeConfigured()) {
     return { status: "not_configured", snippets: [] };
+  }
+  if (!isAiServiceEnabledFor("pinecone", CUSTOMER_CHAT_LIBRARY_FEATURE_CODE)) {
+    return { status: "disabled", snippets: [] };
   }
   await ensureDocumentacionRagSchema();
   const rows = await query(
@@ -866,6 +896,8 @@ export async function retrieveCustomerChatDocumentKnowledge({ prompt }) {
     filter,
     topK: 5,
     timeoutMs: 8_000,
+    featureCode: CUSTOMER_CHAT_LIBRARY_FEATURE_CODE,
+    userId,
   });
   const evidence = snippets
     .map((snippet) => ({

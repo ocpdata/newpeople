@@ -7,6 +7,8 @@ import { requireAnyPermission } from "./auth.js";
 import { query, withTransaction } from "./db.js";
 import { logAuditEvent } from "./audit.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
@@ -1232,27 +1234,24 @@ router.post(
         PROPOSAL_DOCUMENT_AI_TIMEOUT_MS,
       );
       const aiUsageStartedAt = new Date();
+      const aiModel = aiModelFor(PROPOSAL_DOCUMENT_AI_FEATURE_CODE, "fast");
 
       let text;
       try {
-        const response = await fetch(
-          `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${config.openai.apiKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: config.openai.model,
-              input: [
-                { role: "system", content: prompt.system },
-                { role: "user", content: prompt.user },
-              ],
-            }),
-            signal: controller.signal,
+        const response = await aiFetch(PROPOSAL_DOCUMENT_AI_FEATURE_CODE, "/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
+          body: JSON.stringify({
+            model: aiModel,
+            input: [
+              { role: "system", content: prompt.system },
+              { role: "user", content: prompt.user },
+            ],
+          }),
+          signal: controller.signal,
+        });
 
         const responseData = await response.json().catch(() => null);
         if (!response.ok || !responseData) {
@@ -1267,7 +1266,7 @@ router.post(
           await recordAiUsageFromOpenAiResponse({
             userId: aiUsageUserId,
             featureCode: PROPOSAL_DOCUMENT_AI_FEATURE_CODE,
-            model: String(config.openai.model || "").trim(),
+            model: String(aiModel || "").trim(),
             openAiResponse: responseData,
             startedAt: aiUsageStartedAt,
           });
@@ -1335,7 +1334,7 @@ async function requestProposalDocumentImportSegmentation({
   const truncatedText = rawText.slice(0, PROPOSAL_DOCUMENT_IMPORT_MAX_CHARS);
 
   const requestPayload = {
-    model: config.openai.model,
+    model: aiModelFor(PROPOSAL_DOCUMENT_IMPORT_AI_FEATURE_CODE, "fast"),
     input: [
       {
         role: "system",
@@ -1365,18 +1364,14 @@ async function requestProposalDocumentImportSegmentation({
   const aiUsageStartedAt = new Date();
 
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.openai.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestPayload),
-        signal: controller.signal,
+    const response = await aiFetch(PROPOSAL_DOCUMENT_IMPORT_AI_FEATURE_CODE, "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal,
+    });
 
     const responseData = await response.json().catch(() => null);
     if (!response.ok || !responseData) {
@@ -1391,7 +1386,7 @@ async function requestProposalDocumentImportSegmentation({
       await recordAiUsageFromOpenAiResponse({
         userId,
         featureCode: PROPOSAL_DOCUMENT_IMPORT_AI_FEATURE_CODE,
-        model: String(config.openai.model || "").trim(),
+        model: String(requestPayload.model || "").trim(),
         openAiResponse: responseData,
         startedAt: aiUsageStartedAt,
       });

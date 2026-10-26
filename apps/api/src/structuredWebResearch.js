@@ -1,4 +1,6 @@
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { randomUUID } from "node:crypto";
 import {
   assertAiBudgetAvailable,
@@ -220,11 +222,15 @@ export async function runStructuredWebResearch({
     return null;
   }
 
-  const resolvedModel = String(model || config.openai.model || "").trim();
   const safeAiUsageContext =
     aiUsageContext && typeof aiUsageContext === "object"
       ? aiUsageContext
       : null;
+  const aiFeatureCode =
+    String(
+      safeAiUsageContext?.featureCode || "accounts.draft_analysis",
+    ).trim() || "accounts.draft_analysis";
+  const resolvedModel = String(model || aiModelFor(aiFeatureCode, "fast") || "").trim();
   const aiUsageUserId = Number(safeAiUsageContext?.userId || 0);
 
   if (aiUsageUserId) {
@@ -282,18 +288,14 @@ export async function runStructuredWebResearch({
   };
   let response;
   try {
-    response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
+    response = await aiFetch(aiFeatureCode, "/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
       },
       body: JSON.stringify(config.openai.streamResponses ? { ...payload, stream: true } : payload),
       ...(requestSignal ? { signal: requestSignal } : {}),
-    },
-  );
+    });
   } catch (error) {
     clearTimeout(callTimer);
     if (headerTimeout?.signal.aborted && !signal?.aborted && !callTimeout?.signal.aborted) {
@@ -342,10 +344,7 @@ export async function runStructuredWebResearch({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: randomUUID(),
       userId: aiUsageUserId,
-      featureCode:
-        String(
-          safeAiUsageContext?.featureCode || "accounts.draft_analysis",
-        ).trim() || "accounts.draft_analysis",
+      featureCode: aiFeatureCode,
       model: resolvedModel,
       openAiResponse: data,
       jobType: safeAiUsageContext?.jobType || null,

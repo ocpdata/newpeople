@@ -13,6 +13,8 @@ import { parseBuffer as parseAudioBuffer } from "music-metadata";
 import { getUserAuthContext } from "../auth.js";
 import { query, withTransaction } from "../db.js";
 import { config } from "../config.js";
+import { aiFetch } from "../ai-services/client.js";
+import { aiModelFor } from "../ai-services/state.js";
 import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
@@ -431,7 +433,7 @@ async function analyzeStructuredDocument({
   }
 
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor("opportunities.documents.analysis", "fast"),
     input: [
       {
         role: "system",
@@ -472,17 +474,13 @@ async function analyzeStructuredDocument({
   };
 
   const startedAt = new Date();
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch("opportunities.documents.analysis", "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     return fallbackAnalyzeText(trimmedText, fileName);
@@ -494,7 +492,7 @@ async function analyzeStructuredDocument({
       internalRequestId: randomUUID(),
       userId: aiUsageUserId,
       featureCode: "opportunities.documents.analysis",
-      model: String(config.openai.model || "").trim(),
+      model: String(payload.model || "").trim(),
       openAiResponse: data,
       jobType: "opportunity_document_analysis",
       jobId: aiUsageContext?.jobId || null,
@@ -524,7 +522,7 @@ export async function extractImageText(
   }
 
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor("opportunities.documents.ocr", "fast"),
     input: [
       {
         role: "user",
@@ -543,17 +541,13 @@ export async function extractImageText(
   };
 
   const startedAt = new Date();
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch("opportunities.documents.ocr", "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -566,7 +560,7 @@ export async function extractImageText(
       internalRequestId: randomUUID(),
       userId: aiUsageUserId,
       featureCode: "opportunities.documents.ocr",
-      model: String(config.openai.model || "").trim(),
+      model: String(payload.model || "").trim(),
       openAiResponse: data,
       jobType: "opportunity_document_ocr",
       jobId: aiUsageContext?.jobId || null,
@@ -591,25 +585,22 @@ export async function transcribeAudio(
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
+  const aiFeatureCode =
+    aiUsageContext?.featureCode || "opportunities.documents.transcription";
+  const transcriptionModel = aiModelFor(aiFeatureCode, "transcription");
   const body = new FormData();
   body.append(
     "file",
     new Blob([buffer], { type: mimeType || "application/octet-stream" }),
     fileName || "audio",
   );
-  body.append("model", config.openai.transcriptionModel);
+  body.append("model", transcriptionModel);
 
   const startedAt = new Date();
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/audio/transcriptions`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body,
-    },
-  );
+  const response = await aiFetch(aiFeatureCode, "/audio/transcriptions", {
+    method: "POST",
+    body,
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -621,9 +612,8 @@ export async function transcribeAudio(
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: randomUUID(),
       userId: aiUsageUserId,
-      featureCode:
-        aiUsageContext?.featureCode || "opportunities.documents.transcription",
-      model: String(config.openai.transcriptionModel || "").trim(),
+      featureCode: aiFeatureCode,
+      model: String(transcriptionModel || "").trim(),
       openAiResponse: data,
       jobType:
         aiUsageContext?.jobType || "opportunity_document_transcription",
@@ -1331,7 +1321,7 @@ async function persistDocumentArtifacts({
       documentId,
       PIPELINE_VERSION,
       config.openai.apiKey ? "openai" : null,
-      config.openai.apiKey ? config.openai.model : null,
+      config.openai.apiKey ? aiModelFor("opportunities.documents.analysis", "fast") : null,
       processingStatus === "review_ready" ? "completed" : "failed",
       JSON.stringify({
         suggestedName: analysis.suggestedName || "",

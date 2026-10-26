@@ -4,6 +4,8 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "./ai-usage/service.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { query } from "./db.js";
 import {
   accountDraftAnalysisRequestSchema,
@@ -1741,8 +1743,10 @@ async function generateOpenAiSuggestions({
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "accounts.draft_analysis") || "accounts.draft_analysis";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     temperature: 0.2,
     response_format: {
       type: "json_schema",
@@ -1770,17 +1774,13 @@ async function generateOpenAiSuggestions({
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -1792,10 +1792,8 @@ async function generateOpenAiSuggestions({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(aiUsageContext?.featureCode || "accounts.draft_analysis") ||
-        "accounts.draft_analysis",
-      model: String(payload?.model || config.openai.model || "").trim(),
+      featureCode: aiFeatureCode,
+      model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
       openAiResponse: data,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,

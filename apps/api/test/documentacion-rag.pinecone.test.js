@@ -124,6 +124,51 @@ describe("Pinecone Assistant REST client", () => {
     });
   });
 
+  it("registra los tokens de contexto y de respuesta que reporta Pinecone", async () => {
+    const recordAiServiceUsage = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("../src/ai-services/store.js", () => ({
+      recordAiServiceUsage,
+      recordAiServiceError: vi.fn(),
+    }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ name: "test-assistant", host: "https://assistant.example.com", status: "Ready" }),
+      )
+      .mockResolvedValueOnce(jsonResponse({
+        snippets: [{ content: "Fragmento" }],
+        usage: { prompt_tokens: 1200, completion_tokens: 0 },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        message: { content: "Resumen." },
+        usage: { prompt_tokens: 900, completion_tokens: 40 },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { retrieveRagContext, generateRagDocumentSummary } = await import(
+      "../src/documentacion-rag/pinecone.js"
+    );
+
+    await retrieveRagContext({
+      query: "¿Cómo funciona?",
+      featureCode: "commercial_intelligence.account_chat.library",
+      userId: 7,
+    });
+    await generateRagDocumentSummary({ fileName: "guia.pdf", documentId: "doc-1", versionId: "v1", userId: 3 });
+
+    await vi.waitFor(() => expect(recordAiServiceUsage).toHaveBeenCalledTimes(3));
+    expect(recordAiServiceUsage.mock.calls.map(([details]) => details)).toEqual([
+      {
+        provider: "pinecone",
+        metric: "context_tokens",
+        units: 1200,
+        featureCode: "commercial_intelligence.account_chat.library",
+        userId: 7,
+      },
+      { provider: "pinecone", metric: "chat_input_tokens", units: 900, featureCode: "documentacion_rag.summary", userId: 3 },
+      { provider: "pinecone", metric: "chat_output_tokens", units: 40, featureCode: "documentacion_rag.summary", userId: 3 },
+    ]);
+    vi.doUnmock("../src/ai-services/store.js");
+  });
+
   it("espera a que el Assistant recién creado esté listo", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn()

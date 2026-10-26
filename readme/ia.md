@@ -151,6 +151,99 @@ Variables relevantes en `apps/api/.env`:
 
 Si falta API key o el web search esta deshabilitado, la parte estructurada devuelve `null` y el pipeline cae a heuristicas y fuentes publicas no generativas.
 
+## Servicios de IA (Configuración > Crédito IA)
+
+La sección **Crédito IA** está organizada en cinco pestañas:
+
+- **Resumen:** una tarjeta por proveedor (OpenAI, Tavily y Pinecone Assistant)
+  con el consumo del mes, el límite, el porcentaje de aviso y el estado.
+- **Módulos:** proveedor de IA por módulo y casillas para usar Tavily y Pinecone
+  donde el módulo realmente los usa.
+- **Consumo:** uso diario, por módulo, por modelo, los 10 usuarios que más
+  consumen, errores recientes y exportación a Excel.
+- **Crédito por usuario:** porcentaje del saldo capturado de OpenAI para cada
+  usuario activo (ver abajo).
+- **Tarifas:** precios por modelo, ahora capturados en USD por millón de tokens.
+
+Lectura y edición usan los permisos existentes
+(`ia.budget.read_all`/`configuracion.read` y `ia.budget.manage`/`configuracion.update`).
+
+### Modelos por tipo de trabajo
+
+Cada proveedor define un modelo por tipo de trabajo: **Rápido** (antes
+`OPENAI_MODEL`), **Avanzado** (enrutador, analista y redacción del chat de
+Cliente existente; antes `OPENAI_ROUTER_MODEL`/`OPENAI_ANALYST_MODEL`) y
+**Transcripción** (antes `OPENAI_TRANSCRIPTION_MODEL`). Un módulo puede
+personalizar sus modelos como opción avanzada. Todas las llamadas a modelos
+pasan por `apps/api/src/ai-services/client.js` (`aiFetch`) y eligen el modelo con
+`aiModelFor(featureCode, rol)`; el código de funcionalidad determina el módulo
+según `apps/api/src/ai-services/catalog.js`.
+
+Mientras no se guarde una configuración, se usan los valores del `.env`, por lo
+que el comportamiento es idéntico al anterior. La configuración guardada vive en
+`ai_service_settings` (con versión y auditoría en `ai_service_settings_audit`) y
+cada proceso de la API la recarga cada minuto. No se puede guardar un modelo sin
+tarifa vigente: la pantalla muestra el motivo en el módulo afectado.
+
+Por ahora el único proveedor de modelos conectado es OpenAI; agregar otro
+(por ejemplo Gemini) requiere su adaptador, porque la mayoría de las llamadas usan
+la API Responses de OpenAI.
+
+### Medición, límites y avisos
+
+| Proveedor | Origen del uso | Costo |
+|---|---|---|
+| OpenAI | Medido por el CRM (`ai_usage_ledger`) | Tarifas por modelo |
+| Tavily | Leído de Tavily (`/usage`, cada hora) y medido por el CRM por llamada | Créditos × precio del plan, o el precio capturado |
+| Pinecone Assistant | Medido por el CRM con los tokens y unidades que reporta Pinecone | Según el plan (Starter y Builder: incluido) |
+
+El uso de Tavily y Pinecone se registra en `ai_service_usage_events` y los
+errores de los proveedores en `ai_service_call_errors`. El CRM solo ve lo que
+pasa por él: si la misma cuenta de Pinecone se usa fuera del CRM, el uso real
+será mayor.
+
+Cada proveedor tiene un **límite mensual** (OpenAI en USD, Tavily en créditos;
+en Pinecone lo fija el plan), un **porcentaje de aviso** (80 % por defecto) y la
+opción **Solo avisar** o **Detener el servicio**. El mes se cuenta en la zona
+horaria comercial. Al cruzar un umbral se crea un aviso por proveedor, métrica
+y mes (`ai_service_alerts`), visible en una banda superior para quien puede
+leer la configuración de IA; quien puede administrarla lo marca como entendido.
+
+**Saldo de OpenAI.** OpenAI no ofrece una forma oficial de leer el saldo
+prepagado. En la tarjeta de OpenAI se captura el saldo de su página de
+facturación; el servidor registra la fecha y hora de la captura y el CRM muestra
+**saldo estimado = saldo capturado − consumo medido por el CRM desde esa
+captura**. Se puede definir un monto de aviso; el aviso se reactiva con cada
+nueva captura. Las llamadas a OpenAI que no pasan por el CRM no se descuentan,
+por lo que conviene volver a capturar el saldo al recargar o al notar
+diferencias.
+
+### Crédito por usuario
+
+Cada usuario **activo** puede recibir un porcentaje del saldo capturado de
+OpenAI: su asignación es `porcentaje × saldo capturado` y solo descuenta lo que
+él gasta desde la captura (consumo medido por el CRM). Los porcentajes suman como
+máximo 100 %; lo no asignado es una **reserva compartida** que usan los usuarios
+sin porcentaje, y el gasto de todos ellos se descuenta de esa reserva, por lo que
+el total nunca supera el saldo capturado. Cada nueva captura de saldo reinicia
+las asignaciones.
+
+- Sin saldo capturado no hay límite por usuario; el consumo solo se mide.
+- Al agotarse la asignación o la reserva, las funciones de IA responden
+  `AI_BUDGET_EXCEEDED` con un mensaje para pedir más porcentaje o un nuevo saldo.
+- Un solo porcentaje de aviso (80 % por defecto) aplica a todas las asignaciones;
+  la barra superior y el chatbot muestran el porcentaje disponible solo cuando hay
+  límite.
+- **Repartir en partes iguales** asigna el mismo porcentaje a quienes usaron IA en
+  los últimos 90 días.
+- Los porcentajes de usuarios inactivos dejan de contar y se conservan por si se
+  reactivan.
+- El plan vive en `ai_user_allocation_plan` con versión y auditoría
+  (`ai_user_allocation_plan_audit`). Endpoints: `GET/PUT /api/admin/ai/allocations`.
+- Se retiraron las recargas, los ajustes manuales y el crédito inicial de USD 5 de
+  las billeteras por usuario. Sus movimientos (`ai_wallet_transactions`) se pueden
+  consultar en el detalle de cada usuario.
+
 ## Consideraciones operativas
 
 ### Formato de Responses API

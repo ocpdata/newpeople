@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { summarizeForPrompt } from "./opportunity-documents/service.js";
 import {
   assertAiBudgetAvailable,
@@ -12,6 +14,7 @@ const PROCESS_GUIDE_URL = new URL(
   import.meta.url,
 );
 
+const STAGE_SUGGESTIONS_FEATURE_CODE = "opportunities.stage_suggestions";
 const PROPOSE_ANSWERS_MAX_RUNTIME_MS = 25000;
 const PROPOSE_ANSWERS_OPENAI_TIMEOUT_MS = 18000;
 const PROPOSE_ANSWERS_MIN_PASS_WINDOW_MS = 2500;
@@ -794,7 +797,7 @@ function buildOpenAiPayload({
   retryMode = false,
 }) {
   return {
-    model: config.openai.model,
+    model: aiModelFor(STAGE_SUGGESTIONS_FEATURE_CODE, "fast"),
     temperature: OPPORTUNITY_STAGE_AI_PROMPT_CONFIG.modelParameters.temperature,
     top_p: OPPORTUNITY_STAGE_AI_PROMPT_CONFIG.modelParameters.top_p,
     input: [
@@ -855,7 +858,7 @@ function buildSemanticRecoveryPayload({
   sharedDocumentContext,
 }) {
   return {
-    model: config.openai.model,
+    model: aiModelFor(STAGE_SUGGESTIONS_FEATURE_CODE, "fast"),
     input: [
       {
         role: "system",
@@ -911,7 +914,7 @@ function buildTargetedQuestionRecoveryPayload({
   question,
 }) {
   return {
-    model: config.openai.model,
+    model: aiModelFor(STAGE_SUGGESTIONS_FEATURE_CODE, "fast"),
     input: [
       {
         role: "system",
@@ -1003,6 +1006,9 @@ async function requestOpenAiSuggestions(payload, options = {}) {
       ? options.aiUsageContext
       : null;
   const aiUsageUserId = Number(aiUsageContext?.userId || 0);
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || STAGE_SUGGESTIONS_FEATURE_CODE) ||
+    STAGE_SUGGESTIONS_FEATURE_CODE;
 
   if (aiUsageUserId) {
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
@@ -1017,18 +1023,14 @@ async function requestOpenAiSuggestions(payload, options = {}) {
   let response;
 
   try {
-    response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.openai.apiKey}`,
-        },
-        body: JSON.stringify(payload),
-        ...(controller ? { signal: controller.signal } : {}),
+    response = await aiFetch(aiFeatureCode, "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(payload),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new Error(
@@ -1053,11 +1055,8 @@ async function requestOpenAiSuggestions(payload, options = {}) {
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(
-          aiUsageContext?.featureCode || "opportunities.stage_suggestions",
-        ) || "opportunities.stage_suggestions",
-      model: String(payload?.model || config.openai.model || "").trim(),
+      featureCode: aiFeatureCode,
+      model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
       openAiResponse: data,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,
@@ -1270,7 +1269,7 @@ function buildStageValidationPayload({
       : "";
 
   return {
-    model: config.openai.model,
+    model: aiModelFor(STAGE_SUGGESTIONS_FEATURE_CODE, "fast"),
     temperature: 0.1,
     top_p: 1,
     input: [

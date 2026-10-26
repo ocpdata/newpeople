@@ -34,6 +34,10 @@ La documentación se complementa con:
 
 Ayudar al vendedor a consultar, resumir y analizar información CRM de una cuenta existente que ya está seleccionada y autorizada. El chat debe entender preguntas expresadas en lenguaje natural, consultar únicamente evidencia permitida y explicar cuándo no puede contestar con seguridad.
 
+El selector **Cuenta existente** muestra las cuentas por nombre de A a Z,
+con orden alfabético en español sin distinguir mayúsculas ni acentos, tanto
+al cargar como al buscar clientes.
+
 El chat es un asistente especializado en información comercial de la cuenta. No es un asistente general, no sustituye los módulos operativos del CRM y no debe afirmar que una propuesta de escritura ya se ejecutó.
 
 La entrada de preguntas admite varias líneas, ajuste de texto y altura inicial

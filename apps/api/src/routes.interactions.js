@@ -26,6 +26,8 @@ import {
   requirePermission,
 } from "./auth.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { query, withTransaction } from "./db.js";
 import { getCommercialSettings } from "./settings.js";
 import {
@@ -3614,8 +3616,10 @@ async function requestLeadEmailSuggestionWithAi({
       assetTypeLabel: String(attachment.assetTypeLabel || "").trim(),
     }));
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "interactions.email_suggestion") || "interactions.email_suggestion";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     temperature: 0.2,
     response_format: {
       type: "json_schema",
@@ -3670,17 +3674,13 @@ async function requestLeadEmailSuggestionWithAi({
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -3693,11 +3693,8 @@ async function requestLeadEmailSuggestionWithAi({
       await recordAiUsageFromOpenAiResponse({
         internalRequestId: aiUsageInternalRequestId,
         userId: aiUsageUserId,
-        featureCode:
-          String(
-            aiUsageContext?.featureCode || "interactions.email_suggestion",
-          ) || "interactions.email_suggestion",
-        model: String(payload?.model || config.openai.model || "").trim(),
+        featureCode: aiFeatureCode,
+        model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
         openAiResponse: data,
         jobType: aiUsageContext?.jobType || null,
         jobId: aiUsageContext?.jobId || null,

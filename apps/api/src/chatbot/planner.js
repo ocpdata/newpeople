@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { recordAiUsageFromOpenAiResponse } from "../ai-usage/service.js";
 import {
   getReadableDomainHints,
@@ -250,7 +251,7 @@ export async function planChatbotRetrievalWithAi({
   const plannerMetadata = await loadChatbotPlannerMetadata(user);
   const allowedDomains = plannerMetadata.allowedDomains;
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(featureCode, "fast"),
     temperature: 0,
     response_format: {
       type: "json_schema",
@@ -321,7 +322,7 @@ export async function planChatbotRetrievalWithAi({
     internalRequestId: `${internalRequestId}:planner`,
     userId: Number(user.id),
     featureCode,
-    model: String(payload.model || config.openai.model || "").trim(),
+    model: String(payload.model || aiModelFor(featureCode, "fast") || "").trim(),
     openAiResponse: data,
     jobType: "chatbot_planner",
     jobId: null,

@@ -23,6 +23,8 @@ import {
   summarizeProposalComponents,
 } from "./settings.js";
 import { config } from "./config.js";
+import { aiFetch } from "./ai-services/client.js";
+import { aiModelFor } from "./ai-services/state.js";
 import { getExchangeRate } from "./exchange-rates.js";
 import {
   ensureProductTypesCatalog,
@@ -3212,7 +3214,7 @@ async function buildKickoffAiSummaryFromEvidence({
   const aiUsageUserId = Number(user?.id || 0);
 
   const requestPayload = {
-    model: config.openai.model,
+    model: aiModelFor("quotation_processing_kickoff_ai_summary", "fast"),
     input: [
       {
         role: "system",
@@ -3244,18 +3246,14 @@ async function buildKickoffAiSummaryFromEvidence({
   const startedAt = new Date();
   const internalRequestId = randomUUID();
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.openai.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestPayload),
-        signal: controller.signal,
+    const response = await aiFetch("quotation_processing_kickoff_ai_summary", "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal,
+    });
 
     const responseData = await response.json().catch(() => null);
     if (!response.ok || !responseData) {
@@ -3277,7 +3275,7 @@ async function buildKickoffAiSummaryFromEvidence({
           userId: aiUsageUserId,
           featureCode: "quotation_processing_kickoff_ai_summary",
           model: String(
-            requestPayload.model || config.openai.model || "",
+            requestPayload.model || aiModelFor("quotation_processing_kickoff_ai_summary", "fast") || "",
           ).trim(),
           openAiResponse: responseData,
           startedAt,
@@ -5881,7 +5879,7 @@ function buildProviderDocumentImportPrompt({
   strictRecovery = false,
 }) {
   return {
-    model: config.openai.model,
+    model: aiModelFor("quotations.documents.provider_import_preview", "fast"),
     input: [
       {
         role: "system",
@@ -5955,7 +5953,7 @@ function buildProviderDocumentImportPdfPrompt({
   ];
 
   return {
-    model: config.openai.model,
+    model: aiModelFor("quotations.documents.provider_import_preview", "fast"),
     input: [
       {
         role: "system",
@@ -5981,17 +5979,13 @@ async function requestProviderDocumentImportAnalysis(payload) {
   const requestPayload = { ...payload };
   delete requestPayload.aiUsageContext;
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.openai.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestPayload),
+  const response = await aiFetch("quotations.documents.provider_import_preview", "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(requestPayload),
+  });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
@@ -6004,7 +5998,7 @@ async function requestProviderDocumentImportAnalysis(payload) {
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
       featureCode: "quotations.documents.provider_import_preview",
-      model: String(requestPayload?.model || config.openai.model || "").trim(),
+      model: String(requestPayload?.model || aiModelFor("quotations.documents.provider_import_preview", "fast") || "").trim(),
       openAiResponse: responseData,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,
@@ -11452,7 +11446,7 @@ async function requestProposalBrochureRecommendations({
   }
 
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor("proposals.brochure_recommendation", "fast"),
     input: [
       {
         role: "system",
@@ -11515,18 +11509,14 @@ async function requestProposalBrochureRecommendations({
   );
 
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.openai.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
+    const response = await aiFetch("proposals.brochure_recommendation", "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -11539,7 +11529,7 @@ async function requestProposalBrochureRecommendations({
         internalRequestId: aiUsageInternalRequestId,
         userId: aiUsageUserId,
         featureCode: "proposals.brochure_recommendation",
-        model: String(payload?.model || config.openai.model || "").trim(),
+        model: String(payload?.model || aiModelFor("proposals.brochure_recommendation", "fast") || "").trim(),
         openAiResponse: responseData,
         jobType: "proposal_brochure_recommendation",
         jobId: Number(proposal?.id || 0) || null,
@@ -11939,7 +11929,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
           );
 
   const payload = {
-    model: aiParameters?.modelOverride || config.openai.model,
+    model: aiParameters?.modelOverride || aiModelFor("proposals.exec_summary", "fast"),
     input: [
       {
         role: "system",
@@ -11967,18 +11957,14 @@ async function requestProposalExecutiveSummarySuggestion(context) {
   );
 
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.openai.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
+    const response = await aiFetch("proposals.exec_summary", "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -12034,7 +12020,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
             capabilityKey: componentConfig.capabilityKey,
             publishedRevisionNumber:
               Number(aiParameters?.publishedRevisionNumber || 0) || null,
-            model: aiParameters?.modelOverride || config.openai.model,
+            model: aiParameters?.modelOverride || aiModelFor("proposals.exec_summary", "fast"),
           },
         },
       },
@@ -12119,7 +12105,7 @@ async function requestProposalExecutiveSummarySuggestion(context) {
           capabilityKey: componentConfig.capabilityKey,
           publishedRevisionNumber:
             Number(aiParameters?.publishedRevisionNumber || 0) || null,
-          model: aiParameters?.modelOverride || config.openai.model,
+          model: aiParameters?.modelOverride || aiModelFor("proposals.exec_summary", "fast"),
           timeoutMs: Math.max(
             5000,
             Number(
@@ -19635,7 +19621,7 @@ async function requestProposalEmailSuggestionFromOpenAi({
   }
 
   const requestPayload = {
-    model: config.openai.model,
+    model: aiModelFor("proposals_email_suggestion", "fast"),
     input: [
       {
         role: "system",
@@ -19664,18 +19650,14 @@ async function requestProposalEmailSuggestionFromOpenAi({
   const aiUsageStartedAt = new Date();
   const aiUsageInternalRequestId = randomUUID();
   try {
-    const response = await fetch(
-      `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.openai.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestPayload),
-        signal: controller.signal,
+    const response = await aiFetch("proposals_email_suggestion", "/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal,
+    });
 
     const responseData = await response.json().catch(() => null);
     if (!response.ok || !responseData) {
@@ -19690,7 +19672,7 @@ async function requestProposalEmailSuggestionFromOpenAi({
       await recordAiUsageFromOpenAiResponse({
         userId: aiUsageUserId,
         featureCode: "proposals_email_suggestion",
-        model: String(requestPayload.model || config.openai.model || "").trim(),
+        model: String(requestPayload.model || aiModelFor("proposals_email_suggestion", "fast") || "").trim(),
         openAiResponse: responseData,
         startedAt: aiUsageStartedAt,
         endedAt: new Date(),
@@ -19911,7 +19893,7 @@ router.post(
             : [],
         },
         meta: {
-          model: config.openai.model,
+          model: aiModelFor("proposals_email_suggestion", "fast"),
           generatedAt: new Date().toISOString(),
           requestFingerprint,
         },

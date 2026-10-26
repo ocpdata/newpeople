@@ -2,55 +2,81 @@ import express from "express";
 import { z } from "zod";
 import { requireAnyPermission } from "./auth.js";
 import {
-  adjustWalletCredit,
   aggregateAiUsage,
   closeAdminPricingRate,
   createAdminPricingRate,
   getAdminWalletByUserId,
   getAiCreditSummaryByUserId,
-  grantWalletCredit,
   listAdminPricingRates,
   listAiUsageByUserId,
-  listAdminWalletSummaries,
   syncOpenAiPricingRates,
-  updateWalletPolicy,
 } from "./ai-usage/service.js";
+import { listUserAllocations, saveAllocationPlan } from "./ai-services/allocations.js";
+import {
+  acknowledgeAiServiceAlert,
+  getAiServicesOverview,
+  getAiServicesUsage,
+  listAiServiceAlerts,
+  saveAiServiceSettings,
+} from "./ai-services/store.js";
+import { AI_MODEL_ROLES, AI_MODULES, PINECONE_PLANS } from "./ai-services/catalog.js";
 
 const router = express.Router();
 
-const isoDateSchema = z.string().datetime({ offset: true });
+const AI_SERVICES_READ_PERMISSIONS = ["ia.budget.read_all", "configuracion.read"];
+const AI_SERVICES_MANAGE_PERMISSIONS = ["ia.budget.manage", "configuracion.update"];
 
-const grantBodySchema = z.object({
-  amountUsd: z.number().positive(),
-  reasonCode: z.string().trim().min(2).max(50),
-  reasonText: z.string().trim().max(500).optional(),
-  idempotencyKey: z.string().trim().min(8).max(120),
-});
+const modelName = z.string().trim().max(120);
+const roleModelsSchema = z.object(
+  Object.fromEntries(AI_MODEL_ROLES.map((role) => [role.code, modelName.min(1)])),
+);
+const roleOverridesSchema = z.object(
+  Object.fromEntries(AI_MODEL_ROLES.map((role) => [role.code, modelName.optional()])),
+).partial();
+const warningPercentSchema = z.number().int().min(1).max(99);
+const onLimitSchema = z.enum(["warn", "stop"]);
 
-const adjustmentBodySchema = z.object({
-  amountUsd: z.number().refine((value) => value !== 0, {
-    message: "amountUsd debe ser distinto de 0",
+const aiServicesSettingsBodySchema = z.object({
+  expectedVersion: z.number().int().min(0),
+  settings: z.object({
+    providers: z.object({
+      openai: z.object({
+        models: roleModelsSchema,
+        monthlyLimitUsd: z.number().positive().max(1_000_000).nullable(),
+        warningPercent: warningPercentSchema,
+        onLimit: onLimitSchema,
+        balanceUsd: z.number().min(0).max(10_000_000).nullable().optional(),
+        balanceWarningUsd: z.number().min(0).max(10_000_000).nullable().optional(),
+        recaptureBalance: z.boolean().optional(),
+      }),
+      tavily: z.object({
+        monthlyLimitCredits: z.number().int().positive().max(100_000_000).nullable(),
+        usdPerCredit: z.number().min(0).max(10).nullable(),
+        warningPercent: warningPercentSchema,
+        onLimit: onLimitSchema,
+      }),
+      pinecone: z.object({
+        plan: z.enum(Object.keys(PINECONE_PLANS)),
+        warningPercent: warningPercentSchema,
+      }),
+    }),
+    modules: z.object(
+      Object.fromEntries(AI_MODULES.map((module) => [
+        module.code,
+        z.object({
+          llmProvider: z.string().trim().min(2).max(20),
+          tavily: z.boolean(),
+          pinecone: z.boolean(),
+          modelOverrides: roleOverridesSchema.optional(),
+        }),
+      ])),
+    ).partial(),
   }),
-  reasonCode: z.string().trim().min(2).max(50),
-  reasonText: z.string().trim().min(4).max(500),
-  idempotencyKey: z.string().trim().min(8).max(120),
 });
 
-const policyBodySchema = z
-  .object({
-    hardLimitEnabled: z.boolean().optional(),
-    warningThresholdPercent: z.number().int().min(1).max(99).optional(),
-    criticalThresholdPercent: z.number().int().min(1).max(100).optional(),
-  })
-  .refine(
-    (value) =>
-      value.hardLimitEnabled !== undefined ||
-      value.warningThresholdPercent !== undefined ||
-      value.criticalThresholdPercent !== undefined,
-    {
-      message: "No hay campos para actualizar",
-    },
-  );
+const alertIdParamSchema = z.coerce.number().int().positive();
+
+const isoDateSchema = z.string().datetime({ offset: true });
 
 const pricingRateBodySchema = z.object({
   provider: z.string().trim().min(2).max(20),
@@ -198,23 +224,6 @@ router.post(
   },
 );
 
-router.get(
-  "/admin/ai/wallets",
-  requireAnyPermission(["ia.budget.read_all", "configuracion.read"]),
-  async (_req, res) => {
-    try {
-      const items = await listAdminWalletSummaries();
-      return res.json({ items });
-    } catch (error) {
-      const parsed = parseCommonError(
-        error,
-        "No fue posible listar las wallets de IA",
-      );
-      return res.status(parsed.status).json(parsed.body);
-    }
-  },
-);
-
 router.get("/ai/me/credit-summary", async (req, res) => {
   try {
     const summary = await getAiCreditSummaryByUserId(Number(req.user.id));
@@ -279,115 +288,6 @@ router.get(
   },
 );
 
-router.post(
-  "/admin/ai/wallets/:userId/grants",
-  requireAnyPermission(["ia.budget.manage", "configuracion.update"]),
-  async (req, res) => {
-    const userId = toPositiveId(req.params.userId);
-    if (!userId) {
-      return res.status(400).json({ message: "userId invalido" });
-    }
-
-    const parsedBody = grantBodySchema.safeParse(req.body);
-    if (!parsedBody.success) {
-      return res.status(400).json({
-        message: "Datos invalidos",
-        errors: parsedBody.error.flatten(),
-      });
-    }
-
-    try {
-      const result = await grantWalletCredit({
-        userId,
-        amountUsd: parsedBody.data.amountUsd,
-        reasonCode: parsedBody.data.reasonCode,
-        reasonText: parsedBody.data.reasonText,
-        idempotencyKey: parsedBody.data.idempotencyKey,
-        actorUserId: Number(req.user.id),
-      });
-      return res.status(201).json(result);
-    } catch (error) {
-      const parsed = parseCommonError(
-        error,
-        "No fue posible otorgar credito de IA",
-      );
-      return res.status(parsed.status).json(parsed.body);
-    }
-  },
-);
-
-router.post(
-  "/admin/ai/wallets/:userId/adjustments",
-  requireAnyPermission(["ia.budget.manage", "configuracion.update"]),
-  async (req, res) => {
-    const userId = toPositiveId(req.params.userId);
-    if (!userId) {
-      return res.status(400).json({ message: "userId invalido" });
-    }
-
-    const parsedBody = adjustmentBodySchema.safeParse(req.body);
-    if (!parsedBody.success) {
-      return res.status(400).json({
-        message: "Datos invalidos",
-        errors: parsedBody.error.flatten(),
-      });
-    }
-
-    try {
-      const result = await adjustWalletCredit({
-        userId,
-        amountUsd: parsedBody.data.amountUsd,
-        reasonCode: parsedBody.data.reasonCode,
-        reasonText: parsedBody.data.reasonText,
-        idempotencyKey: parsedBody.data.idempotencyKey,
-        actorUserId: Number(req.user.id),
-      });
-      return res.status(201).json(result);
-    } catch (error) {
-      const parsed = parseCommonError(
-        error,
-        "No fue posible aplicar el ajuste de IA",
-      );
-      return res.status(parsed.status).json(parsed.body);
-    }
-  },
-);
-
-router.patch(
-  "/admin/ai/wallets/:userId/policy",
-  requireAnyPermission(["ia.budget.manage", "configuracion.update"]),
-  async (req, res) => {
-    const userId = toPositiveId(req.params.userId);
-    if (!userId) {
-      return res.status(400).json({ message: "userId invalido" });
-    }
-
-    const parsedBody = policyBodySchema.safeParse(req.body);
-    if (!parsedBody.success) {
-      return res.status(400).json({
-        message: "Datos invalidos",
-        errors: parsedBody.error.flatten(),
-      });
-    }
-
-    try {
-      const wallet = await updateWalletPolicy({
-        userId,
-        hardLimitEnabled: parsedBody.data.hardLimitEnabled,
-        warningThresholdPercent: parsedBody.data.warningThresholdPercent,
-        criticalThresholdPercent: parsedBody.data.criticalThresholdPercent,
-      });
-      return res.json(wallet);
-    } catch (error) {
-      const parsed = parseCommonError(
-        error,
-        "No fue posible actualizar la politica de wallet IA",
-      );
-      return res.status(parsed.status).json(parsed.body);
-    }
-  },
-);
-
 router.get(
   "/admin/ai/usage/aggregate",
   requireAnyPermission([
@@ -417,6 +317,144 @@ router.get(
         error,
         "No fue posible cargar el reporte agregado de IA",
       );
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+const allocationPlanBodySchema = z.object({
+  expectedVersion: z.number().int().min(0),
+  warningPercent: z.number().int().min(1).max(99),
+  users: z.array(z.object({
+    userId: z.number().int().positive(),
+    percent: z.number().min(0).max(100).nullable(),
+  })).max(5000),
+});
+
+router.get(
+  "/admin/ai/allocations",
+  requireAnyPermission(AI_SERVICES_READ_PERMISSIONS),
+  async (_req, res) => {
+    try {
+      return res.json(await listUserAllocations());
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible cargar las asignaciones de crédito IA");
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.put(
+  "/admin/ai/allocations",
+  requireAnyPermission(AI_SERVICES_MANAGE_PERMISSIONS),
+  async (req, res) => {
+    const parsedBody = allocationPlanBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+      return res.status(400).json({ message: "Datos invalidos", errors: parsedBody.error.flatten() });
+    }
+    try {
+      const plan = await saveAllocationPlan({ ...parsedBody.data, actorUserId: Number(req.user.id) });
+      return res.json({ plan });
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible guardar las asignaciones de crédito IA");
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.get(
+  "/admin/ai/services",
+  requireAnyPermission(AI_SERVICES_READ_PERMISSIONS),
+  async (req, res) => {
+    try {
+      const overview = await getAiServicesOverview({
+        refreshTavily: String(req.query.refreshTavily || "") === "true",
+      });
+      return res.json(overview);
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible cargar los servicios de IA");
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.put(
+  "/admin/ai/services/settings",
+  requireAnyPermission(AI_SERVICES_MANAGE_PERMISSIONS),
+  async (req, res) => {
+    const parsedBody = aiServicesSettingsBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+      return res.status(400).json({
+        message: "Datos invalidos",
+        errors: parsedBody.error.flatten(),
+      });
+    }
+    try {
+      const settings = await saveAiServiceSettings({
+        settings: parsedBody.data.settings,
+        expectedVersion: parsedBody.data.expectedVersion,
+        actorUserId: Number(req.user.id),
+      });
+      return res.json({ settings });
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible guardar la configuración de IA");
+      if (Array.isArray(error?.details)) parsed.body.details = error.details;
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.get(
+  "/admin/ai/services/usage",
+  requireAnyPermission(AI_SERVICES_READ_PERMISSIONS),
+  async (req, res) => {
+    const { fromUtc, toUtc } = req.query;
+    if (fromUtc && !isoDateSchema.safeParse(fromUtc).success) {
+      return res.status(400).json({ message: "fromUtc invalido (ISO UTC)" });
+    }
+    if (toUtc && !isoDateSchema.safeParse(toUtc).success) {
+      return res.status(400).json({ message: "toUtc invalido (ISO UTC)" });
+    }
+    try {
+      const usage = await getAiServicesUsage({
+        fromUtc: fromUtc ? String(fromUtc) : undefined,
+        toUtc: toUtc ? String(toUtc) : undefined,
+      });
+      return res.json(usage);
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible cargar el consumo de IA");
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.get(
+  "/ai/services/alerts",
+  requireAnyPermission(AI_SERVICES_READ_PERMISSIONS),
+  async (_req, res) => {
+    try {
+      const items = await listAiServiceAlerts();
+      return res.json({ items });
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible cargar los avisos de IA");
+      return res.status(parsed.status).json(parsed.body);
+    }
+  },
+);
+
+router.post(
+  "/ai/services/alerts/:alertId/acknowledge",
+  requireAnyPermission(AI_SERVICES_MANAGE_PERMISSIONS),
+  async (req, res) => {
+    const alertId = alertIdParamSchema.safeParse(req.params.alertId);
+    if (!alertId.success) {
+      return res.status(400).json({ message: "alertId invalido" });
+    }
+    try {
+      await acknowledgeAiServiceAlert({ alertId: alertId.data, actorUserId: Number(req.user.id) });
+      return res.status(204).end();
+    } catch (error) {
+      const parsed = parseCommonError(error, "No fue posible marcar el aviso");
       return res.status(parsed.status).json(parsed.body);
     }
   },

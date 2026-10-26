@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConfigurationPage } from "./configuration/useConfigurationPage";
 import CommercialProposalTemplatePanel from "./CommercialProposalTemplatePanel";
+import AiServicesPanel from "./configuration/AiServicesPanel";
+import AiAllocationsPanel from "./configuration/AiAllocationsPanel";
 import "./configuration/configuration.css";
+
+const AI_BUDGET_TABS = [
+  { id: "summary", label: "Resumen" },
+  { id: "modules", label: "Módulos" },
+  { id: "usage", label: "Consumo" },
+  { id: "allocations", label: "Crédito por usuario" },
+  { id: "pricing", label: "Tarifas" },
+];
 
 const PROPOSAL_ASSET_CATEGORIES = [
   "institutional",
@@ -569,48 +579,21 @@ function ConfigurationBrandingPreview({
   );
 }
 
-function AiCreditConfigurationPanel({
-  items,
-  loading,
-  error,
-  latestUpdateText,
+function AiPricingConfigurationPanel({
   pricingRates,
   pricingRatesLoading,
   pricingRatesError,
   latestPricingUpdateText,
   pricingActionKey,
   pricingSyncPreview,
-  selectedUserId,
-  selectedDetail,
-  detailLoading,
-  actionKey,
-  onSelectUser,
-  onGrantCredit,
-  onAdjustCredit,
-  onUpdatePolicy,
   onCreatePricingRate,
   onClosePricingRate,
   onSyncPricingRates,
 }) {
-  const [filterText, setFilterText] = useState("");
-  const [grantAmountUsd, setGrantAmountUsd] = useState("5.00");
-  const [grantReasonCode, setGrantReasonCode] = useState("manual_topup");
-  const [grantReasonText, setGrantReasonText] = useState(
-    "Recarga de crédito IA",
-  );
-  const [adjustAmountUsd, setAdjustAmountUsd] = useState("");
-  const [adjustReasonCode, setAdjustReasonCode] = useState("manual_adjustment");
-  const [adjustReasonText, setAdjustReasonText] = useState("");
-  const [policyDraft, setPolicyDraft] = useState({
-    hardLimitEnabled: true,
-    warningThresholdPercent: 80,
-    criticalThresholdPercent: 95,
-  });
   const [newPricingModel, setNewPricingModel] = useState("");
-  const [newPricingInputMicros, setNewPricingInputMicros] = useState("300000");
-  const [newPricingOutputMicros, setNewPricingOutputMicros] =
-    useState("1200000");
-  const [newPricingCachedMicros, setNewPricingCachedMicros] = useState("30000");
+  const [newPricingInputUsd, setNewPricingInputUsd] = useState("");
+  const [newPricingOutputUsd, setNewPricingOutputUsd] = useState("");
+  const [newPricingCachedUsd, setNewPricingCachedUsd] = useState("");
   const [newPricingValidFromUtc, setNewPricingValidFromUtc] = useState("");
 
   const moneyMicrosFormatter = useMemo(
@@ -623,75 +606,6 @@ function AiCreditConfigurationPanel({
       }),
     [],
   );
-
-  const currencyFormatter = useMemo(
-    () =>
-      new Intl.NumberFormat("es-MX", {
-        style: "currency",
-        currency: "USD",
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }),
-    [],
-  );
-
-  const selectedWallet = selectedDetail?.wallet || null;
-  const selectedUser = useMemo(
-    () =>
-      items.find((item) => Number(item.userId) === Number(selectedUserId)) ||
-      items[0] ||
-      null,
-    [items, selectedUserId],
-  );
-  const selectedVisibleUser = selectedWallet || selectedUser;
-
-  useEffect(() => {
-    if (!selectedVisibleUser) return;
-    setPolicyDraft({
-      hardLimitEnabled: Boolean(selectedVisibleUser.hardLimitEnabled),
-      warningThresholdPercent: Number(
-        selectedVisibleUser.warningThresholdPercent || 80,
-      ),
-      criticalThresholdPercent: Number(
-        selectedVisibleUser.criticalThresholdPercent || 95,
-      ),
-    });
-  }, [selectedVisibleUser?.userId, selectedVisibleUser?.updatedAtUtc]);
-
-  const filteredItems = useMemo(() => {
-    const normalizedFilter = String(filterText || "")
-      .toLowerCase()
-      .trim();
-    if (!normalizedFilter) return items;
-    return items.filter((item) => {
-      const haystack = [item.fullName, item.email, item.roles, item.state]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(normalizedFilter);
-    });
-  }, [filterText, items]);
-
-  const summary = useMemo(() => {
-    return filteredItems.reduce(
-      (accumulator, item) => {
-        accumulator.totalGranted += Number(item.lifetimeGrantedUsd || 0);
-        accumulator.totalConsumed += Number(item.lifetimeConsumedUsd || 0);
-        accumulator.totalBalance += Number(item.balanceUsd || 0);
-        accumulator[item.state || "normal"] += 1;
-        return accumulator;
-      },
-      {
-        totalGranted: 0,
-        totalConsumed: 0,
-        totalBalance: 0,
-        normal: 0,
-        warning: 0,
-        critical: 0,
-        exhausted: 0,
-      },
-    );
-  }, [filteredItems]);
 
   const groupedPricingRates = useMemo(() => {
     if (!Array.isArray(pricingRates)) return [];
@@ -715,9 +629,9 @@ function AiCreditConfigurationPanel({
     const payload = {
       provider: "openai",
       model: String(newPricingModel || "").trim(),
-      inputUsdPerMillionMicros: Number(newPricingInputMicros || 0),
-      outputUsdPerMillionMicros: Number(newPricingOutputMicros || 0),
-      cachedInputUsdPerMillionMicros: Number(newPricingCachedMicros || 0),
+      inputUsdPerMillionMicros: Math.round(Number(newPricingInputUsd || 0) * 1000000),
+      outputUsdPerMillionMicros: Math.round(Number(newPricingOutputUsd || 0) * 1000000),
+      cachedInputUsdPerMillionMicros: Math.round(Number(newPricingCachedUsd || 0) * 1000000),
       validFromUtc:
         newPricingValidFromUtc && String(newPricingValidFromUtc).trim()
           ? new Date(newPricingValidFromUtc).toISOString()
@@ -730,411 +644,8 @@ function AiCreditConfigurationPanel({
     setNewPricingValidFromUtc("");
   }
 
-  async function submitGrant(event) {
-    event.preventDefault();
-    if (!selectedVisibleUser?.userId) return;
-    await onGrantCredit(selectedVisibleUser.userId, {
-      amountUsd: Number(grantAmountUsd),
-      reasonCode: String(grantReasonCode || "manual_topup").trim(),
-      reasonText: String(grantReasonText || "").trim(),
-      idempotencyKey:
-        window.crypto?.randomUUID?.() ||
-        `grant-${selectedVisibleUser.userId}-${Date.now()}`,
-    });
-  }
-
-  async function submitAdjustment(event) {
-    event.preventDefault();
-    if (!selectedVisibleUser?.userId) return;
-    await onAdjustCredit(selectedVisibleUser.userId, {
-      amountUsd: Number(adjustAmountUsd),
-      reasonCode: String(adjustReasonCode || "manual_adjustment").trim(),
-      reasonText: String(adjustReasonText || "").trim(),
-      idempotencyKey:
-        window.crypto?.randomUUID?.() ||
-        `adjust-${selectedVisibleUser.userId}-${Date.now()}`,
-    });
-    setAdjustAmountUsd("");
-    setAdjustReasonText("");
-  }
-
-  async function submitPolicy(event) {
-    event.preventDefault();
-    if (!selectedVisibleUser?.userId) return;
-    await onUpdatePolicy(selectedVisibleUser.userId, {
-      hardLimitEnabled: Boolean(policyDraft.hardLimitEnabled),
-      warningThresholdPercent: Number(policyDraft.warningThresholdPercent),
-      criticalThresholdPercent: Number(policyDraft.criticalThresholdPercent),
-    });
-  }
-
   return (
     <div className="configuration-section-stack">
-      <section className="configuration-card ai-credit-card">
-        <div className="configuration-card-heading">
-          <div>
-            <h4>Credito IA</h4>
-            <p>
-              Gestiona el saldo por usuario, sus umbrales de consumo y el
-              historial de movimientos.
-            </p>
-          </div>
-          <span className="configuration-inline-pill">{latestUpdateText}</span>
-        </div>
-
-        <div className="ai-credit-summary-grid">
-          <article className="ai-credit-summary-card">
-            <strong>
-              {currencyFormatter.format(summary.totalGranted || 0)}
-            </strong>
-            <span>Credito total asignado</span>
-          </article>
-          <article className="ai-credit-summary-card">
-            <strong>
-              {currencyFormatter.format(summary.totalConsumed || 0)}
-            </strong>
-            <span>Consumo acumulado</span>
-          </article>
-          <article className="ai-credit-summary-card">
-            <strong>
-              {currencyFormatter.format(summary.totalBalance || 0)}
-            </strong>
-            <span>Saldo disponible</span>
-          </article>
-          <article className="ai-credit-summary-card">
-            <strong>{filteredItems.length}</strong>
-            <span>Usuarios visibles</span>
-          </article>
-        </div>
-
-        <div className="ai-credit-toolbar">
-          <input
-            type="search"
-            value={filterText}
-            onChange={(event) => setFilterText(event.target.value)}
-            placeholder="Buscar por nombre, correo, rol o estado"
-          />
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => onSelectUser(selectedVisibleUser?.userId || null)}
-          >
-            Refrescar detalle
-          </button>
-        </div>
-
-        {loading ? <p className="field-hint">Cargando crédito IA...</p> : null}
-        {error ? <p className="field-error-text">{error}</p> : null}
-
-        <div className="ai-credit-table-wrap">
-          <table className="configuration-table ai-credit-table">
-            <thead>
-              <tr>
-                <th>Usuario</th>
-                <th>Saldo</th>
-                <th>Consumido</th>
-                <th>Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredItems.map((item) => (
-                <tr
-                  key={item.userId}
-                  className={
-                    Number(item.userId) === Number(selectedUserId)
-                      ? "is-selected"
-                      : ""
-                  }
-                  onClick={() => void onSelectUser(item.userId)}
-                >
-                  <td>
-                    <strong>{item.fullName}</strong>
-                    <span>{item.email}</span>
-                    <small>{item.roles || "Sin roles"}</small>
-                  </td>
-                  <td>{currencyFormatter.format(item.balanceUsd || 0)}</td>
-                  <td>
-                    <div className="ai-credit-row-progress">
-                      <div className="ai-credit-row-track" aria-hidden="true">
-                        <span
-                          className={`ai-credit-row-fill state-${item.state}`}
-                          style={{
-                            width: `${Math.max(0, Math.min(100, item.consumedPercent || 0))}%`,
-                          }}
-                        />
-                      </div>
-                      <span>
-                        {Math.max(0, Math.min(100, item.consumedPercent || 0))}%
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <span
-                      className={`configuration-status-pill ai-credit-state-${item.state}`}
-                    >
-                      {item.state}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {!filteredItems.length ? (
-                <tr>
-                  <td colSpan="4">
-                    <p className="field-hint">
-                      No hay usuarios para mostrar con ese filtro.
-                    </p>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="configuration-card ai-credit-detail-card">
-        <div className="configuration-card-heading">
-          <div>
-            <h4>Detalle por usuario</h4>
-            <p>
-              Selecciona un usuario para ver su saldo, políticas y movimientos
-              recientes.
-            </p>
-          </div>
-          {selectedVisibleUser ? (
-            <span className="configuration-inline-pill">
-              {selectedVisibleUser.fullName || selectedVisibleUser.email}
-            </span>
-          ) : null}
-        </div>
-
-        {!selectedVisibleUser ? (
-          <p className="field-hint">
-            Selecciona un usuario para administrar su crédito IA.
-          </p>
-        ) : (
-          <div className="ai-credit-detail-grid">
-            <div className="ai-credit-detail-summary">
-              <div>
-                <strong>{selectedVisibleUser.fullName}</strong>
-                <p>{selectedVisibleUser.email}</p>
-                <span>{selectedVisibleUser.roles || "Sin roles"}</span>
-              </div>
-              <div className="ai-credit-detail-metrics">
-                <article>
-                  <strong>
-                    {currencyFormatter.format(
-                      selectedVisibleUser.balanceUsd || 0,
-                    )}
-                  </strong>
-                  <span>Disponible</span>
-                </article>
-                <article>
-                  <strong>
-                    {currencyFormatter.format(
-                      selectedVisibleUser.lifetimeConsumedUsd || 0,
-                    )}
-                  </strong>
-                  <span>Consumido</span>
-                </article>
-                <article>
-                  <strong>
-                    {currencyFormatter.format(
-                      selectedVisibleUser.lifetimeGrantedUsd || 0,
-                    )}
-                  </strong>
-                  <span>Asignado</span>
-                </article>
-                <article>
-                  <strong>{selectedVisibleUser.state}</strong>
-                  <span>Estado</span>
-                </article>
-              </div>
-            </div>
-
-            <form className="ai-credit-form" onSubmit={submitGrant}>
-              <h5>Recargar crédito</h5>
-              <div className="configuration-form-grid">
-                <div className="field-group">
-                  <label>Monto USD</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={grantAmountUsd}
-                    onChange={(event) => setGrantAmountUsd(event.target.value)}
-                  />
-                </div>
-                <div className="field-group">
-                  <label>Codigo motivo</label>
-                  <input
-                    type="text"
-                    value={grantReasonCode}
-                    onChange={(event) => setGrantReasonCode(event.target.value)}
-                  />
-                </div>
-                <div className="field-group configuration-grid-span-full">
-                  <label>Motivo</label>
-                  <textarea
-                    rows="2"
-                    value={grantReasonText}
-                    onChange={(event) => setGrantReasonText(event.target.value)}
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={actionKey === `grant:${selectedVisibleUser.userId}`}
-              >
-                {actionKey === `grant:${selectedVisibleUser.userId}`
-                  ? "Guardando..."
-                  : "Recargar crédito"}
-              </button>
-            </form>
-
-            <form className="ai-credit-form" onSubmit={submitAdjustment}>
-              <h5>Ajuste manual</h5>
-              <div className="configuration-form-grid">
-                <div className="field-group">
-                  <label>Monto USD</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={adjustAmountUsd}
-                    onChange={(event) => setAdjustAmountUsd(event.target.value)}
-                    placeholder="Usa negativo para descontar"
-                  />
-                </div>
-                <div className="field-group">
-                  <label>Codigo motivo</label>
-                  <input
-                    type="text"
-                    value={adjustReasonCode}
-                    onChange={(event) =>
-                      setAdjustReasonCode(event.target.value)
-                    }
-                  />
-                </div>
-                <div className="field-group configuration-grid-span-full">
-                  <label>Motivo obligatorio</label>
-                  <textarea
-                    rows="2"
-                    value={adjustReasonText}
-                    onChange={(event) =>
-                      setAdjustReasonText(event.target.value)
-                    }
-                    placeholder="Explica por que se corrige el saldo"
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                className="btn-secondary"
-                disabled={actionKey === `adjust:${selectedVisibleUser.userId}`}
-              >
-                {actionKey === `adjust:${selectedVisibleUser.userId}`
-                  ? "Aplicando..."
-                  : "Aplicar ajuste"}
-              </button>
-            </form>
-
-            <form className="ai-credit-form" onSubmit={submitPolicy}>
-              <h5>Política del usuario</h5>
-              <div className="configuration-form-grid">
-                <label className="configuration-toggle-row configuration-grid-span-full">
-                  <div className="configuration-toggle-copy">
-                    <strong>Hard limit</strong>
-                    <p>Bloquea la IA cuando el saldo llegue a cero.</p>
-                  </div>
-                  <span className="configuration-toggle-control">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(policyDraft.hardLimitEnabled)}
-                      onChange={(event) =>
-                        setPolicyDraft((current) => ({
-                          ...current,
-                          hardLimitEnabled: event.target.checked,
-                        }))
-                      }
-                    />
-                  </span>
-                </label>
-                <div className="field-group">
-                  <label>Umbral warning %</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="99"
-                    value={policyDraft.warningThresholdPercent}
-                    onChange={(event) =>
-                      setPolicyDraft((current) => ({
-                        ...current,
-                        warningThresholdPercent: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="field-group">
-                  <label>Umbral critical %</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="100"
-                    value={policyDraft.criticalThresholdPercent}
-                    onChange={(event) =>
-                      setPolicyDraft((current) => ({
-                        ...current,
-                        criticalThresholdPercent: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                className="btn-secondary"
-                disabled={actionKey === `policy:${selectedVisibleUser.userId}`}
-              >
-                {actionKey === `policy:${selectedVisibleUser.userId}`
-                  ? "Guardando..."
-                  : "Guardar política"}
-              </button>
-            </form>
-
-            <div className="ai-credit-history">
-              <h5>Movimientos recientes</h5>
-              {detailLoading ? (
-                <p className="field-hint">Cargando detalle...</p>
-              ) : selectedDetail?.recentTransactions?.length ? (
-                <div className="configuration-audit-list ai-credit-history-list">
-                  {selectedDetail.recentTransactions.map((movement) => (
-                    <article
-                      key={movement.id}
-                      className="configuration-audit-item"
-                    >
-                      <div>
-                        <strong>{movement.transactionType}</strong>
-                        <p>{movement.reasonText || movement.reasonCode}</p>
-                      </div>
-                      <span>
-                        {currencyFormatter.format(movement.amountUsd || 0)} ·{" "}
-                        {movement.createdAtUtc
-                          ? new Date(movement.createdAtUtc).toLocaleString()
-                          : ""}
-                      </span>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">
-                  No hay movimientos recientes para este usuario.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
-
       <section className="configuration-card ai-pricing-card">
         <div className="configuration-card-heading">
           <div>
@@ -1295,6 +806,10 @@ function AiCreditConfigurationPanel({
 
         <form className="ai-credit-form" onSubmit={submitNewPricingRate}>
           <h5>Nueva tarifa manual</h5>
+          <p className="field-hint">
+            Registra los precios en USD por millón de tokens, tal como los
+            publica el proveedor.
+          </p>
           <div className="configuration-form-grid">
             <div className="field-group">
               <label>Modelo</label>
@@ -1317,40 +832,43 @@ function AiCreditConfigurationPanel({
               />
             </div>
             <div className="field-group">
-              <label>Input micros por millon</label>
+              <label>Entrada (USD por millón de tokens)</label>
               <input
                 type="number"
                 min="0"
-                step="1"
-                value={newPricingInputMicros}
+                step="0.0001"
+                placeholder="2.00"
+                value={newPricingInputUsd}
                 onChange={(event) =>
-                  setNewPricingInputMicros(event.target.value)
+                  setNewPricingInputUsd(event.target.value)
                 }
                 required
               />
             </div>
             <div className="field-group">
-              <label>Output micros por millon</label>
+              <label>Salida (USD por millón de tokens)</label>
               <input
                 type="number"
                 min="0"
-                step="1"
-                value={newPricingOutputMicros}
+                step="0.0001"
+                placeholder="10.00"
+                value={newPricingOutputUsd}
                 onChange={(event) =>
-                  setNewPricingOutputMicros(event.target.value)
+                  setNewPricingOutputUsd(event.target.value)
                 }
                 required
               />
             </div>
             <div className="field-group configuration-grid-span-full">
-              <label>Cached input micros por millon</label>
+              <label>Entrada en caché (USD por millón de tokens)</label>
               <input
                 type="number"
                 min="0"
-                step="1"
-                value={newPricingCachedMicros}
+                step="0.0001"
+                placeholder="0.10"
+                value={newPricingCachedUsd}
                 onChange={(event) =>
-                  setNewPricingCachedMicros(event.target.value)
+                  setNewPricingCachedUsd(event.target.value)
                 }
               />
             </div>
@@ -4567,7 +4085,9 @@ function AiParametersConfigurationPanel({
   );
 }
 
-export default function ConfigurationPage() {
+export default function ConfigurationPage({ can = () => false }) {
+  const [aiBudgetTab, setAiBudgetTab] = useState("summary");
+  const canManageAiServices = can("ia.budget.manage") || can("configuracion.update");
   const {
     loading,
     saving,
@@ -4600,18 +4120,11 @@ export default function ConfigurationPage() {
     proposalComponentDefinitions,
     institutionalAssets,
     aiParametersConfig,
-    aiWalletSummaries,
-    aiWalletSummariesLoading,
-    aiWalletSummariesError,
     aiPricingRates,
     aiPricingRatesLoading,
     aiPricingRatesError,
     aiPricingActionKey,
     aiPricingSyncPreview,
-    selectedAiWalletUserId,
-    selectedAiWalletDetail,
-    selectedAiWalletDetailLoading,
-    aiWalletActionKey,
     selectedAiCapabilityKey,
     aiParameterDraft,
     aiParameterValidationWarnings,
@@ -4641,7 +4154,6 @@ export default function ConfigurationPage() {
     latestTemporaryFeaturesUpdateText,
     latestChatbotSettingsUpdateText,
     latestCommercialSettingsUpdateText,
-    latestAiWalletUpdateText,
     latestAiPricingUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
@@ -4690,10 +4202,6 @@ export default function ConfigurationPage() {
     saveAiParametersDraft,
     publishAiParameters,
     restoreAiParameterRevision,
-    selectAiWalletUser,
-    grantAiWalletCredit,
-    adjustAiWalletCredit,
-    updateAiWalletPolicy,
     createAiPricingRate,
     closeAiPricingRate,
     syncAiPricingRates,
@@ -4931,7 +4439,7 @@ export default function ConfigurationPage() {
       return latestAiParametersUpdateText;
     }
     if (activeSection === "ai_budget") {
-      return latestAiWalletUpdateText;
+      return latestAiPricingUpdateText;
     }
     if (activeSection === "proposal_content") {
       return latestProposalContentUpdateText;
@@ -4943,7 +4451,7 @@ export default function ConfigurationPage() {
   }, [
     activeSection,
     latestAiParametersUpdateText,
-    latestAiWalletUpdateText,
+    latestAiPricingUpdateText,
     latestProposalContentUpdateText,
     latestTemporaryFeaturesUpdateText,
     latestUpdateText,
@@ -4956,11 +4464,6 @@ export default function ConfigurationPage() {
         : aiParametersConfig.publishedAt
           ? `Publicado ${formatDateTime(aiParametersConfig.publishedAt)}`
           : "Sin publicacion";
-    }
-    if (activeSection === "ai_budget") {
-      return aiWalletSummariesLoading
-        ? "Cargando creditos..."
-        : `${aiWalletSummaries.length} usuarios con wallet`;
     }
     if (
       activeSection === "proposal_content" &&
@@ -4976,8 +4479,6 @@ export default function ConfigurationPage() {
     aiParametersConfig,
     companyProfile,
     formatDateTime,
-    aiWalletSummariesLoading,
-    aiWalletSummaries.length,
     proposalContentConfig.updatedAt,
   ]);
 
@@ -5863,39 +5364,42 @@ export default function ConfigurationPage() {
           ) : null}
 
           {activeSection === "ai_budget" ? (
-            <AiCreditConfigurationPanel
-              items={aiWalletSummaries}
-              loading={aiWalletSummariesLoading}
-              error={aiWalletSummariesError}
-              latestUpdateText={latestAiWalletUpdateText}
-              pricingRates={aiPricingRates}
-              pricingRatesLoading={aiPricingRatesLoading}
-              pricingRatesError={aiPricingRatesError}
-              latestPricingUpdateText={latestAiPricingUpdateText}
-              pricingActionKey={aiPricingActionKey}
-              pricingSyncPreview={aiPricingSyncPreview}
-              selectedUserId={selectedAiWalletUserId}
-              selectedDetail={selectedAiWalletDetail}
-              detailLoading={selectedAiWalletDetailLoading}
-              actionKey={aiWalletActionKey}
-              onSelectUser={(userId) => {
-                void selectAiWalletUser(userId);
-              }}
-              onGrantCredit={(userId, payload) =>
-                grantAiWalletCredit(userId, payload)
-              }
-              onAdjustCredit={(userId, payload) =>
-                adjustAiWalletCredit(userId, payload)
-              }
-              onUpdatePolicy={(userId, payload) =>
-                updateAiWalletPolicy(userId, payload)
-              }
-              onCreatePricingRate={(payload) => createAiPricingRate(payload)}
-              onClosePricingRate={(rateId, payload) =>
-                closeAiPricingRate(rateId, payload)
-              }
-              onSyncPricingRates={(payload) => syncAiPricingRates(payload)}
-            />
+            <div className="configuration-section-stack">
+              <nav className="ai-services-tabs" aria-label="Secciones de Crédito IA">
+                {AI_BUDGET_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={aiBudgetTab === tab.id ? "is-active" : ""}
+                    aria-pressed={aiBudgetTab === tab.id}
+                    onClick={() => setAiBudgetTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+              {["summary", "modules", "usage"].includes(aiBudgetTab) ? (
+                <AiServicesPanel tab={aiBudgetTab} canManage={canManageAiServices} />
+              ) : null}
+              {aiBudgetTab === "allocations" ? (
+                <AiAllocationsPanel canManage={canManageAiServices} />
+              ) : null}
+              {aiBudgetTab === "pricing" ? (
+                <AiPricingConfigurationPanel
+                  pricingRates={aiPricingRates}
+                  pricingRatesLoading={aiPricingRatesLoading}
+                  pricingRatesError={aiPricingRatesError}
+                  latestPricingUpdateText={latestAiPricingUpdateText}
+                  pricingActionKey={aiPricingActionKey}
+                  pricingSyncPreview={aiPricingSyncPreview}
+                  onCreatePricingRate={(payload) => createAiPricingRate(payload)}
+                  onClosePricingRate={(rateId, payload) =>
+                    closeAiPricingRate(rateId, payload)
+                  }
+                  onSyncPricingRates={(payload) => syncAiPricingRates(payload)}
+                />
+              ) : null}
+            </div>
           ) : null}
 
           {activeSection === "ai_parameters" ? (

@@ -48,6 +48,10 @@ import {
   migrateMiCoachPermissions,
 } from "./permissions.js";
 import { ensureAiUsageSchema } from "./ai-usage/service.js";
+import {
+  ensureAiServicesSchema,
+  startAiServiceSettingsRefresher,
+} from "./ai-services/store.js";
 import { ensureChatbotSchema } from "./chatbot/schema.js";
 import { startChatbotWorker } from "./routes.chatbot.js";
 import { ensureLandingPermissions } from "./landing/permissions.js";
@@ -77,6 +81,8 @@ export async function startServer() {
   await ensureDocumentacionRagSchema();
   await ensureAccountsSchema();
   await ensureAiUsageSchema();
+  await ensureAiServicesSchema();
+  await startAiServiceSettingsRefresher();
   await ensureChatbotSchema();
   await ensureInteractionPermissions({ autoAssignRoles });
   await ensureCommercialDevelopmentPermissions({ autoAssignRoles });

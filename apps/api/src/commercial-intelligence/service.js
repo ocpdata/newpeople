@@ -2453,7 +2453,7 @@ async function runPublicSpecialistAgent({
 }) {
   const searches = [queryText, ...queryTexts]
     .filter(Boolean)
-    .map((query) => searchTavily({ query }));
+    .map((query) => searchTavily({ query, featureCode: `commercial_intelligence.${agentId}`, userId: user?.id }));
   const tavilyResults = await Promise.all(searches);
   const tavily = {
     enabled: tavilyResults.some((result) => result.enabled),
@@ -2513,6 +2513,8 @@ async function runPublicSpecialistAgent({
         searchTavily({
           query: `site:linkedin.com/in "${item.firstName} ${item.lastName}" "${subject}" email teléfono contacto`,
           maxResults: 5,
+          featureCode: "commercial_intelligence.contact_enrichment",
+          userId: user?.id,
         }),
       ),
     );
@@ -5093,6 +5095,8 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
                           ? "La intención no requiere consultar documentación."
                           : documentKnowledgeStatus === "not_configured"
                             ? "Pinecone no está configurado; el turno continuó sin evidencia documental."
+                            : documentKnowledgeStatus === "disabled"
+                              ? "La documentación está desactivada para Cliente existente; el turno continuó sin evidencia documental."
                             : documentKnowledgeStatus === "no_documents"
                               ? "No hay documentos activos disponibles para recuperar."
                               : "La recuperación documental no se alcanzó.",
@@ -5906,9 +5910,13 @@ async function runCustomerExternalResearch({ snapshot, user, jobId }) {
     "cliente";
   const tavily = await searchTavily({
     query: `${subject} ${snapshot.account?.city || ""} noticias proyectos tecnología empresa`,
+    featureCode: "commercial_intelligence.external",
+    userId: user?.id,
   });
   const contactSearch = await searchTavily({
     query: `${subject} liderazgo directivos CTO CIO CISO director tecnología contacto empresa`,
+    featureCode: "commercial_intelligence.external",
+    userId: user?.id,
   });
   const publicResults = [
     ...(tavily.results || []),

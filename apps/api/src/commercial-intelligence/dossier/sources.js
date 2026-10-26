@@ -190,12 +190,16 @@ export function libraryQuery(plan, names = []) {
   return text.replace(/\s+/g, " ").trim().slice(0, 1200) || "conocimiento comercial general";
 }
 
-async function librarySection({ query, retrieve = retrieveCustomerChatDocumentKnowledge }) {
+async function librarySection({ query, userId = null, retrieve = retrieveCustomerChatDocumentKnowledge }) {
   const base = { key: "library", title: "Biblioteca documental (conocimiento general)" };
   try {
-    const result = await retrieve({ prompt: query });
+    const result = await retrieve({ prompt: query, userId });
     if (result.status === "not_configured") {
       return { ...base, status: "restricted", total: null, items: [], meaning: "La biblioteca documental no está configurada." };
+    }
+    if (result.status === "disabled") {
+      return { ...base, status: "restricted", total: null, items: [],
+        meaning: "La biblioteca documental está desactivada para Cliente existente en la configuración de IA." };
     }
     const items = result.snippets.map((snippet, index) => ({
       evidenceId: `lib${index + 1}`, source: { table: "documentacion_rag", id: index + 1 },
@@ -234,7 +238,7 @@ export async function buildTurnSourcesDossier({ plan, user, accountDossier, oppo
   }
   if (needed.library) {
     const names = [accountDossier.account.name, ...opportunityDossiers.map((dossier) => dossier.opportunity.name)];
-    sections.library = await librarySection({ query: libraryQuery(plan, names),
+    sections.library = await librarySection({ query: libraryQuery(plan, names), userId: user?.id,
       ...(retrieveLibrary ? { retrieve: retrieveLibrary } : {}) });
   }
   if (!Object.keys(sections).length) return null;

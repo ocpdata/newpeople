@@ -2944,6 +2944,7 @@ export function createCustomerAccountAdapter({
     });
     const retrieve = async () => requested
       ? initialDocumentKnowledge || retrieveCustomerChatDocumentKnowledge({
+          userId: user?.id,
           prompt: buildCustomerDocumentKnowledgeQuery({
             question,
             routing,

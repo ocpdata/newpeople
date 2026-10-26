@@ -67,6 +67,8 @@ describe("Documentación RAG retrieval", () => {
     expect(retrieveRagContextMock).toHaveBeenCalledWith({
       query: "Consulta",
       topK: 6,
+      featureCode: "chatbot.assistant",
+      userId: null,
       filter: {
         $or: [
           {

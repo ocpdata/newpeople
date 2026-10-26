@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { recordAiUsageFromOpenAiResponse } from "../ai-usage/service.js";
 import { getReadableDomainHints } from "./capabilities.js";
 import { extractJsonObject } from "./common.js";
@@ -49,7 +50,7 @@ export async function generateChatbotAnswerWithAi({
   }
 
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(featureCode, "fast"),
     temperature: 0.2,
     response_format: {
       type: "json_schema",
@@ -99,7 +100,7 @@ export async function generateChatbotAnswerWithAi({
     internalRequestId,
     userId: Number(user.id),
     featureCode,
-    model: String(payload.model || config.openai.model || "").trim(),
+    model: String(payload.model || aiModelFor(featureCode, "fast") || "").trim(),
     openAiResponse: data,
     jobType: "chatbot_message",
     jobId: null,

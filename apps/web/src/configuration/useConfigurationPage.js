@@ -1026,7 +1026,11 @@ export function useConfigurationPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [activeSection, setActiveSection] = useState("company");
+  const [activeSection, setActiveSection] = useState(() =>
+    new URLSearchParams(window.location.search).get("section") === "ai_budget"
+      ? "ai_budget"
+      : "company",
+  );
   const [countries, setCountries] = useState([]);
   const [accountTypes, setAccountTypes] = useState([]);
   const [accountTypeDraft, setAccountTypeDraft] = useState({
@@ -1095,20 +1099,11 @@ export function useConfigurationPage() {
   const [aiParametersConfig, setAiParametersConfig] = useState(
     EMPTY_AI_PARAMETERS_CONFIG,
   );
-  const [aiWalletSummaries, setAiWalletSummaries] = useState([]);
-  const [aiWalletSummariesLoading, setAiWalletSummariesLoading] =
-    useState(true);
-  const [aiWalletSummariesError, setAiWalletSummariesError] = useState("");
   const [aiPricingRates, setAiPricingRates] = useState([]);
   const [aiPricingRatesLoading, setAiPricingRatesLoading] = useState(true);
   const [aiPricingRatesError, setAiPricingRatesError] = useState("");
   const [aiPricingActionKey, setAiPricingActionKey] = useState("");
   const [aiPricingSyncPreview, setAiPricingSyncPreview] = useState([]);
-  const [selectedAiWalletUserId, setSelectedAiWalletUserId] = useState(null);
-  const [selectedAiWalletDetail, setSelectedAiWalletDetail] = useState(null);
-  const [selectedAiWalletDetailLoading, setSelectedAiWalletDetailLoading] =
-    useState(false);
-  const [aiWalletActionKey, setAiWalletActionKey] = useState("");
   const [selectedAiCapabilityKey, setSelectedAiCapabilityKey] = useState(
     DEFAULT_SELECTED_AI_CAPABILITY_KEY,
   );
@@ -1158,7 +1153,6 @@ export function useConfigurationPage() {
           commercialProposalFormatsResponse,
           institutionalAssetsResponse,
           aiParametersResponse,
-          aiWalletsResponse,
           aiPricingResponse,
         ] = await Promise.all([
           api.get("/api/settings/company-profile"),
@@ -1200,9 +1194,6 @@ export function useConfigurationPage() {
             .catch(() => ({ data: { items: [] } })),
           api.get("/api/settings/ai-parameters").catch(() => ({
             data: { config: EMPTY_AI_PARAMETERS_CONFIG },
-          })),
-          api.get("/api/admin/ai/wallets").catch(() => ({
-            data: { items: [] },
           })),
           api.get("/api/admin/ai/pricing-rates").catch(() => ({
             data: { items: [] },
@@ -1290,11 +1281,6 @@ export function useConfigurationPage() {
         const nextAiParametersConfig = normalizeAiParametersConfig(
           aiParametersResponse.data?.config,
         );
-        const nextAiWalletSummaries = Array.isArray(
-          aiWalletsResponse.data?.items,
-        )
-          ? aiWalletsResponse.data.items
-          : [];
         const nextAiPricingRates = Array.isArray(aiPricingResponse.data?.items)
           ? aiPricingResponse.data.items
           : [];
@@ -1306,16 +1292,9 @@ export function useConfigurationPage() {
           nextAiParametersConfig.entries[0] ||
           normalizeAiParameterEntry();
         setAiParametersConfig(nextAiParametersConfig);
-        setAiWalletSummaries(nextAiWalletSummaries);
-        setAiWalletSummariesError("");
         setAiPricingRates(nextAiPricingRates);
         setAiPricingRatesError("");
         setAiPricingSyncPreview([]);
-        const nextAiWalletUserId = nextAiWalletSummaries[0]?.userId || null;
-        setSelectedAiWalletUserId(nextAiWalletUserId);
-        if (nextAiWalletUserId) {
-          void loadAiWalletDetail(nextAiWalletUserId).catch(() => {});
-        }
         setSelectedAiCapabilityKey(nextAiEntry.capabilityKey);
         setAiParameterDraft(nextAiEntry);
         setInitialAiParameterSnapshot(serializeAiParameterDraft(nextAiEntry));
@@ -1339,9 +1318,6 @@ export function useConfigurationPage() {
           setError(
             getApiErrorMessage(err, "No fue posible cargar la configuracion"),
           );
-          setAiWalletSummariesError(
-            getApiErrorMessage(err, "No fue posible cargar el credito IA"),
-          );
           setAiPricingRatesError(
             getApiErrorMessage(err, "No fue posible cargar las tarifas IA"),
           );
@@ -1349,7 +1325,6 @@ export function useConfigurationPage() {
       } finally {
         if (!cancelled) {
           setLoading(false);
-          setAiWalletSummariesLoading(false);
           setAiPricingRatesLoading(false);
         }
       }
@@ -2063,19 +2038,6 @@ export function useConfigurationPage() {
     }`;
   }, [aiParametersConfig]);
 
-  const latestAiWalletUpdateText = useMemo(() => {
-    if (!aiWalletSummaries.length) {
-      return "Sin cambios registrados";
-    }
-
-    const latestWallet = [...aiWalletSummaries].sort((left, right) => {
-      return String(right.asOfUtc || "").localeCompare(
-        String(left.asOfUtc || ""),
-      );
-    })[0];
-
-    return `${formatDateTime(latestWallet.asOfUtc)} por sistema`;
-  }, [aiWalletSummaries, formatDateTime]);
 
   const latestAiPricingUpdateText = useMemo(() => {
     if (!aiPricingRates.length) {
@@ -2558,52 +2520,6 @@ export function useConfigurationPage() {
     }
   }
 
-  const reloadAiWalletSummaries = useCallback(async () => {
-    setAiWalletSummariesLoading(true);
-    setAiWalletSummariesError("");
-    try {
-      const response = await api.get("/api/admin/ai/wallets");
-      const items = Array.isArray(response.data?.items)
-        ? response.data.items
-        : [];
-      setAiWalletSummaries(items);
-      if (!selectedAiWalletUserId && items[0]?.userId) {
-        setSelectedAiWalletUserId(items[0].userId);
-        void loadAiWalletDetail(items[0].userId).catch(() => {});
-      }
-      return items;
-    } catch (err) {
-      const message = getApiErrorMessage(
-        err,
-        "No fue posible cargar el credito IA",
-      );
-      setAiWalletSummariesError(message);
-      throw err;
-    } finally {
-      setAiWalletSummariesLoading(false);
-    }
-  }, [selectedAiWalletUserId]);
-
-  const loadAiWalletDetail = useCallback(async (userId) => {
-    if (!userId) {
-      setSelectedAiWalletDetail(null);
-      return null;
-    }
-
-    setSelectedAiWalletDetailLoading(true);
-    try {
-      const response = await api.get(`/api/admin/ai/wallets/${userId}`);
-      const detail = response.data || null;
-      setSelectedAiWalletDetail(detail);
-      return detail;
-    } catch (err) {
-      setSelectedAiWalletDetail(null);
-      throw err;
-    } finally {
-      setSelectedAiWalletDetailLoading(false);
-    }
-  }, []);
-
   const reloadAiPricingRates = useCallback(async () => {
     setAiPricingRatesLoading(true);
     setAiPricingRatesError("");
@@ -2625,83 +2541,6 @@ export function useConfigurationPage() {
       setAiPricingRatesLoading(false);
     }
   }, []);
-
-  async function selectAiWalletUser(userId) {
-    const nextUserId = Number(userId || 0) || null;
-    setSelectedAiWalletUserId(nextUserId);
-    if (!nextUserId) {
-      setSelectedAiWalletDetail(null);
-      return;
-    }
-    await loadAiWalletDetail(nextUserId);
-  }
-
-  async function grantAiWalletCredit(userId, payload) {
-    setAiWalletActionKey(`grant:${userId}`);
-    setError("");
-    setSuccess("");
-    try {
-      const response = await api.post(
-        `/api/admin/ai/wallets/${userId}/grants`,
-        payload,
-      );
-      await reloadAiWalletSummaries();
-      await loadAiWalletDetail(userId);
-      setSuccess("Credito IA recargado correctamente");
-      return response.data;
-    } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible recargar el credito IA"),
-      );
-      throw err;
-    } finally {
-      setAiWalletActionKey("");
-    }
-  }
-
-  async function adjustAiWalletCredit(userId, payload) {
-    setAiWalletActionKey(`adjust:${userId}`);
-    setError("");
-    setSuccess("");
-    try {
-      const response = await api.post(
-        `/api/admin/ai/wallets/${userId}/adjustments`,
-        payload,
-      );
-      await reloadAiWalletSummaries();
-      await loadAiWalletDetail(userId);
-      setSuccess("Ajuste IA aplicado correctamente");
-      return response.data;
-    } catch (err) {
-      setError(getApiErrorMessage(err, "No fue posible aplicar el ajuste IA"));
-      throw err;
-    } finally {
-      setAiWalletActionKey("");
-    }
-  }
-
-  async function updateAiWalletPolicy(userId, payload) {
-    setAiWalletActionKey(`policy:${userId}`);
-    setError("");
-    setSuccess("");
-    try {
-      const response = await api.patch(
-        `/api/admin/ai/wallets/${userId}/policy`,
-        payload,
-      );
-      await reloadAiWalletSummaries();
-      await loadAiWalletDetail(userId);
-      setSuccess("Politica IA actualizada correctamente");
-      return response.data;
-    } catch (err) {
-      setError(
-        getApiErrorMessage(err, "No fue posible actualizar la politica IA"),
-      );
-      throw err;
-    } finally {
-      setAiWalletActionKey("");
-    }
-  }
 
   async function createAiPricingRate(payload) {
     setAiPricingActionKey("create");
@@ -3121,8 +2960,8 @@ export function useConfigurationPage() {
       },
       {
         id: "ai_budget",
-        title: "Credito IA",
-        description: "Credito por usuario, umbrales y control operativo",
+        title: "Crédito IA",
+        description: "Proveedores, módulos, consumo y crédito por usuario",
         dirty: false,
       },
       {
@@ -3191,18 +3030,11 @@ export function useConfigurationPage() {
     proposalComponentDefinitions,
     institutionalAssets,
     aiParametersConfig,
-    aiWalletSummaries,
-    aiWalletSummariesLoading,
-    aiWalletSummariesError,
     aiPricingRates,
     aiPricingRatesLoading,
     aiPricingRatesError,
     aiPricingActionKey,
     aiPricingSyncPreview,
-    selectedAiWalletUserId,
-    selectedAiWalletDetail,
-    selectedAiWalletDetailLoading,
-    aiWalletActionKey,
     selectedAiCapabilityKey,
     aiParameterDraft,
     aiParameterValidationWarnings,
@@ -3232,7 +3064,6 @@ export function useConfigurationPage() {
     latestTemporaryFeaturesUpdateText,
     latestChatbotSettingsUpdateText,
     latestCommercialSettingsUpdateText,
-    latestAiWalletUpdateText,
     latestAiPricingUpdateText,
     latestProposalContentUpdateText,
     latestAiParametersUpdateText,
@@ -3273,13 +3104,7 @@ export function useConfigurationPage() {
     createEconomicSector,
     renameEconomicSector,
     setEconomicSectorStatus,
-    reloadAiWalletSummaries,
     reloadAiPricingRates,
-    loadAiWalletDetail,
-    selectAiWalletUser,
-    grantAiWalletCredit,
-    adjustAiWalletCredit,
-    updateAiWalletPolicy,
     createAiPricingRate,
     closeAiPricingRate,
     syncAiPricingRates,

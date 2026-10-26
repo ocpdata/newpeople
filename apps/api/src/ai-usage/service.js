@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { query, withTransaction } from "../db.js";
 import { config } from "../config.js";
+import { aiModelFor, aiProviderFor } from "../ai-services/state.js";
 
 const PROVIDER_OPENAI = "openai";
 const DEFAULT_CURRENCY_CODE = "USD";
@@ -8,9 +9,6 @@ const MICROS_PER_USD = 1_000_000;
 const OPENAI_PRICING_URL = "https://platform.openai.com/docs/pricing";
 const OPENAI_PRICING_TIMEOUT_MS = Number(
   process.env.OPENAI_PRICING_TIMEOUT_MS || 10_000,
-);
-const DEFAULT_INITIAL_CREDIT_USD = Number(
-  process.env.AI_DEFAULT_INITIAL_CREDIT_USD || 5,
 );
 const DEFAULT_INPUT_USD_PER_MILLION_MICROS = Number(
   process.env.AI_DEFAULT_INPUT_USD_PER_MILLION_MICROS || 300_000,
@@ -113,15 +111,6 @@ function normalizeUtcDateInput(value, fallback = null) {
     return fallback;
   }
   return parseDateOrNull(value);
-}
-
-function buildBudgetExceededError(message) {
-  const error = new Error(
-    message || "No tienes saldo disponible para ejecutar funciones de IA.",
-  );
-  error.code = "AI_BUDGET_EXCEEDED";
-  error.status = 402;
-  return error;
 }
 
 function buildRateNotFoundError(model) {
@@ -349,38 +338,7 @@ async function loadLiveOpenAiPricingRates(models) {
   });
 }
 
-async function ensureWalletRow(conn, userId) {
-  const initialGrantMicros = Math.max(
-    0,
-    toMicrosFromUsd(DEFAULT_INITIAL_CREDIT_USD),
-  );
-  const now = nowDate();
-
-  await conn.query(
-    `INSERT INTO ai_user_wallets
-       (user_id, currency_code, balance_micros, hard_limit_enabled,
-        warning_threshold_percent, critical_threshold_percent,
-        lifetime_granted_micros, lifetime_consumed_micros, version,
-        created_at_utc, updated_at_utc)
-     SELECT ?, ?, ?, 1, 80, 95, ?, 0, 1, ?, ?
-     WHERE NOT EXISTS (
-       SELECT 1
-       FROM ai_user_wallets
-       WHERE user_id = ?
-     )`,
-    [
-      Number(userId),
-      DEFAULT_CURRENCY_CODE,
-      initialGrantMicros,
-      initialGrantMicros,
-      now,
-      now,
-      Number(userId),
-    ],
-  );
-}
-
-async function getActiveRate({ conn, model }) {
+async function getActiveRate({ conn, model, provider = PROVIDER_OPENAI }) {
   const sql = `SELECT *
                FROM ai_pricing_rates
                WHERE provider = ?
@@ -390,7 +348,7 @@ async function getActiveRate({ conn, model }) {
                ORDER BY valid_from_utc DESC, id DESC
                LIMIT 1`;
 
-  const params = [PROVIDER_OPENAI, String(model || "").trim()];
+  const params = [String(provider || PROVIDER_OPENAI), String(model || "").trim()];
 
   const rows = conn
     ? (await conn.query(sql, params))[0]
@@ -558,30 +516,8 @@ export async function assertAiBudgetAvailable({ userId }) {
     return;
   }
 
-  await withTransaction(async (conn) => {
-    await ensureWalletRow(conn, safeUserId);
-
-    const [walletRows] = await conn.query(
-      `SELECT user_id, balance_micros, hard_limit_enabled
-       FROM ai_user_wallets
-       WHERE user_id = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [safeUserId],
-    );
-
-    const wallet = walletRows[0] || null;
-    if (!wallet) {
-      throw buildBudgetExceededError();
-    }
-
-    if (
-      Number(wallet.hard_limit_enabled) &&
-      Number(wallet.balance_micros) <= 0
-    ) {
-      throw buildBudgetExceededError();
-    }
-  });
+  const { assertUserAllocationAvailable } = await import("../ai-services/allocations.js");
+  await assertUserAllocationAvailable(safeUserId);
 }
 
 export async function recordAiUsageFromOpenAiResponse({
@@ -590,6 +526,7 @@ export async function recordAiUsageFromOpenAiResponse({
   featureCode,
   model,
   openAiResponse,
+  provider = null,
   apiKeyAlias = null,
   jobType = null,
   jobId = null,
@@ -602,165 +539,78 @@ export async function recordAiUsageFromOpenAiResponse({
     return null;
   }
 
-  const safeModel = String(model || config.openai.model || "").trim();
+  const safeModel = String(model || aiModelFor(featureCode, "fast") || "").trim();
   const safeFeatureCode =
     String(featureCode || "unspecified").trim() || "unspecified";
+  const safeProvider = String(provider || aiProviderFor(safeFeatureCode));
   const requestId = normalizeInternalRequestId(internalRequestId);
   const usage = coalesceUsageFromOpenAiResponse(openAiResponse);
   const openAiRequestId = String(
     openAiResponse?.id || openAiResponse?.response_id || "",
   ).trim();
 
-  return withTransaction(async (conn) => {
-    await ensureWalletRow(conn, safeUserId);
+  const rate = await getActiveRate({ model: safeModel, provider: safeProvider });
+  const costMicros = calculateCostMicros({ usage, rate });
+  const now = nowDate();
+  let effectiveCostMicros = costMicros;
 
-    const [walletRows] = await conn.query(
-      `SELECT *
-       FROM ai_user_wallets
-       WHERE user_id = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [safeUserId],
+  try {
+    await query(
+      `INSERT INTO ai_usage_ledger
+         (internal_request_id, user_id, provider, model, feature_code,
+          api_key_alias, prompt_tokens, completion_tokens, cached_tokens,
+          total_tokens, pricing_rate_id, cost_micros, wallet_transaction_id,
+          openai_request_id, job_type, job_id, status, error_code,
+          error_message, started_at_utc, completed_at_utc, created_at_utc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'success', NULL,
+               NULL, ?, ?, ?)`,
+      [
+        requestId,
+        safeUserId,
+        safeProvider,
+        safeModel,
+        safeFeatureCode,
+        apiKeyAlias,
+        usage.promptTokens,
+        usage.completionTokens,
+        usage.cachedTokens,
+        usage.totalTokens,
+        Number(rate.id),
+        costMicros,
+        openAiRequestId || null,
+        jobType || null,
+        jobId ? Number(jobId) : null,
+        startedAt ? new Date(startedAt) : now,
+        now,
+        now,
+      ],
     );
-
-    const wallet = walletRows[0];
-    if (!wallet) {
-      throw new Error("No fue posible cargar la billetera de IA del usuario");
+  } catch (error) {
+    if (error?.code !== "ER_DUP_ENTRY") {
+      throw error;
     }
+    // The same request was already recorded; report its original cost.
+    const existing = await query(
+      "SELECT cost_micros FROM ai_usage_ledger WHERE internal_request_id = ? LIMIT 1",
+      [requestId],
+    );
+    effectiveCostMicros = Number(existing[0]?.cost_micros || 0);
+  }
 
-    const rate = await getActiveRate({ conn, model: safeModel });
-    const costMicros = calculateCostMicros({ usage, rate });
-    const balanceBefore = Number(wallet.balance_micros || 0);
-    const balanceAfter = balanceBefore - costMicros;
-    const now = nowDate();
+  Promise.all([
+    import("../ai-services/store.js").then(({ invalidateAiServiceUsageCache }) => invalidateAiServiceUsageCache()),
+    import("../ai-services/allocations.js").then(({ invalidateAllocationCache }) => invalidateAllocationCache()),
+  ]).catch(() => {});
 
-    let transactionId = null;
-    let effectiveCostMicros = costMicros;
-    let effectiveBalanceMicros = balanceAfter;
-    let shouldApplyWalletUpdate = true;
-
-    try {
-      const [txResult] = await conn.query(
-        `INSERT INTO ai_wallet_transactions
-           (user_id, transaction_type, amount_micros,
-            balance_before_micros, balance_after_micros,
-            reason_code, reason_text, idempotency_key,
-            reference_type, reference_id, created_by_user_id,
-            created_at_utc)
-         VALUES (?, 'charge', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          safeUserId,
-          -Math.abs(costMicros),
-          balanceBefore,
-          balanceAfter,
-          "ai_usage_charge",
-          `Cargo IA por ${safeFeatureCode}`,
-          requestId,
-          jobType ? "ai_job" : "ai_usage",
-          jobId ? Number(jobId) : null,
-          safeUserId,
-          now,
-        ],
-      );
-      transactionId = Number(txResult.insertId || 0);
-    } catch (error) {
-      if (error?.code !== "ER_DUP_ENTRY") {
-        throw error;
-      }
-
-      shouldApplyWalletUpdate = false;
-      const [existingTxRows] = await conn.query(
-        `SELECT id, amount_micros, balance_after_micros
-         FROM ai_wallet_transactions
-         WHERE idempotency_key = ?
-           AND user_id = ?
-         LIMIT 1`,
-        [requestId, safeUserId],
-      );
-      const existingTx = existingTxRows[0] || null;
-      if (!existingTx) {
-        throw error;
-      }
-
-      transactionId = Number(existingTx.id || 0);
-      effectiveCostMicros = Math.abs(Number(existingTx.amount_micros || 0));
-      effectiveBalanceMicros = Number(existingTx.balance_after_micros || 0);
-    }
-
-    if (shouldApplyWalletUpdate) {
-      await conn.query(
-        `UPDATE ai_user_wallets
-         SET balance_micros = ?,
-             lifetime_consumed_micros = lifetime_consumed_micros + ?,
-             version = version + 1,
-             updated_at_utc = ?
-         WHERE user_id = ?`,
-        [balanceAfter, Math.abs(costMicros), now, safeUserId],
-      );
-    } else {
-      const [walletRowsCurrent] = await conn.query(
-        `SELECT balance_micros
-         FROM ai_user_wallets
-         WHERE user_id = ?
-         LIMIT 1`,
-        [safeUserId],
-      );
-      if (walletRowsCurrent[0]) {
-        effectiveBalanceMicros = Number(
-          walletRowsCurrent[0].balance_micros || 0,
-        );
-      }
-    }
-
-    try {
-      await conn.query(
-        `INSERT INTO ai_usage_ledger
-           (internal_request_id, user_id, provider, model, feature_code,
-            api_key_alias, prompt_tokens, completion_tokens, cached_tokens,
-            total_tokens, pricing_rate_id, cost_micros, wallet_transaction_id,
-            openai_request_id, job_type, job_id, status, error_code,
-            error_message, started_at_utc, completed_at_utc, created_at_utc)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'success', NULL,
-                 NULL, ?, ?, ?)`,
-        [
-          requestId,
-          safeUserId,
-          PROVIDER_OPENAI,
-          safeModel,
-          safeFeatureCode,
-          apiKeyAlias,
-          usage.promptTokens,
-          usage.completionTokens,
-          usage.cachedTokens,
-          usage.totalTokens,
-          Number(rate.id),
-          effectiveCostMicros,
-          transactionId || null,
-          openAiRequestId || null,
-          jobType || null,
-          jobId ? Number(jobId) : null,
-          startedAt ? new Date(startedAt) : now,
-          now,
-          now,
-        ],
-      );
-    } catch (error) {
-      if (error?.code !== "ER_DUP_ENTRY") {
-        throw error;
-      }
-    }
-
-    return {
-      requestId,
-      costMicros: effectiveCostMicros,
-      costUsd: toUsdFromMicros(effectiveCostMicros),
-      balanceMicros: effectiveBalanceMicros,
-      balanceUsd: toUsdFromMicros(effectiveBalanceMicros),
-      usage,
-    };
-  });
+  return {
+    requestId,
+    costMicros: effectiveCostMicros,
+    costUsd: toUsdFromMicros(effectiveCostMicros),
+    usage,
+  };
 }
 
+// Credit of the signed-in user: their share of the captured provider balance, or unlimited.
 export async function getAiCreditSummaryByUserId(userId) {
   await ensureAiUsageSchema();
 
@@ -769,63 +619,8 @@ export async function getAiCreditSummaryByUserId(userId) {
     throw new Error("Usuario invalido");
   }
 
-  await withTransaction(async (conn) => {
-    await ensureWalletRow(conn, safeUserId);
-  });
-
-  const rows = await query(
-    `SELECT user_id, balance_micros, hard_limit_enabled,
-            warning_threshold_percent, critical_threshold_percent,
-            lifetime_granted_micros, lifetime_consumed_micros,
-            updated_at_utc
-     FROM ai_user_wallets
-     WHERE user_id = ?
-     LIMIT 1`,
-    [safeUserId],
-  );
-
-  const wallet = rows[0];
-  const lifetimeGrantedMicros = Number(wallet?.lifetime_granted_micros || 0);
-  const lifetimeConsumedMicros = Number(wallet?.lifetime_consumed_micros || 0);
-  const consumedPercent =
-    lifetimeGrantedMicros > 0
-      ? Math.min(
-          100,
-          Math.round((lifetimeConsumedMicros / lifetimeGrantedMicros) * 100),
-        )
-      : 0;
-
-  const warningThresholdPercent = Number(
-    wallet?.warning_threshold_percent || 80,
-  );
-  const criticalThresholdPercent = Number(
-    wallet?.critical_threshold_percent || 95,
-  );
-
-  let state = "normal";
-  if (Number(wallet?.balance_micros || 0) <= 0) {
-    state = "exhausted";
-  } else if (consumedPercent >= criticalThresholdPercent) {
-    state = "critical";
-  } else if (consumedPercent >= warningThresholdPercent) {
-    state = "warning";
-  }
-
-  return {
-    userId: safeUserId,
-    balanceMicros: Number(wallet?.balance_micros || 0),
-    balanceUsd: toUsdFromMicros(wallet?.balance_micros || 0),
-    lifetimeGrantedMicros,
-    lifetimeGrantedUsd: toUsdFromMicros(lifetimeGrantedMicros),
-    lifetimeConsumedMicros,
-    lifetimeConsumedUsd: toUsdFromMicros(lifetimeConsumedMicros),
-    consumedPercent,
-    warningThresholdPercent,
-    criticalThresholdPercent,
-    hardLimitEnabled: Boolean(wallet?.hard_limit_enabled),
-    state,
-    asOfUtc: toUtcIso(wallet?.updated_at_utc || nowDate()),
-  };
+  const { getUserAllocationSummary } = await import("../ai-services/allocations.js");
+  return getUserAllocationSummary(safeUserId);
 }
 
 export async function listAiUsageByUserId({
@@ -919,8 +714,9 @@ export async function listAiUsageByUserId({
   };
 }
 
+// Movements of the retired per-user wallets, kept for consultation.
 export async function getAdminWalletByUserId(userId) {
-  const summary = await getAiCreditSummaryByUserId(userId);
+  await ensureAiUsageSchema();
   const txRows = await query(
     `SELECT id, transaction_type, amount_micros,
             balance_before_micros, balance_after_micros,
@@ -934,7 +730,6 @@ export async function getAdminWalletByUserId(userId) {
   );
 
   return {
-    wallet: summary,
     recentTransactions: txRows.map((row) => ({
       id: Number(row.id),
       transactionType: row.transaction_type,
@@ -949,324 +744,6 @@ export async function getAdminWalletByUserId(userId) {
       createdAtUtc: toUtcIso(row.created_at_utc),
     })),
   };
-}
-
-export async function listAdminWalletSummaries() {
-  await ensureAiUsageSchema();
-
-  await query(
-    `INSERT INTO ai_user_wallets
-       (user_id, currency_code, balance_micros, hard_limit_enabled,
-        warning_threshold_percent, critical_threshold_percent,
-        lifetime_granted_micros, lifetime_consumed_micros, version,
-        created_at_utc, updated_at_utc)
-     SELECT u.id, 'USD', ?, 1, 80, 95, ?, 0, 1, NOW(3), NOW(3)
-     FROM users u
-     LEFT JOIN ai_user_wallets aw ON aw.user_id = u.id
-     WHERE aw.user_id IS NULL`,
-    [
-      Math.max(0, toMicrosFromUsd(DEFAULT_INITIAL_CREDIT_USD)),
-      Math.max(0, toMicrosFromUsd(DEFAULT_INITIAL_CREDIT_USD)),
-    ],
-  );
-
-  const rows = await query(
-    `SELECT u.id,
-            u.full_name,
-            u.email,
-            u.status AS user_status,
-            GROUP_CONCAT(DISTINCT r.name ORDER BY r.name SEPARATOR ', ') AS roles,
-            aw.currency_code,
-            COALESCE(aw.balance_micros, 0) AS balance_micros,
-            COALESCE(aw.hard_limit_enabled, 1) AS hard_limit_enabled,
-            COALESCE(aw.warning_threshold_percent, 80) AS warning_threshold_percent,
-            COALESCE(aw.critical_threshold_percent, 95) AS critical_threshold_percent,
-            COALESCE(aw.lifetime_granted_micros, 0) AS lifetime_granted_micros,
-            COALESCE(aw.lifetime_consumed_micros, 0) AS lifetime_consumed_micros,
-            aw.updated_at_utc
-     FROM users u
-     LEFT JOIN user_roles ur ON ur.user_id = u.id
-     LEFT JOIN roles r ON r.id = ur.role_id
-     LEFT JOIN ai_user_wallets aw ON aw.user_id = u.id
-     GROUP BY u.id
-     ORDER BY u.full_name ASC, u.id ASC`,
-  );
-
-  return rows.map((row) => {
-    const lifetimeGrantedMicros = Number(row.lifetime_granted_micros || 0);
-    const lifetimeConsumedMicros = Number(row.lifetime_consumed_micros || 0);
-    const consumedPercent =
-      lifetimeGrantedMicros > 0
-        ? Math.min(
-            100,
-            Math.round((lifetimeConsumedMicros / lifetimeGrantedMicros) * 100),
-          )
-        : 0;
-
-    let state = "normal";
-    if (Number(row.balance_micros || 0) <= 0) {
-      state = "exhausted";
-    } else if (
-      consumedPercent >= Number(row.critical_threshold_percent || 95)
-    ) {
-      state = "critical";
-    } else if (consumedPercent >= Number(row.warning_threshold_percent || 80)) {
-      state = "warning";
-    }
-
-    return {
-      userId: Number(row.id),
-      fullName: String(row.full_name || ""),
-      email: String(row.email || ""),
-      status: String(row.user_status || ""),
-      roles: String(row.roles || ""),
-      balanceMicros: Number(row.balance_micros || 0),
-      balanceUsd: toUsdFromMicros(row.balance_micros || 0),
-      lifetimeGrantedMicros,
-      lifetimeGrantedUsd: toUsdFromMicros(lifetimeGrantedMicros),
-      lifetimeConsumedMicros,
-      lifetimeConsumedUsd: toUsdFromMicros(lifetimeConsumedMicros),
-      consumedPercent,
-      warningThresholdPercent: Number(row.warning_threshold_percent || 80),
-      criticalThresholdPercent: Number(row.critical_threshold_percent || 95),
-      hardLimitEnabled: Boolean(row.hard_limit_enabled),
-      state,
-      asOfUtc: toUtcIso(row.updated_at_utc || nowDate()),
-    };
-  });
-}
-
-async function applyWalletTransaction({
-  userId,
-  amountMicros,
-  transactionType,
-  reasonCode,
-  reasonText,
-  idempotencyKey,
-  createdByUserId,
-  referenceType = null,
-  referenceId = null,
-}) {
-  await ensureAiUsageSchema();
-
-  const safeUserId = Number(userId || 0);
-  const safeAmount = Math.round(Number(amountMicros || 0));
-  if (!safeUserId || !safeAmount) {
-    throw new Error("Solicitud de wallet invalida");
-  }
-
-  const safeIdempotency = String(idempotencyKey || "").trim();
-  if (!safeIdempotency) {
-    throw new Error("idempotencyKey es obligatorio");
-  }
-
-  return withTransaction(async (conn) => {
-    await ensureWalletRow(conn, safeUserId);
-
-    const [walletRows] = await conn.query(
-      `SELECT *
-       FROM ai_user_wallets
-       WHERE user_id = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [safeUserId],
-    );
-
-    const wallet = walletRows[0];
-    if (!wallet) {
-      throw new Error("No se encontro wallet del usuario");
-    }
-
-    const before = Number(wallet.balance_micros || 0);
-    const after = before + safeAmount;
-    const hardLimitEnabled = Number(wallet.hard_limit_enabled) === 1;
-
-    if (hardLimitEnabled && after < 0) {
-      const error = new Error("El ajuste dejaria el saldo en negativo");
-      error.code = "AI_INVALID_POLICY";
-      error.status = 422;
-      throw error;
-    }
-
-    const now = nowDate();
-    let insertResult;
-
-    try {
-      [insertResult] = await conn.query(
-        `INSERT INTO ai_wallet_transactions
-           (user_id, transaction_type, amount_micros,
-            balance_before_micros, balance_after_micros,
-            reason_code, reason_text, idempotency_key,
-            reference_type, reference_id, created_by_user_id,
-            created_at_utc)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          safeUserId,
-          transactionType,
-          safeAmount,
-          before,
-          after,
-          reasonCode,
-          reasonText || null,
-          safeIdempotency,
-          referenceType,
-          referenceId,
-          Number(createdByUserId || 0) || null,
-          now,
-        ],
-      );
-    } catch (error) {
-      if (error?.code === "ER_DUP_ENTRY") {
-        const conflict = new Error("idempotencyKey ya fue utilizado");
-        conflict.code = "AI_IDEMPOTENCY_CONFLICT";
-        conflict.status = 409;
-        throw conflict;
-      }
-      throw error;
-    }
-
-    await conn.query(
-      `UPDATE ai_user_wallets
-       SET balance_micros = ?,
-           lifetime_granted_micros = lifetime_granted_micros + ?,
-           lifetime_consumed_micros = lifetime_consumed_micros + ?,
-           version = version + 1,
-           updated_at_utc = ?
-       WHERE user_id = ?`,
-      [
-        after,
-        safeAmount > 0 ? safeAmount : 0,
-        safeAmount < 0 ? Math.abs(safeAmount) : 0,
-        now,
-        safeUserId,
-      ],
-    );
-
-    return {
-      transactionId: Number(insertResult.insertId || 0),
-      newBalanceMicros: after,
-      newBalanceUsd: toUsdFromMicros(after),
-    };
-  });
-}
-
-export async function grantWalletCredit({
-  userId,
-  amountUsd,
-  reasonCode,
-  reasonText,
-  idempotencyKey,
-  actorUserId,
-}) {
-  const amountMicros = toMicrosFromUsd(amountUsd);
-  if (amountMicros <= 0) {
-    throw new Error("amountUsd debe ser mayor a cero");
-  }
-
-  return applyWalletTransaction({
-    userId,
-    amountMicros,
-    transactionType: "grant",
-    reasonCode: String(reasonCode || "admin_grant"),
-    reasonText,
-    idempotencyKey,
-    createdByUserId: actorUserId,
-    referenceType: "admin_grant",
-  });
-}
-
-export async function adjustWalletCredit({
-  userId,
-  amountUsd,
-  reasonCode,
-  reasonText,
-  idempotencyKey,
-  actorUserId,
-}) {
-  const amountMicros = toMicrosFromUsd(amountUsd);
-  if (!amountMicros) {
-    throw new Error("amountUsd debe ser distinto de cero");
-  }
-
-  return applyWalletTransaction({
-    userId,
-    amountMicros,
-    transactionType: "adjustment",
-    reasonCode: String(reasonCode || "admin_adjustment"),
-    reasonText,
-    idempotencyKey,
-    createdByUserId: actorUserId,
-    referenceType: "admin_adjustment",
-  });
-}
-
-export async function updateWalletPolicy({
-  userId,
-  hardLimitEnabled,
-  warningThresholdPercent,
-  criticalThresholdPercent,
-}) {
-  await ensureAiUsageSchema();
-
-  const safeUserId = Number(userId || 0);
-  if (!safeUserId) {
-    throw new Error("Usuario invalido");
-  }
-
-  return withTransaction(async (conn) => {
-    await ensureWalletRow(conn, safeUserId);
-
-    const [walletRows] = await conn.query(
-      `SELECT *
-       FROM ai_user_wallets
-       WHERE user_id = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [safeUserId],
-    );
-
-    const wallet = walletRows[0];
-    if (!wallet) {
-      throw new Error("Wallet no encontrada");
-    }
-
-    const nextHardLimit =
-      typeof hardLimitEnabled === "boolean"
-        ? hardLimitEnabled
-        : Number(wallet.hard_limit_enabled) === 1;
-    const nextWarning =
-      warningThresholdPercent === undefined
-        ? Number(wallet.warning_threshold_percent || 80)
-        : Math.max(1, Math.min(99, Number(warningThresholdPercent)));
-    const nextCritical =
-      criticalThresholdPercent === undefined
-        ? Number(wallet.critical_threshold_percent || 95)
-        : Math.max(1, Math.min(100, Number(criticalThresholdPercent)));
-
-    if (
-      !Number.isFinite(nextWarning) ||
-      !Number.isFinite(nextCritical) ||
-      nextWarning >= nextCritical
-    ) {
-      const error = new Error("Politica de umbrales invalida");
-      error.code = "AI_INVALID_POLICY";
-      error.status = 400;
-      throw error;
-    }
-
-    await conn.query(
-      `UPDATE ai_user_wallets
-       SET hard_limit_enabled = ?,
-           warning_threshold_percent = ?,
-           critical_threshold_percent = ?,
-           version = version + 1,
-           updated_at_utc = ?
-       WHERE user_id = ?`,
-      [nextHardLimit ? 1 : 0, nextWarning, nextCritical, nowDate(), safeUserId],
-    );
-  });
-
-  return getAiCreditSummaryByUserId(safeUserId);
 }
 
 export async function listAdminPricingRates({

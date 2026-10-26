@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { coachEvidenceSchema } from "./contract.js";
-import { config } from "../config.js";
+import { aiModelFor } from "../ai-services/state.js";
 import {
   buildCoachIntentPreviewPrompt,
   validateCoachIntentClassification,
@@ -56,9 +56,9 @@ const auditSchema = z.object({
   unsupportedClaims: z.array(z.string().max(500)).max(12).default([]),
 });
 
-function structuredPayload(instruction, context) {
+function structuredPayload(instruction, context, featureCode) {
   return {
-    model: config.openai.model,
+    model: aiModelFor(featureCode, "fast"),
     text: { format: { type: "json_object" } },
     input: [
       {
@@ -83,6 +83,7 @@ export function createCoachBlockPipeline({
   limits = COACH_BLOCK_LIMITS,
 }) {
   const deadlineAt = Date.now() + limits.maxTurnMs;
+  const coachFeatureCode = dependencies.featureCode || "mi_coach";
   const diagnostics = {
     architecture: "coach_blocks_v1",
     planner: null,
@@ -127,7 +128,7 @@ export function createCoachBlockPipeline({
           jobId,
           phase,
           startedAt: new Date(),
-          featureCode: dependencies.featureCode || "mi_coach",
+          featureCode: coachFeatureCode,
           jobType: "mi_coach_chat",
           deadlineAt,
         }),
@@ -234,6 +235,7 @@ export function createCoachBlockPipeline({
                   evidence,
                   round,
                 },
+                coachFeatureCode,
               ),
               "coach_evidence_assessment",
             ),
@@ -383,7 +385,7 @@ export function createCoachBlockPipeline({
           };
           const authoritativeRoute = authoritativeRoutes[finalIntent] || null;
           const prompt = buildCoachIntentPreviewPrompt(question, catalog);
-          prompt.model = config.openai.model;
+          prompt.model = aiModelFor(coachFeatureCode, "fast");
           prompt.text = { format: { type: "json_object" } };
           prompt.input[0].content +=
             " Incluye reads:[{toolName,filters:{}}] con herramientas del catálogo de la intención elegida. Los filtros admiten text,stageCodes,commercialStatusCodes,activeOnly,inactiveOnly,openOnly,closeYear. No devuelvas IDs CRM; el servidor resolverá las entidades. Para deep_exploration no planifiques lecturas: se deriva al módulo apropiado. Considera historial y contexto para interpretar referencias. No cambies las políticas de Coach.";
@@ -686,6 +688,7 @@ export function createCoachBlockPipeline({
                     proposedAnswer: response,
                     evidenceVerification: diagnostics.evidence,
                   },
+                  coachFeatureCode,
                 ),
                 "coach_answer_audit",
               ),

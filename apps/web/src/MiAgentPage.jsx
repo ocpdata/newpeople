@@ -3104,6 +3104,12 @@ export default function MiAgentPage({
     snapshot.quota.currencyConversionAvailable && snapshot.quota.gapAmount
       ? snapshot.pipeline.openAmount / snapshot.quota.gapAmount
       : null;
+  const sortedCustomerAccounts = useMemo(
+    () => [...customerAccounts].sort((a, b) =>
+      a.name.localeCompare(b.name, "es", { sensitivity: "base" }),
+    ),
+    [customerAccounts],
+  );
   const selectedCustomerAccount =
     customerAccounts.find(
       (item) => String(item.id) === String(customerAccountId),
@@ -8599,7 +8605,7 @@ export default function MiAgentPage({
                 onChange={(event) => selectCustomerAccount(event.target.value)}
               >
                 <option value="">Selecciona una cuenta</option>
-                {customerAccounts.map((account) => (
+                {sortedCustomerAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.name}
                   </option>

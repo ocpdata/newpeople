@@ -135,6 +135,39 @@ export default function AppShell({
     return (permission) => set.has(permission);
   }, [currentUser]);
 
+  const canReadAiServices = can("ia.budget.read_all") || can("configuracion.read");
+  const canManageAiServices = can("ia.budget.manage") || can("configuracion.update");
+  const [aiServiceAlerts, setAiServiceAlerts] = useState([]);
+
+  useEffect(() => {
+    if (!canReadAiServices) return undefined;
+    let mounted = true;
+    async function fetchAiServiceAlerts() {
+      try {
+        const { data } = await api.get("/api/ai/services/alerts");
+        if (mounted) setAiServiceAlerts(Array.isArray(data?.items) ? data.items : []);
+      } catch {
+        if (mounted) setAiServiceAlerts([]);
+      }
+    }
+    fetchAiServiceAlerts();
+    const interval = setInterval(fetchAiServiceAlerts, 10 * 60 * 1000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [canReadAiServices, currentUser?.id]);
+
+  async function acknowledgeAiServiceAlert(alertId) {
+    try {
+      await api.post(`/api/ai/services/alerts/${alertId}/acknowledge`);
+    } catch {
+      // The alert stays visible and will be refreshed on the next poll.
+      return;
+    }
+    setAiServiceAlerts((current) => current.filter((alert) => alert.id !== alertId));
+  }
+
   useEffect(() => {
     let mounted = true;
 
@@ -298,7 +331,7 @@ export default function AppShell({
           path="/settings"
           element={
             can("configuracion.read") ? (
-              <ConfigurationPage />
+              <ConfigurationPage can={can} />
             ) : (
               <Navigate to="/" />
             )
@@ -1051,10 +1084,14 @@ export default function AppShell({
                   <strong>{currentUser.full_name}</strong>
                   <p>{currentUser.email}</p>
                 </div>
-                {aiCreditSummary ? (
+                {aiCreditSummary?.limited ? (
                   <div
                     className="topbar-ai-credit"
-                    title="Porcentaje disponible de credito IA"
+                    title={
+                      aiCreditSummary.source === "reserve"
+                        ? "Porcentaje disponible de la reserva compartida de crédito IA"
+                        : "Porcentaje disponible de tu asignación de crédito IA"
+                    }
                   >
                     <div className="topbar-ai-credit-head">
                       <span>Credito IA</span>
@@ -1074,6 +1111,28 @@ export default function AppShell({
               </div>
             </NavLink>
           </header>
+
+          {canReadAiServices && aiServiceAlerts.length ? (
+            <div className="ai-service-alert-banner" role="status">
+              {aiServiceAlerts.slice(0, 3).map((alert) => (
+                <div
+                  key={alert.id}
+                  className={`ai-service-alert-banner-item level-${alert.level}`}
+                >
+                  <span>{alert.message}</span>
+                  <NavLink to="/settings?section=ai_budget">Ver</NavLink>
+                  {canManageAiServices ? (
+                    <button
+                      type="button"
+                      onClick={() => acknowledgeAiServiceAlert(alert.id)}
+                    >
+                      Entendido
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           {appRoutes}
         </main>

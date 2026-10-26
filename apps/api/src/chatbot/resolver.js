@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { recordAiUsageFromOpenAiResponse } from "../ai-usage/service.js";
 import { extractJsonObject } from "./common.js";
 import { fetchChatbotCompletion } from "./openai.js";
@@ -49,7 +50,7 @@ export async function resolveChatbotEntityWithAi({
   }
 
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(featureCode, "fast"),
     temperature: 0,
     response_format: {
       type: "json_schema",
@@ -108,7 +109,7 @@ export async function resolveChatbotEntityWithAi({
     internalRequestId: `${internalRequestId}:resolver`,
     userId: Number(user.id),
     featureCode,
-    model: String(payload.model || config.openai.model || "").trim(),
+    model: String(payload.model || aiModelFor(featureCode, "fast") || "").trim(),
     openAiResponse: data,
     jobType: "chatbot_resolver",
     jobId: null,

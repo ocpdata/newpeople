@@ -23,6 +23,11 @@ API:
   20 segundos, dentro del plazo restante del turno (90 segundos desde el inicio
   cuando no se proporciona uno). Para rollback, usar `false` y reiniciar la API;
   no cambia datos, permisos ni los resultados historicos.
+- Modelos de IA: `OPENAI_MODEL`, `OPENAI_ROUTER_MODEL`/`OPENAI_ANALYST_MODEL` y
+  `OPENAI_TRANSCRIPTION_MODEL` son solo los valores iniciales. Una vez que se
+  guarda **Configuración > Crédito IA**, los modelos, el proveedor por módulo y
+  los límites se toman de la base de datos (ver `readme/ia.md`). Cada modelo en
+  uso necesita una tarifa vigente.
 
 Web:
 

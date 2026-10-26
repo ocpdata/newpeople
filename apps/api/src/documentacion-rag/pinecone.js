@@ -1,5 +1,31 @@
 import { config } from "../config.js";
 
+function recordPinecone(action, ...records) {
+  if (!records.length) return;
+  import("../ai-services/store.js")
+    .then((store) => Promise.all(records.map((details) => store[action](details))))
+    .catch(() => {});
+}
+
+function recordPineconeTokens({ usage, metrics, featureCode, userId }) {
+  const records = metrics
+    .map(([metric, field]) => ({ metric, units: Number(usage?.[field]) }))
+    .filter(({ units }) => Number.isFinite(units) && units > 0)
+    .map(({ metric, units }) => ({ provider: "pinecone", metric, units, featureCode, userId }));
+  recordPinecone("recordAiServiceUsage", ...records);
+}
+
+function recordPineconeFailure(error, featureCode, userId) {
+  recordPinecone("recordAiServiceError", {
+    provider: "pinecone",
+    featureCode,
+    statusCode: Number(error?.status) || null,
+    errorCode: error?.code || null,
+    message: error?.message,
+    userId,
+  });
+}
+
 const CONTROL_URL = "https://api.pinecone.io/assistant";
 const REQUEST_TIMEOUT_MS = 120_000;
 const ASSISTANT_READY_TIMEOUT_MS = 120_000;
@@ -272,23 +298,32 @@ export async function retrieveRagContext({
   filter,
   topK = 6,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  featureCode = "unspecified",
+  userId = null,
 }) {
   const deadlineAt = Date.now() + timeoutMs;
-  const assistant = await getPineconeAssistant({ timeoutMs, deadlineAt });
-  const payload = await requestJson(
-    `${assistant.host}/assistant/chat/${encodeURIComponent(assistant.name)}/context`,
-    {
-      method: "POST",
-      body: {
-        query: String(query || "").slice(0, 4000),
-        top_k: Math.max(1, Math.min(12, Number(topK) || 6)),
-        snippet_size: 1200,
-        ...(filter ? { filter } : {}),
+  let payload;
+  try {
+    const assistant = await getPineconeAssistant({ timeoutMs, deadlineAt });
+    payload = await requestJson(
+      `${assistant.host}/assistant/chat/${encodeURIComponent(assistant.name)}/context`,
+      {
+        method: "POST",
+        body: {
+          query: String(query || "").slice(0, 4000),
+          top_k: Math.max(1, Math.min(12, Number(topK) || 6)),
+          snippet_size: 1200,
+          ...(filter ? { filter } : {}),
+        },
+        timeoutMs,
+        deadlineAt,
       },
-      timeoutMs,
-      deadlineAt,
-    },
-  );
+    );
+  } catch (error) {
+    recordPineconeFailure(error, featureCode, userId);
+    throw error;
+  }
+  recordPineconeTokens({ usage: payload?.usage, metrics: [["context_tokens", "prompt_tokens"]], featureCode, userId });
   return Array.isArray(payload?.snippets) ? payload.snippets : [];
 }
 
@@ -296,28 +331,42 @@ export async function generateRagDocumentSummary({
   fileName,
   documentId,
   versionId,
+  featureCode = "documentacion_rag.summary",
+  userId = null,
 }) {
-  const assistant = await getPineconeAssistant();
-  const payload = await requestJson(
-    `${assistant.host}/assistant/chat/${encodeURIComponent(assistant.name)}`,
-    {
-      method: "POST",
-      body: {
-        filter: {
-          $and: [
-            { document_id: { $eq: String(documentId || "") } },
-            { version_id: { $eq: String(versionId || "") } },
+  let payload;
+  try {
+    const assistant = await getPineconeAssistant();
+    payload = await requestJson(
+      `${assistant.host}/assistant/chat/${encodeURIComponent(assistant.name)}`,
+      {
+        method: "POST",
+        body: {
+          filter: {
+            $and: [
+              { document_id: { $eq: String(documentId || "") } },
+              { version_id: { $eq: String(versionId || "") } },
+            ],
+          },
+          messages: [
+            {
+              role: "user",
+              content: `Resume brevemente el documento "${String(fileName || "").slice(0, 180)}" en una sola oración en español. Describe solo el contenido que aparece en el documento. No agregues recomendaciones ni información externa.`,
+            },
           ],
         },
-        messages: [
-          {
-            role: "user",
-            content: `Resume brevemente el documento "${String(fileName || "").slice(0, 180)}" en una sola oración en español. Describe solo el contenido que aparece en el documento. No agregues recomendaciones ni información externa.`,
-          },
-        ],
       },
-    },
-  );
+    );
+  } catch (error) {
+    recordPineconeFailure(error, featureCode, userId);
+    throw error;
+  }
+  recordPineconeTokens({
+    usage: payload?.usage,
+    metrics: [["chat_input_tokens", "prompt_tokens"], ["chat_output_tokens", "completion_tokens"]],
+    featureCode,
+    userId,
+  });
   return String(payload?.message?.content || "")
     .replace(/\s+/g, " ")
     .trim()

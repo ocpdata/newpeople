@@ -2209,6 +2209,36 @@ async function mockCustomerChatRecovery(page, {
   return { state, chat, answer, send };
 }
 
+test("Cliente existente ordena las cuentas de A a Z al cargar y al buscar", async ({ page }) => {
+  await mockMiCoachApi(page, { withCustomerHealth: true });
+  const accounts = [
+    { id: 190, name: "zeta" },
+    { id: 160, name: "Cuenta Demo" },
+    { id: 180, name: "Árbol" },
+    { id: 170, name: "Cuenta Alterna" },
+  ];
+  await page.route("**/api/accounts?**", (route) => {
+    const search = new URL(route.request().url()).searchParams.get("search") || "";
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(accounts.filter((account) =>
+        account.name.toLocaleLowerCase("es").includes(search.toLocaleLowerCase("es")),
+      )),
+    });
+  });
+  await openMiCoach(page, { workspace: "customer" });
+  const select = page.getByLabel("Cuenta existente");
+  await expect(select.locator("option")).toHaveText([
+    "Selecciona una cuenta", "Árbol", "Cuenta Alterna", "Cuenta Demo", "zeta",
+  ]);
+  await select.selectOption("160");
+  await page.getByLabel("Buscar cliente").fill("Cuenta");
+  await expect(select.locator("option")).toHaveText([
+    "Selecciona una cuenta", "Cuenta Alterna", "Cuenta Demo",
+  ]);
+  await expect(select).toHaveValue("160");
+});
+
 test("Cliente existente presenta tablas Markdown legibles y las conserva al recargar en movil", async ({ page }) => {
   const answer = [
     "## Comparación de valor",

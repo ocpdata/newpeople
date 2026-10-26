@@ -26801,3 +26801,42 @@ td {
     grid-column: auto;
   }
 }
+
+.ai-service-alert-banner {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0 0 1rem;
+}
+
+.ai-service-alert-banner-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid #f0d58c;
+  background: #fff8e5;
+  color: #6b4f00;
+  font-size: 0.9rem;
+}
+
+.ai-service-alert-banner-item.level-limit {
+  border-color: #efb4ad;
+  background: #fdeeee;
+  color: #8a2a20;
+}
+
+.ai-service-alert-banner-item span {
+  flex: 1;
+}
+
+.ai-service-alert-banner-item a,
+.ai-service-alert-banner-item button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}

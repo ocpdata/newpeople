@@ -4,6 +4,8 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "../ai-usage/service.js";
 import { config } from "../config.js";
+import { aiFetch } from "../ai-services/client.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { summarizeForPrompt } from "../opportunity-documents/service.js";
 
 function normalizeText(value) {
@@ -390,8 +392,10 @@ async function analyzeInteractionTextWithAi({
     await assertAiBudgetAvailable({ userId: aiUsageUserId });
   }
 
+  const aiFeatureCode =
+    String(aiUsageContext?.featureCode || "interactions.analysis") || "interactions.analysis";
   const payload = {
-    model: config.openai.model,
+    model: aiModelFor(aiFeatureCode, "fast"),
     input: [
       {
         role: "system",
@@ -455,17 +459,13 @@ async function analyzeInteractionTextWithAi({
     ],
   };
 
-  const response = await fetch(
-    `${config.openai.baseUrl.replace(/\/$/, "")}/responses`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify(payload),
+  const response = await aiFetch(aiFeatureCode, "/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(payload),
+  });
 
   if (!response.ok) {
     return null;
@@ -476,10 +476,8 @@ async function analyzeInteractionTextWithAi({
     await recordAiUsageFromOpenAiResponse({
       internalRequestId: aiUsageInternalRequestId,
       userId: aiUsageUserId,
-      featureCode:
-        String(aiUsageContext?.featureCode || "interactions.analysis") ||
-        "interactions.analysis",
-      model: String(payload?.model || config.openai.model || "").trim(),
+      featureCode: aiFeatureCode,
+      model: String(payload?.model || aiModelFor(aiFeatureCode, "fast") || "").trim(),
       openAiResponse: data,
       jobType: aiUsageContext?.jobType || null,
       jobId: aiUsageContext?.jobId || null,

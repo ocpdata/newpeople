@@ -13,7 +13,7 @@ import { loadCoachBusinessRules } from "./business-rules.js";
 import { recordCoachTurnQualityTrace } from "./observability.js";
 import { runCoachDecision } from "./coach-orchestrator.js";
 import { summarizeCoachDecisionTrace } from "./decision-trace.js";
-import { config } from "../config.js";
+import { aiModelFor } from "../ai-services/state.js";
 
 export function coachSessionContextMatchesRequest(
   requestContext,
@@ -233,7 +233,7 @@ export async function runCoachJob({
     ? ({ message, context }) =>
         dependencies.requestMiAgentJson({
           payload: {
-            model: config.openai.model,
+            model: aiModelFor(dependencies.featureCode || "mi_coach", "fast"),
             temperature: 0,
             text: { format: { type: "json_object" } },
             input: [
