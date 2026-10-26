@@ -243,18 +243,49 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   await expect(page.getByRole("columnheader", { name: "Notas" })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Última actualización" })).toHaveCount(0);
   await expect(page.locator(".commercial-planning-quarter-grid")).not.toContainText("USD");
+  await page.getByRole("columnheader", { name: "% Renovaciones" }).first().scrollIntoViewIfNeeded();
   await expect(page.getByRole("columnheader", { name: "% Renovaciones" }).first()).toBeInViewport();
   await page.getByLabel("Productos Ana Vendedora T2").fill("12.5");
+
+  await expect(page.getByText("Reglas de comisión", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Cuota mínima 70% · Margen mínimo 10%/).first()).toBeVisible();
+  await page.getByText("Reglas de comisión", { exact: true }).click();
+  await expect(page.getByRole("cell", { name: "70%", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "10%", exact: true })).toBeVisible();
+  await page.getByText("Categorías de comisión", { exact: true }).click();
+  await expect(page.getByText(/Esta regla tiene prioridad/)).toBeVisible();
+  await expect(page.getByText("Sin cuota en Metas")).toHaveCount(3);
+  await page.getByLabel("Aplicar % Productos a todos T1").fill("7");
+  await page.getByRole("button", { name: "Aplicar a T1" }).click();
+  await expect(page.getByLabel("Productos Ana Vendedora T1")).toHaveValue("7");
+  await expect(page.getByLabel("Servicios Ana Vendedora T1")).toHaveValue("4");
+  await page.getByRole("button", { name: "Copiar de T2" }).click();
+  await expect(page.getByLabel("Productos Ana Vendedora T3")).toHaveValue("12.5");
+
+  await page.getByText("Simulador de comisión", { exact: true }).click();
+  await page.getByLabel("Trimestre a simular").selectOption("4");
+  await page.getByLabel("Venta aceptada acumulada del trimestre").fill("90000");
+  await page.getByLabel("Margen de la cotización (%)").fill("15");
+  await page.getByLabel("Contribución de productos").fill("2000");
+  await expect(page.getByText("Elegible: la cotización genera comisión.")).toBeVisible();
+  await expect(page.getByRole("row", { name: /Comisión estimada/ })).toContainText("100.00");
+  await page.getByLabel("Margen de la cotización (%)").fill("7.5");
+  await expect(page.getByText(/Bloqueada por margen: 10%/)).toBeVisible();
+  await expect(page.getByRole("row", { name: /Comisión estimada/ })).toContainText("0.00");
+
   await page.getByRole("button", { name: "Guardar configuración" }).click();
   await expect(page.getByText("Configuración anual de comisiones actualizada correctamente")).toBeVisible();
   expect(commissionWrites).toHaveLength(1);
   expect(commissionWrites[0].quarters).toHaveLength(4);
+  expect(commissionWrites[0].quarters[0].configs[0].productCommissionPct).toBe(7);
+  expect(commissionWrites[0].quarters[2].configs[0].productCommissionPct).toBe(12.5);
   expect(commissionWrites[0].quarters[1].configs[0]).toEqual(expect.objectContaining({
     sellerUserId: 31,
     productCommissionPct: 12.5,
   }));
 
   await page.getByRole("button", { name: "Comisiones · Seguimiento" }).click();
+  await expect(page.getByText("Reglas de comisión", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Año de seguimiento de comisiones")).toHaveValue(String(year));
   for (const quarter of [1, 2, 3, 4]) {
     await expect(page.getByRole("heading", { name: `T${quarter} ${year}` })).toBeVisible();

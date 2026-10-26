@@ -20,6 +20,18 @@ La primera version ya permite configurar porcentajes y consultar seguimiento por
 - El seguimiento muestra resumen por vendedor y detalle por cotizacion.
 - La configuracion queda bloqueada si el periodo ya esta cerrado.
 
+### Pestaña Comisiones · Configuracion
+
+- Encabezado con selector de año, guardado y enlace a `Metas`, de donde se toman las cuotas.
+- Bloques informativos plegables: `Reglas de comision` (70% de cuota, 10% de margen, base y formula), `Categorias de comision` y `Simulador de comision`. Los umbrales se muestran, no se editan; el calculo sigue en backend.
+- El simulador usa los porcentajes en pantalla (aun sin guardar), no persiste datos y calcula una cotizacion con la misma logica de elegibilidad.
+- Un panel por trimestre con tabla de vendedores, `Aplicar a todos los vendedores` y `Copiar de T{n-1}` (los cambios se guardan hasta pulsar `Guardar configuracion`).
+- Avisos por vendedor cuando no tiene cuota en Metas o todos sus porcentajes estan en 0.
+
+### Pestaña Comisiones · Seguimiento
+
+- Muestra las reglas resumidas y el motivo de bloqueo de cada cotizacion, por ejemplo `Bloqueada por margen (7.50% < 10%)`.
+
 ## Ubicacion funcional
 
 La funcionalidad vive en Planeacion Comercial.

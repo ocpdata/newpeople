@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
+import {
+  CommissionBulkApply,
+  CommissionCategoriesCard,
+  CommissionRulesCard,
+  CommissionSimulator,
+} from "./commercial-planning/CommissionPanels";
+import { describeCommissionBlock } from "./commercial-planning/commissionRules";
 import "./commercial-planning.css";
 
 const TAB_OPTIONS = [
@@ -644,6 +651,50 @@ export default function CommercialPlanningPage({ can }) {
             ? { ...seller, [field]: value }
             : seller),
         }));
+  }
+
+  function applyCommissionRatesToQuarter(quarter, values) {
+    const fields = {
+      products: "productCommissionPct",
+      services: "serviceCommissionPct",
+      renewals: "renewalCommissionPct",
+    };
+    setCommissionConfigDrafts((current) => current.map((item) => item.quarter !== quarter
+      ? item
+      : {
+          ...item,
+          sellers: item.sellers.map((seller) => {
+            const next = { ...seller };
+            Object.entries(fields).forEach(([key, field]) => {
+              if (values[key] !== "" && values[key] !== undefined) next[field] = values[key];
+            });
+            return next;
+          }),
+        }));
+  }
+
+  function copyCommissionRatesFromPreviousQuarter(quarter) {
+    setCommissionConfigDrafts((current) => {
+      const previous = current.find((item) => item.quarter === quarter - 1);
+      if (!previous) return current;
+      const previousBySeller = new Map(previous.sellers.map((seller) => [seller.sellerUserId, seller]));
+      return current.map((item) => item.quarter !== quarter
+        ? item
+        : {
+            ...item,
+            sellers: item.sellers.map((seller) => {
+              const source = previousBySeller.get(seller.sellerUserId);
+              return source
+                ? {
+                    ...seller,
+                    productCommissionPct: source.productCommissionPct,
+                    serviceCommissionPct: source.serviceCommissionPct,
+                    renewalCommissionPct: source.renewalCommissionPct,
+                  }
+                : seller;
+            }),
+          });
+    });
   }
 
   function updateSellerParameterDraft(sellerUserId, field, value) {
@@ -1311,7 +1362,14 @@ export default function CommercialPlanningPage({ can }) {
           <header className="commercial-planning-annual-header">
             <div>
               <h3>Configuración anual de comisiones</h3>
-              <p>Define los porcentajes de productos, servicios y renovaciones por vendedor.</p>
+              <p>
+                Define los porcentajes de productos, servicios y renovaciones por vendedor y trimestre.
+                Las cuotas se toman de{" "}
+                <button type="button" className="commission-link-button" onClick={() => setActiveTab("targets")}>
+                  Metas
+                </button>
+                {" "}(versión activa).
+              </p>
             </div>
             <div className="commercial-planning-annual-controls">
               <label>
@@ -1342,6 +1400,10 @@ export default function CommercialPlanningPage({ can }) {
           {loadingCommissionConfigs ? (
             <div className="field-hint">Cargando configuración de comisiones...</div>
           ) : (
+            <>
+            <CommissionRulesCard />
+            <CommissionCategoriesCard />
+            <CommissionSimulator quarters={commissionConfigDrafts} year={commissionConfigYear} />
             <div className="commercial-planning-quarter-grid commercial-planning-commission-grid">
               {commissionConfigDrafts.map((quarter) => {
                 const totalQuota = quarter.sellers.reduce(
@@ -1352,7 +1414,24 @@ export default function CommercialPlanningPage({ can }) {
                 <section className="commercial-planning-quarter-panel" key={quarter.quarter}>
                   <div className="commercial-planning-quarter-header">
                     <h4>T{quarter.quarter} {commissionConfigYear}</h4>
+                    {quarter.quarter > 1 && canEditCommissionConfigs ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={savingCommissionConfigs}
+                        onClick={() => copyCommissionRatesFromPreviousQuarter(quarter.quarter)}
+                      >
+                        Copiar de T{quarter.quarter - 1}
+                      </button>
+                    ) : null}
                   </div>
+                  {canEditCommissionConfigs && quarter.sellers.length ? (
+                    <CommissionBulkApply
+                      quarter={quarter.quarter}
+                      disabled={savingCommissionConfigs}
+                      onApply={(values) => applyCommissionRatesToQuarter(quarter.quarter, values)}
+                    />
+                  ) : null}
                   <div className="commercial-planning-table-wrap">
                     <table className="commercial-planning-table commercial-planning-annual-commission-table">
                       <thead>
@@ -1370,6 +1449,12 @@ export default function CommercialPlanningPage({ can }) {
                             <td>
                               <strong>{seller.sellerUserName}</strong>
                               <div className="field-hint">{seller.sellerUserEmail}</div>
+                              {Number(seller.salesQuotaAmount || 0) <= 0 ? (
+                                <div className="commission-row-warning">Sin cuota en Metas: no podrá habilitar comisión.</div>
+                              ) : [seller.productCommissionPct, seller.serviceCommissionPct, seller.renewalCommissionPct]
+                                .every((rate) => Number(rate || 0) === 0) ? (
+                                <div className="commission-row-warning">Sin porcentajes: no generará comisión.</div>
+                              ) : null}
                             </td>
                             <td className="is-numeric">{formatAmount(seller.salesQuotaAmount)}</td>
                             <td>
@@ -1446,6 +1531,7 @@ export default function CommercialPlanningPage({ can }) {
                 );
               })}
             </div>
+            </>
           )}
         </div>
       ) : null}
@@ -1472,6 +1558,8 @@ export default function CommercialPlanningPage({ can }) {
               </label>
             </div>
           </header>
+
+          <CommissionRulesCard compact />
 
           {loadingCommissionTracking ? (
             <div className="field-hint">Calculando seguimiento de comisiones...</div>
@@ -1582,11 +1670,12 @@ export default function CommercialPlanningPage({ can }) {
                               </td>
                               <td>{formatPercent(quotation.quotationMarginPct || 0)}</td>
                               <td>
-                                {!quotation.passesMarginRule
-                                  ? "Bloqueada por margen"
-                                  : !quotation.sellerPassesQuotaRule
-                                    ? "Bloqueada por cuota"
-                                    : "Elegible"}
+                                {describeCommissionBlock({
+                                  passesMarginRule: quotation.passesMarginRule,
+                                  sellerPassesQuotaRule: quotation.sellerPassesQuotaRule,
+                                  marginPct: quotation.quotationMarginPct,
+                                  quotaAttainmentPct: seller.quotaAttainmentPct,
+                                })}
                               </td>
                               <td>
                                 {formatCurrency(
