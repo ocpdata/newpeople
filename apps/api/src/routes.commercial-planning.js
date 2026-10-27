@@ -263,7 +263,8 @@ async function buildCommissionTrackingPayload(periodId) {
   const { start, end } = getQuarterDateRange(period.year, period.quarter);
   // Solo cuentan cotizaciones aceptadas, pero se ubican en el trimestre en que se declararon
   // ganadas. Sin ese evento se usa la primera aceptación y, al final, updated_at.
-  const acceptedQuotations = await query(
+  // Las ganadas aún sin aceptar se devuelven aparte (pendingQuotations) y no suman.
+  const trackedQuotations = await query(
     `SELECT w.* FROM (
        SELECT q.id AS quotation_id, q.latest_version_id AS quotation_version_id,
               qv.proposal_name, qs.code AS status_code, qv.currency_code,
@@ -286,13 +287,15 @@ async function buildCommissionTrackingPayload(periodId) {
        INNER JOIN opportunities o ON o.id = q.opportunity_id
        INNER JOIN accounts a ON a.id = o.account_id
        LEFT JOIN users su ON su.id = o.seller_user_id
-       WHERE qs.code = 'aceptada' AND o.seller_user_id IS NOT NULL
+       WHERE qs.code IN ('aceptada', 'ganada') AND o.seller_user_id IS NOT NULL
      ) w
      WHERE w.won_at >= ? AND w.won_at < ?
      ORDER BY w.won_at DESC, w.quotation_id DESC`,
     [start, end],
   );
-  const quotationVersionIds = acceptedQuotations.map((row) => Number(row.quotation_version_id));
+  const acceptedQuotations = trackedQuotations.filter((row) => row.status_code === "aceptada");
+  const pendingQuotationRows = trackedQuotations.filter((row) => row.status_code === "ganada");
+  const quotationVersionIds = trackedQuotations.map((row) => Number(row.quotation_version_id));
   const itemsByVersionId = new Map();
   if (quotationVersionIds.length) {
     const placeholders = quotationVersionIds.map(() => "?").join(", ");
@@ -343,7 +346,7 @@ async function buildCommissionTrackingPayload(periodId) {
     }]),
   );
 
-  const computedQuotations = acceptedQuotations.map((quotationRow) => {
+  const computeQuotation = (quotationRow) => {
     const quotationCurrencyCode = quotationRow.currency_code || period.baseCurrencyCode || "USD";
     const exchangeRate = Number(quotationRow.exchange_rate || 0);
     const items = (itemsByVersionId.get(Number(quotationRow.quotation_version_id)) || [])
@@ -371,6 +374,11 @@ async function buildCommissionTrackingPayload(periodId) {
       currencyCode: period.baseCurrencyCode || quotationCurrencyCode,
       totalSaleAmount, totalCostAmount, totalContributionAmount, quotationMarginPct, items,
     };
+  };
+  const computedQuotations = acceptedQuotations.map(computeQuotation);
+  const pendingQuotations = pendingQuotationRows.map((row) => {
+    const { items: _items, ...quotation } = computeQuotation(row);
+    return quotation;
   });
 
   computedQuotations.forEach((quotation) => {
@@ -439,6 +447,7 @@ async function buildCommissionTrackingPayload(periodId) {
   return {
     period,
     baseCurrencyCode: period.baseCurrencyCode || "USD",
+    pendingQuotations,
     summaries: summaries.sort((left, right) => String(left.sellerUserName || "").localeCompare(String(right.sellerUserName || ""), "es")),
   };
 }

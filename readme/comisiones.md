@@ -31,6 +31,11 @@ La primera version ya permite configurar porcentajes y consultar seguimiento por
 ### Pestaña Comisiones · Seguimiento
 
 - Muestra las reglas resumidas y el motivo de bloqueo de cada cotizacion, por ejemplo `Bloqueada por margen (7.50% < 10%)`.
+- La vista inicial es `Año completo`: matriz vendedor × T1–T4 con la comision de cada trimestre, el total anual y la venta aceptada. Las pestañas `T1`–`T4` muestran un solo trimestre.
+- Filtro por vendedor, interruptor `Solo con actividad` y exportacion a Excel (`comisiones-seguimiento-{año}.xlsx`, con hojas de resumen anual, trimestres, cotizaciones aceptadas y pendientes).
+- Tarjetas de resumen del alcance elegido: comision a pagar, venta aceptada / cuota, vendedores habilitados, contribucion elegible y `Por aceptar`.
+- En la vista trimestral cada vendedor muestra barra de cumplimiento con marca en 70%, un estado que explica por que tiene o no comision (por ejemplo `faltan $X para habilitar`) y un detalle desplegable con categorias (contribucion × % = comision) y cotizaciones.
+- `Pendientes de aceptar` lista las cotizaciones en estado `ganada` cuya fecha ganada cae en el periodo. No suman a venta, cumplimiento ni comision hasta que se acepten.
 
 ## Ubicacion funcional
 
@@ -151,7 +156,7 @@ Los endpoints viven bajo `/api/commercial-planning`.
   - requiere `planeacion_comercial.update`.
   - rechaza cambios si el periodo esta cerrado.
 - `GET /periods/:periodId/commission-tracking`
-  - devuelve el resumen y detalle del seguimiento calculado.
+  - devuelve el resumen y detalle del seguimiento calculado, mas `pendingQuotations` (cotizaciones `ganada` aun sin aceptar, sin items y sin sumar al calculo).
 
 ## Permisos funcionales
 

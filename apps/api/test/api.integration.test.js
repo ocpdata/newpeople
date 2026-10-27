@@ -25113,6 +25113,30 @@ describe("API integration baseline", () => {
         }),
       ]);
       expect(await trackedQuotationIds(thirdQuarter)).toEqual([]);
+
+      await query(
+        `INSERT INTO quotation_statuses (code, name)
+         SELECT 'ganada', 'Ganada' FROM DUAL
+         WHERE NOT EXISTS (SELECT 1 FROM quotation_statuses WHERE code = 'ganada')`,
+      );
+      await query("UPDATE quotation_versions SET status_id = ? WHERE id = ?", [
+        await getCatalogId("quotation_statuses", "ganada"),
+        fixture.latestVersionId,
+      ]);
+      expect(await trackedQuotationIds(secondQuarter)).toEqual([]);
+      const pendingResponse = await request(app)
+        .get(`/api/commercial-planning/periods/${secondQuarter.period.id}/commission-tracking`)
+        .set("Authorization", `Bearer ${token}`);
+      expect(pendingResponse.status).toBe(200);
+      expect(pendingResponse.body.pendingQuotations).toEqual([
+        expect.objectContaining({
+          quotationId: fixture.quotationId,
+          statusCode: "ganada",
+          sellerUserId: ctx.sellerUserId,
+          wonAt: expect.stringMatching(/^2033-05-10/),
+        }),
+      ]);
+      expect(pendingResponse.body.pendingQuotations[0]).not.toHaveProperty("items");
     } finally {
       await query("DELETE FROM audit_log WHERE id = ?", [Number(auditInsert.insertId)]);
     }

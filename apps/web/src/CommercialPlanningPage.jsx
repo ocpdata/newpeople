@@ -6,7 +6,7 @@ import {
   CommissionRulesCard,
   CommissionSimulator,
 } from "./commercial-planning/CommissionPanels";
-import { describeCommissionBlock } from "./commercial-planning/commissionRules";
+import CommissionTrackingView from "./commercial-planning/CommissionTrackingView";
 import "./commercial-planning.css";
 
 const TAB_OPTIONS = [
@@ -513,6 +513,7 @@ export default function CommercialPlanningPage({ can }) {
           tracking: {
             period: quarter.period,
             baseCurrencyCode: plan.currencyCode,
+            pendingQuotations: [],
             summaries: plan.eligibleSellers.map((seller) => {
               const target = targetsBySellerId.get(seller.id);
               return {
@@ -1564,137 +1565,11 @@ export default function CommercialPlanningPage({ can }) {
           {loadingCommissionTracking ? (
             <div className="field-hint">Calculando seguimiento de comisiones...</div>
           ) : (
-            (commissionTracking || []).map(({ quarter, tracking }) => (
-              <div className="commercial-planning-section-stack" key={`commission-quarter-${quarter}`}>
-                <section className="commercial-planning-card">
-                  <div className="commercial-planning-card-header">
-                    <div>
-                      <h3>T{quarter} {commissionTrackingYear}</h3>
-                      <p>Cuota, cumplimiento, margen elegible y comisión sobre cotizaciones aceptadas.</p>
-                    </div>
-                  </div>
-                  <div className="commercial-planning-table-wrap">
-                    <table className="commercial-planning-table">
-                      <thead>
-                        <tr>
-                          <th>Vendedor</th>
-                          <th>Cuota</th>
-                          <th>Venta aceptada</th>
-                          <th>% cumplimiento</th>
-                          <th>Habilitado</th>
-                          <th>Cot. elegibles</th>
-                          <th>Bloqueadas margen</th>
-                          <th>Contribución elegible</th>
-                          <th>Comisión total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(tracking.summaries || []).map((item) => {
-                          const eligibleContribution =
-                            Number(item.eligibleProductContributionAmount || 0) +
-                            Number(item.eligibleServiceContributionAmount || 0) +
-                            Number(item.eligibleRenewalContributionAmount || 0);
-                          return (
-                            <tr key={`commission-summary-${quarter}-${item.sellerUserId}`}>
-                              <td>
-                                <strong>{item.sellerUserName}</strong>
-                                <div className="field-hint">{item.sellerUserEmail}</div>
-                              </td>
-                              <td>
-                                {formatCurrency(item.salesQuotaAmount || 0, item.currencyCode || tracking.baseCurrencyCode || "USD")}
-                              </td>
-                              <td>
-                                {formatCurrency(item.acceptedSalesAmount || 0, item.currencyCode || tracking.baseCurrencyCode || "USD")}
-                              </td>
-                              <td>{formatPercent(item.quotaAttainmentPct || 0)}</td>
-                              <td>{item.commissionEnabled ? "Sí" : "No"}</td>
-                              <td>{item.eligibleQuotationCount || 0}</td>
-                              <td>{item.blockedLowMarginQuotationCount || 0}</td>
-                              <td>
-                                {formatCurrency(eligibleContribution, item.currencyCode || tracking.baseCurrencyCode || "USD")}
-                              </td>
-                              <td>
-                                {formatCurrency(item.calculatedTotalCommissionAmount || 0, item.currencyCode || tracking.baseCurrencyCode || "USD")}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {!(tracking.summaries || []).length ? (
-                          <tr><td colSpan="9" className="centered">No hay vendedores elegibles.</td></tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-
-                {(tracking.summaries || []).map((seller) => (
-                  <section
-                    key={`commission-detail-${quarter}-${seller.sellerUserId}`}
-                    className="commercial-planning-card"
-                  >
-                    <div className="commercial-planning-card-header">
-                      <div>
-                        <h3>{seller.sellerUserName} · T{quarter}</h3>
-                        <p>Detalle de cotizaciones aceptadas y cálculo por item.</p>
-                      </div>
-                    </div>
-                    <div className="commercial-planning-table-wrap">
-                      <table className="commercial-planning-table commercial-planning-commission-detail-table">
-                        <thead>
-                          <tr>
-                            <th>Cotización</th>
-                            <th>Fecha ganada</th>
-                            <th>Cuenta</th>
-                            <th>Venta</th>
-                            <th>Margen</th>
-                            <th>Estado</th>
-                            <th>Comisión</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(seller.quotations || []).map((quotation) => (
-                            <tr key={`quotation-${quarter}-${seller.sellerUserId}-${quotation.quotationId}`}>
-                              <td>
-                                <strong>{quotation.proposalName}</strong>
-                                <div className="field-hint">#{quotation.quotationId}</div>
-                              </td>
-                              <td>{formatDateTime(quotation.wonAt)}</td>
-                              <td>
-                                {quotation.accountName}
-                                {quotation.opportunityName ? (
-                                  <div className="field-hint">{quotation.opportunityName}</div>
-                                ) : null}
-                              </td>
-                              <td>
-                                {formatCurrency(quotation.totalSaleAmount || 0, seller.currencyCode || tracking.baseCurrencyCode || "USD")}
-                              </td>
-                              <td>{formatPercent(quotation.quotationMarginPct || 0)}</td>
-                              <td>
-                                {describeCommissionBlock({
-                                  passesMarginRule: quotation.passesMarginRule,
-                                  sellerPassesQuotaRule: quotation.sellerPassesQuotaRule,
-                                  marginPct: quotation.quotationMarginPct,
-                                  quotaAttainmentPct: seller.quotaAttainmentPct,
-                                })}
-                              </td>
-                              <td>
-                                {formatCurrency(
-                                  (quotation.items || []).reduce((sum, item) => sum + Number(item.commissionAmount || 0), 0),
-                                  seller.currencyCode || tracking.baseCurrencyCode || "USD",
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                          {!(seller.quotations || []).length ? (
-                            <tr><td colSpan="7" className="centered">Sin cotizaciones aceptadas para este vendedor en el trimestre.</td></tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                ))}
-              </div>
-            ))
+            <CommissionTrackingView
+              key={commissionTrackingYear}
+              year={commissionTrackingYear}
+              quarters={commissionTracking || []}
+            />
           )}
         </div>
       ) : null}

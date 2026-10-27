@@ -150,26 +150,40 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
           })),
         })),
       };
-        const trackingMatch = pathname.match(/^\/api\/commercial-planning\/periods\/(\d+)\/commission-tracking$/);
-        if (trackingMatch && request.method() === "GET") {
+      return json({ message: "Configuración anual de comisiones actualizada correctamente", ...commissionPlan });
+    }
+    const trackingMatch = pathname.match(/^\/api\/commercial-planning\/periods\/(\d+)\/commission-tracking$/);
+    if (trackingMatch && request.method() === "GET") {
           const quarter = Number(trackingMatch[1]) - 40;
           const period = activePeriods.find((item) => item.quarter === quarter);
           const seller = commissionPlan.quarters[quarter - 1].sellers[0];
           return json({
             period,
             baseCurrencyCode: "USD",
+            pendingQuotations: quarter === 1 ? [{
+              quotationId: 9002,
+              proposalName: "Cotización ganada pendiente",
+              accountName: "Cuenta pendiente",
+              sellerUserId: seller.sellerUserId,
+              sellerUserName: seller.sellerUserName,
+              totalSaleAmount: 4000,
+              quotationMarginPct: 18,
+              statusCode: "ganada",
+              wonAt: `${year}-03-01T12:00:00.000Z`,
+            }] : [],
             summaries: [{
               ...seller,
-              acceptedSalesAmount: 0,
-              quotaAttainmentPct: 0,
-              commissionEnabled: false,
-              eligibleQuotationCount: 0,
+              acceptedSalesAmount: quarter === 4 ? 100000 : 0,
+              quotaAttainmentPct: quarter === 4 ? 80 : 0,
+              commissionEnabled: quarter === 4,
+              acceptedQuotationCount: 1,
+              eligibleQuotationCount: quarter === 4 ? 1 : 0,
               blockedLowMarginQuotationCount: 0,
               blockedByQuotaQuotationCount: 0,
               eligibleProductContributionAmount: 0,
               eligibleServiceContributionAmount: 0,
               eligibleRenewalContributionAmount: 0,
-              calculatedTotalCommissionAmount: 0,
+              calculatedTotalCommissionAmount: quarter === 4 ? 500 : 0,
               quotations: [{
                 quotationId: 9001,
                 proposalName: "Cotización aceptada de prueba",
@@ -185,8 +199,6 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
               }],
             }],
           });
-        }
-      return json({ message: "Configuración anual de comisiones actualizada correctamente", ...commissionPlan });
     }
     return json({});
   });
@@ -299,9 +311,31 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   await page.getByRole("button", { name: "Comisiones · Seguimiento" }).click();
   await expect(page.getByText("Reglas de comisión", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Año de seguimiento de comisiones")).toHaveValue(String(year));
-  for (const quarter of [1, 2, 3, 4]) {
-    await expect(page.getByRole("heading", { name: `T${quarter} ${year}` })).toBeVisible();
-  }
+  await expect(page.getByRole("button", { name: "Año completo" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("heading", { name: `Comisiones por trimestre · ${year}` })).toBeVisible();
+  await expect(page.locator(".commission-year-table tbody tr").first()).toContainText("USD 500");
+  await expect(page.getByRole("heading", { name: "Pendientes de aceptar" })).toBeVisible();
+  await expect(page.getByText("Cotización ganada pendiente")).toBeVisible();
+  await expect(page.getByLabel(`Resumen Año ${year}`)).toContainText("1 · USD 4,000");
+
+  const periodTabs = page.getByRole("group", { name: "Periodo del seguimiento" });
+  await periodTabs.getByRole("button", { name: "T4", exact: true }).click();
+  await expect(page.getByRole("heading", { name: `T4 ${year}` })).toBeVisible();
+  await expect(page.getByText("Habilitado", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cotización ganada pendiente")).toHaveCount(0);
+  await page.getByRole("button", { name: /Ana Vendedora/ }).click();
+  await expect(page.getByText("Cotización aceptada de prueba")).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Contribución elegible" })).toBeVisible();
+
+  await periodTabs.getByRole("button", { name: "T1", exact: true }).click();
+  await expect(page.getByText("Cotización ganada pendiente")).toBeVisible();
+  await expect(page.getByText("Sin cuota ni ventas")).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Exportar a Excel" }).click();
+  expect((await downloadPromise).suggestedFilename()).toBe(`comisiones-seguimiento-${year}.xlsx`);
+
   await page.getByLabel("Año de seguimiento de comisiones").selectOption(String(year + 1));
-  await expect(page.getByRole("heading", { name: `T1 ${year + 1}` })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Año completo" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("heading", { name: `Comisiones por trimestre · ${year + 1}` })).toBeVisible();
 });

@@ -1114,3 +1114,171 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.commission-tracking-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 16px;
+}
+
+.commission-tracking-controls label {
+  display: grid;
+  gap: 4px;
+  color: #324154;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.commission-tracking-controls .commission-tracking-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.commission-tracking-tabs {
+  display: inline-flex;
+  border: 1px solid #c8d3e0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.commission-tracking-tabs button {
+  padding: 8px 14px;
+  border: 0;
+  border-right: 1px solid #c8d3e0;
+  background: #fff;
+  color: #324154;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.commission-tracking-tabs button:last-child {
+  border-right: 0;
+}
+
+.commission-tracking-tabs button.is-active {
+  background: #1d5fb8;
+  color: #fff;
+}
+
+.commission-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.commission-summary-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.commission-summary-card span {
+  color: #5a6c82;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.commission-summary-card strong {
+  font-size: 18px;
+}
+
+.commission-summary-card small {
+  color: #5a6c82;
+}
+
+.commission-summary-card.is-primary {
+  border-color: #1d5fb8;
+  background: #f1f6fd;
+}
+
+.commission-summary-card.is-warn {
+  border-color: #e0a63a;
+  background: #fff8e8;
+}
+
+.commission-progress {
+  position: relative;
+  height: 8px;
+  min-width: 120px;
+  border-radius: 4px;
+  background: #e5ebf2;
+}
+
+.commission-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: #1d5fb8;
+}
+
+.commission-progress-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: #b42318;
+}
+
+.commission-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.commission-pill.is-ok {
+  background: #e4f5ea;
+  color: #1b7f3b;
+}
+
+.commission-pill.is-warn {
+  background: #fff1d6;
+  color: #8a5300;
+}
+
+.commission-pill.is-muted {
+  background: #edf1f6;
+  color: #5a6c82;
+}
+
+.commission-seller-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.commission-row-inactive {
+  opacity: 0.65;
+}
+
+.commission-detail-row > td {
+  background: #f8fafd;
+}
+
+.commission-seller-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.commission-category-table {
+  min-width: 0;
+}
+
+.commission-year-table td:not(:first-child),
+.commission-year-table th:not(:first-child),
+.commission-quarter-table td:last-child,
+.commission-quarter-table th:last-child {
+  text-align: right;
+}
