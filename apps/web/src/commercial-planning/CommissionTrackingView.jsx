@@ -10,12 +10,31 @@ import {
 
 const QUARTERS = [1, 2, 3, 4];
 
-function formatMoney(value, currencyCode = "USD") {
+function formatMoney(value, currencyCode = "USD", maximumFractionDigits = 0) {
   return new Intl.NumberFormat("es-MX", {
     style: "currency",
     currency: currencyCode || "USD",
-    maximumFractionDigits: 0,
+    maximumFractionDigits,
   }).format(Number(value || 0));
+}
+
+function CompactSale({ value, currencyCode }) {
+  const amount = Number(value || 0);
+  const magnitude = Math.abs(amount);
+  const label = amount === 0
+    ? `Venta ${currencyCode} 0`
+    : magnitude < 1000
+      ? `Venta ${amount < 0 ? "> -" : "< "}${currencyCode} 1 mil`
+      : `Venta ≈ ${currencyCode} ${new Intl.NumberFormat("es-MX", {
+        maximumFractionDigits: 0,
+      }).format(amount / 1000)} mil`;
+  const exact = `Venta aceptada: ${formatMoney(amount, currencyCode, 2)}`;
+  return (
+    <div className="commission-quarter-sale" tabIndex={0} aria-label={exact}>
+      {label}
+      <span className="commission-sale-tooltip" aria-hidden="true">{exact}</span>
+    </div>
+  );
 }
 
 function formatPct(value) {
@@ -46,6 +65,7 @@ function buildTrackingModel(quarters) {
   const byQuarter = new Map();
   const sellers = new Map();
   const pending = [];
+  const invalid = [];
   (quarters || []).forEach(({ quarter, tracking }) => {
     const summaries = new Map();
     (tracking?.summaries || []).forEach((summary) => {
@@ -59,6 +79,9 @@ function buildTrackingModel(quarters) {
       }
     });
     byQuarter.set(quarter, { summaries, tracking });
+    (tracking?.invalidQuotations || []).forEach((item) => {
+      invalid.push({ ...item, quarter });
+    });
     (tracking?.pendingQuotations || []).forEach((item) => {
       pending.push({ ...item, quarter });
       if (!sellers.has(item.sellerUserId)) {
@@ -70,7 +93,54 @@ function buildTrackingModel(quarters) {
       }
     });
   });
-  return { byQuarter, sellers: Array.from(sellers.values()), pending };
+  return { byQuarter, sellers: Array.from(sellers.values()), pending, invalid };
+}
+
+function InvalidQuotationsCard({ items }) {
+  if (!items.length) return null;
+  return (
+    <section className="commercial-planning-card commission-invalid-card">
+      <div className="commercial-planning-card-header">
+        <div>
+          <h3>Sin convertir a la moneda de la cuota</h3>
+          <p>
+            {items.length} cotización(es) no se incluyen en venta, cumplimiento ni comisión porque su
+            moneda o tipo de cambio no permite convertirlas con seguridad. Corrige la cotización para
+            que cuente.
+          </p>
+        </div>
+      </div>
+      <div className="commercial-planning-table-wrap">
+        <table className="commercial-planning-table">
+          <thead>
+            <tr>
+              <th>Cotización</th>
+              <th>Vendedor</th>
+              <th>Trimestre</th>
+              <th>Estado</th>
+              <th>Moneda / TC</th>
+              <th>Motivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={`invalid-${item.quarter}-${item.quotationId}`}>
+                <td>
+                  <Link to={quotationLink(item.quotationId)}>{item.proposalName}</Link>
+                  <div className="field-hint">#{item.quotationId}</div>
+                </td>
+                <td>{item.sellerUserName}</td>
+                <td>T{item.quarter}</td>
+                <td>{item.statusCode === "ganada" ? "Ganada" : "Aceptada"}</td>
+                <td>{item.quotationCurrencyCode} · {item.exchangeRate ?? "sin TC"}</td>
+                <td>{item.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 function ProgressBar({ pct }) {
@@ -198,7 +268,12 @@ function SellerDetail({ summary, currencyCode }) {
                   {quotation.accountName}
                   {quotation.opportunityName ? <div className="field-hint">{quotation.opportunityName}</div> : null}
                 </td>
-                <td>{formatMoney(quotation.totalSaleAmount, currencyCode)}</td>
+                <td>
+                  {formatMoney(quotation.totalSaleAmount, currencyCode)}
+                  {Number(quotation.discountAmount || 0) > 0 ? (
+                    <div className="field-hint">Con descuento de {formatMoney(quotation.discountAmount, currencyCode)}</div>
+                  ) : null}
+                </td>
                 <td>{formatPct(quotation.quotationMarginPct)}</td>
                 <td>
                   <span className={quotation.passesMarginRule && quotation.sellerPassesQuotaRule ? "commission-status-ok" : "commission-status-blocked"}>
@@ -223,18 +298,20 @@ function SellerDetail({ summary, currencyCode }) {
   );
 }
 
-async function exportTrackingToExcel({ year, model, currencyCode }) {
+async function exportTrackingToExcel({ year, model, currencyCode, sellerRows, totalLabel }) {
   const XLSX = await import("xlsx");
   const book = XLSX.utils.book_new();
   const sheet = (rows) => XLSX.utils.json_to_sheet(rows.length ? rows : [{}]);
 
-  const yearRows = model.sellers.map((seller) => {
+  const visibleSellerIds = new Set(sellerRows.map(({ seller }) => seller.id));
+  const yearRows = sellerRows.map(({ seller }) => {
     const row = { Vendedor: seller.name, Correo: seller.email || "" };
     let total = 0;
     let sales = 0;
     QUARTERS.forEach((quarter) => {
       const summary = model.byQuarter.get(quarter)?.summaries.get(seller.id);
       row[`Comisión T${quarter}`] = sumCommission(summary);
+      row[`Venta T${quarter}`] = Number(summary?.acceptedSalesAmount || 0);
       total += sumCommission(summary);
       sales += Number(summary?.acceptedSalesAmount || 0);
     });
@@ -242,12 +319,23 @@ async function exportTrackingToExcel({ year, model, currencyCode }) {
     row["Venta aceptada"] = sales;
     return row;
   });
+  const totalRow = { Vendedor: totalLabel, Correo: "" };
+  const numericColumns = [
+    ...QUARTERS.flatMap((quarter) => [`Comisión T${quarter}`, `Venta T${quarter}`]),
+    "Comisión total",
+    "Venta aceptada",
+  ];
+  numericColumns.forEach((column) => {
+    totalRow[column] = yearRows.reduce((sum, row) => sum + row[column], 0);
+  });
+  yearRows.push(totalRow);
   XLSX.utils.book_append_sheet(book, sheet(yearRows), "Resumen anual");
 
   const quarterRows = [];
   const quotationRows = [];
   QUARTERS.forEach((quarter) => {
     model.byQuarter.get(quarter)?.summaries.forEach((summary) => {
+      if (!visibleSellerIds.has(summary.sellerUserId)) return;
       const status = describeSellerCommissionStatus(summary, (value) => formatMoney(value, currencyCode));
       quarterRows.push({
         Trimestre: `T${quarter}`,
@@ -287,7 +375,7 @@ async function exportTrackingToExcel({ year, model, currencyCode }) {
   });
   XLSX.utils.book_append_sheet(book, sheet(quarterRows), "Por trimestre");
   XLSX.utils.book_append_sheet(book, sheet(quotationRows), "Cotizaciones aceptadas");
-  XLSX.utils.book_append_sheet(book, sheet(model.pending.map((item) => ({
+  XLSX.utils.book_append_sheet(book, sheet(model.pending.filter((item) => visibleSellerIds.has(item.sellerUserId)).map((item) => ({
     Trimestre: `T${item.quarter}`,
     Vendedor: item.sellerUserName,
     Cotización: item.quotationId,
@@ -296,6 +384,16 @@ async function exportTrackingToExcel({ year, model, currencyCode }) {
     "Fecha ganada": item.wonAt ? new Date(item.wonAt).toISOString().slice(0, 10) : "",
     Venta: item.totalSaleAmount,
   }))), "Pendientes de aceptar");
+  XLSX.utils.book_append_sheet(book, sheet(model.invalid.filter((item) => visibleSellerIds.has(item.sellerUserId)).map((item) => ({
+    Trimestre: `T${item.quarter}`,
+    Vendedor: item.sellerUserName,
+    Cotización: item.quotationId,
+    Propuesta: item.proposalName,
+    Estado: item.statusCode,
+    Moneda: item.quotationCurrencyCode,
+    "Tipo de cambio": item.exchangeRate ?? "",
+    Motivo: item.reason,
+  }))), "Sin convertir");
   XLSX.writeFile(book, `comisiones-seguimiento-${year}.xlsx`);
 }
 
@@ -335,6 +433,7 @@ export default function CommissionTrackingView({ year, quarters }) {
       String(left.seller.name || "").localeCompare(String(right.seller.name || ""), "es"));
 
   const pendingInScope = model.pending.filter((item) => scopeQuarters.includes(item.quarter) && inScope(item.sellerUserId));
+  const invalidInScope = model.invalid.filter((item) => scopeQuarters.includes(item.quarter) && inScope(item.sellerUserId));
   const totals = sellerRows.reduce((acc, row) => {
     row.scoped.forEach((summary) => {
       if (!summary) return;
@@ -350,6 +449,12 @@ export default function CommissionTrackingView({ year, quarters }) {
   }, { commission: 0, sales: 0, quota: 0, contribution: 0, enabled: 0 });
   const pendingTotal = pendingInScope.reduce((sum, item) => sum + Number(item.totalSaleAmount || 0), 0);
   const money = (value) => formatMoney(value, currencyCode);
+  const totalLabel = sellerFilter !== "all" || onlyActive ? "Total mostrado" : "Total";
+  const quarterTotals = QUARTERS.map((_, index) => sellerRows.reduce((acc, row) => {
+    acc.commission += sumCommission(row.perQuarter[index]);
+    acc.sales += Number(row.perQuarter[index]?.acceptedSalesAmount || 0);
+    return acc;
+  }, { commission: 0, sales: 0 }));
 
   function toggleExpanded(sellerId) {
     setExpanded((current) => {
@@ -363,7 +468,7 @@ export default function CommissionTrackingView({ year, quarters }) {
   async function handleExport() {
     setExporting(true);
     try {
-      await exportTrackingToExcel({ year, model, currencyCode });
+      await exportTrackingToExcel({ year, model, currencyCode, sellerRows, totalLabel });
     } finally {
       setExporting(false);
     }
@@ -424,6 +529,14 @@ export default function CommissionTrackingView({ year, quarters }) {
           hint={pendingInScope.length ? "Ganadas sin aceptar; no suman" : "Nada pendiente"}
           tone={pendingInScope.length ? "warn" : undefined}
         />
+        {invalidInScope.length ? (
+          <SummaryCard
+            label="Sin convertir"
+            value={String(invalidInScope.length)}
+            hint="Moneda o tipo de cambio inválido; no suman"
+            tone="warn"
+          />
+        ) : null}
       </div>
 
       {view === "year" ? (
@@ -467,6 +580,7 @@ export default function CommissionTrackingView({ year, quarters }) {
                         ) : (
                           <div className="field-hint">Sin cuota</div>
                         )}
+                        <CompactSale value={summary?.acceptedSalesAmount} currencyCode={currencyCode} />
                       </td>
                     ))}
                     <td><strong>{money(row.commission)}</strong></td>
@@ -477,6 +591,19 @@ export default function CommissionTrackingView({ year, quarters }) {
                   <tr><td colSpan="7" className="centered">No hay vendedores para mostrar.</td></tr>
                 ) : null}
               </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">{totalLabel}</th>
+                  {quarterTotals.map((total, index) => (
+                    <td key={QUARTERS[index]}>
+                      <strong>{money(total.commission)}</strong>
+                      <CompactSale value={total.sales} currencyCode={currencyCode} />
+                    </td>
+                  ))}
+                  <td><strong>{money(totals.commission)}</strong></td>
+                  <td>{money(totals.sales)}</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </section>
@@ -557,6 +684,7 @@ export default function CommissionTrackingView({ year, quarters }) {
       )}
 
       <PendingQuotationsCard items={pendingInScope} currencyCode={currencyCode} showSeller />
+      <InvalidQuotationsCard items={invalidInScope} />
     </div>
   );
 }

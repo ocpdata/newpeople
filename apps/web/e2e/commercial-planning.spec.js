@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import * as XLSX from "xlsx";
 
 test("planeacion comercial captura y actualiza los cuatro trimestres por año", async ({
   page,
@@ -19,6 +21,7 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   const makePlan = (planYear = year) => ({
     year: planYear,
     currencyCode: "USD",
+    currencyLocked: true,
     hasPersistedPeriods: true,
     eligibleSellers: [{ id: 31, fullName: "Ana Vendedora", email: "ana@example.test" }],
     quarters: [1, 2, 3, 4].map((quarter) => ({
@@ -160,6 +163,17 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
           return json({
             period,
             baseCurrencyCode: "USD",
+            invalidQuotations: quarter === 2 ? [{
+              quotationId: 9003,
+              proposalName: "Cotización en MXN sin tipo de cambio",
+              sellerUserId: seller.sellerUserId,
+              sellerUserName: seller.sellerUserName,
+              statusCode: "aceptada",
+              quotationCurrencyCode: "MXN",
+              exchangeRate: 1,
+              wonAt: `${year}-05-01T12:00:00.000Z`,
+              reason: "La cotización está en MXN con tipo de cambio inválido (1).",
+            }] : [],
             pendingQuotations: quarter === 1 ? [{
               quotationId: 9002,
               proposalName: "Cotización ganada pendiente",
@@ -197,6 +211,16 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
                 sellerPassesQuotaRule: true,
                 items: [],
               }],
+            }, {
+              sellerUserId: 32,
+              sellerUserName: "Luis Sin Cuota",
+              sellerUserEmail: "luis@example.test",
+              salesQuotaAmount: 0,
+              acceptedSalesAmount: [499, 1499.6, 0, 377803.56][quarter - 1],
+              acceptedQuotationCount: quarter === 3 ? 0 : 1,
+              calculatedTotalCommissionAmount: 0,
+              commissionEnabled: false,
+              quotations: [],
             }],
           });
     }
@@ -245,13 +269,14 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
 
   await expect(page.getByRole("button", { name: "Cerrar período" })).toHaveCount(0);
   await expect(page.getByLabel("Cuota Ana Vendedora T4")).toBeEnabled();
-  await page.getByLabel("Moneda anual").selectOption("MXN");
+  await expect(page.getByLabel("Moneda anual")).toBeDisabled();
+  await expect(page.getByText("Las cuotas del año están en USD.")).toBeVisible();
   await page.getByLabel("Cuota Ana Vendedora T1").fill("50000");
   await page.getByLabel("Margen Ana Vendedora T1").fill("20");
   await page.getByRole("button", { name: "Guardar metas" }).click();
   await expect(page.getByText("Metas del año actualizadas correctamente")).toBeVisible();
   expect(targetWrites).toHaveLength(2);
-  expect(targetWrites[1].currencyCode).toBe("MXN");
+  expect(targetWrites[1].currencyCode).toBe("USD");
   expect(targetWrites[1].quarters.map((item) => item.quarter)).toEqual([1, 2, 3, 4]);
 
   await page.getByRole("button", { name: "Comisiones · Configuración" }).click();
@@ -314,7 +339,64 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   await expect(page.getByRole("button", { name: "Año completo" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("heading", { name: `Comisiones por trimestre · ${year}` })).toBeVisible();
   await expect(page.locator(".commission-year-table tbody tr").first()).toContainText("USD 500");
+  const activityCheck = page.locator(".commission-tracking-check");
+  expect((await activityCheck.locator("input").boundingBox()).width).toBeLessThan(30);
+  expect((await activityCheck.boundingBox()).height).toBeLessThan(40);
+  const annualTable = page.locator(".commission-year-table");
+  const anaRow = annualTable.getByRole("row", { name: /Ana Vendedora/ });
+  const luisRow = annualTable.getByRole("row", { name: /Luis Sin Cuota/ });
+  await expect(anaRow.locator("td").nth(4)).toContainText("Venta ≈ USD 100 mil");
+  await expect(anaRow.locator("td").nth(1)).toContainText("Venta USD 0");
+  await expect(luisRow.locator("td").nth(1)).toContainText("Venta < USD 1 mil");
+  await expect(luisRow.locator("td").nth(2)).toContainText("Venta ≈ USD 1 mil");
+  const luisT4 = luisRow.locator("td").nth(4);
+  await expect(luisT4).toContainText("Sin cuota");
+  await expect(luisT4).toContainText("Venta ≈ USD 378 mil");
+  await luisT4.locator(".commission-quarter-sale").focus();
+  await expect(luisT4.locator(".commission-sale-tooltip")).toBeVisible();
+  await expect(luisT4.locator(".commission-sale-tooltip")).toHaveText("Venta aceptada: USD 377,803.56");
+  const totalRow = annualTable.locator("tfoot tr");
+  await expect(totalRow.getByRole("rowheader")).toHaveText("Total");
+  await expect(totalRow.locator("td").nth(3)).toContainText("Venta ≈ USD 478 mil");
+  await expect(totalRow.locator("td").nth(4)).toHaveText("USD 500");
+  await expect(totalRow.locator("td").nth(5)).toHaveText("USD 479,802");
+  await expect(totalRow).not.toContainText("cumpl.");
+
+  const annualDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Exportar a Excel" }).click();
+  const annualDownload = await annualDownloadPromise;
+  const workbook = XLSX.read(await readFile(await annualDownload.path()), { type: "buffer" });
+  const annualRows = XLSX.utils.sheet_to_json(workbook.Sheets["Resumen anual"]);
+  expect(annualRows).toHaveLength(3);
+  expect(annualRows[1]["Venta T4"]).toBe(377803.56);
+  expect(annualRows[2]["Venta T4"]).toBeCloseTo(477803.56, 2);
+  expect(annualRows[2]["Venta aceptada"]).toBeCloseTo(479802.16, 2);
+  expect(annualRows[2]["Comisión total"]).toBe(500);
+
+  const sellerFilter = page.locator(".commission-tracking-controls").getByRole("combobox");
+  await sellerFilter.selectOption("32");
+  await expect(annualTable.locator("tbody tr")).toHaveCount(1);
+  await expect(totalRow.getByRole("rowheader")).toHaveText("Total mostrado");
+  await expect(totalRow.locator("td").nth(4)).toHaveText("USD 0");
+  await expect(totalRow.locator("td").nth(5)).toHaveText("USD 379,802");
+  const filteredDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Exportar a Excel" }).click();
+  const filteredWorkbook = XLSX.read(await readFile(await (await filteredDownloadPromise).path()), { type: "buffer" });
+  const filteredRows = XLSX.utils.sheet_to_json(filteredWorkbook.Sheets["Resumen anual"]);
+  expect(filteredRows).toHaveLength(2);
+  expect(filteredRows[0].Vendedor).toBe("Luis Sin Cuota");
+  expect(filteredRows[1].Vendedor).toBe("Total mostrado");
+  expect(filteredRows[1]["Venta aceptada"]).toBeCloseTo(379802.16, 2);
+  expect(XLSX.utils.sheet_to_json(filteredWorkbook.Sheets["Pendientes de aceptar"])).toHaveLength(0);
+  await sellerFilter.selectOption("all");
+  await page.getByLabel("Solo con actividad").check();
+  await expect(totalRow.getByRole("rowheader")).toHaveText("Total mostrado");
+  await expect(totalRow.locator("td").nth(5)).toHaveText("USD 479,802");
+  await page.getByLabel("Solo con actividad").uncheck();
   await expect(page.getByRole("heading", { name: "Pendientes de aceptar" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sin convertir a la moneda de la cuota" })).toBeVisible();
+  await expect(page.getByText("Cotización en MXN sin tipo de cambio")).toBeVisible();
+  await expect(page.getByLabel(`Resumen Año ${year}`)).toContainText("Moneda o tipo de cambio inválido");
   await expect(page.getByText("Cotización ganada pendiente")).toBeVisible();
   await expect(page.getByLabel(`Resumen Año ${year}`)).toContainText("1 · USD 4,000");
 

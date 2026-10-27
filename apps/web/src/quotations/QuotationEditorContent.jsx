@@ -13,6 +13,9 @@ import {
   formatQuotationAmount,
   isQuotationSectionCountedInSummary,
   isQuotationSectionVisibleInPrint,
+  getQuotationCurrencyLabel,
+  normalizeQuotationCurrencyCode,
+  normalizeQuotationExchangeRateValue,
   sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
   toNumber,
@@ -176,7 +179,7 @@ function formatQuotationDocumentDate(value) {
 function formatSuggestedExchangeRate(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue) || numericValue <= 0) {
-    return "1.0000";
+    return "";
   }
 
   return numericValue.toFixed(4);
@@ -1067,6 +1070,16 @@ function QuotationEditorContent({
     versionForm.summaryDiscountMode === "amount" ? "amount" : "percentage";
   const summaryDistributionMode =
     versionForm.summaryDistributionMode === "per_item" ? "per_item" : "total";
+  const quotationCurrencyCode = normalizeQuotationCurrencyCode(
+    versionForm.currencyCode,
+    "USD",
+  );
+  const quotationExchangeRateValue = normalizeQuotationExchangeRateValue(
+    versionForm.exchangeRate,
+    1,
+  );
+  const [summaryDiscountResetNotice, setSummaryDiscountResetNotice] =
+    useState("");
   const summaryVatMode =
     versionForm.summaryVatMode === "total"
       ? "total"
@@ -1130,7 +1143,6 @@ function QuotationEditorContent({
         {},
         {
           inclusionTypes: catalogs.inclusionTypes,
-          exchangeRate: versionForm.exchangeRate,
         },
       ),
     [
@@ -1192,7 +1204,6 @@ function QuotationEditorContent({
         },
         {
           inclusionTypes: catalogs.inclusionTypes,
-          exchangeRate: versionForm.exchangeRate,
         },
       ),
     [
@@ -2217,11 +2228,29 @@ function QuotationEditorContent({
     const nextCurrencyCode = String(value || "")
       .trim()
       .toUpperCase();
+    const previousCurrencyCode = normalizeQuotationCurrencyCode(
+      versionForm.currencyCode,
+      "USD",
+    );
+    const shouldResetDiscountAmount =
+      nextCurrencyCode !== previousCurrencyCode &&
+      summaryDiscountMode === "amount" &&
+      Number(versionForm.summaryDiscountValue) > 0;
 
     setVersionForm((prev) => ({
       ...prev,
       currencyCode: nextCurrencyCode,
+      // El tipo de cambio anterior pertenece a otra moneda; se captura o sugiere de nuevo.
+      ...(nextCurrencyCode && nextCurrencyCode !== "USD"
+        ? { exchangeRate: "" }
+        : {}),
+      ...(shouldResetDiscountAmount ? { summaryDiscountValue: "0" } : {}),
     }));
+    setSummaryDiscountResetNotice(
+      shouldResetDiscountAmount
+        ? `El descuento por valor se reinició porque cambió la moneda a ${nextCurrencyCode}.`
+        : "",
+    );
     setExchangeRateError("");
     setExchangeRateFeedback("");
 
@@ -5115,8 +5144,8 @@ function QuotationEditorContent({
               <thead>
                 <tr>
                   <th>Categoria</th>
-                  <th>Costo US$</th>
-                  <th>Venta US$</th>
+                  <th>Costo {getQuotationCurrencyLabel(quotationCurrencyCode)}</th>
+                  <th>Venta {getQuotationCurrencyLabel(quotationCurrencyCode)}</th>
                   <th>Margen %</th>
                 </tr>
               </thead>
@@ -5220,7 +5249,7 @@ function QuotationEditorContent({
               >
                 {summaryDiscountMode === "percentage"
                   ? "Descuento %"
-                  : "Descuento US$"}
+                  : `Descuento ${getQuotationCurrencyLabel(quotationCurrencyCode)}`}
               </label>
               <input
                 className="quotation-summary-discount-input"
@@ -5252,8 +5281,25 @@ function QuotationEditorContent({
               <p className="field-hint quotation-summary-discount-hint">
                 {summaryDiscountMode === "percentage"
                   ? "Se aplica sobre el valor total de venta de la version."
-                  : "Se aplica como monto directo sobre el valor total de venta de la version."}
+                  : `Se aplica como monto directo, en ${quotationCurrencyCode}, sobre el valor total de venta de la version.`}
               </p>
+              {summaryDiscountMode === "amount" &&
+              quotationCurrencyCode !== "USD" &&
+              summaryDiscountPreview.discountAmount > 0 ? (
+                <p className="field-hint quotation-summary-discount-hint">
+                  Equivale a US$
+                  {formatQuotationAmount(
+                    summaryDiscountPreview.discountAmount /
+                      quotationExchangeRateValue,
+                  )}{" "}
+                  (tipo de cambio {quotationExchangeRateValue}).
+                </p>
+              ) : null}
+              {summaryDiscountResetNotice ? (
+                <p className="field-hint quotation-summary-discount-hint">
+                  {summaryDiscountResetNotice}
+                </p>
+              ) : null}
             </div>
 
             <div className="field-group quotation-summary-control-card quotation-summary-vat-field">

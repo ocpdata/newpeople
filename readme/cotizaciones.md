@@ -137,6 +137,19 @@ Reglas operativas:
 - La persistencia guarda ambas referencias para que una version clonada o reabierta mantenga la base del proveedor y el valor comercial calculado de la cotizacion.
 - Los calculos de costo, venta, resumen y PDF parten del valor convertido de la cotizacion.
 
+### Validacion del tipo de cambio
+
+- USD siempre usa tipo de cambio `1`. Cualquier otra moneda exige un tipo de cambio mayor que `0` y distinto de `1` (unidades de esa moneda por 1 USD).
+- La API valida la regla al crear la cotizacion, crear nueva version, `PUT /quotation-versions/:id` y `PUT /quotation-versions/:id/full` (400 con el mensaje correspondiente), y bloquea las acciones `enviar`, `declarar_ganada` y `aceptar` si la version mayor la incumple.
+- La importacion desde documento de proveedor no convierte con tipo de cambio faltante o invalido (409).
+- En creacion y edicion, al elegir una moneda distinta de USD el tipo de cambio queda vacio hasta recibir la sugerencia de Frankfurter; si la consulta falla debe capturarse a mano.
+
+### Descuento global
+
+- El descuento global (`Descuento %` o `Descuento {moneda}`) por monto se captura y guarda en la moneda de la cotizacion; no se multiplica por el tipo de cambio. Debajo del campo se muestra el equivalente en US$ como dato informativo.
+- Al cambiar la moneda con un descuento por monto capturado, el monto se reinicia a 0 y la pantalla lo avisa.
+- Los encabezados del resumen (`Costo`, `Venta`) usan la moneda de la cotizacion (`US$` para USD).
+
 ## Reglas de negocio
 
 - Solo se crea cotizacion desde una oportunidad con estado de activacion `activada`.

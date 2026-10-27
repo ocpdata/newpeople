@@ -160,16 +160,33 @@ function getQuarterDateRange(year, quarter) {
   return { start, end };
 }
 
-function normalizeCommissionAmountToBase(amount, quotationCurrencyCode, baseCurrencyCode, exchangeRate) {
-  const numericAmount = Number(amount || 0);
-  if (!numericAmount) return 0;
-  const quotationCurrency = String(quotationCurrencyCode || "").trim().toUpperCase();
-  const baseCurrency = String(baseCurrencyCode || "").trim().toUpperCase();
-  const numericExchangeRate = Number(exchangeRate || 0);
-  if (!quotationCurrency || !baseCurrency || quotationCurrency === baseCurrency || !(numericExchangeRate > 0)) return numericAmount;
-  if (baseCurrency === "USD") return numericAmount / numericExchangeRate;
-  if (quotationCurrency === "USD") return numericAmount * numericExchangeRate;
-  return numericAmount;
+function resolveCommissionConversion({ quotationCurrencyCode, baseCurrencyCode, exchangeRate }) {
+  const quotationCurrency = String(quotationCurrencyCode || "USD").trim().toUpperCase();
+  const baseCurrency = String(baseCurrencyCode || "USD").trim().toUpperCase();
+  const rate = Number(exchangeRate);
+  if (quotationCurrency === baseCurrency) return { factor: 1 };
+  if (baseCurrency !== "USD") {
+    return {
+      error: `La cuota del año está en ${baseCurrency} y no hay tipo de cambio de planeación para convertir una cotización en ${quotationCurrency}.`,
+    };
+  }
+  if (!(rate > 0) || rate === 1) {
+    return { error: `La cotización está en ${quotationCurrency} con tipo de cambio inválido (${Number.isFinite(rate) ? rate : "sin dato"}).` };
+  }
+  return { factor: 1 / rate };
+}
+
+// Descuento global de la cotización, en la moneda de la cotización. Con distribución "por ítem"
+// el descuento ya está dentro del descuento final de cada ítem, así que no se vuelve a aplicar.
+function resolveSummaryDiscountRatio({ quotationRow, saleTotal }) {
+  if (!(saleTotal > 0) || quotationRow.summary_distribution_mode === "per_item") return 0;
+  const value = Math.max(Number(quotationRow.summary_discount_value || 0), 0);
+  if (quotationRow.summary_discount_mode === "percentage") return Math.min(value, 100) / 100;
+  if (quotationRow.summary_discount_mode !== "amount") return 0;
+  // Con IVA por ítem el monto se descuenta del total con IVA; la comisión se calcula sin IVA.
+  const vatMultiplier = quotationRow.summary_vat_mode === "per_item"
+    ? 1 + Math.max(Number(quotationRow.summary_vat_pct ?? 16), 0) / 100 : 1;
+  return Math.min(value / (saleTotal * vatMultiplier), 1);
 }
 
 function calculateCommissionItemAmounts(item) {
@@ -268,7 +285,9 @@ async function buildCommissionTrackingPayload(periodId) {
     `SELECT w.* FROM (
        SELECT q.id AS quotation_id, q.latest_version_id AS quotation_version_id,
               qv.proposal_name, qs.code AS status_code, qv.currency_code,
-              qv.exchange_rate, a.name AS account_name, o.name AS opportunity_name,
+              qv.exchange_rate, qv.summary_discount_mode, qv.summary_discount_value,
+              qv.summary_distribution_mode, qv.summary_vat_mode, qv.summary_vat_pct,
+              a.name AS account_name, o.name AS opportunity_name,
               o.seller_user_id, su.full_name AS seller_user_name, su.email AS seller_user_email,
               COALESCE(
                 (SELECT MAX(al.created_at) FROM audit_log al
@@ -346,39 +365,67 @@ async function buildCommissionTrackingPayload(periodId) {
     }]),
   );
 
+  const buildQuotationBase = (quotationRow, quotationCurrencyCode) => ({
+    quotationId: Number(quotationRow.quotation_id),
+    quotationVersionId: Number(quotationRow.quotation_version_id),
+    proposalName: quotationRow.proposal_name || `Cotizacion ${quotationRow.quotation_id}`,
+    wonAt: quotationRow.won_at, statusCode: quotationRow.status_code,
+    accountName: quotationRow.account_name || "",
+    opportunityName: quotationRow.opportunity_name || "",
+    sellerUserId: Number(quotationRow.seller_user_id), sellerUserName: quotationRow.seller_user_name || "",
+    sellerUserEmail: quotationRow.seller_user_email || "",
+    quotationCurrencyCode, exchangeRate: quotationRow.exchange_rate == null ? null : Number(quotationRow.exchange_rate),
+  });
+  // Devuelve { quotation } o, si la moneda no puede convertirse con seguridad, { invalid }.
   const computeQuotation = (quotationRow) => {
-    const quotationCurrencyCode = quotationRow.currency_code || period.baseCurrencyCode || "USD";
-    const exchangeRate = Number(quotationRow.exchange_rate || 0);
-    const items = (itemsByVersionId.get(Number(quotationRow.quotation_version_id)) || [])
+    const quotationCurrencyCode = String(quotationRow.currency_code || "USD").toUpperCase();
+    const base = buildQuotationBase(quotationRow, quotationCurrencyCode);
+    const conversion = resolveCommissionConversion({
+      quotationCurrencyCode, baseCurrencyCode: period.baseCurrencyCode, exchangeRate: quotationRow.exchange_rate,
+    });
+    if (conversion.error) return { invalid: { ...base, reason: conversion.error } };
+    const rawItems = (itemsByVersionId.get(Number(quotationRow.quotation_version_id)) || [])
       .filter((item) => item.itemType !== "grupo_productos")
-      .map((item) => {
-        const amounts = calculateCommissionItemAmounts(item);
-        const costTotal = normalizeCommissionAmountToBase(amounts.costTotal, quotationCurrencyCode, period.baseCurrencyCode, exchangeRate);
-        const salePriceTotal = normalizeCommissionAmountToBase(amounts.salePriceTotal, quotationCurrencyCode, period.baseCurrencyCode, exchangeRate);
-        const contributionAmount = normalizeCommissionAmountToBase(amounts.contributionAmount, quotationCurrencyCode, period.baseCurrencyCode, exchangeRate);
-        return { ...item, commissionCategory: resolveCommissionCategory(item), costTotal: roundMoney(costTotal), salePriceTotal: roundMoney(salePriceTotal), contributionAmount: roundMoney(contributionAmount) };
-      });
+      .map((item) => ({ item, amounts: calculateCommissionItemAmounts(item) }));
+    const grossSaleInQuotationCurrency = rawItems.reduce((sum, { amounts }) => sum + amounts.salePriceTotal, 0);
+    const discountRatio = resolveSummaryDiscountRatio({ quotationRow, saleTotal: grossSaleInQuotationCurrency });
+    const items = rawItems.map(({ item, amounts }) => {
+      const costTotal = amounts.costTotal * conversion.factor;
+      const salePriceTotal = amounts.salePriceTotal * conversion.factor * (1 - discountRatio);
+      return {
+        ...item, commissionCategory: resolveCommissionCategory(item),
+        costTotal: roundMoney(costTotal), salePriceTotal: roundMoney(salePriceTotal),
+        contributionAmount: roundMoney(salePriceTotal - costTotal),
+      };
+    });
     const totalSaleAmount = roundMoney(items.reduce((sum, item) => sum + Number(item.salePriceTotal || 0), 0));
     const totalCostAmount = roundMoney(items.reduce((sum, item) => sum + Number(item.costTotal || 0), 0));
     const totalContributionAmount = roundMoney(totalSaleAmount - totalCostAmount);
     const quotationMarginPct = totalSaleAmount > 0 ? roundPercent((totalContributionAmount / totalSaleAmount) * 100, 2) : 0;
     return {
-      quotationId: Number(quotationRow.quotation_id),
-      quotationVersionId: Number(quotationRow.quotation_version_id),
-      proposalName: quotationRow.proposal_name || `Cotizacion ${quotationRow.quotation_id}`,
-      wonAt: quotationRow.won_at, statusCode: quotationRow.status_code,
-      accountName: quotationRow.account_name || "",
-      opportunityName: quotationRow.opportunity_name || "",
-      sellerUserId: Number(quotationRow.seller_user_id), sellerUserName: quotationRow.seller_user_name || "",
-      sellerUserEmail: quotationRow.seller_user_email || "",
-      currencyCode: period.baseCurrencyCode || quotationCurrencyCode,
-      totalSaleAmount, totalCostAmount, totalContributionAmount, quotationMarginPct, items,
+      quotation: {
+        ...base, currencyCode: period.baseCurrencyCode || quotationCurrencyCode,
+        discountAmount: roundMoney(grossSaleInQuotationCurrency * conversion.factor * discountRatio),
+        totalSaleAmount, totalCostAmount, totalContributionAmount, quotationMarginPct, items,
+      },
     };
   };
-  const computedQuotations = acceptedQuotations.map(computeQuotation);
-  const pendingQuotations = pendingQuotationRows.map((row) => {
-    const { items: _items, ...quotation } = computeQuotation(row);
-    return quotation;
+  const invalidQuotations = [];
+  const computedQuotations = [];
+  acceptedQuotations.forEach((row) => {
+    const result = computeQuotation(row);
+    if (result.invalid) invalidQuotations.push(result.invalid);
+    else computedQuotations.push(result.quotation);
+  });
+  const pendingQuotations = [];
+  pendingQuotationRows.forEach((row) => {
+    const result = computeQuotation(row);
+    if (result.invalid) {
+      invalidQuotations.push(result.invalid);
+      return;
+    }
+    const { items: _items, ...quotation } = result.quotation;
+    pendingQuotations.push(quotation);
   });
 
   computedQuotations.forEach((quotation) => {
@@ -448,6 +495,7 @@ async function buildCommissionTrackingPayload(periodId) {
     period,
     baseCurrencyCode: period.baseCurrencyCode || "USD",
     pendingQuotations,
+    invalidQuotations,
     summaries: summaries.sort((left, right) => String(left.sellerUserName || "").localeCompare(String(right.sellerUserName || ""), "es")),
   };
 }
@@ -550,7 +598,11 @@ async function getPlanningYearDetail(year) {
     };
     return { quarter, period, targets: row ? await getTargetsForPeriod(Number(row.id)) : [] };
   }));
-  return { year, currencyCode, hasPersistedPeriods: periodRows.length > 0, eligibleSellers, quarters };
+  return {
+    year, currencyCode, hasPersistedPeriods: periodRows.length > 0,
+    currencyLocked: quarters.some((item) => item.targets.length > 0),
+    eligibleSellers, quarters,
+  };
 }
 
 async function buildAnnualCommissionConfigPayload(year) {
@@ -820,6 +872,11 @@ router.put(
     }
 
     const currencyCode = parsed.data.currencyCode.trim().toUpperCase();
+    if (initialPlan.currencyLocked && currencyCode !== initialPlan.currencyCode) {
+      return res.status(409).json({
+        message: `Las cuotas de ${year} están definidas en ${initialPlan.currencyCode} y no se pueden cambiar a ${currencyCode}. Elimina primero las cuotas del año si necesitas otra moneda.`,
+      });
+    }
     const submittedByQuarter = new Map();
     for (const quarter of parsed.data.quarters) {
       if (submittedByQuarter.has(quarter.quarter)) {

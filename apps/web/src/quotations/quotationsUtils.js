@@ -462,6 +462,11 @@ export function normalizeQuotationCurrencyCode(value, fallback = "USD") {
   return normalizedValue || "USD";
 }
 
+export function getQuotationCurrencyLabel(currencyCode) {
+  const normalizedCode = normalizeQuotationCurrencyCode(currencyCode, "USD");
+  return normalizedCode === "USD" ? "US$" : normalizedCode;
+}
+
 export function normalizeQuotationExchangeRateValue(value, fallback = 1) {
   const numericValue = toNumber(value);
   if (!Number.isFinite(numericValue) || numericValue <= 0) {
@@ -1041,35 +1046,28 @@ export function calculateCreateQuotationSummary(
 
   const summaryDiscountMode =
     summaryDiscountInput?.mode === "amount" ? "amount" : "percentage";
+  // El monto del descuento está en la moneda de la cotización, igual que los importes de los ítems.
   const numericSummaryDiscountValue = Math.max(
     Number(summaryDiscountInput?.value) || 0,
     0,
   );
-  const exchangeRate = normalizeQuotationExchangeRateValue(
-    options?.exchangeRate,
-    1,
-  );
-  const convertedSummaryDiscountValue =
-    summaryDiscountMode === "amount"
-      ? numericSummaryDiscountValue * exchangeRate
-      : numericSummaryDiscountValue;
   const normalizedSummaryDiscountPct =
     summaryDiscountMode === "amount"
       ? buckets.total.salePriceTotal > 0
         ? Math.min(
             Math.max(
-              (convertedSummaryDiscountValue / buckets.total.salePriceTotal) *
+              (numericSummaryDiscountValue / buckets.total.salePriceTotal) *
                 100,
               0,
             ),
             100,
           )
         : 0
-      : Math.min(convertedSummaryDiscountValue, 100);
+      : Math.min(numericSummaryDiscountValue, 100);
   const totalSalePriceTotal = roundQuotationMoney(buckets.total.salePriceTotal);
   const discountAmount = roundQuotationMoney(
     summaryDiscountMode === "amount"
-      ? Math.min(convertedSummaryDiscountValue, totalSalePriceTotal)
+      ? Math.min(numericSummaryDiscountValue, totalSalePriceTotal)
       : totalSalePriceTotal * (normalizedSummaryDiscountPct / 100),
   );
   const discountedTotalAmount = roundQuotationMoney(

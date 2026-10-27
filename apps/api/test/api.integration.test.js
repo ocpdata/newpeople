@@ -25028,14 +25028,64 @@ describe("API integration baseline", () => {
           { quarter: 4, targets: [] },
         ],
       });
-    expect(updateTargets.status).toBe(200);
+    expect(updateTargets.status).toBe(409);
+    expect(updateTargets.body.message).toMatch(/definidas en USD/);
+
+    const updateSameCurrency = await request(app)
+      .put("/api/commercial-planning/years/2031/targets")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currencyCode: "USD",
+        quarters: [
+          { quarter: 1, targets: [{ sellerUserId: ctx.sellerUserId, salesQuotaAmount: 130000, expectedMarginPercent: 25, notes: "Meta T1 actualizada" }] },
+          { quarter: 2, targets: [] },
+          { quarter: 3, targets: [] },
+          { quarter: 4, targets: [] },
+        ],
+      });
+    expect(updateSameCurrency.status).toBe(200);
 
     const updatedYearResponse = await request(app)
       .get("/api/commercial-planning/years/2031")
       .set("Authorization", `Bearer ${token}`);
     expect(updatedYearResponse.status).toBe(200);
-    expect(updatedYearResponse.body.currencyCode).toBe("MXN");
+    expect(updatedYearResponse.body.currencyCode).toBe("USD");
+    expect(updatedYearResponse.body.currencyLocked).toBe(true);
     expect(updatedYearResponse.body.quarters[0].targets[0].salesQuotaAmount).toBe(130000);
+
+    const clearAndChangeAtOnce = await request(app)
+      .put("/api/commercial-planning/years/2031/targets")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currencyCode: "MXN",
+        quarters: [1, 2, 3, 4].map((quarter) => ({ quarter, targets: [] })),
+      });
+    expect(clearAndChangeAtOnce.status).toBe(409);
+
+    const clearTargets = await request(app)
+      .put("/api/commercial-planning/years/2031/targets")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currencyCode: "USD",
+        quarters: [1, 2, 3, 4].map((quarter) => ({ quarter, targets: [] })),
+      });
+    expect(clearTargets.status).toBe(200);
+    expect(clearTargets.body.currencyLocked).toBe(false);
+
+    const changeAfterClearing = await request(app)
+      .put("/api/commercial-planning/years/2031/targets")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currencyCode: "MXN",
+        quarters: [
+          { quarter: 1, targets: [{ sellerUserId: ctx.sellerUserId, salesQuotaAmount: 130000, expectedMarginPercent: 25 }] },
+          { quarter: 2, targets: [] },
+          { quarter: 3, targets: [] },
+          { quarter: 4, targets: [] },
+        ],
+      });
+    expect(changeAfterClearing.status).toBe(200);
+    expect(changeAfterClearing.body.currencyCode).toBe("MXN");
 
     const trackingResponse = await request(app)
       .get(`/api/commercial-planning/periods/${periodId}/commission-tracking`)
@@ -25137,6 +25187,208 @@ describe("API integration baseline", () => {
         }),
       ]);
       expect(pendingResponse.body.pendingQuotations[0]).not.toHaveProperty("items");
+    } finally {
+      await query("DELETE FROM audit_log WHERE id = ?", [Number(auditInsert.insertId)]);
+    }
+  });
+
+  test("cotizaciones exige tipo de cambio valido segun la moneda al guardar y al avanzar de estado", async () => {
+    const fixture = await createQuotationFixture(`${TEST_PREFIX}_quote_fx_rule`);
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    expect(adminLogin.status).toBe(200);
+    const authorization = `Bearer ${adminLogin.body.token}`;
+    const updateVersion = (body) =>
+      request(app)
+        .put(`/api/quotation-versions/${fixture.latestVersionId}`)
+        .set("Authorization", authorization)
+        .send({ contactId: fixture.contactId, ...body });
+
+    const mxnWithoutRate = await updateVersion({ currencyCode: "MXN", exchangeRate: 1 });
+    expect(mxnWithoutRate.status).toBe(400);
+    expect(mxnWithoutRate.body.message).toMatch(/tipo de cambio de MXN/);
+
+    const usdWithRate = await updateVersion({ currencyCode: "USD", exchangeRate: 18 });
+    expect(usdWithRate.status).toBe(400);
+    expect(usdWithRate.body.message).toMatch(/USD debe tener tipo de cambio 1/);
+
+    const createWithoutRate = await request(app)
+      .post(`/api/opportunities/${fixture.opportunityId}/quotations`)
+      .set("Authorization", authorization)
+      .send({
+        accountId: fixture.accountId,
+        contactId: fixture.contactId,
+        sellerUserId: fixture.sellerUserId,
+        currencyCode: "MXN",
+        sections: [],
+      });
+    expect(createWithoutRate.status).toBe(400);
+    expect(createWithoutRate.body.message).toMatch(/tipo de cambio de MXN/);
+
+    const validMxn = await updateVersion({ currencyCode: "MXN", exchangeRate: 18.5 });
+    expect(validMxn.status).toBe(200);
+
+    await query("UPDATE quotation_versions SET exchange_rate = 1, status_id = ? WHERE id = ?", [
+      await getCatalogId("quotation_statuses", "aprobada"),
+      fixture.latestVersionId,
+    ]);
+    const sendWithInvalidRate = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set("Authorization", authorization)
+      .send({ actionCode: "enviar" });
+    expect(sendWithInvalidRate.status).toBe(400);
+    expect(sendWithInvalidRate.body.message).toMatch(/tipo de cambio de MXN/);
+  });
+
+  test("seguimiento de comisiones convierte monedas, aplica el descuento global y aparta cotizaciones sin tipo de cambio valido", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.planning@example.com`,
+    );
+    expect(loginResponse.status).toBe(200);
+    const planningAuthorization = `Bearer ${loginResponse.body.token}`;
+    const fixture = await createQuotationFixture(`${TEST_PREFIX}_commission_fx`);
+
+    if (!ctx.fixtureProviderId) {
+      ctx.fixtureProviderId = await createDirectProvider({
+        actorUserId: ctx.providerManagerUserId,
+        suffix: `${TEST_PREFIX}_quote_provider`,
+      });
+      cleanup.providerIds.push(ctx.fixtureProviderId);
+    }
+
+    // 20,000 MXN de costo y 40,000 MXN de venta (margen 50%): con TC 20 son 1,000 y 2,000 USD.
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    expect(adminLogin.status).toBe(200);
+    const seedResponse = await request(app)
+      .put(`/api/quotation-versions/${fixture.latestVersionId}/full`)
+      .set("Authorization", `Bearer ${adminLogin.body.token}`)
+      .send({
+        contactId: fixture.contactId,
+        currencyCode: "MXN",
+        exchangeRate: 20,
+        sections: [
+          {
+            localId: "fx-section-1",
+            title: "Servicios",
+            inclusionTypeId: ctx.catalogIds.quotationIncludedTypeId,
+            displayOrder: 1,
+            items: [
+              {
+                localId: "fx-item-1",
+                providerId: ctx.fixtureProviderId,
+                productCode: "FX-1",
+                productDescription: "Producto en MXN",
+                quantity: 1,
+                originalCurrencyCode: "USD",
+                originalListPriceUnit: 1000,
+                listPriceUnit: 20000,
+                manufacturerDiscountPct: 0,
+                importCostPct: 0,
+                profitMarginPct: 50,
+                finalDiscountPct: 0,
+                displayOrder: 1,
+              },
+            ],
+          },
+        ],
+      });
+    expect(seedResponse.status).toBe(200);
+
+    const saveTargetsResponse = await request(app)
+      .put("/api/commercial-planning/years/2034/targets")
+      .set("Authorization", planningAuthorization)
+      .send({
+        currencyCode: "USD",
+        quarters: [
+          { quarter: 1, targets: [{ sellerUserId: ctx.sellerUserId, salesQuotaAmount: 1000, expectedMarginPercent: 20 }] },
+          { quarter: 2, targets: [] },
+          { quarter: 3, targets: [] },
+          { quarter: 4, targets: [] },
+        ],
+      });
+    expect(saveTargetsResponse.status).toBe(200);
+    const periodId = saveTargetsResponse.body.quarters[0].period.id;
+
+    await query(
+      `INSERT INTO quotation_statuses (code, name)
+       SELECT 'aceptada', 'Aceptada' FROM DUAL
+       WHERE NOT EXISTS (SELECT 1 FROM quotation_statuses WHERE code = 'aceptada')`,
+    );
+    await query("UPDATE quotation_versions SET status_id = ? WHERE id = ?", [
+      await getCatalogId("quotation_statuses", "aceptada"),
+      fixture.latestVersionId,
+    ]);
+    const auditInsert = await query(
+      `INSERT INTO audit_log
+         (module, action, entity_type, entity_id, status, detail, created_at)
+       VALUES ('cotizaciones', 'declarar_ganada', 'quotation_version', ?, 'success', 'test', '2034-02-10 12:00:00.000')`,
+      [fixture.latestVersionId],
+    );
+
+    const readTracking = async () => {
+      const response = await request(app)
+        .get(`/api/commercial-planning/periods/${periodId}/commission-tracking`)
+        .set("Authorization", planningAuthorization);
+      expect(response.status).toBe(200);
+      const summary = response.body.summaries.find((item) => item.sellerUserId === ctx.sellerUserId);
+      return {
+        quotation: summary?.quotations.find((item) => item.quotationId === fixture.quotationId),
+        invalid: response.body.invalidQuotations.find((item) => item.quotationId === fixture.quotationId),
+      };
+    };
+    const setDiscount = (mode, value, distribution = "total") =>
+      query(
+        `UPDATE quotation_versions
+         SET summary_discount_mode = ?, summary_discount_value = ?, summary_distribution_mode = ?
+         WHERE id = ?`,
+        [mode, value, distribution, fixture.latestVersionId],
+      );
+
+    try {
+      await setDiscount("percentage", 0);
+      let { quotation, invalid } = await readTracking();
+      expect(invalid).toBeUndefined();
+      expect(quotation).toEqual(expect.objectContaining({
+        totalSaleAmount: 2000,
+        totalCostAmount: 1000,
+        quotationMarginPct: 50,
+        discountAmount: 0,
+      }));
+
+      // 8,000 MXN sobre 40,000 MXN de venta: 20% de descuento.
+      await setDiscount("amount", 8000);
+      ({ quotation } = await readTracking());
+      expect(quotation).toEqual(expect.objectContaining({
+        totalSaleAmount: 1600,
+        totalContributionAmount: 600,
+        quotationMarginPct: 37.5,
+        discountAmount: 400,
+      }));
+
+      await setDiscount("percentage", 10);
+      ({ quotation } = await readTracking());
+      expect(quotation.totalSaleAmount).toBe(1800);
+
+      // Con distribución por ítem el descuento ya está dentro de los ítems y no se aplica otra vez.
+      await setDiscount("percentage", 10, "per_item");
+      ({ quotation } = await readTracking());
+      expect(quotation.totalSaleAmount).toBe(2000);
+
+      await setDiscount("percentage", 0);
+      await query("UPDATE quotation_versions SET exchange_rate = 1 WHERE id = ?", [fixture.latestVersionId]);
+      ({ quotation, invalid } = await readTracking());
+      expect(quotation).toBeUndefined();
+      expect(invalid).toEqual(expect.objectContaining({
+        statusCode: "aceptada",
+        quotationCurrencyCode: "MXN",
+        reason: expect.stringMatching(/tipo de cambio inválido/),
+      }));
     } finally {
       await query("DELETE FROM audit_log WHERE id = ?", [Number(auditInsert.insertId)]);
     }

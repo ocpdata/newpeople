@@ -1185,7 +1185,10 @@ export default function CommercialPlanningPage({ can }) {
                   aria-label="Moneda anual"
                   value={annualCurrencyCode}
                   onChange={(event) => setAnnualCurrencyCode(event.target.value)}
-                  disabled={!canEditAnnualTargets || savingAnnualTargets}
+                  disabled={!canEditAnnualTargets || savingAnnualTargets || Boolean(annualPlan?.currencyLocked)}
+                  title={annualPlan?.currencyLocked
+                    ? "Las cuotas ya están definidas en esta moneda. Para cambiarla, borra primero todas las cuotas del año."
+                    : undefined}
                 >
                   {withCurrentCatalogOption(currencies, annualCurrencyCode).map((currency) => (
                     <option key={currency.id || currency.code} value={currency.code}>
@@ -1193,6 +1196,9 @@ export default function CommercialPlanningPage({ can }) {
                     </option>
                   ))}
                 </select>
+                {annualPlan?.currencyLocked ? (
+                  <small className="field-hint">Las cuotas del año están en {annualPlan.currencyCode}.</small>
+                ) : null}
               </label>
               {canCreate || canUpdate ? (
                 <button

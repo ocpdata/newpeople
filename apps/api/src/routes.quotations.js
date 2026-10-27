@@ -246,6 +246,34 @@ const versionPayloadSchema = z.object({
 
 const versionUpdateSchema = versionPayloadSchema;
 
+// USD siempre usa tipo de cambio 1; cualquier otra moneda exige un tipo de cambio real
+// (mayor que 0 y distinto de 1) para que los montos puedan convertirse a USD.
+function getQuotationCurrencyRateError({ currencyCode, exchangeRate }) {
+  const currency = String(currencyCode || "USD")
+    .trim()
+    .toUpperCase();
+  const rate =
+    exchangeRate === null || exchangeRate === undefined || exchangeRate === ""
+      ? null
+      : Number(exchangeRate);
+  if (currency === "USD") {
+    return rate === null || rate === 1
+      ? null
+      : "Una cotizacion en USD debe tener tipo de cambio 1.";
+  }
+  if (rate === null || !Number.isFinite(rate) || rate <= 0 || rate === 1) {
+    return `Captura el tipo de cambio de ${currency} a USD: debe ser mayor que 0 y distinto de 1.`;
+  }
+  return null;
+}
+
+function assertQuotationCurrencyRate(res, source) {
+  const message = getQuotationCurrencyRateError(source);
+  if (!message) return true;
+  res.status(400).json({ message });
+  return false;
+}
+
 const transitionSchema = z.object({
   actionCode: z.enum([
     "solicitar_aprobacion",
@@ -15043,6 +15071,14 @@ router.post(
         errors: parsed.error.flatten(),
       });
     }
+    if (
+      !assertQuotationCurrencyRate(res, {
+        currencyCode: parsed.data.currencyCode,
+        exchangeRate: parsed.data.exchangeRate,
+      })
+    ) {
+      return;
+    }
 
     const opportunity = await getAccessibleOpportunity({
       user: req.user,
@@ -16590,6 +16626,17 @@ router.post(
         errors: parsed.error.flatten(),
       });
     }
+    if (
+      !assertQuotationCurrencyRate(res, {
+        currencyCode: parsed.data.currencyCode ?? latestVersion.currency_code,
+        exchangeRate:
+          parsed.data.exchangeRate == null
+            ? latestVersion.exchange_rate
+            : parsed.data.exchangeRate,
+      })
+    ) {
+      return;
+    }
 
     const contactId = Number(parsed.data.contactId || latestVersion.contact_id);
     const contactValidation = await validateQuotationContact({
@@ -17108,6 +17155,18 @@ router.put(
       return res.status(400).json({ message: "Estado de activacion invalido" });
     }
 
+    if (
+      !assertQuotationCurrencyRate(res, {
+        currencyCode: parsed.data.currencyCode ?? version.currency_code,
+        exchangeRate:
+          parsed.data.exchangeRate == null
+            ? version.exchange_rate
+            : parsed.data.exchangeRate,
+      })
+    ) {
+      return;
+    }
+
     const now = new Date();
     await query(
       `UPDATE quotation_versions
@@ -17288,6 +17347,18 @@ router.put(
       return res
         .status(500)
         .json({ message: "Catalogos de cotizacion incompletos" });
+    }
+
+    if (
+      !assertQuotationCurrencyRate(res, {
+        currencyCode: parsed.data.currencyCode ?? version.currency_code,
+        exchangeRate:
+          parsed.data.exchangeRate == null
+            ? version.exchange_rate
+            : parsed.data.exchangeRate,
+      })
+    ) {
+      return;
     }
 
     const now = new Date();
@@ -18999,6 +19070,22 @@ router.post(
         const originalListPriceUnit = roundProviderDocumentImportMoney(
           item.resolvedCostUnit,
         );
+        const importCurrencyRateError =
+          originalCurrencyCode !==
+          normalizeProviderDocumentImportCurrencyCode(
+            finalCommercialTerms.currencyCode,
+            originalCurrencyCode,
+          )
+            ? getQuotationCurrencyRateError({
+                currencyCode: finalCommercialTerms.currencyCode,
+                exchangeRate: version.exchange_rate,
+              })
+            : null;
+        if (importCurrencyRateError) {
+          throw Object.assign(new Error(importCurrencyRateError), {
+            status: 409,
+          });
+        }
         const listPriceUnit = convertProviderDocumentImportCostToQuotationPrice(
           {
             originalCostUnit: originalListPriceUnit,
@@ -21818,6 +21905,16 @@ router.post(
       return res
         .status(403)
         .json({ message: "No autorizado para esta accion" });
+    }
+
+    if (
+      ["enviar", "declarar_ganada", "aceptar"].includes(actionCode) &&
+      !assertQuotationCurrencyRate(res, {
+        currencyCode: version.currency_code,
+        exchangeRate: version.exchange_rate,
+      })
+    ) {
+      return;
     }
 
     if (actionCode === "aprobar") {

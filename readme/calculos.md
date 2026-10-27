@@ -37,7 +37,7 @@ No existe un estado ni una acción para cerrar períodos. Los cuatro trimestres 
 
 - Metas y Configuración de comisiones tienen selectores de año propios, independientes entre sí y del seguimiento.
 - Cada vendedor tiene como máximo una meta por trimestre. Guardar las cuotas las hace vigentes de inmediato.
-- La moneda de Metas es compartida por los cuatro trimestres; cambiarla no convierte importes existentes.
+- La moneda de Metas es una sola por año (por defecto USD) y es la moneda en que se definieron las cuotas. Una vez que el año tiene cuotas guardadas, la moneda queda bloqueada (`currencyLocked`): la API responde 409 si se intenta cambiarla y la pantalla deshabilita el selector. Para usar otra moneda hay que borrar primero todas las cuotas del año y guardar.
 - Si los períodos heredados de un año contienen monedas distintas, la lectura y el guardado responden con conflicto; no se reinterpretan importes.
 - Las tasas de comisión siguen guardándose por período y vendedor. Al editar la configuración anual se conservan las notas históricas aunque no se presenten en esa tabla.
 - El cálculo de comisiones conserva sus reglas de cuota, margen mínimo y elegibilidad por ítem descritas en [comisiones.md](./comisiones.md).

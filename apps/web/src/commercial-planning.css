@@ -1135,6 +1135,13 @@
   align-items: center;
   gap: 6px;
   padding-bottom: 8px;
+  white-space: nowrap;
+}
+
+.commission-tracking-controls .commission-tracking-check input {
+  flex: none;
+  width: auto;
+  padding: 0;
 }
 
 .commission-tracking-tabs {
@@ -1281,4 +1288,40 @@
 .commission-quarter-table td:last-child,
 .commission-quarter-table th:last-child {
   text-align: right;
+}
+
+.commission-quarter-sale {
+  position: relative;
+  margin-top: 3px;
+  color: #5a6c82;
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.commission-sale-tooltip {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #24364b;
+  color: #fff;
+  font-size: 12px;
+}
+
+.commission-quarter-sale:hover .commission-sale-tooltip,
+.commission-quarter-sale:focus .commission-sale-tooltip {
+  display: block;
+}
+
+.commission-year-table tfoot {
+  background: #f1f6fd;
+}
+
+.commission-year-table tfoot td,
+.commission-year-table tfoot th {
+  border-top: 2px solid #d5deeb;
 }

@@ -32,7 +32,10 @@ La primera version ya permite configurar porcentajes y consultar seguimiento por
 
 - Muestra las reglas resumidas y el motivo de bloqueo de cada cotizacion, por ejemplo `Bloqueada por margen (7.50% < 10%)`.
 - La vista inicial es `Año completo`: matriz vendedor × T1–T4 con la comision de cada trimestre, el total anual y la venta aceptada. Las pestañas `T1`–`T4` muestran un solo trimestre.
+- Debajo del cumplimiento se muestra la venta aceptada trimestral en miles aproximados, con menor tamaño y el importe exacto al pasar el cursor o enfocar el dato. Las ventas menores a mil se indican como tales y las ventas cero se muestran en cero, incluso sin cuota.
+- La matriz anual termina con una fila `Total` (o `Total mostrado` al filtrar), que suma las comisiones y ventas de los vendedores visibles, sin porcentaje de cumplimiento global. Los totales se calculan antes de redondear.
 - Filtro por vendedor, interruptor `Solo con actividad` y exportacion a Excel (`comisiones-seguimiento-{año}.xlsx`, con hojas de resumen anual, trimestres, cotizaciones aceptadas y pendientes).
+- El Excel conserva los cuatro trimestres para los vendedores visibles; el resumen anual incluye ventas trimestrales exactas y una fila de totales sin abreviar.
 - Tarjetas de resumen del alcance elegido: comision a pagar, venta aceptada / cuota, vendedores habilitados, contribucion elegible y `Por aceptar`.
 - En la vista trimestral cada vendedor muestra barra de cumplimiento con marca en 70%, un estado que explica por que tiene o no comision (por ejemplo `faltan $X para habilitar`) y un detalle desplegable con categorias (contribucion × % = comision) y cotizaciones.
 - `Pendientes de aceptar` lista las cotizaciones en estado `ganada` cuya fecha ganada cae en el periodo. No suman a venta, cumplimiento ni comision hasta que se acepten.
@@ -156,7 +159,7 @@ Los endpoints viven bajo `/api/commercial-planning`.
   - requiere `planeacion_comercial.update`.
   - rechaza cambios si el periodo esta cerrado.
 - `GET /periods/:periodId/commission-tracking`
-  - devuelve el resumen y detalle del seguimiento calculado, mas `pendingQuotations` (cotizaciones `ganada` aun sin aceptar, sin items y sin sumar al calculo).
+  - devuelve el resumen y detalle del seguimiento calculado, mas `pendingQuotations` (cotizaciones `ganada` aun sin aceptar, sin items y sin sumar al calculo) e `invalidQuotations` (cotizaciones que no se pudieron convertir a la moneda de la cuota, con el motivo).
 
 ## Permisos funcionales
 
@@ -179,6 +182,8 @@ La funcionalidad de comisiones depende de:
 - Solo cuentan cotizaciones `aceptada`; su fecha para comisiones es el ultimo evento `declarar_ganada` exitoso de la version mayor en `audit_log`. Si no existe (por ejemplo, se acepto sin pasar por ganada), se usa el primer evento `aceptar` y, en ultimo caso, `quotation_versions.updated_at`.
 - El seguimiento devuelve `wonAt` y `statusCode` por cotizacion.
 - El vendedor se toma de `opportunities.seller_user_id`.
+- Monedas: las ventas se convierten a la moneda anual de la cuota. Una cotizacion en la misma moneda no se convierte; una en MXN con cuota en USD se divide entre su tipo de cambio. Si la cotizacion tiene moneda o tipo de cambio invalido (por ejemplo MXN con tipo de cambio 1), o si la cuota anual no esta en USD y la cotizacion esta en otra moneda (no hay tipo de cambio de planeacion), la cotizacion no suma a venta, cumplimiento ni comision: se devuelve en `invalidQuotations` y la pantalla la lista en `Sin convertir a la moneda de la cuota`.
+- Descuento global: se aplica sobre la venta sin IVA, en la moneda de la cotizacion (`summary_discount_value` por monto esta en esa moneda). Con descuento por monto en una cotizacion con IVA por item, el monto se compara contra el total con IVA. Se reparte en proporcion a la venta de cada item; la contribucion y el margen se calculan con la venta descontada. Con distribucion `per_item` el descuento ya esta dentro del descuento final de cada item y no se aplica otra vez. El detalle expone `discountAmount`.
 - La clasificacion de servicios de Access Quality se resuelve por heuristica sobre tipo de item y nombre del proveedor.
 - El seguimiento usa calculo dinamico; si cambian datos historicos de cotizaciones, el seguimiento historico tambien cambia.
 - No existe aun cierre contable de comisiones ni snapshot oficial del trimestre.

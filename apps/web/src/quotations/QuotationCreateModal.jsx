@@ -13,7 +13,10 @@ import {
   buildQuotationItemPricing,
   formatQuotationMoneyInputValue,
   formatQuotationAmount,
+  getQuotationCurrencyLabel,
   isQuotationSectionCountedInSummary,
+  normalizeQuotationCurrencyCode,
+  normalizeQuotationExchangeRateValue,
   resolveQuotationItemSaleTarget,
   sanitizeQuotationMoneyInputValue,
   stepQuantityValueByUnit,
@@ -639,6 +642,21 @@ function QuotationCreateModal({
   const [financingForm, setFinancingForm] = useState(() =>
     buildQuotationFinancingForm(),
   );
+  const exchangeRateRequestSequenceRef = useRef(0);
+  const exchangeRateManualOverrideRef = useRef(0);
+  const [isExchangeRateLoading, setIsExchangeRateLoading] = useState(false);
+  const [exchangeRateFeedback, setExchangeRateFeedback] = useState("");
+  const [exchangeRateError, setExchangeRateError] = useState("");
+  const [summaryDiscountResetNotice, setSummaryDiscountResetNotice] =
+    useState("");
+  const quotationCurrencyCode = normalizeQuotationCurrencyCode(
+    commercialConditions.currencyCode,
+    "USD",
+  );
+  const quotationExchangeRateValue = normalizeQuotationExchangeRateValue(
+    commercialConditions.exchangeRate,
+    1,
+  );
   useEffect(() => {
     if (!createProviderDocumentImportAppliedToken) {
       return;
@@ -692,7 +710,6 @@ function QuotationCreateModal({
         {},
         {
           inclusionTypes: catalogs.inclusionTypes,
-          exchangeRate: commercialConditions.exchangeRate,
         },
       ),
     [
@@ -778,7 +795,6 @@ function QuotationCreateModal({
         },
         {
           inclusionTypes: catalogs.inclusionTypes,
-          exchangeRate: commercialConditions.exchangeRate,
         },
       ),
     [
@@ -920,11 +936,103 @@ function QuotationCreateModal({
     );
   }
 
-  function handleCommercialConditionChange(field, value) {
+  async function handleCommercialConditionChange(field, value) {
+    if (field === "exchangeRate") {
+      exchangeRateManualOverrideRef.current =
+        exchangeRateRequestSequenceRef.current;
+      setIsExchangeRateLoading(false);
+      setExchangeRateError("");
+      setExchangeRateFeedback("");
+      setCommercialConditions((currentValue) => ({
+        ...currentValue,
+        exchangeRate: value,
+      }));
+      return;
+    }
+
+    if (field !== "currencyCode") {
+      setCommercialConditions((currentValue) => ({
+        ...currentValue,
+        [field]: value,
+      }));
+      return;
+    }
+
+    const nextCurrencyCode = String(value || "")
+      .trim()
+      .toUpperCase();
+    const shouldResetDiscountAmount =
+      nextCurrencyCode !== quotationCurrencyCode &&
+      summaryDiscountMode === "amount" &&
+      Number(summaryDiscountValue) > 0;
+    const isUsd = !nextCurrencyCode || nextCurrencyCode === "USD";
+
     setCommercialConditions((currentValue) => ({
       ...currentValue,
-      [field]: value,
+      currencyCode: nextCurrencyCode,
+      // El tipo de cambio anterior pertenece a otra moneda; se sugiere o captura de nuevo.
+      exchangeRate: isUsd ? "1.0000" : "",
     }));
+    if (shouldResetDiscountAmount) {
+      setSummaryDiscountValue("0");
+    }
+    setSummaryDiscountResetNotice(
+      shouldResetDiscountAmount
+        ? `El descuento por valor se reinició porque cambió la moneda a ${nextCurrencyCode}.`
+        : "",
+    );
+    setExchangeRateError("");
+    setExchangeRateFeedback("");
+
+    const requestId = exchangeRateRequestSequenceRef.current + 1;
+    exchangeRateRequestSequenceRef.current = requestId;
+    exchangeRateManualOverrideRef.current = 0;
+
+    if (isUsd) {
+      setIsExchangeRateLoading(false);
+      setExchangeRateFeedback("Tipo de cambio 1 para cotizaciones en USD.");
+      return;
+    }
+
+    setIsExchangeRateLoading(true);
+    try {
+      const { data } = await api.get("/api/quotation-exchange-rate", {
+        params: { currency: nextCurrencyCode },
+      });
+      if (
+        requestId !== exchangeRateRequestSequenceRef.current ||
+        exchangeRateManualOverrideRef.current === requestId
+      ) {
+        return;
+      }
+      const suggestedRate = Number(data?.exchangeRate);
+      if (!Number.isFinite(suggestedRate) || suggestedRate <= 0) {
+        throw new Error("Tipo de cambio sugerido inválido");
+      }
+      setCommercialConditions((currentValue) =>
+        normalizeQuotationCurrencyCode(currentValue.currencyCode, "USD") ===
+        nextCurrencyCode
+          ? { ...currentValue, exchangeRate: suggestedRate.toFixed(4) }
+          : currentValue,
+      );
+      setExchangeRateFeedback(
+        `Tipo sugerido desde Frankfurter (${data?.baseCurrency || "USD"} -> ${data?.targetCurrency || nextCurrencyCode}).`,
+      );
+    } catch (error) {
+      if (requestId !== exchangeRateRequestSequenceRef.current) {
+        return;
+      }
+      setExchangeRateError(
+        getApiErrorMessage(
+          error,
+          "No fue posible obtener el tipo de cambio sugerido. Captúralo manualmente.",
+        ),
+      );
+    } finally {
+      if (requestId === exchangeRateRequestSequenceRef.current) {
+        setIsExchangeRateLoading(false);
+      }
+    }
   }
 
   function handleFinancingFieldChange(field, value) {
@@ -4006,8 +4114,8 @@ function QuotationCreateModal({
                         <thead>
                           <tr>
                             <th>Categoria</th>
-                            <th>Costo US$</th>
-                            <th>Venta US$</th>
+                            <th>Costo {getQuotationCurrencyLabel(quotationCurrencyCode)}</th>
+                            <th>Venta {getQuotationCurrencyLabel(quotationCurrencyCode)}</th>
                             <th>Margen %</th>
                           </tr>
                         </thead>
@@ -4109,7 +4217,7 @@ function QuotationCreateModal({
                         >
                           {summaryDiscountMode === "percentage"
                             ? "Descuento %"
-                            : "Descuento US$"}
+                            : `Descuento ${getQuotationCurrencyLabel(quotationCurrencyCode)}`}
                         </label>
                         <input
                           className="quotation-summary-discount-input"
@@ -4146,8 +4254,25 @@ function QuotationCreateModal({
                         <p className="field-hint quotation-summary-discount-hint">
                           {summaryDiscountMode === "percentage"
                             ? "Se aplica sobre el valor total de venta de la cotización."
-                            : "Se aplica como monto directo sobre el valor total de venta de la cotización."}
+                            : `Se aplica como monto directo, en ${quotationCurrencyCode}, sobre el valor total de venta de la cotización.`}
                         </p>
+                        {summaryDiscountMode === "amount" &&
+                        quotationCurrencyCode !== "USD" &&
+                        summaryDiscountPreview.discountAmount > 0 ? (
+                          <p className="field-hint quotation-summary-discount-hint">
+                            Equivale a US$
+                            {formatQuotationAmount(
+                              summaryDiscountPreview.discountAmount /
+                                quotationExchangeRateValue,
+                            )}{" "}
+                            (tipo de cambio {quotationExchangeRateValue}).
+                          </p>
+                        ) : null}
+                        {summaryDiscountResetNotice ? (
+                          <p className="field-hint quotation-summary-discount-hint">
+                            {summaryDiscountResetNotice}
+                          </p>
+                        ) : null}
                       </div>
 
                       <div className="field-group quotation-summary-control-card quotation-summary-vat-field">
@@ -4232,6 +4357,9 @@ function QuotationCreateModal({
                     onFieldChange={handleCommercialConditionChange}
                     notesRows={7}
                     showPricingHelperText={false}
+                    exchangeRateLoading={isExchangeRateLoading}
+                    exchangeRateFeedback={exchangeRateFeedback}
+                    exchangeRateError={exchangeRateError}
                   />
                 </section>
 
