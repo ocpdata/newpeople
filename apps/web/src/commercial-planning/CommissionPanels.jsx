@@ -17,7 +17,7 @@ function formatMoney(value) {
 
 const RULE_ROWS = [
   ["Periodicidad", "Trimestral", "La comisión se calcula por trimestre."],
-  ["Venta que cuenta", "Cotización aceptada", "Se asigna al trimestre de su fecha de aceptación."],
+  ["Venta que cuenta", "Cotización aceptada", "Se asigna al trimestre en que se declaró ganada, no al de su aceptación."],
   [
     "Cumplimiento mínimo de cuota",
     `${COMMISSION_MIN_QUOTA_ATTAINMENT_PCT}%`,

@@ -6,7 +6,7 @@ Modelo trimestral de comisiones para vendedores dentro de Planeacion Comercial.
 
 - La configuracion de comisiones vive dentro de Planeacion Comercial.
 - Cada periodo trimestral puede definir porcentajes distintos por vendedor.
-- El seguimiento de comisiones se calcula sobre cotizaciones aceptadas del trimestre.
+- El seguimiento de comisiones se calcula sobre cotizaciones aceptadas, ubicadas por la fecha en que se declararon ganadas.
 - La elegibilidad depende de cuota trimestral y margen minimo por cotizacion.
 - El calculo de comision se hace por item sobre contribucion.
 
@@ -16,7 +16,7 @@ La primera version ya permite configurar porcentajes y consultar seguimiento por
 
 - La UI expone dos tabs: `Comisiones · Configuracion` y `Comisiones · Seguimiento`.
 - La configuracion se persiste por periodo y vendedor.
-- El seguimiento se calcula en backend de forma dinamica a partir de las cotizaciones aceptadas del trimestre.
+- El seguimiento se calcula en backend de forma dinamica a partir de las cotizaciones aceptadas cuya fecha ganada cae en el trimestre.
 - El seguimiento muestra resumen por vendedor y detalle por cotizacion.
 - La configuracion queda bloqueada si el periodo ya esta cerrado.
 
@@ -43,8 +43,8 @@ La funcionalidad vive en Planeacion Comercial.
 ## Reglas de negocio
 
 - La periodicidad de comisiones es trimestral.
-- La venta que cuenta para comisiones es la cotizacion con estado `aceptada`.
-- El trimestre de la venta se determina por la fecha de aceptacion.
+- La venta que cuenta para comisiones es la cotizacion con estado `aceptada`; una cotizacion solo `ganada` aun no cuenta.
+- El trimestre de la venta se determina por la fecha en que se declaro ganada, no por la de aceptacion.
 - Cada vendedor debe alcanzar al menos el 70% de su cuota trimestral para habilitar comisiones.
 - Si el vendedor alcanza el 70% al cierre del trimestre, todas sus cotizaciones elegibles del trimestre quedan habilitadas retroactivamente.
 - Una cotizacion con margen menor a 10% no genera comision, pero si cuenta para el cumplimiento de cuota.
@@ -166,12 +166,13 @@ La funcionalidad de comisiones depende de:
 - periodos y versiones de Planeacion Comercial
 - metas trimestrales por vendedor
 - cotizaciones asociadas a oportunidades con vendedor asignado
-- workflow de cotizaciones con estado final `aceptada`
+- workflow de cotizaciones: estado final `aceptada` y evento `declarar_ganada` para la fecha
 - flag `isRenewal` en items de cotizacion
 
 ## Supuestos y limitaciones actuales
 
-- La fecha de aceptacion se toma de `quotation_versions.updated_at` de la version mayor cuando su estado actual es `aceptada`.
+- Solo cuentan cotizaciones `aceptada`; su fecha para comisiones es el ultimo evento `declarar_ganada` exitoso de la version mayor en `audit_log`. Si no existe (por ejemplo, se acepto sin pasar por ganada), se usa el primer evento `aceptar` y, en ultimo caso, `quotation_versions.updated_at`.
+- El seguimiento devuelve `wonAt` y `statusCode` por cotizacion.
 - El vendedor se toma de `opportunities.seller_user_id`.
 - La clasificacion de servicios de Access Quality se resuelve por heuristica sobre tipo de item y nombre del proveedor.
 - El seguimiento usa calculo dinamico; si cambian datos historicos de cotizaciones, el seguimiento historico tambien cambia.

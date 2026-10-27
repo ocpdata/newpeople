@@ -41,6 +41,7 @@ No existe un estado ni una acción para cerrar períodos. Los cuatro trimestres 
 - Si los períodos heredados de un año contienen monedas distintas, la lectura y el guardado responden con conflicto; no se reinterpretan importes.
 - Las tasas de comisión siguen guardándose por período y vendedor. Al editar la configuración anual se conservan las notas históricas aunque no se presenten en esa tabla.
 - El cálculo de comisiones conserva sus reglas de cuota, margen mínimo y elegibilidad por ítem descritas en [comisiones.md](./comisiones.md).
+- El seguimiento cuenta únicamente cotizaciones aceptadas y asigna cada una al trimestre de su evento de auditoría `declarar_ganada`; si no existe, usa el primer evento de aceptación y luego `updated_at`. La API expone la fecha efectiva como `wonAt` y el estado como `statusCode`.
 - Las metas se guardan directamente por trimestre, sin versiones, borradores ni publicación.
 
 ## Principios generales

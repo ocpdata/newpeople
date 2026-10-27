@@ -261,20 +261,35 @@ async function buildCommissionTrackingPayload(periodId) {
   const commissionConfig = await buildCommissionConfigPayload(periodId);
   const { period, sellers } = commissionConfig;
   const { start, end } = getQuarterDateRange(period.year, period.quarter);
+  // Solo cuentan cotizaciones aceptadas, pero se ubican en el trimestre en que se declararon
+  // ganadas. Sin ese evento se usa la primera aceptación y, al final, updated_at.
   const acceptedQuotations = await query(
-    `SELECT q.id AS quotation_id, q.latest_version_id AS quotation_version_id,
-            qv.proposal_name, qv.updated_at AS accepted_at, qv.currency_code,
-            qv.exchange_rate, a.name AS account_name, o.name AS opportunity_name,
-            o.seller_user_id, su.full_name AS seller_user_name, su.email AS seller_user_email
-     FROM quotations q
-     INNER JOIN quotation_versions qv ON qv.id = q.latest_version_id
-     INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
-     INNER JOIN opportunities o ON o.id = q.opportunity_id
-     INNER JOIN accounts a ON a.id = o.account_id
-     LEFT JOIN users su ON su.id = o.seller_user_id
-     WHERE qs.code = 'aceptada' AND o.seller_user_id IS NOT NULL
-       AND qv.updated_at >= ? AND qv.updated_at < ?
-     ORDER BY qv.updated_at DESC, q.id DESC`,
+    `SELECT w.* FROM (
+       SELECT q.id AS quotation_id, q.latest_version_id AS quotation_version_id,
+              qv.proposal_name, qs.code AS status_code, qv.currency_code,
+              qv.exchange_rate, a.name AS account_name, o.name AS opportunity_name,
+              o.seller_user_id, su.full_name AS seller_user_name, su.email AS seller_user_email,
+              COALESCE(
+                (SELECT MAX(al.created_at) FROM audit_log al
+                  WHERE al.module = 'cotizaciones' AND al.action = 'declarar_ganada'
+                    AND al.entity_type = 'quotation_version' AND al.entity_id = qv.id
+                    AND al.status = 'success'),
+                (SELECT MIN(al.created_at) FROM audit_log al
+                  WHERE al.module = 'cotizaciones' AND al.action = 'aceptar'
+                    AND al.entity_type = 'quotation_version' AND al.entity_id = qv.id
+                    AND al.status = 'success'),
+                qv.updated_at
+              ) AS won_at
+       FROM quotations q
+       INNER JOIN quotation_versions qv ON qv.id = q.latest_version_id
+       INNER JOIN quotation_statuses qs ON qs.id = qv.status_id
+       INNER JOIN opportunities o ON o.id = q.opportunity_id
+       INNER JOIN accounts a ON a.id = o.account_id
+       LEFT JOIN users su ON su.id = o.seller_user_id
+       WHERE qs.code = 'aceptada' AND o.seller_user_id IS NOT NULL
+     ) w
+     WHERE w.won_at >= ? AND w.won_at < ?
+     ORDER BY w.won_at DESC, w.quotation_id DESC`,
     [start, end],
   );
   const quotationVersionIds = acceptedQuotations.map((row) => Number(row.quotation_version_id));
@@ -348,7 +363,8 @@ async function buildCommissionTrackingPayload(periodId) {
       quotationId: Number(quotationRow.quotation_id),
       quotationVersionId: Number(quotationRow.quotation_version_id),
       proposalName: quotationRow.proposal_name || `Cotizacion ${quotationRow.quotation_id}`,
-      acceptedAt: quotationRow.accepted_at, accountName: quotationRow.account_name || "",
+      wonAt: quotationRow.won_at, statusCode: quotationRow.status_code,
+      accountName: quotationRow.account_name || "",
       opportunityName: quotationRow.opportunity_name || "",
       sellerUserId: Number(quotationRow.seller_user_id), sellerUserName: quotationRow.seller_user_name || "",
       sellerUserEmail: quotationRow.seller_user_email || "",

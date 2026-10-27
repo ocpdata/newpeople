@@ -1643,7 +1643,7 @@ export default function CommercialPlanningPage({ can }) {
                         <thead>
                           <tr>
                             <th>Cotización</th>
-                            <th>Fecha aceptación</th>
+                            <th>Fecha ganada</th>
                             <th>Cuenta</th>
                             <th>Venta</th>
                             <th>Margen</th>
@@ -1658,7 +1658,7 @@ export default function CommercialPlanningPage({ can }) {
                                 <strong>{quotation.proposalName}</strong>
                                 <div className="field-hint">#{quotation.quotationId}</div>
                               </td>
-                              <td>{formatDateTime(quotation.acceptedAt)}</td>
+                              <td>{formatDateTime(quotation.wonAt)}</td>
                               <td>
                                 {quotation.accountName}
                                 {quotation.opportunityName ? (

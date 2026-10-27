@@ -25051,4 +25051,70 @@ describe("API integration baseline", () => {
       ]),
     );
   });
+
+  test("seguimiento de comisiones cuenta cotizaciones aceptadas en el trimestre en que se declararon ganadas", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.commercial.planning@example.com`,
+    );
+    expect(loginResponse.status).toBe(200);
+    const token = loginResponse.body.token;
+    const fixture = await createQuotationFixture(`${TEST_PREFIX}_commission_won`);
+
+    const saveTargetsResponse = await request(app)
+      .put("/api/commercial-planning/years/2033/targets")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        currencyCode: "USD",
+        quarters: [
+          { quarter: 1, targets: [] },
+          { quarter: 2, targets: [{ sellerUserId: ctx.sellerUserId, salesQuotaAmount: 1000, expectedMarginPercent: 20 }] },
+          { quarter: 3, targets: [] },
+          { quarter: 4, targets: [] },
+        ],
+      });
+    expect(saveTargetsResponse.status).toBe(200);
+    const [, secondQuarter, thirdQuarter] = saveTargetsResponse.body.quarters;
+
+    await query(
+      `INSERT INTO quotation_statuses (code, name)
+       SELECT 'aceptada', 'Aceptada' FROM DUAL
+       WHERE NOT EXISTS (SELECT 1 FROM quotation_statuses WHERE code = 'aceptada')`,
+    );
+    await query("UPDATE quotation_versions SET status_id = ? WHERE id = ?", [
+      await getCatalogId("quotation_statuses", "aceptada"),
+      fixture.latestVersionId,
+    ]);
+    const auditInsert = await query(
+      `INSERT INTO audit_log
+         (module, action, entity_type, entity_id, status, detail, created_at)
+       VALUES ('cotizaciones', 'declarar_ganada', 'quotation_version', ?, 'success', 'test', '2033-05-10 12:00:00.000')`,
+      [fixture.latestVersionId],
+    );
+
+    try {
+      const trackedQuotationIds = async (period) => {
+        const response = await request(app)
+          .get(`/api/commercial-planning/periods/${period.period.id}/commission-tracking`)
+          .set("Authorization", `Bearer ${token}`);
+        expect(response.status).toBe(200);
+        return response.body.summaries
+          .filter((summary) => summary.sellerUserId === ctx.sellerUserId)
+          .flatMap((summary) => summary.quotations)
+          .map((quotation) => ({ id: quotation.quotationId, statusCode: quotation.statusCode, wonAt: quotation.wonAt }));
+      };
+
+      const secondQuarterQuotations = await trackedQuotationIds(secondQuarter);
+      expect(secondQuarterQuotations).toEqual([
+        expect.objectContaining({
+          id: fixture.quotationId,
+          statusCode: "aceptada",
+          wonAt: expect.stringMatching(/^2033-05-10/),
+        }),
+      ]);
+      expect(await trackedQuotationIds(thirdQuarter)).toEqual([]);
+    } finally {
+      await query("DELETE FROM audit_log WHERE id = ?", [Number(auditInsert.insertId)]);
+    }
+  });
 });
