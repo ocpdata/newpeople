@@ -1250,9 +1250,9 @@ export async function reanalyzeCommercialEnablementAssetSummary({
         ? {
             userId: Number(user.id),
             featureCode: "commercial_enablement.asset_summary_reanalysis",
-            jobType: "commercial_enablement_asset_summary_reanalysis",
+            jobType: "enablement_summary_reanalysis",
             jobId: Number(asset.id),
-            internalRequestId: `commercial_enablement_asset_summary_reanalysis:${Number(asset.id)}:${Date.now()}`,
+            internalRequestId: `enablement_summary_reanalysis:${Number(asset.id)}:${Date.now()}`,
           }
         : null,
     });

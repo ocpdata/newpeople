@@ -1,6 +1,27 @@
-import request from "supertest";
+import supertest from "supertest";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
+
+// La aprobacion de cotizaciones exige indicar si se aprueba con o sin IA; las pruebas
+// que solo necesitan una cotizacion aprobada usan la aprobacion humana por defecto.
+function request(application) {
+  const agent = supertest(application);
+  const post = agent.post.bind(agent);
+  agent.post = (url, ...rest) => {
+    const pending = post(url, ...rest);
+    if (/\/transition$/.test(String(url))) {
+      const send = pending.send.bind(pending);
+      pending.send = (body) =>
+        send(
+          body?.actionCode === "aprobar" && !body.approvalContext
+            ? { ...body, approvalContext: { approvalMode: "without_ai" } }
+            : body,
+        );
+    }
+    return pending;
+  };
+  return agent;
+}
 import { config } from "../src/config.js";
 import { ensureCommercialEnablementPermissions } from "../src/commercial-enablement/permissions.js";
 import { ensureCommercialIntelligencePermissions } from "../src/commercial-intelligence/permissions.js";
@@ -23331,6 +23352,7 @@ describe("API integration baseline", () => {
       config.openai.apiKey = "test-key";
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
+        headers: { get: () => null },
         json: async () => ({
           output_text: JSON.stringify({
             summary:
@@ -23573,7 +23595,7 @@ describe("API integration baseline", () => {
     );
 
     const intakePublicId = `${TEST_PREFIX}_intake_summary_language`;
-    const [sessionResult] = await query(
+    const sessionResult = await query(
       `INSERT INTO commercial_enablement_intake_sessions
         (public_id, status, uploaded_by_user_id, source_file_name, source_mime_type,
          source_size_bytes, source_checksum, storage_provider, storage_bucket,
@@ -23617,8 +23639,11 @@ describe("API integration baseline", () => {
       config.openai.apiKey = "test-key";
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
+        headers: { get: () => null },
         json: async () => ({
           output_text: JSON.stringify({
+            summary:
+              "Ficha tecnica sobre Micetro. Resume el contenido principal del documento y su utilidad para dar visibilidad centralizada de DNS, DHCP y administracion de direcciones IP.",
             prefill: {
               summary: {
                 value:

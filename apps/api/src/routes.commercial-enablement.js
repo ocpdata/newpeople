@@ -513,6 +513,7 @@ router.post(
         }),
       );
     } catch (error) {
+      if (!error.status || error.status >= 500) console.error(error);
       return res.status(error.status || 500).json(
         error.body || {
           message:
