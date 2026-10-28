@@ -50,7 +50,7 @@ Buscador de materiales (archivos y enlaces) listos para enviar. El vendedor escr
 - Los selectores de adjuntos de correos y campanas, y las fuentes de propuestas, solo ofrecen materiales activos para cliente. Al enviar un correo desde una oportunidad o un lead, el servidor vuelve a validar que cada adjunto de biblioteca siga activo y para cliente.
 - **Enviar por correo**: desde el panel se elige una oportunidad abierta o un lead (segun permisos); se abre su modal de correo con el material ya adjunto. El traspaso viaja en `sessionStorage` (`crm_library_send_handoff`, vigente 2 minutos).
 - **Usar en propuesta**: agrega el material a la seccion de folletos de una propuesta activa (maximo 10 folletos). Solo materiales activos y para cliente.
-- **Material sugerido**: bloque en Operaciones de la oportunidad con hasta 5 materiales para cliente; puntua coincidencias de fabricante (5), solucion y tecnologia (3), industria (2) y etapa (3) con el nombre de la oportunidad, la cuenta y la etapa.
+- **Material sugerido**: bloque visible bajo el encabezado de "Desarrollo de la oportunidad" (aun colapsado) con hasta 5 materiales para cliente; puntua coincidencias de fabricante (5), solucion y tecnologia (3), industria (2) y etapa (3) con el nombre de la oportunidad, la cuenta y la etapa.
 - **Uso**: se registran los eventos `viewed`, `downloaded`, `opened_link`, `favorited`, `shared` (enlace compartible), `emailed` (correo enviado desde oportunidad o lead) y `added_to_proposal`. Alimentan el atajo Recientes.
 
 ## Estado actual (2026-10-28)

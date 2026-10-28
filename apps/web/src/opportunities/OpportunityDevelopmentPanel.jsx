@@ -3196,6 +3196,14 @@ export default function OpportunityDevelopmentPanel({
         </div>
       </div>
 
+      <OpportunityLibrarySuggestions
+        opportunityId={editingOpportunityId}
+        canAttach={canOpenSendEmailOperation && !sendingOperationEmail}
+        onAttach={(assetPublicId) =>
+          handleOpenSendEmailOperation(assetPublicId)
+        }
+      />
+
       {sourceError && isDevelopmentExpanded ? (
         <p className="field-hint opportunity-development-warning">
           {sourceError}
@@ -4406,13 +4414,6 @@ export default function OpportunityDevelopmentPanel({
                   emails.
                 </p>
               ) : null}
-              <OpportunityLibrarySuggestions
-                opportunityId={editingOpportunityId}
-                canAttach={canOpenSendEmailOperation && !sendingOperationEmail}
-                onAttach={(assetPublicId) =>
-                  handleOpenSendEmailOperation(assetPublicId)
-                }
-              />
             </div>
           </div>
 
