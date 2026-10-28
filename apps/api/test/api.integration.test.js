@@ -23367,6 +23367,192 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("biblioteca agrega un material a los folletos de una propuesta y sugiere material en la oportunidad", async () => {
+    const fixture = await createQuotationFixture(
+      `${TEST_PREFIX}_library_brochure`,
+    );
+    const adminLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.quotes.admin@example.com`,
+    );
+    const adminAuth = { Authorization: `Bearer ${adminLogin.body.token}` };
+
+    const approval = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/transition`)
+      .set(adminAuth)
+      .send({
+        actionCode: "aprobar",
+        approvalContext: { approvalMode: "without_ai" },
+      });
+    expect(approval.status).toBe(200);
+    const proposalResponse = await request(app)
+      .post(`/api/quotation-versions/${fixture.latestVersionId}/proposals`)
+      .set(adminAuth)
+      .send({});
+    expect(proposalResponse.status).toBe(201);
+    const proposalId = Number(proposalResponse.body.proposal.id);
+    cleanup.proposalIds.push(proposalId);
+
+    const enablementRoleId = await createRole({
+      name: `${TEST_PREFIX}_enablement_manager_brochure`,
+      permissionCodes: ["enablement_comercial.manage"],
+    });
+    cleanup.roleIds.push(enablementRoleId);
+    const enablementUserId = await createUser({
+      fullName: "API Enablement Brochure",
+      email: `${TEST_PREFIX}.enablement.brochure@example.com`,
+      roleIds: [enablementRoleId],
+    });
+    cleanup.userIds.push(enablementUserId);
+    const enablementLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.enablement.brochure@example.com`,
+    );
+    const enablementAuth = {
+      Authorization: `Bearer ${enablementLogin.body.token}`,
+    };
+
+    async function createActiveAsset(suffix, visibilityLevel) {
+      const created = await request(app)
+        .post("/api/commercial-enablement/assets")
+        .set(enablementAuth)
+        .send({
+          title: `${TEST_PREFIX}_${suffix}`,
+          assetTypeCode: "solution_brief",
+          status: "archived",
+          sourceType: "url",
+          visibilityLevel,
+          manufacturerCodes: ["microsoft"],
+        });
+      expect(created.status).toBe(201);
+      await request(app)
+        .post(`/api/commercial-enablement/assets/${created.body.publicId}/links`)
+        .set(enablementAuth)
+        .send({ url: `https://example.com/${suffix}` });
+      const activated = await request(app)
+        .post(
+          `/api/commercial-enablement/assets/${created.body.publicId}/activate`,
+        )
+        .set(enablementAuth)
+        .send({});
+      expect(activated.status).toBe(200);
+      return activated.body;
+    }
+
+    const clientAsset = await createActiveAsset("brochure_client", "client_safe");
+    const internalAsset = await createActiveAsset(
+      "brochure_internal",
+      "internal_sales",
+    );
+
+    const added = await request(app)
+      .post(`/api/proposals/${proposalId}/brochures`)
+      .set(adminAuth)
+      .send({ assetPublicId: clientAsset.publicId });
+    expect(added.status).toBe(200);
+
+    const detail = await request(app)
+      .get(`/api/proposals/${proposalId}`)
+      .set(adminAuth);
+    expect(detail.status).toBe(200);
+    const brochureComponent = (detail.body.components || []).find(
+      (component) => component.componentCode === "product_brochures",
+    );
+    expect(
+      (brochureComponent?.blocks || []).map((block) => block.assetPublicId),
+    ).toEqual([clientAsset.publicId]);
+
+    const repeated = await request(app)
+      .post(`/api/proposals/${proposalId}/brochures`)
+      .set(adminAuth)
+      .send({ assetPublicId: clientAsset.publicId });
+    expect(repeated.status).toBe(200);
+    expect(repeated.body.alreadyAdded).toBe(true);
+
+    const rejected = await request(app)
+      .post(`/api/proposals/${proposalId}/brochures`)
+      .set(adminAuth)
+      .send({ assetPublicId: internalAsset.publicId });
+    expect(rejected.status).toBe(422);
+
+    const usage = await query(
+      `SELECT COUNT(*) AS total
+       FROM commercial_enablement_usage_events_v2 e
+       INNER JOIN commercial_enablement_items i ON i.id = e.item_id
+       WHERE i.public_id = ? AND e.event_type = 'added_to_proposal'`,
+      [clientAsset.publicId],
+    );
+    expect(Number(usage[0].total)).toBe(1);
+
+    const suggestionRoleId = await createRole({
+      name: `${TEST_PREFIX}_library_suggestions_reader`,
+      permissionCodes: [
+        "desarrollo_comercial.update",
+        "oportunidades.update",
+        "oportunidades.read_all",
+      ],
+    });
+    cleanup.roleIds.push(suggestionRoleId);
+    const suggestionUserId = await createUser({
+      fullName: "API Library Suggestions",
+      email: `${TEST_PREFIX}.library.suggestions@example.com`,
+      roleIds: [suggestionRoleId],
+    });
+    cleanup.userIds.push(suggestionUserId);
+    const suggestionLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.library.suggestions@example.com`,
+    );
+    const suggestions = await request(app)
+      .get(
+        `/api/execution-commercial/opportunities/${fixture.opportunityId}/library-suggestions`,
+      )
+      .set({ Authorization: `Bearer ${suggestionLogin.body.token}` });
+    expect(suggestions.status).toBe(200);
+    expect(Array.isArray(suggestions.body.items)).toBe(true);
+
+    const pdfCreated = await request(app)
+      .post("/api/commercial-enablement/assets")
+      .set(enablementAuth)
+      .send({
+        title: `${TEST_PREFIX}_brochure_pdf`,
+        assetTypeCode: "solution_brief",
+        status: "archived",
+        sourceType: "file",
+        visibilityLevel: "client_safe",
+        manufacturerCodes: ["microsoft"],
+      });
+    expect(pdfCreated.status).toBe(201);
+    const pdfUpload = await request(app)
+      .post(
+        `/api/commercial-enablement/assets/${pdfCreated.body.publicId}/files`,
+      )
+      .set(enablementAuth)
+      .attach("file", Buffer.from("%PDF-1.4 prueba"), {
+        filename: "folleto.pdf",
+        contentType: "application/pdf",
+      });
+    expect(pdfUpload.status).toBe(201);
+    const pdfActivated = await request(app)
+      .post(
+        `/api/commercial-enablement/assets/${pdfCreated.body.publicId}/activate`,
+      )
+      .set(enablementAuth)
+      .send({});
+    expect(pdfActivated.status).toBe(200);
+
+    const emailOptions = await request(app)
+      .get(
+        `/api/execution-commercial/opportunities/${fixture.opportunityId}/email-attachments/options`,
+      )
+      .query({ assetPublicId: pdfCreated.body.publicId })
+      .set({ Authorization: `Bearer ${suggestionLogin.body.token}` });
+    expect(emailOptions.status).toBe(200);
+    expect(
+      emailOptions.body.libraryFiles.map((file) => file.resourcePublicId),
+    ).toContain(pdfCreated.body.publicId);
+  });
+
   test("enablement.intake analiza un documento y normaliza a espanol un resumen IA en ingles", async () => {
     const enablementRoleId = await createRole({
       name: `${TEST_PREFIX}_enablement_manager_intake_summary_language`,
