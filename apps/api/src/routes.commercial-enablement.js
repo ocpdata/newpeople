@@ -5,51 +5,37 @@ import { logAuditEvent } from "./audit.js";
 import { ensureCommercialEnablementPermissions } from "./commercial-enablement/permissions.js";
 import { ensureCommercialEnablementSchema } from "./commercial-enablement/schema.js";
 import {
-  addCommercialEnablementCollectionItem,
   analyzeCommercialEnablementIntakeSession,
+  activateCommercialEnablementAsset,
   addCommercialEnablementFavorite,
-  archiveCommercialEnablementAsset,
-  buildCommercialEnablementCollectionSharePackage,
   cancelCommercialEnablementIntakeSession,
   createCommercialEnablementAsset,
   createCommercialEnablementAssetFromIntakeSession,
   createCommercialEnablementIntakeSession,
   createCommercialEnablementCatalogEntry,
+  createCommercialEnablementShareLink,
+  deactivateCommercialEnablementAsset,
   deleteCommercialEnablementCatalogEntry,
   deleteCommercialEnablementAsset,
-  createCommercialEnablementCollection,
   createCommercialEnablementLink,
-  createCommercialEnablementRelation,
   ensureCommercialEnablementStarterData,
-  getCommercialEnablementAnalyticsOverview,
   getCommercialEnablementAssetDetail,
   getCommercialEnablementBootstrap,
   getCommercialEnablementCatalogs,
-  getCommercialEnablementCollection,
-  getCommercialEnablementDashboard,
   getCommercialEnablementFileStream,
-  getCommercialEnablementGovernanceOverview,
   listCommercialEnablementAssets,
-  listCommercialEnablementCollections,
-  listCommercialEnablementFavorites,
-  listCommercialEnablementRecent,
-  obsoleteCommercialEnablementAsset,
   openCommercialEnablementLink,
-  publishCommercialEnablementAsset,
+  openCommercialEnablementShareLink,
   recordCommercialEnablementUsageEvent,
-  removeCommercialEnablementCollectionItem,
   removeCommercialEnablementFavorite,
   updateCommercialEnablementAsset,
   updateCommercialEnablementCatalogEntry,
   updateCommercialEnablementFile,
   updateCommercialEnablementLink,
   uploadCommercialEnablementFiles,
-  validateCommercialEnablementAsset,
   validateCommercialEnablementAssetPayload,
   deleteCommercialEnablementFile,
   deleteCommercialEnablementLink,
-  deleteCommercialEnablementRelation,
-  duplicateCommercialEnablementAsset,
   getCommercialEnablementIntakeExtractedContent,
   getCommercialEnablementIntakeSession,
   reanalyzeCommercialEnablementAssetSummary,
@@ -57,6 +43,15 @@ import {
 } from "./commercial-enablement/service.js";
 
 const router = express.Router();
+export const publicRouter = express.Router();
+
+function buildShareUrl(req, token) {
+  const configuredBaseUrl = String(process.env.APP_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+  const baseUrl = configuredBaseUrl || `${req.protocol}://${req.get("host")}`;
+  return `${baseUrl}/api/public/library-shares/${encodeURIComponent(token)}/download`;
+}
 
 const READ_PERMISSIONS = [
   "enablement_comercial.use",
@@ -86,11 +81,10 @@ const stringArraySchema = z
 const assetSchema = z.object({
   title: z.string().trim().min(3).max(190),
   summary: z.string().trim().max(4000).optional().default(""),
+  usageNote: z.string().trim().max(500).optional().default(""),
   internalDescription: z.string().trim().max(40000).optional().default(""),
   assetTypeCode: z.string().trim().min(2).max(80),
-  status: z
-    .enum(["draft", "published", "obsolete", "archived"])
-    .default("draft"),
+  status: z.enum(["published", "archived"]).default("archived"),
   sourceType: z.enum(["file", "url", "mixed"]).default("mixed"),
   visibilityLevel: z.enum([
     "client_safe",
@@ -98,7 +92,7 @@ const assetSchema = z.object({
     "internal_company",
     "restricted",
   ]),
-  audienceCode: z.string().trim().min(2).max(60),
+  audienceCode: z.string().trim().min(2).max(60).optional().default("mixed"),
   languageCode: z.string().trim().min(2).max(20).default("es"),
   manufacturerCodes: stringArraySchema.optional().default([]),
   solutionCodes: stringArraySchema.optional().default([]),
@@ -133,15 +127,7 @@ const intakeCreateSchema = z.object({
 });
 
 const usageEventSchema = z.object({
-  eventType: z.enum([
-    "viewed",
-    "downloaded",
-    "opened_link",
-    "copied_link",
-    "favorited",
-    "added_to_collection",
-    "shared",
-  ]),
+  eventType: z.enum(["viewed", "downloaded", "opened_link", "favorited"]),
   contextType: z.string().trim().max(40).optional().nullable(),
   contextEntityId: z.number().int().positive().optional().nullable(),
   metadata: z.record(z.any()).optional().nullable(),
@@ -157,16 +143,6 @@ const linkSchema = z.object({
   label: z.string().trim().max(190).optional().default(""),
   description: z.string().trim().max(4000).optional().default(""),
   isPrimary: z.boolean().optional().default(false),
-});
-
-const collectionSchema = z.object({
-  name: z.string().trim().min(3).max(190),
-  description: z.string().trim().max(4000).optional().default(""),
-});
-
-const relationSchema = z.object({
-  relatedAssetPublicId: z.string().trim().min(4).max(80),
-  relationType: z.string().trim().min(3).max(60),
 });
 
 const catalogEntrySchema = z.object({
@@ -193,14 +169,6 @@ router.get(
   requireAnyPermission(READ_PERMISSIONS),
   async (req, res) => {
     res.json(await getCommercialEnablementBootstrap({ user: req.user }));
-  },
-);
-
-router.get(
-  "/dashboard",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    res.json(await getCommercialEnablementDashboard({ user: req.user }));
   },
 );
 
@@ -801,11 +769,11 @@ router.delete(
 );
 
 router.post(
-  "/assets/:assetPublicId/validate",
+  "/assets/:assetPublicId/activate",
   requireAnyPermission(UPLOAD_PERMISSIONS),
   async (req, res) => {
     return res.json(
-      await validateCommercialEnablementAsset({
+      await activateCommercialEnablementAsset({
         assetPublicId: req.params.assetPublicId,
         user: req.user,
       }),
@@ -814,56 +782,71 @@ router.post(
 );
 
 router.post(
-  "/assets/:assetPublicId/publish",
-  requireAnyPermission(MANAGE_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await publishCommercialEnablementAsset({
-        assetPublicId: req.params.assetPublicId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.post(
-  "/assets/:assetPublicId/obsolete",
-  requireAnyPermission(MANAGE_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await obsoleteCommercialEnablementAsset({
-        assetPublicId: req.params.assetPublicId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.post(
-  "/assets/:assetPublicId/archive",
-  requireAnyPermission(MANAGE_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await archiveCommercialEnablementAsset({
-        assetPublicId: req.params.assetPublicId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.post(
-  "/assets/:assetPublicId/duplicate",
+  "/assets/:assetPublicId/deactivate",
   requireAnyPermission(UPLOAD_PERMISSIONS),
   async (req, res) => {
     return res.json(
-      await duplicateCommercialEnablementAsset({
+      await deactivateCommercialEnablementAsset({
         assetPublicId: req.params.assetPublicId,
         user: req.user,
       }),
     );
   },
 );
+
+router.post(
+  "/assets/:assetPublicId/share-link",
+  requireAnyPermission(READ_PERMISSIONS),
+  async (req, res) => {
+    try {
+      const share = await createCommercialEnablementShareLink({
+        assetPublicId: req.params.assetPublicId,
+        user: req.user,
+      });
+      if (share.kind === "url") {
+        return res.json({ url: share.url, expiresAt: share.expiresAt });
+      }
+      return res.json({
+        url: buildShareUrl(req, share.token),
+        expiresAt: share.expiresAt,
+      });
+    } catch (error) {
+      return res
+        .status(error.status || 500)
+        .json({ message: error.message || "No fue posible crear el enlace" });
+    }
+  },
+);
+
+publicRouter.get("/library-shares/:token/download", async (req, res) => {
+  try {
+    const file = await openCommercialEnablementShareLink({
+      token: req.params.token,
+    });
+    file.stream.on("error", (error) => {
+      console.error(error);
+      if (!res.headersSent) {
+        res
+          .status(502)
+          .json({ message: "No fue posible transmitir el archivo" });
+        return;
+      }
+      res.destroy(error);
+    });
+    res.setHeader("Content-Type", file.mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
+    return file.stream.pipe(res);
+  } catch (error) {
+    return res
+      .status(error.status || 500)
+      .json({ message: error.message || "No fue posible abrir el material" });
+  }
+});
 
 router.delete(
   "/assets/:assetPublicId",
@@ -892,169 +875,6 @@ router.delete(
       after: resource,
     });
     return res.json(resource);
-  },
-);
-
-router.post(
-  "/assets/:assetPublicId/relations",
-  requireAnyPermission(UPLOAD_PERMISSIONS),
-  async (req, res) => {
-    const parsed = relationSchema.safeParse(req.body || {});
-    if (!parsed.success) {
-      return res.status(400).json({
-        message: "Datos invalidos",
-        errors: parsed.error.flatten(),
-      });
-    }
-    return res.json(
-      await createCommercialEnablementRelation({
-        assetPublicId: req.params.assetPublicId,
-        body: parsed.data,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.delete(
-  "/assets/:assetPublicId/relations/:relationId",
-  requireAnyPermission(UPLOAD_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await deleteCommercialEnablementRelation({
-        assetPublicId: req.params.assetPublicId,
-        relationId: req.params.relationId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.get(
-  "/recent",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    return res.json(await listCommercialEnablementRecent({ user: req.user }));
-  },
-);
-
-router.get(
-  "/favorites",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await listCommercialEnablementFavorites({ user: req.user }),
-    );
-  },
-);
-
-router.get(
-  "/collections",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await listCommercialEnablementCollections({ user: req.user }),
-    );
-  },
-);
-
-router.post(
-  "/collections",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    const parsed = collectionSchema.safeParse(req.body || {});
-    if (!parsed.success) {
-      return res.status(400).json({
-        message: "Datos invalidos",
-        errors: parsed.error.flatten(),
-      });
-    }
-    return res.status(201).json(
-      await createCommercialEnablementCollection({
-        body: parsed.data,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.get(
-  "/collections/:collectionPublicId",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    const collection = await getCommercialEnablementCollection({
-      collectionPublicId: req.params.collectionPublicId,
-      user: req.user,
-    });
-    if (!collection) {
-      return res.status(404).json({ message: "Coleccion no encontrada" });
-    }
-    return res.json(collection);
-  },
-);
-
-router.post(
-  "/collections/:collectionPublicId/items",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    const assetPublicId = String(req.body?.assetPublicId || "").trim();
-    if (!assetPublicId) {
-      return res.status(400).json({ message: "assetPublicId requerido" });
-    }
-    return res.json(
-      await addCommercialEnablementCollectionItem({
-        collectionPublicId: req.params.collectionPublicId,
-        assetPublicId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.delete(
-  "/collections/:collectionPublicId/items/:assetPublicId",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await removeCommercialEnablementCollectionItem({
-        collectionPublicId: req.params.collectionPublicId,
-        assetPublicId: req.params.assetPublicId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.post(
-  "/collections/:collectionPublicId/share-package",
-  requireAnyPermission(READ_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await buildCommercialEnablementCollectionSharePackage({
-        collectionPublicId: req.params.collectionPublicId,
-        user: req.user,
-      }),
-    );
-  },
-);
-
-router.get(
-  "/analytics/overview",
-  requireAnyPermission(MANAGE_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await getCommercialEnablementAnalyticsOverview({ user: req.user }),
-    );
-  },
-);
-
-router.get(
-  "/governance/overview",
-  requireAnyPermission(MANAGE_PERMISSIONS),
-  async (req, res) => {
-    return res.json(
-      await getCommercialEnablementGovernanceOverview({ user: req.user }),
-    );
   },
 );
 

@@ -314,6 +314,18 @@ const COMMERCIAL_ENABLEMENT_SCHEMA_STATEMENTS = [
     CONSTRAINT fk_commercial_enablement_item_source_contents_session FOREIGN KEY (intake_session_id) REFERENCES commercial_enablement_intake_sessions(id) ON DELETE SET NULL,
     INDEX idx_commercial_enablement_item_source_contents_item (item_id, created_at)
   )`,
+  `CREATE TABLE IF NOT EXISTS commercial_enablement_share_links (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    token_hash CHAR(64) NOT NULL,
+    item_id BIGINT UNSIGNED NOT NULL,
+    created_by_user_id BIGINT UNSIGNED NULL,
+    expires_at DATETIME(3) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    CONSTRAINT uq_commercial_enablement_share_links_token UNIQUE (token_hash),
+    CONSTRAINT fk_commercial_enablement_share_links_item FOREIGN KEY (item_id) REFERENCES commercial_enablement_items(id) ON DELETE CASCADE,
+    CONSTRAINT fk_commercial_enablement_share_links_user FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_commercial_enablement_share_links_expires (expires_at)
+  )`,
 ];
 
 async function ensureCommercialEnablementItemsColumn(columnName, definition) {
@@ -403,6 +415,31 @@ export async function ensureCommercialEnablementSchema() {
       await ensureCommercialEnablementItemsColumn(
         "is_deleted",
         "is_deleted TINYINT(1) NOT NULL DEFAULT 0 AFTER is_featured",
+      );
+      await ensureCommercialEnablementItemsColumn(
+        "expires_at",
+        "expires_at DATETIME(3) NULL AFTER is_deleted",
+      );
+      await ensureCommercialEnablementItemsColumn(
+        "usage_note",
+        "usage_note VARCHAR(500) NULL AFTER summary",
+      );
+      // Solo existen dos estados: published (Activo) y archived (Desactivado).
+      await query(
+        `UPDATE commercial_enablement_items
+         SET status = 'archived'
+         WHERE status NOT IN ('published', 'archived')`,
+      );
+      // Materiales tipo URL: vencen a los 30 dias; los existentes arrancan hoy.
+      await query(
+        `UPDATE commercial_enablement_items i
+         SET i.expires_at = DATE_ADD(NOW(3), INTERVAL 30 DAY)
+         WHERE i.expires_at IS NULL
+           AND i.is_deleted = 0
+           AND EXISTS (
+             SELECT 1 FROM commercial_enablement_item_links l
+             WHERE l.item_id = i.id AND l.is_deleted = 0
+           )`,
       );
     })().catch((error) => {
       ensureCommercialEnablementSchemaPromise = null;

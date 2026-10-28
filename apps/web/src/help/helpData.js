@@ -199,11 +199,11 @@ export const HELP_ARTICLES = [
     routeKey: "commercial-enablement",
     title: "Gestionar la biblioteca de ventas",
     summary:
-      "Centraliza activos comerciales y controla su vigencia para ventas y propuestas.",
+      "Busca material listo para enviar, previsualízalo y compártelo en pocos clics.",
     details: [
-      "Clasifica activos por tipo y uso para encontrarlos con rapidez.",
-      "Mantén gobierno de versiónes para evitar materiales obsoletos.",
-      "Revisa cobertura de activos por etapa del proceso comercial.",
+      "Escribe lo que necesitas en el buscador y afina con Tipo, Fabricante y Tecnología.",
+      "Los materiales para cliente se pueden descargar o compartir con un enlace que vence a los 30 días.",
+      "Quien sube material puede desactivar los suyos; los materiales con enlace (URL) vencen a los 30 días y se renuevan al reactivarlos.",
     ],
     tags: ["biblioteca", "activos", "enablement"],
   },

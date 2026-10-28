@@ -6332,7 +6332,7 @@ async function listCommercialLibraryFilesForEmail({ user }) {
     user,
     filters: {
       status: "published",
-      visibilityLevel: "client_safe",
+      onlyClientSafe: "true",
       pageSize: 80,
       sort: "updated_desc",
     },

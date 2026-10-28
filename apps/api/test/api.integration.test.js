@@ -22606,7 +22606,7 @@ describe("API integration baseline", () => {
           title: `${TEST_PREFIX}_${suffix}`,
           summary: "Activo comercial compartible para el resumen ejecutivo.",
           assetTypeCode: "solution_brief",
-          status: "draft",
+          status: "archived",
           sourceType: "url",
           visibilityLevel: "client_safe",
           audienceCode: "client",
@@ -22632,7 +22632,7 @@ describe("API integration baseline", () => {
       expect(createLinkResponse.status).toBe(201);
 
       const publishResponse = await request(app)
-        .post(`/api/commercial-enablement/assets/${assetPublicId}/publish`)
+        .post(`/api/commercial-enablement/assets/${assetPublicId}/activate`)
         .set("Authorization", `Bearer ${enablementLogin.body.token}`)
         .send({});
 
@@ -22881,7 +22881,7 @@ describe("API integration baseline", () => {
         summary:
           "Resumen comercial corto del activo para continuidad operativa.",
         assetTypeCode: "solution_brief",
-        status: "draft",
+        status: "archived",
         sourceType: "url",
         visibilityLevel: "client_safe",
         audienceCode: "client",
@@ -22921,7 +22921,7 @@ describe("API integration baseline", () => {
     );
 
     const publishResponse = await request(app)
-      .post(`/api/commercial-enablement/assets/${assetPublicId}/publish`)
+      .post(`/api/commercial-enablement/assets/${assetPublicId}/activate`)
       .set("Authorization", `Bearer ${enablementLogin.body.token}`)
       .send({});
 
@@ -23281,7 +23281,7 @@ describe("API integration baseline", () => {
         title: `${TEST_PREFIX}_summary_reanalyze_asset`,
         summary: "Resumen inicial breve.",
         assetTypeCode: "solution_brief",
-        status: "draft",
+        status: "archived",
         sourceType: "file",
         visibilityLevel: "client_safe",
         audienceCode: "client",

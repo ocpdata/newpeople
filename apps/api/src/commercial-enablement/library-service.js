@@ -13,6 +13,10 @@ const storage = createDocumentStorage();
 
 const storageKeyPrefix = "commercial_enablement";
 
+const NEW_ITEM_WINDOW_DAYS = 30;
+const URL_ITEM_VALIDITY_DAYS = 30;
+const SHARE_LINK_VALIDITY_DAYS = 30;
+
 let ensureCommercialEnablementStarterDataPromise;
 
 const MANAGE_PERMISSION_CODES = new Set([
@@ -229,8 +233,6 @@ const LEGACY_KIND_TO_AUDIENCE = {
   manager_guide: "manager",
   presales_guide: "presales",
 };
-
-const COLLECTION_SHAREABLE_VISIBILITIES = new Set(["client_safe"]);
 
 async function execSql(executor, sql, params = []) {
   const result = await executor.query(sql, params);
@@ -499,12 +501,7 @@ async function migrateLegacyResourcesIfNeeded() {
       const visibilityLevel =
         LEGACY_KIND_TO_VISIBILITY[resource.kind] || "internal_sales";
       const audienceCode = LEGACY_KIND_TO_AUDIENCE[resource.kind] || "seller";
-      const status =
-        resource.status === "obsolete"
-          ? "obsolete"
-          : resource.status === "published"
-            ? "published"
-            : "draft";
+      const status = resource.status === "published" ? "published" : "archived";
       const solutionCodes = parseJsonArray(resource.solution_codes_json);
       const industryTags = parseJsonArray(resource.industry_tags_json);
       const competitorTags = parseJsonArray(resource.competitor_tags_json);
@@ -970,7 +967,8 @@ function groupCatalogEntries(entries) {
   }, {});
 }
 
-async function loadRawEnablementData() {
+async function loadRawEnablementData(user = null) {
+  const userId = Number(user?.id || 0);
   const [
     itemRows,
     fileRows,
@@ -978,11 +976,8 @@ async function loadRawEnablementData() {
     catalogRows,
     catalogLinkRows,
     tagRows,
-    relationRows,
-    usageRows,
     favoriteRows,
-    collectionRows,
-    collectionItemRows,
+    recentRows,
   ] = await Promise.all([
     query(
       `SELECT * FROM commercial_enablement_items WHERE is_deleted = 0 ORDER BY updated_at DESC, id DESC`,
@@ -1000,19 +995,21 @@ async function loadRawEnablementData() {
     query(
       `SELECT * FROM commercial_enablement_item_tags ORDER BY tag_group ASC, value_label ASC`,
     ),
-    query(`SELECT * FROM commercial_enablement_item_relations`),
-    query(
-      `SELECT * FROM commercial_enablement_usage_events_v2 ORDER BY created_at DESC`,
-    ),
-    query(
-      `SELECT * FROM commercial_enablement_favorites ORDER BY created_at DESC`,
-    ),
-    query(
-      `SELECT * FROM commercial_enablement_collections ORDER BY updated_at DESC, id DESC`,
-    ),
-    query(
-      `SELECT * FROM commercial_enablement_collection_items ORDER BY sort_order ASC, created_at ASC`,
-    ),
+    userId
+      ? query(
+          `SELECT item_id FROM commercial_enablement_favorites WHERE user_id = ?`,
+          [userId],
+        )
+      : [],
+    userId
+      ? query(
+          `SELECT item_id, MAX(created_at) AS last_used_at
+           FROM commercial_enablement_usage_events_v2
+           WHERE user_id = ?
+           GROUP BY item_id`,
+          [userId],
+        )
+      : [],
   ]);
 
   return {
@@ -1022,11 +1019,8 @@ async function loadRawEnablementData() {
     catalogRows,
     catalogLinkRows,
     tagRows,
-    relationRows,
-    usageRows,
     favoriteRows,
-    collectionRows,
-    collectionItemRows,
+    recentRows,
   };
 }
 
@@ -1098,35 +1092,15 @@ function assembleEnablementItems(raw, user) {
       label: row.value_label,
     });
   });
-  const usageByItemId = raw.usageRows.reduce((accumulator, row) => {
-    const itemId = Number(row.item_id);
-    if (!accumulator.has(itemId)) accumulator.set(itemId, []);
-    accumulator.get(itemId).push({
-      id: Number(row.id),
-      eventType: row.event_type,
-      userId: row.user_id ? Number(row.user_id) : null,
-      contextType: row.context_type || null,
-      contextEntityId: row.context_entity_id
-        ? Number(row.context_entity_id)
-        : null,
-      createdAt: row.created_at,
-    });
-    return accumulator;
-  }, new Map());
   const favoriteItemIds = new Set(
-    raw.favoriteRows
-      .filter((row) => Number(row.user_id) === Number(user?.id || 0))
-      .map((row) => Number(row.item_id)),
+    raw.favoriteRows.map((row) => Number(row.item_id)),
+  );
+  const lastUsedByItemId = new Map(
+    raw.recentRows.map((row) => [Number(row.item_id), row.last_used_at]),
   );
 
-  const relationRowsByItemId = raw.relationRows.reduce((accumulator, row) => {
-    const itemId = Number(row.item_id);
-    if (!accumulator.has(itemId)) accumulator.set(itemId, []);
-    accumulator.get(itemId).push(row);
-    return accumulator;
-  }, new Map());
-
   const allowedVisibilities = new Set(getAllowedVisibilityLevels(user));
+  const canManage = canManageEnablement(user);
   const items = raw.itemRows
     .map((row) => {
       const itemId = Number(row.id);
@@ -1134,35 +1108,37 @@ function assembleEnablementItems(raw, user) {
       const links = linksByItemId.get(itemId) || [];
       const catalogs = catalogsByItemId.get(itemId) || [];
       const tags = tagsByItemId.get(itemId) || [];
-      const usageEvents = usageByItemId.get(itemId) || [];
       const isOwner =
         Number(row.owner_user_id || 0) === Number(user?.id || 0) ||
         Number(row.created_by_user_id || 0) === Number(user?.id || 0);
       const visible =
         allowedVisibilities.has(String(row.visibility_level || "")) ||
         (String(row.visibility_level || "") === "restricted" && isOwner);
-      const canEdit =
-        canManageEnablement(user) || (canUploadEnablement(user) && isOwner);
+      const canEdit = canManage || (canUploadEnablement(user) && isOwner);
+      const expiresAtDate = row.expires_at ? new Date(row.expires_at) : null;
+      const isExpired = Boolean(
+        expiresAtDate && expiresAtDate.getTime() <= Date.now(),
+      );
+      const isActive = row.status === "published" && !isExpired;
       return {
         id: itemId,
         publicId: row.public_id,
         title: row.title,
         summary: row.summary || "",
+        usageNote: row.usage_note || "",
         internalDescription: row.internal_description || "",
         assetTypeCode: row.asset_type_code,
         assetTypeLabel: titleizeCode(row.asset_type_code),
-        status: row.status,
-        statusLabel:
-          row.status === "published"
-            ? "Vigente"
-            : row.status === "obsolete"
-              ? "Obsoleto"
-              : row.status === "archived"
-                ? "Archivado"
-                : "Borrador",
+        // Solo existen dos estados efectivos; un material vencido cuenta como desactivado.
+        status: isActive ? "published" : "archived",
+        statusLabel: isActive ? "Activo" : "Desactivado",
+        isActive,
+        isExpired,
+        expiresAt: expiresAtDate ? expiresAtDate.toISOString() : null,
         sourceType: row.source_type,
         visibilityLevel: row.visibility_level,
         visibilityLabel: titleizeCode(row.visibility_level),
+        isShareable: row.visibility_level === "client_safe",
         audienceCode: row.audience_code,
         audienceLabel: titleizeCode(row.audience_code),
         languageCode: row.language_code || "es",
@@ -1176,52 +1152,32 @@ function assembleEnablementItems(raw, user) {
         isInternal: Boolean(row.is_internal),
         isDownloadable: Boolean(row.is_downloadable),
         isFeatured: Boolean(row.is_featured),
-        searchText:
-          row.search_text ||
-          buildSearchText({ item: row, catalogs, tags, links, files }),
+        searchText: normalizeText(
+          `${row.search_text || ""} ${buildSearchText({ item: row, catalogs, tags, links, files })}`,
+        ),
         files,
         links,
         catalogs,
         tags,
-        usageCount: usageEvents.length,
-        usageEvents,
         isFavorite: favoriteItemIds.has(itemId),
+        isOwnedByUser: isOwner,
+        lastUsedAt: lastUsedByItemId.get(itemId) || null,
         visible,
         canEdit,
-        canPublish: canManageEnablement(user),
-        canObsolete: canManageEnablement(user),
-        relations: relationRowsByItemId.get(itemId) || [],
+        canToggle: canEdit,
+        canDelete: canManage,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
     })
     .filter((item) => {
+      // Quien solo busca nunca ve materiales desactivados.
+      if (!item.isActive && !item.canEdit) return false;
       if (item.visible) return true;
-      if (canManageEnablement(user)) return true;
+      if (canManage) return true;
       if (canUploadEnablement(user) && item.canEdit) return true;
       return false;
     });
-
-  const itemMap = new Map(items.map((item) => [item.id, item]));
-  items.forEach((item) => {
-    item.relations = item.relations
-      .map((row) => ({
-        id: Number(row.id),
-        relationType: row.relation_type,
-        relatedItem: itemMap.get(Number(row.related_item_id))
-          ? {
-              id: Number(row.related_item_id),
-              publicId: itemMap.get(Number(row.related_item_id)).publicId,
-              title: itemMap.get(Number(row.related_item_id)).title,
-              assetTypeLabel: itemMap.get(Number(row.related_item_id))
-                .assetTypeLabel,
-              visibilityLevel: itemMap.get(Number(row.related_item_id))
-                .visibilityLevel,
-            }
-          : null,
-      }))
-      .filter((relation) => relation.relatedItem);
-  });
 
   return items;
 }
@@ -1290,8 +1246,89 @@ function itemHasTagCode(item, tagGroup, filterCodes) {
   return filterCodes.some((code) => values.includes(code));
 }
 
-function filterItems(items, filters = {}) {
-  const queryText = normalizeText(filters.q || "");
+function normalizeStatusFilter(value) {
+  const status = String(value || "active")
+    .trim()
+    .toLowerCase();
+  if (status === "all") return "all";
+  if (["archived", "inactive", "desactivado"].includes(status)) {
+    return "inactive";
+  }
+  return "active";
+}
+
+function buildQueryTokens(value) {
+  return Array.from(new Set(normalizeText(value).split(" ").filter(Boolean)));
+}
+
+// Devuelve 0 si algun termino no aparece; todos los terminos deben coincidir.
+function scoreItemForTokens(item, tokens, contentText = "") {
+  if (!tokens.length) return 1;
+  const title = ` ${normalizeText(item.title)}`;
+  const catalogText = normalizeText(
+    item.catalogs.map((catalog) => catalog.name).join(" "),
+  );
+  const tagText = normalizeText(item.tags.map((tag) => tag.label).join(" "));
+  const summaryText = normalizeText(`${item.summary} ${item.usageNote}`);
+  let total = 0;
+  for (const token of tokens) {
+    let score = 0;
+    if (title.includes(` ${token}`)) score += 15;
+    else if (title.includes(token)) score += 10;
+    if (catalogText.includes(token)) score += 6;
+    if (tagText.includes(token)) score += 4;
+    if (summaryText.includes(token)) score += 3;
+    if (item.searchText.includes(token)) score += 1;
+    else if (contentText.includes(token)) score += 1;
+    if (score === 0) return 0;
+    total += score;
+  }
+  return total;
+}
+
+const contentTextCache = new Map();
+const CONTENT_TEXT_CACHE_LIMIT = 500;
+const CONTENT_TEXT_MAX_CHARS = 60000;
+
+async function loadNormalizedContentTexts() {
+  const latestRows = await query(
+    `SELECT MAX(id) AS id, item_id
+       FROM commercial_enablement_item_source_contents
+      GROUP BY item_id`,
+  );
+  const latestIds = latestRows.map((row) => Number(row.id));
+  if (
+    contentTextCache.size +
+      latestIds.filter((id) => !contentTextCache.has(id)).length >
+    CONTENT_TEXT_CACHE_LIMIT
+  ) {
+    contentTextCache.clear();
+  }
+  const missingIds = latestIds.filter((id) => !contentTextCache.has(id));
+  if (missingIds.length) {
+    const rows = await query(
+      `SELECT id, SUBSTRING(extracted_text, 1, ${CONTENT_TEXT_MAX_CHARS}) AS text
+         FROM commercial_enablement_item_source_contents
+        WHERE id IN (${missingIds.map(() => "?").join(",")})`,
+      missingIds,
+    );
+    rows.forEach((row) =>
+      contentTextCache.set(Number(row.id), normalizeText(row.text || "")),
+    );
+  }
+  return new Map(
+    latestRows.map((row) => [
+      Number(row.item_id),
+      contentTextCache.get(Number(row.id)) || "",
+    ]),
+  );
+}
+
+function filterItems(
+  items,
+  filters = {},
+  { tokens = [], contentTexts = new Map(), scores = new Map() } = {},
+) {
   const manufacturerCodes = parseCsvArray(filters.manufacturerCodes);
   const solutionCodes = parseCsvArray(filters.solutionCodes);
   const technologyCodes = parseCsvArray(filters.technologyCodes);
@@ -1307,26 +1344,32 @@ function filterItems(items, filters = {}) {
   const tags = parseCsvArray(filters.tags).map((tag) =>
     normalizeText(tag).replace(/\s+/g, "_"),
   );
-  const status = String(filters.status || "published").trim();
-  const includeDrafts = String(filters.includeDrafts || "false") === "true";
+  const status = normalizeStatusFilter(filters.status);
+  const shortcut = String(filters.shortcut || "").trim();
+  const onlyMine = String(filters.mine || "") === "true";
+  const newSince = Date.now() - NEW_ITEM_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
   return items.filter((item) => {
-    if (!includeDrafts) {
-      if (status === "all") {
-        if (!["published", "obsolete"].includes(item.status) && !item.canEdit) {
-          return false;
-        }
-      } else if (status && status !== item.status) {
-        return false;
-      } else if (!status && item.status !== "published") {
-        return false;
-      }
-    } else if (status && status !== "all" && status !== item.status) {
+    if (status === "active" && !item.isActive) return false;
+    if (status === "inactive" && item.isActive) return false;
+    if (onlyMine && !item.isOwnedByUser) return false;
+    if (shortcut === "recent" && !item.lastUsedAt) return false;
+    if (
+      shortcut === "new" &&
+      new Date(item.createdAt).getTime() < newSince
+    ) {
       return false;
     }
 
-    if (queryText && !String(item.searchText || "").includes(queryText))
-      return false;
+    if (tokens.length) {
+      const score = scoreItemForTokens(
+        item,
+        tokens,
+        contentTexts.get(item.id) || "",
+      );
+      if (!score) return false;
+      scores.set(item.id, score);
+    }
     if (
       assetTypeCodes.length &&
       !assetTypeCodes.includes(String(item.assetTypeCode))
@@ -1363,7 +1406,11 @@ function filterItems(items, filters = {}) {
     ) {
       return false;
     }
-    if (filters.onlyFavorites === "true" && !item.isFavorite) return false;
+    if (
+      (filters.onlyFavorites === "true" || shortcut === "favorites") &&
+      !item.isFavorite
+    )
+      return false;
     if (
       filters.onlyClientSafe === "true" &&
       item.visibilityLevel !== "client_safe"
@@ -1373,28 +1420,47 @@ function filterItems(items, filters = {}) {
   });
 }
 
-function sortItems(items, sort = "updated_desc") {
+function compareByUpdatedDesc(left, right) {
+  return String(right.updatedAt).localeCompare(String(left.updatedAt));
+}
+
+function sortItems(items, { sort, scores, hasQuery, shortcut }) {
   const cloned = [...items];
-  if (sort === "title_asc") {
+  const effectiveSort =
+    sort ||
+    (shortcut === "recent"
+      ? "recent"
+      : shortcut === "new"
+        ? "created_desc"
+        : hasQuery
+          ? "relevance"
+          : "updated_desc");
+  if (effectiveSort === "title_asc") {
     return cloned.sort((left, right) =>
       String(left.title).localeCompare(String(right.title), "es"),
     );
   }
-  if (sort === "most_used") {
+  if (effectiveSort === "created_desc") {
+    return cloned.sort((left, right) =>
+      String(right.createdAt).localeCompare(String(left.createdAt)),
+    );
+  }
+  if (effectiveSort === "recent") {
     return cloned.sort(
       (left, right) =>
-        right.usageCount - left.usageCount ||
-        String(left.title).localeCompare(String(right.title), "es"),
+        String(right.lastUsedAt || "").localeCompare(
+          String(left.lastUsedAt || ""),
+        ) || compareByUpdatedDesc(left, right),
     );
   }
-  if (sort === "recent") {
-    return cloned.sort((left, right) =>
-      String(right.updatedAt).localeCompare(String(left.updatedAt)),
+  if (effectiveSort === "relevance" && hasQuery) {
+    return cloned.sort(
+      (left, right) =>
+        (scores.get(right.id) || 0) - (scores.get(left.id) || 0) ||
+        compareByUpdatedDesc(left, right),
     );
   }
-  return cloned.sort((left, right) =>
-    String(right.updatedAt).localeCompare(String(left.updatedAt)),
-  );
+  return cloned.sort(compareByUpdatedDesc);
 }
 
 function paginate(items, page = 1, pageSize = 24) {
@@ -1405,8 +1471,15 @@ function paginate(items, page = 1, pageSize = 24) {
     page: normalizedPage,
     pageSize: normalizedPageSize,
     total: items.length,
+    hasMore: startIndex + normalizedPageSize < items.length,
     items: items.slice(startIndex, startIndex + normalizedPageSize),
   };
+}
+
+function toPublicItem(item) {
+  const publicItem = { ...item };
+  delete publicItem.searchText;
+  return publicItem;
 }
 
 export async function getCommercialEnablementCatalogs() {
@@ -1417,20 +1490,7 @@ export async function getCommercialEnablementCatalogs() {
 
 export async function getCommercialEnablementBootstrap({ user }) {
   await ensureCommercialEnablementStarterData();
-  const raw = await loadRawEnablementData();
-  const items = assembleEnablementItems(raw, user);
   const catalogResponse = await buildCommercialEnablementCatalogResponse(user);
-  const recent = await listCommercialEnablementRecent({ user, raw, items });
-  const favorites = await listCommercialEnablementFavorites({
-    user,
-    raw,
-    items,
-  });
-  const collections = await listCommercialEnablementCollections({
-    user,
-    raw,
-    items,
-  });
 
   return {
     permissions: {
@@ -1439,43 +1499,69 @@ export async function getCommercialEnablementBootstrap({ user }) {
       canManage: canManageEnablement(user),
       canAdmin: canAdminEnablement(user),
     },
-    summary: {
-      totalVisibleAssets: items.filter((item) => item.status === "published")
-        .length,
-      clientSafeAssets: items.filter(
-        (item) =>
-          item.status === "published" && item.visibilityLevel === "client_safe",
-      ).length,
-      internalAssets: items.filter(
-        (item) =>
-          item.status === "published" && item.visibilityLevel !== "client_safe",
-      ).length,
-      favoriteAssets: favorites.length,
-      recentAssets: recent.length,
-    },
     catalogs: catalogResponse.catalogs,
     adminCatalogs: catalogResponse.adminCatalogs || catalogResponse.catalogs,
-    recent,
-    favorites,
-    collections,
   };
 }
 
 export async function listCommercialEnablementAssets({ user, filters = {} }) {
   await ensureCommercialEnablementStarterData();
-  const raw = await loadRawEnablementData();
+  const raw = await loadRawEnablementData(user);
   const items = assembleEnablementItems(raw, user);
+  const tokens = buildQueryTokens(filters.q);
+  const contentTexts = tokens.length
+    ? await loadNormalizedContentTexts()
+    : new Map();
+  const scores = new Map();
   const filtered = sortItems(
-    filterItems(items, filters),
-    filters.sort || "updated_desc",
+    filterItems(items, filters, { tokens, contentTexts, scores }),
+    {
+      sort: String(filters.sort || "").trim(),
+      scores,
+      hasQuery: tokens.length > 0,
+      shortcut: String(filters.shortcut || "").trim(),
+    },
   );
   const paginated = paginate(filtered, filters.page, filters.pageSize);
   return {
     page: paginated.page,
     pageSize: paginated.pageSize,
     total: paginated.total,
-    items: paginated.items,
+    hasMore: paginated.hasMore,
+    items: paginated.items.map(toPublicItem),
   };
+}
+
+function findRelatedItems(item, items, limit = 6) {
+  const keyOf = (catalog) => `${catalog.catalogType}:${catalog.code}`;
+  const ownKeys = new Set(
+    item.catalogs
+      .filter((catalog) => ["manufacturer", "solution"].includes(catalog.catalogType))
+      .map(keyOf),
+  );
+  if (!ownKeys.size) return [];
+  return items
+    .filter((candidate) => candidate.id !== item.id && candidate.isActive)
+    .map((candidate) => ({
+      candidate,
+      shared: candidate.catalogs.filter((catalog) =>
+        ownKeys.has(keyOf(catalog)),
+      ).length,
+    }))
+    .filter((entry) => entry.shared > 0)
+    .sort(
+      (left, right) =>
+        right.shared - left.shared ||
+        compareByUpdatedDesc(left.candidate, right.candidate),
+    )
+    .slice(0, limit)
+    .map(({ candidate }) => ({
+      publicId: candidate.publicId,
+      title: candidate.title,
+      assetTypeLabel: candidate.assetTypeLabel,
+      visibilityLevel: candidate.visibilityLevel,
+      isShareable: candidate.isShareable,
+    }));
 }
 
 export async function getCommercialEnablementAssetDetail({
@@ -1483,11 +1569,13 @@ export async function getCommercialEnablementAssetDetail({
   assetPublicId,
 }) {
   await ensureCommercialEnablementStarterData();
-  const raw = await loadRawEnablementData();
+  const raw = await loadRawEnablementData(user);
   const items = assembleEnablementItems(raw, user);
   const item =
     items.find((candidate) => candidate.publicId === assetPublicId) || null;
   if (!item) return null;
+
+  const relatedItems = findRelatedItems(item, items);
 
   const files = await Promise.all(
     item.files.map(async (file) => ({
@@ -1514,8 +1602,9 @@ export async function getCommercialEnablementAssetDetail({
   const latestSourceContent = sourceContentRows[0] || null;
 
   return {
-    ...item,
+    ...toPublicItem(item),
     files,
+    relatedItems,
     sourceContent: latestSourceContent
       ? {
           sourceFileName: latestSourceContent.source_file_name || "",
@@ -1543,10 +1632,13 @@ function buildAssetSearchPayload(body = {}) {
   return {
     title: String(body.title || "").trim(),
     summary: String(body.summary || "").trim(),
+    usageNote: String(body.usageNote || "")
+      .trim()
+      .slice(0, 500),
     internalDescription: String(body.internalDescription || "").trim(),
     assetTypeCode:
       String(body.assetTypeCode || "").trim() || "internal_playbook",
-    status: String(body.status || "draft").trim() || "draft",
+    status: String(body.status || "").trim() === "published" ? "published" : "archived",
     sourceType: String(body.sourceType || "mixed").trim() || "mixed",
     visibilityLevel:
       String(body.visibilityLevel || "internal_sales").trim() ||
@@ -1649,12 +1741,14 @@ export async function validateCommercialEnablementAssetPayload({ body }) {
   const payload = buildAssetSearchPayload(body);
   const issues = [];
   if (!payload.title) issues.push("Titulo requerido");
-  if (!payload.summary) issues.push("Resumen requerido");
-  if (!payload.assetTypeCode) issues.push("Tipo de activo requerido");
-  if (!payload.visibilityLevel) issues.push("Visibilidad requerida");
-  if (!payload.audienceCode) issues.push("Audiencia requerida");
-  if (!payload.manufacturerCodes.length && !payload.solutionCodes.length) {
-    issues.push("Debes indicar al menos un fabricante o una solucion");
+  if (!payload.assetTypeCode) issues.push("Tipo requerido");
+  if (!payload.visibilityLevel) issues.push("Indica si se puede enviar al cliente");
+  if (
+    !payload.manufacturerCodes.length &&
+    !payload.technologyCodes.length &&
+    !payload.solutionCodes.length
+  ) {
+    issues.push("Debes indicar al menos un fabricante o una tecnologia");
   }
   return {
     ok: issues.length === 0,
@@ -1691,16 +1785,17 @@ export async function createCommercialEnablementAsset({ body, user }) {
     const result = await execSql(
       conn,
       `INSERT INTO commercial_enablement_items
-        (public_id, title, summary, internal_description, asset_type_code,
+        (public_id, title, summary, usage_note, internal_description, asset_type_code,
          status, source_type, visibility_level, audience_code, language_code,
          owner_user_id, created_by_user_id, updated_by_user_id, is_internal,
          is_downloadable, is_featured, is_deleted, search_text,
          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(3), NOW(3))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NOW(3), NOW(3))`,
       [
         publicId,
         payload.title,
         payload.summary,
+        payload.usageNote || null,
         payload.internalDescription,
         payload.assetTypeCode,
         payload.status,
@@ -1765,10 +1860,13 @@ export async function updateCommercialEnablementAsset({
     error.status = 403;
     throw error;
   }
+  // El estado solo cambia al activar o desactivar.
+  payload.status = item.status;
   const searchText = normalizeText(
     [
       payload.title,
       payload.summary,
+      payload.usageNote,
       payload.internalDescription,
       payload.assetTypeCode,
       ...payload.manufacturerCodes,
@@ -1789,7 +1887,7 @@ export async function updateCommercialEnablementAsset({
     await execSql(
       conn,
       `UPDATE commercial_enablement_items
-       SET title = ?, summary = ?, internal_description = ?, asset_type_code = ?,
+       SET title = ?, summary = ?, usage_note = ?, internal_description = ?, asset_type_code = ?,
            status = ?, source_type = ?, visibility_level = ?, audience_code = ?,
            language_code = ?, owner_user_id = ?, updated_by_user_id = ?,
            is_internal = ?, is_downloadable = ?, is_featured = ?, search_text = ?,
@@ -1798,6 +1896,7 @@ export async function updateCommercialEnablementAsset({
       [
         payload.title,
         payload.summary,
+        payload.usageNote || null,
         payload.internalDescription,
         payload.assetTypeCode,
         payload.status,
@@ -1931,7 +2030,7 @@ export async function uploadCommercialEnablementFiles({
       await execSql(
         conn,
         `UPDATE commercial_enablement_items
-         SET source_type = ?, updated_by_user_id = ?, updated_at = NOW(3)
+         SET source_type = ?, expires_at = NULL, updated_by_user_id = ?, updated_at = NOW(3)
          WHERE id = ?`,
         ["file", Number(user.id), Number(item.id)],
       );
@@ -2190,7 +2289,8 @@ export async function createCommercialEnablementLink({
     );
     await conn.query(
       `UPDATE commercial_enablement_items
-       SET source_type = ?, updated_by_user_id = ?, updated_at = NOW(3)
+       SET source_type = ?, expires_at = DATE_ADD(NOW(3), INTERVAL ${URL_ITEM_VALIDITY_DAYS} DAY),
+           updated_by_user_id = ?, updated_at = NOW(3)
        WHERE id = ?`,
       ["url", Number(user.id), Number(asset.id)],
     );
@@ -2234,6 +2334,12 @@ export async function updateCommercialEnablementLink({
       linkPublicId,
       Number(asset.id),
     ],
+  );
+  await query(
+    `UPDATE commercial_enablement_items
+     SET expires_at = DATE_ADD(NOW(3), INTERVAL ${URL_ITEM_VALIDITY_DAYS} DAY), updated_at = NOW(3)
+     WHERE id = ?`,
+    [Number(asset.id)],
   );
   return getCommercialEnablementAssetDetail({ user, assetPublicId });
 }
@@ -2288,23 +2394,13 @@ export async function validateCommercialEnablementAsset({
   }
   const issues = [];
   if (!asset.title) issues.push("Titulo requerido");
-  if (!asset.summary) issues.push("Resumen requerido");
-  if (!asset.assetTypeCode) issues.push("Tipo de activo requerido");
+  if (!asset.assetTypeCode) issues.push("Tipo requerido");
   if (
-    ![
-      "client_safe",
-      "internal_sales",
-      "internal_company",
-      "restricted",
-    ].includes(asset.visibilityLevel)
+    !asset.catalogs.some((catalog) =>
+      ["manufacturer", "technology", "solution"].includes(catalog.catalogType),
+    )
   ) {
-    issues.push("Visibilidad invalida");
-  }
-  if (
-    !asset.catalogs.some((catalog) => catalog.catalogType === "manufacturer") &&
-    !asset.catalogs.some((catalog) => catalog.catalogType === "solution")
-  ) {
-    issues.push("Debes indicar al menos un fabricante o una solucion");
+    issues.push("Debes indicar al menos un fabricante o una tecnologia");
   }
   if (asset.files.length + asset.links.length > 1) {
     issues.push(SINGLE_RESOURCE_VALIDATION_MESSAGE);
@@ -2315,49 +2411,49 @@ export async function validateCommercialEnablementAsset({
   return { ok: issues.length === 0, issues, asset };
 }
 
-async function changeAssetStatus({ assetPublicId, user, status }) {
+async function setAssetActive({ assetPublicId, user, active }) {
   const validation = await validateCommercialEnablementAsset({
     assetPublicId,
     user,
   });
-  if (status === "published" && !validation.ok) {
-    const error = new Error(validation.issues.join(". "));
-    error.status = 400;
-    throw error;
-  }
-  if (!canManageEnablement(user) && !canAdminEnablement(user)) {
+  const { asset } = validation;
+  if (!asset.canToggle) {
     const error = new Error("No autorizado para cambiar el estado");
     error.status = 403;
     throw error;
   }
+  if (active && !validation.ok) {
+    const error = new Error(validation.issues.join(". "));
+    error.status = 400;
+    throw error;
+  }
+  // Reactivar un material tipo URL renueva su vigencia de 30 dias.
+  const expiresSql = active
+    ? asset.links.length
+      ? `DATE_ADD(NOW(3), INTERVAL ${URL_ITEM_VALIDITY_DAYS} DAY)`
+      : "NULL"
+    : "expires_at";
   await query(
     `UPDATE commercial_enablement_items
-     SET status = ?, updated_by_user_id = ?, updated_at = NOW(3)
+     SET status = ?, expires_at = ${expiresSql}, updated_by_user_id = ?, updated_at = NOW(3)
      WHERE public_id = ?`,
-    [status, Number(user.id), assetPublicId],
+    [active ? "published" : "archived", Number(user.id), assetPublicId],
   );
   return getCommercialEnablementAssetDetail({ user, assetPublicId });
 }
 
-export async function publishCommercialEnablementAsset({
+export async function activateCommercialEnablementAsset({
   assetPublicId,
   user,
 }) {
-  return changeAssetStatus({ assetPublicId, user, status: "published" });
+  return setAssetActive({ assetPublicId, user, active: true });
 }
 
-export async function obsoleteCommercialEnablementAsset({
+export async function deactivateCommercialEnablementAsset({
   assetPublicId,
   user,
 }) {
-  return changeAssetStatus({ assetPublicId, user, status: "obsolete" });
-}
-
-export async function archiveCommercialEnablementAsset({
-  assetPublicId,
-  user,
-}) {
-  return changeAssetStatus({ assetPublicId, user, status: "archived" });
+  return setAssetActive({ assetPublicId, user, active: false });
 }
 
 export async function deleteCommercialEnablementAsset({ assetPublicId, user }) {
@@ -2400,201 +2496,6 @@ export async function deleteCommercialEnablementAsset({ assetPublicId, user }) {
   };
 }
 
-export async function duplicateCommercialEnablementAsset({
-  assetPublicId,
-  user,
-}) {
-  const asset = await getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId,
-  });
-  if (!asset) {
-    const error = new Error("Activo no encontrado");
-    error.status = 404;
-    throw error;
-  }
-  if (!(canManageEnablement(user) || asset.canEdit)) {
-    const error = new Error("No autorizado para duplicar este activo");
-    error.status = 403;
-    throw error;
-  }
-  if (asset.files.length + asset.links.length > 1) {
-    const error = new Error(
-      "No se puede duplicar un activo con multiples recursos. Deja un solo archivo o una sola URL antes de duplicarlo.",
-    );
-    error.status = 409;
-    throw error;
-  }
-  const duplicatePublicId = buildPublicId("cea");
-  await withTransaction(async (conn) => {
-    const result = await execSql(
-      conn,
-      `INSERT INTO commercial_enablement_items
-        (public_id, title, summary, internal_description, asset_type_code,
-         status, source_type, visibility_level, audience_code, language_code,
-         owner_user_id, created_by_user_id, updated_by_user_id, is_internal,
-         is_downloadable, is_featured, search_text,
-         created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3))`,
-      [
-        duplicatePublicId,
-        `${asset.title} copia`,
-        asset.summary,
-        asset.internalDescription,
-        asset.assetTypeCode,
-        asset.sourceType,
-        asset.visibilityLevel,
-        asset.audienceCode,
-        asset.languageCode,
-        asset.ownerUserId || Number(user.id),
-        Number(user.id),
-        Number(user.id),
-        boolToTinyInt(asset.isInternal),
-        boolToTinyInt(asset.isDownloadable),
-        boolToTinyInt(asset.isFeatured),
-        asset.searchText,
-      ],
-    );
-    const duplicateId = Number(result.insertId);
-    for (const catalog of asset.catalogs) {
-      await execSql(
-        conn,
-        `INSERT INTO commercial_enablement_item_catalog_links (item_id, catalog_entry_id, created_at)
-         VALUES (?, ?, NOW(3))`,
-        [duplicateId, catalog.id],
-      );
-    }
-    for (const tag of asset.tags) {
-      await execSql(
-        conn,
-        `INSERT INTO commercial_enablement_item_tags
-          (item_id, tag_group, value_code, value_label, created_at)
-         VALUES (?, ?, ?, ?, NOW(3))`,
-        [duplicateId, tag.tagGroup, tag.code, tag.label],
-      );
-    }
-    for (const link of asset.links) {
-      await execSql(
-        conn,
-        `INSERT INTO commercial_enablement_item_links
-          (public_id, item_id, url, link_type, label, description, is_primary,
-           created_by_user_id, created_at, updated_at, is_deleted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(3), NOW(3), 0)`,
-        [
-          buildPublicId("cel"),
-          duplicateId,
-          link.url,
-          link.linkType,
-          link.label,
-          link.description,
-          boolToTinyInt(link.isPrimary),
-          Number(user.id),
-        ],
-      );
-    }
-    for (const file of asset.files) {
-      await execSql(
-        conn,
-        `INSERT INTO commercial_enablement_item_files
-          (public_id, item_id, storage_provider, storage_bucket, storage_key,
-           original_file_name, stored_file_name, mime_type, file_extension,
-           byte_size, sha256, uploaded_by_user_id, is_deleted, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(3), NOW(3))`,
-        [
-          buildPublicId("cef"),
-          duplicateId,
-          file.storageProvider,
-          file.storageBucket,
-          file.storageKey,
-          file.originalFileName,
-          file.storedFileName,
-          file.mimeType,
-          file.fileExtension,
-          file.byteSize,
-          createHash("sha256")
-            .update(`${file.storageKey}:${duplicatePublicId}`)
-            .digest("hex"),
-          Number(user.id),
-        ],
-      );
-    }
-  });
-  return getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId: duplicatePublicId,
-  });
-}
-
-export async function createCommercialEnablementRelation({
-  assetPublicId,
-  body,
-  user,
-}) {
-  const asset = await getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId,
-  });
-  if (!asset) {
-    const error = new Error("Activo no encontrado");
-    error.status = 404;
-    throw error;
-  }
-  if (!(canManageEnablement(user) || asset.canEdit)) {
-    const error = new Error("No autorizado para relacionar activos");
-    error.status = 403;
-    throw error;
-  }
-  const relatedPublicId = String(body.relatedAssetPublicId || "").trim();
-  const related = await getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId: relatedPublicId,
-  });
-  if (!related) {
-    const error = new Error("Activo relacionado no encontrado");
-    error.status = 404;
-    throw error;
-  }
-  await query(
-    `INSERT INTO commercial_enablement_item_relations
-      (item_id, related_item_id, relation_type, created_by_user_id, created_at)
-     VALUES (?, ?, ?, ?, NOW(3))`,
-    [
-      Number(asset.id),
-      Number(related.id),
-      String(body.relationType || "related_to"),
-      Number(user.id),
-    ],
-  );
-  return getCommercialEnablementAssetDetail({ user, assetPublicId });
-}
-
-export async function deleteCommercialEnablementRelation({
-  assetPublicId,
-  relationId,
-  user,
-}) {
-  const asset = await getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId,
-  });
-  if (!asset) {
-    const error = new Error("Activo no encontrado");
-    error.status = 404;
-    throw error;
-  }
-  if (!(canManageEnablement(user) || asset.canEdit)) {
-    const error = new Error("No autorizado para eliminar relaciones");
-    error.status = 403;
-    throw error;
-  }
-  await query(
-    `DELETE FROM commercial_enablement_item_relations
-     WHERE id = ? AND item_id = ?`,
-    [Number(relationId), Number(asset.id)],
-  );
-  return getCommercialEnablementAssetDetail({ user, assetPublicId });
-}
-
 export async function recordCommercialEnablementUsageEvent({
   assetPublicId,
   eventType,
@@ -2626,55 +2527,6 @@ export async function recordCommercialEnablementUsageEvent({
     ],
   );
   return getCommercialEnablementAssetDetail({ user, assetPublicId });
-}
-
-export async function listCommercialEnablementRecent({
-  user,
-  raw = null,
-  items = null,
-}) {
-  const currentRaw = raw || (await loadRawEnablementData());
-  const currentItems = items || assembleEnablementItems(currentRaw, user);
-  const userId = Number(user?.id || 0);
-  if (!userId) return [];
-  const latestUsage = new Map();
-  currentRaw.usageRows
-    .filter((row) => Number(row.user_id || 0) === userId)
-    .forEach((row) => {
-      const itemId = Number(row.item_id);
-      if (
-        !latestUsage.has(itemId) ||
-        String(row.created_at) > String(latestUsage.get(itemId).createdAt)
-      ) {
-        latestUsage.set(itemId, { createdAt: row.created_at });
-      }
-    });
-  return Array.from(latestUsage.entries())
-    .sort((left, right) =>
-      String(right[1].createdAt).localeCompare(String(left[1].createdAt)),
-    )
-    .map(([itemId]) =>
-      currentItems.find((item) => Number(item.id) === Number(itemId)),
-    )
-    .filter(Boolean)
-    .slice(0, 8);
-}
-
-export async function listCommercialEnablementFavorites({
-  user,
-  raw = null,
-  items = null,
-}) {
-  const currentRaw = raw || (await loadRawEnablementData());
-  const currentItems = items || assembleEnablementItems(currentRaw, user);
-  const favoriteIds = new Set(
-    currentRaw.favoriteRows
-      .filter((row) => Number(row.user_id || 0) === Number(user?.id || 0))
-      .map((row) => Number(row.item_id)),
-  );
-  return currentItems
-    .filter((item) => favoriteIds.has(Number(item.id)))
-    .slice(0, 12);
 }
 
 export async function addCommercialEnablementFavorite({ assetPublicId, user }) {
@@ -2722,291 +2574,6 @@ export async function removeCommercialEnablementFavorite({
     [Number(user.id), Number(asset.id)],
   );
   return getCommercialEnablementAssetDetail({ user, assetPublicId });
-}
-
-function assembleCollections(raw, items, user) {
-  const itemMap = new Map(items.map((item) => [Number(item.id), item]));
-  return raw.collectionRows
-    .filter((row) => Number(row.user_id) === Number(user?.id || 0))
-    .map((row) => {
-      const collectionItems = raw.collectionItemRows
-        .filter((item) => Number(item.collection_id) === Number(row.id))
-        .map((item) => itemMap.get(Number(item.item_id)))
-        .filter(Boolean);
-      return {
-        id: Number(row.id),
-        publicId: row.public_id,
-        name: row.name,
-        description: row.description || "",
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        items: collectionItems,
-      };
-    });
-}
-
-export async function listCommercialEnablementCollections({
-  user,
-  raw = null,
-  items = null,
-}) {
-  const currentRaw = raw || (await loadRawEnablementData());
-  const currentItems = items || assembleEnablementItems(currentRaw, user);
-  return assembleCollections(currentRaw, currentItems, user);
-}
-
-export async function createCommercialEnablementCollection({ body, user }) {
-  const name = String(body.name || "").trim();
-  if (!name) {
-    const error = new Error("Nombre requerido");
-    error.status = 400;
-    throw error;
-  }
-  const publicId = buildPublicId("cec");
-  await query(
-    `INSERT INTO commercial_enablement_collections
-      (public_id, user_id, name, description, created_at, updated_at)
-     VALUES (?, ?, ?, ?, NOW(3), NOW(3))`,
-    [
-      publicId,
-      Number(user.id),
-      name,
-      String(body.description || "").trim() || null,
-    ],
-  );
-  const collections = await listCommercialEnablementCollections({ user });
-  return (
-    collections.find((collection) => collection.publicId === publicId) || null
-  );
-}
-
-export async function getCommercialEnablementCollection({
-  collectionPublicId,
-  user,
-}) {
-  const collections = await listCommercialEnablementCollections({ user });
-  return (
-    collections.find(
-      (collection) => collection.publicId === collectionPublicId,
-    ) || null
-  );
-}
-
-export async function addCommercialEnablementCollectionItem({
-  collectionPublicId,
-  assetPublicId,
-  user,
-}) {
-  const collection = await getCommercialEnablementCollection({
-    collectionPublicId,
-    user,
-  });
-  if (!collection) {
-    const error = new Error("Coleccion no encontrada");
-    error.status = 404;
-    throw error;
-  }
-  const asset = await getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId,
-  });
-  if (!asset) {
-    const error = new Error("Activo no encontrado");
-    error.status = 404;
-    throw error;
-  }
-  const currentMax = await query(
-    `SELECT COALESCE(MAX(sort_order), 0) AS current_max
-     FROM commercial_enablement_collection_items
-     WHERE collection_id = ?`,
-    [Number(collection.id)],
-  );
-  await query(
-    `INSERT IGNORE INTO commercial_enablement_collection_items
-      (collection_id, item_id, sort_order, created_at)
-     VALUES (?, ?, ?, NOW(3))`,
-    [
-      Number(collection.id),
-      Number(asset.id),
-      Number(currentMax[0]?.current_max || 0) + 1,
-    ],
-  );
-  await recordCommercialEnablementUsageEvent({
-    assetPublicId,
-    eventType: "added_to_collection",
-    user,
-    contextType: "collection",
-    contextEntityId: collection.id,
-  }).catch(() => undefined);
-  return getCommercialEnablementCollection({ collectionPublicId, user });
-}
-
-export async function removeCommercialEnablementCollectionItem({
-  collectionPublicId,
-  assetPublicId,
-  user,
-}) {
-  const collection = await getCommercialEnablementCollection({
-    collectionPublicId,
-    user,
-  });
-  if (!collection) {
-    const error = new Error("Coleccion no encontrada");
-    error.status = 404;
-    throw error;
-  }
-  const asset = await getCommercialEnablementAssetDetail({
-    user,
-    assetPublicId,
-  });
-  if (!asset) {
-    const error = new Error("Activo no encontrado");
-    error.status = 404;
-    throw error;
-  }
-  await query(
-    `DELETE FROM commercial_enablement_collection_items
-     WHERE collection_id = ? AND item_id = ?`,
-    [Number(collection.id), Number(asset.id)],
-  );
-  return getCommercialEnablementCollection({ collectionPublicId, user });
-}
-
-export async function buildCommercialEnablementCollectionSharePackage({
-  collectionPublicId,
-  user,
-}) {
-  const collection = await getCommercialEnablementCollection({
-    collectionPublicId,
-    user,
-  });
-  if (!collection) {
-    const error = new Error("Coleccion no encontrada");
-    error.status = 404;
-    throw error;
-  }
-  const shareableItems = collection.items.filter((item) =>
-    COLLECTION_SHAREABLE_VISIBILITIES.has(item.visibilityLevel),
-  );
-  const blockedItems = collection.items.filter(
-    (item) => !COLLECTION_SHAREABLE_VISIBILITIES.has(item.visibilityLevel),
-  );
-  return {
-    collection: {
-      publicId: collection.publicId,
-      name: collection.name,
-      itemCount: collection.items.length,
-    },
-    shareableItems: shareableItems.map((item) => ({
-      publicId: item.publicId,
-      title: item.title,
-      links: item.links,
-      fileCount: item.files.length,
-    })),
-    blockedItems: blockedItems.map((item) => ({
-      publicId: item.publicId,
-      title: item.title,
-      visibilityLevel: item.visibilityLevel,
-    })),
-  };
-}
-
-export async function getCommercialEnablementAnalyticsOverview({ user }) {
-  await ensureCommercialEnablementStarterData();
-  if (!canManageEnablement(user) && !canAdminEnablement(user)) {
-    const error = new Error("No autorizado");
-    error.status = 403;
-    throw error;
-  }
-  const raw = await loadRawEnablementData();
-  const items = assembleEnablementItems(raw, user);
-  const published = items.filter((item) => item.status === "published");
-  const usageByType = published.reduce((accumulator, item) => {
-    accumulator[item.assetTypeCode] =
-      (accumulator[item.assetTypeCode] || 0) + item.usageCount;
-    return accumulator;
-  }, {});
-  const topItems = [...published]
-    .sort((left, right) => right.usageCount - left.usageCount)
-    .slice(0, 10)
-    .map((item) => ({
-      publicId: item.publicId,
-      title: item.title,
-      usageCount: item.usageCount,
-      visibilityLevel: item.visibilityLevel,
-      assetTypeLabel: item.assetTypeLabel,
-    }));
-  return {
-    totals: {
-      totalAssets: items.length,
-      publishedAssets: published.length,
-      totalUsageEvents: raw.usageRows.length,
-      totalFavorites: raw.favoriteRows.length,
-      totalCollections: raw.collectionRows.length,
-    },
-    usageByType,
-    topItems,
-  };
-}
-
-export async function getCommercialEnablementGovernanceOverview({ user }) {
-  await ensureCommercialEnablementStarterData();
-  if (!canManageEnablement(user) && !canAdminEnablement(user)) {
-    const error = new Error("No autorizado");
-    error.status = 403;
-    throw error;
-  }
-  const raw = await loadRawEnablementData();
-  const items = assembleEnablementItems(raw, user);
-  const qualityIssues = items.filter((item) => {
-    const hasManufacturerOrSolution = item.catalogs.some((catalog) =>
-      ["manufacturer", "solution"].includes(catalog.catalogType),
-    );
-    const hasNeedOrRequirement = item.catalogs.some((catalog) =>
-      ["need", "requirement"].includes(catalog.catalogType),
-    );
-    return (
-      !hasManufacturerOrSolution ||
-      !hasNeedOrRequirement ||
-      (!item.files.length && !item.links.length)
-    );
-  });
-  const duplicates = items.filter(
-    (item, index, array) =>
-      array.findIndex(
-        (candidate) =>
-          normalizeText(candidate.title) === normalizeText(item.title),
-      ) !== index,
-  );
-  return {
-    summary: {
-      totalAssets: items.length,
-      draftAssets: items.filter((item) => item.status === "draft").length,
-      obsoleteAssets: items.filter((item) => item.status === "obsolete").length,
-      qualityIssues: qualityIssues.length,
-      duplicateCandidates: duplicates.length,
-    },
-    qualityIssues: qualityIssues.slice(0, 20).map((item) => ({
-      publicId: item.publicId,
-      title: item.title,
-      status: item.status,
-      hasFilesOrLinks: Boolean(item.files.length || item.links.length),
-      categoriesCount: item.catalogs.length,
-    })),
-    duplicateCandidates: duplicates.slice(0, 20).map((item) => ({
-      publicId: item.publicId,
-      title: item.title,
-      updatedAt: item.updatedAt,
-    })),
-    manageableItems: items.slice(0, 20).map((item) => ({
-      publicId: item.publicId,
-      title: item.title,
-      status: item.status,
-      updatedAt: item.updatedAt,
-      assetTypeLabel: item.assetTypeLabel,
-      usageCount: item.usageCount,
-    })),
-  };
 }
 
 export async function createCommercialEnablementCatalogEntry({
@@ -3141,9 +2708,150 @@ export async function openCommercialEnablementLink({
   return link;
 }
 
-export async function getCommercialEnablementDashboard({ user = null } = {}) {
-  const bootstrap = await getCommercialEnablementBootstrap({ user });
-  return bootstrap;
+function hashShareToken(token) {
+  return createHash("sha256")
+    .update(String(token || ""))
+    .digest("hex");
+}
+
+export async function createCommercialEnablementShareLink({
+  assetPublicId,
+  user,
+}) {
+  const asset = await getCommercialEnablementAssetDetail({
+    user,
+    assetPublicId,
+  });
+  const fail = (status, message) => {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+  };
+  if (!asset) throw fail(404, "Activo no encontrado");
+  if (!asset.isActive) throw fail(409, "El material esta desactivado");
+  if (!asset.isShareable) {
+    throw fail(409, "Solo los materiales para cliente se pueden compartir");
+  }
+
+  let result;
+  if (asset.links.length) {
+    result = {
+      kind: "url",
+      url: asset.links[0].url,
+      expiresAt: asset.expiresAt,
+    };
+  } else {
+    const file = asset.files[0];
+    if (!file || !asset.isDownloadable) {
+      throw fail(409, "Este material no tiene un archivo descargable");
+    }
+    if (file.isAvailable === false) {
+      throw fail(404, "El archivo ya no esta disponible en almacenamiento");
+    }
+    const token = `${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`;
+    const expiresAt = new Date(
+      Date.now() + SHARE_LINK_VALIDITY_DAYS * 24 * 60 * 60 * 1000,
+    );
+    await query(
+      `DELETE FROM commercial_enablement_share_links
+       WHERE expires_at < DATE_SUB(NOW(3), INTERVAL 7 DAY)`,
+    );
+    await query(
+      `INSERT INTO commercial_enablement_share_links
+        (token_hash, item_id, created_by_user_id, expires_at, created_at)
+       VALUES (?, ?, ?, ?, NOW(3))`,
+      [hashShareToken(token), Number(asset.id), Number(user.id), expiresAt],
+    );
+    result = { kind: "file", token, expiresAt: expiresAt.toISOString() };
+  }
+
+  await recordCommercialEnablementUsageEvent({
+    assetPublicId,
+    eventType: "shared",
+    user,
+    contextType: "share_link",
+    contextEntityId: asset.id,
+  }).catch(() => undefined);
+  return result;
+}
+
+// Se valida en cada descarga: desactivar, eliminar o volver interno un material invalida sus enlaces.
+export async function openCommercialEnablementShareLink({ token }) {
+  const fail = (status, message) => {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+  };
+  const cleanToken = String(token || "").trim();
+  if (!cleanToken) throw fail(400, "Enlace invalido");
+
+  const rows = await query(
+    `SELECT s.expires_at AS share_expires_at,
+            i.status, i.visibility_level, i.is_downloadable,
+            i.expires_at AS item_expires_at,
+            f.storage_provider, f.storage_bucket, f.storage_key,
+            f.original_file_name, f.stored_file_name, f.mime_type
+       FROM commercial_enablement_share_links s
+       INNER JOIN commercial_enablement_items i
+               ON i.id = s.item_id AND i.is_deleted = 0
+       INNER JOIN commercial_enablement_item_files f
+               ON f.item_id = i.id AND f.is_deleted = 0
+      WHERE s.token_hash = ?
+      ORDER BY f.created_at DESC
+      LIMIT 1`,
+    [hashShareToken(cleanToken)],
+  );
+  const row = rows[0];
+  if (!row) throw fail(404, "Enlace no encontrado");
+
+  const now = Date.now();
+  const itemExpired =
+    row.item_expires_at && new Date(row.item_expires_at).getTime() <= now;
+  if (
+    new Date(row.share_expires_at).getTime() <= now ||
+    row.status !== "published" ||
+    itemExpired ||
+    row.visibility_level !== "client_safe" ||
+    !row.is_downloadable
+  ) {
+    throw fail(410, "Este material ya no esta disponible");
+  }
+
+  let stream;
+  try {
+    stream = await storage.openReadStream({
+      storageKey: row.storage_key,
+      storageBucket: row.storage_bucket,
+    });
+  } catch (error) {
+    throw fail(
+      error?.code === "ENOENT" ? 404 : 502,
+      "No fue posible abrir el archivo",
+    );
+  }
+  return {
+    stream,
+    mimeType: row.mime_type || "application/octet-stream",
+    fileName: row.original_file_name || row.stored_file_name || "archivo",
+  };
+}
+
+export async function findCommercialEnablementDuplicateByChecksum(sha256) {
+  const rows = await query(
+    `SELECT i.public_id, i.title, i.status
+       FROM commercial_enablement_item_files f
+       INNER JOIN commercial_enablement_items i ON i.id = f.item_id
+      WHERE f.sha256 = ? AND f.is_deleted = 0 AND i.is_deleted = 0
+      LIMIT 1`,
+    [String(sha256 || "")],
+  );
+  return rows[0]
+    ? {
+        publicId: rows[0].public_id,
+        title: rows[0].title,
+        isActive: rows[0].status === "published",
+      }
+    : null;
 }
 
 export async function loadCommercialEnablementRecommendationCatalog() {

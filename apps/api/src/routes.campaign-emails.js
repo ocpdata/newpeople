@@ -399,6 +399,9 @@ async function resolveLibraryFileRow({ assetPublicId, filePublicId }) {
         AND COALESCE(i.is_deleted, 0) = 0
         AND COALESCE(f.is_deleted, 0) = 0
         AND COALESCE(i.is_downloadable, 1) = 1
+        AND i.status = 'published'
+        AND i.visibility_level = 'client_safe'
+        AND (i.expires_at IS NULL OR i.expires_at > NOW(3))
       LIMIT 1`,
     [String(assetPublicId || "").trim(), String(filePublicId || "").trim()],
   );
@@ -555,6 +558,8 @@ async function listCampaignEmailLibraryFiles({ user, q = "" }) {
     user,
     filters: {
       q: String(q || "").trim(),
+      status: "published",
+      onlyClientSafe: "true",
       page: 1,
       pageSize: 30,
       sort: "updated_desc",

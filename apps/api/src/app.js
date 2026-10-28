@@ -19,7 +19,9 @@ import executionCommercialRoutes from "./routes.execution-commercial.js";
 import miAgentRoutes from "./routes.mi-agent.js";
 import customerChatEvaluationRoutes from "./customer-chat-evaluations/routes.js";
 import commercialTrackingRoutes from "./routes.commercial-tracking.js";
-import commercialEnablementRoutes from "./routes.commercial-enablement.js";
+import commercialEnablementRoutes, {
+  publicRouter as publicCommercialEnablementRoutes,
+} from "./routes.commercial-enablement.js";
 import commercialPlanningRoutes from "./routes.commercial-planning.js";
 import commercialIntelligenceRoutes from "./routes.commercial-intelligence.js";
 import prospectResearchRoutes from "./routes.prospect-research.js";
@@ -112,6 +114,7 @@ export function createApp() {
 
   app.use("/api/public", quotationPublicRoutes);
   app.use("/api/public", publicCampaignEmailRoutes);
+  app.use("/api/public", publicCommercialEnablementRoutes);
   app.use("/", publicLandingRoutes);
   app.use("/api/auth", authRoutes);
   app.use("/api/users", authRequired, loadUser, userRoutes);

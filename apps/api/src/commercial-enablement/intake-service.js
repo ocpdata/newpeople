@@ -19,6 +19,7 @@ import { createDocumentStorage } from "../opportunity-documents/storage.js";
 import {
   createCommercialEnablementAsset,
   ensureCommercialEnablementStarterData,
+  findCommercialEnablementDuplicateByChecksum,
   getCommercialEnablementAssetDetail,
   getCommercialEnablementCatalogs,
 } from "./library-service.js";
@@ -1834,7 +1835,10 @@ export async function createCommercialEnablementIntakeSession({
     });
 
     const sessionRow = await getIntakeSessionRowByPublicId(publicId);
-    return buildStoredSessionResponse(sessionRow);
+    return {
+      ...buildStoredSessionResponse(sessionRow),
+      duplicateOf: await findCommercialEnablementDuplicateByChecksum(sha256),
+    };
   } finally {
     await cleanupTempFiles(files).catch(() => undefined);
   }
@@ -1935,14 +1939,12 @@ export async function reviewCommercialEnablementIntakeSession({
   );
   const canCreate =
     String(acceptedPayload?.title || "").trim().length >= 3 &&
-    String(acceptedPayload?.summary || "").trim().length > 0 &&
     String(acceptedPayload?.assetTypeCode || "").trim().length > 0 &&
-    ((Array.isArray(acceptedPayload?.manufacturerCodes) &&
-      acceptedPayload.manufacturerCodes.length > 0) ||
-      (Array.isArray(acceptedPayload?.solutionCodes) &&
-        acceptedPayload.solutionCodes.length > 0)) &&
+    ["manufacturerCodes", "technologyCodes", "solutionCodes"].some(
+      (key) =>
+        Array.isArray(acceptedPayload?.[key]) && acceptedPayload[key].length,
+    ) &&
     String(acceptedPayload?.visibilityLevel || "").trim().length > 0 &&
-    String(acceptedPayload?.status || "").trim().length > 0 &&
     reviewConfirmed;
 
   await query(
