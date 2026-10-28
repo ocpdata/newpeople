@@ -2854,6 +2854,59 @@ export async function findCommercialEnablementDuplicateByChecksum(sha256) {
     : null;
 }
 
+// Sugiere materiales para cliente según el texto de la oportunidad y su etapa.
+export async function suggestCommercialEnablementForContext({
+  user,
+  text = "",
+  stageCode = "",
+  limit = 5,
+}) {
+  await ensureCommercialEnablementStarterData();
+  const raw = await loadRawEnablementData(user);
+  const source = ` ${normalizeText(text)} `;
+  const stage = normalizeText(stageCode).replace(/\s+/g, "_");
+  const catalogWeights = {
+    manufacturer: 5,
+    solution: 3,
+    technology: 3,
+    industry: 2,
+  };
+
+  return assembleEnablementItems(raw, user)
+    .filter((item) => item.isActive && item.isShareable)
+    .map((item) => {
+      const reasons = [];
+      let score = 0;
+      item.catalogs.forEach((catalog) => {
+        const weight = catalogWeights[catalog.catalogType];
+        const name = normalizeText(catalog.name);
+        if (weight && name && source.includes(` ${name} `)) {
+          score += weight;
+          reasons.push(catalog.name);
+        }
+      });
+      if (stage && item.tags.some((tag) => tag.tagGroup === "stage" && tag.code === stage)) {
+        score += 3;
+        reasons.push("Etapa actual");
+      }
+      return { item, score, reasons };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        compareByUpdatedDesc(left.item, right.item),
+    )
+    .slice(0, limit)
+    .map(({ item, reasons }) => ({
+      publicId: item.publicId,
+      title: item.title,
+      summary: item.summary,
+      assetTypeLabel: item.assetTypeLabel,
+      reasons: Array.from(new Set(reasons)),
+    }));
+}
+
 export async function loadCommercialEnablementRecommendationCatalog() {
   await ensureCommercialEnablementStarterData();
   const raw = await loadRawEnablementData();

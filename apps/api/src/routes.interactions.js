@@ -50,11 +50,13 @@ import {
   COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES,
   COMMERCIAL_EMAIL_ALLOWED_ATTACHMENT_MIME_TYPES,
   COMMERCIAL_EMAIL_LIBRARY_SUGGESTION_MAX_FILES,
+  assertLibraryAttachmentsShareable,
   buildCommercialLibraryAttachmentCatalogs,
   filterCommercialLibraryFiles,
   listCommercialLibraryFilesForEmail,
   normalizeCommercialEmailDraft,
   normalizeCommercialLibraryFilters,
+  recordLibraryAttachmentsUsage,
   sortCommercialLibraryFiles,
   validateCommercialEmailAttachments,
 } from "./commercial-email/shared.js";
@@ -3752,8 +3754,15 @@ function scoreLeadLibraryAttachment(asset, draft) {
     .reduce((acc, token) => (target.includes(token) ? acc + 1 : acc), 0);
 }
 
-async function loadInteractionEmailAttachmentOptions({ user, libraryFilters }) {
-  const allLibraryFiles = await listCommercialLibraryFilesForEmail({ user });
+async function loadInteractionEmailAttachmentOptions({
+  user,
+  libraryFilters,
+  includeAssetPublicId = "",
+}) {
+  const allLibraryFiles = await listCommercialLibraryFilesForEmail({
+    user,
+    includeAssetPublicId,
+  });
   const libraryCatalogs =
     buildCommercialLibraryAttachmentCatalogs(allLibraryFiles);
   const filteredLibraryFiles = filterCommercialLibraryFiles(
@@ -4786,6 +4795,7 @@ router.get(
 
     const options = await loadInteractionEmailAttachmentOptions({
       user: req.user,
+      includeAssetPublicId: req.query?.assetPublicId,
       libraryFilters: {
         q: req.query?.q,
         manufacturerCodes: req.query?.manufacturerCodes,
@@ -5110,6 +5120,10 @@ router.post(
         });
       }
 
+      await assertLibraryAttachmentsShareable({
+        user: req.user,
+        attachments: draft.attachments,
+      });
       const resolvedAttachments = await resolveInteractionEmailAttachments({
         interactionId,
         user: req.user,
@@ -5150,6 +5164,13 @@ router.post(
         });
 
         await clearUserGoogleMailConnectionError(req.user.id);
+        await recordLibraryAttachmentsUsage({
+          user: req.user,
+          attachments: draft.attachments,
+          eventType: "emailed",
+          contextType: "lead",
+          contextEntityId: interactionId,
+        });
       } catch (error) {
         const errorCode = String(error?.code || "google_send_failed");
         await markUserGoogleMailConnectionError({

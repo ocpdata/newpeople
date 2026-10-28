@@ -11,10 +11,17 @@ import {
   createUser,
   login,
 } from "./helpers/apiTestUtils.js";
+import { suggestCommercialEnablementForContext } from "../src/commercial-enablement/service.js";
+import {
+  assertLibraryAttachmentsShareable,
+  listCommercialLibraryFilesForEmail,
+  recordLibraryAttachmentsUsage,
+} from "../src/commercial-email/shared.js";
 
 describe("Biblioteca de ventas", () => {
   const cleanup = { userIds: [], roleIds: [] };
   const tokens = {};
+  const actors = {};
 
   async function createActor(key, permissionCodes) {
     const roleId = await createRole({
@@ -29,6 +36,7 @@ describe("Biblioteca de ventas", () => {
       roleIds: [roleId],
     });
     cleanup.userIds.push(userId);
+    actors[key] = { id: userId, permissionSet: new Set(permissionCodes) };
     const response = await login(request(app), email);
     tokens[key] = response.body.token;
   }
@@ -301,5 +309,100 @@ describe("Biblioteca de ventas", () => {
       .send({});
     expect(urlShare.status).toBe(200);
     expect(urlShare.body.url).toBe("https://example.com/original");
+  });
+
+  async function createPdfMaterial(suffix, overrides = {}) {
+    const asset = await createMaterial("manager", suffix, {
+      sourceType: "file",
+      ...overrides,
+    });
+    const upload = await request(app)
+      .post(`/api/commercial-enablement/assets/${asset.publicId}/files`)
+      .set(auth("manager"))
+      .attach("file", Buffer.from("%PDF-1.4 prueba"), {
+        filename: "material.pdf",
+        contentType: "application/pdf",
+      });
+    expect(upload.status).toBe(201);
+    const activated = await request(app)
+      .post(`/api/commercial-enablement/assets/${asset.publicId}/activate`)
+      .set(auth("manager"))
+      .send({});
+    expect(activated.status).toBe(200);
+    return activated.body;
+  }
+
+  test("sugiere materiales para cliente segun fabricante y etapa de la oportunidad", async () => {
+    const match = await createMaterial("manager", "Caso Zyxel salud", {
+      manufacturerCodes: ["zyxel"],
+    });
+    await addLinkAndActivate("manager", match, "https://example.com/zyxel");
+    const internal = await createMaterial("manager", "Interno Zyxel", {
+      manufacturerCodes: ["zyxel"],
+      visibilityLevel: "internal_sales",
+    });
+    await addLinkAndActivate("manager", internal, "https://example.com/zyxel-i");
+
+    const suggestions = await suggestCommercialEnablementForContext({
+      user: actors.seller,
+      text: "Proyecto Zyxel para hospital regional",
+      stageCode: "descubrimiento",
+    });
+    expect(suggestions.map((item) => item.publicId)).toEqual([match.publicId]);
+    expect(suggestions[0].reasons).toContain("Zyxel");
+
+    const none = await suggestCommercialEnablementForContext({
+      user: actors.seller,
+      text: "Proyecto sin relacion",
+    });
+    expect(none.map((item) => item.publicId)).not.toContain(match.publicId);
+  });
+
+  test("los adjuntos de correo solo admiten materiales activos para cliente y registran el envio", async () => {
+    const client = await createPdfMaterial("Folleto adjuntable");
+    const internal = await createPdfMaterial("Folleto interno adjuntable", {
+      visibilityLevel: "internal_sales",
+    });
+
+    const options = await listCommercialLibraryFilesForEmail({
+      user: actors.seller,
+      includeAssetPublicId: client.publicId,
+    });
+    const optionIds = options.map((option) => option.resourcePublicId);
+    expect(optionIds).toContain(client.publicId);
+    const internalOptions = await listCommercialLibraryFilesForEmail({
+      user: actors.seller,
+      includeAssetPublicId: internal.publicId,
+    });
+    expect(
+      internalOptions.map((option) => option.resourcePublicId),
+    ).not.toContain(internal.publicId);
+
+    const attachment = (asset) => ({
+      sourceType: "library_file",
+      resourcePublicId: asset.publicId,
+    });
+    await expect(
+      assertLibraryAttachmentsShareable({
+        user: actors.seller,
+        attachments: [attachment(client)],
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertLibraryAttachmentsShareable({
+        user: actors.manager,
+        attachments: [attachment(internal)],
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    await recordLibraryAttachmentsUsage({
+      user: actors.seller,
+      attachments: [attachment(client)],
+      eventType: "emailed",
+      contextType: "opportunity",
+      contextEntityId: 1,
+    });
+    const recent = await search("seller", { shortcut: "recent" });
+    expect(recent.items.map((item) => item.publicId)).toContain(client.publicId);
   });
 });

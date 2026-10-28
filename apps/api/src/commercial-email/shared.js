@@ -1,7 +1,59 @@
 import {
   getCommercialEnablementAssetDetail,
   listCommercialEnablementAssets,
+  recordCommercialEnablementUsageEvent,
 } from "../commercial-enablement/service.js";
+
+function getLibraryAttachmentAssetIds(attachments) {
+  return Array.from(
+    new Set(
+      (Array.isArray(attachments) ? attachments : [])
+        .filter((attachment) => attachment?.sourceType === "library_file")
+        .map((attachment) => String(attachment.resourcePublicId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+// Un correo a cliente solo puede llevar materiales activos y marcados para cliente.
+export async function assertLibraryAttachmentsShareable({
+  user,
+  attachments,
+}) {
+  for (const assetPublicId of getLibraryAttachmentAssetIds(attachments)) {
+    const asset = await getCommercialEnablementAssetDetail({
+      user,
+      assetPublicId,
+    }).catch(() => null);
+    if (!asset || !asset.isActive || asset.visibilityLevel !== "client_safe") {
+      const error = new Error(
+        `El material "${asset?.title || assetPublicId}" ya no esta disponible para enviar a clientes.`,
+      );
+      error.status = 400;
+      throw error;
+    }
+  }
+}
+
+export async function recordLibraryAttachmentsUsage({
+  user,
+  attachments,
+  eventType,
+  contextType,
+  contextEntityId,
+}) {
+  await Promise.all(
+    getLibraryAttachmentAssetIds(attachments).map((assetPublicId) =>
+      recordCommercialEnablementUsageEvent({
+        assetPublicId,
+        eventType,
+        user,
+        contextType,
+        contextEntityId,
+      }).catch(() => undefined),
+    ),
+  );
+}
 
 export const COMMERCIAL_EMAIL_ATTACHMENT_MAX_FILES = 10;
 export const COMMERCIAL_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
@@ -209,7 +261,10 @@ function getCommercialAttachmentCatalogMeta(asset, catalogType) {
   };
 }
 
-export async function listCommercialLibraryFilesForEmail({ user }) {
+export async function listCommercialLibraryFilesForEmail({
+  user,
+  includeAssetPublicId = "",
+}) {
   const assetResult = await listCommercialEnablementAssets({
     user,
     filters: {
@@ -221,16 +276,29 @@ export async function listCommercialLibraryFilesForEmail({ user }) {
   }).catch(() => ({ items: [] }));
 
   const items = Array.isArray(assetResult?.items) ? assetResult.items : [];
+  const assetPublicIds = items.map((item) => item.publicId);
+  const requestedPublicId = String(includeAssetPublicId || "").trim();
+  // Garantiza que el material elegido en la biblioteca aparezca aunque no esté entre los 80 más recientes.
+  if (requestedPublicId && !assetPublicIds.includes(requestedPublicId)) {
+    assetPublicIds.push(requestedPublicId);
+  }
   const details = await Promise.all(
-    items.map((item) =>
+    assetPublicIds.map((assetPublicId) =>
       getCommercialEnablementAssetDetail({
         user,
-        assetPublicId: item.publicId,
+        assetPublicId,
       }).catch(() => null),
     ),
   );
 
-  return details.filter(Boolean).flatMap((asset) =>
+  return details
+    .filter(
+      (asset) =>
+        asset &&
+        asset.isActive &&
+        asset.visibilityLevel === "client_safe",
+    )
+    .flatMap((asset) =>
     (asset.files || [])
       .filter(
         (file) =>

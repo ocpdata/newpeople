@@ -13,8 +13,13 @@ import {
   listCommercialEnablementAssets,
   loadCommercialEnablementRecommendationCatalog,
   recommendCommercialEnablementResources,
+  suggestCommercialEnablementForContext,
 } from "./commercial-enablement/service.js";
-import { listCommercialLibraryFilesForEmail as listCommercialLibraryFilesForEmailShared } from "./commercial-email/shared.js";
+import {
+  assertLibraryAttachmentsShareable,
+  listCommercialLibraryFilesForEmail as listCommercialLibraryFilesForEmailShared,
+  recordLibraryAttachmentsUsage,
+} from "./commercial-email/shared.js";
 import { ensureCommercialNarrativeJobSchema } from "./commercial-development/narrative-jobs-schema.js";
 import {
   COMMERCIAL_ACTIVITY_TYPES,
@@ -6112,9 +6117,10 @@ async function loadCommercialEmailAttachmentOptions({
   user,
   opportunityId,
   libraryFilters = {},
+  includeAssetPublicId = "",
 }) {
   const [allLibraryFiles, quotationVersions] = await Promise.all([
-    listCommercialLibraryFilesForEmailShared({ user }),
+    listCommercialLibraryFilesForEmailShared({ user, includeAssetPublicId }),
     listCommercialQuotationVersionsForEmail({ opportunityId }),
   ]);
 
@@ -9810,6 +9816,37 @@ router.patch(
 );
 
 router.get(
+  "/opportunities/:id/library-suggestions",
+  requirePermission("desarrollo_comercial.update"),
+  requirePermission("oportunidades.update"),
+  async (req, res) => {
+    const opportunityId = Number(req.params.id);
+    if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+      return res.status(400).json({ message: "Parametros invalidos" });
+    }
+
+    const opportunity = await loadOpportunityForExecution(
+      req.user,
+      opportunityId,
+    );
+    if (!opportunity) {
+      return res.status(404).json({ message: "Oportunidad no encontrada" });
+    }
+
+    const items = await suggestCommercialEnablementForContext({
+      user: req.user,
+      text: [
+        opportunity.name,
+        opportunity.account_name,
+        opportunity.sales_stage_name,
+      ].join(" "),
+      stageCode: opportunity.sales_stage_code,
+    });
+    return res.json({ items });
+  },
+);
+
+router.get(
   "/opportunities/:id/email-attachments/options",
   requirePermission("desarrollo_comercial.update"),
   requirePermission("oportunidades.update"),
@@ -9830,6 +9867,7 @@ router.get(
     const options = await loadCommercialEmailAttachmentOptions({
       user: req.user,
       opportunityId,
+      includeAssetPublicId: req.query?.assetPublicId,
       libraryFilters: {
         q: req.query?.q,
         manufacturerCodes: req.query?.manufacturerCodes,
@@ -10161,6 +10199,10 @@ router.post(
       return res.status(400).json({ message: attachmentValidationError });
     }
 
+    await assertLibraryAttachmentsShareable({
+      user: req.user,
+      attachments: nextDetails.attachments,
+    });
     const resolvedAttachments = await resolveCommercialEmailAttachments({
       user: req.user,
       opportunity: context.opportunity,
@@ -10197,6 +10239,13 @@ router.post(
     }
 
     const sentAt = new Date().toISOString();
+    await recordLibraryAttachmentsUsage({
+      user: req.user,
+      attachments: nextDetails.attachments,
+      eventType: "emailed",
+      contextType: "opportunity",
+      contextEntityId: opportunityId,
+    });
     nextDetails.sentAt = sentAt;
     nextDetails.sentByUserId = Number(req.user.id);
     nextDetails.sentByUserName = String(

@@ -44,6 +44,7 @@ import {
   getCommercialEnablementCatalogs,
   getCommercialEnablementFileStream,
   listCommercialEnablementAssets,
+  recordCommercialEnablementUsageEvent,
 } from "./commercial-enablement/service.js";
 import {
   assertAiBudgetAvailable,
@@ -16115,6 +16116,105 @@ router.put(
       message: "Componente actualizado",
       proposal: await serializeProposalDetail(refreshedProposal),
     });
+  },
+);
+
+router.post(
+  "/proposals/:proposalId/brochures",
+  requireAnyPermission(proposalUpdateAccessPermissionCodes),
+  async (req, res) => {
+    if (!assertProposalUpdatePermission(req, res)) return;
+    const proposalId = Number(req.params.proposalId);
+    const assetPublicId = String(req.body?.assetPublicId || "").trim();
+    if (!Number.isInteger(proposalId) || proposalId <= 0 || !assetPublicId) {
+      return res.status(400).json({ message: "Datos invalidos" });
+    }
+
+    const proposal = await getAccessibleProposal({
+      user: req.user,
+      proposalId,
+    });
+    if (!proposal) {
+      return res.status(404).json({ message: "Propuesta no encontrada" });
+    }
+    if (proposal.archived_at || proposal.status_code === "archived") {
+      return res
+        .status(409)
+        .json({ message: "No puedes agregar material a una propuesta archivada" });
+    }
+
+    const components = await listProposalComponents(proposalId);
+    const brochureComponent = components.find((component) =>
+      isProductBrochuresComponentCode(component.componentCode),
+    );
+    const currentAssetPublicIds = (brochureComponent?.blocks || [])
+      .filter((block) => block.type === "brochure" && block.assetPublicId)
+      .map((block) => String(block.assetPublicId));
+    if (currentAssetPublicIds.includes(assetPublicId)) {
+      return res.json({
+        message: "El material ya estaba en la propuesta",
+        alreadyAdded: true,
+      });
+    }
+
+    let resolved;
+    try {
+      resolved = await resolveProposalBrochureAssetsByPublicIds({
+        user: req.user,
+        assetPublicIds: [...currentAssetPublicIds, assetPublicId],
+      });
+    } catch (error) {
+      if (error?.body) return res.status(error.status || 422).json(error.body);
+      throw error;
+    }
+
+    await saveProposalComponentBlocks({
+      proposalId,
+      componentCode: PRODUCT_BROCHURES_COMPONENT_CODE,
+      title: brochureComponent?.title,
+      blocks: resolved.assetPublicIds.map((id) => ({
+        type: "brochure",
+        assetPublicId: id,
+      })),
+      brochureAssetsByPublicId: resolved.brochureAssetsByPublicId,
+      actorUserId: Number(req.user.id),
+    });
+    const synced = await refreshProposalLegacyContentFromComponents({
+      proposalId,
+      proposalTitle: proposal.title,
+      userId: Number(req.user.id),
+    });
+    await createProposalRevision({
+      proposalId,
+      quotationVersionId: Number(proposal.quotation_version_id),
+      title: proposal.title,
+      statusCode: normalizeProposalStatusCode(
+        proposal.status_code,
+        proposal.archived_at ? "archived" : "active",
+      ),
+      content: synced.content,
+      pricingSnapshot:
+        safeParseJsonObject(proposal.pricing_snapshot_json) || {},
+      changeType: `add_brochure_${PRODUCT_BROCHURES_COMPONENT_CODE}`,
+      userId: req.user.id,
+    });
+    await logAuditEvent({
+      req,
+      module: "propuestas",
+      action: "add_library_brochure",
+      entityType: "proposal",
+      entityId: proposalId,
+      detail: `Material de biblioteca agregado a folletos: ${assetPublicId}`,
+    });
+    await recordCommercialEnablementUsageEvent({
+      assetPublicId,
+      eventType: "added_to_proposal",
+      user: req.user,
+      contextType: "proposal",
+      contextEntityId: proposalId,
+    }).catch(() => undefined);
+
+    return res.json({ message: "Material agregado a la propuesta" });
   },
 );
 
