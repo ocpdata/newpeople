@@ -22699,6 +22699,7 @@ describe("API integration baseline", () => {
       librarySourceMode: "manual",
       libraryContentMode: "summary_extract",
       sourcePriorityMode: "non_library_first",
+      sourceScopeMode: "both",
       selectedLibraryAssetPublicIds: [asset.publicId],
     });
 
@@ -22719,6 +22720,7 @@ describe("API integration baseline", () => {
           librarySourceMode: "manual",
           libraryContentMode: "summary_extract",
           sourcePriorityMode: "non_library_first",
+          sourceScopeMode: "both",
           selectedLibraryAssetPublicIds: [asset.publicId],
         },
       }),
@@ -23054,6 +23056,7 @@ describe("API integration baseline", () => {
             librarySourceMode: "manual",
             libraryContentMode: "source_text",
             sourcePriorityMode: "library_first",
+            sourceScopeMode: "both",
           },
         }),
       );
