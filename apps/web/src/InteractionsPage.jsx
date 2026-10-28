@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { takeLibrarySendHandoff } from "./commercial-enablement/libraryModel";
 import { api, getApiErrorMessage } from "./api";
 import {
   addDaysToIsoDate,
@@ -5385,6 +5386,8 @@ function LeadCallOutcomeModal({
 function InteractionsPage({ can, currentUser }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const openedLeadHandoffRef = useRef("");
+  // Material elegido desde la biblioteca: se incluye siempre en las opciones de adjuntos.
+  const leadLibraryAssetHintRef = useRef("");
   const coachHandoff = useCoachHandoff({ module: "interactions" });
   const appliedCoachHandoffRef = useRef("");
   const helpRef = useRef(null);
@@ -5693,8 +5696,11 @@ function InteractionsPage({ can, currentUser }) {
     }
   }
 
-  async function loadLeadEmailAttachmentOptions({ queryText = "" } = {}) {
-    if (!detail?.id) return;
+  async function loadLeadEmailAttachmentOptions({
+    queryText = "",
+    assetPublicId = leadLibraryAssetHintRef.current,
+  } = {}) {
+    if (!detail?.id) return [];
     setLeadEmailLoadingLibraryOptions(true);
     setLeadEmailLibraryError("");
 
@@ -5704,6 +5710,7 @@ function InteractionsPage({ can, currentUser }) {
         {
           params: {
             q: normalizeText(queryText),
+            ...(assetPublicId ? { assetPublicId } : {}),
           },
         },
       );
@@ -5728,6 +5735,7 @@ function InteractionsPage({ can, currentUser }) {
         );
 
       setLeadEmailLibraryOptions(libraryOptions);
+      return libraryOptions;
     } catch (err) {
       setLeadEmailLibraryError(
         getApiErrorMessage(
@@ -5735,9 +5743,34 @@ function InteractionsPage({ can, currentUser }) {
           "No fue posible cargar contenido de biblioteca comercial.",
         ),
       );
+      return [];
     } finally {
       setLeadEmailLoadingLibraryOptions(false);
     }
+  }
+
+  function attachLibraryAssetToLeadEmail(options, assetPublicId) {
+    const option = (Array.isArray(options) ? options : []).find(
+      (item) => item.resourcePublicId === assetPublicId,
+    );
+    const mapped = mapLibraryOptionToLeadEmailAttachment(option, "manual");
+    if (!mapped) {
+      setLeadEmailError(
+        "Ese material ya no está disponible para enviar a clientes.",
+      );
+      return;
+    }
+    setLeadEmailSelectedLibraryAttachmentIds([mapped.id]);
+    setLeadEmailDraft((current) => ({
+      ...(current || {}),
+      attachments: [
+        ...(current?.attachments || []).filter((item) => item.id !== mapped.id),
+        mapped,
+      ],
+    }));
+    setLeadEmailNotice(
+      `Se adjuntó "${mapped.title || mapped.fileName}" desde la biblioteca.`,
+    );
   }
 
   async function handleOpenLeadEmailModal(prefill = null) {
@@ -5775,7 +5808,13 @@ function InteractionsPage({ can, currentUser }) {
     });
     setIsLeadEmailModalOpen(true);
 
-    void loadLeadEmailAttachmentOptions({ queryText: "" });
+    const libraryAssetPublicId = normalizeText(prefill?.libraryAssetPublicId);
+    leadLibraryAssetHintRef.current = libraryAssetPublicId;
+    void loadLeadEmailAttachmentOptions({ queryText: "" }).then((options) => {
+      if (libraryAssetPublicId) {
+        attachLibraryAssetToLeadEmail(options, libraryAssetPublicId);
+      }
+    });
     const googleStatus = await loadLeadEmailGoogleMailStatus({ silent: true });
     if (!googleStatus?.canSend) {
       setLeadEmailNotice("Conecta Google para habilitar el envio desde Leads.");
@@ -6812,6 +6851,19 @@ function InteractionsPage({ can, currentUser }) {
       setSearchParams(nextSearchParams, { replace: true });
     });
   }, [searchParams, setSearchParams]);
+
+  // Si el vendedor llegó desde "Enviar por correo" en la biblioteca, abre el correo con el material adjunto.
+  useEffect(() => {
+    if (!detail?.id || !canOpenLeadEmailModal) return;
+    const handoff = takeLibrarySendHandoff("lead", detail.id);
+    if (!handoff) return;
+    queueMicrotask(() => {
+      void handleOpenLeadEmailModal({
+        libraryAssetPublicId: handoff.assetPublicId,
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail?.id, canOpenLeadEmailModal]);
 
   useEffect(() => {
     const operation = coachHandoff.handoff?.payload;

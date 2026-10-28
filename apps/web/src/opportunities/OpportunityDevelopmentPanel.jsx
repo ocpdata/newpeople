@@ -11,6 +11,8 @@ import {
   toBusinessDateTimeInputValue,
 } from "../business-timezone";
 import OpportunityOperationEmailModal from "./OpportunityOperationEmailModal";
+import OpportunityLibrarySuggestions from "../commercial-enablement/OpportunityLibrarySuggestions";
+import { takeLibrarySendHandoff } from "../commercial-enablement/libraryModel";
 import {
   buildInteractionApprovalDraft,
   inferInteractionActivityStatus,
@@ -798,6 +800,8 @@ export default function OpportunityDevelopmentPanel({
   const [operationEmailNotice, setOperationEmailNotice] = useState("");
   const [operationLibraryError, setOperationLibraryError] = useState("");
   const [operationLibraryQuery, setOperationLibraryQuery] = useState("");
+  // Material elegido desde la biblioteca: se incluye siempre en las opciones de adjuntos.
+  const libraryAssetHintRef = useRef("");
   const [operationLibraryOptions, setOperationLibraryOptions] = useState([]);
   const [
     operationSelectedLibraryAttachmentIds,
@@ -1580,6 +1584,15 @@ export default function OpportunityDevelopmentPanel({
 
     return () => window.clearTimeout(timeoutId);
   }, [editingOpportunityId, isOperationEmailModalOpen, operationLibraryQuery]);
+
+  // Si el vendedor llegó desde "Enviar por correo" en la biblioteca, abre el correo con el material adjunto.
+  useEffect(() => {
+    if (!editingOpportunityId || !canOpenSendEmailOperation) return;
+    const handoff = takeLibrarySendHandoff("opportunity", editingOpportunityId);
+    if (!handoff) return;
+    void handleOpenSendEmailOperation(handoff.assetPublicId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingOpportunityId, canOpenSendEmailOperation]);
 
   async function refreshExecutionSection() {
     if (typeof refreshCommercialContext === "function") {
@@ -2375,8 +2388,11 @@ export default function OpportunityDevelopmentPanel({
     }
   }
 
-  async function loadOperationEmailAttachmentOptions({ query = "" } = {}) {
-    if (!editingOpportunityId) return;
+  async function loadOperationEmailAttachmentOptions({
+    query = "",
+    assetPublicId = libraryAssetHintRef.current,
+  } = {}) {
+    if (!editingOpportunityId) return [];
 
     setLoadingOperationLibraryOptions(true);
     setOperationLibraryError("");
@@ -2387,6 +2403,7 @@ export default function OpportunityDevelopmentPanel({
         {
           params: {
             q: normalizeText(query),
+            ...(assetPublicId ? { assetPublicId } : {}),
           },
         },
       );
@@ -2411,6 +2428,7 @@ export default function OpportunityDevelopmentPanel({
         );
 
       setOperationLibraryOptions(nextOptions);
+      return nextOptions;
     } catch (error) {
       setOperationLibraryError(
         getApiErrorMessage(
@@ -2418,6 +2436,7 @@ export default function OpportunityDevelopmentPanel({
           "No fue posible cargar contenido de biblioteca comercial.",
         ),
       );
+      return [];
     } finally {
       setLoadingOperationLibraryOptions(false);
     }
@@ -2651,8 +2670,35 @@ export default function OpportunityDevelopmentPanel({
     }
   }
 
-  async function handleOpenSendEmailOperation() {
+  function attachLibraryAssetFromOptions(options, assetPublicId) {
+    const option = (Array.isArray(options) ? options : []).find(
+      (item) => item.resourcePublicId === assetPublicId,
+    );
+    const mapped = mapLibraryOptionToEmailAttachment(option, "manual");
+    if (!mapped) {
+      setOperationEmailError(
+        "Ese material ya no está disponible para enviar a clientes.",
+      );
+      return;
+    }
+    setOperationSelectedLibraryAttachmentIds([mapped.id]);
+    setOperationEmailDraft((current) => ({
+      ...current,
+      attachments: [
+        ...(current.attachments || []).filter((item) => item.id !== mapped.id),
+        mapped,
+      ],
+    }));
+    setOperationEmailNotice(
+      `Se adjuntó "${mapped.title || mapped.fileName}" desde la biblioteca.`,
+    );
+  }
+
+  // Recibe el id del material cuando se abre desde la biblioteca; como onClick recibe un evento.
+  async function handleOpenSendEmailOperation(libraryAssetArg) {
     if (!editingOpportunityId || !canOpenSendEmailOperation) return;
+    const libraryAssetPublicId =
+      typeof libraryAssetArg === "string" ? libraryAssetArg : "";
 
     setOperationEmailDraft(buildOperationEmailDefaultDraft());
     setOperationEmailError("");
@@ -2670,7 +2716,12 @@ export default function OpportunityDevelopmentPanel({
     setOperationSelectedLibraryAttachmentIds([]);
     setIsOperationEmailModalOpen(true);
 
-    void loadOperationEmailAttachmentOptions({ query: "" });
+    libraryAssetHintRef.current = libraryAssetPublicId;
+    void loadOperationEmailAttachmentOptions({ query: "" }).then((options) => {
+      if (libraryAssetPublicId) {
+        attachLibraryAssetFromOptions(options, libraryAssetPublicId);
+      }
+    });
 
     const googleStatus = await loadOperationGoogleMailStatus({ silent: true });
     if (!googleStatus?.canSend) {
@@ -4355,6 +4406,13 @@ export default function OpportunityDevelopmentPanel({
                   emails.
                 </p>
               ) : null}
+              <OpportunityLibrarySuggestions
+                opportunityId={editingOpportunityId}
+                canAttach={canOpenSendEmailOperation && !sendingOperationEmail}
+                onAttach={(assetPublicId) =>
+                  handleOpenSendEmailOperation(assetPublicId)
+                }
+              />
             </div>
           </div>
 
