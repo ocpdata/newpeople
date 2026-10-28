@@ -1659,6 +1659,11 @@ async function analyzeIntakeSessionInternal({
     isDownloadable: true,
   };
   const draftPayload = buildDraftPayloadFromAnalysis(analysis, basePayload);
+  // La IA no propone tecnologia: se detecta por coincidencia con el catalogo en el titulo y el texto.
+  draftPayload.technologyCodes = pickMatchingCodes(
+    `${titleBase} ${text}`,
+    catalogs.technology,
+  );
 
   await query(
     `UPDATE commercial_enablement_intake_sessions

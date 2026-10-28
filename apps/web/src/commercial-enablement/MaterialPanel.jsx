@@ -411,7 +411,6 @@ export default function MaterialPanel({
       {dialog === "proposal" && asset ? (
         <ProposalMaterialDialog
           asset={asset}
-          notify={notify}
           onClose={() => setDialog(null)}
         />
       ) : null}

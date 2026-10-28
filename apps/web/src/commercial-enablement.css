@@ -883,6 +883,14 @@
   gap: 10px;
 }
 
+.sl-link-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+}
+
 /* Diálogos de uso (enviar / propuesta) */
 .sl-modal-small {
   width: min(560px, 94vw);

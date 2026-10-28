@@ -238,7 +238,12 @@ test("envía el material a una oportunidad y lo agrega a una propuesta", async (
   await expect(dialog.getByText("Propuesta vieja")).toHaveCount(0);
   await dialog.getByRole("button", { name: /Propuesta Hospital/ }).click();
   await expect(page.getByText(/se agregó a los folletos de «Propuesta Hospital»/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Abrir propuesta" })).toHaveAttribute(
+    "href",
+    "/proposals?proposalId=7",
+  );
   expect(brochureRequests).toEqual([{ assetPublicId: "cea_1" }]);
+  await page.getByRole("button", { name: "Seguir en la biblioteca" }).click();
 
   await panel.getByRole("button", { name: "Enviar por correo" }).click();
   const sendDialog = page.getByRole("dialog", { name: "Enviar por correo" });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, getApiErrorMessage } from "../api";
 import { API_BASE, setLibrarySendHandoff } from "./libraryModel";
 
@@ -196,9 +196,10 @@ export function SendMaterialDialog({ asset, capabilities, onClose }) {
 }
 
 // "Usar en propuesta": agrega el material a la sección de folletos de una propuesta abierta.
-export function ProposalMaterialDialog({ asset, onClose, notify }) {
+export function ProposalMaterialDialog({ asset, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [added, setAdded] = useState(null);
 
   const loadProposals = useStableLoader(async (query) => {
     const { data } = await api.get("/api/proposals");
@@ -224,13 +225,11 @@ export function ProposalMaterialDialog({ asset, onClose, notify }) {
       const response = await api.post(`/api/proposals/${item.id}/brochures`, {
         assetPublicId: asset.publicId,
       });
-      notify(
-        response.data?.alreadyAdded
-          ? `«${asset.title}» ya estaba en «${item.label}».`
-          : `«${asset.title}» se agregó a los folletos de «${item.label}».`,
-        "success",
-      );
-      onClose();
+      setAdded({
+        id: item.id,
+        label: item.label,
+        alreadyAdded: Boolean(response.data?.alreadyAdded),
+      });
     } catch (requestError) {
       setError(
         getApiErrorMessage(requestError, "No fue posible agregar el material a la propuesta"),
@@ -238,6 +237,26 @@ export function ProposalMaterialDialog({ asset, onClose, notify }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (added) {
+    return (
+      <DialogShell title="Usar en propuesta" onClose={onClose}>
+        <p className="form-success" role="status">
+          {added.alreadyAdded
+            ? `«${asset.title}» ya estaba en los folletos de «${added.label}».`
+            : `«${asset.title}» se agregó a los folletos de «${added.label}».`}
+        </p>
+        <div className="sl-inline-actions">
+          <Link className="btn-primary sl-link-button" to={`/proposals?proposalId=${added.id}`}>
+            Abrir propuesta
+          </Link>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Seguir en la biblioteca
+          </button>
+        </div>
+      </DialogShell>
+    );
   }
 
   return (
