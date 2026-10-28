@@ -4875,200 +4875,13 @@
         ]
       }
     },
-    "/api/commercial-enablement/analytics/overview": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/analytics/overview",
-        "operationId": "get_api_commercial_enablement_analytics_overview",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/assets",
-        "operationId": "get_api_commercial_enablement_assets",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
+    "/api/commercial-enablement/assets/{assetPublicId}/activate": {
       "post": {
         "tags": [
           "commercial-enablement"
         ],
-        "summary": "POST /api/commercial-enablement/assets",
-        "operationId": "post_api_commercial_enablement_assets",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/assets/{assetPublicId}",
-        "operationId": "get_api_commercial_enablement_assets_assetPublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "PUT /api/commercial-enablement/assets/{assetPublicId}",
-        "operationId": "put_api_commercial_enablement_assets_assetPublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/assets/{assetPublicId}",
-        "operationId": "delete_api_commercial_enablement_assets_assetPublicId",
+        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/activate",
+        "operationId": "post_api_commercial_enablement_assets_assetPublicId_activate",
         "parameters": [
           {
             "name": "assetPublicId",
@@ -5106,13 +4919,13 @@
         ]
       }
     },
-    "/api/commercial-enablement/assets/{assetPublicId}/archive": {
+    "/api/commercial-enablement/assets/{assetPublicId}/deactivate": {
       "post": {
         "tags": [
           "commercial-enablement"
         ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/archive",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_archive",
+        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/deactivate",
+        "operationId": "post_api_commercial_enablement_assets_assetPublicId_deactivate",
         "parameters": [
           {
             "name": "assetPublicId",
@@ -5150,13 +4963,13 @@
         ]
       }
     },
-    "/api/commercial-enablement/assets/{assetPublicId}/duplicate": {
+    "/api/commercial-enablement/assets/{assetPublicId}/share-link": {
       "post": {
         "tags": [
           "commercial-enablement"
         ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/duplicate",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_duplicate",
+        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/share-link",
+        "operationId": "post_api_commercial_enablement_assets_assetPublicId_share_link",
         "parameters": [
           {
             "name": "assetPublicId",
@@ -5167,1695 +4980,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/favorite": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/favorite",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_favorite",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/assets/{assetPublicId}/favorite",
-        "operationId": "delete_api_commercial_enablement_assets_assetPublicId_favorite",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/files": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/files",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_files",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/files/{filePublicId}": {
-      "put": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "PUT /api/commercial-enablement/assets/{assetPublicId}/files/{filePublicId}",
-        "operationId": "put_api_commercial_enablement_assets_assetPublicId_files_filePublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "filePublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/assets/{assetPublicId}/files/{filePublicId}",
-        "operationId": "delete_api_commercial_enablement_assets_assetPublicId_files_filePublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "filePublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/files/{filePublicId}/content": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/assets/{assetPublicId}/files/{filePublicId}/content",
-        "operationId": "get_api_commercial_enablement_assets_assetPublicId_files_filePublicId_content",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "filePublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/links": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/links",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_links",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/links/{linkPublicId}": {
-      "put": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "PUT /api/commercial-enablement/assets/{assetPublicId}/links/{linkPublicId}",
-        "operationId": "put_api_commercial_enablement_assets_assetPublicId_links_linkPublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "linkPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/assets/{assetPublicId}/links/{linkPublicId}",
-        "operationId": "delete_api_commercial_enablement_assets_assetPublicId_links_linkPublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "linkPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/obsolete": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/obsolete",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_obsolete",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/open-link/{linkPublicId}": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/assets/{assetPublicId}/open-link/{linkPublicId}",
-        "operationId": "get_api_commercial_enablement_assets_assetPublicId_open_link_linkPublicId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "linkPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/publish": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/publish",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_publish",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/reanalyze-summary": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/reanalyze-summary",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_reanalyze_summary",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/relations": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/relations",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_relations",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/relations/{relationId}": {
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/assets/{assetPublicId}/relations/{relationId}",
-        "operationId": "delete_api_commercial_enablement_assets_assetPublicId_relations_relationId",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "relationId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/usage-events": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/usage-events",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_usage_events",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/assets/{assetPublicId}/validate": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/assets/{assetPublicId}/validate",
-        "operationId": "post_api_commercial_enablement_assets_assetPublicId_validate",
-        "parameters": [
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/bootstrap": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/bootstrap",
-        "operationId": "get_api_commercial_enablement_bootstrap",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/catalogs": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/catalogs",
-        "operationId": "get_api_commercial_enablement_catalogs",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/catalogs/{catalogType}": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/catalogs/{catalogType}",
-        "operationId": "post_api_commercial_enablement_catalogs_catalogType",
-        "parameters": [
-          {
-            "name": "catalogType",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/catalogs/entry/{catalogPublicId}": {
-      "put": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "PUT /api/commercial-enablement/catalogs/entry/{catalogPublicId}",
-        "operationId": "put_api_commercial_enablement_catalogs_entry_catalogPublicId",
-        "parameters": [
-          {
-            "name": "catalogPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/catalogs/entry/{catalogPublicId}",
-        "operationId": "delete_api_commercial_enablement_catalogs_entry_catalogPublicId",
-        "parameters": [
-          {
-            "name": "catalogPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/collections": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/collections",
-        "operationId": "get_api_commercial_enablement_collections",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/collections",
-        "operationId": "post_api_commercial_enablement_collections",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/collections/{collectionPublicId}": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/collections/{collectionPublicId}",
-        "operationId": "get_api_commercial_enablement_collections_collectionPublicId",
-        "parameters": [
-          {
-            "name": "collectionPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/collections/{collectionPublicId}/items": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/collections/{collectionPublicId}/items",
-        "operationId": "post_api_commercial_enablement_collections_collectionPublicId_items",
-        "parameters": [
-          {
-            "name": "collectionPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/collections/{collectionPublicId}/items/{assetPublicId}": {
-      "delete": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "DELETE /api/commercial-enablement/collections/{collectionPublicId}/items/{assetPublicId}",
-        "operationId": "delete_api_commercial_enablement_collections_collectionPublicId_items_assetPublicId",
-        "parameters": [
-          {
-            "name": "collectionPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "assetPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/collections/{collectionPublicId}/share-package": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/collections/{collectionPublicId}/share-package",
-        "operationId": "post_api_commercial_enablement_collections_collectionPublicId_share_package",
-        "parameters": [
-          {
-            "name": "collectionPublicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/dashboard": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/dashboard",
-        "operationId": "get_api_commercial_enablement_dashboard",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/favorites": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/favorites",
-        "operationId": "get_api_commercial_enablement_favorites",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/governance/overview": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/governance/overview",
-        "operationId": "get_api_commercial_enablement_governance_overview",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/intake-sessions",
-        "operationId": "post_api_commercial_enablement_intake_sessions",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions/{publicId}": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/intake-sessions/{publicId}",
-        "operationId": "get_api_commercial_enablement_intake_sessions_publicId",
-        "parameters": [
-          {
-            "name": "publicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions/{publicId}/analyze": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/intake-sessions/{publicId}/analyze",
-        "operationId": "post_api_commercial_enablement_intake_sessions_publicId_analyze",
-        "parameters": [
-          {
-            "name": "publicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions/{publicId}/cancel": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/intake-sessions/{publicId}/cancel",
-        "operationId": "post_api_commercial_enablement_intake_sessions_publicId_cancel",
-        "parameters": [
-          {
-            "name": "publicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions/{publicId}/create-asset": {
-      "post": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "POST /api/commercial-enablement/intake-sessions/{publicId}/create-asset",
-        "operationId": "post_api_commercial_enablement_intake_sessions_publicId_create_asset",
-        "parameters": [
-          {
-            "name": "publicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions/{publicId}/extracted-content": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/intake-sessions/{publicId}/extracted-content",
-        "operationId": "get_api_commercial_enablement_intake_sessions_publicId_extracted_content",
-        "parameters": [
-          {
-            "name": "publicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/intake-sessions/{publicId}/review": {
-      "patch": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "PATCH /api/commercial-enablement/intake-sessions/{publicId}/review",
-        "operationId": "patch_api_commercial_enablement_intake_sessions_publicId_review",
-        "parameters": [
-          {
-            "name": "publicId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK"
-          },
-          "400": {
-            "description": "Bad Request"
-          },
-          "401": {
-            "description": "Unauthorized"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not Found"
-          },
-          "500": {
-            "description": "Internal Server Error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
-    "/api/commercial-enablement/recent": {
-      "get": {
-        "tags": [
-          "commercial-enablement"
-        ],
-        "summary": "GET /api/commercial-enablement/recent",
-        "operationId": "get_api_commercial_enablement_recent",
-        "parameters": [],
         "responses": {
           "200": {
             "description": "OK"
@@ -19142,6 +17266,177 @@
             "description": "Internal Server Error"
           }
         }
+      }
+    },
+    "/api/public/library-shares/{token}/download": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "summary": "GET /api/public/library-shares/{token}/download",
+        "operationId": "get_api_public_library_shares_token_download",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/commercial-development/opportunities/{id}/library-suggestions": {
+      "get": {
+        "tags": [
+          "commercial-development"
+        ],
+        "summary": "GET /api/commercial-development/opportunities/{id}/library-suggestions",
+        "operationId": "get_api_commercial_development_opportunities_id_library_suggestions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/execution-commercial/opportunities/{id}/library-suggestions": {
+      "get": {
+        "tags": [
+          "execution-commercial"
+        ],
+        "summary": "GET /api/execution-commercial/opportunities/{id}/library-suggestions",
+        "operationId": "get_api_execution_commercial_opportunities_id_library_suggestions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/proposals/{proposalId}/brochures": {
+      "post": {
+        "tags": [
+          "proposals"
+        ],
+        "summary": "POST /api/proposals/{proposalId}/brochures",
+        "operationId": "post_api_proposals_proposalId_brochures",
+        "parameters": [
+          {
+            "name": "proposalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     }
   }
