@@ -279,3 +279,55 @@ export function describeCopyResult({ url, expiresAt, copied }) {
     ? `Enlace copiado. Vence el ${formatDate(expiresAt)}.`
     : `No se pudo copiar automáticamente. Copia este enlace: ${url}`;
 }
+
+// Qué puede hacer el usuario con un material, según sus permisos.
+export function getLibraryCapabilities(permissions) {
+  const granted = new Set(permissions || []);
+  const hasPrefix = (prefix) =>
+    Array.from(granted).some((code) => code.startsWith(prefix));
+  return {
+    canEmailOpportunity:
+      granted.has("desarrollo_comercial.update") &&
+      granted.has("oportunidades.update") &&
+      granted.has("oportunidades.read"),
+    canEmailLead:
+      granted.has("interacciones.update") && granted.has("interacciones.read"),
+    canUseInProposal: granted.has("propuestas.update") || hasPrefix("cotizaciones."),
+  };
+}
+
+// Traspaso entre la biblioteca y los módulos que abren su modal de correo.
+const SEND_HANDOFF_KEY = "crm_library_send_handoff";
+const SEND_HANDOFF_MAX_AGE_MS = 2 * 60 * 1000;
+
+export function setLibrarySendHandoff({ assetPublicId, targetType, targetId }) {
+  window.sessionStorage.setItem(
+    SEND_HANDOFF_KEY,
+    JSON.stringify({
+      assetPublicId,
+      targetType,
+      targetId: Number(targetId),
+      createdAt: Date.now(),
+    }),
+  );
+}
+
+// Devuelve y consume el traspaso solo si corresponde a este destino.
+export function takeLibrarySendHandoff(targetType, targetId) {
+  let handoff = null;
+  try {
+    handoff = JSON.parse(window.sessionStorage.getItem(SEND_HANDOFF_KEY));
+  } catch {
+    handoff = null;
+  }
+  if (
+    !handoff ||
+    handoff.targetType !== targetType ||
+    Number(handoff.targetId) !== Number(targetId) ||
+    Date.now() - Number(handoff.createdAt || 0) > SEND_HANDOFF_MAX_AGE_MS
+  ) {
+    return null;
+  }
+  window.sessionStorage.removeItem(SEND_HANDOFF_KEY);
+  return handoff;
+}

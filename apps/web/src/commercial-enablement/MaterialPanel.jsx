@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, ExternalLink, Link as LinkIcon, Star, X } from "lucide-react";
+import { Download, ExternalLink, FilePlus, Link as LinkIcon, Mail, Star, X } from "lucide-react";
 import { api, getApiErrorMessage } from "../api";
 import { AudienceBadge, MaterialIcon, StatusBadge } from "./LibraryParts";
+import { ProposalMaterialDialog, SendMaterialDialog } from "./UseMaterialDialogs";
 import {
   API_BASE,
   copyShareLink,
@@ -105,11 +106,14 @@ export default function MaterialPanel({
   onEdit,
   onDeleted,
   notify,
+  capabilities,
 }) {
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dialog, setDialog] = useState(null);
+  const canSend = capabilities.canEmailOpportunity || capabilities.canEmailLead;
 
   useEffect(() => {
     let cancelled = false;
@@ -279,6 +283,26 @@ export default function MaterialPanel({
                 <LinkIcon size={16} aria-hidden="true" /> Copiar enlace
               </button>
             ) : null}
+            {asset.isShareable && asset.isActive && canSend ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDialog("send")}
+                disabled={busy}
+              >
+                <Mail size={16} aria-hidden="true" /> Enviar por correo
+              </button>
+            ) : null}
+            {asset.isShareable && asset.isActive && capabilities.canUseInProposal ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDialog("proposal")}
+                disabled={busy}
+              >
+                <FilePlus size={16} aria-hidden="true" /> Usar en propuesta
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn-secondary"
@@ -376,6 +400,20 @@ export default function MaterialPanel({
             </div>
           ) : null}
         </div>
+      ) : null}
+      {dialog === "send" && asset ? (
+        <SendMaterialDialog
+          asset={asset}
+          capabilities={capabilities}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "proposal" && asset ? (
+        <ProposalMaterialDialog
+          asset={asset}
+          notify={notify}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
     </aside>
   );

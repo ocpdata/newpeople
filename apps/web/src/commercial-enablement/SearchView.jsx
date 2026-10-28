@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Search, X } from "lucide-react";
 import { api, getApiErrorMessage } from "../api";
 import MaterialCard from "./MaterialCard";
@@ -62,14 +63,26 @@ export default function SearchView({
   refreshKey,
   notify,
   onEdit,
+  capabilities,
 }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [shortcut, setShortcut] = useState("");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [sort, setSort] = useState("");
-  const [selectedId, setSelectedId] = useState(null);
+  // Permite abrir un material directo desde otros módulos con ?material=<id>.
+  const [selectedId, setSelectedId] = useState(
+    () => searchParams.get("material") || null,
+  );
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!searchParams.get("material")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("material");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(queryDraft.trim()), 300);
@@ -340,6 +353,7 @@ export default function SearchView({
           onOpenRelated={setSelectedId}
           onChanged={applyPanelChange}
           onEdit={onEdit}
+          capabilities={capabilities}
           onDeleted={() => {
             setSelectedId(null);
             setReloadKey((key) => key + 1);

@@ -195,6 +195,66 @@ test("copia el enlace compartible y avisa cuando vence", async ({ page, context 
   );
 });
 
+test("envía el material a una oportunidad y lo agrega a una propuesta", async ({ page }) => {
+  await openLibrary(page, {
+    permissions: [
+      "enablement_comercial.use",
+      "desarrollo_comercial.update",
+      "oportunidades.update",
+      "oportunidades.read",
+      "propuestas.update",
+    ],
+    items: [material({})],
+  });
+  // Se registran después para tener prioridad sobre el mock general de la API.
+  await page.route("**/api/opportunities?*", (route) =>
+    route.fulfill({
+      json: [
+        { id: 41, name: "Hospital Central", account_name: "Salud SA", sales_stage: "Descubrimiento" },
+        { id: 42, name: "Banco Norte", account_name: "Finanzas SA", sales_stage: "Propuesta" },
+      ],
+    }),
+  );
+  await page.route("**/api/proposals", (route) =>
+    route.fulfill({
+      json: [
+        { id: 7, title: "Propuesta Hospital", accountName: "Salud SA", opportunityName: "Hospital Central", statusCode: "active" },
+        { id: 8, title: "Propuesta vieja", accountName: "Salud SA", opportunityName: "Otro", statusCode: "archived" },
+      ],
+    }),
+  );
+  const brochureRequests = [];
+  await page.route("**/api/proposals/7/brochures", (route) => {
+    brochureRequests.push(route.request().postDataJSON());
+    return route.fulfill({ json: { message: "Material agregado a la propuesta" } });
+  });
+
+  await page.getByRole("button", { name: "Ver Fortinet salud caso de éxito" }).click();
+  const panel = page.getByRole("complementary", { name: "Detalle del material" });
+
+  await panel.getByRole("button", { name: "Usar en propuesta" }).click();
+  const dialog = page.getByRole("dialog", { name: "Usar en propuesta" });
+  await expect(dialog.getByText("Propuesta Hospital")).toBeVisible();
+  await expect(dialog.getByText("Propuesta vieja")).toHaveCount(0);
+  await dialog.getByRole("button", { name: /Propuesta Hospital/ }).click();
+  await expect(page.getByText(/se agregó a los folletos de «Propuesta Hospital»/)).toBeVisible();
+  expect(brochureRequests).toEqual([{ assetPublicId: "cea_1" }]);
+
+  await panel.getByRole("button", { name: "Enviar por correo" }).click();
+  const sendDialog = page.getByRole("dialog", { name: "Enviar por correo" });
+  await sendDialog.getByLabel("Buscar oportunidad abierta").fill("banco");
+  await expect(sendDialog.getByText("Hospital Central")).toHaveCount(0);
+  await sendDialog.getByRole("button", { name: /Banco Norte/ }).click();
+
+  await expect(page).toHaveURL(/\/opportunities\?edit=42/);
+  const handoff = await page.evaluate(() =>
+    JSON.parse(window.sessionStorage.getItem("crm_library_send_handoff")),
+  );
+  expect(handoff).toEqual(
+    expect.objectContaining({ assetPublicId: "cea_1", targetType: "opportunity", targetId: 42 }),
+  );
+});
+
 test("sube un material por enlace y lo publica como activo", async ({ page }) => {
   const requests = await openLibrary(page, {
     permissions: ["enablement_comercial.use", "enablement_comercial.upload"],

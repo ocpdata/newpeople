@@ -5,7 +5,7 @@ import CatalogsView from "./commercial-enablement/CatalogsView";
 import MyMaterialsView from "./commercial-enablement/MyMaterialsView";
 import SearchView from "./commercial-enablement/SearchView";
 import UploadModal from "./commercial-enablement/UploadModal";
-import { API_BASE } from "./commercial-enablement/libraryModel";
+import { API_BASE, getLibraryCapabilities } from "./commercial-enablement/libraryModel";
 import "./commercial-enablement.css";
 
 const NO_PERMISSIONS = {
@@ -15,7 +15,8 @@ const NO_PERMISSIONS = {
   canAdmin: false,
 };
 
-export default function CommercialEnablementPage() {
+export default function CommercialEnablementPage({ currentUser }) {
+  const capabilities = getLibraryCapabilities(currentUser?.permissions);
   const [bootstrap, setBootstrap] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [activeTab, setActiveTab] = useState("search");
@@ -145,6 +146,7 @@ export default function CommercialEnablementPage() {
           refreshKey={refreshKey}
           notify={notify}
           onEdit={(asset) => setModal({ mode: "edit", asset })}
+          capabilities={capabilities}
         />
       ) : null}
       {currentTab === "mine" ? (
