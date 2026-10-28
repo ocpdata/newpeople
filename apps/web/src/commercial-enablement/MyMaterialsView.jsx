@@ -1,19 +1,36 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
-import { AudienceBadge, StatusBadge } from "./LibraryParts";
-import { API_BASE, describeExpiry, formatDate } from "./libraryModel";
+import { AudienceBadge, FilterMenu, StatusBadge } from "./LibraryParts";
+import {
+  API_BASE,
+  describeExpiry,
+  formatDate,
+  toggleValue,
+} from "./libraryModel";
 import useAssetList from "./useAssetList";
 
 const PAGE_SIZE = 50;
 
+const EMPTY_FILTERS = {
+  status: "all",
+  assetTypeCodes: [],
+  manufacturerCodes: [],
+  technologyCodes: [],
+  sharing: "",
+  sourceType: "",
+  expiry: "",
+};
+
 export default function MyMaterialsView({
+  catalogs,
   canManage,
   refreshKey,
   notify,
   onEdit,
 }) {
   const [scope, setScope] = useState("mine");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [sort, setSort] = useState("updated_desc");
   const [queryDraft, setQueryDraft] = useState("");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -24,11 +41,35 @@ export default function MyMaterialsView({
   }, [queryDraft]);
 
   const params = useMemo(() => {
-    const next = { pageSize: PAGE_SIZE, status: statusFilter, sort: "updated_desc" };
+    const next = { pageSize: PAGE_SIZE, status: filters.status, sort };
     if (scope === "mine") next.mine = "true";
     if (query) next.q = query;
+    ["assetTypeCodes", "manufacturerCodes", "technologyCodes"].forEach((key) => {
+      if (filters[key].length) next[key] = filters[key].join(",");
+    });
+    ["sharing", "sourceType", "expiry"].forEach((key) => {
+      if (filters[key]) next[key] = filters[key];
+    });
     return next;
-  }, [scope, statusFilter, query]);
+  }, [scope, filters, sort, query]);
+  const optionsFor = (type) => catalogs?.[type] || [];
+  const hasActiveFilters =
+    Boolean(queryDraft) ||
+    JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
+
+  function setFilter(key, value) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleFilter(key, code) {
+    setFilters((current) => ({ ...current, [key]: toggleValue(current[key], code) }));
+  }
+
+  function clearFilters() {
+    setFilters(EMPTY_FILTERS);
+    setQueryDraft("");
+    setQuery("");
+  }
   const { items, total, hasMore, error, loading, loadMore, patchItem, removeItem } =
     useAssetList(params, String(refreshKey));
 
@@ -80,8 +121,8 @@ export default function MyMaterialsView({
           aria-label="Buscar en mis materiales"
         />
         <select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
+          value={filters.status}
+          onChange={(event) => setFilter("status", event.target.value)}
           aria-label="Estado"
         >
           <option value="all">Todos los estados</option>
@@ -98,7 +139,69 @@ export default function MyMaterialsView({
             <option value="all">Todos los materiales</option>
           </select>
         ) : null}
-        <strong>
+      </div>
+
+      <div className="sl-mine-toolbar sl-mine-filters">
+        <FilterMenu
+          label="Tipo"
+          options={optionsFor("asset_type")}
+          selected={filters.assetTypeCodes}
+          onToggle={(code) => toggleFilter("assetTypeCodes", code)}
+        />
+        <FilterMenu
+          label="Fabricante"
+          options={optionsFor("manufacturer")}
+          selected={filters.manufacturerCodes}
+          onToggle={(code) => toggleFilter("manufacturerCodes", code)}
+        />
+        <FilterMenu
+          label="Tecnología"
+          options={optionsFor("technology")}
+          selected={filters.technologyCodes}
+          onToggle={(code) => toggleFilter("technologyCodes", code)}
+        />
+        <select
+          value={filters.sharing}
+          onChange={(event) => setFilter("sharing", event.target.value)}
+          aria-label="Compartir"
+        >
+          <option value="">Cliente o interno</option>
+          <option value="client">Para cliente</option>
+          <option value="internal">Solo interno</option>
+        </select>
+        <select
+          value={filters.sourceType}
+          onChange={(event) => setFilter("sourceType", event.target.value)}
+          aria-label="Origen"
+        >
+          <option value="">Archivo o enlace</option>
+          <option value="file">Archivo</option>
+          <option value="url">Enlace</option>
+        </select>
+        <select
+          value={filters.expiry}
+          onChange={(event) => setFilter("expiry", event.target.value)}
+          aria-label="Vigencia"
+        >
+          <option value="">Cualquier vigencia</option>
+          <option value="expired">Vencidos</option>
+          <option value="expiring">Vencen en 7 días</option>
+        </select>
+        <select
+          value={sort}
+          onChange={(event) => setSort(event.target.value)}
+          aria-label="Ordenar"
+        >
+          <option value="updated_desc">Más recientes</option>
+          <option value="created_desc">Más nuevos</option>
+          <option value="title_asc">Título A–Z</option>
+        </select>
+        {hasActiveFilters ? (
+          <button type="button" className="btn-tertiary" onClick={clearFilters}>
+            Limpiar filtros
+          </button>
+        ) : null}
+        <strong className="sl-mine-total" aria-live="polite">
           {total} {total === 1 ? "material" : "materiales"}
         </strong>
       </div>

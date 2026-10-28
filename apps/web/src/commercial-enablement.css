@@ -688,7 +688,7 @@
 .sl-field input[type="url"],
 .sl-field select,
 .sl-field textarea,
-.sl-mine-toolbar input,
+.sl-mine-toolbar input[type="search"],
 .sl-mine-toolbar select,
 .sl-catalog input,
 .sl-results-bar select {
@@ -748,13 +748,21 @@
   gap: 10px;
 }
 
-.sl-mine-toolbar input {
+.sl-mine-toolbar input[type="search"] {
   flex: 1 1 220px;
   width: auto;
 }
 
 .sl-mine-toolbar select {
   width: auto;
+}
+
+.sl-mine-filters {
+  gap: 8px;
+}
+
+.sl-mine-total {
+  margin-left: auto;
 }
 
 .sl-table-wrap {

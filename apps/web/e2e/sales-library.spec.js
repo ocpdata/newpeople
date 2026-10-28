@@ -301,3 +301,46 @@ test("sube un material por enlace y lo publica como activo", async ({ page }) =>
     }),
   );
 });
+
+test("Mis materiales filtra en el servidor y permite limpiar los filtros", async ({ page }) => {
+  const requests = await openLibrary(page, {
+    permissions: ["enablement_comercial.use", "enablement_comercial.upload"],
+    canUpload: true,
+    items: [material({ publicId: "cea_mine", title: "Mi material" })],
+  });
+
+  await page.getByRole("tab", { name: "Mis materiales" }).click();
+  await expect(page.getByText("Mi material")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Limpiar filtros" })).toHaveCount(0);
+
+  const lastListParams = () =>
+    requests
+      .filter((request) => request.method === "GET" && request.pathname === "/api/commercial-enablement/assets")
+      .at(-1).search;
+
+  await page.getByRole("button", { name: "Fabricante" }).click();
+  await page.getByLabel("Fortinet").check();
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Vigencia").selectOption("expiring");
+  await page.getByLabel("Origen").selectOption("url");
+  await page.getByLabel("Compartir").selectOption("internal");
+  await page.getByLabel("Estado").selectOption("active");
+
+  await expect.poll(lastListParams).toEqual(
+    expect.objectContaining({
+      mine: "true",
+      status: "active",
+      manufacturerCodes: "fortinet",
+      expiry: "expiring",
+      sourceType: "url",
+      sharing: "internal",
+    }),
+  );
+
+  await page.getByRole("button", { name: "Limpiar filtros" }).click();
+  await expect.poll(lastListParams).toEqual(
+    expect.not.objectContaining({ manufacturerCodes: "fortinet" }),
+  );
+  expect(lastListParams()).toEqual(expect.objectContaining({ status: "all", mine: "true" }));
+  await expect(page.getByRole("button", { name: "Limpiar filtros" })).toHaveCount(0);
+});

@@ -237,6 +237,43 @@ describe("Biblioteca de ventas", () => {
     ).toBe(1);
   });
 
+  test("filtra por origen, vencimiento y si se comparte con el cliente", async () => {
+    const link = await createMaterial("manager", "filtro enlace");
+    await addLinkAndActivate("manager", link);
+    const expiring = await createMaterial("manager", "filtro por vencer");
+    await addLinkAndActivate("manager", expiring);
+    const expired = await createMaterial("manager", "filtro vencido");
+    await addLinkAndActivate("manager", expired);
+    const internal = await createMaterial("manager", "filtro interno", {
+      visibilityLevel: "internal_sales",
+    });
+    await addLinkAndActivate("manager", internal);
+
+    await query(
+      `UPDATE commercial_enablement_items
+       SET expires_at = DATE_ADD(NOW(3), INTERVAL 3 DAY) WHERE public_id = ?`,
+      [expiring.publicId],
+    );
+    await query(
+      `UPDATE commercial_enablement_items
+       SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 DAY) WHERE public_id = ?`,
+      [expired.publicId],
+    );
+
+    const base = { q: `${TEST_PREFIX} filtro`, status: "all" };
+    const titles = async (extra) =>
+      (await search("manager", { ...base, ...extra })).items
+        .map((item) => item.publicId)
+        .sort();
+
+    expect(await titles({ sourceType: "url" })).toHaveLength(4);
+    expect(await titles({ sourceType: "file" })).toHaveLength(0);
+    expect(await titles({ expiry: "expired" })).toEqual([expired.publicId]);
+    expect(await titles({ expiry: "expiring" })).toEqual([expiring.publicId]);
+    expect(await titles({ sharing: "internal" })).toEqual([internal.publicId]);
+    expect(await titles({ sharing: "client" })).toHaveLength(3);
+  });
+
   test("los enlaces compartibles de archivos se validan en cada descarga", async () => {
     const asset = await createMaterial("manager", "Folleto compartible", {
       sourceType: "file",

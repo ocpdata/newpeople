@@ -151,6 +151,7 @@ export default function CommercialEnablementPage({ currentUser }) {
       ) : null}
       {currentTab === "mine" ? (
         <MyMaterialsView
+          catalogs={bootstrap.catalogs || {}}
           canManage={permissions.canManage}
           refreshKey={refreshKey}
           notify={notify}

@@ -7,7 +7,7 @@ Buscador de materiales (archivos y enlaces) listos para enviar. El vendedor escr
 ## Pantallas
 
 - **Buscar**: caja de busqueda unica (todos los terminos deben coincidir, en cualquier orden; busca en titulo, resumen, fabricante, tecnologia, etiquetas y texto del documento), atajos Favoritos, Recientes y Nuevos, filtros (Tipo, Fabricante, Tecnologia y "Mas filtros"), tarjetas con insignia Para cliente / Solo interno y panel lateral con vista previa, "Cuando usarlo", materiales relacionados y acciones (descargar, copiar enlace, **Enviar por correo** y **Usar en propuesta**).
-- **Mis materiales**: lista de los materiales propios (los gestores pueden ver todos) con estado, vencimiento y acciones Editar, Desactivar/Reactivar y Eliminar.
+- **Mis materiales**: lista de los materiales propios (los gestores pueden ver todos) con estado, vencimiento y acciones Editar, Desactivar/Reactivar y Eliminar. Se puede filtrar (en el servidor) por texto, estado, tipo, fabricante, tecnologia, cliente/interno, archivo/enlace y vigencia (vencidos o que vencen en 7 dias), y ordenar por recientes, nuevos o titulo.
 - **Catalogos** (solo `admin`): fabricantes, tecnologias, soluciones, industrias y tipos.
 - **Subir**: modal de tres pasos (archivo o enlace, revision, publicar). Con archivo, la IA propone los datos; se detecta un archivo identico ya existente.
 

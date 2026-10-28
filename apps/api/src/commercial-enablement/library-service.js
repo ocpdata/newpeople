@@ -14,6 +14,7 @@ const storage = createDocumentStorage();
 const storageKeyPrefix = "commercial_enablement";
 
 const NEW_ITEM_WINDOW_DAYS = 30;
+const EXPIRING_SOON_DAYS = 7;
 const URL_ITEM_VALIDITY_DAYS = 30;
 const SHARE_LINK_VALIDITY_DAYS = 30;
 
@@ -1347,12 +1348,30 @@ function filterItems(
   const status = normalizeStatusFilter(filters.status);
   const shortcut = String(filters.shortcut || "").trim();
   const onlyMine = String(filters.mine || "") === "true";
+  const sourceType = ["file", "url"].includes(String(filters.sourceType || ""))
+    ? String(filters.sourceType)
+    : "";
+  const expiry = ["expired", "expiring"].includes(String(filters.expiry || ""))
+    ? String(filters.expiry)
+    : "";
+  const sharing = ["client", "internal"].includes(String(filters.sharing || ""))
+    ? String(filters.sharing)
+    : "";
+  const expiringUntil = Date.now() + EXPIRING_SOON_DAYS * 24 * 60 * 60 * 1000;
   const newSince = Date.now() - NEW_ITEM_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
   return items.filter((item) => {
     if (status === "active" && !item.isActive) return false;
     if (status === "inactive" && item.isActive) return false;
     if (onlyMine && !item.isOwnedByUser) return false;
+    if (sourceType && item.sourceType !== sourceType) return false;
+    if (sharing === "client" && !item.isShareable) return false;
+    if (sharing === "internal" && item.isShareable) return false;
+    if (expiry === "expired" && !item.isExpired) return false;
+    if (expiry === "expiring") {
+      const expiresAt = item.expiresAt ? new Date(item.expiresAt).getTime() : 0;
+      if (item.isExpired || !expiresAt || expiresAt > expiringUntil) return false;
+    }
     if (shortcut === "recent" && !item.lastUsedAt) return false;
     if (
       shortcut === "new" &&
