@@ -52,6 +52,17 @@ function sumCommission(summary) {
   return Number(summary?.calculatedTotalCommissionAmount || 0);
 }
 
+function sumEligibleContribution(summary) {
+  return Number(summary?.eligibleProductContributionAmount || 0)
+    + Number(summary?.eligibleServiceContributionAmount || 0)
+    + Number(summary?.eligibleRenewalContributionAmount || 0);
+}
+
+// Contribución de todas las cotizaciones aceptadas, sin importar si generan comisión.
+function sumContribution(summary) {
+  return (summary?.quotations || []).reduce((sum, quotation) => sum + Number(quotation.totalContributionAmount || 0), 0);
+}
+
 function quotationCommission(quotation) {
   return (quotation.items || []).reduce((sum, item) => sum + Number(item.commissionAmount || 0), 0);
 }
@@ -308,15 +319,18 @@ async function exportTrackingToExcel({ year, model, currencyCode, sellerRows, to
     const row = { Vendedor: seller.name, Correo: seller.email || "" };
     let total = 0;
     let sales = 0;
+    let contribution = 0;
     QUARTERS.forEach((quarter) => {
       const summary = model.byQuarter.get(quarter)?.summaries.get(seller.id);
       row[`Comisión T${quarter}`] = sumCommission(summary);
       row[`Venta T${quarter}`] = Number(summary?.acceptedSalesAmount || 0);
       total += sumCommission(summary);
       sales += Number(summary?.acceptedSalesAmount || 0);
+      contribution += sumContribution(summary);
     });
     row["Comisión total"] = total;
     row["Venta aceptada"] = sales;
+    row["Contribución"] = contribution;
     return row;
   });
   const totalRow = { Vendedor: totalLabel, Correo: "" };
@@ -324,6 +338,7 @@ async function exportTrackingToExcel({ year, model, currencyCode, sellerRows, to
     ...QUARTERS.flatMap((quarter) => [`Comisión T${quarter}`, `Venta T${quarter}`]),
     "Comisión total",
     "Venta aceptada",
+    "Contribución",
   ];
   numericColumns.forEach((column) => {
     totalRow[column] = yearRows.reduce((sum, row) => sum + row[column], 0);
@@ -420,10 +435,11 @@ export default function CommissionTrackingView({ year, quarters }) {
       const commission = scoped.reduce((sum, summary) => sum + sumCommission(summary), 0);
       const sales = scoped.reduce((sum, summary) => sum + Number(summary?.acceptedSalesAmount || 0), 0);
       const quota = scoped.reduce((sum, summary) => sum + Number(summary?.salesQuotaAmount || 0), 0);
+      const contribution = scoped.reduce((sum, summary) => sum + sumContribution(summary), 0);
       const active = scopeQuarters.some((quarter) =>
         isSellerActive(model.byQuarter.get(quarter)?.summaries.get(seller.id) || {}, pendingByKey(quarter, seller.id)),
       );
-      return { seller, perQuarter, scoped, commission, sales, quota, active };
+      return { seller, perQuarter, scoped, commission, sales, quota, contribution, active };
     })
     .filter((row) => !onlyActive || row.active)
     .sort((left, right) =>
@@ -436,17 +452,15 @@ export default function CommissionTrackingView({ year, quarters }) {
   const invalidInScope = model.invalid.filter((item) => scopeQuarters.includes(item.quarter) && inScope(item.sellerUserId));
   const totals = sellerRows.reduce((acc, row) => {
     row.scoped.forEach((summary) => {
-      if (!summary) return;
-      acc.contribution += Number(summary.eligibleProductContributionAmount || 0)
-        + Number(summary.eligibleServiceContributionAmount || 0)
-        + Number(summary.eligibleRenewalContributionAmount || 0);
+      acc.contribution += sumEligibleContribution(summary);
     });
+    acc.totalContribution += row.contribution;
     acc.commission += row.commission;
     acc.sales += row.sales;
     acc.quota += row.quota;
     if (row.scoped.some((summary) => summary?.commissionEnabled)) acc.enabled += 1;
     return acc;
-  }, { commission: 0, sales: 0, quota: 0, contribution: 0, enabled: 0 });
+  }, { commission: 0, sales: 0, quota: 0, contribution: 0, totalContribution: 0, enabled: 0 });
   const pendingTotal = pendingInScope.reduce((sum, item) => sum + Number(item.totalSaleAmount || 0), 0);
   const money = (value) => formatMoney(value, currencyCode);
   const totalLabel = sellerFilter !== "all" || onlyActive ? "Total mostrado" : "Total";
@@ -561,6 +575,7 @@ export default function CommissionTrackingView({ year, quarters }) {
                   ))}
                   <th>Total comisión</th>
                   <th>Venta aceptada</th>
+                  <th>Contribución</th>
                 </tr>
               </thead>
               <tbody>
@@ -585,10 +600,11 @@ export default function CommissionTrackingView({ year, quarters }) {
                     ))}
                     <td><strong>{money(row.commission)}</strong></td>
                     <td>{money(row.sales)}</td>
+                    <td>{money(row.contribution)}</td>
                   </tr>
                 ))}
                 {!sellerRows.length ? (
-                  <tr><td colSpan="7" className="centered">No hay vendedores para mostrar.</td></tr>
+                  <tr><td colSpan="8" className="centered">No hay vendedores para mostrar.</td></tr>
                 ) : null}
               </tbody>
               <tfoot>
@@ -602,6 +618,7 @@ export default function CommissionTrackingView({ year, quarters }) {
                   ))}
                   <td><strong>{money(totals.commission)}</strong></td>
                   <td>{money(totals.sales)}</td>
+                  <td>{money(totals.totalContribution)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -623,6 +640,7 @@ export default function CommissionTrackingView({ year, quarters }) {
                   <th>Cumplimiento</th>
                   <th>Estado</th>
                   <th>Venta / Cuota</th>
+                  <th>Contribución</th>
                   <th>Comisión</th>
                 </tr>
               </thead>
@@ -662,11 +680,12 @@ export default function CommissionTrackingView({ year, quarters }) {
                         <td>
                           {money(row.sales)} / {row.quota > 0 ? money(row.quota) : "—"}
                         </td>
+                        <td>{money(row.contribution)}</td>
                         <td><strong>{money(row.commission)}</strong></td>
                       </tr>
                       {isOpen && summary ? (
                         <tr className="commission-detail-row">
-                          <td colSpan="5">
+                          <td colSpan="6">
                             <SellerDetail summary={summary} currencyCode={currencyCode} />
                           </td>
                         </tr>
@@ -675,7 +694,7 @@ export default function CommissionTrackingView({ year, quarters }) {
                   );
                 })}
                 {!sellerRows.length ? (
-                  <tr><td colSpan="5" className="centered">No hay vendedores para mostrar.</td></tr>
+                  <tr><td colSpan="6" className="centered">No hay vendedores para mostrar.</td></tr>
                 ) : null}
               </tbody>
             </table>

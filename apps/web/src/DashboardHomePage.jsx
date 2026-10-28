@@ -25,10 +25,10 @@ export default function DashboardHomePage({
     canAccessCommercialTracking
       ? {
           badge: "Analitica",
-          title: "Pipeline comercial",
+          title: "Embudo de ventas",
           description: "Seguimiento detallado del pipeline y forecast por etapa.",
           to: "/commercial-tracking",
-          cta: "Abrir pipeline",
+          cta: "Abrir embudo",
           tone: "default",
           meta: "Comercial",
         }
@@ -36,7 +36,7 @@ export default function DashboardHomePage({
     canAccessCommercialRhythm
       ? {
           badge: "Dashboard",
-          title: "Ritmo comercial",
+          title: "Ritmo de ventas",
           description: "Marcador diario competitivo para mostrar desempeno del equipo comercial.",
           to: "/seller-league-tv",
           cta: "Abrir liga",
@@ -58,10 +58,10 @@ export default function DashboardHomePage({
     canAccessCommercialPlanning
       ? {
           badge: "Analitica",
-          title: "Planeacion comercial",
+          title: "Metas y comisiones",
           description: "Objetivos, capacidad y coordinacion del frente comercial.",
           to: "/commercial-planning",
-          cta: "Abrir planeacion",
+          cta: "Ver metas y comisiones",
           tone: "default",
           meta: "Comercial",
         }
@@ -108,12 +108,12 @@ export default function DashboardHomePage({
           <span className="dashboard-home-kicker">Inicio</span>
           <h2>Resumen ejecutivo</h2>
           <p>
-            Entrada principal para navegar entre dashboards especializados y modulos operativos.
+            Entrada principal para navegar entre indicadores y módulos operativos.
           </p>
         </div>
         <div className="dashboard-home-actions">
           <Link className="primary-button" to="/dashboards">
-            Ver dashboards
+            Ver indicadores
           </Link>
         </div>
       </header>
@@ -121,7 +121,7 @@ export default function DashboardHomePage({
       <section className="panel dashboard-home-section">
         <div className="dashboard-home-section-header">
           <div>
-            <h3>Dashboards disponibles</h3>
+            <h3>Indicadores disponibles</h3>
             <span>Vistas especializadas para leer el negocio</span>
           </div>
           <Link className="dashboard-home-inline-link" to="/dashboards">
@@ -136,7 +136,7 @@ export default function DashboardHomePage({
           </div>
         ) : (
           <p className="dashboard-home-empty">
-            No tienes dashboards disponibles con tus permisos actuales.
+            No tienes indicadores disponibles con tus permisos actuales.
           </p>
         )}
       </section>

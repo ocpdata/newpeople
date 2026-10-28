@@ -759,7 +759,7 @@ export default function ContactMappingPage({ currentUser }) {
       <div className="roles-page-header contact-mapping-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
-            <h2>Mapeo de contactos</h2>
+            <h2>Mapa de relaciones</h2>
             <span
               className="module-title-icon module-title-icon-contacts"
               aria-hidden="true"

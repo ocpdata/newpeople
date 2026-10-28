@@ -489,7 +489,7 @@ export default function DocumentationPage() {
         <header className="documentation-header">
           <div>
             <div className="module-title-with-icon">
-              <h2>Documentación</h2>
+              <h2>Documentación del sistema</h2>
               <span
                 className="module-title-icon documentation-title-icon"
                 aria-hidden="true"
@@ -546,7 +546,7 @@ export default function DocumentationPage() {
       <header className="documentation-header">
         <div>
           <div className="module-title-with-icon">
-            <h2>Documentación</h2>
+            <h2>Documentación del sistema</h2>
             <span
               className="module-title-icon documentation-title-icon"
               aria-hidden="true"

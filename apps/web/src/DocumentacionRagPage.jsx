@@ -328,7 +328,7 @@ export default function DocumentacionRagPage({ canManage = false }) {
       <header className="documentacion-rag-header">
         <div>
           <div className="module-title-with-icon">
-            <h2>Documentación RAG</h2>
+            <h2>Base de conocimiento IA</h2>
           </div>
           <p className="roles-subtitle">
             {canManage
@@ -338,7 +338,7 @@ export default function DocumentacionRagPage({ canManage = false }) {
         </div>
       </header>
 
-      <div className="documentacion-rag-tabs" role="tablist" aria-label="Secciones de Documentación RAG">
+      <div className="documentacion-rag-tabs" role="tablist" aria-label="Secciones de Base de conocimiento IA">
         <button
           type="button"
           role="tab"

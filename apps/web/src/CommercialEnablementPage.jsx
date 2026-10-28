@@ -2722,9 +2722,9 @@ export default function CommercialEnablementPage({ currentUser }) {
       <header className="enablement-library-hero">
         <div>
           <span className="enablement-library-eyebrow">
-            Biblioteca Comercial
+            Biblioteca de ventas
           </span>
-          <h1>Biblioteca comercial para preparar, comparar y compartir</h1>
+          <h1>Biblioteca de ventas para preparar, comparar y compartir</h1>
           <p>
             Encuentra material por fabricante, tecnologia, necesidad o
             requerimiento. Separa claramente el uso del contenido, la carga de

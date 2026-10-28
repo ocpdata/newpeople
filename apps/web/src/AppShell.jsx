@@ -1,10 +1,11 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Children, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import {
   NavLink,
   Navigate,
   Route,
   Routes,
   useLocation,
+  matchPath,
 } from "react-router-dom";
 import Dashboard from "./Dashboard";
 import DashboardHomePage from "./DashboardHomePage";
@@ -84,11 +85,49 @@ function RouteFallback() {
   return <div className="centered">Cargando...</div>;
 }
 
-function SidebarNavGroup({ title, children }) {
+function SidebarNavGroup({ title, children, userId }) {
+  const { pathname } = useLocation();
+  const links = Children.toArray(children);
+  const isActive = links.some((link) => link.props?.to && matchPath({
+    path: link.props.to,
+    end: link.props.end ?? link.props.to === "/",
+  }, pathname));
+  const storageKey = `crm_sidebar:${userId}:${title}`;
+  const [expanded, setExpanded] = useState(() => {
+    try {
+      return isActive || window.localStorage.getItem(storageKey) !== "false";
+    } catch (error) {
+      console.warn("No fue posible leer la preferencia del menú lateral", error);
+      return true;
+    }
+  });
+  if (!links.length) return null;
+
+  function toggleExpanded() {
+    const next = !expanded;
+    setExpanded(next);
+    try {
+      window.localStorage.setItem(storageKey, String(next));
+    } catch (error) {
+      console.warn("No fue posible guardar la preferencia del menú lateral", error);
+    }
+  }
+
   return (
     <div className="sidebar-nav-group">
-      <div className="sidebar-nav-group-title">{title}</div>
-      <div className="sidebar-nav-group-links">{children}</div>
+      <button
+        type="button"
+        className="sidebar-nav-group-title"
+        aria-expanded={expanded}
+        aria-controls={`sidebar-${encodeURIComponent(title)}`}
+        onClick={toggleExpanded}
+      >
+        <span>{title}</span>
+        <span aria-hidden="true">{expanded ? "−" : "+"}</span>
+      </button>
+      <div id={`sidebar-${encodeURIComponent(title)}`} className="sidebar-nav-group-links" hidden={!expanded}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -753,7 +792,7 @@ export default function AppShell({
         <aside className="sidebar">
           <h1>NewPeople CRM</h1>
           <nav>
-            <SidebarNavGroup title="General">
+            <SidebarNavGroup title="Inicio" userId={currentUser.id} key={`inicio:${location.pathname}`}>
               <GuardedNavLink to="/" onBeforeNavigate={confirmRouteChange}>
                 Inicio
               </GuardedNavLink>
@@ -762,9 +801,19 @@ export default function AppShell({
                   to="/dashboards"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Dashboards
+                  Indicadores
                 </GuardedNavLink>
               ) : null}
+              {canAccessCommercialCalendar && (
+                <GuardedNavLink to="/calendar" onBeforeNavigate={confirmRouteChange}>
+                  Agenda
+                </GuardedNavLink>
+              )}
+              {canAccessMiAgent && (
+                <GuardedNavLink to="/mi-agent" onBeforeNavigate={confirmRouteChange}>
+                  Mi coach
+                </GuardedNavLink>
+              )}
             </SidebarNavGroup>
 
             {(canReadAccounts ||
@@ -772,8 +821,9 @@ export default function AppShell({
               canReadOpportunities ||
               canAccessInteractions ||
               canAccessQuotations ||
-              canAccessManufacturerRegistrations) && (
-              <SidebarNavGroup title="Comercial">
+              canAccessProposals ||
+              (canAccessManufacturerRegistrations && canReadOpportunities)) && (
+              <SidebarNavGroup title="Ventas" userId={currentUser.id} key={`ventas:${location.pathname}`}>
                 {canReadAccounts && (
                   <GuardedNavLink
                     to="/accounts"
@@ -788,6 +838,11 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Contactos
+                  </GuardedNavLink>
+                )}
+                {canReadContacts && (
+                  <GuardedNavLink to="/contact-mapping" onBeforeNavigate={confirmRouteChange}>
+                    Mapa de relaciones
                   </GuardedNavLink>
                 )}
                 {canAccessInteractions && (
@@ -820,43 +875,28 @@ export default function AppShell({
                     to="/proposals-new"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Propuestas (nuevo)
+                    Propuestas
+                  </GuardedNavLink>
+                )}
+                {canAccessManufacturerRegistrations && canReadOpportunities && (
+                  <GuardedNavLink to="/manufacturer-registrations" onBeforeNavigate={confirmRouteChange}>
+                    Registros con fabricantes
                   </GuardedNavLink>
                 )}
               </SidebarNavGroup>
             )}
 
-            {(canAccessCommercialDevelopment ||
-              canAccessMiAgent ||
-              canAccessCommercialCalendar ||
-              canAccessCommercialTracking ||
+            {(canAccessCommercialTracking ||
               canAccessCommercialRhythm ||
               canAccessCommercialPlanning ||
-              canAccessCommercialEnablement ||
-              canReadContacts) && (
-              <SidebarNavGroup title="Gestión Comercial">
-                {canAccessMiAgent ? (
-                  <GuardedNavLink
-                    to="/mi-agent"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Mi Coach
-                  </GuardedNavLink>
-                ) : null}
+              canAccessCommercialEnablement) && (
+              <SidebarNavGroup title="Gestión de ventas" userId={currentUser.id} key={`gestion:${location.pathname}`}>
                 {canAccessCommercialTracking ? (
                   <GuardedNavLink
                     to="/commercial-tracking"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Pipeline
-                  </GuardedNavLink>
-                ) : null}
-                {canAccessCommercialRhythm ? (
-                  <GuardedNavLink
-                    to="/seller-league-tv"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Ritmo comercial
+                    Embudo de ventas
                   </GuardedNavLink>
                 ) : null}
                 {canAccessCommercialPlanning ? (
@@ -864,23 +904,15 @@ export default function AppShell({
                     to="/commercial-planning"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Planeación Comercial
+                    Metas y comisiones
                   </GuardedNavLink>
                 ) : null}
-                {canAccessCommercialCalendar ? (
+                {canAccessCommercialRhythm ? (
                   <GuardedNavLink
-                    to="/calendar"
+                    to="/seller-league-tv"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Calendario
-                  </GuardedNavLink>
-                ) : null}
-                {canReadContacts ? (
-                  <GuardedNavLink
-                    to="/contact-mapping"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Mapeo de contactos
+                    Ritmo de ventas
                   </GuardedNavLink>
                 ) : null}
                 {canAccessCommercialEnablement ? (
@@ -888,7 +920,7 @@ export default function AppShell({
                     to="/commercial-enablement"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Biblioteca Comercial
+                    Biblioteca de ventas
                   </GuardedNavLink>
                 ) : null}
               </SidebarNavGroup>
@@ -897,7 +929,7 @@ export default function AppShell({
             {(canAccessCampaigns ||
               canAccessCampaignEmails ||
               canAccessLandingModule) && (
-              <SidebarNavGroup title="Marketing">
+              <SidebarNavGroup title="Marketing" userId={currentUser.id} key={`marketing:${location.pathname}`}>
                 {canAccessCampaigns ? (
                   <GuardedNavLink
                     to="/campaigns"
@@ -911,7 +943,7 @@ export default function AppShell({
                     to="/campaign-emails"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Correos
+                    Correo de campañas
                   </GuardedNavLink>
                 ) : null}
                 {canAccessLandingModule ? (
@@ -919,54 +951,43 @@ export default function AppShell({
                     to="/landing"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Landing
+                    Páginas de captación
                   </GuardedNavLink>
                 ) : null}
               </SidebarNavGroup>
             )}
 
-            {(can("proveedores.read") ||
-              (canAccessManufacturerRegistrations && canReadOpportunities)) && (
-              <SidebarNavGroup title="Externos">
-                {can("proveedores.read") && (
-                  <GuardedNavLink
-                    to="/providers"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Proveedores
-                  </GuardedNavLink>
-                )}
-                {canAccessManufacturerRegistrations && canReadOpportunities ? (
-                  <GuardedNavLink
-                    to="/manufacturer-registrations"
-                    onBeforeNavigate={confirmRouteChange}
-                  >
-                    Registros de fabricantes
-                  </GuardedNavLink>
-                ) : null}
-              </SidebarNavGroup>
-            )}
-
-            {canAccessAcceptOrder && (
-              <SidebarNavGroup title="Administracion">
+            {(canAccessAcceptOrder || can("proveedores.read")) && (
+              <SidebarNavGroup title="Operaciones" userId={currentUser.id} key={`operaciones:${location.pathname}`}>
+                {canAccessAcceptOrder && (
                 <GuardedNavLink
                   to="/accept-order"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Aceptar Pedido
+                  Aceptación de pedidos
                 </GuardedNavLink>
+                )}
+                {canAccessAcceptOrder && (
                 <GuardedNavLink
                   to="/invoicing"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Facturacion
+                  Facturación a clientes
                 </GuardedNavLink>
+                )}
+                {canAccessAcceptOrder && (
                 <GuardedNavLink
                   to="/provider-invoice-reception"
                   onBeforeNavigate={confirmRouteChange}
                 >
-                  Recepcion de Facturas
+                  Facturas de proveedores
                 </GuardedNavLink>
+                )}
+                {can("proveedores.read") && (
+                  <GuardedNavLink to="/providers" onBeforeNavigate={confirmRouteChange}>
+                    Proveedores
+                  </GuardedNavLink>
+                )}
               </SidebarNavGroup>
             )}
 
@@ -975,8 +996,10 @@ export default function AppShell({
               canAccessProcessCommercialConfig ||
               canAccessDocumentacionRag ||
               can("configuracion.read") ||
-              can("herramientas.read")) && (
-              <SidebarNavGroup title="Sistema">
+              can("herramientas.read") ||
+              can("pruebas.read") ||
+              can("audit.read")) && (
+              <SidebarNavGroup title="Administración" userId={currentUser.id} key={`administracion:${location.pathname}`}>
                 {can("usuarios.read") && (
                   <GuardedNavLink
                     to="/users"
@@ -990,7 +1013,7 @@ export default function AppShell({
                     to="/roles"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Roles
+                    Roles y permisos
                   </GuardedNavLink>
                 )}
                 {canAccessProcessCommercialConfig && (
@@ -998,7 +1021,7 @@ export default function AppShell({
                     to="/opportunities/questions"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Configuración del proceso comercial
+                    Proceso de ventas
                   </GuardedNavLink>
                 )}
                 {can("configuracion.read") && (
@@ -1006,7 +1029,7 @@ export default function AppShell({
                     to="/settings"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Configuración
+                    Configuración general
                   </GuardedNavLink>
                 )}
                 {canAccessDocumentacionRag && (
@@ -1014,7 +1037,7 @@ export default function AppShell({
                     to="/documentacion-rag"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Documentación RAG
+                    Base de conocimiento IA
                   </GuardedNavLink>
                 )}
                 {can("configuracion.read") && (
@@ -1022,7 +1045,7 @@ export default function AppShell({
                     to="/documentation"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Documentación
+                    Documentación del sistema
                   </GuardedNavLink>
                 )}
                 {can("herramientas.read") && (
@@ -1030,7 +1053,7 @@ export default function AppShell({
                     to="/tools"
                     onBeforeNavigate={confirmRouteChange}
                   >
-                    Herramientas
+                    Herramientas del sistema
                   </GuardedNavLink>
                 )}
                 {can("pruebas.read") && (
@@ -1041,17 +1064,14 @@ export default function AppShell({
                     Pruebas de seguridad
                   </GuardedNavLink>
                 )}
-              </SidebarNavGroup>
-            )}
-
-            {can("audit.read") && (
-              <SidebarNavGroup title="Control">
-                <GuardedNavLink
-                  to="/audit"
-                  onBeforeNavigate={confirmRouteChange}
-                >
-                  Auditoría
-                </GuardedNavLink>
+                {can("audit.read") && (
+                  <GuardedNavLink
+                    to="/audit"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Auditoría
+                  </GuardedNavLink>
+                )}
               </SidebarNavGroup>
             )}
           </nav>
@@ -1065,7 +1085,7 @@ export default function AppShell({
               onLogout();
             }}
           >
-            Salir
+            Cerrar sesión
           </button>
           <div className="sidebar-version">
             Version {appVersion} · {appCommit}

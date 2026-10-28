@@ -228,7 +228,7 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   });
 
   await page.goto("/commercial-planning");
-  await expect(page.getByRole("heading", { name: "Planeación Comercial" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Metas y comisiones" })).toBeVisible();
   await expect(page.getByText("Vista activa")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Resumen", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Auditoría", exact: true })).toHaveCount(0);
@@ -239,23 +239,25 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   await expect(page.getByRole("columnheader", { name: "Moneda" })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Observaciones" })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "Última actualización" })).toHaveCount(0);
-  await expect(page.getByRole("columnheader", { name: "Contribución esperada" }).first()).toBeInViewport();
-  await expect(page.locator(".commercial-planning-quarter-grid")).not.toContainText("USD");
+  await page.getByRole("columnheader", { name: "Contribución anual" }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole("columnheader", { name: "Contribución anual" })).toBeInViewport();
+  await expect(page.locator(".targets-matrix")).not.toContainText("USD");
   await expect(page.locator(".commercial-planning-annual-target-table tbody tr").first().locator("td").nth(1)).toHaveCSS("text-align", "right");
   await expect(page.getByLabel("Cuota Ana Vendedora T4")).toHaveCSS("text-align", "right");
   for (const quarter of [1, 2, 3, 4]) {
-    await expect(page.getByRole("heading", { name: `T${quarter} ${year}` })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: new RegExp(`^T${quarter} ${year}`) })).toBeVisible();
   }
+  await expect(page.getByText("Avance vs. meta", { exact: false })).toBeVisible();
   await page.getByLabel("Año de metas").selectOption(String(year + 1));
-  await expect(page.getByRole("heading", { name: `T1 ${year + 1}` })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: new RegExp(`^T1 ${year + 1}`) })).toBeVisible();
   await page.getByLabel("Año de metas").selectOption(String(year));
-  await expect(page.getByRole("heading", { name: `T1 ${year}` })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: new RegExp(`^T1 ${year}`) })).toBeVisible();
   await page.getByLabel("Cuota Ana Vendedora T4").fill("125000");
-  const annualSellerRow = page.locator(".commercial-planning-annual-quota-summary-table tbody")
+  await expect(page.getByText("1 cambio(s) sin guardar")).toBeVisible();
+  const annualSellerRow = page.locator(".commercial-planning-annual-target-table tbody")
     .getByRole("row", { name: /Ana Vendedora/ });
-  await expect(annualSellerRow.getByRole("cell").nth(4)).toHaveText("125,000");
-  await expect(annualSellerRow.getByRole("cell").nth(5)).toHaveText("125,000");
-  await expect(annualSellerRow.getByRole("cell").nth(6)).toHaveText("30,000");
+  await expect(annualSellerRow.getByRole("cell").nth(13)).toHaveText("125,000");
+  await expect(annualSellerRow.getByRole("cell").nth(14)).toHaveText("30,000");
   await page.getByRole("button", { name: "Guardar metas" }).click();
   await expect(page.getByText("Metas del año actualizadas correctamente")).toBeVisible();
   expect(targetWrites).toHaveLength(1);
@@ -278,6 +280,31 @@ test("planeacion comercial captura y actualiza los cuatro trimestres por año", 
   expect(targetWrites).toHaveLength(2);
   expect(targetWrites[1].currencyCode).toBe("USD");
   expect(targetWrites[1].quarters.map((item) => item.quarter)).toEqual([1, 2, 3, 4]);
+
+  await page.getByLabel("Cuota anual a distribuir").fill("400000");
+  await page.getByRole("button", { name: "Distribuir" }).click();
+  await expect(page.getByLabel("Cuota Ana Vendedora T2")).toHaveValue("100,000");
+  await expect(page.getByLabel("Cuota Ana Vendedora T3")).toHaveValue("100,000");
+  await page.getByLabel("Trimestre origen").selectOption("4");
+  await page.getByRole("button", { name: "Copiar" }).click();
+  await expect(page.getByLabel("Margen Ana Vendedora T1")).toHaveValue("24");
+  await page.getByLabel("Margen a aplicar").fill("18");
+  await page.getByLabel("Trimestre del margen").selectOption("2");
+  await page.getByRole("button", { name: "Aplicar" }).click();
+  await expect(page.getByLabel("Margen Ana Vendedora T2")).toHaveValue("18");
+  await page.getByLabel("Cuota Ana Vendedora T1").evaluate((input) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "70000\t15\t80000\t16");
+    input.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByLabel("Cuota Ana Vendedora T1")).toHaveValue("70,000");
+  await expect(page.getByLabel("Cuota Ana Vendedora T2")).toHaveValue("80,000");
+  await expect(page.getByLabel("Margen Ana Vendedora T2")).toHaveValue("16");
+  await expect(page.getByText("cambio(s) sin guardar")).toBeVisible();
+  await page.getByRole("button", { name: "Descartar cambios" }).click();
+  await expect(page.getByLabel("Cuota Ana Vendedora T2")).toHaveValue("");
+  await expect(page.getByText("cambio(s) sin guardar")).toHaveCount(0);
+  expect(targetWrites).toHaveLength(2);
 
   await page.getByRole("button", { name: "Comisiones · Configuración" }).click();
   await expect(page.getByLabel("Año de comisiones")).toHaveValue(String(year));

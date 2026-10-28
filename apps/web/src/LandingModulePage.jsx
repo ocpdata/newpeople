@@ -2840,7 +2840,7 @@ export default function LandingModulePage() {
     >
       <header className="landing-module-head">
         <div>
-          <h2>Landing por evento</h2>
+          <h2>Páginas de captación</h2>
           <p>
             Crea, edita y publica landings; captura registros y revisa la
             integración CRM.

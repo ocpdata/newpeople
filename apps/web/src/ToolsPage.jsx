@@ -44,7 +44,7 @@ export default function ToolsPage() {
       <header className="tools-page-header">
         <div>
           <div className="module-title-with-icon">
-            <h2>Herramientas</h2>
+            <h2>Herramientas del sistema</h2>
             <span className="module-title-icon tools-title-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" focusable="false">
                 <path d="M14.7 3.3a1 1 0 0 1 1.41 0l1.59 1.59a1 1 0 0 1 0 1.41l-2.12 2.12 2.3 2.3a3 3 0 0 1 .7 3.11l-6.38 6.38a2 2 0 0 1-2.83 0l-3.12-3.12a2 2 0 0 1 0-2.83l6.38-6.38a3 3 0 0 1 3.11-.7l-2.3-2.3-2.12 2.12a1 1 0 0 1-1.41 0L8.3 7.29a1 1 0 0 1 0-1.41L9.89 4.3a1 1 0 0 1 1.41 0l3.4 3.4 2.12-2.12a1 1 0 0 1 0-1.41L14.7 3.3z" />

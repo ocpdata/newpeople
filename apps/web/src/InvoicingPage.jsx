@@ -944,7 +944,7 @@ export default function InvoicingPage() {
   return (
     <section>
       <header className="page-header" style={{ marginBottom: 16 }}>
-        <h2>Facturacion</h2>
+        <h2>Facturación a clientes</h2>
         <p>Listado de cotizaciones aceptadas para seguimiento de facturacion.</p>
       </header>
 

@@ -4491,7 +4491,7 @@ export default function ConfigurationPage({ can = () => false }) {
       <header className="configuration-header">
         <div>
           <div className="module-title-with-icon">
-            <h2>Configuracion</h2>
+            <h2>Configuración general</h2>
             <span
               className="module-title-icon configuration-title-icon"
               aria-hidden="true"

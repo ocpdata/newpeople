@@ -2249,7 +2249,7 @@ export default function CalendarPage({ currentUser }) {
       />
       <header className="calendar-module-header">
         <div>
-          <h2>Calendario</h2>
+          <h2>Agenda</h2>
           <p>
             Agenda comercial, alertas del dia y control de riesgos operativos.
           </p>

@@ -40,7 +40,7 @@ async function mockLibrary(page, { canManage = true, conflict = false, failPrevi
     return json({});
   });
   await page.goto("/documentacion-rag");
-  await expect(page.getByRole("heading", { name: "Documentación RAG", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Base de conocimiento IA", exact: true })).toBeVisible();
   return submissions;
 }
 

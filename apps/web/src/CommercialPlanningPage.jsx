@@ -7,6 +7,17 @@ import {
   CommissionSimulator,
 } from "./commercial-planning/CommissionPanels";
 import CommissionTrackingView from "./commercial-planning/CommissionTrackingView";
+import AnnualTargetsView from "./commercial-planning/AnnualTargetsView";
+import {
+  buildAnnualTargetPayload,
+  mergeAnnualTargetDrafts,
+} from "./commercial-planning/annualTargetsModel";
+import {
+  formatAmount,
+  formatGroupedDecimalInput,
+  formatPercent,
+  normalizeDecimalInput,
+} from "./commercial-planning/planningFormat";
 import "./commercial-planning.css";
 
 const TAB_OPTIONS = [
@@ -38,23 +49,6 @@ function formatCurrency(value, currencyCode = "USD") {
   }).format(Number(value || 0));
 }
 
-function formatAmount(value) {
-  return new Intl.NumberFormat("es-MX", {
-    maximumFractionDigits: 0,
-  }).format(Number(value || 0));
-}
-
-function formatPercent(value) {
-  if (value === null || value === undefined || value === "") return "Sin dato";
-  return `${Number(value).toFixed(2)}%`;
-}
-
-function normalizeDecimalInput(value) {
-  return String(value || "")
-    .replace(/,/g, "")
-    .trim();
-}
-
 function formatDayValue(value) {
   const numericValue = Number(value || 0);
   if (!Number.isFinite(numericValue)) return "0";
@@ -71,21 +65,6 @@ function buildOpportunityToWinStageBreakdown(totalDays) {
   }));
 }
 
-function formatGroupedDecimalInput(value) {
-  const normalized = normalizeDecimalInput(value);
-  if (!normalized) return "";
-
-  const isNegative = normalized.startsWith("-");
-  const unsigned = isNegative ? normalized.slice(1) : normalized;
-  const [integerPartRaw, decimalPart] = unsigned.split(".");
-  const integerPart = integerPartRaw.replace(/\D/g, "") || "0";
-  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-
-  return `${isNegative ? "-" : ""}${groupedInteger}${
-    decimalPart !== undefined ? `.${decimalPart}` : ""
-  }`;
-}
-
 function formatDateTime(value) {
   if (!value) return "Sin fecha";
   const parsed = new Date(value);
@@ -97,26 +76,6 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function withCurrentCatalogOption(options, currentValue, valueKey = "code") {
-  if (!currentValue) return options;
-  if (
-    options.some(
-      (option) => String(option?.[valueKey] || "") === String(currentValue),
-    )
-  ) {
-    return options;
-  }
-
-  return [
-    {
-      id: `legacy-${valueKey}-${currentValue}`,
-      [valueKey]: currentValue,
-      name: currentValue,
-    },
-    ...options,
-  ];
 }
 
 function mergeTargetDrafts(periodDetail) {
@@ -154,66 +113,6 @@ function mergeTargetDrafts(periodDetail) {
       updatedAt: target?.updatedAt || null,
     };
   });
-}
-
-function mergeAnnualTargetDrafts(plan) {
-  if (!plan) return [];
-  return (plan.quarters || []).map((quarter) => {
-    const targetsBySellerId = new Map(
-      (quarter.targets || []).map((target) => [target.sellerUserId, target]),
-    );
-    return {
-      quarter: quarter.quarter,
-      period: quarter.period,
-      sellers: (plan.eligibleSellers || []).map((seller) => {
-        const target = targetsBySellerId.get(seller.id);
-        return {
-          sellerUserId: seller.id,
-          sellerUserName: seller.fullName,
-          sellerEmail: seller.email,
-          salesQuotaAmount: target?.salesQuotaAmount == null
-            ? ""
-            : String(target.salesQuotaAmount),
-          expectedMarginPercent: target?.expectedMarginPercent == null
-            ? ""
-            : String(target.expectedMarginPercent),
-        };
-      }),
-    };
-  });
-}
-
-function buildAnnualTargetPayload(quarterDrafts) {
-  const errors = [];
-  const quarters = quarterDrafts.map((quarter) => {
-    const targets = [];
-    for (const draft of quarter.sellers) {
-      const hasQuota = String(draft.salesQuotaAmount).trim() !== "";
-      const hasMargin = String(draft.expectedMarginPercent).trim() !== "";
-      if (!hasQuota && !hasMargin) continue;
-      if (!hasQuota || !hasMargin) {
-        errors.push(`Completa cuota y margen esperado para ${draft.sellerUserName} en T${quarter.quarter}.`);
-        continue;
-      }
-      const salesQuotaAmount = Number(normalizeDecimalInput(draft.salesQuotaAmount));
-      const expectedMarginPercent = Number(draft.expectedMarginPercent);
-      if (!Number.isFinite(salesQuotaAmount) || salesQuotaAmount < 0) {
-        errors.push(`La cuota de ${draft.sellerUserName} en T${quarter.quarter} debe ser mayor o igual a cero.`);
-        continue;
-      }
-      if (!Number.isFinite(expectedMarginPercent) || expectedMarginPercent < 0) {
-        errors.push(`El margen de ${draft.sellerUserName} en T${quarter.quarter} debe ser mayor o igual a cero.`);
-        continue;
-      }
-      targets.push({
-        sellerUserId: draft.sellerUserId,
-        salesQuotaAmount,
-        expectedMarginPercent,
-      });
-    }
-    return { quarter: quarter.quarter, targets };
-  });
-  return { quarters, errors };
 }
 
 function mergeCommissionConfigDrafts(payload) {
@@ -632,17 +531,6 @@ export default function CommercialPlanningPage({ can }) {
     };
   }, [isHelpOpen]);
 
-  function updateAnnualTargetDraft(quarter, sellerUserId, field, value) {
-    setAnnualTargetDrafts((current) => current.map((item) => item.quarter !== quarter
-      ? item
-      : {
-          ...item,
-          sellers: item.sellers.map((seller) => seller.sellerUserId === sellerUserId
-            ? { ...seller, [field]: value }
-            : seller),
-        }));
-  }
-
   function updateCommissionConfigDraft(quarter, sellerUserId, field, value) {
     setCommissionConfigDrafts((current) => current.map((item) => item.quarter !== quarter
       ? item
@@ -834,44 +722,6 @@ export default function CommercialPlanningPage({ can }) {
   const yearlyMarginAverage = yearlyQuotaTotal
     ? (yearlyContributionTotal / yearlyQuotaTotal) * 100
     : null;
-  const annualQuotaBySellerId = new Map();
-  for (const quarter of annualTargetDrafts) {
-    for (const seller of quarter.sellers) {
-      const summary = annualQuotaBySellerId.get(seller.sellerUserId) || {
-        sellerUserId: seller.sellerUserId,
-        sellerUserName: seller.sellerUserName,
-        sellerEmail: seller.sellerEmail,
-        salesQuotaAmount: 0,
-        quarterlyQuotaAmounts: { 1: 0, 2: 0, 3: 0, 4: 0 },
-        expectedContributionAmount: 0,
-      };
-      const salesQuotaAmount = Number(
-        normalizeDecimalInput(seller.salesQuotaAmount) || 0,
-      );
-      const expectedMarginPercent = Number(seller.expectedMarginPercent || 0);
-      summary.quarterlyQuotaAmounts[quarter.quarter] = salesQuotaAmount;
-      summary.salesQuotaAmount += salesQuotaAmount;
-      summary.expectedContributionAmount += salesQuotaAmount * expectedMarginPercent / 100;
-      annualQuotaBySellerId.set(seller.sellerUserId, summary);
-    }
-  }
-  const annualQuotaSummary = [...annualQuotaBySellerId.values()].sort(
-    (left, right) => left.sellerUserName.localeCompare(right.sellerUserName, "es"),
-  );
-  const annualQuotaTotal = annualQuotaSummary.reduce(
-    (total, seller) => total + seller.salesQuotaAmount,
-    0,
-  );
-  const annualContributionTotal = annualQuotaSummary.reduce(
-    (total, seller) => total + seller.expectedContributionAmount,
-    0,
-  );
-  const quarterlyQuotaTotals = [1, 2, 3, 4].map((quarter) =>
-    annualQuotaSummary.reduce(
-      (total, seller) => total + seller.quarterlyQuotaAmounts[quarter],
-      0,
-    ),
-  );
   const canEditAnnualTargets = Boolean(
     annualPlan &&
     (annualPlan.hasPersistedPeriods ? canUpdate : canCreate),
@@ -887,7 +737,7 @@ export default function CommercialPlanningPage({ can }) {
         <div className="commercial-planning-header-copy">
           <div className="commercial-planning-title-row">
             <div className="module-title-with-icon">
-              <h2>Planeación Comercial</h2>
+              <h2>Metas y comisiones</h2>
               <span
                 className="module-title-icon commercial-planning-title-icon"
                 aria-hidden="true"
@@ -1157,211 +1007,24 @@ export default function CommercialPlanningPage({ can }) {
       ) : null}
 
       {activeTab === "targets" ? (
-        <div className="commercial-planning-annual">
-          <header className="commercial-planning-annual-header">
-            <div>
-              <h3>Metas anuales</h3>
-              <p>Los cambios de los trimestres abiertos quedan vigentes al guardar.</p>
-            </div>
-            <div className="commercial-planning-annual-controls">
-              <label>
-                Año
-                <select
-                  aria-label="Año de metas"
-                  value={planningYear}
-                  onChange={(event) => {
-                    setError("");
-                    setPlanningYear(Number(event.target.value));
-                  }}
-                >
-                  {Array.from({ length: 81 }, (_, index) => 2020 + index).map((year) => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Moneda anual
-                <select
-                  aria-label="Moneda anual"
-                  value={annualCurrencyCode}
-                  onChange={(event) => setAnnualCurrencyCode(event.target.value)}
-                  disabled={!canEditAnnualTargets || savingAnnualTargets || Boolean(annualPlan?.currencyLocked)}
-                  title={annualPlan?.currencyLocked
-                    ? "Las cuotas ya están definidas en esta moneda. Para cambiarla, borra primero todas las cuotas del año."
-                    : undefined}
-                >
-                  {withCurrentCatalogOption(currencies, annualCurrencyCode).map((currency) => (
-                    <option key={currency.id || currency.code} value={currency.code}>
-                      {currency.code}{currency.name ? ` - ${currency.name}` : ""}
-                    </option>
-                  ))}
-                </select>
-                {annualPlan?.currencyLocked ? (
-                  <small className="field-hint">Las cuotas del año están en {annualPlan.currencyCode}.</small>
-                ) : null}
-              </label>
-              {canCreate || canUpdate ? (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={handleSaveAnnualTargets}
-                  disabled={savingAnnualTargets || !canEditAnnualTargets || loadingAnnualPlan}
-                >
-                  {savingAnnualTargets ? "Guardando..." : "Guardar metas"}
-                </button>
-              ) : null}
-            </div>
-          </header>
-
-          {loadingAnnualPlan ? (
-            <div className="field-hint">Cargando metas de {planningYear}...</div>
-          ) : (
-            <div className="commercial-planning-quarter-grid">
-              {annualTargetDrafts.map((quarter) => {
-                const totals = quarter.sellers.reduce((result, seller) => {
-                  const quota = Number(normalizeDecimalInput(seller.salesQuotaAmount) || 0);
-                  const margin = Number(seller.expectedMarginPercent || 0);
-                  const contribution = quota * margin / 100;
-                  result.quota += quota;
-                  result.contribution += contribution;
-                  return result;
-                }, { quota: 0, contribution: 0 });
-                const marginAverage = totals.quota ? totals.contribution / totals.quota * 100 : null;
-                return (
-                  <section className="commercial-planning-quarter-panel" key={quarter.quarter}>
-                    <div className="commercial-planning-quarter-header">
-                      <h4>T{quarter.quarter} {planningYear}</h4>
-                    </div>
-                    <div className="commercial-planning-table-wrap">
-                      <table className="commercial-planning-table commercial-planning-annual-target-table">
-                        <thead>
-                          <tr>
-                            <th>Vendedor</th>
-                            <th>Cuota</th>
-                            <th>Margen esperado</th>
-                            <th>Contribución esperada</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {quarter.sellers.map((seller) => {
-                            const quota = Number(normalizeDecimalInput(seller.salesQuotaAmount) || 0);
-                            const margin = Number(seller.expectedMarginPercent || 0);
-                            return (
-                              <tr key={seller.sellerUserId}>
-                                <td>
-                                  <strong>{seller.sellerUserName}</strong>
-                                  <div className="field-hint">{seller.sellerEmail}</div>
-                                </td>
-                                <td>
-                                  <input
-                                    aria-label={`Cuota ${seller.sellerUserName} T${quarter.quarter}`}
-                                    type="text"
-                                    inputMode="decimal"
-                                    value={formatGroupedDecimalInput(seller.salesQuotaAmount)}
-                                    onChange={(event) => updateAnnualTargetDraft(
-                                      quarter.quarter,
-                                      seller.sellerUserId,
-                                      "salesQuotaAmount",
-                                      normalizeDecimalInput(event.target.value),
-                                    )}
-                                    disabled={!canEditAnnualTargets || savingAnnualTargets}
-                                  />
-                                </td>
-                                <td>
-                                  <input
-                                    aria-label={`Margen ${seller.sellerUserName} T${quarter.quarter}`}
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={seller.expectedMarginPercent}
-                                    onChange={(event) => updateAnnualTargetDraft(
-                                      quarter.quarter,
-                                      seller.sellerUserId,
-                                      "expectedMarginPercent",
-                                      event.target.value,
-                                    )}
-                                    disabled={!canEditAnnualTargets || savingAnnualTargets}
-                                  />
-                                </td>
-                                <td>{formatAmount(quota * margin / 100)}</td>
-                              </tr>
-                            );
-                          })}
-                          {!quarter.sellers.length ? (
-                            <tr><td colSpan="4" className="centered">No hay vendedores elegibles.</td></tr>
-                          ) : null}
-                        </tbody>
-                        <tfoot>
-                          <tr>
-                            <td><strong>Total T{quarter.quarter}</strong></td>
-                            <td><strong>{formatAmount(totals.quota)}</strong></td>
-                            <td><strong>{formatPercent(marginAverage)}</strong></td>
-                            <td><strong>{formatAmount(totals.contribution)}</strong></td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
-          )}
-          {!loadingAnnualPlan && annualQuotaSummary.length ? (
-            <section className="commercial-planning-annual-quota-summary">
-              <h4>Cuota anual por vendedor</h4>
-              <div className="commercial-planning-table-wrap">
-                <table className="commercial-planning-table commercial-planning-annual-quota-summary-table">
-                  <thead>
-                    <tr>
-                      <th>Vendedor</th>
-                      <th>T1</th>
-                      <th>T2</th>
-                      <th>T3</th>
-                      <th>T4</th>
-                      <th>Cuota anual</th>
-                      <th>Contribución anual</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {annualQuotaSummary.map((seller) => (
-                      <tr key={`annual-quota-${seller.sellerUserId}`}>
-                        <td>
-                          <strong>{seller.sellerUserName}</strong>
-                          {seller.sellerEmail ? (
-                            <div className="field-hint">{seller.sellerEmail}</div>
-                          ) : null}
-                        </td>
-                        {[1, 2, 3, 4].map((quarter) => (
-                          <td className="is-numeric" key={`seller-${seller.sellerUserId}-q${quarter}`}>
-                            {formatAmount(seller.quarterlyQuotaAmounts[quarter])}
-                          </td>
-                        ))}
-                        <td className="is-numeric">
-                          {formatAmount(seller.salesQuotaAmount)}
-                        </td>
-                        <td className="is-numeric">
-                          {formatAmount(seller.expectedContributionAmount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td><strong>Total anual</strong></td>
-                      {quarterlyQuotaTotals.map((total, index) => (
-                        <td className="is-numeric" key={`annual-quota-total-q${index + 1}`}>
-                          <strong>{formatAmount(total)}</strong>
-                        </td>
-                      ))}
-                      <td className="is-numeric"><strong>{formatAmount(annualQuotaTotal)}</strong></td>
-                      <td className="is-numeric"><strong>{formatAmount(annualContributionTotal)}</strong></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </section>
-          ) : null}
-        </div>
+        <AnnualTargetsView
+          year={planningYear}
+          onYearChange={(nextYear) => {
+            setError("");
+            setPlanningYear(nextYear);
+          }}
+          plan={annualPlan}
+          drafts={annualTargetDrafts}
+          setDrafts={setAnnualTargetDrafts}
+          currencyCode={annualCurrencyCode}
+          onCurrencyChange={setAnnualCurrencyCode}
+          currencies={currencies}
+          loading={loadingAnnualPlan}
+          canEdit={canEditAnnualTargets}
+          canSave={canCreate || canUpdate}
+          saving={savingAnnualTargets}
+          onSave={handleSaveAnnualTargets}
+        />
       ) : null}
 
       {activeTab === "commissionConfigs" ? (

@@ -212,7 +212,7 @@ export default function ManufacturerRegistrationsPage({ can }) {
     <section className="panel manufacturer-registration-page">
       <div className="manufacturer-registration-page-header">
         <div>
-          <h2>Registros de fabricantes</h2>
+          <h2>Registros con fabricantes</h2>
           <p className="field-hint">
             Supervisa solicitudes pendientes, vigencias y renovaciones de
             oportunidades comercialmente abiertas.

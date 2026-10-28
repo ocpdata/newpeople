@@ -1540,7 +1540,7 @@ export default function CommercialTrackingPage() {
                 <path d="M17 18v-6" />
               </svg>
             </span>
-            <h2 data-help-id="tracking.title">Pipeline</h2>
+            <h2 data-help-id="tracking.title">Embudo de ventas</h2>
           </div>
           <p className="section-helper-text tracking-hero-text">
             Da visibilidad al pipeline, al forecast y a los movimientos

@@ -2,7 +2,7 @@ export const HELP_ARTICLES = [
   {
     id: "dashboard-overview",
     routeKey: "dashboard",
-    title: "Leer el dashboard sin perder foco",
+    title: "Leer los indicadores sin perder foco",
     summary:
       "Usa esta vista para detectar prioridades del día antes de entrar a los módulos operativos.",
     details: [
@@ -158,7 +158,7 @@ export const HELP_ARTICLES = [
   {
     id: "tracking-overview",
     routeKey: "commercial-tracking",
-    title: "Leer el cockpit comercial",
+    title: "Leer el embudo de ventas",
     summary:
       "Ajusta filtros de semana/vendedor/línea y usa tabs para revisar resumen, abiertas y forecast.",
     details: [
@@ -171,7 +171,7 @@ export const HELP_ARTICLES = [
   {
     id: "planning-commissions",
     routeKey: "commercial-planning",
-    title: "Configurar planeación y comisiónes",
+    title: "Configurar metas y comisiones",
     summary:
       "Define metas y reglas de comisión para alínear ejecución comercial y rentabilidad.",
     details: [
@@ -197,7 +197,7 @@ export const HELP_ARTICLES = [
   {
     id: "enablement-library",
     routeKey: "commercial-enablement",
-    title: "Gestionar biblioteca comercial",
+    title: "Gestionar la biblioteca de ventas",
     summary:
       "Centraliza activos comerciales y controla su vigencia para ventas y propuestas.",
     details: [
@@ -210,7 +210,7 @@ export const HELP_ARTICLES = [
   {
     id: "contact-mapping-network",
     routeKey: "contact-mapping",
-    title: "Mapear red de contactos",
+    title: "Usar el mapa de relaciones",
     summary:
       "Visualiza relaciónes y niveles de influencia para mejorar estrategia de acceso a cuentas.",
     details: [
@@ -236,7 +236,7 @@ export const HELP_ARTICLES = [
   {
     id: "manufacturer-registrations-control",
     routeKey: "manufacturer-registrations",
-    title: "Control de registros de fabricantes",
+    title: "Control de registros con fabricantes",
     summary:
       "Gestiona registro documental y estatus para cumplir requisitos de fabricantes.",
     details: [
@@ -275,7 +275,7 @@ export const HELP_ARTICLES = [
   {
     id: "process-config",
     routeKey: "opportunities-questions",
-    title: "Configurar proceso comercial",
+    title: "Configurar el proceso de ventas",
     summary:
       "Administra preguntas y reglas de etapa para que la validacion operacional sea consistente.",
     details: [
@@ -301,7 +301,7 @@ export const HELP_ARTICLES = [
   {
     id: "tools-operations",
     routeKey: "tools",
-    title: "Usar herramientas administrativas",
+    title: "Usar las herramientas del sistema",
     summary:
       "Ejecuta útilidades de mantenimiento con criterio operativo y trazabilidad.",
     details: [
@@ -331,6 +331,8 @@ export const HELP_ARTICLES = [
     summary:
       "Si un módulo no tiene ayuda especifica, usa esta guia base para trabajar de forma segura.",
     details: [
+      "El menú se organiza en Inicio, Ventas, Gestión de ventas, Marketing, Operaciones y Administración; solo muestra opciones autorizadas.",
+      "Pulsa el título de una división para desplegarla o contraerla. La preferencia se guarda por usuario en este navegador y la división de la página activa se abre al navegar.",
       "Confirma permisos y contexto antes de crear o editar registros.",
       "Guarda cambios de forma incremental para reducir pérdida de información.",
       "Usa filtros y búsqueda para operar sobre lotes pequeños y precisos.",
@@ -423,12 +425,12 @@ export const HELP_TOURS = [
   {
     id: "tour-tracking-basic",
     routeKey: "commercial-tracking",
-    title: "Tour rápido de Seguimiento",
+    title: "Tour rápido del embudo de ventas",
     steps: [
       {
         id: "tracking-title",
         target: '[data-help-id="tracking.title"]',
-        title: "Cockpit comercial",
+        title: "Embudo de ventas",
         content:
           "Este módulo concentra visibilidad del pipeline y rendimiento semanal.",
       },

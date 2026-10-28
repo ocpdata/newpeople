@@ -6869,7 +6869,7 @@ export default function MiAgentPage({
       <header className="mi-agent-hero">
         <div>
           <span className="mi-agent-kicker">Ejecución comercial</span>
-          <h2>Mi Coach</h2>
+          <h2>Mi coach</h2>
           <p>Tu siguiente mejor movimiento para acercarte a la cuota.</p>
         </div>
       </header>

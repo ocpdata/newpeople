@@ -18,7 +18,7 @@ export default function OpportunityQuestionAdminLayout({
       <div className="roles-page-header">
         <div className="roles-page-header-left">
           <div className="module-title-with-icon">
-            <h2>Configuración del proceso comercial</h2>
+            <h2>Proceso de ventas</h2>
             <span
               className="module-title-icon module-title-icon-opportunities"
               aria-hidden="true"

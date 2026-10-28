@@ -4789,7 +4789,7 @@ export default function CampaignEmailModulePage() {
     <section className="campaign-email-page">
       <header className="campaign-email-head">
         <div>
-          <h2>Correos de campana</h2>
+          <h2>Correo de campañas</h2>
           <p>
             Modulo temporal para crear, organizar y monitorear correos ligados a
             campanas y su audiencia objetivo.

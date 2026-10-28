@@ -2,7 +2,7 @@ export default function ProviderInvoiceReceptionPage() {
   return (
     <section>
       <header className="page-header" style={{ marginBottom: 16 }}>
-        <h2>Recepcion de Facturas</h2>
+        <h2>Facturas de proveedores</h2>
         <p>Modulo en construccion para recibir y validar facturas de proveedor.</p>
       </header>
 

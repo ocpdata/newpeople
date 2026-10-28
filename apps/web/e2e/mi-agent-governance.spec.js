@@ -2107,7 +2107,7 @@ async function openMiCoach(page, { workspace = "coach" } = {}) {
     "jwt-token",
   );
   await page.goto("/mi-agent");
-  await expect(page.getByRole("heading", { name: "Mi Coach" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mi coach" })).toBeVisible();
   if (workspace === "coach") await openCoachConversation(page);
   if (workspace === "prospect")
     await page.getByRole("button", { name: "Cuenta nueva" }).click();
@@ -3097,7 +3097,7 @@ test.describe("Mi Coach governance and workspaces", () => {
 
         await page.goto("/mi-agent");
         await expect(
-          page.getByRole("heading", { name: "Mi Coach" }),
+          page.getByRole("heading", { name: "Mi coach" }),
         ).toBeVisible();
         await openCoachConversation(page);
         await page.getByText("Actividad reciente").click();

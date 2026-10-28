@@ -22,7 +22,7 @@ export default function DashboardsPage({
     canAccessCommercialTracking
       ? {
           badge: "Disponible ahora",
-          title: "Pipeline comercial",
+          title: "Embudo de ventas",
           description: "Seguimiento detallado de etapas, forecast y movimiento del pipeline.",
           to: "/commercial-tracking",
           cta: "Abrir vista",
@@ -33,7 +33,7 @@ export default function DashboardsPage({
     canAccessCommercialRhythm
       ? {
           badge: "Disponible ahora",
-          title: "Ritmo comercial",
+          title: "Ritmo de ventas",
           description: "Ranking competitivo diario por vendedor para mostrar en pantallas de equipo.",
           to: "/seller-league-tv",
           cta: "Abrir liga",
@@ -55,7 +55,7 @@ export default function DashboardsPage({
     canAccessCommercialPlanning
       ? {
           badge: "Disponible ahora",
-          title: "Planeacion comercial",
+          title: "Metas y comisiones",
           description: "Prioridades, objetivos y coordinacion de la ejecucion comercial.",
           to: "/commercial-planning",
           cta: "Abrir vista",
@@ -104,8 +104,8 @@ export default function DashboardsPage({
     <section className="dashboard-home-page">
       <header className="panel dashboard-home-hero">
         <div>
-          <span className="dashboard-home-kicker">Dashboards</span>
-          <h2>Catalogo de tableros</h2>
+          <span className="dashboard-home-kicker">Indicadores</span>
+          <h2>Indicadores</h2>
           <p>
             Este espacio agrupa dashboards tematicos para crecer sin mezclar analitica con operacion.
           </p>
