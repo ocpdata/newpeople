@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 import ProposalRichTextEditor from "./ProposalRichTextEditor";
+import TechnicalScopePanel from "./technical-scope/TechnicalScopePanel";
+import { SCOPE_STATUS_LABELS, technicalScopeApi } from "./technical-scope/technicalScopeApi";
 import { legacyBlocksToTiptap } from "./proposalRichText";
 import "./proposal-document-module.css";
 import "../../../shared/proposal-document-print.css";
@@ -12,6 +14,9 @@ const BLOCK_TYPE_LABELS = {
   list: "Lista",
   image: "Imagen",
 };
+
+// Rendering the PDF (and the SOW when it is attached) before sending can take longer than the default 15 s.
+const PDF_REQUEST_TIMEOUT_MS = 120000;
 
 function makeId(prefix) {
   const random =
@@ -348,7 +353,11 @@ export default function ProposalDocumentsPage() {
     cc: "",
     subject: "",
     message_body: "",
+    attach_sow: false,
   });
+  const [isScopeDrawerOpen, setIsScopeDrawerOpen] = useState(false);
+  const [scopeGate, setScopeGate] = useState(null);
+  const [createWithScope, setCreateWithScope] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [aiLoadingBlockId, setAiLoadingBlockId] = useState(null);
@@ -692,6 +701,27 @@ export default function ProposalDocumentsPage() {
     }
   }, [selectedDocumentId, loadDocumentDetail]);
 
+  // Proposals with a technical scope can only be printed, emailed or finalized once the scope is approved.
+  useEffect(() => {
+    if (!selectedDocumentId) return undefined;
+    let active = true;
+    technicalScopeApi
+      .gate(selectedDocumentId)
+      .then((gate) => active && setScopeGate(gate))
+      .catch(() => active && setScopeGate(null));
+    return () => {
+      active = false;
+    };
+  }, [selectedDocumentId]);
+
+  const refreshScopeGate = useCallback(() => {
+    if (!selectedDocumentId) return;
+    technicalScopeApi
+      .gate(selectedDocumentId)
+      .then(setScopeGate)
+      .catch(() => setScopeGate(null));
+  }, [selectedDocumentId]);
+
   function updateContent(updater) {
     const draft = normalizeContent(contentRef.current || content);
     const next = updater(draft);
@@ -759,7 +789,18 @@ export default function ProposalDocumentsPage() {
       await loadDocuments();
       if (documentId > 0) {
         setSelectedDocumentId(documentId);
+        if (createWithScope) {
+          try {
+            await technicalScopeApi.start(documentId);
+            setIsScopeDrawerOpen(true);
+          } catch (scopeError) {
+            pushError(
+              getApiErrorMessage(scopeError, "La propuesta se creó, pero no fue posible iniciar el alcance técnico"),
+            );
+          }
+        }
       }
+      setCreateWithScope(false);
     } catch (error) {
       pushError(getApiErrorMessage(error, "No fue posible crear la propuesta"));
     } finally {
@@ -796,7 +837,7 @@ export default function ProposalDocumentsPage() {
       }
       const response = await api.get(
         `/api/proposal-documents/v1/proposal-documents/${selectedDocumentId}/pdf`,
-        { responseType: "blob" },
+        { responseType: "blob", timeout: PDF_REQUEST_TIMEOUT_MS },
       );
       const objectUrl = window.URL.createObjectURL(response.data);
       window.open(objectUrl, "_blank");
@@ -815,6 +856,7 @@ export default function ProposalDocumentsPage() {
       cc: "",
       subject: `Propuesta: ${documentMeta?.title || ""}`.trim(),
       message_body: "Adjunto la propuesta para su revisión.",
+      attach_sow: false,
     });
     setIsEmailModalOpen(true);
   }
@@ -827,6 +869,7 @@ export default function ProposalDocumentsPage() {
       await api.post(
         `/api/proposal-documents/v1/proposal-documents/${selectedDocumentId}/send-email`,
         emailForm,
+        { timeout: PDF_REQUEST_TIMEOUT_MS },
       );
       setIsEmailModalOpen(false);
       pushSuccess("Correo enviado correctamente");
@@ -1172,6 +1215,8 @@ export default function ProposalDocumentsPage() {
   const sections = content?.sections || [];
   const removedSections = content?.removed_sections || [];
   const isPublished = documentMeta?.status === "published";
+  const scopeBlocked = Boolean(scopeGate?.applies && !scopeGate.allowed);
+  const scopeBlockedTitle = "Requiere el alcance técnico aprobado por el preventa";
 
   return (
     <div className={`proposal-document-module-page${selectedDocumentId ? "" : " is-list-view"}`}>
@@ -1249,6 +1294,7 @@ export default function ProposalDocumentsPage() {
                   <th>Cliente</th>
                   <th>Vendedor</th>
                   <th>Estado</th>
+                  <th>Alcance técnico</th>
                   <th>Actualizada</th>
                   <th className="proposal-document-actions-column">Acciones</th>
                 </tr>
@@ -1256,7 +1302,7 @@ export default function ProposalDocumentsPage() {
               <tbody>
                 {documents.length === 0 ? (
                   <tr>
-                    <td colSpan={6}>No hay propuestas registradas</td>
+                    <td colSpan={7}>No hay propuestas registradas</td>
                   </tr>
                 ) : (
                   documents.map((item) => (
@@ -1274,6 +1320,15 @@ export default function ProposalDocumentsPage() {
                         >
                           {formatStatus(item.status)}
                         </span>
+                      </td>
+                      <td>
+                        {item.technical_scope_status ? (
+                          <span className="proposal-chip proposal-chip-soft">
+                            {SCOPE_STATUS_LABELS[item.technical_scope_status] || item.technical_scope_status}
+                          </span>
+                        ) : (
+                          "Básica"
+                        )}
                       </td>
                       <td className="proposal-document-updated-cell">
                         {item.updated_at
@@ -1309,7 +1364,11 @@ export default function ProposalDocumentsPage() {
           <button
             type="button"
             className="proposal-document-back-button"
-            onClick={() => setSelectedDocumentId(null)}
+            onClick={() => {
+              setSelectedDocumentId(null);
+              setIsScopeDrawerOpen(false);
+              setScopeGate(null);
+            }}
           >
             ← Volver al listado
           </button>
@@ -1353,29 +1412,73 @@ export default function ProposalDocumentsPage() {
                       {isSaving ? "Guardando..." : "Guardar cambios"}
                     </button>
                   </div>
+                  {scopeGate !== null ? (
+                    <div className="proposal-document-action-group">
+                      <span>Alcance técnico</span>
+                      <button
+                        type="button"
+                        className="proposal-document-action-secondary"
+                        onClick={() => setIsScopeDrawerOpen(true)}
+                      >
+                        Alcance técnico y SOW
+                      </button>
+                      <span
+                        className={`proposal-chip ${scopeGate.applies && scopeGate.allowed ? "" : "proposal-chip-soft"}`}
+                      >
+                        {scopeGate.applies ? SCOPE_STATUS_LABELS[scopeGate.status] || scopeGate.status : "Propuesta básica"}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="proposal-document-action-group proposal-document-action-group-review">
                     <span>Revisar y enviar</span>
-                    <button type="button" className="proposal-document-action-secondary" onClick={handleViewPdf} disabled={isLoadingPdf}>
+                    <button
+                      type="button"
+                      className="proposal-document-action-secondary"
+                      onClick={handleViewPdf}
+                      disabled={isLoadingPdf || scopeBlocked}
+                      title={scopeBlocked ? scopeBlockedTitle : "Ver PDF"}
+                    >
                       {isLoadingPdf ? "Generando..." : "Ver PDF"}
                     </button>
                     <button
                       type="button"
                       className="proposal-document-action-secondary"
                       onClick={handleOpenEmailModal}
-                      disabled={hasUnsavedChanges || isSaving || isSendingEmail}
-                      title={hasUnsavedChanges ? "Guarda los cambios antes de enviar por correo" : "Enviar por correo"}
+                      disabled={hasUnsavedChanges || isSaving || isSendingEmail || scopeBlocked}
+                      title={
+                        scopeBlocked
+                          ? scopeBlockedTitle
+                          : hasUnsavedChanges
+                            ? "Guarda los cambios antes de enviar por correo"
+                            : "Enviar por correo"
+                      }
                     >
                       Enviar por correo
                     </button>
                   </div>
                   <div className="proposal-document-action-group proposal-document-action-group-close">
                     <span>Cierre</span>
-                    <button type="button" className="proposal-document-action-publish" onClick={handlePublish} disabled={isPublishing || isPublished}>
+                    <button
+                      type="button"
+                      className="proposal-document-action-publish"
+                      onClick={handlePublish}
+                      disabled={isPublishing || isPublished || scopeBlocked}
+                      title={scopeBlocked ? scopeBlockedTitle : undefined}
+                    >
                       {isPublished ? "Finalizada" : isPublishing ? "Finalizando..." : "Finalizar propuesta"}
                     </button>
                   </div>
                 </div>
               </div>
+
+              {scopeGate?.applies ? (
+                <p className={scopeBlocked ? "ts-warn" : "ts-ok"} role="status" style={{ margin: "0 0 12px" }}>
+                  {scopeBlocked
+                    ? `${scopeGate.message} `
+                    : "El alcance técnico está aprobado. "}
+                  En el PDF, el alcance técnico aprobado reemplaza la sección “Descripción de la solución”.
+                </p>
+              ) : null}
 
               <div className="proposal-document-canvas">
                 {content?.schema_version >= 3 && content.document?.type === "doc" ? (
@@ -1808,6 +1911,17 @@ export default function ProposalDocumentsPage() {
                   <option value="basic">Básico</option>
                 </select>
               </label>
+              <label className="proposal-document-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={createWithScope}
+                  onChange={(event) => setCreateWithScope(event.target.checked)}
+                />
+                <span>
+                  Incluir alcance técnico y SOW a la medida del cliente. Requiere la aprobación del preventa antes de
+                  imprimir, enviar o finalizar. Sin esta opción se crea una propuesta básica, que no requiere aprobación.
+                </span>
+              </label>
               <div className="proposal-document-modal-actions">
                 <button
                   type="button"
@@ -2108,6 +2222,23 @@ export default function ProposalDocumentsPage() {
                   required
                 />
               </label>
+              {scopeGate?.applies ? (
+                <label className="proposal-document-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(emailForm.attach_sow)}
+                    disabled={!scopeGate.sowPrintable}
+                    onChange={(event) =>
+                      setEmailForm((prev) => ({ ...prev, attach_sow: event.target.checked }))
+                    }
+                  />
+                  <span>
+                    {scopeGate.sowPrintable
+                      ? "Adjuntar el SOW aprobado"
+                      : "Adjuntar el SOW (disponible cuando el SOW esté aprobado)"}
+                  </span>
+                </label>
+              ) : null}
               <div className="proposal-document-modal-actions">
                 <button
                   type="button"
@@ -2123,6 +2254,28 @@ export default function ProposalDocumentsPage() {
           </div>
         </div>
       ) : null}
+      {isScopeDrawerOpen && selectedDocumentId ? (
+        <div className="ts-drawer-overlay" role="presentation">
+          <aside className="ts-drawer" role="dialog" aria-modal="true" aria-label="Alcance técnico y SOW">
+            <header className="ts-drawer-head">
+              <div>
+                <h3>Alcance técnico y SOW</h3>
+                <p className="field-hint">{documentMeta?.title || ""}</p>
+              </div>
+              <button type="button" className="proposal-document-icon-button" onClick={() => setIsScopeDrawerOpen(false)} aria-label="Cerrar alcance técnico">
+                ×
+              </button>
+            </header>
+            <TechnicalScopePanel
+              key={selectedDocumentId}
+              proposal={{ id: selectedDocumentId }}
+              embedded
+              onChange={refreshScopeGate}
+            />
+          </aside>
+        </div>
+      ) : null}
+
     </div>
   );
 }

@@ -10,6 +10,9 @@ Documentar el modulo de propuestas comerciales asociado al flujo de cotizaciones
 - Editar componentes de contenido por seccion.
 - Generar vista de impresion y envio por correo.
 - Aplicar plantillas y reutilizar activos institucionales/comerciales.
+- Elaborar el alcance técnico a la medida del cliente (solución, alcance,
+  exclusiones, topología) y un SOW separado, con aprobación del preventa.
+  Ver [Alcance técnico de propuestas](./alcance-tecnico-propuestas.md).
 
 ## Permisos y acceso
 
@@ -46,6 +49,10 @@ Documentar el modulo de propuestas comerciales asociado al flujo de cotizaciones
 - El contenido por componente se persiste por bloques (heading, paragraph, list, image, brochure).
 - La impresion usa render de backend para asegurar consistencia del documento final.
 - El envio por correo valida destinatarios y genera auditoria de accion.
+- El alcance técnico y el SOW se elaboran en el módulo **Propuestas**
+  (`/proposals-new`, documentos de propuesta), no en `/proposals`. Una propuesta
+  básica no requiere aprobación; una propuesta con alcance técnico sí
+  (ver [Alcance técnico de propuestas](./alcance-tecnico-propuestas.md)).
 
 ## Integraciones
 

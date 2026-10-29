@@ -30,6 +30,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Aceptar pedido](./aceptar-pedido.md)
 - [Aceptar pedido - Especificacion de procesamiento](./aceptar-pedido-procesamiento-especificacion.md)
 - [Propuestas](./propuestas.md)
+- [Alcance técnico de propuestas y SOW](./alcance-tecnico-propuestas.md)
 - [Comisiones](./comisiones.md)
 - [Seguimiento comercial](./seguimiento-comercial.md)
 - [Ritmo comercial](./ritmo-comercial.md)

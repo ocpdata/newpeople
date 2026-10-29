@@ -23,6 +23,7 @@ const SystemAuditPage = lazy(() => import("./SystemAuditPage"));
 const ConfigurationPage = lazy(() => import("./ConfigurationPage"));
 const DocumentationPage = lazy(() => import("./DocumentationPage"));
 const DocumentacionRagPage = lazy(() => import("./DocumentacionRagPage"));
+const PlaybooksAdminPage = lazy(() => import("./technical-scope/PlaybooksAdminPage"));
 const AccountSettingsPage = lazy(() => import("./AccountSettingsPage"));
 const ToolsPage = lazy(() => import("./ToolsPage"));
 const SecurityTestsPage = lazy(() => import("./SecurityTestsPage"));
@@ -302,6 +303,7 @@ export default function AppShell({
   const canAccessDocumentacionRag =
     can("documentacion_rag.access") || can("documentacion_rag.manage");
   const canManageDocumentacionRag = can("documentacion_rag.manage");
+  const canManageTechnicalPlaybooks = can("playbooks.manage");
   const canAccessManufacturerRegistrations =
     can("registros_fabricantes.read") || can("registros_fabricantes.read_all");
   const canAccessLandingModule =
@@ -406,6 +408,12 @@ export default function AppShell({
             ) : (
               <Navigate to="/" />
             )
+          }
+        />
+        <Route
+          path="/technical-playbooks"
+          element={
+            canManageTechnicalPlaybooks ? <PlaybooksAdminPage /> : <Navigate to="/" />
           }
         />
         <Route
@@ -995,6 +1003,7 @@ export default function AppShell({
               can("roles.read") ||
               canAccessProcessCommercialConfig ||
               canAccessDocumentacionRag ||
+              canManageTechnicalPlaybooks ||
               can("configuracion.read") ||
               can("herramientas.read") ||
               can("pruebas.read") ||
@@ -1038,6 +1047,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Base de conocimiento IA
+                  </GuardedNavLink>
+                )}
+                {canManageTechnicalPlaybooks && (
+                  <GuardedNavLink
+                    to="/technical-playbooks"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Playbooks técnicos
                   </GuardedNavLink>
                 )}
                 {can("configuracion.read") && (

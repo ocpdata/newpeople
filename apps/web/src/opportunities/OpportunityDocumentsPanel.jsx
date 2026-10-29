@@ -1,6 +1,9 @@
 import { useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
-import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../../shared/document-formats.js";
+import {
+  OPPORTUNITY_DOCUMENT_FILE_ACCEPT,
+  OPPORTUNITY_DOCUMENT_FORMAT_HELP,
+} from "../../../../shared/document-formats.js";
 
 function buildPastedTextFileName(label) {
   const normalizedLabel = String(label || "")
@@ -497,7 +500,7 @@ function OpportunityDocumentsPanel({
                       className="opportunity-documents-upload-input"
                       type="file"
                       multiple
-                      accept={DOCUMENT_FILE_ACCEPT}
+                      accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
                       onChange={handleUploadInputChange}
                       disabled={isUploadDisabled}
                     />
@@ -548,7 +551,7 @@ function OpportunityDocumentsPanel({
                       className="opportunity-documents-upload-input"
                       type="file"
                       multiple
-                      accept={DOCUMENT_FILE_ACCEPT}
+                      accept={OPPORTUNITY_DOCUMENT_FILE_ACCEPT}
                       onChange={handleUploadInputChange}
                       disabled={isUploadDisabled}
                     />
@@ -577,7 +580,7 @@ function OpportunityDocumentsPanel({
                 </div>
               ) : null}
               <span className="field-hint opportunity-documents-toolbar-formats">
-                Formatos: {DOCUMENT_FORMAT_HELP}
+                Formatos: {OPPORTUNITY_DOCUMENT_FORMAT_HELP}
               </span>
               <p
                 className="opportunity-documents-a11y-status"

@@ -40,6 +40,7 @@ import landingRoutes, {
   publicRouter as publicLandingRoutes,
 } from "./routes.landing.js";
 import proposalDocumentRoutes from "./routes.proposal-documents.js";
+import technicalScopeRoutes from "./routes.technical-scope.js";
 import campaignRoutes from "./routes.campaigns.js";
 import campaignEmailRoutes, {
   publicRouter as publicCampaignEmailRoutes,
@@ -169,6 +170,7 @@ export function createApp() {
     prospectResearchRoutes,
   );
   app.use("/api", authRequired, loadUser, manufacturerRegistrationRoutes);
+  app.use("/api", authRequired, loadUser, technicalScopeRoutes);
   app.use("/api", authRequired, loadUser, quotationRoutes);
   app.use("/api/catalogs", authRequired, loadUser, catalogRoutes);
   app.use("/api/audit", authRequired, loadUser, auditRoutes);

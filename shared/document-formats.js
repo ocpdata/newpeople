@@ -23,13 +23,36 @@ export const LEGACY_DOCUMENT_FORMATS = {
   ".mp4": { maxBytes: 80 * mb, kind: "audio", mimeTypes: ["video/mp4", "audio/mp4", "application/mp4"] },
 };
 
+// Technical customer files (configurations and editable diagrams). Only the opportunity channel accepts them.
+export const TECHNICAL_DOCUMENT_FORMATS = {
+  ".conf": { maxBytes: 2 * mb, kind: "config", mimeTypes: ["text/plain"] },
+  ".cfg": { maxBytes: 2 * mb, kind: "config", mimeTypes: ["text/plain"] },
+  ".yaml": { maxBytes: 2 * mb, kind: "config", mimeTypes: ["application/x-yaml", "application/yaml", "text/yaml", "text/x-yaml", "text/plain"] },
+  ".yml": { maxBytes: 2 * mb, kind: "config", mimeTypes: ["application/x-yaml", "application/yaml", "text/yaml", "text/x-yaml", "text/plain"] },
+  ".json": { maxBytes: 2 * mb, kind: "config", mimeTypes: ["application/json", "text/plain"] },
+  ".xml": { maxBytes: 5 * mb, kind: "config", mimeTypes: ["application/xml", "text/xml", "text/plain"] },
+  ".tf": { maxBytes: 2 * mb, kind: "config", mimeTypes: ["text/plain"] },
+  ".drawio": { maxBytes: 10 * mb, kind: "diagram", mimeTypes: ["application/vnd.jgraph.mxfile", "application/xml", "text/xml", "text/plain"] },
+};
+
+export const OPPORTUNITY_DOCUMENT_FILE_ACCEPT = [
+  ...Object.keys(DOCUMENT_FORMATS),
+  ...Object.keys(TECHNICAL_DOCUMENT_FORMATS),
+].join(",");
+export const OPPORTUNITY_DOCUMENT_FORMAT_HELP =
+  "PDF (20 MB), DOCX (15 MB), XLSX/XLS (10 MB), CSV (5 MB), TXT/MD (2 MB), EML (10 MB), PNG/JPG/JPEG (10 MB), MP3/WAV/M4A (50 MB). Archivos técnicos: CONF/CFG/YAML/YML/JSON/TF (2 MB), XML (5 MB), DRAWIO (10 MB).";
+
 export const DOCUMENT_FILE_ACCEPT = Object.keys(DOCUMENT_FORMATS).join(",");
 export const DOCUMENT_FORMAT_HELP =
   "PDF (20 MB), DOCX (15 MB), XLSX/XLS (10 MB), CSV (5 MB), TXT/MD (2 MB), EML (10 MB), PNG/JPG/JPEG (10 MB), MP3/WAV/M4A (50 MB).";
 
 export const DOCUMENT_MIME_TYPES = [
   ...new Set([
-    ...Object.values({ ...DOCUMENT_FORMATS, ...LEGACY_DOCUMENT_FORMATS })
+    ...Object.values({
+      ...DOCUMENT_FORMATS,
+      ...LEGACY_DOCUMENT_FORMATS,
+      ...TECHNICAL_DOCUMENT_FORMATS,
+    })
       .flatMap((format) => format.mimeTypes),
     "application/octet-stream",
   ]),

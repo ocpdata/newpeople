@@ -301,7 +301,21 @@ de Pinecone. Las operaciones de carga, reemplazo y eliminación se actualizan
 consultando el estado de Pinecone. La sustitución conserva la versión activa
 hasta que la nueva queda disponible; el backend mantiene el seguimiento en
 segundo plano, aunque el administrador cierre la pestaña. Los formatos
-aceptados son PDF, DOCX, JSON, Markdown y TXT.
+aceptados son PDF, DOCX, JSON, Markdown y TXT. Las hojas de cálculo (XLSX, XLS,
+CSV) y las presentaciones (PPTX) se convierten a texto Markdown antes de
+cargarse; el documento conserva el nombre original con la extensión `.md`.
+
+Cada documento puede clasificarse con un **tipo** (cuestionario, manual, guía de
+diseño, arquitectura de referencia, configuración modelo, hoja de
+dimensionamiento u otro), una **versión del producto** y una marca **vigente**.
+El tipo se infiere del nombre del archivo cuando usa el formato
+`[Tipo] Título` (por ejemplo `[Cuestionario] F5 XC WAAP - levantamiento.docx`) y
+puede ajustarse desde la tarjeta del documento. Los documentos no vigentes no se
+usan en la consulta por tema del alcance técnico de las propuestas (ver
+[Alcance técnico de propuestas](./alcance-tecnico-propuestas.md)).
+
+La biblioteca contiene conocimiento de la empresa y de los fabricantes. **No se
+cargan en ella documentos de clientes**: esos viven en la oportunidad.
 
 Además de cargar archivos locales, los administradores pueden importar enlaces
 públicos a archivos admitidos o a páginas web. Las páginas HTML se convierten a

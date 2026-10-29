@@ -58,6 +58,9 @@ import { ensureLandingPermissions } from "./landing/permissions.js";
 import { ensureLandingSchema } from "./landing/schema.js";
 import { startLandingWorker } from "./routes.landing.js";
 import { ensureProposalDocumentSchema } from "./proposal-documents/schema.js";
+import { ensureTechnicalScopePermissions } from "./technical-scope/permissions.js";
+import { ensureTechnicalScopeSchema } from "./technical-scope/schema.js";
+import { ensureTechnicalPlaybookSeeds } from "./technical-scope/playbooks.js";
 import { ensureCampaignPermissions } from "./campaigns/permissions.js";
 import { ensureCampaignsSchema } from "./campaigns/schema.js";
 import { startCampaignEmailDispatchWorker } from "./routes.campaign-emails.js";
@@ -95,6 +98,7 @@ export async function startServer() {
   await ensureCommercialEnablementPermissions({ autoAssignRoles });
   await ensureCommercialPlanningPermissions({ autoAssignRoles });
   await ensureManufacturerRegistrationPermissions({ autoAssignRoles });
+  await ensureTechnicalScopePermissions({ autoAssignRoles });
   await ensureProcessCommercialConfigPermissions({ autoAssignRoles });
   await ensureLandingPermissions({ autoAssignRoles });
   await ensureCampaignPermissions({ autoAssignRoles });
@@ -119,6 +123,8 @@ export async function startServer() {
   await ensureManufacturerRegistrationsSchema();
   await ensureLandingSchema();
   await ensureProposalDocumentSchema();
+  await ensureTechnicalScopeSchema();
+  await ensureTechnicalPlaybookSeeds();
   await ensureCampaignsSchema();
   await ensureCampaignEmailDispatchSchema();
   await ensureSecurityTestSchema();

@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { query } from "../db.js";
-import { cleanupTempFiles, parseMultipartFiles } from "../opportunity-documents/service.js";
+import {
+  cleanupTempFiles,
+  extractContentFromBuffer,
+  parseMultipartFiles,
+} from "../opportunity-documents/service.js";
 import { config } from "../config.js";
 import { buildRagPublicId, ensureDocumentacionRagSchema } from "./schema.js";
 import {
@@ -14,11 +18,15 @@ import {
   uploadRagFile,
 } from "./pinecone.js";
 import { importRagSourceUrl } from "./url-import.js";
+import { inferRagDocTypeFromFileName, resolveRagDocType } from "./doc-types.js";
 import { isAiServiceEnabledFor } from "../ai-services/state.js";
 
 const CHATBOT_FEATURE_CODE = "chatbot.assistant";
 const CUSTOMER_CHAT_LIBRARY_FEATURE_CODE = "commercial_intelligence.account_chat.library";
 const ALLOWED_EXTENSIONS = new Set([".docx", ".json", ".md", ".pdf", ".txt"]);
+// Spreadsheets and presentations are converted to Markdown text before reaching the assistant.
+const CONVERTIBLE_EXTENSIONS = new Set([".xlsx", ".xls", ".csv", ".pptx"]);
+
 const MAX_FILE_SIZE_BYTES = Number(config.pinecone.maxFileBytes);
 const refreshLocks = new Map();
 let workerStarted = false;
@@ -63,6 +71,9 @@ function normalizeDocument(row) {
     summary: String(row.summary || ""),
     summaryStatus: String(row.summary_status || "pending"),
     summaryError: String(row.summary_error || ""),
+    docType: row.doc_type ? String(row.doc_type) : null,
+    productVersion: String(row.product_version || ""),
+    isCurrent: row.is_current === undefined ? true : Boolean(Number(row.is_current)),
     error: String(row.error_message || ""),
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -427,6 +438,21 @@ export async function getDocumentacionRagBootstrap() {
   };
 }
 
+// Active topics with their document counts, used by modules that link content to a RAG topic.
+export async function listDocumentacionRagTopicOptions() {
+  await ensureDocumentacionRagSchema();
+  const rows = await query(
+    `SELECT t.public_id, t.name, t.description, t.sort_order, t.is_active,
+            COUNT(d.id) AS document_count
+     FROM documentacion_rag_topics t
+     LEFT JOIN documentacion_rag_documents d ON d.topic_id = t.id
+     WHERE t.is_active = 1
+     GROUP BY t.id
+     ORDER BY t.sort_order ASC, t.name ASC`,
+  );
+  return rows.map(normalizeTopic);
+}
+
 export async function createDocumentacionRagTopic({ user, name, description, sortOrder }) {
   await ensureDocumentacionRagSchema();
   const publicId = buildRagPublicId();
@@ -520,10 +546,10 @@ function validateFileDetails({ fileName: inputFileName, mimeType: inputMimeType,
     .trim()
     .slice(0, 255);
   const extension = path.extname(fileName).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(extension)) {
+  if (!ALLOWED_EXTENSIONS.has(extension) && !CONVERTIBLE_EXTENSIONS.has(extension)) {
     throw makeHttpError(
       400,
-      "Formato no admitido. Sube un archivo PDF, DOCX, JSON, Markdown o TXT",
+      "Formato no admitido. Sube un archivo PDF, DOCX, XLSX, CSV, PPTX, JSON, Markdown o TXT",
     );
   }
   if (Number(byteSize || 0) > MAX_FILE_SIZE_BYTES) {
@@ -549,6 +575,27 @@ async function getActiveTopic(topicPublicId) {
   return rows[0];
 }
 
+// Spreadsheets and presentations are indexed as Markdown text; returns null for formats that need no conversion.
+async function convertToMarkdownSource(details, buffer) {
+  const extension = path.extname(details.fileName).toLowerCase();
+  if (!CONVERTIBLE_EXTENSIONS.has(extension)) return null;
+  const converted = await extractContentFromBuffer({
+    buffer,
+    mimeType: details.mimeType,
+    fileName: details.fileName,
+    extension,
+  });
+  const text = String(converted.rawText || "").trim();
+  if (!text) throw makeHttpError(400, "No fue posible extraer texto del archivo");
+  const textBuffer = Buffer.from(text, "utf8");
+  return {
+    fileName: `${details.fileName}.md`.slice(0, 255),
+    mimeType: "text/markdown",
+    buffer: textBuffer,
+    byteSize: textBuffer.length,
+  };
+}
+
 async function prepareUploadSource({ file, sourceUrl }) {
   if (file) {
     const details = validateFileDetails({
@@ -561,6 +608,8 @@ async function prepareUploadSource({ file, sourceUrl }) {
     if (byteSize > MAX_FILE_SIZE_BYTES) {
       throw makeHttpError(413, "El documento supera el límite de tamaño permitido");
     }
+    const converted = await convertToMarkdownSource(details, buffer);
+    if (converted) return { ...converted, sourceType: "upload", sourceUrl: "" };
     return {
       ...details,
       buffer,
@@ -575,7 +624,8 @@ async function prepareUploadSource({ file, sourceUrl }) {
       maxBytes: MAX_FILE_SIZE_BYTES,
     });
     const details = validateFileDetails(imported);
-    return { ...imported, ...details };
+    const converted = imported.buffer ? await convertToMarkdownSource(details, imported.buffer) : null;
+    return converted ? { ...imported, ...converted } : { ...imported, ...details };
   } catch (error) {
     if (Number(error?.status)) throw error;
     const tooLarge = String(error?.message || "").includes("tamaño máximo");
@@ -637,6 +687,14 @@ export async function uploadDocumentacionRagDocument({ user, req }) {
       file: files[0],
       sourceUrl,
     });
+    const requestedDocType = readMultipartField(fields, "docType");
+    const docType =
+      resolveRagDocType(requestedDocType) ||
+      inferRagDocTypeFromFileName(source.fileName);
+    if (requestedDocType && !resolveRagDocType(requestedDocType)) {
+      throw makeHttpError(400, "Tipo de documento no válido");
+    }
+    const productVersion = readMultipartField(fields, "productVersion").slice(0, 60);
     const uploaded = await uploadFileToPinecone({
       source,
       topic,
@@ -650,8 +708,9 @@ export async function uploadDocumentacionRagDocument({ user, req }) {
             source_type, source_url, pending_source_type, pending_source_url,
             status, pending_file_id, pending_version_id, pending_file_name,
             pending_mime_type, pending_byte_size, upload_operation_id,
+            doc_type, product_version,
             summary_status, uploaded_by_user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(3), NOW(3))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(3), NOW(3))`,
         [
           publicId,
           Number(topic.id),
@@ -668,6 +727,8 @@ export async function uploadDocumentacionRagDocument({ user, req }) {
           uploaded.mimeType,
           uploaded.byteSize,
           uploaded.operationId,
+          docType,
+          productVersion || null,
           Number(user.id),
         ],
       );
@@ -911,11 +972,107 @@ export async function retrieveCustomerChatDocumentKnowledge({ prompt, userId = n
   };
 }
 
+export async function updateDocumentacionRagClassification({
+  documentPublicId,
+  docType,
+  productVersion,
+  isCurrent,
+}) {
+  await ensureDocumentacionRagSchema();
+  const resolvedType = docType === undefined || docType === null || docType === ""
+    ? null
+    : resolveRagDocType(docType);
+  if (docType && !resolvedType) throw makeHttpError(400, "Tipo de documento no válido");
+  const result = await query(
+    `UPDATE documentacion_rag_documents
+     SET doc_type = ?, product_version = ?, is_current = ?, updated_at = NOW(3)
+     WHERE public_id = ?`,
+    [
+      resolvedType,
+      String(productVersion || "").trim().slice(0, 60) || null,
+      isCurrent === false ? 0 : 1,
+      String(documentPublicId || "").trim(),
+    ],
+  );
+  if (!result?.affectedRows) throw makeHttpError(404, "Documento no encontrado");
+}
+
+// Evidence restricted to one topic (and optionally some document types), with the source file name for citations.
+export async function retrieveDocumentacionRagTopicEvidence({
+  topicName,
+  prompt,
+  docTypes = null,
+  topK = 6,
+  userId = null,
+  featureCode = "proposals.technical_scope.rag",
+}) {
+  if (!isPineconeConfigured()) return { status: "not_configured", snippets: [] };
+  if (!isAiServiceEnabledFor("pinecone", featureCode)) {
+    return { status: "disabled", snippets: [] };
+  }
+  await ensureDocumentacionRagSchema();
+  const params = [String(topicName || "").trim()];
+  let typeFilter = "";
+  const types = (Array.isArray(docTypes) ? docTypes : [])
+    .map(resolveRagDocType)
+    .filter(Boolean);
+  if (types.length) {
+    typeFilter = ` AND d.doc_type IN (${types.map(() => "?").join(", ")})`;
+    params.push(...types);
+  }
+  const rows = await query(
+    `SELECT d.public_id, d.active_version_id, d.original_file_name
+     FROM documentacion_rag_documents d
+     INNER JOIN documentacion_rag_topics t ON t.id = d.topic_id
+     WHERE t.name = ?
+       AND t.is_active = 1
+       AND d.is_current = 1
+       AND d.status IN ('available', 'replacing')
+       AND d.active_file_id IS NOT NULL
+       AND d.active_version_id IS NOT NULL${typeFilter}
+     ORDER BY d.updated_at DESC
+     LIMIT 200`,
+    params,
+  );
+  if (!rows.length) return { status: "no_documents", snippets: [] };
+  const fileNameByDocument = new Map(
+    rows.map((row) => [String(row.public_id), String(row.original_file_name || "")]),
+  );
+  const snippets = await retrieveRagContext({
+    query: String(prompt || "").slice(0, 2000),
+    filter: {
+      $or: rows.map((row) => ({
+        $and: [
+          { document_id: { $eq: String(row.public_id) } },
+          { version_id: { $eq: String(row.active_version_id) } },
+        ],
+      })),
+    },
+    topK,
+    timeoutMs: 20_000,
+    featureCode,
+    userId,
+  });
+  const evidence = snippets
+    .map((snippet) => {
+      const documentId = String(snippet?.reference?.file?.metadata?.document_id || "");
+      return {
+        content: String(snippet?.content || "").trim().slice(0, 3000),
+        score: Number(snippet?.score || 0),
+        source:
+          fileNameByDocument.get(documentId) ||
+          String(snippet?.reference?.file?.name || ""),
+      };
+    })
+    .filter((snippet) => snippet.content);
+  return { status: evidence.length ? "results" : "no_results", snippets: evidence };
+}
+
 export function getDocumentacionRagUploadLimits() {
   return {
     maxFileBytes: Number.isFinite(MAX_FILE_SIZE_BYTES)
       ? Math.min(MAX_FILE_SIZE_BYTES, config.documents.storage.maxSessionBytes)
       : config.documents.storage.maxSessionBytes,
-    allowedExtensions: Array.from(ALLOWED_EXTENSIONS),
+    allowedExtensions: [...ALLOWED_EXTENSIONS, ...CONVERTIBLE_EXTENSIONS],
   };
 }

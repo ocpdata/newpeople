@@ -1,0 +1,671 @@
+.ts-panel {
+  border: 1px solid #d6e0ec;
+  border-radius: 12px;
+  background: #fff;
+  margin: 16px 0;
+}
+
+.ts-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  background: #f6faff;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ts-panel-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-panel-body {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.ts-chip-warn {
+  background: #fff3d6;
+  color: #7a4b00;
+  border-color: #f0c36d;
+}
+
+.ts-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid #d6e0ec;
+}
+
+.ts-tabs button {
+  border: 0;
+  background: transparent;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  color: #40576b;
+}
+
+.ts-tabs button.is-selected {
+  border-bottom-color: #1f6fca;
+  color: #173259;
+  font-weight: 600;
+}
+
+.ts-badge {
+  margin-left: 6px;
+  background: #c8102e;
+  color: #fff;
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 0.75rem;
+}
+
+.ts-tab {
+  display: grid;
+  gap: 14px;
+}
+
+.ts-card {
+  border: 1px solid #e1e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.ts-card h4,
+.ts-card h5 {
+  margin: 0;
+}
+
+.ts-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.ts-actions,
+.ts-actions-row,
+.ts-section-actions,
+.ts-add-block {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ts-ok { color: #1d7b4b; margin: 0; }
+.ts-warn { color: #8a5a00; margin: 0; }
+.ts-error { color: #b3261e; margin: 0; }
+
+.ts-warnings {
+  margin: 0;
+  padding-left: 18px;
+  color: #8a5a00;
+  font-size: 0.9rem;
+}
+
+.ts-playbook-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.ts-playbook {
+  border: 1px solid #d6e0ec;
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.ts-playbook.is-selected {
+  border-color: #1f6fca;
+  background: #f2f8ff;
+}
+
+.ts-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The global input rule (width: 100%) must not stretch checkboxes and radios. */
+.ts-panel input[type="checkbox"],
+.ts-panel input[type="radio"] {
+  width: auto;
+  flex: none;
+  padding: 0;
+  margin: 0;
+}
+
+.ts-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.ts-progress {
+  height: 6px;
+  background: #e1e8f0;
+  border-radius: 4px;
+  margin-top: 6px;
+  min-width: 220px;
+}
+
+.ts-progress span {
+  display: block;
+  height: 100%;
+  background: #1d7b4b;
+  border-radius: 4px;
+}
+
+.ts-question-group {
+  display: grid;
+  gap: 10px;
+}
+
+.ts-fieldset {
+  border: 1px solid #e1e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.ts-fieldset legend {
+  font-weight: 600;
+  padding: 0 6px;
+  color: #173259;
+}
+
+.ts-question {
+  display: grid;
+  gap: 4px;
+}
+
+.ts-question.is-suggested {
+  background: #fffaf0;
+  border-left: 3px solid #f0c36d;
+  padding-left: 8px;
+}
+
+.ts-required {
+  color: #c8102e;
+}
+
+.ts-extractions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ts-extractions li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ts-section {
+  border: 1px solid #e1e8f0;
+  border-radius: 10px;
+}
+
+.ts-section > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 600;
+}
+
+.ts-section-body {
+  padding: 0 14px 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.ts-blocks {
+  display: grid;
+  gap: 10px;
+}
+
+.ts-block {
+  border: 1px solid #e8eef5;
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.ts-block textarea,
+.ts-block input {
+  width: 100%;
+}
+
+.ts-block-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ts-table-editor table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ts-table-editor th,
+.ts-table-editor td {
+  border: 1px solid #e1e8f0;
+  padding: 4px;
+  vertical-align: top;
+}
+
+.ts-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.ts-findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ts-findings li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ts-findings li.is-blocking .proposal-chip {
+  background: #fde7e5;
+  color: #b3261e;
+}
+
+.ts-segmented {
+  display: inline-flex;
+  border: 1px solid #d6e0ec;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ts-segmented button {
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  color: #1f5fae;
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ts-segmented button.is-selected {
+  background: #1e66be;
+  color: #fff;
+}
+
+.ts-topology {
+  border: 1px solid #d6e0ec;
+  border-radius: 10px;
+  display: grid;
+}
+
+.ts-topology-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid #e1e8f0;
+}
+
+.ts-topology-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+}
+
+.ts-flow {
+  height: 520px;
+}
+
+.ts-inspector-panel {
+  border-left: 1px solid #e1e8f0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 520px;
+}
+
+.ts-inspector {
+  display: grid;
+  gap: 8px;
+}
+
+.ts-inspector label {
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+
+.ts-inspector label.ts-check {
+  display: flex;
+}
+
+.ts-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 150px;
+  min-height: 52px;
+  border: 2px solid #5b6b79;
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  padding: 4px 10px 4px 14px;
+  box-sizing: border-box;
+}
+
+.ts-node-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  border-radius: 6px 0 0 6px;
+}
+
+.ts-node-text {
+  display: grid;
+  text-align: center;
+  width: 100%;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.ts-node-text small {
+  color: #5b6b79;
+}
+
+.ts-node-lock {
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  font-size: 0.7rem;
+}
+
+.ts-handle-fill {
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  opacity: 0;
+}
+
+.ts-handle-dot {
+  width: 10px;
+  height: 10px;
+  background: #1f6fca;
+}
+
+.ts-zone {
+  width: 100%;
+  height: 100%;
+  border: 1.5px dashed #9fb0bf;
+  border-radius: 10px;
+  background: rgba(244, 247, 250, 0.7);
+  box-sizing: border-box;
+}
+
+.ts-zone-label {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: #33485a;
+}
+
+.ts-edge-label {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  color: #33485a;
+  pointer-events: all;
+}
+
+.ts-svg-preview {
+  padding: 10px;
+  overflow: auto;
+  border-top: 1px solid #e1e8f0;
+}
+
+.ts-svg-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.ts-approval-form textarea {
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .ts-topology-body {
+    grid-template-columns: 1fr;
+  }
+
+  .ts-inspector-panel {
+    border-left: 0;
+    border-top: 1px solid #e1e8f0;
+  }
+}
+
+.ts-admin {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.ts-diagnostic {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ts-diagnostic th,
+.ts-diagnostic td {
+  border-bottom: 1px solid #e1e8f0;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.ts-diagnostic tr.is-selected {
+  background: #f2f8ff;
+}
+
+.ts-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.ts-grid-2 label {
+  display: grid;
+  gap: 2px;
+}
+
+.ts-json {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.ts-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 30, 45, 0.45);
+}
+
+.ts-drawer {
+  width: min(1180px, 96vw);
+  height: 100%;
+  overflow-y: auto;
+  background: #fff;
+  padding: 16px 20px 28px;
+  box-shadow: -8px 0 28px rgba(15, 30, 45, 0.25);
+}
+
+.ts-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ts-drawer-head h3 {
+  margin: 0;
+}
+
+/* Same look as the proposal module (proposal-document-module.css). */
+.ts-panel .btn-primary,
+.ts-panel .btn-secondary {
+  min-height: 34px;
+  border-radius: 6px;
+  padding: 7px 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ts-panel .btn-primary {
+  border: 1px solid #1e66be;
+  background: #1e66be;
+  color: #fff;
+}
+
+.ts-panel .btn-primary:hover:not(:disabled) {
+  background: #1857a2;
+}
+
+.ts-panel .btn-secondary {
+  border: 1px solid #bfd1ef;
+  background: #fff;
+  color: #1f5fae;
+}
+
+.ts-panel .btn-secondary:hover:not(:disabled) {
+  background: #f2f7ff;
+}
+
+.ts-panel .btn-primary:disabled,
+.ts-panel .btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ts-panel h4,
+.ts-panel h5,
+.ts-drawer-head h3 {
+  color: #173d72;
+}
+
+.ts-card {
+  border-color: #d6e4f7;
+  background: #fff;
+}
+
+.ts-tabs {
+  border-bottom-color: #bfd1ef;
+}
+
+.ts-tabs button.is-selected {
+  border-bottom-color: #1e66be;
+  color: #173d72;
+  font-weight: 700;
+}
+
+.ts-section > summary {
+  color: #173d72;
+  font-weight: 700;
+}
+
+.ts-rich-editor {
+  border: 1px solid #bfd1ef;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ts-rich-editor .proposal-rich-text-content,
+.ts-rich-editor .proposal-rich-text-content .ProseMirror {
+  min-height: 140px;
+}
+
+.ts-rich-editor .proposal-rich-text-content .ProseMirror {
+  padding: 12px 16px;
+}
+
+.ts-rich-editor table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.ts-rich-editor th,
+.ts-rich-editor td {
+  border: 1px solid #bfd1ef;
+  padding: 6px 8px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.ts-rich-editor th {
+  background: #eef4fd;
+}
+
+.ts-preview {
+  display: grid;
+  gap: 18px;
+}
+
+.ts-preview-section h2 {
+  margin: 0 0 6px;
+  color: #173d72;
+}
+
+.ts-preview .ts-rich-editor {
+  border: 0;
+}
+
+.ts-preview-figure {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.ts-preview-figure figcaption {
+  font-style: italic;
+  margin-bottom: 4px;
+}

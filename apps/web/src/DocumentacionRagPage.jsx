@@ -17,6 +17,10 @@ const FORMAT_LABELS = {
   ".md": "Markdown (.md)",
   ".pdf": "PDF",
   ".txt": "TXT",
+  ".xlsx": "Excel (.xlsx)",
+  ".xls": "Excel (.xls)",
+  ".csv": "CSV",
+  ".pptx": "PowerPoint (.pptx)",
 };
 
 const IMPORT_STATUS_LABELS = {
@@ -45,6 +49,7 @@ export default function DocumentacionRagPage({ canManage = false }) {
   const [topics, setTopics] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [uploadLimits, setUploadLimits] = useState(null);
+  const [documentTypes, setDocumentTypes] = useState({});
   const [pineconeConfigured, setPineconeConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -72,6 +77,7 @@ export default function DocumentacionRagPage({ canManage = false }) {
       setTopics(Array.isArray(data?.topics) ? data.topics : []);
       setDocuments(Array.isArray(data?.documents) ? data.documents : []);
       setUploadLimits(data?.uploadLimits || null);
+      setDocumentTypes(data?.documentTypes || {});
       setPineconeConfigured(Boolean(data?.pineconeConfigured));
       setError("");
       return data;
@@ -278,6 +284,27 @@ export default function DocumentacionRagPage({ canManage = false }) {
       await loadLibrary();
     } catch (topicError) {
       setError(getApiErrorMessage(topicError, "No fue posible eliminar el tema"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveClassification(document, patch) {
+    setBusy(`classification:${document.id}`);
+    setError("");
+    try {
+      await api.patch(
+        `/api/documentacion-rag/documents/${encodeURIComponent(document.id)}/classification`,
+        {
+          docType: document.docType,
+          productVersion: document.productVersion,
+          isCurrent: document.isCurrent,
+          ...patch,
+        },
+      );
+      await loadLibrary();
+    } catch (classificationError) {
+      setError(getApiErrorMessage(classificationError, "No fue posible guardar la clasificación"));
     } finally {
       setBusy("");
     }
@@ -609,6 +636,47 @@ export default function DocumentacionRagPage({ canManage = false }) {
                               ? "No fue posible generar el resumen."
                               : "Resumen pendiente.")}
                       </p>
+                      {canManage && document.status === "available" ? (
+                        <div className="documentacion-rag-classification">
+                          <select
+                            aria-label={`Tipo de ${document.fileName}`}
+                            value={document.docType || ""}
+                            disabled={Boolean(busy)}
+                            onChange={(event) =>
+                              saveClassification(document, { docType: event.target.value || null })
+                            }
+                          >
+                            <option value="">Sin tipo</option>
+                            {Object.entries(documentTypes).map(([value, label]) => (
+                              <option key={value} value={value}>{label}</option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label={`Versión del producto de ${document.fileName}`}
+                            placeholder="Versión del producto"
+                            defaultValue={document.productVersion || ""}
+                            disabled={Boolean(busy)}
+                            onBlur={(event) => {
+                              if (event.target.value !== (document.productVersion || "")) {
+                                saveClassification(document, { productVersion: event.target.value });
+                              }
+                            }}
+                          />
+                          <label className="documentacion-rag-current">
+                            <input
+                              type="checkbox"
+                              checked={document.isCurrent !== false}
+                              disabled={Boolean(busy)}
+                              onChange={(event) =>
+                                saveClassification(document, { isCurrent: event.target.checked })
+                              }
+                            />
+                            Vigente
+                          </label>
+                        </div>
+                      ) : document.docType ? (
+                        <span className="field-hint">{documentTypes[document.docType] || document.docType}</span>
+                      ) : null}
                       <span className="field-hint">
                         {formatFileSize(document.byteSize)}
                         {document.updatedAt

@@ -73,6 +73,9 @@ async function ensureSchema() {
     ["source_url", "TEXT NULL"],
     ["pending_source_type", "VARCHAR(30) NULL"],
     ["pending_source_url", "TEXT NULL"],
+    ["doc_type", "VARCHAR(40) NULL"],
+    ["product_version", "VARCHAR(60) NULL"],
+    ["is_current", "TINYINT(1) NOT NULL DEFAULT 1"],
   ];
   for (const [columnName, definition] of columns) {
     const existing = await query(

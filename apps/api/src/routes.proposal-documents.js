@@ -18,6 +18,10 @@ import {
   cleanupTempFiles,
   extractContentFromBuffer,
 } from "./opportunity-documents/service.js";
+import { applyTechnicalScopeToDocumentContent, assertDocumentCanBeFinalized } from "./technical-scope/print-gate.js";
+import { loadProposalDocumentSource } from "./technical-scope/proposal-source.js";
+import { ensureTechnicalScopeSchema } from "./technical-scope/schema.js";
+import { buildSowDocumentContent } from "./technical-scope/sow-service.js";
 import { renderProposalDocumentPdfBuffer } from "./proposal-documents/pdf.js";
 import { renderProposalDocumentHtmlPdfBuffer } from "./proposal-documents/html-pdf.js";
 import { getProposalFormat, listProposalFormats, DEFAULT_PROPOSAL_FORMAT_CODE } from "../../../shared/proposal-formats.js";
@@ -166,6 +170,7 @@ const proposalDocumentSendEmailSchema = z.object({
   cc: z.string().trim().max(1000).optional().default(""),
   subject: z.string().trim().min(1).max(200),
   message_body: z.string().trim().min(1).max(5000),
+  attach_sow: z.boolean().optional().default(false),
 });
 
 const PROPOSAL_DOCUMENT_SUPPORTED_INSTITUTIONAL_BLOCK_TYPES = new Set([
@@ -285,6 +290,7 @@ function serializeProposalDocumentRow(row) {
       row.current_version_id === null ? null : Number(row.current_version_id),
     client_name: row.client_name || "",
     seller_name: row.seller_name || "",
+    technical_scope_status: row.technical_scope_status || null,
     updated_at: row.updated_at,
     created_at: row.created_at,
   };
@@ -441,11 +447,12 @@ async function loadAccessibleOpportunityContext({ user, opportunityId }) {
 
 async function loadQuotationVersionItemNames(versionId) {
   const rows = await query(
-    `SELECT DISTINCT qsi.product_description
+    `SELECT qsi.product_description
      FROM quotation_section_items qsi
      INNER JOIN quotation_sections qs ON qs.id = qsi.quotation_section_id
      WHERE qs.quotation_version_id = ?
-     ORDER BY qsi.display_order
+     GROUP BY qsi.product_description
+     ORDER BY MIN(qsi.display_order)
      LIMIT 40`,
     [Number(versionId)],
   );
@@ -528,12 +535,15 @@ router.get(
       params.push(`%${search}%`);
     }
 
+    await ensureTechnicalScopeSchema();
     const items = await query(
             `SELECT pd.id, pd.title, pd.status, pd.account_id, pd.contact_id,
               pd.opportunity_id, pd.quotation_id, pd.current_version_id,
           pd.created_at, pd.updated_at, a.name AS client_name,
-          COALESCE(owners.seller_name, '') AS seller_name
+          COALESCE(owners.seller_name, '') AS seller_name,
+          scope.status AS technical_scope_status
        FROM proposal_documents pd
+        LEFT JOIN proposal_technical_scopes scope ON scope.proposal_document_id = pd.id
         LEFT JOIN accounts a ON a.id = pd.account_id
         LEFT JOIN (
           SELECT ao.account_id,
@@ -851,6 +861,8 @@ router.post(
         .status(409)
         .json({ message: "La propuesta no tiene una version activa" });
     }
+    const finalizable = await assertDocumentCanBeFinalized({ documentId: proposalDocumentId });
+    if (!finalizable.ok) return res.status(finalizable.status).json(finalizable.body);
 
     await withTransaction(async (conn) => {
       await conn.query(
@@ -1644,10 +1656,30 @@ async function loadProposalDocumentForOutput(proposalDocumentId) {
     typeof contentRaw === "string" ? JSON.parse(contentRaw) : contentRaw;
 
   return {
+    id: proposalDocumentId,
     title: documentRows[0].title,
     content: content || {},
     clientLogoUrl: documentRows[0].client_logo_url || "",
   };
+}
+
+// Output goes through the technical scope gate: proposals with an unapproved scope are not rendered, and approved
+// scopes replace the generic solution description.
+async function loadGatedProposalDocumentForOutput(res, proposalDocumentId) {
+  const document = await loadProposalDocumentForOutput(proposalDocumentId);
+  if (!document) {
+    res.status(404).json({ message: "Propuesta no encontrada" });
+    return null;
+  }
+  const gated = await applyTechnicalScopeToDocumentContent({
+    documentId: proposalDocumentId,
+    content: document.content,
+  });
+  if (!gated.ok) {
+    res.status(gated.status).json(gated.body);
+    return null;
+  }
+  return { ...document, content: gated.content };
 }
 
 async function renderProposalDocumentOutput(document) {
@@ -1683,6 +1715,23 @@ async function renderProposalDocumentOutput(document) {
   return buffer;
 }
 
+// The approved SOW rendered with the proposal's own branding. Returns the PDF or the blocking response.
+export async function renderSowOutput({ proposalDocumentId, user }) {
+  const proposal = await loadProposalDocumentSource({ documentId: proposalDocumentId, user });
+  if (!proposal) return { ok: false, status: 404, body: { message: "Propuesta no encontrada" } };
+  const base = await loadProposalDocumentForOutput(proposalDocumentId);
+  if (!base) return { ok: false, status: 404, body: { message: "Propuesta no encontrada" } };
+  let content;
+  try {
+    content = await buildSowDocumentContent({ proposal, baseContent: base.content });
+  } catch (error) {
+    if (!error?.status || error.status >= 500) throw error;
+    return { ok: false, status: error.status, body: { message: error.message, reason: error.reason || null } };
+  }
+  const buffer = await renderProposalDocumentOutput({ ...base, title: `SOW - ${base.title}`, content });
+  return { ok: true, buffer };
+}
+
 router.get(
   "/proposal-documents/:proposalDocumentId/pdf",
   requireAnyPermission(proposalDocumentReadPermissions),
@@ -1692,10 +1741,8 @@ router.get(
       return res.status(400).json({ message: "proposalDocumentId invalido" });
     }
 
-    const document = await loadProposalDocumentForOutput(proposalDocumentId);
-    if (!document) {
-      return res.status(404).json({ message: "Propuesta no encontrada" });
-    }
+    const document = await loadGatedProposalDocumentForOutput(res, proposalDocumentId);
+    if (!document) return undefined;
 
     const buffer = await renderProposalDocumentOutput(document);
     res.setHeader("Cache-Control", "no-store, max-age=0");
@@ -1739,9 +1786,18 @@ router.post(
     }
     const payload = parsed.data;
 
-    const document = await loadProposalDocumentForOutput(proposalDocumentId);
-    if (!document) {
-      return res.status(404).json({ message: "Propuesta no encontrada" });
+    const document = await loadGatedProposalDocumentForOutput(res, proposalDocumentId);
+    if (!document) return undefined;
+
+    let sowAttachment = null;
+    if (payload.attach_sow) {
+      const sowOutput = await renderSowOutput({ proposalDocumentId, user: req.user });
+      if (!sowOutput.ok) return res.status(sowOutput.status).json(sowOutput.body);
+      sowAttachment = {
+        filename: `sow-${proposalDocumentId}.pdf`,
+        contentType: "application/pdf",
+        content: sowOutput.buffer,
+      };
     }
 
     const connection = await getUserGoogleMailConnection(Number(req.user.id));
@@ -1778,6 +1834,7 @@ router.post(
             contentType: "application/pdf",
             content: brandedBuffer,
           },
+          ...(sowAttachment ? [sowAttachment] : []),
         ],
       });
 

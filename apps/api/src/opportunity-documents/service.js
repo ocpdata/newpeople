@@ -20,14 +20,24 @@ import {
   recordAiUsageFromOpenAiResponse,
 } from "../ai-usage/service.js";
 import { createDocumentStorage } from "./storage.js";
-import { DOCUMENT_FORMATS, LEGACY_DOCUMENT_FORMATS } from "../../../../shared/document-formats.js";
+import {
+  DOCUMENT_FORMATS,
+  LEGACY_DOCUMENT_FORMATS,
+  TECHNICAL_DOCUMENT_FORMATS,
+} from "../../../../shared/document-formats.js";
+import { maskSecrets } from "../technical-scope/secrets.js";
+import { extractMxGraphXml } from "../technical-scope/parsers/drawio.js";
 
 const commercialSellerEligibilityPermission = "comercial.seller.eligible";
 
 const storage = createDocumentStorage();
 const PIPELINE_VERSION = "v1";
 
-const FILE_LIMITS = { ...DOCUMENT_FORMATS, ...LEGACY_DOCUMENT_FORMATS };
+const FILE_LIMITS = {
+  ...DOCUMENT_FORMATS,
+  ...LEGACY_DOCUMENT_FORMATS,
+  ...TECHNICAL_DOCUMENT_FORMATS,
+};
 
 function normalizeText(value) {
   return String(value || "")
@@ -647,6 +657,29 @@ export async function extractContentFromBuffer({
 
   if (resolvedExtension === ".txt" || resolvedExtension === ".md") {
     const text = buffer.toString("utf8");
+    return {
+      extractionStatus: "completed",
+      transcriptionStatus: "pending",
+      detectedFormat,
+      rawText: text,
+      normalizedText: summarizeForPrompt(text, 120000),
+      structuredContentJson: null,
+      transcriptText: null,
+      transcriptionLanguage: null,
+      transcriptionConfidence: null,
+      durationSeconds: null,
+      pageCount: null,
+      contentSummary: summarizeForPrompt(text, 300),
+    };
+  }
+
+  if (TECHNICAL_DOCUMENT_FORMATS[resolvedExtension]) {
+    // Credentials are masked before the text is stored or reaches any AI model.
+    const sourceText =
+      resolvedExtension === ".drawio"
+        ? extractMxGraphXml(buffer.toString("utf8")) || buffer.toString("utf8")
+        : buffer.toString("utf8");
+    const { text } = maskSecrets(sourceText, { configLike: true });
     return {
       extractionStatus: "completed",
       transcriptionStatus: "pending",

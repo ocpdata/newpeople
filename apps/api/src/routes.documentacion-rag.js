@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAnyPermission, requirePermission } from "./auth.js";
 import { ensureDocumentacionRagPermissions } from "./documentacion-rag/permissions.js";
 import { ensureDocumentacionRagSchema } from "./documentacion-rag/schema.js";
+import { RAG_DOCUMENT_TYPES } from "./documentacion-rag/doc-types.js";
 import { importPineconeDocuments, previewPineconeImport } from "./documentacion-rag/import-service.js";
 import {
   createDocumentacionRagTopic,
@@ -11,6 +12,7 @@ import {
   getDocumentacionRagBootstrap,
   getDocumentacionRagUploadLimits,
   replaceDocumentacionRagDocument,
+  updateDocumentacionRagClassification,
   updateDocumentacionRagSummary,
   updateDocumentacionRagTopic,
   uploadDocumentacionRagDocument,
@@ -24,6 +26,11 @@ const topicSchema = z.object({
 });
 const topicUpdateSchema = topicSchema.extend({
   isActive: z.boolean(),
+});
+const classificationSchema = z.object({
+  docType: z.string().trim().max(60).nullable().optional(),
+  productVersion: z.string().trim().max(60).optional().default(""),
+  isCurrent: z.boolean().optional().default(true),
 });
 const summarySchema = z.object({
   summary: z.string().trim().min(1).max(500),
@@ -44,6 +51,7 @@ router.get(
   async (_req, res) => {
     return res.json({
       ...(await getDocumentacionRagBootstrap()),
+      documentTypes: RAG_DOCUMENT_TYPES,
       uploadLimits: getDocumentacionRagUploadLimits(),
     });
   },
@@ -146,6 +154,21 @@ router.patch("/documents/:documentId/summary", async (req, res) => {
   await updateDocumentacionRagSummary({
     documentPublicId: req.params.documentId,
     summary: parsed.data.summary,
+  });
+  return res.status(204).end();
+});
+
+router.patch("/documents/:documentId/classification", async (req, res) => {
+  const parsed = classificationSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "La clasificación no es válida",
+      errors: parsed.error.flatten(),
+    });
+  }
+  await updateDocumentacionRagClassification({
+    documentPublicId: req.params.documentId,
+    ...parsed.data,
   });
   return res.status(204).end();
 });

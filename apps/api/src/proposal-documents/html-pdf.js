@@ -206,7 +206,7 @@ function renderProposalCover({ title, context, format, cover }) {
     <div class="proposal-print-cover-accent"></div>
     ${coverImage ? '<div class="proposal-print-cover-photo-overlay"></div>' : ""}
     <div class="proposal-print-cover-content">
-      <span class="proposal-print-cover-eyebrow">Propuesta comercial</span>
+      <span class="proposal-print-cover-eyebrow">${escapeHtml(cover?.label || "Propuesta comercial")}</span>
       <h1>${escapeHtml(title || "Propuesta")}</h1>
       <div class="proposal-print-cover-parties">
         <div>
