@@ -25406,7 +25406,7 @@ describe("API integration baseline", () => {
     }
   });
 
-  test("seguimiento de comisiones ubica la cotizacion en el trimestre en que la oportunidad se declaro ganada", async () => {
+  test("seguimiento de comisiones ubica la cotizacion en el trimestre de la fecha de cierre de la oportunidad ganada", async () => {
     const loginResponse = await login(
       request(app),
       `${TEST_PREFIX}.commercial.planning@example.com`,
@@ -25439,7 +25439,7 @@ describe("API integration baseline", () => {
       await getCatalogId("quotation_statuses", "aceptada"),
       fixture.latestVersionId,
     ]);
-    // La cotización se declaró ganada en T3, pero la oportunidad se ganó antes, en T2.
+    // La cotización se declaró ganada en T3, pero la fecha de cierre de la oportunidad es de T2.
     const auditInsert = await query(
       `INSERT INTO audit_log
          (module, action, entity_type, entity_id, status, detail, created_at)
@@ -25464,10 +25464,11 @@ describe("API integration baseline", () => {
       expect(await trackedIds(thirdQuarter)).toEqual([expect.stringMatching(/^2036-08-20/)]);
 
       await query(
-        "UPDATE opportunities SET commercial_status_id = ?, commercial_closed_at = ? WHERE id = ?",
+        "UPDATE opportunities SET commercial_status_id = ?, close_date = ?, commercial_closed_at = ? WHERE id = ?",
         [
           await getCatalogId("opportunity_commercial_statuses", "ganada"),
-          "2036-05-15 12:00:00.000",
+          "2036-05-15",
+          "2036-09-01 12:00:00.000",
           fixture.opportunityId,
         ],
       );

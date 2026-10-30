@@ -278,9 +278,9 @@ async function buildCommissionTrackingPayload(periodId) {
   const commissionConfig = await buildCommissionConfigPayload(periodId);
   const { period, sellers } = commissionConfig;
   const { start, end } = getQuarterDateRange(period.year, period.quarter);
-  // Solo cuentan cotizaciones aceptadas, pero se ubican en el trimestre en que se declaró ganada
-  // la oportunidad (commercial_closed_at). Si la oportunidad aún no está ganada se usa el evento
-  // de la cotización: declarar ganada, la primera aceptación y, al final, updated_at.
+  // Solo cuentan cotizaciones aceptadas, pero se ubican en el trimestre de la fecha de cierre de
+  // su oportunidad ganada (close_date, la que captura el vendedor). Si la oportunidad aún no está
+  // ganada se usa el evento de la cotización: declarar ganada, la primera aceptación y updated_at.
   // Las ganadas aún sin aceptar se devuelven aparte (pendingQuotations) y no suman.
   const trackedQuotations = await query(
     `SELECT w.* FROM (
@@ -291,7 +291,7 @@ async function buildCommissionTrackingPayload(periodId) {
               a.name AS account_name, o.name AS opportunity_name,
               o.seller_user_id, su.full_name AS seller_user_name, su.email AS seller_user_email,
               COALESCE(
-                CASE WHEN ocs.code = 'ganada' THEN o.commercial_closed_at END,
+                CASE WHEN ocs.code = 'ganada' THEN o.close_date END,
                 (SELECT MAX(al.created_at) FROM audit_log al
                   WHERE al.module = 'cotizaciones' AND al.action = 'declarar_ganada'
                     AND al.entity_type = 'quotation_version' AND al.entity_id = qv.id

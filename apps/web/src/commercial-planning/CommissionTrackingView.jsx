@@ -195,7 +195,7 @@ function PendingQuotationsCard({ items, currencyCode, showSeller }) {
               <th>Cotización</th>
               {showSeller ? <th>Vendedor</th> : null}
               <th>Trimestre</th>
-              <th>Fecha ganada (oportunidad)</th>
+              <th>Fecha de cierre (oportunidad)</th>
               <th>Cuenta</th>
               <th>Venta</th>
             </tr>
@@ -259,7 +259,7 @@ function SellerDetail({ summary, currencyCode }) {
           <thead>
             <tr>
               <th>Cotización</th>
-              <th>Fecha ganada (oportunidad)</th>
+              <th>Fecha de cierre (oportunidad)</th>
               <th>Cuenta</th>
               <th>Venta</th>
               <th>Margen</th>
@@ -374,7 +374,7 @@ async function exportTrackingToExcel({ year, model, currencyCode, sellerRows, to
           Cotización: quotation.quotationId,
           Propuesta: quotation.proposalName,
           Cuenta: quotation.accountName,
-          "Fecha ganada (oportunidad)": quotation.wonAt ? new Date(quotation.wonAt).toISOString().slice(0, 10) : "",
+          "Fecha de cierre (oportunidad)": quotation.wonAt ? new Date(quotation.wonAt).toISOString().slice(0, 10) : "",
           Venta: quotation.totalSaleAmount,
           "Margen (%)": quotation.quotationMarginPct,
           Estado: describeCommissionBlock({
@@ -396,7 +396,7 @@ async function exportTrackingToExcel({ year, model, currencyCode, sellerRows, to
     Cotización: item.quotationId,
     Propuesta: item.proposalName,
     Cuenta: item.accountName,
-    "Fecha ganada (oportunidad)": item.wonAt ? new Date(item.wonAt).toISOString().slice(0, 10) : "",
+    "Fecha de cierre (oportunidad)": item.wonAt ? new Date(item.wonAt).toISOString().slice(0, 10) : "",
     Venta: item.totalSaleAmount,
   }))), "Pendientes de aceptar");
   XLSX.utils.book_append_sheet(book, sheet(model.invalid.filter((item) => visibleSellerIds.has(item.sellerUserId)).map((item) => ({
