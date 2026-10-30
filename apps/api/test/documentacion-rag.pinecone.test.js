@@ -37,6 +37,36 @@ describe("Pinecone Assistant REST client", () => {
     expect(fetchMock.mock.calls.every(([, options]) => options.method === "GET")).toBe(true);
   });
 
+  it("recorre todas las páginas del listado de archivos", async () => {
+    const page = (ids, next) => jsonResponse({
+      files: ids.map((id) => ({ id, name: `${id}.pdf`, status: "Available", metadata: { document_id: id } })),
+      ...(next ? { pagination: { next } } : {}),
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: "Ready", host: "assistant.example.com" }))
+      .mockResolvedValueOnce(page(["a", "b"], "tok 1"))
+      .mockResolvedValueOnce(page(["c"], "tok2"))
+      .mockResolvedValueOnce(page(["d"]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listRagFiles } = await import("../src/documentacion-rag/pinecone.js");
+    const result = await listRagFiles();
+    expect(result.files.map((file) => file.id)).toEqual(["a", "b", "c", "d"]);
+    expect(fetchMock.mock.calls[2][0]).toBe("https://assistant.example.com/assistant/files/test-assistant?pagination_token=tok%201");
+    expect(fetchMock.mock.calls[3][0]).toContain("pagination_token=tok2");
+  });
+
+  it("detiene el recorrido si Pinecone repite el cursor", async () => {
+    const page = jsonResponse({ files: [{ id: "a", name: "a.pdf", status: "Available" }], pagination: { next: "same" } });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ status: "Ready", host: "assistant.example.com" }))
+      .mockImplementation(() => Promise.resolve(page.clone()));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listRagFiles } = await import("../src/documentacion-rag/pinecone.js");
+    const result = await listRagFiles();
+    expect(result.files).toHaveLength(1);
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
   it("no crea un Assistant ausente durante la importación", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ message: "not found" }, 404));
     vi.stubGlobal("fetch", fetchMock);

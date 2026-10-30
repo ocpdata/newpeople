@@ -259,20 +259,36 @@ export async function listRagFiles() {
     error.status = 503;
     throw error;
   }
-  const result = await requestJson(
-    `${getAssistantHost(assistant)}/assistant/files/${encodeURIComponent(assistantName())}`,
-    { deadlineAt },
-  );
-  // The Assistant list-files API returns all files, without pagination.
-  if (!Array.isArray(result?.files) || result.files.some((file) =>
-    !file || typeof file.id !== "string" || typeof file.name !== "string")) {
-    const error = new Error("Pinecone devolvió un listado de archivos no válido");
-    error.status = 502;
-    throw error;
-  }
+  const filesUrl = `${getAssistantHost(assistant)}/assistant/files/${encodeURIComponent(assistantName())}`;
+  // The list-files API returns pages (50 files by default) with a `pagination.next` token.
+  const files = [];
+  const seenFileIds = new Set();
+  const seenTokens = new Set();
+  let token = null;
+  do {
+    const result = await requestJson(
+      token ? `${filesUrl}?pagination_token=${encodeURIComponent(token)}` : filesUrl,
+      { deadlineAt },
+    );
+    if (!Array.isArray(result?.files) || result.files.some((file) =>
+      !file || typeof file.id !== "string" || typeof file.name !== "string")) {
+      const error = new Error("Pinecone devolvió un listado de archivos no válido");
+      error.status = 502;
+      throw error;
+    }
+    for (const file of result.files) {
+      if (seenFileIds.has(file.id)) continue;
+      seenFileIds.add(file.id);
+      files.push(file);
+    }
+    const next = typeof result.pagination?.next === "string" ? result.pagination.next : null;
+    // A repeated token would loop forever, so stop instead of trusting the remote cursor.
+    token = next && !seenTokens.has(next) ? next : null;
+    if (token) seenTokens.add(token);
+  } while (token);
   return {
     assistantName: assistantName(),
-    files: result.files.map(({ id, name, status, metadata }) => ({
+    files: files.map(({ id, name, status, metadata }) => ({
       id, name, status, metadata,
     })),
   };
