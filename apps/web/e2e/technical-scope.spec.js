@@ -155,10 +155,12 @@ test("alcance técnico: iniciar, responder, generar, editar la topología y apro
 
   await expect(page.getByRole("button", { name: "Ver PDF" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Finalizar propuesta" })).toBeDisabled();
-  await expect(panel.getByText("0 de 2 respondidas (0%).")).toBeVisible();
+  await expect(panel.getByLabel("Avance del cuestionario")).toContainText("0 confirmadas");
+  await expect(panel.getByLabel("Avance del cuestionario")).toContainText("2 sin responder");
   await panel.getByLabel("¿Cuántas aplicaciones se protegerán?").fill("12");
   await panel.getByRole("button", { name: /Guardar respuestas/ }).click();
-  await expect(panel.getByText("1 de 2 respondidas (50%).")).toBeVisible();
+  await expect(panel.getByLabel("Avance del cuestionario")).toContainText("1 confirmadas");
+  await expect(panel.getByLabel("Avance del cuestionario")).toContainText("1 sin responder");
   expect(calls.find((call) => call.sub === "/answers").body.answers).toEqual([{ playbookCode: "f5_dcs", questionCode: "apps_count", value: "12" }]);
 
   await panel.getByRole("tab", { name: "Alcance" }).click();

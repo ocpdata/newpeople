@@ -76,6 +76,9 @@
 .proposal-print-content figure[data-align="right"], .proposal-print-content .proposal-image-node-view.is-align-right { justify-content: flex-end; }
 .proposal-print-content figure[data-vertical-align="top"], .proposal-print-content .proposal-image-node-view[data-vertical-align="top"] { align-items: flex-start; }
 .proposal-print-content figure[data-vertical-align="bottom"], .proposal-print-content .proposal-image-node-view[data-vertical-align="bottom"] { align-items: flex-end; }
+/* Diagrams (SVG, e.g. the technical topology) use the full content width instead of the 193px photo cap. */
+.proposal-print-content figure.is-diagram { min-height: 0; margin: 6px 0 14px; justify-content: center; }
+.proposal-print-content figure.is-diagram img { width: 100% !important; height: auto !important; max-height: 760px; object-fit: contain; }
 .proposal-image-row { display: grid; grid-template-columns: repeat(var(--proposal-image-row-columns), minmax(0, 1fr)); gap: 16px; width: 100%; margin: 0 0 16px; break-inside: avoid; }
 .proposal-image-row-cell { position: relative; min-height: 193px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px dashed #9db4d6; background: #f8fbff; }
 .proposal-image-row-cell img { width: 100%; max-height: 193px; object-fit: contain; }

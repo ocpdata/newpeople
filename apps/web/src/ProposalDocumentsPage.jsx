@@ -1348,7 +1348,20 @@ export default function ProposalDocumentsPage() {
                             aria-label="Eliminar propuesta"
                             title="Eliminar propuesta"
                           >
-                            🗑
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M3 6h18" />
+                              <path d="M8 6V4h8v2" />
+                              <path d="M19 6l-1 14H6L5 6" />
+                              <path d="M10 11v6M14 11v6" />
+                            </svg>
                           </button>
                         ) : null}
                       </td>
@@ -1848,7 +1861,7 @@ export default function ProposalDocumentsPage() {
         <div className="proposal-document-modal-overlay">
           <div className="proposal-document-modal proposal-document-modal-wide">
             <h3>Nueva propuesta</h3>
-            <form onSubmit={handleCreateDocument}>
+            <form className="proposal-document-create-form" onSubmit={handleCreateDocument}>
               <div className="proposal-document-field-block">
                 Oportunidad de origen
                 <OpportunityPickerField
@@ -1891,35 +1904,40 @@ export default function ProposalDocumentsPage() {
                   autoFocus
                 />
               </label>
-              <label>
-                Tipo de propuesta
-                <select
-                  value={createTemplateCode}
-                  onChange={(event) => setCreateTemplateCode(event.target.value)}
-                  required
-                >
-                  {proposalTemplates.map((template) => (
-                    <option key={template.code} value={template.code}>
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Formato visual
-                <select value={createFormatCode} onChange={(event) => setCreateFormatCode(event.target.value)} required>
-                  <option value="basic">Básico</option>
-                </select>
-              </label>
+              <div className="proposal-document-create-row">
+                <label>
+                  Tipo de propuesta
+                  <select
+                    value={createTemplateCode}
+                    onChange={(event) => setCreateTemplateCode(event.target.value)}
+                    required
+                  >
+                    {proposalTemplates.map((template) => (
+                      <option key={template.code} value={template.code}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Formato visual
+                  <select value={createFormatCode} onChange={(event) => setCreateFormatCode(event.target.value)} required>
+                    <option value="basic">Básico</option>
+                  </select>
+                </label>
+              </div>
               <label className="proposal-document-checkbox-label">
                 <input
                   type="checkbox"
                   checked={createWithScope}
                   onChange={(event) => setCreateWithScope(event.target.checked)}
                 />
-                <span>
-                  Incluir alcance técnico y SOW a la medida del cliente. Requiere la aprobación del preventa antes de
-                  imprimir, enviar o finalizar. Sin esta opción se crea una propuesta básica, que no requiere aprobación.
+                <span className="proposal-document-checkbox-text">
+                  <strong>Incluir alcance técnico y SOW a la medida del cliente</strong>
+                  <small>
+                    Requiere la aprobación del preventa antes de imprimir, enviar o finalizar. Sin esta opción se crea
+                    una propuesta básica, que no requiere aprobación.
+                  </small>
                 </span>
               </label>
               <div className="proposal-document-modal-actions">

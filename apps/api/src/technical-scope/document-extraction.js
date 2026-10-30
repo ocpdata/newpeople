@@ -117,21 +117,40 @@ async function streamToBuffer(stream) {
   return Buffer.concat(chunks);
 }
 
+const MAX_AI_ANSWERS = 80;
+
+const aiAnswerSchema = z.object({
+  playbookCode: z.string().trim().max(80),
+  questionCode: z.string().trim().max(120),
+  value: z.preprocess(
+    (value) =>
+      Array.isArray(value)
+        ? value.filter((item) => item !== null && item !== undefined).map((item) => String(item))
+        : value,
+    z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+  ),
+  confidence: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() !== "" ? Number(value) : value),
+    z.number().min(0).max(1),
+  ).catch(0.5),
+  evidence: z.preprocess((value) => (typeof value === "string" ? value.slice(0, 400) : ""), z.string().trim()),
+});
+
+// The model may return malformed entries (null values, nested objects); those are dropped instead of failing the whole document.
 const aiAnswersSchema = z.object({
-  detectedKind: z.string().trim().max(60).optional().default("unknown"),
-  summary: z.string().trim().max(600).optional().default(""),
+  detectedKind: z.string().trim().max(60).optional().default("unknown").catch("unknown"),
+  summary: z.preprocess((value) => (typeof value === "string" ? value.slice(0, 600) : ""), z.string().trim()),
   answers: z
-    .array(
-      z.object({
-        playbookCode: z.string().trim().max(80),
-        questionCode: z.string().trim().max(120),
-        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
-        confidence: z.number().min(0).max(1).optional().default(0.5),
-        evidence: z.string().trim().max(400).optional().default(""),
-      }),
-    )
-    .max(80)
-    .default([]),
+    .array(z.unknown())
+    .default([])
+    .catch([])
+    .transform((items) =>
+      items
+        .map((item) => aiAnswerSchema.safeParse(item))
+        .filter((parsed) => parsed.success)
+        .map((parsed) => parsed.data)
+        .slice(0, MAX_AI_ANSWERS),
+    ),
 });
 
 const aiDiagramSchema = z.object({

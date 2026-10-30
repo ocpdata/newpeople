@@ -165,13 +165,24 @@ function PlaybookSelector({ overview, disabled, onSave }) {
 }
 
 // The form remounts when the stored answers change, so drafts always start from what is saved.
+// The playbook selector stays outside that remount so unsaved checkbox changes survive an analysis run.
 export default function QuestionnaireTab(props) {
   const signature = JSON.stringify(props.overview.questions.map((q) => [answerKey(q), q.answer?.value ?? null, q.answer?.status ?? null]));
   const selectionSignature = JSON.stringify(props.overview.scope.playbookCodes);
-  return <QuestionnaireForm key={`${signature}|${selectionSignature}`} {...props} />;
+  return (
+    <div className="ts-tab">
+      <PlaybookSelector
+        key={selectionSignature}
+        overview={props.overview}
+        disabled={!props.canEdit || props.busy}
+        onSave={props.onSaveSelections}
+      />
+      <QuestionnaireForm key={`${signature}|${selectionSignature}`} {...props} />
+    </div>
+  );
 }
 
-function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAnswers, onConfirm, onAnalyze, onUseAsAsIs }) {
+function QuestionnaireForm({ overview, canEdit, busy, analyzing, onSaveAnswers, onConfirm, onAnalyze, onUseAsAsIs }) {
   const { questions, coverage, extractions, scope } = overview;
   const [drafts, setDrafts] = useState(() =>
     Object.fromEntries(questions.map((question) => [answerKey(question), initialValue(question)])),
@@ -196,6 +207,10 @@ function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAn
   }, [questions]);
   const playbookName = (code) => overview.catalog.find((entry) => entry.code === code)?.name || code;
   const progress = coverage.total ? Math.round((coverage.confirmed / coverage.total) * 100) : 0;
+  const suggestedProgress = coverage.total ? Math.round((coverage.suggestedPending / coverage.total) * 100) : 0;
+  const unanswered = Math.max(coverage.total - coverage.confirmed - coverage.suggestedPending, 0);
+  const suggestedCount = (code) =>
+    questions.filter((question) => question.playbookCode === code && question.answer?.status === "suggested").length;
 
   const save = () =>
     onSaveAnswers(
@@ -207,9 +222,7 @@ function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAn
     );
 
   return (
-    <div className="ts-tab">
-      <PlaybookSelector overview={overview} disabled={!canEdit || busy} onSave={onSaveSelections} />
-
+    <>
       <section className="ts-card">
         <div className="ts-card-head">
           <div>
@@ -220,11 +233,21 @@ function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAn
             </p>
           </div>
           {canEdit ? (
-            <button type="button" className="btn-secondary" disabled={busy} onClick={() => onAnalyze()}>
-              Analizar documentos
+            <button type="button" className="btn-secondary ts-analyze-btn" disabled={busy} aria-busy={analyzing} onClick={() => onAnalyze()}>
+              {analyzing ? <span className="ts-spinner" aria-hidden="true" /> : null}
+              {analyzing ? "Analizando…" : "Analizar documentos"}
             </button>
           ) : null}
         </div>
+        {analyzing ? (
+          <div className="ts-analyzing" role="status" aria-live="polite">
+            <span className="ts-spinner" aria-hidden="true" />
+            <span>
+              Analizando los documentos de la oportunidad con IA. Esto puede tardar un minuto; no cierres esta ventana.
+            </span>
+            <span className="ts-analyzing-bar" aria-hidden="true" />
+          </div>
+        ) : null}
         {extractions.length ? (
           <ul className="ts-extractions">
             {extractions.map((extraction) => (
@@ -252,22 +275,35 @@ function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAn
         <div className="ts-card-head">
           <div>
             <h4>Cuestionario técnico</h4>
+            <div className="ts-coverage" aria-label="Avance del cuestionario">
+              <span className="ts-coverage-item is-confirmed"><strong>{coverage.confirmed}</strong> confirmadas</span>
+              <span className="ts-coverage-item is-suggested"><strong>{coverage.suggestedPending}</strong> sugeridas por revisar</span>
+              <span className="ts-coverage-item is-empty"><strong>{unanswered}</strong> sin responder</span>
+              <span className="field-hint">de {coverage.total} preguntas</span>
+            </div>
+            <div className="ts-progress" aria-hidden="true">
+              <span className="ts-progress-confirmed" style={{ width: `${progress}%` }} />
+              <span className="ts-progress-suggested" style={{ width: `${suggestedProgress}%` }} />
+            </div>
             <p className="field-hint">
-              {coverage.confirmed} de {coverage.total} respondidas ({progress}%).
+              {coverage.suggestedPending > 0
+                ? "Las sugeridas (en amarillo) las propuso la IA desde los documentos: revísalas y confírmalas para que cuenten. "
+                : ""}
               {coverage.requiredMissing.length
-                ? ` Faltan ${coverage.requiredMissing.length} obligatorias; se tratarán como supuestos.`
-                : " Todas las obligatorias están respondidas."}
+                ? `Faltan ${coverage.requiredMissing.length} obligatorias por confirmar; se tratarán como supuestos.`
+                : "Todas las obligatorias están confirmadas."}
             </p>
-            <div className="ts-progress" aria-hidden="true"><span style={{ width: `${progress}%` }} /></div>
           </div>
           {canEdit ? (
             <div className="ts-actions">
               {coverage.suggestedPending > 0
-                ? scope.playbookCodes.map((selection) => (
-                    <button key={selection.code} type="button" className="btn-secondary" disabled={busy} onClick={() => onConfirm(selection.code)}>
-                      Confirmar sugeridas de {playbookName(selection.code)}
-                    </button>
-                  ))
+                ? scope.playbookCodes
+                    .filter((selection) => suggestedCount(selection.code) > 0)
+                    .map((selection) => (
+                      <button key={selection.code} type="button" className="btn-secondary" disabled={busy} onClick={() => onConfirm(selection.code)}>
+                        Confirmar {suggestedCount(selection.code)} sugeridas de {playbookName(selection.code)}
+                      </button>
+                    ))
                 : null}
               <button type="button" className="btn-primary" disabled={busy || dirtyQuestions.length === 0} onClick={save}>
                 Guardar respuestas{dirtyQuestions.length ? ` (${dirtyQuestions.length})` : ""}
@@ -301,7 +337,8 @@ function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAn
                       />
                       {answer ? (
                         <small className="field-hint">
-                          {answer.status === "suggested" ? "Sugerida · " : ""}
+                          {answer.status === "suggested" ? <span className="ts-status-pill">Sugerida por IA · por confirmar</span> : null}
+                          {answer.status === "suggested" ? " " : ""}
                           {SOURCE_LABELS[answer.sourceType] || answer.sourceType}
                           {answer.sourceRef ? `: ${answer.sourceRef}` : ""}
                           {answer.confidence !== null && answer.confidence !== undefined
@@ -317,6 +354,6 @@ function QuestionnaireForm({ overview, canEdit, busy, onSaveSelections, onSaveAn
           </div>
         ))}
       </section>
-    </div>
+    </>
   );
 }

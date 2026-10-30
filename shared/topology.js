@@ -320,7 +320,7 @@ function escapeXml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function wrapLabel(value, maxChars) {
+function wrapLabel(value, maxChars, maxLines = 3) {
   const words = String(value || "").split(" ");
   const lines = [];
   let line = "";
@@ -333,7 +333,17 @@ function wrapLabel(value, maxChars) {
     }
   }
   if (line) lines.push(line);
-  return lines.slice(0, 3);
+  return lines.slice(0, maxLines);
+}
+
+const NODE_TEXT_LINE_HEIGHT = 13;
+
+// Wrapped label/detail lines for a node and the height needed to show them without clipping.
+function layoutNodeText(node) {
+  const lines = wrapLabel(node.label, Math.max(Math.floor((node.w - 28) / 6.8), 8), 4);
+  const subLines = node.sublabel ? wrapLabel(node.sublabel, Math.max(Math.floor((node.w - 28) / 5.4), 10), 4) : [];
+  const height = Math.max(node.h, 20 + (lines.length + subLines.length) * NODE_TEXT_LINE_HEIGHT);
+  return { lines, subLines, height };
 }
 
 function clipToRect(rect, from, to) {
@@ -362,28 +372,39 @@ function arrowHead(tip, from, size = 9) {
 }
 
 export function getTopologyBounds(topology) {
+  let minX = Infinity;
+  let minY = Infinity;
   let maxX = 0;
   let maxY = 0;
   for (const zone of topology.zones) {
+    minX = Math.min(minX, zone.x || 0);
+    minY = Math.min(minY, zone.y || 0);
     maxX = Math.max(maxX, (zone.x || 0) + (zone.w || 0));
     maxY = Math.max(maxY, (zone.y || 0) + (zone.h || 0));
   }
   for (const node of topology.nodes) {
+    minX = Math.min(minX, node.x || 0);
+    minY = Math.min(minY, node.y || 0);
     maxX = Math.max(maxX, (node.x || 0) + (node.w || DEFAULT_NODE_WIDTH));
     maxY = Math.max(maxY, (node.y || 0) + (node.h || DEFAULT_NODE_HEIGHT));
   }
-  return { width: maxX + CANVAS_MARGIN, height: maxY + CANVAS_MARGIN };
+  // Items dragged above or left of the origin must stay inside the drawing.
+  const originX = Number.isFinite(minX) ? Math.min(0, minX - CANVAS_MARGIN) : 0;
+  const originY = Number.isFinite(minY) ? Math.min(0, minY - CANVAS_MARGIN) : 0;
+  return { originX, originY, width: maxX + CANVAS_MARGIN - originX, height: maxY + CANVAS_MARGIN - originY };
 }
 
 // Deterministic SVG with absolute coordinates; no markers or external fonts so PDF converters render it identically.
 export function renderTopologySvg(input) {
-  const topology = autoLayoutTopology(input);
-  const { width, height } = getTopologyBounds(topology);
+  const laidOut = autoLayoutTopology(input);
+  const textByNode = new Map(laidOut.nodes.map((node) => [node.id, layoutNodeText(node)]));
+  const topology = { ...laidOut, nodes: laidOut.nodes.map((node) => ({ ...node, h: textByNode.get(node.id).height })) };
+  const { originX, originY, width, height } = getTopologyBounds(topology);
   const parts = [];
   parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(width)}" height="${Math.ceil(height)}" viewBox="0 0 ${Math.ceil(width)} ${Math.ceil(height)}" font-family="Helvetica, Arial, sans-serif">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(width)}" height="${Math.ceil(height)}" viewBox="${Math.floor(originX)} ${Math.floor(originY)} ${Math.ceil(width)} ${Math.ceil(height)}" font-family="Helvetica, Arial, sans-serif">`,
   );
-  parts.push(`<rect width="100%" height="100%" fill="#ffffff"/>`);
+  parts.push(`<rect x="${Math.floor(originX)}" y="${Math.floor(originY)}" width="${Math.ceil(width)}" height="${Math.ceil(height)}" fill="#ffffff"/>`);
 
   for (const zone of topology.zones) {
     parts.push(
@@ -395,6 +416,7 @@ export function renderTopologySvg(input) {
   }
 
   const nodeById = new Map(topology.nodes.map((node) => [node.id, node]));
+  const edgeLabelParts = [];
   for (const edge of topology.edges) {
     const source = nodeById.get(edge.source);
     const target = nodeById.get(edge.target);
@@ -409,15 +431,31 @@ export function renderTopologySvg(input) {
     );
     parts.push(`<polygon points="${arrowHead(end, start)}" fill="#40576b"/>`);
     if (edge.label) {
-      const midX = (start.x + end.x) / 2;
-      const midY = (start.y + end.y) / 2;
-      const labelWidth = Math.min(180, edge.label.length * 5.6 + 10);
-      parts.push(
-        `<rect x="${(midX - labelWidth / 2).toFixed(1)}" y="${(midY - 9).toFixed(1)}" width="${labelWidth.toFixed(1)}" height="16" rx="3" fill="#ffffff" fill-opacity="0.92"/>`,
+      const labelLines = wrapLabel(edge.label, 26, 3);
+      const labelWidth = Math.max(...labelLines.map((line) => line.length)) * 5.2 + 12;
+      const labelHeight = labelLines.length * 11 + 6;
+      // Prefer the middle of the line, sliding along it when a node would cover the label.
+      const overlapsNode = (cx, cy) =>
+        topology.nodes.some(
+          (node) =>
+            cx + labelWidth / 2 > node.x &&
+            cx - labelWidth / 2 < node.x + node.w &&
+            cy + labelHeight / 2 > node.y &&
+            cy - labelHeight / 2 < node.y + node.h,
+        );
+      const spots = [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8].map((t) => ({
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t,
+      }));
+      const { x: midX, y: midY } = spots.find((spot) => !overlapsNode(spot.x, spot.y)) || spots[0];
+      edgeLabelParts.push(
+        `<rect x="${(midX - labelWidth / 2).toFixed(1)}" y="${(midY - labelHeight / 2).toFixed(1)}" width="${labelWidth.toFixed(1)}" height="${labelHeight}" rx="3" fill="#ffffff" fill-opacity="0.95" stroke="#d6e0ec" stroke-width="0.8"/>`,
       );
-      parts.push(
-        `<text x="${midX.toFixed(1)}" y="${(midY + 3).toFixed(1)}" font-size="9.5" text-anchor="middle" fill="#33485a">${escapeXml(edge.label)}</text>`,
-      );
+      labelLines.forEach((line, index) => {
+        edgeLabelParts.push(
+          `<text x="${midX.toFixed(1)}" y="${(midY - labelHeight / 2 + 12 + index * 11).toFixed(1)}" font-size="9.5" text-anchor="middle" fill="#33485a">${escapeXml(line)}</text>`,
+        );
+      });
     }
   }
 
@@ -429,10 +467,9 @@ export function renderTopologySvg(input) {
     parts.push(
       `<rect x="${node.x}" y="${node.y}" width="6" height="${node.h}" rx="3" fill="${kind.color}"/>`,
     );
-    const lines = wrapLabel(node.label, 22);
-    const subLines = node.sublabel ? wrapLabel(node.sublabel, 28).slice(0, 1) : [];
+    const { lines, subLines } = textByNode.get(node.id);
     const totalLines = lines.length + subLines.length;
-    const lineHeight = 13;
+    const lineHeight = NODE_TEXT_LINE_HEIGHT;
     let textY = node.y + node.h / 2 - ((totalLines - 1) * lineHeight) / 2 + 4;
     for (const line of lines) {
       parts.push(
@@ -448,6 +485,8 @@ export function renderTopologySvg(input) {
     }
   }
 
+  // Labels are drawn last so a line crossing a node never hides its text.
+  parts.push(...edgeLabelParts);
   parts.push("</svg>");
   return parts.join("");
 }

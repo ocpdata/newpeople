@@ -94,6 +94,69 @@
   flex-wrap: wrap;
 }
 
+.ts-analyze-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid #bfd1ef;
+  border-top-color: #1e66be;
+  border-radius: 50%;
+  animation: ts-spin 0.8s linear infinite;
+}
+
+.ts-analyzing {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px 14px 14px;
+  border: 1px solid #cfe0f7;
+  border-radius: 10px;
+  background: #eef5ff;
+  color: #1f4673;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.ts-analyzing-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, #1e66be, transparent);
+  animation: ts-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes ts-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ts-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-spinner,
+  .ts-analyzing-bar {
+    animation-duration: 2.4s;
+  }
+}
+
 .ts-actions,
 .ts-actions-row,
 .ts-section-actions,
@@ -157,18 +220,72 @@
 }
 
 .ts-progress {
-  height: 6px;
+  display: flex;
+  height: 8px;
   background: #e1e8f0;
   border-radius: 4px;
-  margin-top: 6px;
+  margin: 8px 0;
   min-width: 220px;
+  overflow: hidden;
 }
 
 .ts-progress span {
   display: block;
   height: 100%;
+}
+
+.ts-progress-confirmed {
   background: #1d7b4b;
-  border-radius: 4px;
+}
+
+.ts-progress-suggested {
+  background: #f0c36d;
+}
+
+.ts-coverage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ts-coverage-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+
+.ts-coverage-item.is-confirmed {
+  background: #e6f4ec;
+  border-color: #b9dfc9;
+  color: #14603a;
+}
+
+.ts-coverage-item.is-suggested {
+  background: #fff4dc;
+  border-color: #f0c36d;
+  color: #7a5200;
+}
+
+.ts-coverage-item.is-empty {
+  background: #eef1f5;
+  border-color: #d5dce6;
+  color: #4a5a6e;
+}
+
+.ts-status-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff4dc;
+  border: 1px solid #f0c36d;
+  color: #7a5200;
+  font-weight: 700;
+  font-size: 11px;
 }
 
 .ts-question-group {
@@ -374,8 +491,6 @@
   position: relative;
   width: 100%;
   height: 100%;
-  min-width: 150px;
-  min-height: 52px;
   border: 2px solid #5b6b79;
   border-radius: 8px;
   background: #fff;
@@ -396,14 +511,24 @@
 
 .ts-node-text {
   display: grid;
+  gap: 2px;
   text-align: center;
   width: 100%;
-  font-size: 0.8rem;
-  line-height: 1.2;
+  font-size: 0.85rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.ts-node-text strong {
+  color: #1c2f44;
+  font-weight: 700;
 }
 
 .ts-node-text small {
-  color: #5b6b79;
+  color: #52657a;
+  font-size: 0.74rem;
+  line-height: 1.3;
 }
 
 .ts-node-lock {
@@ -449,10 +574,16 @@
 
 .ts-edge-label {
   position: absolute;
-  background: rgba(255, 255, 255, 0.92);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 0.7rem;
+  max-width: 150px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #d6e0ec;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: #33485a;
   pointer-events: all;
 }

@@ -243,7 +243,7 @@ const EMPTY_COMMERCIAL_PROPOSAL_TEMPLATE = {
 };
 
 const DEFAULT_COMMERCIAL_PROPOSAL_TEMPLATES = [
-  { code: "generica", name: "Genérica", isActive: true, isSystem: true },
+  { code: "generica", name: "Propuesta manual", isActive: true, isSystem: true },
 ];
 
 const INITIAL_COMMERCIAL_PROPOSAL_DOCUMENT = {

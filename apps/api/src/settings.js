@@ -1101,7 +1101,7 @@ async function ensureCommercialProposalTemplateSchema() {
         `CREATE TABLE IF NOT EXISTS commercial_proposal_templates (
           id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
           singleton_key VARCHAR(40) NOT NULL,
-          name VARCHAR(190) NOT NULL DEFAULT 'Genérica',
+          name VARCHAR(190) NOT NULL DEFAULT 'Propuesta manual',
           content_json JSON NOT NULL,
           is_active TINYINT(1) NOT NULL DEFAULT 1,
           is_system TINYINT(1) NOT NULL DEFAULT 0,
@@ -1114,7 +1114,7 @@ async function ensureCommercialProposalTemplateSchema() {
       );
       await query(
         `ALTER TABLE commercial_proposal_templates
-         ADD COLUMN name VARCHAR(190) NOT NULL DEFAULT 'Genérica' AFTER singleton_key`,
+         ADD COLUMN name VARCHAR(190) NOT NULL DEFAULT 'Propuesta manual' AFTER singleton_key`,
       ).catch(() => {});
       await query(
         `ALTER TABLE commercial_proposal_templates
@@ -1127,7 +1127,7 @@ async function ensureCommercialProposalTemplateSchema() {
       await query(
         `INSERT INTO commercial_proposal_templates
           (singleton_key, name, content_json, is_active, is_system, updated_by_user_id, created_at, updated_at)
-         SELECT 'generica', 'Genérica', ?, 1, 1, NULL, NOW(3), NOW(3)
+         SELECT 'generica', 'Propuesta manual', ?, 1, 1, NULL, NOW(3), NOW(3)
          WHERE NOT EXISTS (
            SELECT 1 FROM commercial_proposal_templates WHERE singleton_key IN ('default', 'generica')
          )`,
@@ -1144,8 +1144,14 @@ async function ensureCommercialProposalTemplateSchema() {
       );
       await query(
         `UPDATE commercial_proposal_templates
-         SET singleton_key = 'generica', name = 'Genérica', is_system = 1
+         SET singleton_key = 'generica', name = 'Propuesta manual', is_system = 1
          WHERE singleton_key = 'default'`,
+      ).catch(() => {});
+      // Renames the system template once; a name customized afterwards is left untouched.
+      await query(
+        `UPDATE commercial_proposal_templates
+         SET name = 'Propuesta manual'
+         WHERE singleton_key = 'generica' AND name = 'Genérica'`,
       ).catch(() => {});
     })().catch((error) => {
       ensureCommercialProposalTemplateSchemaPromise = undefined;
@@ -1273,7 +1279,7 @@ export async function setCommercialProposalTemplateStatus({ code, isActive, acto
   const template = await getCommercialProposalTemplate(code);
   if (!template) return null;
   if (template.isSystem && !isActive) {
-    throw Object.assign(new Error("La plantilla genérica no se puede desactivar"), { code: "SYSTEM_TEMPLATE_REQUIRED" });
+    throw Object.assign(new Error("La plantilla base de propuesta manual no se puede desactivar"), { code: "SYSTEM_TEMPLATE_REQUIRED" });
   }
   await query(
     `UPDATE commercial_proposal_templates

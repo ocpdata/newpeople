@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import {
   BaseEdge,
   Background,
@@ -35,10 +35,26 @@ const ZONE_KIND_LABELS = {
   generic: "Zona",
 };
 
-function TopoNode({ data }) {
+const ReadOnlyContext = createContext(false);
+
+const MIN_NODE_WIDTH = 120;
+const MIN_NODE_HEIGHT = 48;
+
+// Height that fits the wrapped label and detail at the given width, so long texts are not clipped.
+function fitNodeHeight({ label = "", sublabel = "", width, height }) {
+  const usable = Math.max(width - 32, 60);
+  const labelLines = Math.max(1, Math.ceil(String(label).length / Math.max(Math.floor(usable / 7.6), 6)));
+  const detailLines = sublabel ? Math.ceil(String(sublabel).length / Math.max(Math.floor(usable / 6.4), 6)) : 0;
+  const needed = 20 + labelLines * 18 + detailLines * 16;
+  return Math.max(height, Math.ceil(needed));
+}
+
+function TopoNode({ data, selected }) {
+  const readOnly = useContext(ReadOnlyContext);
   const kind = getTopologyNodeKind(data.kind);
   return (
     <div className="ts-node" style={{ borderColor: kind.color }}>
+      <NodeResizer minWidth={MIN_NODE_WIDTH} minHeight={MIN_NODE_HEIGHT} isVisible={selected && !readOnly} />
       <span className="ts-node-bar" style={{ background: kind.color }} />
       <Handle type="target" position={Position.Left} className="ts-handle-fill" isConnectableStart={false} />
       <div className="ts-node-text">
@@ -52,9 +68,10 @@ function TopoNode({ data }) {
 }
 
 function ZoneNode({ data, selected }) {
+  const readOnly = useContext(ReadOnlyContext);
   return (
     <div className="ts-zone">
-      <NodeResizer minWidth={140} minHeight={90} isVisible={selected} />
+      <NodeResizer minWidth={140} minHeight={90} isVisible={selected && !readOnly} />
       <span className="ts-zone-label">{data.label}</span>
     </div>
   );
@@ -99,7 +116,7 @@ function FloatingEdge({ id, source, target, markerEnd, style, label, selected })
       {label ? (
         <EdgeLabelRenderer>
           <div
-            className="ts-edge-label"
+            className="ts-edge-label nodrag nopan"
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
           >
             {label}
@@ -129,7 +146,7 @@ function toFlow(input) {
     type: "topo",
     position: { x: node.x, y: node.y },
     width: node.w,
-    height: node.h,
+    height: fitNodeHeight({ label: node.label, sublabel: node.sublabel, width: node.w, height: node.h }),
     data: {
       label: node.label,
       sublabel: node.sublabel,
@@ -287,7 +304,8 @@ function EditorInner({ value, quotationItems, readOnly, onSave, onPropose, busy,
   const topologyTitle = initial.title;
 
   const onNodesChange = useCallback((changes) => {
-    if (changes.some((change) => change.type !== "select" && change.type !== "dimensions")) setDirty(true);
+    // Measurements are reported as "dimensions" too; only an explicit resize (setAttributes) is a user edit.
+    if (changes.some((change) => (change.type !== "select" && change.type !== "dimensions") || (change.type === "dimensions" && change.setAttributes))) setDirty(true);
     setNodes((current) => applyNodeChanges(changes, current));
   }, []);
   const onEdgesChange = useCallback((changes) => {
@@ -336,7 +354,16 @@ function EditorInner({ value, quotationItems, readOnly, onSave, onPropose, busy,
 
   const updateNodeData = (id, patch) => {
     setDirty(true);
-    setNodes((current) => current.map((node) => (node.id === id ? { ...node, data: { ...node.data, ...patch } } : node)));
+    setNodes((current) =>
+      current.map((node) => {
+        if (node.id !== id) return node;
+        const data = { ...node.data, ...patch };
+        if (patch.label === undefined && patch.sublabel === undefined) return { ...node, data };
+        const width = node.width ?? node.measured?.width ?? 170;
+        const height = fitNodeHeight({ label: data.label, sublabel: data.sublabel, width, height: node.height ?? node.measured?.height ?? 58 });
+        return { ...node, data, width, height };
+      }),
+    );
     setSelected((current) =>
       current?.kind === "node" && current.node.id === id
         ? { ...current, node: { ...current.node, data: { ...current.node.data, ...patch } } }
@@ -409,6 +436,7 @@ function EditorInner({ value, quotationItems, readOnly, onSave, onPropose, busy,
   const svg = useMemo(() => (showSvg ? renderTopologySvg(current) : ""), [showSvg, current]);
 
   return (
+    <ReadOnlyContext.Provider value={Boolean(readOnly)}>
     <div className="ts-topology">
       <div className="ts-topology-toolbar">
         <strong>{title}</strong>
@@ -481,6 +509,7 @@ function EditorInner({ value, quotationItems, readOnly, onSave, onPropose, busy,
         <div className="ts-svg-preview" dangerouslySetInnerHTML={{ __html: svg }} />
       ) : null}
     </div>
+    </ReadOnlyContext.Provider>
   );
 }
 

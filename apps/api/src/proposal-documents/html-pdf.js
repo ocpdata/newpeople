@@ -75,7 +75,8 @@ function renderImage(node) {
   const verticalAlign = ["top", "center", "bottom"].includes(attrs.verticalAlign)
     ? attrs.verticalAlign
     : "center";
-  return `<figure class="proposal-print-image" data-align="${align}" data-vertical-align="${verticalAlign}">
+  const isDiagram = String(attrs.src || "").startsWith("data:image/svg+xml");
+  return `<figure class="proposal-print-image${isDiagram ? " is-diagram" : ""}" data-align="${align}" data-vertical-align="${verticalAlign}">
     <img src="${escapeHtml(attrs.src)}" alt="${escapeHtml(attrs.alt || "")}" style="width:${width};height:${height};" />
   </figure>`;
 }
@@ -235,7 +236,27 @@ function renderProposalCover({ title, context, format, cover }) {
   </section>`;
 }
 
-export function renderProposalDocumentHtml({ title, content, tocPages = {} }) {
+const PART_STYLES = {
+  cover: `@media print {
+      @page { size: Letter; margin: 0; }
+      .proposal-print-page { width: 816px; min-height: 0; padding: 0; border-top: 0; }
+      .proposal-print-cover { width: 816px; height: 1056px; min-height: 0; margin: 0; break-after: auto; }
+    }`,
+  body: `@media print { .proposal-print-page { border-top: 0; } }`,
+};
+
+async function mergeCoverPdf(coverBuffer, bodyBuffer) {
+  const merged = await PDFDocument.create();
+  const cover = await PDFDocument.load(coverBuffer);
+  const body = await PDFDocument.load(bodyBuffer);
+  const [coverPage] = await merged.copyPages(cover, [0]);
+  merged.addPage(coverPage);
+  for (const page of await merged.copyPages(body, body.getPageIndices())) merged.addPage(page);
+  return Buffer.from(await merged.save());
+}
+
+// "cover" and "body" render the PDF in two parts: the cover is printed full-bleed (no page margin) and merged in front of the body.
+export function renderProposalDocumentHtml({ title, content, tocPages = {}, part = "all" }) {
   const sourceContext = content?.metadata?.source_context || {};
   const context = {
     client_name: sourceContext.account_name || "cliente",
@@ -276,7 +297,8 @@ export function renderProposalDocumentHtml({ title, content, tocPages = {} }) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     html, body { margin: 0; padding: 0; }
     ${PRINT_STYLES}
-  </style></head><body><main class="proposal-print-page" style="--proposal-format-accent:${escapeHtml(format.accent)};--proposal-format-heading:${escapeHtml(format.heading)};--proposal-format-text:${escapeHtml(format.text)};--proposal-format-border:${escapeHtml(format.border)};--proposal-format-surface:${escapeHtml(format.surface)};--proposal-format-spacing:${escapeHtml(format.spacing)};--proposal-format-heading-font:${escapeHtml(format.headingFont)};--proposal-format-body-font:${escapeHtml(format.bodyFont)};--proposal-format-margin:${escapeHtml(format.margin)}">${renderProposalCover({ title, context, format, cover })}${renderTableOfContents(getDocumentSections(content).map((entry) => ({ ...entry, page: tocPages[entry.id] })))}<div class="proposal-print-content">${body}</div></main></body></html>`;
+    ${PART_STYLES[part] || ""}
+  </style></head><body><main class="proposal-print-page" style="--proposal-format-accent:${escapeHtml(format.accent)};--proposal-format-heading:${escapeHtml(format.heading)};--proposal-format-text:${escapeHtml(format.text)};--proposal-format-border:${escapeHtml(format.border)};--proposal-format-surface:${escapeHtml(format.surface)};--proposal-format-spacing:${escapeHtml(format.spacing)};--proposal-format-heading-font:${escapeHtml(format.headingFont)};--proposal-format-body-font:${escapeHtml(format.bodyFont)};--proposal-format-margin:${escapeHtml(format.margin)}">${part === "body" ? "" : renderProposalCover({ title, context, format, cover })}${part === "cover" ? "" : `${renderTableOfContents(getDocumentSections(content).map((entry) => ({ ...entry, page: tocPages[entry.id] })))}<div class="proposal-print-content">${body}</div>`}</main></body></html>`;
 }
 
 export async function renderProposalDocumentHtmlPdfBuffer(document) {
@@ -292,18 +314,23 @@ export async function renderProposalDocumentHtmlPdfBuffer(document) {
       const pageHeight = document.querySelector(".proposal-print-cover")?.getBoundingClientRect().height || 1056;
       return Object.fromEntries([...document.querySelectorAll(".proposal-document-section[id]")].map((section) => [section.id, Math.floor(section.getBoundingClientRect().top / pageHeight) + 1]));
     });
-    await page.setContent(renderProposalDocumentHtml({ ...document, tocPages }), { waitUntil: "networkidle" });
-    await page.waitForFunction(
-      () => Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0),
-      null,
-      { timeout: 15000 },
-    ).catch(() => {});
-    await page.emulateMedia({ media: "print" });
-    const baseBuffer = await page.pdf({
-      format: "Letter",
-      printBackground: true,
-      preferCSSPageSize: true,
-    });
+    const printPart = async (part) => {
+      await page.setContent(renderProposalDocumentHtml({ ...document, tocPages, part }), { waitUntil: "networkidle" });
+      await page.waitForFunction(
+        () => Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0),
+        null,
+        { timeout: 15000 },
+      ).catch(() => {});
+      await page.emulateMedia({ media: "print" });
+      return page.pdf({
+        format: "Letter",
+        printBackground: true,
+        preferCSSPageSize: true,
+      });
+    };
+    const coverBuffer = await printPart("cover");
+    const bodyBuffer = await printPart("body");
+    const baseBuffer = await mergeCoverPdf(coverBuffer, bodyBuffer);
     const embeddedNodes = getEmbeddedPdfNodes(document.content);
     const parser = new PDFParse({ data: baseBuffer });
     const textResult = await parser.getText();

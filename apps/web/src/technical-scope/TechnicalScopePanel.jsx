@@ -81,6 +81,7 @@ export default function TechnicalScopePanel({ proposal, embedded = false, onChan
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("questionnaire");
   const [busy, setBusy] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [warnings, setWarnings] = useState([]);
@@ -209,6 +210,7 @@ export default function TechnicalScopePanel({ proposal, embedded = false, onChan
                   overview={overview}
                   canEdit={caps.canEdit}
                   busy={busy}
+                  analyzing={analyzing}
                   onSaveSelections={(selections) =>
                     run(() => technicalScopeApi.saveSelections(proposalId, selections), { success: "Selección guardada" })
                   }
@@ -218,16 +220,21 @@ export default function TechnicalScopePanel({ proposal, embedded = false, onChan
                   onConfirm={(playbookCode) =>
                     run(() => technicalScopeApi.confirmAnswers(proposalId, playbookCode), { success: "Sugerencias confirmadas" })
                   }
-                  onAnalyze={() =>
-                    run(() => technicalScopeApi.analyzeDocuments(proposalId), {
-                      apply: (result) => setOverview(result.overview),
-                      success: (result) =>
-                        `Documentos analizados: ${result.analysis.documents.length}. Respuestas sugeridas: ${result.analysis.applied}.` +
-                        (result.analysis.conflicts.length
-                          ? ` ${result.analysis.conflicts.length} difieren de respuestas ya confirmadas y no se aplicaron.`
-                          : ""),
-                    })
-                  }
+                  onAnalyze={async () => {
+                    setAnalyzing(true);
+                    try {
+                      await run(() => technicalScopeApi.analyzeDocuments(proposalId), {
+                        apply: (result) => setOverview(result.overview),
+                        success: (result) =>
+                          `Documentos analizados: ${result.analysis.documents.length}. Respuestas sugeridas: ${result.analysis.applied}.` +
+                          (result.analysis.conflicts.length
+                            ? ` ${result.analysis.conflicts.length} difieren de respuestas ya confirmadas y no se aplicaron.`
+                            : ""),
+                      });
+                    } finally {
+                      setAnalyzing(false);
+                    }
+                  }}
                   onUseAsAsIs={(documentPublicId) =>
                     run(() => technicalScopeApi.useExtractionAsAsIs(proposalId, documentPublicId), {
                       success: "Diagrama del cliente guardado como situación actual",
