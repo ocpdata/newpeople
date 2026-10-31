@@ -49,4 +49,14 @@ async function createSchema() {
     KEY evaluation_events(run_id,id),
     FOREIGN KEY (run_id) REFERENCES customer_chat_evaluation_runs(id)
   ) ENGINE=InnoDB`);
+  await query(`CREATE TABLE IF NOT EXISTS customer_chat_evaluation_custom_cases (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(200) NOT NULL,
+    question TEXT NOT NULL, expected TEXT NOT NULL,
+    account_id BIGINT UNSIGNED NOT NULL, account_name VARCHAR(190) NOT NULL,
+    source_feedback_id BIGINT UNSIGNED NULL, active TINYINT NOT NULL DEFAULT 1,
+    created_by_user_id BIGINT UNSIGNED NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    KEY custom_case_active(active,id), UNIQUE KEY custom_case_feedback(source_feedback_id)
+  ) ENGINE=InnoDB`);
 }

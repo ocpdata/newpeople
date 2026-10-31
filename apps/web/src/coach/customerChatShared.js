@@ -21,6 +21,15 @@ export const CUSTOMER_ACTIVITY_TYPE_LABELS = {
   presentation: "Presentación",
 };
 
+export const CUSTOMER_CHAT_FEEDBACK_REASONS = {
+  incorrect_data: "Dato incorrecto",
+  misunderstood: "No entendió la pregunta",
+  missing_info: "Falta información",
+  wrong_action: "Acción equivocada",
+  format: "Formato o redacción",
+  other: "Otro",
+};
+
 export const CUSTOMER_FINDING_CONFIDENCE_LABELS = {
   high: "Alta",
   medium: "Media",

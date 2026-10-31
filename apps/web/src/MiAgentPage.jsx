@@ -22,6 +22,7 @@ import { CustomerStageSummary } from "./coach/CustomerStageReview";
 import { CustomerChatEvaluations } from "./coach/CustomerChatEvaluations";
 import { CustomerChatDebugFlow } from "./coach/CustomerChatDebug";
 import { CustomerChatPanel } from "./coach/CustomerChatPanel";
+import { CustomerChatFeedbackTriage } from "./coach/CustomerChatFeedbackTriage";
 import { useCustomerChat } from "./coach/useCustomerChat";
 import { CoachQualityFeedback } from "./coach/CoachQualityFeedback";
 import {
@@ -5202,6 +5203,10 @@ export default function MiAgentPage({
             </div>
             <span>Trazas de consulta · cierre de revisión</span>
           </div>
+          <CustomerChatFeedbackTriage
+            canConvert={canWriteEvaluations}
+            onOpenDiagnostic={(jobId) => void openCustomerChatDiagnostic({ jobId })}
+          />
           <form
             className="mi-agent-chat-diagnostics-search"
             onSubmit={(event) => {

@@ -11,7 +11,8 @@ const labels = {
 };
 const active = (run) => ["pending", "running"].includes(run?.status);
 const categoryGroups = { Q: "Consultas", G: "Orientación comercial", C: "Contenido", R: "Reportes",
-  A: "Acciones controladas", K: "Controles críticos", MIX: "Solicitudes compuestas", L: "Variantes de lenguaje", SEQ: "Conversaciones" };
+  A: "Acciones controladas", K: "Controles críticos", MIX: "Solicitudes compuestas", L: "Variantes de lenguaje", SEQ: "Conversaciones",
+  USR: "Casos creados desde feedback" };
 const categoryNames = {
   Q01: "Resumen de cuenta", Q02: "Detalle de registro", Q03: "Consulta de campos", Q04: "Listado de registros",
   Q05: "Búsqueda de registros", Q06: "Historial", Q07: "Pendientes", Q08: "Relaciones entre registros",

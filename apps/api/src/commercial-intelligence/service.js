@@ -46,6 +46,7 @@ import {
 } from "./conversation-context.js";
 import { createTurnExecutionTrace } from "./turn-execution-trace.js";
 import { createChatProgressReporter } from "./chat-progress.js";
+import { listOwnFeedbackForSession } from "./turn-feedback.js";
 import {
   getCustomerActivityHistoryRange,
   getCustomerActivityHistoryRangeFromFilters,
@@ -3080,6 +3081,7 @@ export async function getCustomerAccountChatSession({ user, sessionId }) {
   const row = rows[0];
   if (!row) return null;
   const history = parseJson(row.history_json, []);
+  const feedback = await listOwnFeedbackForSession({ user, sessionId: Number(row.id) });
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -3090,6 +3092,7 @@ export async function getCustomerAccountChatSession({ user, sessionId }) {
     history: Array.isArray(history)
       ? history.slice(-8).map((message) => customerChatDataForUser(message, user))
       : [],
+    feedback,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

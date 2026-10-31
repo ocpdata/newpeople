@@ -317,7 +317,8 @@ export async function processEvaluationRun(run, workerId) {
         throw evaluationError(409, "Precondición incumplida: validate_stage está deshabilitado. No se envió la pregunta ni se cambiaron permisos; habilitarlo requiere una decisión administrativa explícita.");
       }
       const before = reference(await buildAuthorizedCustomerSnapshot({ user, accountId: definition.accountId, includeProviderCatalog: false }));
-      const expectedAccount = definition.accountId === 22 ? "Totalplay" : "Grupo Hotelero Santa Fe";
+      const expectedAccount = definition.expectedAccountName ||
+        (definition.accountId === 22 ? "Totalplay" : "Grupo Hotelero Santa Fe");
       if (before.account.name !== expectedAccount) throw evaluationError(409, `El catálogo requiere la cuenta ${expectedAccount}; verifica sus referencias antes de ejecutar.`);
       evidence.referenceBefore = before;
       const referenceBlockReason = evaluationReferenceBlockReason(definition, before);

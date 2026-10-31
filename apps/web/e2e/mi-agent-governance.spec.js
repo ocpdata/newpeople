@@ -16,6 +16,7 @@ async function mockMiCoachApi(
     withCustomerChatAccess = withCustomerHealth,
     withCustomerChatTrace = false,
     canDiagnoseCustomerChats = false,
+    canWriteEvaluations = false,
     withCustomerStageAnswerPrefill = false,
     withCustomerContactOperation = false,
     withCustomerOpportunityOperation = false,
@@ -256,6 +257,15 @@ async function mockMiCoachApi(
       return json({ prompt });
     }
 
+    if (
+      pathname === "/api/commercial-intelligence/account-chat/diagnostics/feedback" &&
+      method === "GET"
+    ) {
+      return json({
+        items: [], total: 0, page: 1, pageSize: 10,
+        summary: { positive: 0, negative: 0, byReason: {}, byStatus: {}, completedTurns: 0, negativeRatePct: 0, feedbackRatePct: 0 },
+      });
+    }
     if (
       withCustomerHealth &&
       pathname === "/api/commercial-intelligence/account-chat/sessions" &&
@@ -1034,6 +1044,7 @@ async function mockMiCoachApi(
           ...(withCustomerOutcome ? ["interacciones.read", "interacciones.update"] : []),
           ...(canAdmin ? ["mi_coach.admin"] : []),
           ...(canDiagnoseCustomerChats ? ["mi_coach.chat_diagnostics"] : []),
+          ...(canWriteEvaluations ? ["mi_coach.evaluations_write"] : []),
         ],
       });
     }
@@ -2136,6 +2147,9 @@ async function mockCustomerChatRecovery(page, {
     cancelRequests: 0,
     cancelOutcome: "cancelled",
     abortSubmission: false,
+    feedbackRequests: [],
+    feedbackFailure: false,
+    sessionFeedback: [],
   };
   const history = [
     { role: "user", text: "¿Cuál es el monto de la oportunidad?" },
@@ -2157,10 +2171,22 @@ async function mockCustomerChatRecovery(page, {
               documentCoverage: state.documentCoverage, documentSources: state.documentSources,
               turnDebug: { currentTurn: { jobId: 921 } } },
           ] : history,
+          feedback: state.sessionFeedback,
         },
       }),
     }),
   );
+  await page.route("**/api/commercial-intelligence/account-chat/jobs/921/feedback", (route) => {
+    const body = route.request().postDataJSON();
+    state.feedbackRequests.push(body);
+    if (state.feedbackFailure) {
+      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "No se pudo guardar" }) });
+    }
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ feedback: { jobId: 921, rating: body.rating, reasonCode: body.reasonCode || null, hasComment: Boolean(body.comment) } }),
+    });
+  });
   await page.route("**/api/commercial-intelligence/account-chat/jobs", async (route) => {
     state.submissions += 1;
     if (state.holdSubmission) await state.holdSubmission;
@@ -2447,6 +2473,131 @@ test("Cliente existente copia la respuesta al portapapeles", async ({ page, cont
   await chat.getByRole("button", { name: "Copiar respuesta" }).last().click();
   await expect(chat.getByRole("button", { name: "Copiado" })).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(answer);
+});
+
+test("Cliente existente permite calificar una respuesta: pulgar arriba directo y pulgar abajo con motivo", async ({ page }) => {
+  const { state, chat, send } = await mockCustomerChatRecovery(page);
+  await send();
+  const group = chat.getByRole("group", { name: "Opinión sobre esta respuesta" }).last();
+  await group.getByRole("button", { name: "Sí me sirvió" }).click();
+  await expect(group.getByRole("button", { name: "Sí me sirvió" })).toHaveAttribute("aria-pressed", "true");
+  await expect(group).toContainText("Gracias, tu opinión quedó registrada.");
+  expect(state.feedbackRequests).toEqual([{ rating: "positive" }]);
+
+  await group.getByRole("button", { name: "No me sirvió" }).click();
+  const submit = group.getByRole("button", { name: "Enviar opinión" });
+  await expect(submit).toBeDisabled();
+  await expect(group).toContainText("Solo lo ven quienes revisan diagnósticos y se elimina a los 12 meses");
+  await group.getByLabel("¿Qué falló?").selectOption("incorrect_data");
+  await group.getByLabel("Comentario (opcional)").fill("  El monto está mal  ");
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(group.getByRole("button", { name: "No me sirvió" })).toHaveAttribute("aria-pressed", "true");
+  await expect(group.getByRole("button", { name: "Enviar opinión" })).toHaveCount(0);
+  expect(state.feedbackRequests.at(-1)).toEqual({ rating: "negative", reasonCode: "incorrect_data", comment: "El monto está mal" });
+});
+
+test("Cliente existente muestra el error al guardar la opinión y restaura la calificación al recargar", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  await send();
+  const group = chat.getByRole("group", { name: "Opinión sobre esta respuesta" }).last();
+  state.feedbackFailure = true;
+  await group.getByRole("button", { name: "Sí me sirvió" }).click();
+  await expect(group.getByRole("alert")).toContainText("No se pudo guardar");
+  await expect(group.getByRole("button", { name: "Sí me sirvió" })).toHaveAttribute("aria-pressed", "false");
+
+  state.historySaved = true;
+  state.sessionFeedback = [{ jobId: 921, rating: "negative", reasonCode: "format", hasComment: true }];
+  await page.reload();
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await page.getByLabel("Cuenta existente").selectOption("160");
+  const restored = page.getByRole("region", { name: "Chat de cuenta" });
+  await expect(restored.getByText(answer, { exact: true })).toBeVisible();
+  const restoredGroup = restored.getByRole("group", { name: "Opinión sobre esta respuesta" }).last();
+  await expect(restoredGroup.getByRole("button", { name: "No me sirvió" })).toHaveAttribute("aria-pressed", "true");
+  await expect(restored).not.toContainText("hasComment");
+});
+
+test("Diagnóstico de chats lista el feedback negativo, lo revisa y lo convierte en caso de prueba", async ({ page }) => {
+  await mockMiCoachApi(page, { canDiagnoseCustomerChats: true, canWriteEvaluations: true });
+  const item = {
+    id: 51, jobId: 700, sessionId: 90, accountId: 160, accountName: "Intraway", rating: "negative", reasonCode: "incorrect_data",
+    comment: "El monto no coincide", triageStatus: "new", triageNote: "", triagedByName: "", evaluationCaseId: null,
+    createdAt: "2026-10-28T18:00:00.000Z", userName: "Vendedor Uno", question: "¿Cuál es el monto de Vrf 2027?",
+    answerExcerpt: "El monto es 100 USD.", intent: "query.field_value", responseType: "informational", latencyMs: 4200, errorCode: "",
+  };
+  const calls = { list: [], patch: [], convert: [] };
+  await page.route("**/api/commercial-intelligence/account-chat/diagnostics/feedback**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === "PATCH") {
+      calls.patch.push(request.postDataJSON());
+      item.triageStatus = request.postDataJSON().triageStatus;
+      return route.fulfill({ json: { id: 51, triageStatus: item.triageStatus } });
+    }
+    if (request.method() === "POST") {
+      calls.convert.push(request.postDataJSON());
+      item.triageStatus = "converted";
+      item.evaluationCaseId = "U-7";
+      return route.fulfill({ status: 201, json: { evaluationCaseId: "U-7" } });
+    }
+    calls.list.push(url.searchParams.get("triageStatus"));
+    const wanted = url.searchParams.get("triageStatus");
+    const items = wanted === "all" || wanted === item.triageStatus ? [item] : [];
+    return route.fulfill({ json: {
+      items, total: items.length, page: 1, pageSize: 10,
+      summary: { positive: 4, negative: 1, byReason: { incorrect_data: 1 }, byStatus: { new: 1 }, completedTurns: 20, negativeRatePct: 20, feedbackRatePct: 25 },
+    } });
+  });
+  await openMiCoach(page, { workspace: "none" });
+  await page.getByRole("button", { name: "Diagnóstico de chats", exact: true }).click();
+  const triage = page.getByRole("region", { name: "Feedback de respuestas" });
+  await expect(triage).toContainText("Feedback de respuestas (1)");
+  await expect(triage).toContainText("20% de las calificadas son negativas");
+  const card = triage.locator("article").first();
+  await expect(card).toContainText("Dato incorrecto");
+  await expect(card).toContainText("¿Cuál es el monto de Vrf 2027?");
+  await expect(card).toContainText("El monto es 100 USD.");
+  await expect(card).toContainText("El monto no coincide");
+  await expect(triage).toContainText("se eliminan automáticamente a los 12 meses");
+
+  await card.getByLabel("Nota de revisión (opcional)").fill("Se corrige el mapeo");
+  await card.getByRole("button", { name: "Marcar revisado" }).click();
+  await expect(triage.getByRole("status")).toContainText("marcado como revisado");
+  expect(calls.patch).toEqual([{ triageStatus: "reviewed", note: "Se corrige el mapeo" }]);
+  await triage.getByLabel("Estado").selectOption("all");
+  await expect(card.getByRole("button", { name: "Reabrir" })).toBeVisible();
+
+  await card.getByRole("button", { name: "Convertir en caso de prueba" }).click();
+  const form = card.getByRole("form", { name: "Crear caso de prueba" });
+  await expect(form.getByLabel("Pregunta a evaluar")).toHaveValue("¿Cuál es el monto de Vrf 2027?");
+  await form.getByLabel("Resultado esperado").fill("Debe responder el monto en USD.");
+  await form.getByRole("button", { name: "Crear caso" }).click();
+  await expect(triage.getByRole("status")).toContainText("U-7");
+  expect(calls.convert).toEqual([{
+    title: "Feedback: ¿Cuál es el monto de Vrf 2027?", question: "¿Cuál es el monto de Vrf 2027?", expected: "Debe responder el monto en USD.",
+  }]);
+  await expect(card).toContainText("Convertido en caso");
+  await expect(card.getByRole("button", { name: "Convertir en caso de prueba" })).toHaveCount(0);
+});
+
+test("Diagnóstico de chats oculta la conversión a caso de prueba sin permiso de evaluaciones", async ({ page }) => {
+  await mockMiCoachApi(page, { canDiagnoseCustomerChats: true });
+  await page.route("**/api/commercial-intelligence/account-chat/diagnostics/feedback**", (route) => route.fulfill({ json: {
+    items: [{
+      id: 8, jobId: 800, sessionId: 90, accountId: 160, accountName: "Intraway", rating: "negative", reasonCode: "format", comment: "",
+      triageStatus: "new", triageNote: "", triagedByName: "", evaluationCaseId: null, createdAt: "2026-10-28T18:00:00.000Z",
+      userName: "Vendedor Dos", question: "Resume la cuenta", answerExcerpt: "Resumen", intent: "", responseType: "", latencyMs: null, errorCode: "",
+    }],
+    total: 1, page: 1, pageSize: 10,
+    summary: { positive: 0, negative: 1, byReason: { format: 1 }, byStatus: { new: 1 }, completedTurns: 5, negativeRatePct: 100, feedbackRatePct: 20 },
+  } }));
+  await openMiCoach(page, { workspace: "none" });
+  await page.getByRole("button", { name: "Diagnóstico de chats", exact: true }).click();
+  const card = page.getByRole("region", { name: "Feedback de respuestas" }).locator("article").first();
+  await expect(card).toContainText("Formato o redacción");
+  await expect(card.getByRole("button", { name: "Marcar revisado" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Convertir en caso de prueba" })).toHaveCount(0);
 });
 
 test("Cliente existente conserva la respuesta y avisa si B10 no completa la redaccion conversacional", async ({ page }) => {

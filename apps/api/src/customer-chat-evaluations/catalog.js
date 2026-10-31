@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { businessImpactForCase, operationBusinessImpacts } from "./business-impact.js";
+import { listCustomEvaluationCases } from "./custom-cases.js";
 
 export const SMOKE_CASE_IDS = ["Q01-01", "Q03-01", "Q05-01", "C01-01", "A08-04", "A09-01", "A10-01",
   "Q09-04", "SEQ12", "L09"];
@@ -113,5 +114,12 @@ export function parseCatalog(markdown) {
 }
 
 export async function getEvaluationCatalog() {
-  return parseCatalog(await readFile(sourceUrl, "utf8"));
+  const catalog = parseCatalog(await readFile(sourceUrl, "utf8"));
+  const custom = await listCustomEvaluationCases();
+  if (!custom.length) return catalog;
+  // Custom cases change what a run covers, so they are part of the catalog version.
+  const version = createHash("sha256")
+    .update(`${catalog.version}|${custom.map((item) => `${item.id}:${item.updatedAt}`).join(",")}`)
+    .digest("hex").slice(0, 16);
+  return { ...catalog, version, cases: [...catalog.cases, ...custom] };
 }

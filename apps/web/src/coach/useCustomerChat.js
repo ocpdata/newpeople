@@ -32,6 +32,8 @@ export function useCustomerChat({
   const [customerChatTurn, setCustomerChatTurn] = useState(null);
   const [customerChatCanceling, setCustomerChatCanceling] = useState(false);
   const [customerChatAnnouncement, setCustomerChatAnnouncement] = useState("");
+  // Ratings the seller already gave in this conversation, by job id.
+  const [customerChatFeedback, setCustomerChatFeedback] = useState({});
   const customerChatTurnBlocking = Boolean(customerChatTurn && customerChatTurn.status !== "failed");
   const customerChatRevisionRef = useRef(0);
   const customerChatRequestRef = useRef(null);
@@ -67,6 +69,7 @@ export function useCustomerChat({
     setCustomerChatLoading(false);
     setCustomerChatTurn(null);
     setCustomerChatAnnouncement("");
+    setCustomerChatFeedback({});
     const accountId = Number(customerAccountId || 0);
     if (!accountId || !hasCustomerContext) {
       setCustomerChatSessionId(null);
@@ -96,6 +99,9 @@ export function useCustomerChat({
         if (Number(session?.accountId || 0) !== accountId) {
           throw new Error("La sesion no corresponde a la cuenta actual");
         }
+        setCustomerChatFeedback(
+          Object.fromEntries((Array.isArray(session.feedback) ? session.feedback : []).map((item) => [item.jobId, item])),
+        );
         setCustomerChatMessages(
           (Array.isArray(session.history) ? session.history : []).map(
             (message) =>
@@ -201,6 +207,7 @@ export function useCustomerChat({
     setCustomerChatFailureIds(null);
     setCustomerChatPublicResearch(false);
     setCustomerChatAnnouncement("");
+    setCustomerChatFeedback({});
   }
 
   // `options.attachment` re-sends the original file when a failed turn is retried;
@@ -666,6 +673,18 @@ export function useCustomerChat({
     setCustomerChatTransportError(null);
     setCustomerChatFailureIds(null);
     setCustomerChatAnnouncement("");
+    setCustomerChatFeedback({});
+  }
+
+  // Sends the seller's rating of one answer and remembers it so the buttons show the saved state.
+  async function submitCustomerChatFeedback(jobId, payload) {
+    const response = await api.post(
+      `/api/commercial-intelligence/account-chat/jobs/${jobId}/feedback`,
+      payload,
+    );
+    const saved = response.data?.feedback;
+    if (saved) setCustomerChatFeedback((current) => ({ ...current, [saved.jobId]: saved }));
+    return saved;
   }
 
   function updateCustomerChatFoundationVisibility(visible) {
@@ -710,6 +729,8 @@ export function useCustomerChat({
     retryCustomerChatTurn,
     customerChatCanceling,
     customerChatAnnouncement,
+    customerChatFeedback,
+    submitCustomerChatFeedback,
     startNewCustomerChat,
     reset,
   };

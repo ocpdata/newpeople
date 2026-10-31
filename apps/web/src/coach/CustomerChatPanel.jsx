@@ -3,6 +3,7 @@ import "./customer-chat-a11y.css";
 import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../../shared/document-formats.js";
 import { CustomerChatAnswer } from "./CustomerChatAnswer";
 import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
+import { CustomerChatFeedback } from "./CustomerChatFeedback";
 import {
   CustomerChatDebugFlow,
   CustomerChatDebugResult,
@@ -65,6 +66,8 @@ export function CustomerChatPanel({
     retryCustomerChatTurn,
     customerChatCanceling,
     customerChatAnnouncement,
+    customerChatFeedback,
+    submitCustomerChatFeedback,
   } = chat;
   const hintId = useId();
   const attachmentErrorId = useId();
@@ -587,6 +590,13 @@ export function CustomerChatPanel({
                             : message.answer}
                       />
                       <CustomerChatCopyButton text={message.answer} />
+                      {message.jobId ? (
+                        <CustomerChatFeedback
+                          jobId={Number(message.jobId)}
+                          feedback={customerChatFeedback[Number(message.jobId)]}
+                          onSubmit={submitCustomerChatFeedback}
+                        />
+                      ) : null}
                       {message.presentation?.status === "degraded" ? (
                         <p role="status">
                           {message.presentation?.engine === "dossier"

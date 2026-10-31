@@ -37,6 +37,17 @@ import {
   validateSingleFile,
 } from "./opportunity-documents/service.js";
 import { logAuditEvent } from "./audit.js";
+import {
+  FEEDBACK_RATINGS,
+  FEEDBACK_REASONS,
+  FEEDBACK_TRIAGE_STATUSES,
+  getFeedbackForTriage,
+  listFeedbackForTriage,
+  markFeedbackConverted,
+  submitCustomerChatFeedback,
+  updateFeedbackTriage,
+} from "./commercial-intelligence/turn-feedback.js";
+import { createCustomEvaluationCase } from "./customer-chat-evaluations/custom-cases.js";
 import { ensureCommercialIntelligencePermissions } from "./commercial-intelligence/permissions.js";
 import { ensureCommercialIntelligenceSchema } from "./commercial-intelligence/schema.js";
 import {
@@ -668,6 +679,146 @@ router.get(
       return res.json(await getCustomerChatFocusOptions({ user: req.user, accountId: parsed.data.accountId }));
     } catch (error) {
       return sendRouteError(res, error, "No fue posible cargar las oportunidades de la cuenta");
+    }
+  },
+);
+
+const feedbackSubmitSchema = z.object({
+  rating: z.enum(FEEDBACK_RATINGS),
+  reasonCode: z.enum(Object.keys(FEEDBACK_REASONS)).nullable().optional(),
+  comment: z.string().max(2000).nullable().optional(),
+});
+
+const feedbackTriageQuerySchema = z.object({
+  rating: z.enum(["all", ...FEEDBACK_RATINGS]).optional().default("negative"),
+  triageStatus: z.enum(["all", ...FEEDBACK_TRIAGE_STATUSES]).optional().default("all"),
+  reasonCode: z.enum(["all", ...Object.keys(FEEDBACK_REASONS)]).optional().default("all"),
+  page: z.coerce.number().int().positive().optional().default(1),
+});
+
+router.post(
+  "/account-chat/jobs/:jobId/feedback",
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
+    const parsed = feedbackSubmitSchema.safeParse(req.body || {});
+    if (!parsed.success)
+      return res.status(400).json({ message: "Feedback invalido", issues: parsed.error.issues });
+    try {
+      const feedback = await submitCustomerChatFeedback({
+        user: req.user,
+        jobId,
+        rating: parsed.data.rating,
+        reasonCode: parsed.data.reasonCode ?? null,
+        comment: parsed.data.comment ?? null,
+      });
+      return res.json({ feedback });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible guardar tu opinion");
+    }
+  },
+);
+
+router.get(
+  "/account-chat/diagnostics/feedback",
+  requirePermission("mi_coach.chat_diagnostics"),
+  async (req, res) => {
+    const parsed = feedbackTriageQuerySchema.safeParse(req.query || {});
+    if (!parsed.success)
+      return res.status(400).json({ message: "Filtros invalidos", issues: parsed.error.issues });
+    try {
+      return res.json(await listFeedbackForTriage(parsed.data));
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cargar el feedback");
+    }
+  },
+);
+
+router.patch(
+  "/account-chat/diagnostics/feedback/:feedbackId",
+  requirePermission("mi_coach.chat_diagnostics"),
+  async (req, res) => {
+    const parsed = z.object({
+      feedbackId: z.coerce.number().int().positive(),
+      triageStatus: z.enum(["new", "reviewed", "dismissed"]),
+      note: z.string().max(1000).nullable().optional(),
+    }).safeParse({ feedbackId: req.params.feedbackId, ...(req.body || {}) });
+    if (!parsed.success) return res.status(400).json({ message: "Solicitud invalida" });
+    try {
+      const result = await updateFeedbackTriage({
+        feedbackId: parsed.data.feedbackId,
+        user: req.user,
+        triageStatus: parsed.data.triageStatus,
+        note: parsed.data.note ?? null,
+      });
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "chat_feedback_triaged",
+        entityType: "customer_chat_feedback",
+        entityId: parsed.data.feedbackId,
+        detail: `Feedback del chat marcado como ${parsed.data.triageStatus}`,
+      });
+      return res.json(result);
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible actualizar el feedback");
+    }
+  },
+);
+
+router.post(
+  "/account-chat/diagnostics/feedback/:feedbackId/convert",
+  requirePermission("mi_coach.chat_diagnostics"),
+  async (req, res) => {
+    if (!req.user?.permissionSet?.has("mi_coach.evaluations_write")) {
+      return res.status(403).json({
+        message: "No autorizado",
+        requiredPermission: "mi_coach.evaluations_write",
+      });
+    }
+    const parsed = z.object({
+      feedbackId: z.coerce.number().int().positive(),
+      title: z.string().trim().min(3).max(200),
+      question: z.string().trim().min(3).max(2000),
+      expected: z.string().trim().min(10).max(2000),
+    }).safeParse({ feedbackId: req.params.feedbackId, ...(req.body || {}) });
+    if (!parsed.success)
+      return res.status(400).json({ message: "Solicitud invalida", issues: parsed.error.issues });
+    try {
+      const feedback = await getFeedbackForTriage(parsed.data.feedbackId);
+      if (!feedback || feedback.rating !== "negative")
+        return res.status(404).json({ message: "Feedback negativo no encontrado" });
+      if (feedback.triage_status === "converted")
+        return res.status(409).json({ message: "Este feedback ya se convirtió en un caso de prueba" });
+      if (!feedback.account_id || !feedback.account_name)
+        return res.status(409).json({ message: "El feedback no tiene una cuenta asociada para evaluar" });
+      const evaluationCase = await createCustomEvaluationCase({
+        title: parsed.data.title,
+        question: parsed.data.question,
+        expected: parsed.data.expected,
+        accountId: feedback.account_id,
+        accountName: feedback.account_name,
+        sourceFeedbackId: parsed.data.feedbackId,
+        userId: req.user.id,
+      });
+      await markFeedbackConverted({
+        feedbackId: parsed.data.feedbackId,
+        user: req.user,
+        evaluationCaseId: evaluationCase.id,
+      });
+      await logAuditEvent({
+        req,
+        module: "mi_coach",
+        action: "chat_feedback_converted",
+        entityType: "customer_chat_feedback",
+        entityId: parsed.data.feedbackId,
+        detail: `Feedback convertido en el caso de evaluacion ${evaluationCase.id}`,
+      });
+      return res.status(201).json({ evaluationCaseId: evaluationCase.id });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible crear el caso de prueba");
     }
   },
 );
