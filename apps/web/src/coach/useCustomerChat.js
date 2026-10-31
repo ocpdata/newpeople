@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import {
+  ANSWER_READY_ANNOUNCEMENT,
+  classifyCustomerChatFailure,
+  removeLastSellerMessage,
+} from "./customerChatShared";
 
 const CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY =
   "mi-agent-customer-chat-show-foundation";
@@ -25,6 +30,8 @@ export function useCustomerChat({
   const [customerChatMessages, setCustomerChatMessages] = useState([]);
   const [customerChatLoading, setCustomerChatLoading] = useState(false);
   const [customerChatTurn, setCustomerChatTurn] = useState(null);
+  const [customerChatCanceling, setCustomerChatCanceling] = useState(false);
+  const [customerChatAnnouncement, setCustomerChatAnnouncement] = useState("");
   const customerChatTurnBlocking = Boolean(customerChatTurn && customerChatTurn.status !== "failed");
   const customerChatRevisionRef = useRef(0);
   const customerChatRequestRef = useRef(null);
@@ -59,6 +66,7 @@ export function useCustomerChat({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCustomerChatLoading(false);
     setCustomerChatTurn(null);
+    setCustomerChatAnnouncement("");
     const accountId = Number(customerAccountId || 0);
     if (!accountId || !hasCustomerContext) {
       setCustomerChatSessionId(null);
@@ -192,20 +200,24 @@ export function useCustomerChat({
     setCustomerChatSessionLoading(false);
     setCustomerChatFailureIds(null);
     setCustomerChatPublicResearch(false);
+    setCustomerChatAnnouncement("");
   }
 
-  async function askCustomerChat(question = customerChatQuestion, recovery = null) {
+  // `options.attachment` re-sends the original file when a failed turn is retried;
+  // `options.retry` allows resending after a failure that never created a job.
+  async function askCustomerChat(question = customerChatQuestion, recovery = null, options = {}) {
     const normalizedQuestion = String(question || "").trim();
-    const selectedAttachment = recovery ? null : customerChatAttachment;
+    const selectedAttachment = recovery ? null : options.attachment || customerChatAttachment;
     if (
       !normalizedQuestion || !hasCustomerContext ||
       customerChatRequestRef.current || customerChatSessionLoading ||
-      (!recovery && customerChatTurnBlocking)
+      (!recovery && !options.retry && customerChatTurnBlocking)
     ) return;
     const revision = ++customerChatRevisionRef.current;
     customerChatRequestRef.current = revision;
     const isCurrent = () => revision === customerChatRevisionRef.current;
     const accountId = Number(customerAccountId);
+    const turnStartedAt = recovery?.startedAt || Date.now();
     const transportExchanges = [...(recovery?.transportTrace?.exchanges || [])];
     let activeExchange = null;
     let failedJobDebug = null;
@@ -213,7 +225,6 @@ export function useCustomerChat({
     let activeChatJobId = recovery?.jobId || null;
     let terminalFailure = false;
     const beginExchange = (label, method, path, requestSummary = null) => {
-      // eslint-disable-next-line react-hooks/immutability
       activeExchange = {
         label,
         method,
@@ -257,12 +268,14 @@ export function useCustomerChat({
         .slice(0, 180);
 
     setCustomerChatLoading(true);
+    setCustomerChatAnnouncement("");
     setCustomerIntelligenceError("");
     setCustomerChatTransportError(null);
     setCustomerChatFailureIds(null);
     setCustomerChatTurn({
       accountId, sessionId: activeChatSessionId, jobId: activeChatJobId,
       question: normalizedQuestion, status: "pending", error: "",
+      startedAt: turnStartedAt, attachment: selectedAttachment || null,
     });
     if (!recovery) {
       setCustomerChatMessages((current) => [
@@ -346,7 +359,20 @@ export function useCustomerChat({
         const response = await api.post(
           "/api/commercial-intelligence/account-chat/jobs",
           requestBody,
-          selectedAttachment ? { timeout: 120000 } : undefined,
+          selectedAttachment
+            ? {
+                timeout: 120000,
+                onUploadProgress: (event) => {
+                  if (!event.total || !isCurrent()) return;
+                  const uploadPercent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+                  setCustomerChatTurn((current) =>
+                    current && current.status === "pending" && !current.jobId
+                      ? { ...current, uploadPercent }
+                      : current,
+                  );
+                },
+              }
+            : undefined,
         );
         const jobId = Number(response.data?.job?.id || 0);
         activeChatJobId = jobId || null;
@@ -377,6 +403,7 @@ export function useCustomerChat({
         setCustomerChatTurn({
           accountId, sessionId: activeChatSessionId, jobId,
           question: normalizedQuestion, status: "pending", error: "",
+          startedAt: turnStartedAt, attachment: selectedAttachment || null,
         });
       }
       const jobId = activeChatJobId;
@@ -426,8 +453,13 @@ export function useCustomerChat({
         if (
           !job || Number(job.id) !== jobId ||
           (job.accountId != null && Number(job.accountId) !== accountId) ||
-          !["pending", "running", "completed", "failed"].includes(job.status)
+          !["pending", "running", "completed", "failed", "cancelled"].includes(job.status)
         ) throw new Error("El servidor devolvió un resultado de chat inválido");
+        if (job.progress?.phase) {
+          setCustomerChatTurn((current) =>
+            current && current.status === "pending" ? { ...current, progress: job.progress } : current,
+          );
+        }
         pollExchange.pollCount += 1;
         pollExchange.pollEvents.push({
           attempt: pollExchange.pollCount,
@@ -440,6 +472,11 @@ export function useCustomerChat({
           !pollExchange.observedStatuses.includes(String(job.status))
         ) {
           pollExchange.observedStatuses.push(String(job.status));
+        }
+        if (job?.status === "cancelled") {
+          finishExchange(pollExchange, jobResponse, "cancelled", { jobId, finalStatus: "cancelled" });
+          discardCancelledTurn({ accountId, question: normalizedQuestion, attachment: selectedAttachment });
+          return;
         }
         if (["completed", "failed"].includes(String(job?.status || ""))) {
           finalPollJob = job;
@@ -503,6 +540,7 @@ export function useCustomerChat({
       });
       window.sessionStorage.removeItem(customerChatPendingKey(accountId));
       setCustomerChatTurn(null);
+      setCustomerChatAnnouncement(ANSWER_READY_ANNOUNCEMENT);
       setCustomerChatFailureIds(
         result.responseType === "error"
           ? { sessionId: activeChatSessionId, jobId: activeChatJobId }
@@ -528,11 +566,16 @@ export function useCustomerChat({
         debug: failedJobDebug,
       });
       if (terminalFailure) window.sessionStorage.removeItem(customerChatPendingKey(accountId));
+      const failure = classifyCustomerChatFailure(requestError, { terminalFailure });
       setCustomerChatTurn({
         accountId, sessionId: activeChatSessionId, jobId: activeChatJobId,
         question: normalizedQuestion,
         status: terminalFailure ? "failed" : "interrupted",
         error: getApiErrorMessage(requestError, "No se pudo recuperar la respuesta de la cuenta"),
+        errorKind: failure.kind,
+        errorHint: failure.hint,
+        startedAt: turnStartedAt,
+        attachment: selectedAttachment || null,
         transportTrace: {
           source: "browser_observed", exchanges: transportExchanges,
         },
@@ -557,6 +600,57 @@ export function useCustomerChat({
     }
   }
 
+  // A cancelled turn leaves no trace in the conversation: the question goes back to the input
+  // (with its attachment) so the seller can edit or resend it.
+  function discardCancelledTurn({ accountId, question, attachment }) {
+    window.sessionStorage.removeItem(customerChatPendingKey(accountId));
+    setCustomerChatMessages((current) => removeLastSellerMessage(current, question));
+    setCustomerChatQuestion(question);
+    if (attachment) setCustomerChatAttachment(attachment);
+    setCustomerChatTurn(null);
+    setCustomerChatFailureIds(null);
+    setCustomerIntelligenceError("");
+    setCustomerChatAnnouncement("Pregunta cancelada. Tu pregunta volvió al cuadro de texto.");
+  }
+
+  async function cancelCustomerChatTurn() {
+    const turn = customerChatTurn;
+    if (!turn || turn.status !== "pending" || !turn.jobId || customerChatCanceling) return;
+    setCustomerChatCanceling(true);
+    try {
+      const response = await api.post(
+        `/api/commercial-intelligence/account-chat/jobs/${turn.jobId}/cancel`,
+      );
+      if (response.data?.job?.status === "cancelled") {
+        // Invalidates the running poll loop so it cannot paint this turn again.
+        customerChatRevisionRef.current += 1;
+        customerChatRequestRef.current = null;
+        setCustomerChatLoading(false);
+        discardCancelledTurn({
+          accountId: turn.accountId,
+          question: turn.question,
+          attachment: turn.attachment,
+        });
+      }
+      // Any other status means the turn already finished; the poll loop shows its result.
+    } catch (requestError) {
+      setCustomerIntelligenceError(
+        getApiErrorMessage(requestError, "No fue posible cancelar la pregunta"),
+      );
+    } finally {
+      setCustomerChatCanceling(false);
+    }
+  }
+
+  // Resends a failed question (and its original attachment) without duplicating the seller message.
+  function retryCustomerChatTurn() {
+    const turn = customerChatTurn;
+    if (!turn?.question || customerChatRequestRef.current) return;
+    if (turn.status === "interrupted" && turn.jobId) return;
+    setCustomerChatMessages((current) => removeLastSellerMessage(current, turn.question));
+    askCustomerChat(turn.question, null, { attachment: turn.attachment || null, retry: true });
+  }
+
   function startNewCustomerChat() {
     if (customerChatLoading || customerChatSessionLoading) return;
     window.sessionStorage.removeItem(customerChatSessionKey(customerAccountId));
@@ -571,6 +665,7 @@ export function useCustomerChat({
     setCustomerIntelligenceError("");
     setCustomerChatTransportError(null);
     setCustomerChatFailureIds(null);
+    setCustomerChatAnnouncement("");
   }
 
   function updateCustomerChatFoundationVisibility(visible) {
@@ -611,6 +706,10 @@ export function useCustomerChat({
     customerChatTransportError,
     customerChatFailureIds,
     askCustomerChat,
+    cancelCustomerChatTurn,
+    retryCustomerChatTurn,
+    customerChatCanceling,
+    customerChatAnnouncement,
     startNewCustomerChat,
     reset,
   };

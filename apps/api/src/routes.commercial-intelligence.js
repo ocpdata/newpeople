@@ -62,6 +62,7 @@ import {
   createCustomerAccountChatSession,
   getCustomerChatFocusOptions,
   createCustomerAccountChatJob,
+  cancelCustomerAccountChatJob,
   getCustomerAccountChatSession,
   getCustomerAccountChatDiagnosticSession,
   listCustomerAccountChatDiagnostics,
@@ -846,6 +847,24 @@ router.get(
     if (!job || job.jobType !== "account_chat")
       return res.status(404).json({ message: "Chat de cuenta no encontrado" });
     return res.json({ job });
+  },
+);
+
+router.post(
+  "/account-chat/jobs/:jobId/cancel",
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Job invalido" });
+    try {
+      const job = await cancelCustomerAccountChatJob({ user: req.user, jobId });
+      if (!job || job.jobType !== "account_chat")
+        return res.status(404).json({ message: "Chat de cuenta no encontrado" });
+      return res.json({ job });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cancelar la pregunta");
+    }
   },
 );
 

@@ -2131,6 +2131,11 @@ async function mockCustomerChatRecovery(page, {
     wrongAccount: false,
     holdPoll: null,
     holdSubmission: null,
+    progress: null,
+    cancelled: false,
+    cancelRequests: 0,
+    cancelOutcome: "cancelled",
+    abortSubmission: false,
   };
   const history = [
     { role: "user", text: "¿Cuál es el monto de la oportunidad?" },
@@ -2159,6 +2164,7 @@ async function mockCustomerChatRecovery(page, {
   await page.route("**/api/commercial-intelligence/account-chat/jobs", async (route) => {
     state.submissions += 1;
     if (state.holdSubmission) await state.holdSubmission;
+    if (state.abortSubmission) return route.abort("connectionfailed");
     return route.fulfill({
       status: 202, contentType: "application/json",
       body: JSON.stringify({ job: { id: 921, status: "pending" } }),
@@ -2167,6 +2173,12 @@ async function mockCustomerChatRecovery(page, {
   await page.route("**/api/commercial-intelligence/account-chat/jobs/921", async (route) => {
     state.polls += 1;
     if (state.holdPoll) await state.holdPoll;
+    if (state.cancelled) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ job: { id: 921, accountId: 160, status: "cancelled" } }),
+      });
+    }
     if (state.failuresRemaining > 0) {
       state.failuresRemaining -= 1;
       return route.fulfill({
@@ -2178,7 +2190,7 @@ async function mockCustomerChatRecovery(page, {
       state.pendingPolls -= 1;
       return route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({ job: { id: 921, accountId: 160, status: "running" } }),
+        body: JSON.stringify({ job: { id: 921, accountId: 160, status: "running", progress: state.progress } }),
       });
     }
     return route.fulfill({
@@ -2195,6 +2207,16 @@ async function mockCustomerChatRecovery(page, {
             ...(state.activityHistory ? { activityHistory: state.activityHistory } : {}),
           },
         },
+      }),
+    });
+  });
+  await page.route("**/api/commercial-intelligence/account-chat/jobs/921/cancel", (route) => {
+    state.cancelRequests += 1;
+    if (state.cancelOutcome === "cancelled") state.cancelled = true;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        job: { id: 921, accountId: 160, jobType: "account_chat", status: state.cancelOutcome },
       }),
     });
   });
@@ -2322,6 +2344,109 @@ test("Cliente existente reintenta lecturas transitorias y muestra el estado hast
   await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeEnabled();
   expect(state.submissions).toBe(1);
   expect(state.polls).toBe(4);
+});
+
+test("Cliente existente muestra la fase y el tiempo, y cancelar devuelve la pregunta al cuadro", async ({ page }) => {
+  const { state, chat, send } = await mockCustomerChatRecovery(page);
+  state.pendingPolls = 50;
+  state.progress = { phase: "crm", label: "Consultando los registros del CRM" };
+  await send();
+  await expect(chat.getByRole("status")).toContainText("Consultando los registros del CRM");
+  await expect(chat.getByRole("button", { name: "Cancelar pregunta" })).toBeEnabled();
+  await chat.getByRole("button", { name: "Cancelar pregunta" }).click();
+  await expect(chat.getByRole("status")).toHaveCount(0);
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toHaveValue("Vrf 2027.");
+  await expect(chat.locator(".mi-agent-coach-message.is-seller").filter({ hasText: "Vrf 2027." })).toHaveCount(0);
+  await expect(chat.getByRole("button", { name: "Preguntar", exact: true })).toBeEnabled();
+  expect(state.cancelRequests).toBe(1);
+  expect(state.submissions).toBe(1);
+});
+
+test("Cliente existente muestra la respuesta si el turno terminó antes de cancelar", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.pendingPolls = 3;
+  state.cancelOutcome = "completed";
+  await send();
+  await chat.getByRole("button", { name: "Cancelar pregunta" }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(chat.getByRole("status")).toHaveCount(0);
+  expect(state.cancelRequests).toBe(1);
+});
+
+test("Cliente existente reintenta un turno fallido sin duplicar la pregunta", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.failed = true;
+  await send();
+  await expect(chat.getByRole("alert")).toContainText("No fue posible responder");
+  await expect(chat.getByRole("alert")).toContainText("Puedes reintentar o reformular la pregunta");
+  state.failed = false;
+  await chat.getByRole("button", { name: "Reintentar", exact: true }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(chat.locator(".mi-agent-coach-message.is-seller").filter({ hasText: "Vrf 2027." })).toHaveCount(1);
+  await expect(chat.getByRole("button", { name: "Reintentar", exact: true })).toHaveCount(0);
+  expect(state.submissions).toBe(2);
+});
+
+test("Cliente existente explica un fallo de red y permite reintentar", async ({ page }) => {
+  const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
+  state.abortSubmission = true;
+  await send();
+  await expect(chat.getByRole("alert")).toContainText("No hay conexión con el servidor");
+  state.abortSubmission = false;
+  await chat.getByRole("button", { name: "Reintentar", exact: true }).click();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(chat.locator(".mi-agent-coach-message.is-seller").filter({ hasText: "Vrf 2027." })).toHaveCount(1);
+  expect(state.submissions).toBe(2);
+});
+
+test("Cliente existente anuncia la respuesta con un aviso breve en lugar de leer todo el hilo", async ({ page }) => {
+  const { chat, answer, send } = await mockCustomerChatRecovery(page);
+  await expect(chat.locator(".mi-agent-coach-thread")).not.toHaveAttribute("aria-live", /.+/);
+  await send();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await expect(chat.locator("[aria-atomic='true']").first()).toHaveText("Respuesta lista al final de la conversación.");
+  await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toHaveAccessibleDescription(/Un archivo por mensaje/);
+});
+
+test("Cliente existente mueve el foco al aviso cuando falla un turno", async ({ page }) => {
+  const { state, chat, send } = await mockCustomerChatRecovery(page);
+  state.failed = true;
+  await send();
+  await expect(chat.getByRole("alert")).toBeFocused();
+  await expect(chat.getByRole("button", { name: "Reintentar", exact: true })).toBeVisible();
+});
+
+test("Cliente existente valida el adjunto al elegirlo y acepta arrastrar y soltar", async ({ page }) => {
+  const { chat } = await mockCustomerChatRecovery(page);
+  const picker = chat.getByLabel("Adjuntar documento, imagen o audio");
+  await picker.setInputFiles({ name: "programa.exe", mimeType: "application/octet-stream", buffer: Buffer.from("x") });
+  await expect(chat.getByRole("alert")).toContainText("El tipo de archivo .exe no está soportado.");
+  await expect(chat.getByTitle("programa.exe", { exact: true })).toHaveCount(0);
+  await picker.setInputFiles({ name: "vacio.txt", mimeType: "text/plain", buffer: Buffer.alloc(0) });
+  await expect(chat.getByRole("alert")).toContainText("está vacío");
+  await picker.setInputFiles({ name: "pesado.txt", mimeType: "text/plain", buffer: Buffer.alloc(3 * 1024 * 1024) });
+  await expect(chat.getByRole("alert")).toContainText("excede el tamaño permitido para .txt (2 MB)");
+  await picker.setInputFiles({ name: "acta.txt", mimeType: "text/plain", buffer: Buffer.from("Contenido válido") });
+  await expect(chat.getByRole("alert")).toHaveCount(0);
+  await expect(chat.getByTitle("acta.txt", { exact: true })).toBeVisible();
+  await chat.getByRole("button", { name: "Quitar archivo adjunto" }).click();
+  const dataTransfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["contenido"], "arrastrado.txt", { type: "text/plain" }));
+    return transfer;
+  });
+  await chat.locator("form.mi-agent-coach-form").dispatchEvent("drop", { dataTransfer });
+  await expect(chat.getByTitle("arrastrado.txt", { exact: true })).toBeVisible();
+});
+
+test("Cliente existente copia la respuesta al portapapeles", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const { chat, answer, send } = await mockCustomerChatRecovery(page);
+  await send();
+  await expect(chat.getByText(answer, { exact: true })).toBeVisible();
+  await chat.getByRole("button", { name: "Copiar respuesta" }).last().click();
+  await expect(chat.getByRole("button", { name: "Copiado" })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(answer);
 });
 
 test("Cliente existente conserva la respuesta y avisa si B10 no completa la redaccion conversacional", async ({ page }) => {

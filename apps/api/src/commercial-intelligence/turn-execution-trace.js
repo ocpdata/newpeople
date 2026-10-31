@@ -1,15 +1,24 @@
-export function createTurnExecutionTrace({ enabled = true, now = Date.now } = {}) {
+export function createTurnExecutionTrace({ enabled = true, now = Date.now, onEvent = null } = {}) {
   const events = [];
   let nextSpanId = 0;
 
   const record = (event) => {
     if (!enabled) return;
-    events.push({
+    const entry = {
       lane: event.lane || "worker",
       ...event,
       sequence: events.length + 1,
       at: event.at || new Date(now()).toISOString(),
-    });
+    };
+    events.push(entry);
+    // Observers (e.g. job progress) must never break the turn.
+    if (onEvent) {
+      try {
+        onEvent(entry);
+      } catch {
+        // ignored on purpose
+      }
+    }
   };
 
   const span = async (

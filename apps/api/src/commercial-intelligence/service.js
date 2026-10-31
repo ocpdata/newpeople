@@ -45,6 +45,7 @@ import {
   validateCustomerConversationContext,
 } from "./conversation-context.js";
 import { createTurnExecutionTrace } from "./turn-execution-trace.js";
+import { createChatProgressReporter } from "./chat-progress.js";
 import {
   getCustomerActivityHistoryRange,
   getCustomerActivityHistoryRangeFromFilters,
@@ -585,6 +586,7 @@ function mapJobRow(row) {
     request: parseJson(row.request_json, null),
     result: parseJson(row.result_json, null),
     errorMessage: row.error_message || null,
+    progress: parseJson(row.progress_json, null),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     finishedAt: row.finished_at || null,
@@ -2887,19 +2889,30 @@ export async function processAccountIntelligenceAgentsJob({ jobId, user }) {
   );
   const job = rows[0];
   if (!job) return null;
-  const snapshot = await buildAuthorizedCustomerSnapshot({
-    user,
-    accountId: job.account_id,
-    opportunityId: job.opportunity_id,
-    contactId: job.contact_id,
-  });
-  const request = parseJson(job.request_json, {});
-  if (request?.includePublicResearch) {
-    if (!hasPermission(user, "fuentes_externas.execute"))
-      throw createHttpError(403, "No autorizado", {
-        requiredPermission: "fuentes_externas.execute",
-      });
-    await assertExternalResearchGovernance(user);
+  let snapshot;
+  let request;
+  try {
+    snapshot = await buildAuthorizedCustomerSnapshot({
+      user,
+      accountId: job.account_id,
+      opportunityId: job.opportunity_id,
+      contactId: job.contact_id,
+    });
+    request = parseJson(job.request_json, {});
+    if (request?.includePublicResearch) {
+      if (!hasPermission(user, "fuentes_externas.execute"))
+        throw createHttpError(403, "No autorizado", {
+          requiredPermission: "fuentes_externas.execute",
+        });
+      await assertExternalResearchGovernance(user);
+    }
+  } catch (error) {
+    // Failing before the main try left the job 'pending' forever.
+    await query(
+      `UPDATE customer_intelligence_jobs SET status = 'failed', error_message = ?, updated_at = NOW(3), finished_at = NOW(3) WHERE id = ? AND status = 'pending'`,
+      [clip(error?.message || "No fue posible ejecutar los agentes especializados", 1000), Number(jobId)],
+    ).catch(() => undefined);
+    throw error;
   }
   const startedAt = Date.now();
   const includePublicResearch = Boolean(request?.includePublicResearch);
@@ -3465,9 +3478,25 @@ export async function createCustomerAccountChatJob({ user, payload }) {
   };
 }
 
+export async function cancelCustomerAccountChatJob({ user, jobId }) {
+  await ensureCommercialIntelligenceSchema();
+  // Only a pending turn can be cancelled; a finished one is returned as is so the client shows it.
+  await query(
+    `UPDATE customer_intelligence_jobs
+     SET status = 'cancelled', error_message = 'Cancelado por el usuario',
+         updated_at = NOW(3), finished_at = NOW(3)
+     WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'
+       AND status = 'pending'`,
+    [Number(jobId), Number(user.id)],
+  );
+  return getCustomerIntelligenceJob({ user, jobId });
+}
+
 export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = null }) {
+  const progressReporter = createChatProgressReporter({ jobId });
   const executionTrace = createTurnExecutionTrace({
     enabled: true,
+    onEvent: progressReporter.onEvent,
   });
   const workerSpanId = `account-chat-worker-${Number(jobId)}`;
   const workerStartedAt = Date.now();
@@ -3486,7 +3515,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
     [Number(jobId), Number(user.id)],
   );
   const job = rows[0];
-  if (!job) return null;
+  if (!job || job.status === "cancelled") return null;
   let request;
   let snapshot;
   let agents;
@@ -3506,6 +3535,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
   try {
     request = parseJson(job.request_json, {});
     if (request.attachment?.filePath) {
+      progressReporter.report("attachment");
       const buffer = await readFile(request.attachment.filePath);
       if ([".txt", ".md"].includes(request.attachment.extension) && buffer.includes(0)) {
         throw createHttpError(400, "El archivo de texto no es valido");
@@ -3937,7 +3967,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       `UPDATE customer_intelligence_jobs
        SET status = 'failed', error_message = ?, result_json = ?,
            updated_at = NOW(3), finished_at = NOW(3)
-       WHERE id = ?`,
+       WHERE id = ? AND status = 'pending'`,
       [
         preparationError,
         JSON.stringify({ errorCode: error?.code || "CHAT_PREPARATION_FAILED", debug: preparationDebug }),
@@ -4560,6 +4590,14 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
   let persistedHistoryForTrace = null;
   try {
     await withTransaction(async (conn) => {
+      // A turn cancelled by the user while it was running must not write its answer or history.
+      const [jobStateRows] = await conn.query(
+        "SELECT status FROM customer_intelligence_jobs WHERE id = ? FOR UPDATE",
+        [Number(jobId)],
+      );
+      if (jobStateRows[0]?.status === "cancelled") {
+        throw Object.assign(new Error("Turno cancelado por el usuario"), { code: "turn_cancelled" });
+      }
       const [sessionRows] = await conn.query(
         `SELECT history_json, context_json FROM customer_intelligence_chat_sessions
        WHERE id = ? AND requested_by_user_id = ?
@@ -5553,6 +5591,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       );
     });
   } catch (error) {
+    if (error?.code === "turn_cancelled") return null;
     const persistenceError = clip(
       error?.message || "No fue posible guardar el resultado del chat",
       1000,
@@ -5635,7 +5674,8 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       `UPDATE customer_intelligence_jobs
        SET status = 'failed', error_message = ?, result_json = ?,
            updated_at = NOW(3), finished_at = NOW(3)
-       WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'`,
+       WHERE id = ? AND requested_by_user_id = ? AND job_type = 'account_chat'
+         AND status = 'pending'`,
       [
         persistenceError,
         JSON.stringify({ debug: failureDebug }),

@@ -33,6 +33,7 @@ const COMMERCIAL_INTELLIGENCE_SCHEMA_STATEMENTS = [
     request_json JSON NULL,
     result_json JSON NULL,
     error_message VARCHAR(1000) NULL,
+    progress_json JSON NULL,
     created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
     updated_at DATETIME(3) NOT NULL DEFAULT NOW(3),
     finished_at DATETIME(3) NULL,
@@ -114,6 +115,12 @@ export async function ensureCommercialIntelligenceSchema() {
       ) {
         await query(
           `ALTER TABLE customer_intelligence_chat_sessions ADD COLUMN context_json JSON NULL AFTER history_json`,
+        );
+      }
+      const jobColumns = await query(`SHOW COLUMNS FROM customer_intelligence_jobs`);
+      if (!jobColumns.some((column) => column.Field === "progress_json")) {
+        await query(
+          `ALTER TABLE customer_intelligence_jobs ADD COLUMN progress_json JSON NULL AFTER error_message`,
         );
       }
       await query(

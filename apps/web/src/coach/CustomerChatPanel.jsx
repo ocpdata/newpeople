@@ -1,5 +1,8 @@
+import { useEffect, useId, useRef, useState } from "react";
+import "./customer-chat-a11y.css";
 import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../../shared/document-formats.js";
 import { CustomerChatAnswer } from "./CustomerChatAnswer";
+import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
 import {
   CustomerChatDebugFlow,
   CustomerChatDebugResult,
@@ -9,11 +12,14 @@ import { CustomerOutcomeSummary } from "./CustomerOutcomeSummary";
 import { CustomerRescheduleSummary } from "./CustomerRescheduleReview";
 import { CustomerStageSummary } from "./CustomerStageReview";
 import { CoachQualityFeedback } from "./CoachQualityFeedback";
+import { CustomerChatProgress } from "./CustomerChatProgress";
 import {
   CUSTOMER_ACTIVITY_STATUS_LABELS,
   CUSTOMER_ACTIVITY_TYPE_LABELS,
   CUSTOMER_FINDING_CONFIDENCE_LABELS,
   formatDate,
+  formatFileSize,
+  validateChatAttachment,
 } from "./customerChatShared";
 
 export function CustomerChatPanel({
@@ -55,7 +61,32 @@ export function CustomerChatPanel({
     customerChatTurn,
     customerChatThreadRef,
     setCustomerChatHistoryReload,
+    cancelCustomerChatTurn,
+    retryCustomerChatTurn,
+    customerChatCanceling,
+    customerChatAnnouncement,
   } = chat;
+  const hintId = useId();
+  const attachmentErrorId = useId();
+  const [attachmentError, setAttachmentError] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const chatInputsDisabled = customerChatLoading || customerChatSessionLoading || !hasCustomerContext;
+  // Validates the file when it is chosen or dropped, so a bad file is rejected before sending.
+  function selectAttachment(file) {
+    const problem = validateChatAttachment(file);
+    setAttachmentError(problem);
+    if (!problem) setCustomerChatAttachment(file || null);
+  }
+  const turnNoticeRef = useRef(null);
+  const previousTurnStatusRef = useRef(null);
+  // When a pending turn fails, move focus to its notice so the retry/recover actions are reachable.
+  useEffect(() => {
+    const status = customerChatTurn?.status || null;
+    if (previousTurnStatusRef.current === "pending" && ["failed", "interrupted"].includes(status)) {
+      turnNoticeRef.current?.focus();
+    }
+    previousTurnStatusRef.current = status;
+  }, [customerChatTurn?.status]);
   return (
     <>
           {customerChatFailureIds ? (
@@ -187,10 +218,24 @@ export function CustomerChatPanel({
               </div>
             </div>
             <form
-              className="mi-agent-coach-form"
+              className={`mi-agent-coach-form${dragActive ? " is-drag-active" : ""}`}
               onSubmit={(event) => {
                 event.preventDefault();
                 askCustomerChat();
+              }}
+              onDragOver={(event) => {
+                if (chatInputsDisabled) return;
+                event.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) setDragActive(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+                if (chatInputsDisabled) return;
+                selectAttachment(event.dataTransfer?.files?.[0] || null);
               }}
             >
               <label className="mi-agent-customer-chat-file-picker">
@@ -199,23 +244,33 @@ export function CustomerChatPanel({
                   type="file"
                   accept={DOCUMENT_FILE_ACCEPT}
                   aria-label="Adjuntar documento, imagen o audio"
+                  aria-describedby={attachmentError ? `${hintId} ${attachmentErrorId}` : hintId}
                   title={DOCUMENT_FORMAT_HELP}
                   onChange={(event) => {
-                    setCustomerChatAttachment(event.target.files?.[0] || null);
+                    selectAttachment(event.target.files?.[0] || null);
                     event.target.value = "";
                   }}
-                  disabled={customerChatLoading || customerChatSessionLoading || !hasCustomerContext}
+                  disabled={chatInputsDisabled}
                 />
               </label>
+              {attachmentError ? (
+                <small className="form-error" id={attachmentErrorId} role="alert">
+                  {attachmentError}
+                </small>
+              ) : null}
               {customerChatAttachment ? (
                 <div className="mi-agent-customer-chat-file-name">
                   <span title={customerChatAttachment.name}>
                     {customerChatAttachment.name}
                   </span>
+                  <small>{formatFileSize(customerChatAttachment.size)}</small>
                   <button
                     type="button"
                     aria-label="Quitar archivo adjunto"
-                    onClick={() => setCustomerChatAttachment(null)}
+                    onClick={() => {
+                      setCustomerChatAttachment(null);
+                      setAttachmentError("");
+                    }}
                     disabled={customerChatLoading}
                   >
                     Quitar
@@ -225,6 +280,7 @@ export function CustomerChatPanel({
               <textarea
                 rows={3}
                 aria-label="Pregunta sobre la cuenta"
+                aria-describedby={hintId}
                 value={customerChatQuestion}
                 onChange={(event) =>
                   setCustomerChatQuestion(event.target.value)
@@ -246,9 +302,12 @@ export function CustomerChatPanel({
                 {customerChatLoading ? "Consultando..." : "Preguntar"}
               </button>
             </form>
-            <small className="field-hint">Un archivo por mensaje. {DOCUMENT_FORMAT_HELP}</small>
+            <small className="field-hint" id={hintId}>Un archivo por mensaje. {DOCUMENT_FORMAT_HELP}</small>
+            <div className="mi-agent-sr-only" aria-live="polite" aria-atomic="true">
+              {customerChatAnnouncement}
+            </div>
             {customerChatMessages.length || customerChatTurn ? (
-              <div className="mi-agent-coach-thread" aria-live="polite" ref={customerChatThreadRef}>
+              <div className="mi-agent-coach-thread" ref={customerChatThreadRef}>
                 {customerChatMessages.map((message, index) =>
                   message.role === "seller" ? (
                     <div
@@ -527,6 +586,7 @@ export function CustomerChatPanel({
                             ? String(message.answer || "").split("\n").filter((line) => !line.startsWith("|")).join("\n")
                             : message.answer}
                       />
+                      <CustomerChatCopyButton text={message.answer} />
                       {message.presentation?.status === "degraded" ? (
                         <p role="status">
                           {message.presentation?.engine === "dossier"
@@ -1092,11 +1152,23 @@ export function CustomerChatPanel({
                   <div
                     className="mi-agent-coach-message is-coach"
                     role={customerChatTurn.status === "pending" ? "status" : "alert"}
+                    ref={turnNoticeRef}
+                    tabIndex={-1}
                   >
                     <span>Estado de la respuesta</span>
                     <p>
                       {customerChatTurn.error || "Consultando la cuenta. La respuesta todavía está pendiente..."}
                     </p>
+                    {customerChatTurn.status === "pending" ? (
+                      <CustomerChatProgress
+                        turn={customerChatTurn}
+                        onCancel={cancelCustomerChatTurn}
+                        canceling={customerChatCanceling}
+                      />
+                    ) : null}
+                    {customerChatTurn.status !== "pending" && customerChatTurn.errorHint ? (
+                      <small className="mi-agent-customer-chat-error-hint">{customerChatTurn.errorHint}</small>
+                    ) : null}
                     {customerChatTurn.status === "interrupted" && customerChatTurn.jobId ? (
                       <button
                         type="button"
@@ -1116,9 +1188,31 @@ export function CustomerChatPanel({
                         Recargar conversación
                       </button>
                     ) : customerChatTurn.status === "failed" ? (
-                      <p>Puedes corregir tu pregunta o enviar otra en esta misma conversación.</p>
+                      <>
+                        <p>Puedes corregir tu pregunta o enviar otra en esta misma conversación.</p>
+                        <button
+                          type="button"
+                          className="mi-agent-secondary-button"
+                          disabled={customerChatLoading || customerChatSessionLoading}
+                          onClick={retryCustomerChatTurn}
+                        >
+                          Reintentar
+                        </button>
+                      </>
                     ) : customerChatTurn.status !== "pending" ? (
-                      <p>Inicia una nueva conversación para enviar otra pregunta.</p>
+                      <>
+                        <p>Inicia una nueva conversación para enviar otra pregunta.</p>
+                        {customerChatTurn.question ? (
+                          <button
+                            type="button"
+                            className="mi-agent-secondary-button"
+                            disabled={customerChatLoading || customerChatSessionLoading}
+                            onClick={retryCustomerChatTurn}
+                          >
+                            Reintentar
+                          </button>
+                        ) : null}
+                      </>
                     ) : null}
                   </div>
                 ) : null}
