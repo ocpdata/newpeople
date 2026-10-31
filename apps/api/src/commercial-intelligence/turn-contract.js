@@ -1092,7 +1092,9 @@ export function getCustomerTurnProviderVariants(fields = getCustomerTurnContract
     if (!groups.has(signature)) groups.set(signature, { categories: [], keys });
     groups.get(signature).categories.push(category);
   }
-  const variants = [...groups.values()].map(({ categories, keys }) => ({
+  // The first variant is the one used as the format example, so it must be the one without specification blocks.
+  const orderedGroups = [...groups.values()].sort((a, b) => Number(Boolean(a.keys.length)) - Number(Boolean(b.keys.length)));
+  const variants = orderedGroups.map(({ categories, keys }) => ({
     type: "object",
     fields: [
       { key: "category", type: "enum", enum: categories },

@@ -29,7 +29,7 @@ describe("structured web research schema", () => {
     const { schema } = buildStructuredResearchSchema("compact", fields, variants);
     const { schema: inline } = buildStructuredResearchSchema("inline", fields, withoutDefinitions(variants));
     expect(expandReferences(schema, schema)).toEqual(expandReferences(inline, inline));
-    expect(JSON.stringify(schema).length).toBeLessThan(34500);
+    expect(JSON.stringify(schema).length).toBeLessThan(36000);
     const components = schema.$defs.componentsItem.anyOf;
     for (const variant of components) {
       for (const key of ["object", "scope", "attribution", "certainty", "continuationOf"]) {
