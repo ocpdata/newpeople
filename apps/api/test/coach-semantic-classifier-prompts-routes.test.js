@@ -22,7 +22,7 @@ const app = express();
 app.use(express.json());
 app.use((req, _res, next) => {
   req.user = { id: 31, permissionSet: new Set(
-    req.headers["x-admin"] === "yes" ? ["mi_coach.admin"] : ["mi_coach.use"],
+    req.headers["x-admin"] === "yes" ? ["mi_coach.access", "mi_coach.admin"] : ["mi_coach.access", "mi_coach.use"],
   ) };
   next();
 });

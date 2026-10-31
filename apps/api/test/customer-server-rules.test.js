@@ -33,7 +33,7 @@ import router from "../src/routes.commercial-intelligence.js";
 const app = express();
 app.use(express.json());
 app.use((req, _res, next) => {
-  req.user = { id: 31, permissionSet: new Set(req.headers["x-admin"] === "yes" ? ["mi_coach.admin"] : []) };
+  req.user = { id: 31, permissionSet: new Set(req.headers["x-admin"] === "yes" ? ["mi_coach.access", "mi_coach.admin"] : ["mi_coach.access"]) };
   next();
 });
 app.use("/api/commercial-intelligence", router);

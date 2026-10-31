@@ -222,7 +222,7 @@ export const CUSTOMER_ACCOUNT_CHAT_EVALUATION_CASES = Object.freeze([
     baseline: {
       status: "covered",
       intent: "opportunity_status",
-      allowedTools: ["searchAccounts", "searchOpportunities", "getOpportunity"],
+      allowedTools: ["searchAccounts", "searchOpportunities", "getOpportunity", "getOpportunityNotes"],
       readTools: ["searchAccounts", "searchOpportunities", "getOpportunity"],
       evidenceIds: { getOpportunity: [7101] },
     },

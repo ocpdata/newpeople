@@ -47,6 +47,7 @@ async function mockMiCoachApi(
     currencyConversionAvailable = true,
   } = {},
 ) {
+  const closedCoachSessions = new Set();
   const prospectSession = {
     id: 991,
     status: "completed",
@@ -2850,7 +2851,7 @@ test("Cliente existente espera el historial antes de enviar y no permite que bor
   await page.getByLabel("Cuenta existente").selectOption("160");
   await expect.poll(() => historyRequested).toBe(true);
   await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeDisabled();
-  await expect(chat.getByRole("button", { name: "Expansión", exact: true })).toBeDisabled();
+  await expect(chat.getByRole("button", { name: "Preguntar", exact: true })).toBeDisabled();
   expect(state.submissions).toBe(0);
   release();
   await expect(chat.getByPlaceholder("Pregunta sobre la cuenta...")).toBeEnabled();
@@ -4000,7 +4001,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     page,
   }) => {
     const contactCreateRequests = [];
-    page.on("request", (request) => {
+    page.context().on("request", (request) => {
       if (
         request.method() === "POST" &&
         new URL(request.url()).pathname === "/api/contacts"
@@ -4036,14 +4037,16 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
     await expect(confirmation.getByLabel("firstName")).toHaveValue("Oscar");
     await expect(confirmation.getByLabel("lastName")).toHaveValue("Montufar");
+    const moduleTabPromise = page.waitForEvent("popup");
     await confirmation
       .getByRole("button", { name: "Continuar en el módulo" })
       .click();
+    const moduleTab = await moduleTabPromise;
 
-    await expect(page).toHaveURL(
+    await expect(moduleTab).toHaveURL(
       /\/contacts\?coachDraft=customer-contact-903$/,
     );
-    const contactModal = page.locator(".modal-dialog-account");
+    const contactModal = moduleTab.locator(".modal-dialog-account");
     await expect(
       contactModal.getByRole("heading", { name: "Crear contacto" }),
     ).toBeVisible();
@@ -4162,7 +4165,7 @@ test.describe("Mi Coach governance and workspaces", () => {
         writes.push(request.url());
       }
     });
-    await mockMiCoachApi(context, {
+    await mockMiCoachApi(page, {
       withCustomerHealth: true,
       withCustomerStageAnswerPrefill: true,
     });
@@ -4247,7 +4250,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     page,
   }) => {
     const opportunityWrites = [];
-    page.on("request", (request) => {
+    page.context().on("request", (request) => {
       if (
         request.method() === "POST" &&
         new URL(request.url()).pathname === "/api/opportunities"
@@ -4281,17 +4284,19 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(confirmation.getByLabel("name")).toHaveValue(
       "Renovación anual",
     );
+    const moduleTabPromise = page.waitForEvent("popup");
     await confirmation
       .getByRole("button", { name: "Continuar en el módulo" })
       .click();
-    await expect(page).toHaveURL(
+    const moduleTab = await moduleTabPromise;
+    await expect(moduleTab).toHaveURL(
       /\/opportunities\?coachDraft=customer-opportunity-904$/,
     );
     await expect(
-      page.getByRole("heading", { name: "Crear oportunidad" }),
+      moduleTab.getByRole("heading", { name: "Crear oportunidad" }),
     ).toBeVisible();
     await expect(
-      page
+      moduleTab
         .locator(".opportunity-edit-modal .account-create-form input")
         .first(),
     ).toHaveValue("Renovación anual");
@@ -4302,7 +4307,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     page,
   }) => {
     const opportunityWrites = [];
-    page.on("request", (request) => {
+    page.context().on("request", (request) => {
       if (
         request.method() === "PUT" &&
         /^\/api\/opportunities\/\d+$/.test(new URL(request.url()).pathname)
@@ -4336,17 +4341,19 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       confirmation.getByLabel("Contacto que se asociará"),
     ).toHaveValue("Ana Compras");
+    const moduleTabPromise = page.waitForEvent("popup");
     await confirmation
       .getByRole("button", { name: "Continuar en el módulo" })
       .click();
-    await expect(page).toHaveURL(
+    const moduleTab = await moduleTabPromise;
+    await expect(moduleTab).toHaveURL(
       /\/opportunities\?coachDraft=customer-opportunity-905$/,
     );
     await expect(
-      page.getByRole("heading", { name: "Editar oportunidad" }),
+      moduleTab.getByRole("heading", { name: "Editar oportunidad" }),
     ).toBeVisible();
     await expect(
-      page.locator(".opportunity-edit-modal select").nth(1),
+      moduleTab.locator(".opportunity-edit-modal select").nth(1),
     ).toHaveValue("601");
     expect(opportunityWrites).toEqual([]);
   });
@@ -4455,7 +4462,7 @@ test.describe("Mi Coach governance and workspaces", () => {
 
   test("A04 versionado traslada desde chat y guarda solo la asociación desde Oportunidades", async ({ page }) => {
     const writes = [];
-    page.on("request", (request) => {
+    page.context().on("request", (request) => {
       if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/opportunities")) {
         writes.push({ method: request.method(), path: new URL(request.url()).pathname, body: request.postDataJSON() });
       }
@@ -4470,15 +4477,17 @@ test.describe("Mi Coach governance and workspaces", () => {
     const dialog = page.getByRole("dialog", { name: "Confirmar vínculo de contacto a oportunidad" });
     await expect(dialog).toContainText("Contacto actual: Contacto Anterior");
     await expect(dialog).toContainText("no se conservarán ambos");
+    const moduleTabPromise = page.waitForEvent("popup");
     await dialog.getByRole("button", { name: "Continuar en el módulo" }).click();
-    const panel = page.getByRole("region", { name: "Revisar vínculo contacto-oportunidad" });
+    const moduleTab = await moduleTabPromise;
+    const panel = moduleTab.getByRole("region", { name: "Revisar vínculo contacto-oportunidad" });
     await expect(panel).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Editar oportunidad" })).toHaveCount(0);
+    await expect(moduleTab.getByRole("heading", { name: "Editar oportunidad" })).toHaveCount(0);
     expect(writes).toEqual([]);
     await panel.getByRole("button", { name: "Confirmar y guardar vínculo" }).click();
     await expect(panel).toHaveCount(0);
-    await expect(page).not.toHaveURL(/coachDraft=/);
-    await expect(page.getByRole("status")).toContainText("Vínculo guardado y auditado correctamente");
+    await expect(moduleTab).not.toHaveURL(/coachDraft=/);
+    await expect(moduleTab.getByRole("status")).toContainText("Vínculo guardado y auditado correctamente");
     expect(writes).toEqual([{ method: "POST", path: "/api/opportunities/300/coach-contact",
       body: { token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 } }]);
   });
@@ -4486,7 +4495,7 @@ test.describe("Mi Coach governance and workspaces", () => {
   for (const decision of ["ready_to_advance", "not_ready_to_advance"]) {
     test(`A08 traslada sin ejecutar y conserva resultado existente ${decision}`, async ({ page }) => {
       const starts = [], forbidden = [];
-      page.on("request", (request) => {
+      page.context().on("request", (request) => {
         const path = new URL(request.url()).pathname;
         if (request.method() === "POST" && path.endsWith("/coach-stage-validation")) starts.push(request.postDataJSON());
         if (request.method() !== "GET" && /stage-transition|commercial-close|\/opportunities\/300$/.test(path)) forbidden.push(path);
@@ -4502,9 +4511,11 @@ test.describe("Mi Coach governance and workspaces", () => {
       await expect(dialog).toContainText("Siguiente etapa: Negociación");
       await expect(dialog).toContainText("puede avanzar automáticamente");
       expect(starts).toEqual([]);
+      const moduleTabPromise = page.waitForEvent("popup");
       await dialog.getByRole("button", { name: "Continuar en el módulo" }).click();
-      await expect(page).toHaveURL(/\/opportunities\?coachDraft=/);
-      const panel = page.getByRole("region", { name: "Validar avance desde Mi Coach" });
+      const moduleTab = await moduleTabPromise;
+      await expect(moduleTab).toHaveURL(/\/opportunities\?coachDraft=/);
+      const panel = moduleTab.getByRole("region", { name: "Validar avance desde Mi Coach" });
       await expect(panel).toBeVisible();
       expect(starts).toEqual([]);
       await panel.getByRole("button", { name: "Solicitar validación con IA (puede avanzar)", exact: true }).click();
@@ -4514,8 +4525,8 @@ test.describe("Mi Coach governance and workspaces", () => {
       expect(starts).toEqual([{ token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 }]);
       expect(forbidden).toEqual([]);
       await expect(panel.getByRole("button", { name: "Solicitar validación con IA (puede avanzar)", exact: true })).toHaveCount(0);
-      await page.reload();
-      await expect(page.getByRole("region", { name: "Resultado de validación" })).toContainText("Resultado del validador existente");
+      await moduleTab.reload();
+      await expect(moduleTab.getByRole("region", { name: "Resultado de validación" })).toContainText("Resultado del validador existente");
       expect(starts).toHaveLength(1);
     });
   }
@@ -4582,7 +4593,7 @@ test.describe("Mi Coach governance and workspaces", () => {
 
   test("A06 traslada del chat a Calendario sin crear una actividad y guarda solo al confirmar", async ({ page }) => {
     const writes = [];
-    page.on("request", (request) => {
+    page.context().on("request", (request) => {
       const path = new URL(request.url()).pathname;
       if (request.method() !== "GET" && (path.startsWith("/api/opportunities") || path.startsWith("/api/commercial-development"))) {
         writes.push({ method: request.method(), path, body: request.postDataJSON() });
@@ -4598,16 +4609,18 @@ test.describe("Mi Coach governance and workspaces", () => {
     const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
     await expect(dialog).toContainText("Programación actual: 2030-10-20T10:00:00");
     await expect(dialog).toContainText("Programación propuesta: 2030-10-23T10:00:00");
+    const moduleTabPromise = page.waitForEvent("popup");
     await dialog.getByRole("button", { name: "Continuar en el módulo" }).click();
-    await expect(page).toHaveURL(/\/calendar\?coachDraft=/);
-    const panel = page.getByRole("region", { name: "Revisar reprogramación" });
+    const moduleTab = await moduleTabPromise;
+    await expect(moduleTab).toHaveURL(/\/calendar\?coachDraft=/);
+    const panel = moduleTab.getByRole("region", { name: "Revisar reprogramación" });
     await expect(panel).toBeVisible();
     await expect(panel).toContainText("ID 75");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(moduleTab.getByRole("dialog")).toHaveCount(0);
     expect(writes).toEqual([]);
     await panel.getByRole("button", { name: "Confirmar y reprogramar" }).click();
     await expect(panel).toHaveCount(0);
-    await expect(page.getByRole("status")).toContainText("Actividad reprogramada y auditada correctamente");
+    await expect(moduleTab.getByRole("status")).toContainText("Actividad reprogramada y auditada correctamente");
     expect(writes).toEqual([{ method: "POST", path: "/api/opportunities/300/coach-reschedule",
       body: { token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 } }]);
   });
@@ -5688,28 +5701,12 @@ test.describe("Mi Coach governance and workspaces", () => {
         exact: true,
       }),
     ).toBeVisible();
+    // The policy of Cliente existente is administered in the server rules, so no operation toggles are repeated here.
     await expect(
-      channelPolicy.getByText(
-        "Crea un borrador; las continuaciones completan el mismo borrador. No edita una actividad ya registrada.",
-        { exact: true },
-      ),
+      channelPolicy.getByText("Las políticas de Cliente existente ahora se administran en", { exact: false }),
     ).toBeVisible();
-    await expect(
-      channelPolicy.getByText(
-        "Propone una oportunidad nueva bajo la cuenta seleccionada; se completa y guarda en Oportunidades.",
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await expect(
-      channelPolicy.getByRole("checkbox", {
-        name: "Crear oportunidad en esta cuenta",
-      }),
-    ).not.toBeChecked();
-    await expect(
-      channelPolicy.getByRole("checkbox", {
-        name: "Vincular contacto existente a una oportunidad",
-      }),
-    ).not.toBeChecked();
+    await expect(channelPolicy.getByRole("link", { name: "Reglas del servidor" })).toHaveAttribute("href", "#mi-agent-server-rules");
+    await expect(channelPolicy.getByRole("checkbox", { name: "Crear oportunidad en esta cuenta" })).toHaveCount(0);
     await expect(consultationType).toHaveCount(0);
     await channelSelector.selectOption("coach");
     await expect(

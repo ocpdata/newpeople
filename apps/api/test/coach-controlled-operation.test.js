@@ -8,6 +8,9 @@ vi.mock("../src/db.js", () => ({
   query: vi.fn(),
   withTransaction: withTransactionMock,
 }));
+vi.mock("../src/opportunity-workspace/schema.js", () => ({
+  ensureOpportunityWorkspaceSchema: vi.fn(),
+}));
 
 import {
   CoachOperationError,

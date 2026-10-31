@@ -36,6 +36,7 @@ import { runStructuredTextResearch } from "../src/structuredWebResearch.js";
 import { createCustomerAccountAdapter } from "../src/commercial-intelligence/customer-chat-adapter.js";
 import { runCustomerDossierTurn } from "../src/commercial-intelligence/dossier/engine.js";
 import { interpretReviewedCustomerTurn } from "../src/commercial-intelligence/turn-contract-review.js";
+import { CUSTOMER_TURN_PROVIDER_VERSION } from "../src/commercial-intelligence/turn-contract.js";
 import {
   getCustomerAccountChatSession,
   getCustomerIntelligenceJob,
@@ -209,7 +210,7 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
     const result = JSON.parse(failureWrite.params[1]);
     expect(result.errorCode).toBe("CUSTOMER_B3_TIMEOUT");
     expect(result.debug.currentTurn.diagnostics.classificationFailure).toMatchObject({
-      code: "CUSTOMER_B3_TIMEOUT", contractVersion: "compact-v7", durationMs: expect.any(Number),
+      code: "CUSTOMER_B3_TIMEOUT", contractVersion: CUSTOMER_TURN_PROVIDER_VERSION, durationMs: expect.any(Number),
     });
     expect(result.debug.currentTurn.diagnostics.classificationFailure.timeoutMs).toBeLessThanOrEqual(2000);
     expect(createCustomerAccountAdapter).not.toHaveBeenCalled();

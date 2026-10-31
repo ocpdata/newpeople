@@ -101,6 +101,7 @@ describe("Coach business rules", () => {
     expect(customerRules.operationPolicy.allowedKinds).toEqual([
       ...coachRules.operationPolicy.allowedKinds,
       "create_contact",
+      "opportunity_note",
     ]);
     expect(customerRules.operationPolicy.sourceChannel).toBe(
       "customer_account",
