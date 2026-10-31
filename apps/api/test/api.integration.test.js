@@ -84,6 +84,16 @@ import {
   login,
 } from "./helpers/apiTestUtils.js";
 
+// Creating a lead only stores it now; the analysis that fills in suggestions is requested afterwards.
+async function analyzeCreatedInteraction(createResponse, token) {
+  if (createResponse.status !== 201) return createResponse;
+  const analyzed = await request(app)
+    .post(`/api/interactions/${createResponse.body.id}/analyze`)
+    .set("Authorization", `Bearer ${token}`);
+  if (analyzed.status === 200) createResponse.body = analyzed.body;
+  return createResponse;
+}
+
 describe("API integration baseline", () => {
   const cleanup = {
     stageQuestionIds: [],
@@ -9373,6 +9383,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion top-level ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .field(
         "sourceNotes",
         "Seguimiento posterior a una reunion de descubrimiento.",
@@ -9396,6 +9407,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     expect(createResponse.body.analysisStatus).toBe("created");
@@ -9436,6 +9449,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion async ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .field(
         "sourceNotes",
         "Seguimiento a discovery con necesidad confirmada y proximo paso comercial.",
@@ -9505,6 +9519,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion async failed ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .field("sourceNotes", "Seguimiento comercial con job asincrono fallido.")
       .attach(
         "files",
@@ -9554,6 +9569,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion async stale ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .field("sourceNotes", "Seguimiento comercial para invalidar snapshot.")
       .attach(
         "files",
@@ -9606,6 +9622,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion async expired ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .field("sourceNotes", "Seguimiento comercial para expirar resultado.")
       .attach(
         "files",
@@ -9657,6 +9674,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion eml ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -9681,6 +9699,8 @@ describe("API integration baseline", () => {
           contentType: "message/rfc822",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     expect(createResponse.body.analysisStatus).toBe("created");
@@ -9713,6 +9733,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion delete doc ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -9794,6 +9815,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead owner scope ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -9809,6 +9831,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
 
@@ -9882,6 +9906,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead self assign ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -9899,6 +9924,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -9981,6 +10008,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion append docs ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -9996,6 +10024,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     expect(createResponse.body.documents).toHaveLength(1);
@@ -10037,6 +10067,7 @@ describe("API integration baseline", () => {
       );
 
     expect(appendResponse.status).toBe(201);
+    await analyzeCreatedInteraction(appendResponse, token);
     expect(appendResponse.body.analysisStatus).toBe("created");
     expect(appendResponse.body.processingStatus).toBe("analyzed");
     expect(appendResponse.body.documents).toHaveLength(3);
@@ -10074,6 +10105,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion delete ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10098,7 +10130,7 @@ describe("API integration baseline", () => {
       .set("Authorization", `Bearer ${token}`);
 
     expect(deleteResponse.status).toBe(200);
-    expect(deleteResponse.body.message).toBe("Interacción eliminada");
+    expect(deleteResponse.body.message).toBe("Lead eliminado");
 
     const interactionRows = await query(
       `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
@@ -10127,6 +10159,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Interaccion delete blocked ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10144,6 +10177,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -10210,7 +10245,7 @@ describe("API integration baseline", () => {
 
     expect(deleteResponse.status).toBe(409);
     expect(deleteResponse.body.message).toBe(
-      "No puedes eliminar un lead calificado",
+      "No puedes eliminar un lead finalizado",
     );
 
     const interactionRows = await query(
@@ -10231,6 +10266,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Resolucion top-level ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10250,6 +10286,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -10537,6 +10575,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead asignado ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10553,6 +10592,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -10615,6 +10656,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead asignado con vendedor ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10631,6 +10673,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -10694,6 +10738,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead ignored resolution ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10710,6 +10755,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -10772,6 +10819,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead self only ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10846,6 +10894,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead assign any ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10861,6 +10910,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -10914,6 +10965,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead assign any keep seller ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -10929,6 +10981,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -11011,6 +11065,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${creatorToken}`)
       .field("title", `Lead assigned visibility ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11026,6 +11081,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, creatorToken);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -11105,6 +11162,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead self assigned ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11120,6 +11178,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -11326,6 +11386,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead duplicate account on resolve ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11382,6 +11443,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead duplicate contact on resolve ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11397,6 +11459,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const firstContactSuggestion = createResponse.body.suggestedContacts[0];
@@ -11464,6 +11528,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead duplicate opportunity on resolve ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11480,6 +11545,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const firstContactSuggestion = createResponse.body.suggestedContacts[0];
@@ -11548,6 +11615,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead duplicate opportunity similar ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11564,6 +11632,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const firstContactSuggestion = createResponse.body.suggestedContacts[0];
@@ -11639,6 +11709,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead recreate opportunity ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11656,6 +11727,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -11790,6 +11863,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead recreate account ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11879,6 +11953,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead recreate contact ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -11894,6 +11969,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -11985,6 +12062,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead ignore account ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12000,6 +12078,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -12057,6 +12137,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead relink account ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12072,6 +12153,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -12123,6 +12206,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead ignore contact ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12138,6 +12222,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -12209,6 +12295,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead relink contact ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12224,6 +12311,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -12289,6 +12378,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead ignore opportunity ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12306,6 +12396,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -12407,6 +12499,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead relink opportunity ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12424,6 +12517,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
@@ -12520,6 +12615,7 @@ describe("API integration baseline", () => {
       .post("/api/interactions")
       .set("Authorization", `Bearer ${token}`)
       .field("title", `Lead idempotent materialized ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
       .attach(
         "files",
         Buffer.from(
@@ -12537,6 +12633,8 @@ describe("API integration baseline", () => {
           contentType: "text/plain",
         },
       );
+
+    await analyzeCreatedInteraction(createResponse, token);
 
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
