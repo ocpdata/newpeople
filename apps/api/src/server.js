@@ -71,6 +71,7 @@ import { startSecurityTestWorker } from "./security-tests/async.js";
 import { startEvaluationWorker } from "./customer-chat-evaluations/async.js";
 import { startStaleJobReaper } from "./commercial-intelligence/stale-jobs.js";
 import { startFeedbackRetentionWorker } from "./commercial-intelligence/turn-feedback.js";
+import { startProductionMonitorWorker } from "./customer-chat-quality/production-monitor.js";
 import { ensureEvaluationAdministratorAccess } from "./customer-chat-evaluations/permissions.js";
 import { ensureDocumentacionRagPermissions } from "./documentacion-rag/permissions.js";
 import { ensureDocumentacionRagSchema } from "./documentacion-rag/schema.js";
@@ -145,6 +146,7 @@ export async function startServer() {
   startEvaluationWorker();
   startStaleJobReaper();
   startFeedbackRetentionWorker();
+  startProductionMonitorWorker();
   return server;
 }
 

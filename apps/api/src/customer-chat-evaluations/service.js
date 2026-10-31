@@ -8,6 +8,7 @@ import { getEvaluationCatalog, SMOKE_CASE_IDS } from "./catalog.js";
 import { businessImpactForCase } from "./business-impact.js";
 import { getEvaluationLibraryReadiness } from "./library-readiness.js";
 import { ensureEvaluationSchema } from "./schema.js";
+import { recordQualityRun } from "../customer-chat-quality/store.js";
 import { evaluateResponse, evaluationStepBlockReason, evaluationReferenceBlockReason, safeEvidence, summarizeCases } from "./checks.js";
 import {
   buildAuthorizedCustomerSnapshot, createCustomerAccountChatJob,
@@ -400,6 +401,28 @@ export async function processEvaluationRun(run, workerId) {
   }
   await query("UPDATE customer_chat_evaluation_runs SET status=IF(cancel_requested=1,'cancelled','completed'),finished_at=NOW(3) WHERE id=? AND worker_id=?",
     [run.id, workerId]);
+  await recordEvaluationQuality(run, settings);
+}
+
+// Only the automatic checks are scored here; human_review cases still need a person to approve them.
+async function recordEvaluationQuality(run, settings) {
+  try {
+    const [current] = await query("SELECT status FROM customer_chat_evaluation_runs WHERE id=?", [run.id]);
+    if (current?.status !== "completed") return;
+    const rows = await query("SELECT status, COUNT(*) AS total FROM customer_chat_evaluation_cases WHERE run_id=? GROUP BY status", [run.id]);
+    const counts = Object.fromEntries(rows.map((row) => [row.status, Number(row.total)]));
+    const passed = counts.human_review || 0;
+    const scored = passed + (counts.failed || 0) + (counts.environment_error || 0);
+    if (scored === 0) return;
+    await recordQualityRun({
+      source: "evaluation_module", report: { groups: { cases: { passed, total: scored } } },
+      metrics: { runId: run.id, suite: settings.suite || null, counts },
+      model: aiModelFor("commercial_intelligence.account_chat", "fast"),
+      commitSha: process.env.GIT_COMMIT || process.env.GITHUB_SHA || null, trigger: "in_app",
+    });
+  } catch (error) {
+    console.error("[customer-chat-evaluation] No fue posible registrar la calidad", { runId: run.id, message: error.message });
+  }
 }
 
 export async function processPendingEvaluations() {

@@ -62,12 +62,39 @@ Los siguientes números son resultados **históricos**, no una medición del est
 
 | Evaluación | Resultado observado | Umbral exigido |
 | --- | --- | --- |
-| Categoría y objeto, 44 casos | 43/44 (97,7%) | Al menos 95% |
-| Movimiento, 13 casos | 12/13 (92,3%) | Al menos 90% |
+| Categoría y objeto, 44 casos (el catálogo actual tiene 46) | 43/44 (97,7%) | Al menos 95%; con 46 casos, 44 o más |
+| Movimiento, 13 casos | 12/13 (92,3%) | Al menos 90% (12 de 13) |
 | Controles críticos | 9/9 | 100% |
 | Recorridos completos sintéticos | 7/7 | 100% |
 
+El resultado de categoría y objeto se midió cuando el catálogo tenía 44 categorías; hoy tiene 46 y el evaluador exige 44 aciertos o más (43/46 ya no cumple). Por eso este resultado no es comparable con una ejecución actual.
+
 Quedaron dos discrepancias: en una consulta de cotización el objeto fue `opportunity` en lugar de `quotation`, aunque conserva el lector autorizado de cotizaciones; el cambio de foco fue `new_request` en lugar de `change_focus`, ambos sin reutilizar el reporte pendiente. Estos resultados no son garantía de interpretación perfecta ni certificación sobre datos reales.
+
+## Seguimiento de la calidad en el tiempo
+
+Cada resultado se guarda en la tabla `customer_chat_quality_runs` con fecha, modelo, versión del código (commit), origen y resultado por grupo. La pestaña **Pruebas del chat** muestra el último resultado de cada fuente, una tendencia y las ejecuciones recientes en **Calidad en el tiempo**.
+
+| Fuente | Cómo se registra | Umbral |
+| --- | --- | --- |
+| Interpretación del turno (live) | `npm run quality:record --workspace=apps/api -- --source=contract --file=contrato.json` | 95% del catálogo (44 de 46), 90% de movimiento (12 de 13), 9/9 críticos |
+| Recorridos completos (live) | `npm run quality:record --workspace=apps/api -- --source=pipeline --file=pipeline.json` | 7/7 |
+| Pruebas de este laboratorio | Automático al terminar una ejecución completa | 90% de las comprobaciones automáticas |
+| Producción · últimos 7 días | Automático una vez al día (o con **Actualizar monitoreo de producción**) | 90% de turnos sin fallo, 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
+
+Cada resultado queda como **Dentro del umbral**, **Bajo el umbral** o **Bajó frente a la anterior** (cae 5 puntos o más frente a la ejecución anterior de la misma fuente, aunque cumpla el umbral). El monitoreo de producción no usa IA ni tiene costo: marca para revisión los turnos fallidos, sin evidencia, con operaciones rechazadas o con 👎 y guarda sus identificadores (no su contenido). Los registros se conservan 24 meses.
+
+### Evaluación semanal en GitHub
+
+El flujo [Customer chat quality](../.github/workflows/customer-chat-quality.yml) ejecuta las dos evaluaciones live cada lunes, a demanda o en un PR con la etiqueta `chat-evals`, con datos sintéticos y llamadas pagadas de IA.
+
+- **Interruptor en la aplicación:** en **Calidad en el tiempo** hay un botón para activar o desactivar la evaluación semanal (requiere `mi_coach.evaluations_execute`). Está **desactivada por defecto**. Antes de gastar IA, las ejecuciones programadas y las de PR consultan este interruptor; si está apagado o la aplicación no responde, se omiten. Una ejecución manual desde GitHub (Run workflow) siempre se realiza. El interruptor no cancela una ejecución que ya empezó.
+- **Envío del resultado:** al terminar, el flujo envía a la aplicación los puntajes y solo los casos fallidos (el reporte completo queda como archivo adjunto del flujo). La aplicación calcula el estado y lo compara con la ejecución anterior; enviar el mismo reporte dos veces no crea duplicados.
+- **Configuración necesaria:**
+  1. En el servidor, `CUSTOMER_CHAT_QUALITY_CI_TOKEN` con un valor aleatorio de al menos 32 caracteres. Sin él, la integración responde 503 y la pantalla muestra un aviso.
+  2. En GitHub (Settings > Secrets and variables > Actions): `CUSTOMER_CHAT_QUALITY_CI_TOKEN` (el mismo valor), `CUSTOMER_CHAT_QUALITY_API_URL` (URL pública `https` de la aplicación, sin ruta final) y `OPENAI_API_KEY`.
+- **Puntos de acceso (solo para el flujo, autenticados con el token):** `GET /api/internal/customer-chat-quality/status` y `POST /api/internal/customer-chat-quality/reports`. Solo aceptan las fuentes `contract` y `pipeline`.
+- **Uso manual:** `npm run quality:submit --workspace=apps/api -- --source=contract --file=contrato.json` envía un reporte ya generado, con `CUSTOMER_CHAT_QUALITY_API_URL` y `CUSTOMER_CHAT_QUALITY_CI_TOKEN` definidos. `quality:record` sigue disponible para guardar un reporte directamente en la base de la instancia.
 
 ## Fuentes y pruebas relacionadas
 

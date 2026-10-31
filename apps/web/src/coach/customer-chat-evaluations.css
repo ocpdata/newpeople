@@ -163,3 +163,31 @@
   .chat-evaluations-launch button,
   .chat-evaluations-comparison button { width: 100%; }
 }
+
+.chat-quality { display: grid; gap: 14px; padding: 22px; border: 1px solid var(--evaluation-border); border-radius: 12px; background: #fff; }
+.chat-quality-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.chat-quality-card { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 16px 18px; border: 1px solid var(--evaluation-border); border-radius: 12px; background: #f7fafc; }
+.chat-quality-card h4 { margin: 0; font-size: 13px; }
+.chat-quality-card.is-failed { border-color: #f2c8c3; background: #fff4f2; }
+.chat-quality-card.is-regressed { border-color: #f0dcae; background: #fffaf0; }
+.chat-quality-status { margin: 0; font-size: 12px; font-weight: 600; }
+.chat-quality-card.is-passed .chat-quality-status { color: #1f6b3a; }
+.chat-quality-card.is-failed .chat-quality-status { color: #a32e24; }
+.chat-quality-card.is-regressed .chat-quality-status { color: #8a5a00; }
+.chat-quality-groups { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.chat-quality-groups li { display: flex; justify-content: space-between; gap: 12px; }
+.chat-quality-reasons { margin: 0; padding-left: 18px; color: #a32e24; font-size: 12px; }
+.chat-quality-hint { margin: 0; color: var(--evaluation-muted); font-size: 12px; }
+.chat-quality-sparkline { width: 100%; height: 48px; }
+.chat-quality-sparkline polyline { stroke: #3b7ea1; }
+.chat-quality-sparkline circle { fill: #3b7ea1; }
+.chat-quality-sparkline circle.is-failed { fill: #a32e24; }
+.chat-quality-sparkline circle.is-regressed { fill: #c98a00; }
+.chat-quality-history summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+@media (max-width: 720px) { .chat-quality { padding: 16px; } }
+.chat-quality-weekly { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; padding: 16px 18px; border: 1px solid var(--evaluation-border); border-radius: 12px; background: #f7fafc; }
+.chat-quality-weekly.is-on { border-color: #b9dcc6; background: #f3faf5; }
+.chat-quality-weekly > div { flex: 1; min-width: 240px; display: grid; gap: 6px; }
+.chat-quality-weekly h4 { margin: 0; font-size: 13px; }
+.chat-quality-weekly p { margin: 0; color: var(--evaluation-muted); font-size: 13px; }
+.chat-quality-warning { color: #8a5a00; }

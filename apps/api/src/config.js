@@ -73,6 +73,10 @@ export const config = {
       process.env.APP_CALENDAR_REMINDER_LEAD_MINUTES || 60,
     ),
   },
+  customerChatQuality: {
+    // Shared secret that lets the weekly GitHub workflow read the on/off switch and submit reports.
+    ciToken: process.env.CUSTOMER_CHAT_QUALITY_CI_TOKEN || "",
+  },
   securityTests: {
     githubRateLimit: {
       token: process.env.GH_RATE_LIMIT_TOKEN || "",

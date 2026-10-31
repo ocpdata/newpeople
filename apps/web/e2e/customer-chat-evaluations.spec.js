@@ -4,8 +4,10 @@ const runId = "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6";
 const otherId = "77769f2d-6399-4e7e-9d4e-0601efc57f50";
 async function openEvaluations(page, { execute = true, read = true, write = false, status = "completed", failLaunch = false,
   emptyHistory = false, actionHistory = [], actionKind = "validate_stage", failActionRead = false, activityHistory,
+  quality = { days: 90, runs: [], latest: {},
+    settings: { weeklyEnabled: false, updatedAt: null, updatedBy: null, ciConfigured: true, lastCiReportAt: null } },
   library = { ready: false, eligibleDocuments: 0, reason: "Importa los documentos de BlueCat desde Pinecone." } } = {}) {
-  const requests = { launches: [], preflights: 0, reviews: [], actions: [], cancellations: 0, exports: 0 };
+  const requests = { launches: [], preflights: 0, reviews: [], actions: [], cancellations: 0, exports: 0, snapshots: 0, settings: [] };
   let runStatus = status, review = null;
   const definition = { id: "Q01-01", category: "Q01", accountId: 22, title: "Resumen de Totalplay", businessImpact: businessImpacts.none,
     steps: [{ question: "Resume Totalplay", expected: "Resumen autorizado" }] };
@@ -31,6 +33,12 @@ async function openEvaluations(page, { execute = true, read = true, write = fals
         { ...definition, id: "A05-01", category: "A05", title: "Prepara una llamada", businessImpact: businessImpacts.module },
         { ...definition, id: "A02-01", category: "A02", title: "Prepara cambiar monto", businessImpact: businessImpacts.confirm },
       ] });
+    if (path.endsWith("/quality/production-snapshot")) { requests.snapshots += 1; return json({ run: { id: 99 } }); }
+    if (path.endsWith("/quality/settings") && req.method() === "PUT") {
+      const body = req.postDataJSON(); requests.settings.push(body);
+      return json({ ...quality.settings, weeklyEnabled: body.weeklyEnabled, updatedAt: "2026-10-30T21:00:00.000Z", updatedBy: "Evaluador" });
+    }
+    if (path.endsWith("/quality")) return json(quality);
     if (path.endsWith("/preflight")) {
       requests.preflights += 1;
       return json({ instance: "Instancia actual", model: "test-model", userId: 31, providerReady: true, catalogVersion: "catalog-test",
@@ -302,4 +310,64 @@ test("evaluation keeps evidence readable and does not imply no changes when acti
   await expect(detail).toContainText("Respuesta real registrada");
   await expect(detail).toContainText("no asumas que no hubo cambios");
   await expect(detail).not.toContainText("No hay confirmaciones de negocio registradas");
+});
+
+const qualityRun = (patch) => ({ id: 1, source: "contract", status: "passed", trigger: "ci", model: "gpt-4.1-mini", commit: "abcdef1234567890",
+  groups: { catalog: { passed: 44, total: 46 }, critical: { passed: 9, total: 9 } }, metrics: {}, reasons: [], details: [],
+  evaluatedAt: "2026-10-20T15:00:00.000Z", ...patch });
+test("quality trend shows the latest result per source with its version and flags what needs attention", async ({ page }) => {
+  const earlier = qualityRun({ id: 1, evaluatedAt: "2026-10-13T15:00:00.000Z" });
+  const failing = qualityRun({ id: 2, groups: { catalog: { passed: 40, total: 46 }, critical: { passed: 8, total: 9 } }, status: "failed",
+    reasons: ["Controles críticos: 8/9; se exige 9/9."] });
+  const production = qualityRun({ id: 3, source: "production_monitor", commit: null, model: null,
+    groups: { reliability: { passed: 18, total: 20 }, satisfaction: { passed: 3, total: 4 } },
+    metrics: { turns: 20, failedTurns: 2, negativeRatings: 1, latencyP95Seconds: 14.2 } });
+  await openEvaluations(page, { quality: { days: 90, runs: [earlier, failing, production],
+    latest: { contract: failing, production_monitor: production } } });
+  const quality = page.getByRole("region", { name: "Calidad en el tiempo" });
+  await expect(quality).toContainText("Requiere atención: Interpretación del turno (live) (Bajo el umbral)");
+  await expect(quality).toContainText("Controles críticos: 8/9; se exige 9/9.");
+  await expect(quality).toContainText("abcdef1");
+  await expect(quality).toContainText("20 turnos · 2 fallidos · 1 valoraciones 👎 · p95 14 s");
+  await expect(quality.getByRole("img", { name: "Tendencia de Interpretación del turno (live)" })).toBeVisible();
+  await expect(quality.getByText("Sin ejecuciones registradas.")).toHaveCount(2);
+  await quality.getByText("Ejecuciones recientes (3)").click();
+  await expect(quality.getByRole("row")).toHaveCount(4);
+});
+test("quality trend lets only executors refresh the production snapshot", async ({ page }) => {
+  const requests = await openEvaluations(page);
+  const quality = page.getByRole("region", { name: "Calidad en el tiempo" });
+  await expect(quality.getByText("Sin ejecuciones registradas.")).toHaveCount(4);
+  await quality.getByRole("button", { name: "Actualizar monitoreo de producción" }).click();
+  await expect.poll(() => requests.snapshots).toBe(1);
+});
+test("quality trend hides the refresh button without execution permission", async ({ page }) => {
+  await openEvaluations(page, { execute: false });
+  await expect(page.getByRole("region", { name: "Calidad en el tiempo" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Actualizar monitoreo de producción" })).toHaveCount(0);
+});
+
+test("weekly evaluation switch explains its state, warns about a missing token and saves the change", async ({ page }) => {
+  const settings = { weeklyEnabled: false, updatedAt: null, updatedBy: null, ciConfigured: false, lastCiReportAt: "2026-10-27T11:00:00.000Z" };
+  const requests = await openEvaluations(page, { quality: { days: 90, runs: [], latest: {}, settings } });
+  const quality = page.getByRole("region", { name: "Calidad en el tiempo" });
+  await expect(quality).toContainText("Desactivada: GitHub no ejecutará las evaluaciones live programadas");
+  await expect(quality).toContainText("Falta configurar el token del servidor");
+  await expect(quality).toContainText("Último reporte recibido:");
+  const toggle = quality.getByRole("button", { name: "Activar evaluación semanal" });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect.poll(() => requests.settings).toEqual([{ weeklyEnabled: true }]);
+  await expect(quality).toContainText("Activada: cada lunes GitHub ejecuta las evaluaciones live");
+  await expect(quality).toContainText("por Evaluador");
+  await quality.getByRole("button", { name: "Desactivar evaluación semanal" }).click();
+  await expect.poll(() => requests.settings.length).toBe(2);
+  expect(requests.settings[1]).toEqual({ weeklyEnabled: false });
+});
+test("weekly evaluation switch is read-only without execution permission", async ({ page }) => {
+  await openEvaluations(page, { execute: false, quality: { days: 90, runs: [], latest: {},
+    settings: { weeklyEnabled: true, updatedAt: null, updatedBy: null, ciConfigured: true, lastCiReportAt: null } } });
+  const quality = page.getByRole("region", { name: "Calidad en el tiempo" });
+  await expect(quality).toContainText("Activada: cada lunes");
+  await expect(quality.getByRole("button", { name: /evaluación semanal/ })).toHaveCount(0);
 });

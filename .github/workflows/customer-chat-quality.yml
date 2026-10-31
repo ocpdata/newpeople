@@ -1,0 +1,139 @@
+name: Customer chat quality
+
+# Live evaluations of the existing-customer chat. They call a paid AI provider with synthetic CRM
+# data only, so they never run on every push. Scheduled runs and PRs labelled "chat-evals" only run
+# while the switch in the application (Mi Coach > Pruebas del chat > Calidad en el tiempo) is on.
+# A manual run always executes. Results are sent to the application, which keeps the history.
+#
+# Required secrets: OPENAI_API_KEY, CUSTOMER_CHAT_QUALITY_API_URL (public https URL of the application)
+# and CUSTOMER_CHAT_QUALITY_CI_TOKEN (same value as the server's CUSTOMER_CHAT_QUALITY_CI_TOKEN).
+on:
+  schedule:
+    - cron: "0 11 * * 1"
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+    branches: [main]
+
+concurrency:
+  group: customer-chat-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'chat-evals')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    env:
+      CUSTOMER_CHAT_QUALITY_API_URL: ${{ secrets.CUSTOMER_CHAT_QUALITY_API_URL }}
+      CUSTOMER_CHAT_QUALITY_CI_TOKEN: ${{ secrets.CUSTOMER_CHAT_QUALITY_CI_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ask the application whether the evaluation is enabled
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Ejecución manual: se ejecuta sin consultar el interruptor."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if status=$(node apps/api/scripts/submitCustomerChatQualityReport.js --status); then
+            echo "$status"
+            echo "run=${status#weeklyEnabled=}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No se pudo consultar la aplicación; se omite la evaluación."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  live-evaluations:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      CUSTOMER_CHAT_QUALITY_API_URL: ${{ secrets.CUSTOMER_CHAT_QUALITY_API_URL }}
+      CUSTOMER_CHAT_QUALITY_CI_TOKEN: ${{ secrets.CUSTOMER_CHAT_QUALITY_CI_TOKEN }}
+      DB_NAME: newpeople_crm_test
+      GIT_COMMIT: ${{ github.sha }}
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Check the AI provider secret
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::Falta el secreto OPENAI_API_KEY; las evaluaciones live no pueden ejecutarse."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare database
+        run: npm run test:db:prepare --workspace=apps/api
+
+      - name: Contract evaluation (live)
+        id: contract
+        continue-on-error: true
+        run: npm run test:customer-chat:contract:live --workspace=apps/api -- --output "$RUNNER_TEMP/contract.json"
+
+      - name: Pipeline evaluation (live)
+        id: pipeline
+        continue-on-error: true
+        run: npm run test:customer-chat:pipeline:live --workspace=apps/api -- --output "$RUNNER_TEMP/pipeline.json"
+
+      - name: Send results to the application
+        if: always()
+        run: |
+          status=0
+          for source in contract pipeline; do
+            if [ -f "$RUNNER_TEMP/$source.json" ]; then
+              npm run quality:submit --workspace=apps/api -- --source=$source --file="$RUNNER_TEMP/$source.json" || status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-chat-quality-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/contract.json
+            ${{ runner.temp }}/pipeline.json
+          if-no-files-found: warn
+
+      - name: Fail when a quality gate is not met
+        if: steps.contract.outcome == 'failure' || steps.pipeline.outcome == 'failure'
+        run: |
+          echo "::error::Una evaluación live no alcanzó su umbral; revisa los reportes adjuntos."
+          exit 1

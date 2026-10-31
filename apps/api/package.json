@@ -14,6 +14,8 @@
     "seed:demo:reset-db": "node scripts/resetDemoDb.js",
     "test:quick:calendar-create-rules": "node scripts/quickCalendarActivityCreationChecks.js",
     "report:customer-chat:metrics": "node scripts/reportCustomerChatMetrics.js",
+    "quality:record": "node scripts/recordCustomerChatQualityRun.js",
+    "quality:submit": "node scripts/submitCustomerChatQualityReport.js",
     "test:customer-chat:evaluation": "vitest run --maxWorkers=1 test/customer-account-chat-evaluation.test.js",
     "test:customer-chat:acceptance": "node scripts/evaluateCustomerChat.js",
     "test:customer-chat:bank": "node scripts/runCustomerChatAcceptance.js",

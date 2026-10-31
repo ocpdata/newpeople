@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, getApiErrorMessage } from "../api";
+import { CustomerChatQualityTrend } from "./CustomerChatQualityTrend.jsx";
 import "./customer-chat-evaluations.css";
 
 const base = "/api/mi-agent/evaluations";
@@ -217,6 +218,7 @@ export function CustomerChatEvaluations({ canExecute = false, canWrite = false }
       <span><strong>{catalog ? blockedCount : "…"}</strong> requieren preparación y se omiten con explicación</span>
       <span>Las conversaciones pueden consumir varios mensajes.</span>
     </div>
+    <CustomerChatQualityTrend canExecute={canExecute} />
     {error ? <p className="chat-evaluations-notice is-error" role="alert">{error}</p> : null}
     {!canExecute ? <p className="chat-evaluations-notice">Tienes acceso de consulta: puedes revisar el historial y sus evidencias.
       Para iniciar pruebas necesitas permiso de ejecución.</p> : null}

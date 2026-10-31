@@ -7,6 +7,8 @@ import {
 } from "./service.js";
 import { queueEvaluationProcessing } from "./async.js";
 import { confirmEvaluationAction, readEvaluationActions } from "./actions.js";
+import { getQualityOverview, setWeeklyEvaluationEnabled } from "../customer-chat-quality/store.js";
+import { runProductionMonitor } from "../customer-chat-quality/production-monitor.js";
 
 const router = express.Router();
 router.use((req, _res, next) => { requireEvaluationPermission(req.user); next(); });
@@ -15,6 +17,17 @@ const page = (value) => z.coerce.number().int().min(1).max(100000).default(1).pa
 const caseId = (value) => z.coerce.number().int().positive().parse(value);
 router.get("/catalog", async (_req, res) => res.json(await getEvaluationCatalog()));
 router.post("/preflight", async (req, res) => res.json(await preflightEvaluation(req.user)));
+router.get("/quality", async (req, res) =>
+  res.json(await getQualityOverview({ days: z.coerce.number().int().min(1).max(365).default(90).parse(req.query.days) })));
+router.put("/quality/settings", async (req, res) => {
+  requireEvaluationPermission(req.user, "execute");
+  const { weeklyEnabled } = z.object({ weeklyEnabled: z.boolean() }).strict().parse(req.body);
+  res.json(await setWeeklyEvaluationEnabled({ enabled: weeklyEnabled, userId: req.user.id }));
+});
+router.post("/quality/production-snapshot", async (req, res) => {
+  requireEvaluationPermission(req.user, "execute");
+  res.json({ run: await runProductionMonitor({ force: true, trigger: "manual" }) });
+});
 router.get("/runs", async (req, res) => res.json(await listEvaluations(req.user, page(req.query.page))));
 router.post("/runs", async (req, res) => {
   const run = await createEvaluation(req.user, req.body);

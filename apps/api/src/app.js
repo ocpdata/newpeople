@@ -18,6 +18,7 @@ import auditRoutes from "./routes.audit.js";
 import executionCommercialRoutes from "./routes.execution-commercial.js";
 import miAgentRoutes from "./routes.mi-agent.js";
 import customerChatEvaluationRoutes from "./customer-chat-evaluations/routes.js";
+import customerChatQualityCiRoutes from "./customer-chat-quality/ci-routes.js";
 import commercialTrackingRoutes from "./routes.commercial-tracking.js";
 import commercialEnablementRoutes, {
   publicRouter as publicCommercialEnablementRoutes,
@@ -112,6 +113,8 @@ export function createApp() {
     "/api/internal/security-tests/github-callback",
     githubRateLimitCallback,
   );
+
+  app.use("/api/internal/customer-chat-quality", customerChatQualityCiRoutes);
 
   app.use("/api/public", quotationPublicRoutes);
   app.use("/api/public", publicCampaignEmailRoutes);

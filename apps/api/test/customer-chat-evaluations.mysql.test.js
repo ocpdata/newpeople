@@ -42,6 +42,7 @@ import {
   awaitEvaluationChat,
 } from "../src/customer-chat-evaluations/service.js";
 import { ensureEvaluationSchema } from "../src/customer-chat-evaluations/schema.js";
+import { ensureQualitySchema } from "../src/customer-chat-quality/store.js";
 import { confirmEvaluationAction, readEvaluationActions } from "../src/customer-chat-evaluations/actions.js";
 import { ensureEvaluationAdministratorAccess } from "../src/customer-chat-evaluations/permissions.js";
 describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and worker in isolated MySQL", () => {
@@ -58,13 +59,14 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     admin = await mysql.createConnection(options); await admin.query(`CREATE DATABASE ${database}`);
     state.pool = mysql.createPool({ ...options, database, connectionLimit: 6 });
     await sql("CREATE TABLE users(id BIGINT UNSIGNED PRIMARY KEY)"); await sql("INSERT INTO users VALUES(7),(8)");
-    await ensureEvaluationSchema();
+    await ensureEvaluationSchema(); await ensureQualitySchema();
   });
   beforeEach(async () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     await sql("DELETE FROM customer_chat_evaluation_events"); await sql("DELETE FROM customer_chat_evaluation_actions");
     await sql("DELETE FROM customer_chat_evaluation_cases"); await sql("DELETE FROM customer_chat_evaluation_runs");
+    await sql("DELETE FROM customer_chat_quality_runs");
     state.snapshot.mockResolvedValue({ account: { id: 22, name: "Totalplay" },
       opportunities: [{ id: 36, name: "Hardware Refresh", amountUsd: 500000 }], contacts: [] });
     state.actor.mockResolvedValue(user); state.metrics.mockReturnValue([]);
@@ -196,7 +198,11 @@ describe.skipIf(!process.env.G06_MYSQL_TEST_SOCKET)("Evaluation persistence and 
     expect(state.chat.mock.calls[0][0].deadlineAt).toBeLessThanOrEqual(Date.now() + 90000);
     expect(state.chat.mock.calls[0][0].deadlineAt).toBeGreaterThan(Date.now());
     expect(await sql("SELECT * FROM customer_chat_evaluation_actions")).toHaveLength(0);
+    const [quality] = await sql("SELECT source, status, trigger_kind, groups_json FROM customer_chat_quality_runs WHERE source = 'evaluation_module'");
+    expect(quality).toMatchObject({ status: "passed", trigger_kind: "in_app" });
+    expect(quality.groups_json).toEqual({ cases: { passed: 1, total: 1 } });
   });
+
   it("preserves multitur n continuity and initial referenced messages", async () => {
     const { id } = await launch({ caseIds: ["SEQ06"] }); await processPendingEvaluations();
     const item = await getEvaluationCase(user, id, (await caseRows(id))[0].id);
