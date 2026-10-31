@@ -76,11 +76,9 @@ import { ensureEvaluationAdministratorAccess } from "./customer-chat-evaluations
 import { ensureDocumentacionRagPermissions } from "./documentacion-rag/permissions.js";
 import { ensureDocumentacionRagSchema } from "./documentacion-rag/schema.js";
 
-export async function startServer() {
-  validateConfig();
-  const server = app.listen(config.port, () => {
-    console.log(`API running on http://localhost:${config.port}`);
-  });
+// Creates or updates the permissions and tables the API expects. The integration tests call it too, because
+// the test database is built from schema.sql and would otherwise lack the tables created at startup.
+export async function bootstrapDatabase() {
   const autoAssignRoles = await isInitialRoleAssignmentRequired();
   await ensureCorePermissions({ autoAssignRoles });
   await ensureDocumentacionRagPermissions();
@@ -88,7 +86,6 @@ export async function startServer() {
   await ensureAccountsSchema();
   await ensureAiUsageSchema();
   await ensureAiServicesSchema();
-  await startAiServiceSettingsRefresher();
   await ensureChatbotSchema();
   await ensureInteractionPermissions({ autoAssignRoles });
   await ensureCommercialDevelopmentPermissions({ autoAssignRoles });
@@ -131,6 +128,15 @@ export async function startServer() {
   await ensureCampaignsSchema();
   await ensureCampaignEmailDispatchSchema();
   await ensureSecurityTestSchema();
+}
+
+export async function startServer() {
+  validateConfig();
+  const server = app.listen(config.port, () => {
+    console.log(`API running on http://localhost:${config.port}`);
+  });
+  await bootstrapDatabase();
+  await startAiServiceSettingsRefresher();
   await startAccountDraftAnalysisWorker();
   await startCommercialNarrativeWorker();
   await startInteractionAnalysisWorker();

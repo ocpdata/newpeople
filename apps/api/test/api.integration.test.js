@@ -1,6 +1,7 @@
 import supertest from "supertest";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { app } from "../src/app.js";
+import { bootstrapDatabase } from "../src/server.js";
 
 // La aprobacion de cotizaciones exige indicar si se aprueba con o sin IA; las pruebas
 // que solo necesitan una cotizacion aprobada usan la aprobacion humana por defecto.
@@ -112,6 +113,7 @@ describe("API integration baseline", () => {
   const ctx = {};
 
   beforeAll(async () => {
+    await bootstrapDatabase();
     const adminRole = await ensureNamedRole("Administrador");
     if (adminRole.created) cleanup.roleIds.push(adminRole.roleId);
     await ensureCorePermissions({ autoAssignRoles: true });
@@ -498,6 +500,8 @@ describe("API integration baseline", () => {
         "ninguno",
       ),
       employmentStatusId: await getFirstId("contact_employment_statuses"),
+      hierarchyLevelId: await getFirstId("contact_hierarchy_levels"),
+      influenceLevelId: await getFirstId("contact_influence_levels"),
       contactActiveStatusId: await getCatalogId(
         "contact_activation_statuses",
         "activado",
@@ -2300,6 +2304,14 @@ describe("API integration baseline", () => {
       roleIds: [roleId],
     });
     cleanup.userIds.push(userId);
+    // Creating opportunities and linking contacts is off by default for Cliente existente, so the test turns it on and restores it.
+    const { loadCoachBusinessRules, saveCoachBusinessRules } = await import("../src/coach/business-rules.js");
+    const previousKinds = (await loadCoachBusinessRules({ channel: "customer_account", process: "default" })).operationPolicy.allowedKinds;
+    await saveCoachBusinessRules({
+      user: { id: userId }, channel: "customer_account", process: "default",
+      rules: { operationPolicy: { allowedKinds: [...new Set([...previousKinds, "create_opportunity", "link_contact_to_opportunity"])] } },
+    });
+    try {
     const fixture = await createOwnedOpportunityFlowFixture(
       `${TEST_PREFIX}_customer_operation_targets`,
       {
@@ -2516,6 +2528,13 @@ describe("API integration baseline", () => {
         },
       });
     expect(foreignContactLinkProposal.status).toBe(404);
+  
+    } finally {
+      await saveCoachBusinessRules({
+        user: { id: userId }, channel: "customer_account", process: "default",
+        rules: { operationPolicy: { allowedKinds: previousKinds } },
+      });
+    }
   });
 
   test("mi coach protege y completa sesiones, jobs, handoffs y reversiones", async () => {
@@ -8611,6 +8630,21 @@ describe("API integration baseline", () => {
     expect(readAllPermissionRows).toHaveLength(1);
     const readAllPermissionId = Number(readAllPermissionRows[0].id);
 
+    // Listing accounts requires cuentas.read; the role may not carry it in the test database.
+    const readPermissionRows = await query(
+      "SELECT id FROM permissions WHERE code = 'cuentas.read' LIMIT 1",
+    );
+    const readPermissionId = Number(readPermissionRows[0].id);
+    const adminHadRead = (await query(
+      "SELECT 1 FROM role_permissions WHERE role_id = ? AND permission_id = ? LIMIT 1",
+      [adminRoleId, readPermissionId],
+    )).length > 0;
+    if (!adminHadRead) {
+      await query(
+        "INSERT INTO role_permissions (role_id, permission_id, created_at) VALUES (?, ?, NOW(3))",
+        [adminRoleId, readPermissionId],
+      );
+    }
     await query(
       "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
       [adminRoleId, readAllPermissionId],
@@ -8649,6 +8683,12 @@ describe("API integration baseline", () => {
       "INSERT INTO role_permissions (role_id, permission_id, created_at) VALUES (?, ?, NOW(3))",
       [adminRoleId, readAllPermissionId],
     );
+    if (!adminHadRead) {
+      await query(
+        "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
+        [adminRoleId, readPermissionId],
+      );
+    }
   });
 
   test("Administrador conserva acceso efectivo aunque falten permisos explicitos en role_permissions", async () => {
@@ -11497,7 +11537,7 @@ describe("API integration baseline", () => {
       );
 
     expect(resolveResponse.status).toBe(409);
-    expect(resolveResponse.body.code).toBe("CONTACT_DUPLICATE_BLOCKED");
+    expect(resolveResponse.body.code).toBe("CONTACT_DUPLICATE_REVIEW_REQUIRED");
     expect(resolveResponse.body.duplicateWarnings?.length).toBeGreaterThan(0);
   });
 
@@ -11592,7 +11632,7 @@ describe("API integration baseline", () => {
       );
 
     expect(resolveResponse.status).toBe(409);
-    expect(resolveResponse.body.code).toBe("OPPORTUNITY_DUPLICATE_BLOCKED");
+    expect(resolveResponse.body.code).toBe("OPPORTUNITY_DUPLICATE_REVIEW_REQUIRED");
     expect(resolveResponse.body.duplicateWarnings?.length).toBeGreaterThan(0);
   });
 
@@ -12859,6 +12899,8 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
+        hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+        influenceLevelId: ctx.catalogIds.influenceLevelId,
         activationStatusId: ctx.catalogIds.contactActiveStatusId,
         managerContactId: null,
         influencesContactId: null,
@@ -12921,6 +12963,8 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
+        hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+        influenceLevelId: ctx.catalogIds.influenceLevelId,
         activationStatusId: ctx.catalogIds.contactActiveStatusId,
         managerContactId: null,
         influencesContactId: null,
@@ -13015,6 +13059,8 @@ describe("API integration baseline", () => {
           purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
           relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
           employmentStatusId: ctx.catalogIds.employmentStatusId,
+          hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+          influenceLevelId: ctx.catalogIds.influenceLevelId,
           activationStatusId: ctx.catalogIds.contactActiveStatusId,
           managerContactId: null,
           influencesContactId: null,
@@ -13087,6 +13133,8 @@ describe("API integration baseline", () => {
           purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
           relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
           employmentStatusId: ctx.catalogIds.employmentStatusId,
+          hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+          influenceLevelId: ctx.catalogIds.influenceLevelId,
           activationStatusId: ctx.catalogIds.contactActiveStatusId,
           managerContactId: null,
           influencesContactId: null,
@@ -13192,6 +13240,8 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
+        hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+        influenceLevelId: ctx.catalogIds.influenceLevelId,
         activationStatusId: ctx.catalogIds.contactActiveStatusId,
         managerContactId: null,
         influencesContactId: null,
@@ -13272,6 +13322,8 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
+        hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+        influenceLevelId: ctx.catalogIds.influenceLevelId,
         activationStatusId: ctx.catalogIds.contactActiveStatusId,
         managerContactId: null,
         influencesContactId: null,
@@ -13328,6 +13380,8 @@ describe("API integration baseline", () => {
         purchaseParticipationId: ctx.catalogIds.purchaseParticipationNoneId,
         relationshipTypeId: ctx.catalogIds.relationshipTypeNoneId,
         employmentStatusId: ctx.catalogIds.employmentStatusId,
+        hierarchyLevelId: ctx.catalogIds.hierarchyLevelId,
+        influenceLevelId: ctx.catalogIds.influenceLevelId,
         activationStatusId: ctx.catalogIds.contactInactiveStatusId,
         managerContactId: null,
         influencesContactId: null,
