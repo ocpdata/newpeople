@@ -285,6 +285,7 @@ export default function MiAgentPage({
   const coachDraftSaveSignatureRef = useRef("");
   // Set while the Coach dialog shows a proposal opened from the customer chat, so the chat learns how it ended.
   const coachChatOriginRef = useRef(null);
+  const coachUndoOriginRef = useRef(null);
 
   useEffect(() => {
     const sessionId = Number(
@@ -3709,8 +3710,12 @@ export default function MiAgentPage({
                       ? "Nota registrada correctamente en la oportunidad."
                     : "Cambio guardado correctamente en el CRM.";
       }
-      if (completedOperation?.id && operation.kind !== "opportunity_note")
+      if (completedOperation?.id && operation.kind !== "opportunity_note") {
         setCoachUndoOperationId(completedOperation.id);
+        coachUndoOriginRef.current = coachChatOriginRef.current?.chatSessionId
+          ? { operationId: completedOperation.id, ...coachChatOriginRef.current }
+          : null;
+      }
       if (completedOperation) {
         setCoachPendingOperations((current) =>
           current.filter((item) => item.id !== completedOperation.id),
@@ -3821,10 +3826,17 @@ export default function MiAgentPage({
 
   async function undoCoachOperation() {
     if (!coachUndoOperationId) return;
+    // A proposal that came from the customer chat reports back so the card offers it again.
+    const origin = coachUndoOriginRef.current?.operationId === coachUndoOperationId ? coachUndoOriginRef.current : null;
     try {
       const response = await api.post(
         `/api/mi-agent/coach/operations/${coachUndoOperationId}/revert`,
+        origin ? { chatSessionId: origin.chatSessionId } : undefined,
       );
+      if (origin) {
+        customerChat.setCustomerChatOperationOutcome(origin.signature, null);
+        coachUndoOriginRef.current = null;
+      }
       if (response.data?.operation) {
         setCoachRecentOperations((current) =>
           [

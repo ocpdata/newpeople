@@ -6911,3 +6911,26 @@ test("Cliente existente deja editar en el Coach una propuesta, antes o después 
   expect(requests.persist).toHaveLength(persistedBefore);
   expect(requests.execute).toEqual([]);
 });
+
+test("Cliente existente vuelve a ofrecer una propuesta cuando se deshace en el Coach el cambio confirmado ahí", async ({ page }) => {
+  const { chat, send, requests } = await mockInChatConfirmation(page);
+  await send();
+  const actions = chat.locator(".mi-agent-customer-chat-actions");
+  const fieldCard = actions.locator("article").filter({ hasText: "Actualizar monto de Vrf 2027" });
+  await fieldCard.getByRole("button", { name: "Editar en el Coach" }).click();
+  const dialog = page.getByRole("dialog", { name: "Confirmar cambio del Coach" });
+  await dialog.getByRole("button", { name: "Confirmar y guardar" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(requests.execute[0]).toMatchObject({ chatSessionId: 920 });
+  await expect(fieldCard.getByText("Confirmado y guardado.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Mi Coach", exact: true }).click();
+  await page.getByRole("button", { name: "Conversación", exact: true }).click();
+  await page.getByRole("button", { name: "Deshacer último cambio" }).click();
+  await expect.poll(() => requests.revert.length).toBe(1);
+  expect(requests.revert[0]).toMatchObject({ chatSessionId: 920 });
+
+  await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+  await expect(fieldCard.getByText("Confirmado y guardado.")).toHaveCount(0);
+  await expect(fieldCard.getByRole("button", { name: "Revisar y confirmar aquí" })).toBeVisible();
+});
