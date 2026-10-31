@@ -524,3 +524,79 @@ export async function cleanupArtifacts({
     );
   }
 }
+
+const QUOTATION_STATUSES = [
+  ["borrador", "Borrador", "draft"], ["en_aprobacion", "En aprobacion", "pending"], ["rechazada", "Rechazada", "rejected"],
+  ["aprobada", "Aprobada", "approved"], ["enviada", "Enviada", "sent"], ["ganada", "Ganada", "won"], ["perdida", "Perdida", "lost"],
+  ["anulada", "Anulada", "cancelled"], ["aceptada", "Aceptada", "accepted"], ["no_vigente", "No vigente", "inactive"],
+];
+const QUOTATION_ACTIONS = [
+  ["crear_cotizacion", "Crear cotizacion"], ["crear_version", "Crear version"], ["ver", "Ver"], ["modificar", "Modificar"],
+  ["solicitar_aprobacion", "Solicitar aprobacion"], ["declarar_ganada", "Declarar ganada"], ["declarar_perdida", "Declarar perdida"],
+  ["declarar_anulada", "Declarar anulada"], ["enviar", "Enviar"], ["aprobar", "Aprobar"], ["rechazar", "Rechazar"],
+  ["ponerla_borrador", "Ponerla borrador"], ["aceptar", "Aceptar"],
+];
+// [status, action, permissions (suffix of cotizaciones.*)]
+const QUOTATION_ACTION_MATRIX = [
+  ["aceptada", "ver", "externo,ingreso,operacion,revision"],
+  ["anulada", "ver", "ingreso,operacion,revision"],
+  ["aprobada", "declarar_ganada", "ingreso,operacion"],
+  ["aprobada", "enviar", "operacion"],
+  ["aprobada", "ver", "externo,ingreso,operacion,revision"],
+  ["borrador", "declarar_anulada", "operacion"],
+  ["borrador", "declarar_perdida", "operacion"],
+  ["borrador", "modificar", "ingreso,operacion"],
+  ["borrador", "solicitar_aprobacion", "ingreso,operacion"],
+  ["borrador", "ver", "ingreso,operacion,revision"],
+  ["en_aprobacion", "aprobar", "ingreso,revision"],
+  ["en_aprobacion", "modificar", "revision"],
+  ["en_aprobacion", "rechazar", "revision"],
+  ["en_aprobacion", "ver", "ingreso,operacion,revision"],
+  ["enviada", "declarar_anulada", "operacion"],
+  ["enviada", "declarar_ganada", "operacion"],
+  ["enviada", "declarar_perdida", "operacion"],
+  ["enviada", "ver", "externo,ingreso,operacion,revision"],
+  ["ganada", "aceptar", "ingreso"],
+  ["ganada", "ponerla_borrador", "ingreso"],
+  ["ganada", "ver", "externo,ingreso,operacion,revision"],
+  ["no_vigente", "ver", "ingreso,operacion,revision"],
+  ["perdida", "ver", "ingreso,operacion,revision"],
+  ["rechazada", "declarar_anulada", "operacion"],
+  ["rechazada", "declarar_perdida", "operacion"],
+  ["rechazada", "modificar", "operacion"],
+  ["rechazada", "ver", "ingreso,operacion,revision"],
+];
+
+// The quotation workflow catalog and its permission matrix are configuration data that the dev database carries but
+// schema.sql does not; the permissions must already exist, so this runs after the server bootstrap.
+export async function seedQuotationWorkflowCatalog() {
+  for (const [index, [code, name, uiKey]] of QUOTATION_STATUSES.entries()) {
+    await query(
+      `INSERT INTO quotation_statuses (code, name, ui_key, display_order, is_active) VALUES (?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE name = VALUES(name), ui_key = VALUES(ui_key), display_order = VALUES(display_order), is_active = 1`,
+      [code, name, uiKey, index + 1],
+    );
+  }
+  for (const [index, [code, name]] of QUOTATION_ACTIONS.entries()) {
+    await query(
+      `INSERT INTO quotation_actions (code, name, display_order, is_active) VALUES (?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE name = VALUES(name), display_order = VALUES(display_order), is_active = 1`,
+      [code, name, index + 1],
+    );
+  }
+  for (const [status, action, permissions] of QUOTATION_ACTION_MATRIX) {
+    for (const permission of permissions.split(",")) {
+      await query(
+        `INSERT INTO quotation_action_permissions (status_id, action_id, permission_id, is_allowed)
+         SELECT qs.id, qa.id, p.id, 1
+         FROM quotation_statuses qs, quotation_actions qa, permissions p
+         WHERE qs.code = ? AND qa.code = ? AND p.code = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM quotation_action_permissions existing
+             WHERE existing.status_id = qs.id AND existing.action_id = qa.id AND existing.permission_id = p.id
+           )`,
+        [status, action, `cotizaciones.${permission}`],
+      );
+    }
+  }
+}

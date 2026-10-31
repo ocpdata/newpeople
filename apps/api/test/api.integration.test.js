@@ -76,6 +76,7 @@ import {
   createDirectProviderPriceList,
   createDirectProviderPriceItem,
   createRole,
+  seedQuotationWorkflowCatalog,
   createUser,
   ensureNamedRole,
   getCatalogId,
@@ -114,6 +115,7 @@ describe("API integration baseline", () => {
 
   beforeAll(async () => {
     await bootstrapDatabase();
+    await seedQuotationWorkflowCatalog();
     const adminRole = await ensureNamedRole("Administrador");
     if (adminRole.created) cleanup.roleIds.push(adminRole.roleId);
     await ensureCorePermissions({ autoAssignRoles: true });
