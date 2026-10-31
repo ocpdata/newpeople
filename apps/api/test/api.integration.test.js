@@ -11704,6 +11704,12 @@ describe("API integration baseline", () => {
       suffix: `${TEST_PREFIX}_recreate_opportunity_isolated`,
     });
     cleanup.contactIds.push(isolatedContactId);
+    const materializedOpportunityId = await createExistingOpportunityForLead({
+      accountId: isolatedAccountId,
+      contactId: isolatedContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_recreate_opportunity_existing`,
+    });
 
     const createResponse = await request(app)
       .post("/api/interactions")
@@ -11764,22 +11770,9 @@ describe("API integration baseline", () => {
         opportunityResolutions: [
           {
             suggestionId: firstOpportunitySuggestion.suggestionId,
-            mode: "create_new",
+            mode: "link_existing",
+            opportunityId: materializedOpportunityId,
             isPrimary: true,
-            draft: {
-              name:
-                firstOpportunitySuggestion.name ||
-                `Oportunidad Epsilon ${TEST_PREFIX}`,
-              contactId: null,
-              amountUsd: 95000,
-              closeDate: "2026-07-20",
-              businessLineId: ctx.catalogIds.businessLineId,
-              sellerUserId: ctx.sellerUserId,
-              presalesUserId: null,
-              summary:
-                firstOpportunitySuggestion.summary ||
-                "Oportunidad creada desde lead para prueba de duplicado.",
-            },
           },
         ],
       });
@@ -12375,6 +12368,12 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}.interactions.manager@example.com`,
     );
     const token = loginResponse.body.token;
+    const materializedOpportunityId = await createExistingOpportunityForLead({
+      accountId: ctx.fixtureAccountId,
+      contactId: ctx.fixtureContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_ignore_opportunity_existing`,
+    });
 
     const createResponse = await request(app)
       .post("/api/interactions")
@@ -12427,12 +12426,116 @@ describe("API integration baseline", () => {
           opportunityResolutions: [
             {
               suggestionId: firstOpportunitySuggestion.suggestionId,
+              mode: "link_existing",
+              opportunityId: materializedOpportunityId,
+              isPrimary: true,
+            },
+          ],
+        }),
+      );
+
+    expect(initialResolveResponse.status).toBe(200);
+
+    const reopenResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(initialResolveResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: initialResolveResponse.body.accountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedContacts[0].suggestionId,
+              mode: "link_existing",
+              contactId: initialResolveResponse.body.contacts[0].id,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId:
+                initialResolveResponse.body.suggestedOpportunities[0]
+                  .suggestionId,
+              mode: "ignore",
+            },
+          ],
+        }),
+      );
+
+    expect(reopenResponse.status).toBe(409);
+    expect(reopenResponse.body.message).toBe(
+      "La oportunidad sugerida ya fue materializada y no puede modificarse desde este lead",
+    );
+  });
+
+
+  test("interacciones permite ignorar una sugerencia de oportunidad que se creó como nueva", async () => {
+    const loginResponse = await login(
+      request(app),
+      `${TEST_PREFIX}.interactions.manager@example.com`,
+    );
+    const token = loginResponse.body.token;
+
+    const createResponse = await request(app)
+      .post("/api/interactions")
+      .set("Authorization", `Bearer ${token}`)
+      .field("title", `Lead ignore created opportunity ${TEST_PREFIX}`)
+      .field("leadSource", "vendedor")
+      .attach(
+        "files",
+        Buffer.from(
+          [
+            "Cuenta: Prospecto Xi Seguridad",
+            "Contacto: Xavier Diaz",
+            "Tema: Seguimiento comercial",
+            "Correo: xavier.diaz@xi.example.com",
+            "Oportunidad: Servicio gestionado Xi",
+          ].join("\n"),
+          "utf8",
+        ),
+        {
+          filename: `interaction_ignore_created_opportunity_${TEST_PREFIX}.txt`,
+          contentType: "text/plain",
+        },
+      );
+
+    await analyzeCreatedInteraction(createResponse, token);
+
+    expect(createResponse.status).toBe(201);
+    const interactionId = Number(createResponse.body.id);
+    const firstContactSuggestion = createResponse.body.suggestedContacts[0];
+    const firstOpportunitySuggestion =
+      createResponse.body.suggestedOpportunities[0];
+
+    const initialResolveResponse = await request(app)
+      .post(`/api/interactions/${interactionId}/resolve`)
+      .set("Authorization", `Bearer ${token}`)
+      .send(
+        buildInteractionResolvePayload(createResponse.body, {
+          sellerUserId: ctx.sellerUserId,
+          accountResolution: {
+            mode: "link_existing",
+            accountId: ctx.fixtureAccountId,
+          },
+          contactResolutions: [
+            {
+              suggestionId: firstContactSuggestion.suggestionId,
+              mode: "link_existing",
+              contactId: ctx.fixtureContactId,
+            },
+          ],
+          opportunityResolutions: [
+            {
+              suggestionId: firstOpportunitySuggestion.suggestionId,
               mode: "create_new",
               isPrimary: true,
               draft: {
                 name:
                   firstOpportunitySuggestion.name ||
-                  `Oportunidad Mu ${TEST_PREFIX}`,
+                  `Oportunidad Xi ${TEST_PREFIX}`,
                 contactId: null,
                 amountUsd: 87000,
                 closeDate: "2026-09-18",
@@ -12477,12 +12580,9 @@ describe("API integration baseline", () => {
         }),
       );
 
-    expect(reopenResponse.status).toBe(409);
-    expect(reopenResponse.body.message).toBe(
-      "La oportunidad sugerida ya fue materializada y no puede modificarse desde este lead",
-    );
+    // A suggestion that was created as new is not frozen: only one linked to an existing record is.
+    expect(reopenResponse.status).toBe(200);
   });
-
   test("interacciones bloquea relinkear una oportunidad ya materializada a otro registro", async () => {
     const alternateOpportunityId = await createExistingOpportunityForLead({
       accountId: ctx.fixtureAccountId,
@@ -12496,6 +12596,12 @@ describe("API integration baseline", () => {
       `${TEST_PREFIX}.interactions.manager@example.com`,
     );
     const token = loginResponse.body.token;
+    const materializedOpportunityId = await createExistingOpportunityForLead({
+      accountId: ctx.fixtureAccountId,
+      contactId: ctx.fixtureContactId,
+      actorUserId: ctx.interactionsManagerUserId,
+      suffix: `${TEST_PREFIX}_relink_opportunity_existing`,
+    });
 
     const createResponse = await request(app)
       .post("/api/interactions")
@@ -12548,20 +12654,9 @@ describe("API integration baseline", () => {
           opportunityResolutions: [
             {
               suggestionId: firstOpportunitySuggestion.suggestionId,
-              mode: "create_new",
+              mode: "link_existing",
+              opportunityId: materializedOpportunityId,
               isPrimary: true,
-              draft: {
-                name:
-                  firstOpportunitySuggestion.name ||
-                  `Oportunidad Nu ${TEST_PREFIX}`,
-                contactId: null,
-                amountUsd: 91000,
-                closeDate: "2026-10-01",
-                businessLineId: ctx.catalogIds.businessLineId,
-                sellerUserId: ctx.sellerUserId,
-                presalesUserId: null,
-                summary: "Oportunidad materializada para validar relink.",
-              },
             },
           ],
         }),
