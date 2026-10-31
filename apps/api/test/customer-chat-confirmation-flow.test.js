@@ -17,7 +17,7 @@ const COACH = "/api/mi-agent/coach/operations";
 const CI = "/api/commercial-intelligence";
 const PERMISSIONS = [
   "mi_coach.access", "mi_coach.use", "mi_coach.execute", "inteligencia_comercial.access", "inteligencia_comercial.read",
-  "cuentas.read", "oportunidades.read", "oportunidades.update",
+  "cuentas.read", "cuentas.update", "contactos.read", "contactos.update", "oportunidades.read", "oportunidades.update",
 ];
 
 // Persists, reviews and confirms real proposals through the HTTP API, exactly as the chat card does.
@@ -117,7 +117,8 @@ describe("confirmar notas y datos de una oportunidad desde el chat (base de dato
     const off = await capabilities();
     expect(off.status).toBe(200);
     expect(off.body.inChatConfirmation).toMatchObject({
-      enabled: false, kinds: ["opportunity_note", "opportunity_field"], fields: { opportunity_field: ["name", "amountUsd", "closeDate"] },
+      enabled: false, kinds: ["opportunity_note", "opportunity_field", "account_field", "contact_field"],
+      fields: { opportunity_field: ["name", "amountUsd", "closeDate"], account_field: expect.arrayContaining(["city"]), contact_field: expect.arrayContaining(["email"]) },
     });
     expect((await api().get(`${CI}/account-chat/capabilities`)).status).toBe(401);
     const body = { ...originalSettings, customerChatConfirmationEnabled: true };
@@ -227,6 +228,66 @@ describe("confirmar notas y datos de una oportunidad desde el chat (base de dato
         .send({ version: reviewed.version, idempotencyKey: "coach-key" });
       expect(viaCoach.status).toBe(200);
       expect(await amount()).toBe(51000);
+    } finally {
+      await setSwitch(true);
+    }
+  });
+
+  test("confirma y deshace un cambio de cuenta", async () => {
+    const [{ city }] = await query("SELECT city FROM accounts WHERE id = ?", [accountId]);
+    const operation = { kind: "account_field", sourceChannel: "customer_account", requiresConfirmation: true, title: "Cambiar ciudad de la cuenta",
+      accountId, field: "city", currentValue: city, value: "Puebla" };
+    const reviewed = await review(await persist(operation));
+    const response = await confirm(reviewed);
+    expect(response.status).toBe(200);
+    expect((await query("SELECT city FROM accounts WHERE id = ?", [accountId]))[0].city).toBe("Puebla");
+    const events = await query("SELECT metadata FROM coach_operation_events WHERE operation_id = ? AND event_type = 'completed'", [reviewed.id]);
+    expect(typeof events[0].metadata === "string" ? JSON.parse(events[0].metadata) : events[0].metadata).toEqual({ confirmedVia: "customer_chat" });
+    expect((await api().post(`${COACH}/${reviewed.id}/revert`).set(auth()).send({ chatSessionId })).status).toBe(200);
+    expect((await query("SELECT city FROM accounts WHERE id = ?", [accountId]))[0].city).toBe(city);
+  });
+
+  test("confirma un cambio de contacto y no un campo de catálogo", async () => {
+    const contactId = ids.contacts[0];
+    const email = `nuevo.${TEST_PREFIX}@example.com`;
+    const [{ email: before, hierarchy_level_id: level }] = await query("SELECT email, hierarchy_level_id FROM contacts WHERE id = ?", [contactId]);
+    const emailChange = { kind: "contact_field", sourceChannel: "customer_account", requiresConfirmation: true, title: "Cambiar correo del contacto",
+      contactId, field: "email", currentValue: before, value: email };
+    const reviewed = await review(await persist(emailChange));
+    expect((await confirm(reviewed)).status).toBe(200);
+    expect((await query("SELECT email FROM contacts WHERE id = ?", [contactId]))[0].email).toBe(email);
+
+    const catalogChange = { ...emailChange, title: "Cambiar nivel jerárquico", field: "hierarchyLevelId", currentValue: level, value: level };
+    const catalogOp = await persist(catalogChange);
+    const blocked = await confirm(await review(catalogOp), { idempotencyKey: "catalogo" });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.code).toBe("CHAT_CONFIRMATION_KIND_NOT_ALLOWED");
+    await api().post(`${COACH}/${catalogOp.id}/reject`).set(auth()).send({});
+  });
+
+  test("si la propuesta se abre en el Coach desde el chat, la conversación recuerda cómo terminó", async () => {
+    await setSwitch(false);
+    try {
+      const outcomeOf = async (operation) => (await query(
+        "SELECT status FROM customer_chat_operation_outcomes WHERE session_id = ? AND signature = ?",
+        [chatSessionId, chatOperationSignature(operation)]))[0]?.status || null;
+      const first = proposal({ value: 52000 });
+      const reviewed = await review(await persist(first));
+      const viaCoach = await api().post(`${COACH}/${reviewed.id}/execute`).set(auth())
+        .send({ version: reviewed.version, idempotencyKey: "coach-desde-chat", chatSessionId });
+      expect(viaCoach.status).toBe(200);
+      expect(await outcomeOf(first)).toBe("confirmed");
+
+      const second = proposal({ value: 53000 });
+      const again = await persist(second);
+      await api().post(`${COACH}/${again.id}/reject`).set(auth()).send({ reason: "no", chatSessionId });
+      expect(await outcomeOf(second)).toBe("discarded");
+
+      // Without the conversation, nothing is recorded.
+      const third = proposal({ value: 54000 });
+      const plain = await review(await persist(third));
+      await api().post(`${COACH}/${plain.id}/execute`).set(auth()).send({ version: plain.version, idempotencyKey: "coach-solo" });
+      expect(await outcomeOf(third)).toBeNull();
     } finally {
       await setSwitch(true);
     }

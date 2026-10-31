@@ -5096,7 +5096,8 @@ router.post(
         validateLeadOutcome: validateLeadCallOutcomeForCoach,
         confirmedVia,
       });
-      if (confirmedVia && operation.status === "completed") {
+      // Confirmed from the chat card, or in the Coach after being opened from the chat: the conversation remembers it.
+      if (chatSessionId && operation.status === "completed" && operation.pendingOperation?.sourceChannel === "customer_account") {
         await recordChatOperationOutcome({
           userId: req.user.id, chatSessionId, operation: operation.pendingOperation, status: "confirmed", operationId,
         });

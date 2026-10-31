@@ -6,7 +6,7 @@ const COACH = "/api/mi-agent/coach/operations";
 
 // Confirms a note or an opportunity data change without leaving the chat. Nothing is written until the
 // seller presses the confirm button, and only after the server has re-read the current value.
-export function CustomerChatOperationCard({ operation, accountId, chatSessionId, onOutcome }) {
+export function CustomerChatOperationCard({ operation, accountId, chatSessionId, onOutcome, onOpenInCoach, coachBusy = false }) {
   const [state, setState] = useState("idle");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -35,7 +35,7 @@ export function CustomerChatOperationCard({ operation, accountId, chatSessionId,
         sessionId: null,
         originChannel: "customer_account",
         originalIntent: `Propuesta desde Cliente existente: ${operation.title || operation.kind}`,
-        context: { accountId: Number(accountId || 0) || null, opportunityId: Number(operation.opportunityId || 0) || null, contactId: null, leadId: null },
+        context: { accountId: Number(accountId || 0) || null, opportunityId: Number(operation.opportunityId || 0) || null, contactId: Number(operation.contactId || 0) || null, leadId: null },
         operation: { ...operation, requiresConfirmation: true },
       });
       persistedRef.current = data?.operation;
@@ -78,8 +78,11 @@ export function CustomerChatOperationCard({ operation, accountId, chatSessionId,
     setState("idle");
   });
 
-  if (operation.outcome === "confirmed" && state !== "done") return <small>Confirmado y guardado desde el chat.</small>;
-  if (operation.outcome === "discarded") return <small>Descartado desde el chat.</small>;
+  // Editing the value is done in the Coach. A proposal already persisted here is reused, never duplicated.
+  const openInCoach = () => onOpenInCoach?.(persistedRef.current ? { ...operation, persistentId: persistedRef.current.id } : operation);
+
+  if (operation.outcome === "confirmed" && state !== "done") return <small>Confirmado y guardado.</small>;
+  if (operation.outcome === "discarded") return <small>Descartado.</small>;
 
   const currentValue = observed && Object.hasOwn(observed, "currentValue") ? observed.currentValue : operation.currentValue;
   const sameValue = !isNote && observed && String(currentValue ?? "") === String(operation.value ?? "");
@@ -89,7 +92,7 @@ export function CustomerChatOperationCard({ operation, accountId, chatSessionId,
     <div className="mi-agent-customer-operation-card">
       {state === "done" ? (
         <>
-          <p aria-live="polite">{isNote ? "Nota registrada en la oportunidad." : "Cambio guardado en la oportunidad."}</p>
+          <p aria-live="polite">{isNote ? "Nota registrada en la oportunidad." : operation.kind === "account_field" ? "Cambio guardado en la cuenta." : operation.kind === "contact_field" ? "Cambio guardado en el contacto." : "Cambio guardado en la oportunidad."}</p>
           {!isNote ? (
             <button type="button" className="mi-agent-link-button" disabled={busy} onClick={undo}>Deshacer cambio</button>
           ) : null}
@@ -114,12 +117,24 @@ export function CustomerChatOperationCard({ operation, accountId, chatSessionId,
                 <button type="button" className="mi-agent-secondary-button" disabled={busy} onClick={discard}>
                   {state === "discarding" ? "Descartando…" : "Descartar"}
                 </button>
+                {onOpenInCoach ? (
+                  <button type="button" className="mi-agent-link-button" disabled={busy || coachBusy} onClick={openInCoach}>
+                    Editar en el Coach
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : (
-            <button type="button" className="mi-agent-link-button" disabled={busy} onClick={review}>
-              {state === "reviewing" ? "Revisando el valor actual…" : "Revisar y confirmar aquí"}
-            </button>
+            <div className="mi-agent-customer-operation-actions">
+              <button type="button" className="mi-agent-link-button" disabled={busy} onClick={review}>
+                {state === "reviewing" ? "Revisando el valor actual…" : "Revisar y confirmar aquí"}
+              </button>
+              {onOpenInCoach ? (
+                <button type="button" className="mi-agent-link-button" disabled={busy || coachBusy} onClick={openInCoach}>
+                  Editar en el Coach
+                </button>
+              ) : null}
+            </div>
           )}
         </>
       )}

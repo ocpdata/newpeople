@@ -49,12 +49,23 @@ const body = (extra = {}) => ({ version: 3, idempotencyKey: "key-1", confirmedVi
 const execute = (extra) => request(app).post("/coach/operations/900/execute").send(body(extra));
 
 describe("firma y alcance de la confirmación desde el chat", () => {
-  it("solo admite notas y los campos permitidos de una oportunidad", () => {
+  it("solo admite notas y los campos de texto permitidos de oportunidad, cuenta y contacto", () => {
     expect(isInChatConfirmable(noteOperation)).toBe(true);
     for (const field of ["name", "amountUsd", "closeDate"]) expect(isInChatConfirmable({ ...fieldOperation, field })).toBe(true);
+    for (const field of ["name", "phone", "website", "city", "stateRegion", "companyDescription"]) {
+      expect(isInChatConfirmable({ ...fieldOperation, kind: "account_field", field })).toBe(true);
+    }
+    for (const field of ["firstName", "lastName", "email", "mobile", "phone", "positionTitle", "department", "city", "stateRegion"]) {
+      expect(isInChatConfirmable({ ...fieldOperation, kind: "contact_field", field })).toBe(true);
+    }
+    // Fields that hold catalog ids, or are not allowed for the kind, stay in the Coach.
+    for (const field of ["hierarchyLevelId", "relationshipTypeId", "influenceLevelId", "managerContactId", "influencesContactId"]) {
+      expect(isInChatConfirmable({ ...fieldOperation, kind: "contact_field", field })).toBe(false);
+    }
     expect(isInChatConfirmable({ ...fieldOperation, field: "stageId" })).toBe(false);
     expect(isInChatConfirmable({ ...fieldOperation, field: "" })).toBe(false);
-    for (const kind of ["account_field", "contact_field", "stage_answer", "lead_call_outcome", "activity", "create_contact"]) {
+    expect(isInChatConfirmable({ ...fieldOperation, kind: "account_field", field: "amountUsd" })).toBe(false);
+    for (const kind of ["stage_answer", "lead_call_outcome", "activity", "reschedule_activity", "create_contact", "create_opportunity", "link_contact_to_opportunity"]) {
       expect(isInChatConfirmable({ ...fieldOperation, kind })).toBe(false);
     }
     expect(isInChatConfirmable(null)).toBe(false);
@@ -77,6 +88,11 @@ describe("firma y alcance de la confirmación desde el chat", () => {
     expect(chatOperationSignature({ ...fieldOperation, field: "closeDate" })).not.toBe(base);
     expect(chatOperationSignature({ ...noteOperation, noteText: "  El cliente pidió   revisar el alcance. " })).toBe(chatOperationSignature(noteOperation));
     expect(chatOperationSignature({ ...noteOperation, noteText: "Otro texto" })).not.toBe(chatOperationSignature(noteOperation));
+    // The target follows the kind: two contacts (or a contact and an account) with the same new value are different proposals.
+    const contact = { kind: "contact_field", sourceChannel: "customer_account", accountId: 160, contactId: 5, field: "email", value: "a@x.com" };
+    expect(chatOperationSignature({ ...contact, contactId: 6 })).not.toBe(chatOperationSignature(contact));
+    expect(chatOperationSignature({ ...contact, kind: "account_field", accountId: 5 })).not.toBe(chatOperationSignature(contact));
+    expect(chatOperationSignature({ ...contact, accountId: 999 })).toBe(chatOperationSignature(contact));
   });
 });
 
@@ -109,6 +125,18 @@ describe("ejecutar una operación confirmada desde el chat", () => {
     expect(mocks.record).not.toHaveBeenCalled();
   });
 
+  it("si el Coach se abrió desde el chat, la conversación recuerda el resultado sin pasar por el interruptor", async () => {
+    mocks.settings.mockResolvedValue({ customerChatConfirmationEnabled: false });
+    await request(app).post("/coach/operations/900/execute").send({ version: 3, idempotencyKey: "key-1", chatSessionId: 55 }).expect(200);
+    expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({ confirmedVia: null }));
+    expect(mocks.settings).not.toHaveBeenCalled();
+    expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ chatSessionId: 55, status: "confirmed", operationId: 900 }));
+    mocks.record.mockClear();
+    mocks.execute.mockResolvedValue({ id: 900, status: "completed", pendingOperation: { ...fieldOperation, sourceChannel: "coach" } });
+    await request(app).post("/coach/operations/900/execute").send({ version: 3, idempotencyKey: "key-2", chatSessionId: 55 }).expect(200);
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
   it("rechaza con el interruptor apagado sin ejecutar nada", async () => {
     mocks.settings.mockResolvedValue({ customerChatConfirmationEnabled: false });
     const response = await execute().expect(403);
@@ -118,7 +146,9 @@ describe("ejecutar una operación confirmada desde el chat", () => {
   });
 
   it.each([
-    ["una cuenta", { ...fieldOperation, kind: "account_field" }, "CHAT_CONFIRMATION_KIND_NOT_ALLOWED"],
+    ["una respuesta de etapa", { ...fieldOperation, kind: "stage_answer" }, "CHAT_CONFIRMATION_KIND_NOT_ALLOWED"],
+    ["un campo de contacto con catálogo", { ...fieldOperation, kind: "contact_field", field: "hierarchyLevelId" }, "CHAT_CONFIRMATION_KIND_NOT_ALLOWED"],
+    ["un monto aplicado a una cuenta", { ...fieldOperation, kind: "account_field" }, "CHAT_CONFIRMATION_KIND_NOT_ALLOWED"],
     ["un campo no permitido", { ...fieldOperation, field: "stageId" }, "CHAT_CONFIRMATION_KIND_NOT_ALLOWED"],
     ["una propuesta del Coach", { ...fieldOperation, sourceChannel: "coach" }, "CHAT_CONFIRMATION_ORIGIN"],
   ])("rechaza %s", async (_label, operation, code) => {

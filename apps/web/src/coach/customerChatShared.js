@@ -132,7 +132,11 @@ export function isInChatConfirmable(operation, capabilities) {
   return !fields || fields.includes(String(operation.field || ""));
 }
 
-export const CHAT_OPERATION_FIELD_LABELS = { name: "Nombre", amountUsd: "Monto (USD)", closeDate: "Fecha de cierre" };
+export const CHAT_OPERATION_FIELD_LABELS = {
+  name: "Nombre", amountUsd: "Monto (USD)", closeDate: "Fecha de cierre", phone: "Teléfono", website: "Sitio web", city: "Ciudad",
+  stateRegion: "Estado o región", companyDescription: "Descripción", firstName: "Nombre", lastName: "Apellido", email: "Correo",
+  mobile: "Celular", positionTitle: "Puesto", department: "Área",
+};
 
 export function formatChatOperationValue(field, value) {
   if (value === null || value === undefined || value === "") return "(vacío)";

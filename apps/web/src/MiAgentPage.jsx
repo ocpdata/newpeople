@@ -1297,6 +1297,8 @@ export default function MiAgentPage({
   const coachActiveSessionRequestRef = useRef(null);
   const coachContextRevisionRef = useRef(0);
   const coachDraftSaveSignatureRef = useRef("");
+  // Set while the Coach dialog shows a proposal opened from the customer chat, so the chat learns how it ended.
+  const coachChatOriginRef = useRef(null);
 
   useEffect(() => {
     const sessionId = Number(
@@ -2496,6 +2498,10 @@ export default function MiAgentPage({
         persistedOperation,
         ...current.filter((item) => item.id !== persistedOperation.id),
       ]);
+      coachChatOriginRef.current = {
+        chatSessionId: Number(customerChat.customerChatSessionId || 0) || null,
+        signature: operation.signature || null,
+      };
       await openCoachOperationConfirmation({
         ...persistedOperation.pendingOperation,
         persistentId: persistedOperation.id,
@@ -4580,6 +4586,7 @@ export default function MiAgentPage({
   }
 
   function closeCoachOperationDraft() {
+    coachChatOriginRef.current = null;
     setCoachOperationDraft(null);
     setCoachOperationOpportunityOptionsOverride(null);
     window.requestAnimationFrame(() => coachReturnFocusRef.current?.focus());
@@ -4690,9 +4697,13 @@ export default function MiAgentPage({
         {
           version: draft.version,
           idempotencyKey: draft.idempotencyKey,
+          ...(coachChatOriginRef.current?.chatSessionId ? { chatSessionId: coachChatOriginRef.current.chatSessionId } : {}),
         },
       );
       const completedOperation = response.data?.operation;
+      if (completedOperation?.status === "completed" && coachChatOriginRef.current?.signature) {
+        customerChat.setCustomerChatOperationOutcome(coachChatOriginRef.current.signature, "confirmed");
+      }
       if ((operation.updateDraftId || operation.outcomeDraftId || operation.kind === "opportunity_note") && completedOperation?.status !== "completed") {
         throw new Error("El servidor no confirmó la ejecución del cambio. No se acredita como guardado.");
       }
@@ -4858,8 +4869,14 @@ export default function MiAgentPage({
     try {
       const response = await api.post(
         `/api/mi-agent/coach/operations/${persistentId}/reject`,
-        { reason: "Rechazada por el vendedor" },
+        {
+          reason: "Rechazada por el vendedor",
+          ...(coachChatOriginRef.current?.chatSessionId ? { chatSessionId: coachChatOriginRef.current.chatSessionId } : {}),
+        },
       );
+      if (response.data?.operation && coachChatOriginRef.current?.signature) {
+        customerChat.setCustomerChatOperationOutcome(coachChatOriginRef.current.signature, "discarded");
+      }
       if (response.data?.operation) {
         setCoachPendingOperations((current) =>
           current.filter((item) => item.id !== response.data.operation.id),
@@ -11179,7 +11196,7 @@ export default function MiAgentPage({
                       />
                     </label>
                     <label>
-                      Confirmar notas y datos de oportunidad desde el chat de Cliente existente
+                      Confirmar notas y cambios de datos (oportunidad, cuenta y contacto) desde el chat de Cliente existente
                       <input
                         type="checkbox"
                         checked={Boolean(

@@ -1176,6 +1176,8 @@ export function CustomerChatPanel({
                                       accountId={chatAccountId}
                                       chatSessionId={customerChatSessionId}
                                       onOutcome={setCustomerChatOperationOutcome}
+                                      onOpenInCoach={openCustomerChatOperation}
+                                      coachBusy={savingCoachOperation}
                                     />
                                   ) : (
                                     <button

@@ -4547,7 +4547,8 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(dialog).toHaveCount(0);
     await expect(page.getByText("Resultado del lead guardado correctamente.").first()).toBeVisible();
     expect(writes).toHaveLength(1);
-    expect(writes[0]).toEqual({ version: 2, idempotencyKey: expect.any(String) });
+    // Opened from the chat, so the Coach also tells the conversation how it ended.
+    expect(writes[0]).toEqual({ version: 2, idempotencyKey: expect.any(String), chatSessionId: 920 });
   });
 
   test("A07 conflicto visible no acredita guardado ni permite editar un borrador versionado en el modal", async ({ page }) => {
@@ -6693,15 +6694,15 @@ const proposedOperations = () => [
     field: "email", currentValue: "a@example.com", value: "b@example.com", signature: "sig-contact" },
 ];
 
-async function mockInChatConfirmation(page, { enabled = true, executeStatus = 200 } = {}) {
-  const requests = { persist: [], review: [], execute: [], reject: [], revert: [] };
+async function mockInChatConfirmation(page, { enabled = true, executeStatus = 200, kinds = ["opportunity_note", "opportunity_field"] } = {}) {
+  const requests = { persist: [], review: [], execute: [], reject: [], revert: [], read: [] };
   let nextId = 800;
   const { chat, send } = await mockCustomerChatRecovery(page, {
     coachApi: { withCustomerNote: true, withCustomerContactUpdate: true },
     setup: async () => {
       await page.route(capabilitiesUrl, (route) => route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({ inChatConfirmation: { enabled, kinds: ["opportunity_note", "opportunity_field"], fields: { opportunity_field: ["name", "amountUsd", "closeDate"] } } }),
+        body: JSON.stringify({ inChatConfirmation: { enabled, kinds, fields: { opportunity_field: ["name", "amountUsd", "closeDate"], contact_field: ["email", "phone"] } } }),
       }));
       await page.route("**/api/commercial-intelligence/account-chat/jobs/921", (route) => route.fulfill({
         contentType: "application/json",
@@ -6714,6 +6715,13 @@ async function mockInChatConfirmation(page, { enabled = true, executeStatus = 20
         const url = new URL(request.url());
         const body = request.postDataJSON?.() || {};
         const json = (data, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
+        const persistedMatch = /\/coach\/operations\/(\d+)$/.exec(url.pathname);
+        if (request.method() === "GET" && persistedMatch) {
+          const id = Number(persistedMatch[1]);
+          requests.read.push(id);
+          const original = requests.persist.find((_item, index) => 801 + index === id)?.operation;
+          return json({ sessionId: 70, operation: { id, version: 2, status: "ready", reviewedAt: "2026-10-30T22:00:00Z", pendingOperation: { ...original } } });
+        }
         if (request.method() === "POST" && url.pathname.endsWith("/coach/operations")) {
           requests.persist.push(body);
           nextId += 1;
@@ -6781,13 +6789,26 @@ test("Cliente existente confirma una nota y un cambio de monto sin salir del cha
   expect(requests.execute).toHaveLength(2);
 });
 
+test("Cliente existente confirma un cambio de contacto en el chat cuando el administrador amplió el alcance, y deja los campos de catálogo en el Coach", async ({ page }) => {
+  const { chat, send, requests } = await mockInChatConfirmation(page, { kinds: ["opportunity_note", "opportunity_field", "contact_field"] });
+  await send();
+  const actions = chat.locator(".mi-agent-customer-chat-actions");
+  const contactCard = actions.locator("article").filter({ hasText: "Cambiar correo del contacto" });
+  await contactCard.getByRole("button", { name: "Revisar y confirmar aquí" }).click();
+  await expect(contactCard.getByText(/Correo:/)).toContainText("b@example.com");
+  expect(requests.persist[0]).toMatchObject({ originChannel: "customer_account", context: { accountId: 160, contactId: 5 } });
+  await contactCard.getByRole("button", { name: "Confirmar cambio" }).click();
+  await expect(contactCard.getByText("Cambio guardado en el contacto.")).toBeVisible();
+  expect(requests.execute[0]).toMatchObject({ confirmedVia: "customer_chat", chatSessionId: 920 });
+});
+
 test("Cliente existente permite descartar una propuesta y no la vuelve a ofrecer", async ({ page }) => {
   const { chat, send, requests } = await mockInChatConfirmation(page);
   await send();
   const fieldCard = chat.locator(".mi-agent-customer-chat-actions article").filter({ hasText: "Actualizar monto de Vrf 2027" });
   await fieldCard.getByRole("button", { name: "Revisar y confirmar aquí" }).click();
   await fieldCard.getByRole("button", { name: "Descartar" }).click();
-  await expect(fieldCard.getByText("Descartado desde el chat.")).toBeVisible();
+  await expect(fieldCard.getByText("Descartado.")).toBeVisible();
   expect(requests.reject).toEqual([{ id: 801, reason: "Descartada desde el chat", chatSessionId: 920 }]);
   expect(requests.execute).toEqual([]);
 });
@@ -6826,9 +6847,37 @@ test("Cliente existente recuerda las propuestas ya confirmadas o descartadas al 
   await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
   await page.getByLabel("Cuenta existente").selectOption("160");
   const restored = page.getByRole("region", { name: "Chat de cuenta" }).locator(".mi-agent-customer-chat-actions");
-  await expect(restored.getByText("Confirmado y guardado desde el chat.")).toBeVisible();
-  await expect(restored.getByText("Descartado desde el chat.")).toBeVisible();
+  await expect(restored.getByText("Confirmado y guardado.")).toBeVisible();
+  await expect(restored.getByText("Descartado.")).toBeVisible();
   await expect(restored.getByRole("button", { name: "Revisar y confirmar aquí" })).toHaveCount(0);
   await expect(restored.getByRole("button", { name: "Revisar operación" })).toHaveCount(1);
   expect(chat).toBeTruthy();
+});
+
+test("Cliente existente deja editar en el Coach una propuesta, antes o después de revisarla, sin duplicarla", async ({ page }) => {
+  const { chat, send, requests } = await mockInChatConfirmation(page);
+  await send();
+  const actions = chat.locator(".mi-agent-customer-chat-actions");
+  const fieldCard = actions.locator("article").filter({ hasText: "Actualizar monto de Vrf 2027" });
+  const noteCard = actions.locator("article").filter({ hasText: "Registrar nota en Vrf 2027" });
+  // Only the two kinds the card handles offer the edit button; the others already go straight to the Coach.
+  await expect(actions.getByRole("button", { name: "Editar en el Coach" })).toHaveCount(2);
+
+  // Before reviewing: the proposal is prepared for the Coach and nothing is written.
+  await noteCard.getByRole("button", { name: "Editar en el Coach" }).click();
+  await expect(page.getByRole("dialog", { name: "Confirmar cambio del Coach" })).toBeVisible();
+  expect(requests.persist).toHaveLength(1);
+  expect(requests.persist[0]).toMatchObject({ originChannel: "customer_account", operation: { kind: "opportunity_note" } });
+  expect(requests.execute).toEqual([]);
+  await page.getByRole("dialog", { name: "Confirmar cambio del Coach" }).getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByRole("dialog", { name: "Confirmar cambio del Coach" })).toHaveCount(0);
+
+  // After reviewing in the chat: the very same persisted operation is opened instead of creating another.
+  await fieldCard.getByRole("button", { name: "Revisar y confirmar aquí" }).click();
+  await expect(fieldCard.getByText(/Monto \(USD\):/)).toBeVisible();
+  const persistedBefore = requests.persist.length;
+  await fieldCard.getByRole("button", { name: "Editar en el Coach" }).click();
+  await expect.poll(() => requests.read.length).toBe(1);
+  expect(requests.persist).toHaveLength(persistedBefore);
+  expect(requests.execute).toEqual([]);
 });

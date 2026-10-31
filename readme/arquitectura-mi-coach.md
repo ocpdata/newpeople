@@ -200,7 +200,7 @@ Estas reglas aplican a los tres chats:
 
 Las operaciones incluyen `sourceChannel` para impedir que una propuesta sea ejecutada desde otro canal.
 
-La paridad de herramientas de lectura no implica paridad de escritura: cada canal conserva una lista de operaciones permitidas, sus permisos de dominio y su flujo de confirmacion. Cliente existente no ejecuta escrituras directamente desde el chat.
+La paridad de herramientas de lectura no implica paridad de escritura: cada canal conserva una lista de operaciones permitidas, sus permisos de dominio y su flujo de confirmacion. Cliente existente no ejecuta escrituras desde un mensaje del chat; solo, si un administrador lo activa, confirma notas y cambios de texto de oportunidad, cuenta y contacto desde una tarjeta, con las mismas comprobaciones del Coach (véase [alcance](./chat-cliente-existente-alcance.md#confirmar-notas-y-cambios-de-datos-desde-el-chat)).
 
 ## 8. Contrato de operaciones
 
