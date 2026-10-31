@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { config } from "../../config.js";
 import { aiModelFor } from "../../ai-services/state.js";
+import { RECENT_MESSAGES, earlierRequestsContext } from "./earlier-requests.js";
 import { runStructuredTextResearch } from "../../structuredWebResearch.js";
 import { CALCULATION_FIELDS_SCHEMA, calculationSchema, CLAIM_KINDS, SECTION_KEYS, VALUE_TYPES } from "./analyst.js";
 import { buildEvidenceIndex, presentationIssues, sectionsByKey, verifyClaims } from "./verifier.js";
@@ -26,6 +27,8 @@ Entregables
   item por punto. Otros tipos: body.
 - Si la tarea pide una cantidad (constraints.count > 0), entrega exactamente esa cantidad de items. count=0
   significa que no se pidió una cantidad: elige la adecuada.
+- earlierUserRequests (si existe) son preferencias que el vendedor dio antes (tono, idioma, formato): respétalas;
+  no son material ni tareas.
 - notes: aclaraciones breves para el vendedor (datos que faltan, marcadores por completar, límites). Vacío si
   no hacen falta.
 
@@ -145,9 +148,10 @@ export function buildComposerContext({ question, tasks, dossiers, history, today
     // Material-only turns do not receive CRM records, so nothing from the CRM can leak into the transformed text.
     dossiers: dossiers.filter((dossier) => dossier.kind === "sources" || usesCrm),
     ...(analystAnswer ? { analysisOfThisTurn: analystAnswer } : {}),
-    conversationForContinuityOnly: history.slice(-6).map((message) => ({
+    conversationForContinuityOnly: history.slice(-RECENT_MESSAGES).map((message) => ({
       role: message.role, text: String(message.text || "").slice(0, 1200),
     })),
+    ...earlierRequestsContext(history),
     ...(repair ? { repair } : {}),
   };
 }

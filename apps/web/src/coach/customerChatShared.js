@@ -112,3 +112,15 @@ export function removeLastSellerMessage(messages, question) {
   }
   return messages;
 }
+
+// Citation markers are placed by character position, so they are only used while the answer is the very text
+// they were computed on (the end of each anchor must still end with its stored quote).
+export function validCitationAnchors(answer, anchors, citationCount) {
+  const text = String(answer || "");
+  return (Array.isArray(anchors) ? anchors : []).filter((anchor) =>
+    Number.isInteger(anchor?.start) && Number.isInteger(anchor?.end) && anchor.start < anchor.end &&
+    anchor.end <= text.length && typeof anchor.quote === "string" && anchor.quote.length > 0 &&
+    text.slice(anchor.end - anchor.quote.length, anchor.end) === anchor.quote &&
+    Array.isArray(anchor.citations) && anchor.citations.length > 0 &&
+    anchor.citations.every((number) => Number.isInteger(number) && number >= 1 && number <= citationCount));
+}

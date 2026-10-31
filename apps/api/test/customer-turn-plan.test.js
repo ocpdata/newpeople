@@ -35,6 +35,17 @@ describe("plan del turno", () => {
     expect(result.plan.tasks[3].dependsOn).toEqual(["t2"]);
   });
 
+  it("acepta que una restricción cite un pedido anterior del vendedor, pero no la evidencia de la tarea", () => {
+    const withEarlier = (patch, earlierRequests) => validate(plan([task({
+      type: "compose", kind: "email", evidence: "redacta un correo a Kimberly", ...patch,
+    })]), { earlierRequests });
+    const constrained = { constraints: { ...DEFAULT_CONSTRAINTS, excludedSources: ["library"], quotes: ["no uses la biblioteca"] } };
+    expect(withEarlier(constrained, []).issues.join(" ")).toMatch(/quotes contiene fragmentos que no están en el mensaje/);
+    expect(withEarlier(constrained, ["Para esta conversación, no uses la biblioteca"]).issues).toEqual([]);
+    expect(withEarlier({ evidence: "habla en inglés" }, ["habla en inglés"]).issues.join(" "))
+      .toMatch(/evidence debe ser un fragmento literal del mensaje/);
+  });
+
   it("rechaza tipos incoherentes, evidencia inventada, IDs ajenos y dependencias hacia adelante", () => {
     const issues = validate(plan([
       task({ kind: "email" }),

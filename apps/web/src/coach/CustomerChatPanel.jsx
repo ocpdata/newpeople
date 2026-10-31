@@ -3,6 +3,7 @@ import "./customer-chat-a11y.css";
 import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../../shared/document-formats.js";
 import { CustomerChatAnswer } from "./CustomerChatAnswer";
 import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
+import { CustomerChatHistory } from "./CustomerChatHistory";
 import { CustomerChatFeedback } from "./CustomerChatFeedback";
 import {
   CustomerChatDebugFlow,
@@ -21,6 +22,7 @@ import {
   formatDate,
   formatFileSize,
   validateChatAttachment,
+  validCitationAnchors,
 } from "./customerChatShared";
 
 export function CustomerChatPanel({
@@ -49,6 +51,9 @@ export function CustomerChatPanel({
     customerChatPublicResearch,
     setCustomerChatPublicResearch,
     startNewCustomerChat,
+    resumeCustomerChat,
+    customerAccountId: chatAccountId,
+    customerChatSessionId,
     showCustomerChatFoundation,
     hasCustomerChatFoundation,
     updateCustomerChatFoundationVisibility,
@@ -79,6 +84,17 @@ export function CustomerChatPanel({
     const problem = validateChatAttachment(file);
     setAttachmentError(problem);
     if (!problem) setCustomerChatAttachment(file || null);
+  }
+  // A marker in the answer opens the evidence list of that message and points to the cited record.
+  function selectCitation(targetId) {
+    const item = document.getElementById(targetId);
+    if (!item) return;
+    const details = item.closest("details");
+    if (details) details.open = true;
+    item.scrollIntoView?.({ block: "nearest" });
+    item.focus({ preventScroll: true });
+    item.setAttribute("data-highlight", "true");
+    window.setTimeout(() => item.removeAttribute("data-highlight"), 2500);
   }
   const turnNoticeRef = useRef(null);
   const previousTurnStatusRef = useRef(null);
@@ -220,6 +236,16 @@ export function CustomerChatPanel({
                 </label>
               </div>
             </div>
+            {hasCustomerContext ? (
+              <CustomerChatHistory
+                key={chatAccountId}
+                accountId={chatAccountId}
+                currentSessionId={customerChatSessionId}
+                disabled={customerChatLoading || customerChatSessionLoading}
+                opportunityNames={Object.fromEntries((customerFocusOptions.opportunities || []).map((item) => [item.id, item.name]))}
+                onResume={resumeCustomerChat}
+              />
+            ) : null}
             <form
               className={`mi-agent-coach-form${dragActive ? " is-drag-active" : ""}`}
               onSubmit={(event) => {
@@ -588,6 +614,10 @@ export function CustomerChatPanel({
                             message.trendMetadata?.table || message.trendMetadata?.tables?.length || message.scenarioMetadata?.tables?.length
                             ? String(message.answer || "").split("\n").filter((line) => !line.startsWith("|")).join("\n")
                             : message.answer}
+                        citationAnchors={validCitationAnchors(message.answer, message.citationAnchors, message.dossierCitations?.length || 0)}
+                        citationLabels={(message.dossierCitations || []).map((citation) => citation.label)}
+                        citationIdPrefix={`message-${index}`}
+                        onCitationSelect={selectCitation}
                       />
                       <CustomerChatCopyButton text={message.answer} />
                       {message.jobId ? (
@@ -624,8 +654,9 @@ export function CustomerChatPanel({
                         <details className="mi-agent-dossier-citations">
                           <summary>Evidencia del CRM citada ({message.dossierCitations.length})</summary>
                           <ul>
-                            {message.dossierCitations.map((citation) => (
-                              <li key={citation.evidenceId}>
+                            {message.dossierCitations.map((citation, citationIndex) => (
+                              <li key={citation.evidenceId} id={`cita-message-${index}-${citationIndex + 1}`} tabIndex={-1}>
+                                <span className="mi-agent-dossier-citation-number">[{citationIndex + 1}]</span>{" "}
                                 <strong>{citation.label}</strong>
                                 {citation.detail ? <span> · {citation.detail}</span> : null}
                                 {citation.date ? <span> · {String(citation.date).slice(0, 10)}</span> : null}

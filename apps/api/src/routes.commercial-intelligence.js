@@ -78,6 +78,7 @@ import {
   getCustomerAccountChatDiagnosticSession,
   listCustomerAccountChatDiagnostics,
   closeCustomerChatDiagnostic,
+  listCustomerAccountChatSessions,
   processCustomerAccountChatJob,
   updateCustomerIntelligenceFindingStatus,
   updateMiCoachGovernanceSettings,
@@ -893,6 +894,25 @@ router.get(
 );
 
 router.get(
+  "/account-chat/sessions",
+  requirePermission("inteligencia_comercial.read"),
+  async (req, res) => {
+    const parsed = z.object({
+      accountId: z.coerce.number().int().positive(),
+      page: z.coerce.number().int().positive().max(1000).optional().default(1),
+    }).safeParse(req.query || {});
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Solicitud invalida", issues: parsed.error.issues });
+    }
+    try {
+      return res.json(await listCustomerAccountChatSessions({ user: req.user, ...parsed.data }));
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cargar las conversaciones anteriores");
+    }
+  },
+);
+
+router.get(
   "/account-chat/sessions/:sessionId",
   requirePermission("inteligencia_comercial.read"),
   async (req, res) => {
@@ -900,9 +920,11 @@ router.get(
     if (!Number.isInteger(sessionId) || sessionId <= 0) {
       return res.status(400).json({ message: "Sesion invalida" });
     }
+    const limit = z.coerce.number().int().positive().max(80).safeParse(req.query?.limit);
     const session = await getCustomerAccountChatSession({
       user: req.user,
       sessionId,
+      ...(limit.success ? { limit: limit.data } : {}),
     });
     if (!session) {
       return res.status(404).json({ message: "Chat de cuenta no encontrado" });

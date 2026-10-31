@@ -2158,7 +2158,7 @@ async function mockCustomerChatRecovery(page, {
   await page.addInitScript(() => {
     window.sessionStorage.setItem("mi-agent-customer-chat-session:160", "920");
   });
-  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -2829,7 +2829,7 @@ test("Cliente existente espera el historial antes de enviar y no permite que bor
   let release;
   const heldHistory = new Promise((resolve) => { release = resolve; });
   let historyRequested = false;
-  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", async (route) => {
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", async (route) => {
     historyRequested = true;
     await heldHistory;
     await route.fulfill({
@@ -2857,7 +2857,7 @@ test("Cliente existente espera el historial antes de enviar y no permite que bor
 
 test("Cliente existente desplaza el hilo para que la respuesta nueva quede visible", async ({ page }) => {
   const { state, chat, answer, send } = await mockCustomerChatRecovery(page);
-  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -2939,7 +2939,7 @@ test("Cliente existente no revive un job antiguo si se inició otra conversació
 
 test("Cliente existente muestra errores de historial sin borrar la sesión y permite recargarla", async ({ page }) => {
   const { chat } = await mockCustomerChatRecovery(page);
-  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", (route) =>
     route.fulfill({
       status: 503, contentType: "application/json",
       body: JSON.stringify({ message: "No se pudo cargar el historial" }),
@@ -2951,8 +2951,8 @@ test("Cliente existente muestra errores de historial sin borrar la sesión y per
   expect(await page.evaluate(() =>
     sessionStorage.getItem("mi-agent-customer-chat-session:160"),
   )).toBe("920");
-  await page.unroute("**/api/commercial-intelligence/account-chat/sessions/920");
-  await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+  await page.unroute("**/api/commercial-intelligence/account-chat/sessions/920*");
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", (route) =>
     route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
@@ -4189,7 +4189,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     await page.addInitScript(() => {
       window.sessionStorage.setItem("mi-agent-customer-chat-session:160", "920");
     });
-    await page.route("**/api/commercial-intelligence/account-chat/sessions/920", (route) =>
+    await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", (route) =>
       route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({
@@ -6555,4 +6555,125 @@ test.describe("Mi Coach governance and workspaces", () => {
       ),
     ).toBe(true);
   });
+});
+
+const isSessionList = (url) => url.pathname === "/api/commercial-intelligence/account-chat/sessions";
+
+test("Cliente existente lista las conversaciones anteriores de la cuenta y retoma una", async ({ page }) => {
+  const { chat } = await mockCustomerChatRecovery(page);
+  const listRequests = [];
+  await page.route(isSessionList, (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const url = new URL(route.request().url());
+    listRequests.push(Object.fromEntries(url.searchParams));
+    const second = url.searchParams.get("page") === "2";
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(second
+        ? { page: 2, hasMore: false, sessions: [{ id: 910, title: "Resumen de la cuenta", messageCount: 4, opportunityId: null, updatedAt: "2026-10-01T15:00:00.000Z" }] }
+        : { page: 1, hasMore: true, sessions: [
+          { id: 920, title: "¿Cuál es el monto de la oportunidad?", messageCount: 2, opportunityId: null, updatedAt: "2026-10-20T15:00:00.000Z" },
+          { id: 930, title: "Prepara un correo para la reunión", messageCount: 6, opportunityId: null, updatedAt: "2026-10-18T15:00:00.000Z" },
+        ] }),
+    });
+  });
+  let resumedLimit = null;
+  await page.route("**/api/commercial-intelligence/account-chat/sessions/930*", (route) => {
+    resumedLimit = new URL(route.request().url()).searchParams.get("limit");
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ session: { id: 930, accountId: 160, feedback: [], history: [
+        { role: "user", text: "Prepara un correo para la reunión" },
+        { role: "assistant", text: "Aquí tienes un borrador del correo." },
+      ] } }),
+    });
+  });
+  await chat.getByText("Conversaciones anteriores", { exact: true }).click();
+  await expect(chat.getByRole("button", { name: /¿Cuál es el monto de la oportunidad\?/ })).toBeDisabled();
+  await expect(chat).toContainText("2 mensajes · abierta ahora");
+  expect(listRequests[0]).toMatchObject({ accountId: "160", page: "1" });
+  await chat.getByRole("button", { name: "Ver las más antiguas" }).click();
+  await expect(chat.getByRole("button", { name: /Resumen de la cuenta/ })).toBeVisible();
+  await expect(chat.getByRole("button", { name: "Ver las más antiguas" })).toHaveCount(0);
+  await chat.getByRole("button", { name: /Prepara un correo para la reunión/ }).click();
+  await expect(chat.getByText("Aquí tienes un borrador del correo.", { exact: true })).toBeVisible();
+  expect(resumedLimit).toBe("40");
+  expect(await page.evaluate(() => window.sessionStorage.getItem("mi-agent-customer-chat-session:160"))).toBe("930");
+  await expect(chat.getByText("¿A qué oportunidad te refieres?", { exact: true })).toHaveCount(0);
+});
+
+test("Cliente existente avisa cuando no hay conversaciones anteriores o no se pueden cargar", async ({ page }) => {
+  const { chat } = await mockCustomerChatRecovery(page);
+  let fail = false;
+  await page.route(isSessionList, (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return fail
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "Servicio no disponible" }) })
+      : route.fulfill({ contentType: "application/json", body: JSON.stringify({ page: 1, hasMore: false, sessions: [] }) });
+  });
+  const summary = chat.getByText("Conversaciones anteriores", { exact: true });
+  await summary.click();
+  await expect(chat.getByText("Aún no hay conversaciones guardadas de esta cuenta.")).toBeVisible();
+  await summary.click();
+  fail = true;
+  await summary.click();
+  await expect(chat.getByText("Servicio no disponible")).toBeVisible();
+});
+
+test("Cliente existente marca en la respuesta de qué registro sale cada dato y abre la evidencia al pulsar el marcador", async ({ page }) => {
+  const { chat, send } = await mockCustomerChatRecovery(page);
+  const first = "La orden de compra sigue prevista.";
+  const second = "No consta como recibida, y el contacto es **Ana Pérez**.";
+  const answer = `${first} ${second}`;
+  const dossierCitations = [
+    { evidenceId: "act51", label: "Actividad: Llamada de confirmación", excerpt: "Se procederá con la orden de compra" },
+    { evidenceId: "contact7", label: "Contacto Ana Pérez", excerpt: "Compras" },
+  ];
+  const citationAnchors = [
+    { start: 0, end: first.length, quote: first, citations: [1] },
+    { start: first.length + 1, end: answer.length, quote: second.slice(-60), citations: [1, 2] },
+  ];
+  let anchors = citationAnchors;
+  let text = answer;
+  await page.route("**/api/commercial-intelligence/account-chat/jobs/921", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ job: { id: 921, accountId: 160, status: "completed", result: {
+      answer: text, responseType: "informational", presentation: { status: "completed", engine: "dossier" },
+      dossierCitations, citationAnchors: anchors,
+    } } }),
+  }));
+  await send();
+  const answerBox = chat.locator(".customer-chat-answer").last();
+  await expect(answerBox).toContainText(first);
+  const markers = answerBox.locator("a.customer-chat-citation-marker");
+  await expect(markers).toHaveText(["[1]", "[1]", "[2]"]);
+  await expect(answerBox.getByRole("link", { name: "Fuente 2: Contacto Ana Pérez" })).toBeVisible();
+  await expect(answerBox.locator("strong")).toHaveText("Ana Pérez");
+  const citations = chat.locator(".mi-agent-dossier-citations").last();
+  await expect(citations.getByText("Se procederá con la orden de compra")).toBeHidden();
+  await answerBox.getByRole("link", { name: "Fuente 2: Contacto Ana Pérez" }).click();
+  await expect(citations.getByText("Compras")).toBeVisible();
+  await expect(citations.locator("li[data-highlight='true']")).toContainText("Contacto Ana Pérez");
+  await expect(citations.locator("li").first()).toContainText("[1]");
+  await expect(page).not.toHaveURL(/#cita-/);
+
+  // A restored conversation keeps its markers, but never when they were computed on a different text.
+  const restore = async (savedAnchors) => {
+    await page.route("**/api/commercial-intelligence/account-chat/sessions/920*", (route) => route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ session: { id: 920, accountId: 160, feedback: [], history: [
+        { role: "user", text: "¿Cómo va la orden de compra?" },
+        { role: "assistant", text: answer, dossierCitations, citationAnchors: savedAnchors },
+      ] } }),
+    }));
+    await page.reload();
+    await page.getByRole("button", { name: "Cliente existente", exact: true }).click();
+    await page.getByLabel("Cuenta existente").selectOption("160");
+    const restored = page.getByRole("region", { name: "Chat de cuenta" });
+    await expect(restored.locator(".customer-chat-answer").filter({ hasText: first })).toHaveCount(1);
+    return restored.locator("a.customer-chat-citation-marker");
+  };
+  await expect(await restore(citationAnchors)).toHaveCount(3);
+  await expect(await restore([{ start: 0, end: first.length, quote: "otro texto distinto", citations: [1] }])).toHaveCount(0);
+  await expect(await restore([{ start: 0, end: first.length, quote: first, citations: [9] }])).toHaveCount(0);
 });

@@ -2273,6 +2273,8 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && message.stageMetadata ? { stageMetadata: message.stageMetadata } : {}),
       ...(message.role === "assistant" && Array.isArray(message.dossierCitations)
         ? { dossierCitations: message.dossierCitations.slice(0, 40) } : {}),
+      ...(message.role === "assistant" && Array.isArray(message.citationAnchors)
+        ? { citationAnchors: message.citationAnchors.slice(0, 60) } : {}),
       ...(message.role === "assistant" && Array.isArray(message.opportunityOptions)
         ? { opportunityOptions: message.opportunityOptions.slice(0, 10) } : {}),
     }));
@@ -2336,6 +2338,8 @@ export function appendCustomerAccountChatHistory(
           ...(assistantMetadata.stageMetadata ? { stageMetadata: assistantMetadata.stageMetadata } : {}),
           ...(Array.isArray(assistantMetadata.dossierCitations)
             ? { dossierCitations: assistantMetadata.dossierCitations.slice(0, 40) } : {}),
+          ...(Array.isArray(assistantMetadata.citationAnchors)
+            ? { citationAnchors: assistantMetadata.citationAnchors.slice(0, 60) } : {}),
           ...(Array.isArray(assistantMetadata.opportunityOptions)
             ? { opportunityOptions: assistantMetadata.opportunityOptions.slice(0, 10) } : {}),
         }

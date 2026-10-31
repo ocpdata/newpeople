@@ -396,12 +396,45 @@ oportunidad, también se actualiza la oportunidad del contexto para que las
 acciones posteriores del recorrido actual usen la misma. La memoria de turno
 del recorrido actual se descarta para no arrastrar categorías antiguas.
 
+**Pedidos anteriores del vendedor.** Los modelos ven los últimos 6 mensajes.
+Lo que el vendedor pidió antes de esa ventana (por ejemplo «responde en
+inglés» o «sin fuentes públicas») llega como `earlierUserRequests`: hasta 10
+mensajes suyos, de 200 caracteres como máximo y sin las respuestas del chat
+([earlier-requests.js](../apps/api/src/commercial-intelligence/dossier/earlier-requests.js)).
+Sirve para respetar restricciones y preferencias; no es evidencia ni se
+vuelve a ejecutar como tarea. El enrutador puede citar ese texto en
+`constraints.quotes` (se valida contra el mensaje actual más estos pedidos);
+la evidencia de cada tarea y los filtros de registros siguen exigiendo el
+mensaje actual. Es un resumen determinista, sin una llamada adicional al
+modelo.
+
 **Interfaz.** Con el motor activo, el chat muestra el
 selector «Oportunidad» con «Toda la cuenta» y las oportunidades visibles,
 obtenidas con `GET /api/commercial-intelligence/account-chat/focus-options`.
 El foco viaja en cada pregunta como `focusOpportunityId`. Cada respuesta
 incluye la evidencia del CRM citada, desplegable, y un aviso propio cuando
 parte de la respuesta no se pudo verificar.
+
+**Marcadores de cita en el texto.** Además de la lista, cada oración de la
+respuesta del analista puede llevar marcadores numerados ([1], [2]) que
+apuntan a la evidencia de la lista. El servidor los calcula sin pedir nada
+nuevo al modelo ([citation-anchors.js](../apps/api/src/commercial-intelligence/dossier/citation-anchors.js)):
+une cada afirmación verificada (texto, valores estructurados y registros que
+cita) con la oración del texto a la que más se parece, comparando palabras
+y los valores en distintos formatos (importes, fechas). Si ninguna oración
+coincide con claridad, no se marca: un marcador equivocado es peor que
+ninguno. La respuesta guarda `citationAnchors` (posición, fragmento final de
+la oración y números de cita); el chat solo los usa mientras el texto sea
+exactamente aquel sobre el que se calcularon. Pulsar un marcador abre la
+evidencia y resalta el registro. Las respuestas anteriores a este cambio y
+las redacciones (correos, agendas) no llevan marcadores.
+
+**Historial de conversaciones.** `GET /api/commercial-intelligence/account-chat/sessions?accountId=N&page=P`
+lista las conversaciones propias de la cuenta (título tomado del primer
+mensaje, fecha, número de mensajes), de la más reciente a la más antigua, y
+exige acceso vigente a la cuenta. En el chat, «Conversaciones anteriores»
+permite retomar una: se carga su historial (hasta 40 mensajes; el servidor
+devuelve 8 si no se pide un límite con `?limit=`, máximo 80) y su contexto.
 
 **Trazas.** La traza de calidad incluye `dossierEngine`: decisión del
 enrutador, secciones y tamaño de cada expediente, duración de cada llamada,

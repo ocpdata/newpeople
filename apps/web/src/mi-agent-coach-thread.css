@@ -1112,3 +1112,13 @@
   gap: 0.5rem;
   margin-top: 0.75rem;
 }
+
+.mi-agent-customer-chat-history { margin: 0 0 12px; border: 1px solid #dbe5ea; border-radius: 10px; background: #f8fafc; }
+.mi-agent-customer-chat-history > summary { cursor: pointer; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #173b52; }
+.mi-agent-customer-chat-history-body { display: grid; gap: 8px; padding: 0 14px 14px; }
+.mi-agent-customer-chat-history-body ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; max-height: 280px; overflow-y: auto; }
+.mi-agent-customer-chat-history-body li button { display: grid; gap: 2px; width: 100%; padding: 10px 12px; border: 1px solid #dbe5ea; border-radius: 8px; background: #fff; color: #173b52; text-align: left; cursor: pointer; }
+.mi-agent-customer-chat-history-body li button:disabled { cursor: default; background: #eef5f9; }
+.mi-agent-customer-chat-history-body li strong { font-size: 13px; overflow-wrap: anywhere; }
+.mi-agent-customer-chat-history-body li span { color: #536977; font-size: 12px; }
+.mi-agent-customer-chat-history-hint { margin: 0; color: #536977; font-size: 12px; }

@@ -431,6 +431,13 @@ describe("motor de expedientes", () => {
     expect(result).toMatchObject({ handled: true, response: { responseType: "informational", presentation: { status: "completed", engine: "dossier" } } });
     expect(result.response.dossierCitations.map((citation) => citation.label)).toEqual(
       expect.arrayContaining(["Oportunidad Sealpath", "Cotización 78 · versión 1"]));
+    // Every marker points to a position in the answer text and to citations that exist in the list shown.
+    const { citationAnchors, dossierCitations, answer } = result.response;
+    expect(citationAnchors.length).toBeGreaterThan(0);
+    for (const anchor of citationAnchors) {
+      expect(answer.slice(anchor.end - anchor.quote.length, anchor.end)).toBe(anchor.quote);
+      expect(anchor.citations.every((number) => number >= 1 && number <= dossierCitations.length)).toBe(true);
+    }
     expect(result.memory).toMatchObject({ level: "opportunity", focusOpportunityIds: [121], obligations: [{ id: "o1", ask: "Importe y cotización" }] });
     expect(buildDossierQualityTrace(result)).toMatchObject({ intentType: "dossier_consult", validationStatus: "valid", evidenceCount: 2 });
   });
@@ -534,6 +541,13 @@ describe("memoria, historial y citas", () => {
       presentation: { status: "completed", engine: "dossier" }, dossierCitations: [{ evidenceId: "act51", label: "Actividad" }] });
     expect(history[1]).toMatchObject({ role: "assistant", dossierCitations: [{ evidenceId: "act51" }] });
     expect(appendCustomerAccountChatHistory(history, "otra", "más")[1].dossierCitations).toHaveLength(1);
+  });
+
+  it("conserva los marcadores de citas en el historial y limita su cantidad", () => {
+    const anchors = Array.from({ length: 80 }, (_, index) => ({ start: index, end: index + 5, quote: "texto", citations: [1] }));
+    const history = appendCustomerAccountChatHistory([], "pregunta", "respuesta", { citationAnchors: anchors });
+    expect(history[1].citationAnchors).toHaveLength(60);
+    expect(appendCustomerAccountChatHistory([], "pregunta", "respuesta", {})[1]).not.toHaveProperty("citationAnchors");
   });
 
   it("describe cada tipo de evidencia de forma legible", () => {

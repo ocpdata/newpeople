@@ -9,6 +9,7 @@ import { buildRouterContext, DELEGATED_MODES, routeCustomerTurn } from "./router
 import { analyzeCustomerTurn, buildAnalystContext } from "./analyst.js";
 import { buildComposerContext, composeCustomerTurn, renderComposition, verifyComposition } from "./composer.js";
 import { buildEvidenceIndex, normalizeAnalysisEvidence, verifyAnalysis } from "./verifier.js";
+import { buildCitationAnchors } from "./citation-anchors.js";
 
 function businessDate(now, timezone) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
@@ -185,6 +186,7 @@ export function combineDossierAndActionResponse(dossierResponse, actionResponse)
     answer: [String(dossierResponse.answer || "").trim(), actionAnswer].filter(Boolean).join("\n\n"),
     turnTasks: [...(dossierResponse.turnTasks || []), ...describeTurnTasks(actionResponse)],
     dossierCitations: dossierResponse.dossierCitations || [],
+    citationAnchors: dossierResponse.citationAnchors || [],
     dossierSources: dossierResponse.dossierSources || [],
     ...(!actionResponse?.contentSource && dossierResponse.contentSource ? { contentSource: dossierResponse.contentSource } : {}),
     presentation: { ...(actionResponse?.presentation || {}), engine: "mixed", actionAnswer,
@@ -448,6 +450,9 @@ async function executeCustomerDossierTurn({
   const verified = allFailures.length === 0;
   const citedEvidenceIds = [...new Set([...(verification?.citedEvidenceIds || []), ...(compositionCheck?.citedEvidenceIds || [])])];
   const citations = citedEvidenceIds.slice(0, 40).map((id) => describeCitation(index.get(id)));
+  const citationAnchors = analysis
+    ? buildCitationAnchors({ answerText: analysis.answerText.trim(), blocks: analysis.blocks, citedEvidenceIds: citedEvidenceIds.slice(0, 40) })
+    : [];
   // Limit tasks mixed with consultations (for example, "summarize and delete the duplicate") keep their fixed answer.
   const limitTasks = (routed.route.plan?.tasks || []).filter((task) => task.type === "limit");
   const limitText = [...new Set(limitTasks.map((task) => limitAnswer(task.kind, task.ask)))].join("\n\n");
@@ -481,6 +486,7 @@ async function executeCustomerDossierTurn({
         ? { status: "completed", engine: "dossier" }
         : { status: "degraded", engine: "dossier", reasonCode: "DOSSIER_VERIFICATION_INCOMPLETE" },
       dossierCitations: citations,
+      citationAnchors,
       dossierSources: dossierSources(dossiers),
       ...(contentSourceFor(citedEvidenceIds, compositions) ? { contentSource: contentSourceFor(citedEvidenceIds, compositions) } : {}),
       turnTasks: [

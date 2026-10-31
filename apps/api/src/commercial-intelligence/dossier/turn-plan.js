@@ -79,7 +79,7 @@ const restricts = (constraints) => constraints.count > 0 || constraints.duration
  * Validates a proposed turn plan against the message and the opportunities the user can see.
  * Returns the plan with task IDs assigned by code (t1..tN) and the concrete issues found.
  */
-export function validateTurnPlan(raw, { question, opportunityIds = [], hasPendingAction = false }) {
+export function validateTurnPlan(raw, { question, opportunityIds = [], hasPendingAction = false, earlierRequests = [] }) {
   const parsed = planSchema.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -91,6 +91,9 @@ export function validateTurnPlan(raw, { question, opportunityIds = [], hasPendin
   const issues = [];
   const visible = new Set(opportunityIds.map(Number));
   const message = normalize(question);
+  // A restriction the seller gave earlier in the conversation may be quoted from there; everything else
+  // (the task evidence, record filters) must still come from the current message.
+  const restrictionSource = normalize([question, ...earlierRequests].join("\n"));
   const clarifying = Boolean(plan.clarification.question.trim());
 
   if (!plan.tasks.length && !clarifying) issues.push("El plan no tiene tareas ni aclaración.");
@@ -119,7 +122,7 @@ export function validateTurnPlan(raw, { question, opportunityIds = [], hasPendin
     }
     if (restricts(constraints)) {
       if (!constraints.quotes.length) issues.push(`${id}: cada restricción requiere su cita literal en quotes.`);
-      if (constraints.quotes.some((quote) => !message.includes(normalize(quote)))) {
+      if (constraints.quotes.some((quote) => !restrictionSource.includes(normalize(quote)))) {
         issues.push(`${id}: quotes contiene fragmentos que no están en el mensaje.`);
       }
     }

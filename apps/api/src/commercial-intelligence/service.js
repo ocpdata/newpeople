@@ -3070,8 +3070,61 @@ export async function getCustomerChatFocusOptions({ user, accountId }) {
   };
 }
 
-export async function getCustomerAccountChatSession({ user, sessionId }) {
+const DEFAULT_SESSION_HISTORY_LIMIT = 8;
+const MAX_SESSION_HISTORY_LIMIT = 80;
+const SESSION_TITLE_LENGTH = 80;
+export const CHAT_SESSION_LIST_PAGE_SIZE = 20;
+
+export function buildChatSessionTitle(firstText) {
+  const text = String(firstText || "").replace(/\s+/g, " ").trim();
+  if (!text) return "Conversación sin título";
+  return text.length > SESSION_TITLE_LENGTH ? `${text.slice(0, SESSION_TITLE_LENGTH - 1).trimEnd()}…` : text;
+}
+
+// The seller's own earlier conversations about one account, newest first. Empty sessions are not listed.
+export async function listCustomerAccountChatSessions({ user, accountId, page = 1 }) {
   await ensureCommercialIntelligenceSchema();
+  const normalizedAccountId = Number(accountId || 0);
+  if (!Number.isInteger(normalizedAccountId) || normalizedAccountId <= 0) {
+    throw createHttpError(400, "Cuenta invalida");
+  }
+  await getAccessibleAccount({ user, accountId: normalizedAccountId });
+  const safePage = Math.max(1, Math.trunc(Number(page) || 1));
+  const rows = await query(
+    `SELECT id, opportunity_id, created_at, updated_at,
+            JSON_LENGTH(history_json) AS message_count,
+            JSON_UNQUOTE(JSON_EXTRACT(history_json, '$[0].text')) AS first_text
+     FROM customer_intelligence_chat_sessions
+     WHERE requested_by_user_id = ? AND account_id = ? AND JSON_LENGTH(history_json) > 0
+     ORDER BY updated_at DESC, id DESC
+     LIMIT ? OFFSET ?`,
+    [
+      Number(user.id),
+      normalizedAccountId,
+      CHAT_SESSION_LIST_PAGE_SIZE + 1,
+      (safePage - 1) * CHAT_SESSION_LIST_PAGE_SIZE,
+    ],
+  );
+  return {
+    page: safePage,
+    hasMore: rows.length > CHAT_SESSION_LIST_PAGE_SIZE,
+    sessions: rows.slice(0, CHAT_SESSION_LIST_PAGE_SIZE).map((row) => ({
+      id: Number(row.id),
+      title: buildChatSessionTitle(row.first_text),
+      messageCount: Number(row.message_count || 0),
+      opportunityId: row.opportunity_id === null ? null : Number(row.opportunity_id),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })),
+  };
+}
+
+export async function getCustomerAccountChatSession({ user, sessionId, limit = DEFAULT_SESSION_HISTORY_LIMIT }) {
+  await ensureCommercialIntelligenceSchema();
+  const historyLimit = Math.min(
+    MAX_SESSION_HISTORY_LIMIT,
+    Math.max(1, Math.trunc(Number(limit) || DEFAULT_SESSION_HISTORY_LIMIT)),
+  );
   const rows = await query(
     `SELECT id, public_id, account_id, opportunity_id, contact_id, history_json,
             created_at, updated_at
@@ -3091,7 +3144,7 @@ export async function getCustomerAccountChatSession({ user, sessionId }) {
       row.opportunity_id === null ? null : Number(row.opportunity_id),
     contactId: row.contact_id === null ? null : Number(row.contact_id),
     history: Array.isArray(history)
-      ? history.slice(-8).map((message) => customerChatDataForUser(message, user))
+      ? history.slice(-historyLimit).map((message) => customerChatDataForUser(message, user))
       : [],
     feedback,
     createdAt: row.created_at,
@@ -4679,6 +4732,7 @@ async function runCustomerAccountChatJob({ jobId, user, deadlineAt = null }) {
           trendEvidence: response.trendEvidence,
           presentation: response.presentation,
           dossierCitations: response.dossierCitations,
+          citationAnchors: response.citationAnchors,
           opportunityOptions: response.opportunityOptions,
         },
       );

@@ -8,6 +8,8 @@ import {
 
 const CUSTOMER_CHAT_FOUNDATION_VISIBILITY_KEY =
   "mi-agent-customer-chat-show-foundation";
+// An earlier conversation is shown with more than the 8 messages the server returns by default.
+const CUSTOMER_CHAT_RESTORED_MESSAGES = 40;
 const customerChatSessionKey = (accountId) =>
   `mi-agent-customer-chat-session:${Number(accountId || 0)}`;
 const customerChatPendingKey = (accountId) =>
@@ -91,7 +93,7 @@ export function useCustomerChat({
     setCustomerChatSessionLoading(true);
     api
       .get(
-        `/api/commercial-intelligence/account-chat/sessions/${storedSessionId}`,
+        `/api/commercial-intelligence/account-chat/sessions/${storedSessionId}?limit=${CUSTOMER_CHAT_RESTORED_MESSAGES}`,
       )
       .then((response) => {
         if (cancelled || revision !== customerChatRevisionRef.current) return;
@@ -116,6 +118,7 @@ export function useCustomerChat({
                     answer: message.text,
                     presentation: message.presentation || null,
                     dossierCitations: message.dossierCitations || [],
+                    citationAnchors: message.citationAnchors || [],
                     opportunityOptions: message.opportunityOptions || [],
                     activityHistory: message.activityHistory || null,
                     operations: message.operations || [],
@@ -676,6 +679,20 @@ export function useCustomerChat({
     setCustomerChatFeedback({});
   }
 
+  // Opens an earlier conversation of this account: the restore effect loads its history and context.
+  function resumeCustomerChat(sessionId) {
+    const id = Number(sessionId || 0);
+    if (!id || customerChatLoading || customerChatSessionLoading) return;
+    window.sessionStorage.setItem(customerChatSessionKey(customerAccountId), String(id));
+    window.sessionStorage.removeItem(customerChatPendingKey(customerAccountId));
+    setCustomerIntelligenceError("");
+    setCustomerChatTransportError(null);
+    setCustomerChatFailureIds(null);
+    setCustomerChatQuestion("");
+    setCustomerChatAttachment(null);
+    setCustomerChatHistoryReload((value) => value + 1);
+  }
+
   // Sends the seller's rating of one answer and remembers it so the buttons show the saved state.
   async function submitCustomerChatFeedback(jobId, payload) {
     const response = await api.post(
@@ -705,6 +722,7 @@ export function useCustomerChat({
   );
 
   return {
+    customerAccountId,
     customerChatQuestion,
     setCustomerChatQuestion,
     customerChatAttachment,
@@ -732,6 +750,7 @@ export function useCustomerChat({
     customerChatFeedback,
     submitCustomerChatFeedback,
     startNewCustomerChat,
+    resumeCustomerChat,
     reset,
   };
 }
