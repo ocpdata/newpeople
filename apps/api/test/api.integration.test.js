@@ -11880,6 +11880,8 @@ describe("API integration baseline", () => {
         },
       );
 
+    await analyzeCreatedInteraction(createResponse, token);
+
     expect(createResponse.status).toBe(201);
     const interactionId = Number(createResponse.body.id);
 
