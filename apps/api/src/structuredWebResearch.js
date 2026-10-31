@@ -2,6 +2,12 @@ import { config } from "./config.js";
 import { aiFetch } from "./ai-services/client.js";
 import { aiModelFor } from "./ai-services/state.js";
 import { randomUUID } from "node:crypto";
+import { promptCacheFields } from "./ai-prompt-cache.js";
+import {
+  currentTurnSignal,
+  registerProviderCall,
+  turnAbortError,
+} from "./commercial-intelligence/turn-context.js";
 import {
   assertAiBudgetAvailable,
   recordAiUsageFromOpenAiResponse,
@@ -197,7 +203,17 @@ async function readStreamedResponse(response, stats = { events: 0, bytes: 0 }) {
   return final;
 }
 
-export async function runStructuredWebResearch({
+// Inside a chat turn this counts the call against the turn budget and lets a cancellation reach it.
+export async function runStructuredWebResearch(args) {
+  registerProviderCall();
+  try {
+    return await runStructuredWebResearchCall(args);
+  } catch (error) {
+    throw turnAbortError() || error;
+  }
+}
+
+async function runStructuredWebResearchCall({
   schemaName,
   systemPrompt,
   subject,
@@ -239,6 +255,7 @@ export async function runStructuredWebResearch({
 
   const payload = {
     model: resolvedModel,
+    ...promptCacheFields({ featureCode: aiFeatureCode }),
     ...(temperature === null ? {} : { temperature }),
     ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     ...(maxOutputTokens ? { max_output_tokens: maxOutputTokens } : {}),
@@ -277,7 +294,7 @@ export async function runStructuredWebResearch({
   // A call that keeps streaming without finishing would otherwise hold the whole turn; it is retried instead.
   const callTimeout = maxDurationMs ? new AbortController() : null;
   const callTimer = callTimeout ? setTimeout(() => callTimeout.abort(new Error("call timeout")), maxDurationMs) : null;
-  const signals = [signal, headerTimeout?.signal, callTimeout?.signal].filter(Boolean);
+  const signals = [signal, currentTurnSignal(), headerTimeout?.signal, callTimeout?.signal].filter(Boolean);
   const requestSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0] || null;
   const stats = { events: 0, bytes: 0 };
   const callTimedOut = (error) => {

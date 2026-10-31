@@ -46,6 +46,7 @@ import {
 } from "./conversation-context.js";
 import { createTurnExecutionTrace } from "./turn-execution-trace.js";
 import { createChatProgressReporter } from "./chat-progress.js";
+import { TURN_CANCELLED_CODE, abortActiveTurn, runWithTurnContext } from "./turn-context.js";
 import { listOwnFeedbackForSession } from "./turn-feedback.js";
 import {
   getCustomerActivityHistoryRange,
@@ -3492,10 +3493,38 @@ export async function cancelCustomerAccountChatJob({ user, jobId }) {
        AND status = 'pending'`,
     [Number(jobId), Number(user.id)],
   );
+  // Stops the provider calls of a turn already running in this process; other processes notice it by polling.
+  abortActiveTurn(jobId);
   return getCustomerIntelligenceJob({ user, jobId });
 }
 
+const CANCEL_POLL_MS = 2000;
+
+// Runs the turn inside a context that counts its provider calls, bounds its duration and aborts the
+// in-flight calls as soon as the user cancels it.
 export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = null }) {
+  const limits = config.customerChat || {};
+  return runWithTurnContext({
+    jobId,
+    maxLlmCalls: Number(limits.maxLlmCallsPerTurn) > 0 ? Number(limits.maxLlmCallsPerTurn) : Infinity,
+    maxDurationMs: Number(limits.maxTurnMs) > 0 ? Number(limits.maxTurnMs) : 0,
+  }, async () => {
+    const poll = setInterval(() => {
+      query(
+        `SELECT status FROM customer_intelligence_jobs WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
+        [Number(jobId), Number(user.id)],
+      ).then((rows) => { if (rows[0]?.status === "cancelled") abortActiveTurn(jobId); }).catch(() => undefined);
+    }, CANCEL_POLL_MS);
+    poll.unref?.();
+    try {
+      return await runCustomerAccountChatJob({ jobId, user, deadlineAt });
+    } finally {
+      clearInterval(poll);
+    }
+  });
+}
+
+async function runCustomerAccountChatJob({ jobId, user, deadlineAt = null }) {
   const progressReporter = createChatProgressReporter({ jobId });
   const executionTrace = createTurnExecutionTrace({
     enabled: true,
@@ -3862,6 +3891,7 @@ export async function processCustomerAccountChatJob({ jobId, user, deadlineAt = 
       agents = preparedAgents;
     }
   } catch (error) {
+    if (error?.code === TURN_CANCELLED_CODE) return null;
     const contractFailure = error?.code === "CUSTOMER_TURN_CONTRACT_INVALID" ? {
       code: error.code, validationIssues: error.validationIssues, invalidStructure: error.invalidStructure,
     } : null;

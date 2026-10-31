@@ -192,8 +192,17 @@ export const config = {
       "https://api.frankfurter.app",
     timeoutMs: Number(process.env.EXCHANGE_RATE_TIMEOUT_MS || 5000),
   },
+  customerChat: {
+    // Hard limits for one existing-customer chat turn; the busiest turn measured used 8 provider calls.
+    maxLlmCallsPerTurn: Number(process.env.CUSTOMER_CHAT_MAX_LLM_CALLS_PER_TURN || 16),
+    maxTurnMs: Number(process.env.CUSTOMER_CHAT_MAX_TURN_MS || 180000),
+  },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
+    // Routing hint that makes repeated long prompts hit OpenAI's prompt cache (only sent to api.openai.com).
+    promptCacheKeyEnabled: String(process.env.OPENAI_PROMPT_CACHE_KEY ?? "true") !== "false",
+    // "24h" / "in_memory" apply to models before GPT-5.6; empty keeps the organization's default at OpenAI.
+    promptCacheRetention: process.env.OPENAI_PROMPT_CACHE_RETENTION || "",
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     // The cheaper default model applied the routing rules inconsistently in the Pruebas catalog.
     routerModel: process.env.OPENAI_ROUTER_MODEL || "gpt-6.1-sol",
