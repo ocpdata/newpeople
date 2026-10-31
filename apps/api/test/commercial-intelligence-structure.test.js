@@ -9,6 +9,7 @@ const read = (file) => readFileSync(`${folder}${file}`, "utf8");
 const MODULES = [
   "service-helpers.js", "account-access.js", "governance-settings.js", "snapshot-data-needs.js", "customer-snapshot.js",
   "intelligence-research.js", "chat-sessions.js", "chat-diagnostics.js", "chat-worker.js", "chat-jobs.js",
+  "chat-turn-debug-flow.js", "chat-turn-debug-issue.js",
 ];
 const localImports = (file) => [...read(file).matchAll(/from\s+"\.\/([\w-]+\.js)"/g)].map((match) => match[1]);
 
@@ -93,8 +94,8 @@ describe("estructura del servicio de inteligencia comercial", () => {
     const lines = (file) => read(file).split("\n").length;
     expect(lines("service.js")).toBeLessThan(1600);
     for (const file of MODULES.filter((name) => name !== "chat-worker.js")) expect(lines(file)).toBeLessThan(1300);
-    // The turn worker is split by stage, but the diagnostics builder is still one very long function.
-    expect(lines("chat-worker.js")).toBeLessThan(2450);
+    // The diagnostics blocks live in their own modules; the worker keeps the stages.
+    expect(lines("chat-worker.js")).toBeLessThan(1850);
   });
 
   it("el turno del chat se ejecuta por etapas y la función principal no vuelve a crecer", () => {
