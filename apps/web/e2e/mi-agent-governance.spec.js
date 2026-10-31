@@ -6802,6 +6802,36 @@ test("Cliente existente confirma un cambio de contacto en el chat cuando el admi
   expect(requests.execute[0]).toMatchObject({ confirmedVia: "customer_chat", chatSessionId: 920 });
 });
 
+test("la prueba de enrutamiento de Administración muestra el resultado sin romper la página", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await mockMiCoachApi(page, { canAdmin: true });
+  await page.route("**/api/commercial-intelligence/governance/intents", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ catalog: [{
+      code: "pipeline_status", label: "Estado del pipeline", description: "Consulta el avance.", requiredContext: [], tools: ["searchOpportunities"],
+      examples: ["¿Cómo va el pipeline?"],
+    }], revisions: [] }),
+  }));
+  await page.route("**/api/mi-agent/coach/admin/intents/preview", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ classification: {
+      intent: "pipeline_status", mode: "coaching", confidence: 0.82, requiredContext: [], detailTarget: null,
+    }, missingContext: [], plannedTools: ["searchOpportunities"] }),
+  }));
+  await openMiCoach(page);
+  await page.getByRole("button", { name: "Administración" }).click();
+  const section = page.locator("details.mi-agent-intent-governance");
+  await section.locator(":scope > summary").click();
+  await section.getByLabel("Pregunta de prueba").fill("¿Cómo va mi pipeline?");
+  await section.getByRole("button", { name: "Probar", exact: true }).click();
+  const preview = section.locator(".mi-agent-intent-preview");
+  await expect(preview).toContainText("Estado del pipeline");
+  await expect(preview).toContainText("Modo:");
+  await expect(preview).toContainText("Confianza 82%");
+  expect(errors).toEqual([]);
+});
+
 test("Cliente existente permite descartar una propuesta y no la vuelve a ofrecer", async ({ page }) => {
   const { chat, send, requests } = await mockInChatConfirmation(page);
   await send();

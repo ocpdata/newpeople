@@ -293,4 +293,8 @@ Esta suite cubre sesiones separadas, fundamentos, operaciones, conversiones y lo
 - Adaptador Cuenta nueva: `apps/api/src/prospect-research/prospect-chat-adapter.js`
 - Contrato de operaciones: `apps/api/src/coach/operation-contract.js`
 - Contrato de respuestas: `apps/api/src/coach/contract.js`
-- Interfaz principal: `apps/web/src/MiAgentPage.jsx`
+- Interfaz principal: `apps/web/src/MiAgentPage.jsx` (estado, efectos y manejadores). Las pantallas viven en `apps/web/src/coach/`:
+  - `CustomerAccountWorkspace.jsx` (Cliente existente), `ProspectWorkspace.jsx` (Cuenta nueva), `CoachConversationPanel.jsx` y `CoachAnalysisContent.jsx` (Coach), `CoachOperationDialog.jsx` (confirmación de cambios) y `CustomerChatDiagnosticsPanel.jsx` (diagnóstico de chats).
+  - Administración: `IntentGovernanceSection.jsx`, `DecisionObservabilitySection.jsx`, `ChannelPolicySection.jsx` y `GovernanceSettingsSection.jsx`.
+  - `miAgentConstants.js`, `miAgentHelpers.js` y `MiAgentWidgets.jsx`: etiquetas, funciones puras y componentes pequeños compartidos.
+  Cada sección recibe por propiedades el estado y los manejadores que usa; no tiene estado propio.
