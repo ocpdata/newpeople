@@ -105,4 +105,50 @@ describe("estructura del servicio de inteligencia comercial", () => {
     const start = text.indexOf("export async function runCustomerAccountChatJob");
     expect(text.slice(start).split("\n").length).toBeLessThan(700);
   });
+
+  describe("adaptador del chat de cliente existente", () => {
+    const ADAPTER_MODULES = [
+      "customer-chat-adapter.js", "customer-chat-records.js", "customer-chat-intents.js", "customer-chat-planner-context.js",
+      "customer-chat-read-model.js", "customer-chat-intent-response.js", "customer-chat-responses.js", "customer-chat-normalizers.js",
+      "customer-chat-history.js", "customer-chat-intent-planning.js", "customer-chat-response-request.js",
+      "customer-chat-evidence-assessment.js", "customer-chat-answer-generation.js", "customer-chat-answer-audit.js",
+      "customer-chat-contract-turn.js",
+    ];
+
+    it("customer-chat-adapter.js sigue exponiendo la misma API pública", async () => {
+      const adapter = await import("../src/commercial-intelligence/customer-chat-adapter.js");
+      expect(Object.keys(adapter).sort()).toEqual([
+        "appendCustomerAccountChatHistory", "buildCustomerEvidenceFailureResponse", "buildCustomerEvidenceQueryCoverage",
+        "buildCustomerFallback", "buildCustomerIntentResponse", "buildCustomerQueryPlannerContext", "buildCustomerQuotationResponse",
+        "buildCustomerReadModel", "buildCustomerStageReadinessResponse", "createCustomerAccountAdapter", "extractCustomerNoteText",
+        "isCustomerActivityClarificationReply", "normalizeCustomerOperations", "normalizeCustomerResponse",
+      ]);
+    });
+
+    it("ningún módulo depende de la fachada y las dependencias no forman ciclos", () => {
+      const graph = Object.fromEntries(ADAPTER_MODULES.map((file) => [file, localImports(file).filter((other) => ADAPTER_MODULES.includes(other))]));
+      for (const file of ADAPTER_MODULES.filter((name) => name !== "customer-chat-adapter.js")) {
+        expect(graph[file], file).not.toContain("customer-chat-adapter.js");
+      }
+      const state = {};
+      const visit = (file, path) => {
+        if (state[file] === "done") return;
+        expect(state[file], `ciclo: ${[...path, file].join(" → ")}`).not.toBe("visiting");
+        state[file] = "visiting";
+        graph[file].forEach((next) => visit(next, [...path, file]));
+        state[file] = "done";
+      };
+      ADAPTER_MODULES.forEach((file) => visit(file, []));
+    });
+
+    it("ningún módulo del adaptador vuelve a crecer sin control", () => {
+      for (const file of ADAPTER_MODULES) expect(read(file).split("\n").length, file).toBeLessThan(750);
+    });
+
+    it("el estado mutable del turno vive en un solo objeto compartido", () => {
+      const text = read("customer-chat-adapter.js");
+      expect(text).not.toMatch(/^ {2}let \w+ = /m);
+      expect(text).toMatch(/const state = \{/);
+    });
+  });
 });

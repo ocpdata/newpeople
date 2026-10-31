@@ -278,7 +278,18 @@ Esta suite cubre sesiones separadas, fundamentos, operaciones, conversiones y lo
 - Motor: `apps/api/src/coach/conversation-engine.js`
 - Gateway Coach: `apps/api/src/coach/agent-gateway.js`
 - Adaptador Coach: `apps/api/src/coach/coach-adapter.js`
-- Adaptador Cliente existente: `apps/api/src/commercial-intelligence/customer-chat-adapter.js`
+- Adaptador Cliente existente: `apps/api/src/commercial-intelligence/customer-chat-adapter.js` (fachada que arma el adaptador y reexporta su API pública; el trabajo vive en módulos `customer-chat-*.js` de la misma carpeta):
+  - `customer-chat-records.js`: acceso a registros y alcance del snapshot.
+  - `customer-chat-intents.js` y `customer-chat-intent-planning.js`: interpretación de la petición y planificación de intención.
+  - `customer-chat-planner-context.js`: contexto y candidatos para el planificador.
+  - `customer-chat-read-model.js`: herramientas de lectura y modelo de lectura.
+  - `customer-chat-evidence-assessment.js`: valoración y ampliación de evidencia por rondas.
+  - `customer-chat-response-request.js`, `customer-chat-answer-generation.js` y `customer-chat-answer-audit.js`: generación de la respuesta y auditoría de afirmaciones.
+  - `customer-chat-responses.js` y `customer-chat-intent-response.js`: respuestas deterministas.
+  - `customer-chat-normalizers.js`: normalización de operaciones y respuestas.
+  - `customer-chat-history.js`: historial, citas y prompt.
+  - `customer-chat-contract-turn.js`: turnos con contrato (varios componentes).
+  El estado mutable del turno vive en un solo objeto `state` dentro de la fábrica; `test/commercial-intelligence-structure.test.js` vigila la API pública, los ciclos y el tamaño de cada módulo.
 - Adaptador Cuenta nueva: `apps/api/src/prospect-research/prospect-chat-adapter.js`
 - Contrato de operaciones: `apps/api/src/coach/operation-contract.js`
 - Contrato de respuestas: `apps/api/src/coach/contract.js`
