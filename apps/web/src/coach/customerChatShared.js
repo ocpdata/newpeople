@@ -124,3 +124,24 @@ export function validCitationAnchors(answer, anchors, citationCount) {
     Array.isArray(anchor.citations) && anchor.citations.length > 0 &&
     anchor.citations.every((number) => Number.isInteger(number) && number >= 1 && number <= citationCount));
 }
+
+// Whether the chat card may drive this operation: the server's list of kinds and fields, as it reported them.
+export function isInChatConfirmable(operation, capabilities) {
+  if (!capabilities?.enabled || !operation || !capabilities.kinds?.includes(operation.kind)) return false;
+  const fields = capabilities.fields?.[operation.kind];
+  return !fields || fields.includes(String(operation.field || ""));
+}
+
+export const CHAT_OPERATION_FIELD_LABELS = { name: "Nombre", amountUsd: "Monto (USD)", closeDate: "Fecha de cierre" };
+
+export function formatChatOperationValue(field, value) {
+  if (value === null || value === undefined || value === "") return "(vacío)";
+  if (field === "amountUsd") {
+    const amount = Number(value);
+    return Number.isFinite(amount)
+      ? new Intl.NumberFormat("es-MX", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(amount)
+      : String(value);
+  }
+  if (field === "closeDate") return formatDate(value);
+  return String(value);
+}

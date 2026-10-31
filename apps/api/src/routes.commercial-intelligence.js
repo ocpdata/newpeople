@@ -78,6 +78,7 @@ import {
   getCustomerAccountChatDiagnosticSession,
   listCustomerAccountChatDiagnostics,
   closeCustomerChatDiagnostic,
+  getCustomerChatCapabilities,
   listCustomerAccountChatSessions,
   processCustomerAccountChatJob,
   updateCustomerIntelligenceFindingStatus,
@@ -170,6 +171,7 @@ const governanceSettingsSchema = z.object({
   findingRetentionDays: z.number().int().min(30).max(3650).optional(),
   requireEvidenceForExternalFindings: z.boolean().optional(),
   allowProspectConversion: z.boolean().optional(),
+  customerChatConfirmationEnabled: z.boolean().optional(),
   qualifiedOpportunityStageCodes: z
     .array(
       z.enum([
@@ -664,6 +666,18 @@ router.post(
         error,
         "No fue posible crear la sesion de chat",
       );
+    }
+  },
+);
+
+router.get(
+  "/account-chat/capabilities",
+  requirePermission("inteligencia_comercial.read"),
+  async (_req, res) => {
+    try {
+      return res.json(await getCustomerChatCapabilities());
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cargar las capacidades del chat");
     }
   },
 );

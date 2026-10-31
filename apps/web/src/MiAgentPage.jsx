@@ -11179,6 +11179,24 @@ export default function MiAgentPage({
                       />
                     </label>
                     <label>
+                      Confirmar notas y datos de oportunidad desde el chat de Cliente existente
+                      <input
+                        type="checkbox"
+                        checked={Boolean(
+                          coachGovernance.settings.customerChatConfirmationEnabled,
+                        )}
+                        onChange={(event) =>
+                          setCoachGovernance((current) => ({
+                            ...current,
+                            settings: {
+                              ...current.settings,
+                              customerChatConfirmationEnabled: event.target.checked,
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
                       Incluir oportunidades ganadas
                       <input
                         type="checkbox"

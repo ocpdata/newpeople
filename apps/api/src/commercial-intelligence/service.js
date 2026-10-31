@@ -47,6 +47,8 @@ import {
 import { createTurnExecutionTrace } from "./turn-execution-trace.js";
 import { createChatProgressReporter } from "./chat-progress.js";
 import { TURN_CANCELLED_CODE, abortActiveTurn, runWithTurnContext } from "./turn-context.js";
+import { listChatOperationOutcomes, withOperationSignatures } from "./operation-outcomes.js";
+import { IN_CHAT_CONFIRMATION_KINDS, IN_CHAT_FIELD_ALLOWLIST } from "../coach/chat-confirmation.js";
 import { listOwnFeedbackForSession } from "./turn-feedback.js";
 import {
   getCustomerActivityHistoryRange,
@@ -335,6 +337,8 @@ const DEFAULT_GOVERNANCE_SETTINGS = {
   findingRetentionDays: 365,
   requireEvidenceForExternalFindings: true,
   allowProspectConversion: true,
+  // Lets the seller confirm notes and opportunity data from the chat card instead of the Coach (off until an admin enables it).
+  customerChatConfirmationEnabled: false,
   qualifiedOpportunityStageCodes: [
     "desarrollo",
     "cotizacion",
@@ -494,6 +498,7 @@ function normalizeGovernanceSettings(value) {
     requireEvidenceForExternalFindings:
       source.requireEvidenceForExternalFindings !== false,
     allowProspectConversion: source.allowProspectConversion !== false,
+    customerChatConfirmationEnabled: source.customerChatConfirmationEnabled === true,
     qualifiedOpportunityStageCodes,
     committedOpportunityStageCodes,
     notes: clip(source.notes || DEFAULT_GOVERNANCE_SETTINGS.notes, 1000),
@@ -3070,6 +3075,25 @@ export async function getCustomerChatFocusOptions({ user, accountId }) {
   };
 }
 
+// What the chat card may do for this seller's organization: today, confirm a few kinds of change in place.
+export async function getCustomerChatCapabilities() {
+  const settings = await getMiCoachGovernanceSettings();
+  return {
+    inChatConfirmation: {
+      enabled: settings.customerChatConfirmationEnabled === true,
+      kinds: [...IN_CHAT_CONFIRMATION_KINDS],
+      fields: Object.fromEntries(Object.entries(IN_CHAT_FIELD_ALLOWLIST).map(([kind, fields]) => [kind, [...fields]])),
+    },
+  };
+}
+
+// Operations are returned with their signature and the answer already given (confirmed or discarded).
+async function withOperationOutcomes(result, chatSessionId) {
+  if (!Array.isArray(result?.operations) || !result.operations.length) return result;
+  const outcomes = chatSessionId ? await listChatOperationOutcomes({ chatSessionId }) : new Map();
+  return { ...result, operations: withOperationSignatures(result.operations, outcomes) };
+}
+
 const DEFAULT_SESSION_HISTORY_LIMIT = 8;
 const MAX_SESSION_HISTORY_LIMIT = 80;
 const SESSION_TITLE_LENGTH = 80;
@@ -3136,6 +3160,12 @@ export async function getCustomerAccountChatSession({ user, sessionId, limit = D
   if (!row) return null;
   const history = parseJson(row.history_json, []);
   const feedback = await listOwnFeedbackForSession({ user, sessionId: Number(row.id) });
+  const shownMessages = Array.isArray(history)
+    ? history.slice(-historyLimit).map((message) => customerChatDataForUser(message, user)) : [];
+  const outcomes = shownMessages.some((message) => message?.operations?.length)
+    ? await listChatOperationOutcomes({ chatSessionId: Number(row.id) }) : new Map();
+  const visibleHistory = shownMessages.map((message) => (message?.operations?.length
+    ? { ...message, operations: withOperationSignatures(message.operations, outcomes) } : message));
   return {
     id: Number(row.id),
     publicId: row.public_id,
@@ -3143,9 +3173,7 @@ export async function getCustomerAccountChatSession({ user, sessionId, limit = D
     opportunityId:
       row.opportunity_id === null ? null : Number(row.opportunity_id),
     contactId: row.contact_id === null ? null : Number(row.contact_id),
-    history: Array.isArray(history)
-      ? history.slice(-historyLimit).map((message) => customerChatDataForUser(message, user))
-      : [],
+    history: visibleHistory,
     feedback,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -6708,7 +6736,7 @@ export async function getCustomerIntelligenceJob({ user, jobId }) {
   return {
     ...job,
     result: job.jobType === "account_chat"
-      ? customerChatDataForUser(job.result, user)
+      ? await withOperationOutcomes(customerChatDataForUser(job.result, user), Number(job.request?.chatSessionId || 0) || null)
       : job.result,
     findings: findings.map(mapFindingRow),
   };

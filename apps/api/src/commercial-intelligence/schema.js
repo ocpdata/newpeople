@@ -79,6 +79,17 @@ const COMMERCIAL_INTELLIGENCE_SCHEMA_STATEMENTS = [
     INDEX idx_customer_chat_turn_feedback_session (session_id, user_id),
     INDEX idx_customer_chat_turn_feedback_comment_age (comment_at)
   )`,
+  `CREATE TABLE IF NOT EXISTS customer_chat_operation_outcomes (
+    session_id BIGINT UNSIGNED NOT NULL,
+    signature CHAR(40) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    operation_id BIGINT UNSIGNED NULL,
+    user_id BIGINT UNSIGNED NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
+    PRIMARY KEY (session_id, signature),
+    CONSTRAINT fk_customer_chat_operation_outcomes_session FOREIGN KEY (session_id) REFERENCES customer_intelligence_chat_sessions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_customer_chat_operation_outcomes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`,
   `CREATE TABLE IF NOT EXISTS customer_intelligence_findings (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     public_id VARCHAR(64) NOT NULL,

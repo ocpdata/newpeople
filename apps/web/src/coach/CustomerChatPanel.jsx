@@ -4,6 +4,7 @@ import { DOCUMENT_FILE_ACCEPT, DOCUMENT_FORMAT_HELP } from "../../../../shared/d
 import { CustomerChatAnswer } from "./CustomerChatAnswer";
 import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
 import { CustomerChatHistory } from "./CustomerChatHistory";
+import { CustomerChatOperationCard } from "./CustomerChatOperationCard";
 import { CustomerChatFeedback } from "./CustomerChatFeedback";
 import {
   CustomerChatDebugFlow,
@@ -22,6 +23,7 @@ import {
   formatDate,
   formatFileSize,
   validateChatAttachment,
+  isInChatConfirmable,
   validCitationAnchors,
 } from "./customerChatShared";
 
@@ -52,6 +54,8 @@ export function CustomerChatPanel({
     setCustomerChatPublicResearch,
     startNewCustomerChat,
     resumeCustomerChat,
+    inChatConfirmation,
+    setCustomerChatOperationOutcome,
     customerAccountId: chatAccountId,
     customerChatSessionId,
     showCustomerChatFoundation,
@@ -1165,16 +1169,26 @@ export function CustomerChatPanel({
                                   <p>{operation.noteText}</p>
                                 ) : null}
                                 {canReviewCustomerOperation(operation) ? (
-                                  <button
-                                    type="button"
-                                    className="mi-agent-link-button"
-                                    disabled={savingCoachOperation}
-                                    onClick={() =>
-                                      openCustomerChatOperation(operation)
-                                    }
-                                  >
-                                    Revisar operación
-                                  </button>
+                                  operation.outcome || isInChatConfirmable(operation, inChatConfirmation) ? (
+                                    <CustomerChatOperationCard
+                                      key={operation.signature || operationIndex}
+                                      operation={operation}
+                                      accountId={chatAccountId}
+                                      chatSessionId={customerChatSessionId}
+                                      onOutcome={setCustomerChatOperationOutcome}
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="mi-agent-link-button"
+                                      disabled={savingCoachOperation}
+                                      onClick={() =>
+                                        openCustomerChatOperation(operation)
+                                      }
+                                    >
+                                      Revisar operación
+                                    </button>
+                                  )
                                 ) : (
                                   <small>
                                     No tienes permisos para proponer este tipo

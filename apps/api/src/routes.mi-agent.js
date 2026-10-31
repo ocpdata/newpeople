@@ -92,6 +92,17 @@ import {
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
 import {
+  CONFIRMED_VIA_CUSTOMER_CHAT,
+  inChatConfirmationBlock,
+} from "./coach/chat-confirmation.js";
+import {
+  clearChatOperationOutcome,
+  getChatOperationOutcome,
+  loadOwnPersistedOperation,
+  ownChatSession,
+  recordChatOperationOutcome,
+} from "./commercial-intelligence/operation-outcomes.js";
+import {
   listPlannerPrompts,
   savePlannerPrompt,
 } from "./coach/planner-prompts.js";
@@ -100,6 +111,26 @@ import {
   saveSemanticClassifierPrompt,
   restoreSemanticClassifierPrompt,
 } from "./coach/semantic-classifier-prompts.js";
+
+// Confirming from the chat card is allowed only when an admin turned it on, for the few kinds the card
+// drives, for proposals born in Cliente existente, and once per proposal in a conversation.
+async function assertChatConfirmationAllowed({ user, operationId, chatSessionId }) {
+  if (!Number.isInteger(chatSessionId) || chatSessionId <= 0) {
+    throw new CoachOperationError(400, "CHAT_SESSION_REQUIRED", "La confirmación desde el chat requiere la conversación");
+  }
+  if (!(await ownChatSession({ userId: user.id, chatSessionId }))) {
+    throw new CoachOperationError(404, "CHAT_SESSION_NOT_FOUND", "Conversación no encontrada");
+  }
+  const persisted = await loadOwnPersistedOperation({ userId: user.id, operationId });
+  if (!persisted) throw new CoachOperationError(404, "COACH_OPERATION_NOT_FOUND", "Operación no encontrada");
+  const settings = await getMiCoachGovernanceSettings();
+  const block = inChatConfirmationBlock({ enabled: settings.customerChatConfirmationEnabled === true, operation: persisted.operation });
+  if (block) throw new CoachOperationError(block.status, block.code, block.message);
+  const outcome = await getChatOperationOutcome({ userId: user.id, chatSessionId, operation: persisted.operation });
+  if (outcome === "confirmed" && persisted.status !== "completed") {
+    throw new CoachOperationError(409, "CHAT_OPERATION_ALREADY_CONFIRMED", "Este cambio ya se confirmó en esta conversación");
+  }
+}
 
 const router = express.Router();
 
@@ -121,6 +152,19 @@ const requireCoachOperationAccess = requireAnyPermission([
   MI_COACH_USE_PERMISSION,
   CUSTOMER_CHAT_PERMISSION,
 ]);
+
+// The chat decorates the operations it proposes with a signature and the answer already given; those are
+// not part of an operation, so they never reach the strict operation schemas or the stored operation.
+router.use((req, _res, next) => {
+  for (const key of ["operation", "pendingOperation"]) {
+    const value = req.body?.[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      delete value.signature;
+      delete value.outcome;
+    }
+  }
+  next();
+});
 
 router.use(requirePermission("mi_coach.access"));
 
@@ -5040,13 +5084,23 @@ router.post(
   requireCoachOperationAccess,
   async (req, res) => {
     try {
+      const operationId = Number(req.params.operationId || 0);
+      const confirmedVia = req.body?.confirmedVia === CONFIRMED_VIA_CUSTOMER_CHAT ? CONFIRMED_VIA_CUSTOMER_CHAT : null;
+      const chatSessionId = Number(req.body?.chatSessionId || 0);
+      if (confirmedVia) await assertChatConfirmationAllowed({ user: req.user, operationId, chatSessionId });
       const operation = await executeControlledCoachOperation({
         req,
-        operationId: Number(req.params.operationId || 0),
+        operationId,
         version: Number(req.body?.version || 0),
         idempotencyKey: req.body?.idempotencyKey,
         validateLeadOutcome: validateLeadCallOutcomeForCoach,
+        confirmedVia,
       });
+      if (confirmedVia && operation.status === "completed") {
+        await recordChatOperationOutcome({
+          userId: req.user.id, chatSessionId, operation: operation.pendingOperation, status: "confirmed", operationId,
+        });
+      }
       return res.json({ operation, result: operation.result });
     } catch (error) {
       if (error instanceof CoachOperationError) {
@@ -5078,6 +5132,10 @@ router.post(
         req,
         operationId: Number(req.params.operationId || 0),
       });
+      const chatSessionId = Number(req.body?.chatSessionId || 0);
+      if (chatSessionId && operation.pendingOperation?.sourceChannel === "customer_account") {
+        await clearChatOperationOutcome({ userId: req.user.id, chatSessionId, operation: operation.pendingOperation });
+      }
       return res.json({ operation });
     } catch (error) {
       if (error instanceof CoachOperationError) {
@@ -5502,6 +5560,14 @@ router.post(
         message: "La operación ya no puede rechazarse",
         operation: result.operation,
       });
+    // A proposal discarded from the chat card stays discarded when the conversation is reopened.
+    const discardedFromChat = Number(req.body?.chatSessionId || 0);
+    if (discardedFromChat && result.operation?.pendingOperation?.sourceChannel === "customer_account") {
+      await recordChatOperationOutcome({
+        userId: req.user.id, chatSessionId: discardedFromChat, operation: result.operation.pendingOperation,
+        status: "discarded", operationId,
+      });
+    }
     return res.json({ operation: result.operation });
   },
 );

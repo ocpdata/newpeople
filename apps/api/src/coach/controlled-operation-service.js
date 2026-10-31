@@ -74,11 +74,15 @@ function normalizeComparable(value) {
   return value;
 }
 
+const isNumeric = (value) =>
+  typeof value === "number" || (typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value.trim()));
+
+// A DECIMAL column comes back as "45000.00" while the stored result holds 45000: they are the same amount.
 function valuesEqual(left, right) {
-  return (
-    JSON.stringify(normalizeComparable(left)) ===
-    JSON.stringify(normalizeComparable(right))
-  );
+  const a = normalizeComparable(left);
+  const b = normalizeComparable(right);
+  if (isNumeric(a) && isNumeric(b)) return Number(a) === Number(b);
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function normalizeFieldValue(kind, field, value) {
@@ -660,6 +664,7 @@ export async function executeControlledCoachOperation({
   version,
   idempotencyKey,
   validateLeadOutcome,
+  confirmedVia = null,
 }) {
   await ensureOpportunityWorkspaceSchema();
   const safeKey = String(idempotencyKey || "").trim();
@@ -756,6 +761,7 @@ export async function executeControlledCoachOperation({
       source: "user",
       eventKey: `approved:${safeKey}`,
       idempotencyKey: safeKey,
+      ...(confirmedVia ? { metadata: { confirmedVia } } : {}),
     });
     await executeEvent({
       operationId: persisted.id,
@@ -814,6 +820,7 @@ export async function executeControlledCoachOperation({
       domainAuditId: result.auditId,
       eventKey: `completed:${safeKey}`,
       idempotencyKey: safeKey,
+      ...(confirmedVia ? { metadata: { confirmedVia } } : {}),
     });
     const [completedRows] = await conn.query(
       `SELECT * FROM coach_session_operations WHERE id = ? LIMIT 1`,

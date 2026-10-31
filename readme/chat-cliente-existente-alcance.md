@@ -1122,6 +1122,33 @@ consume el borrador, agrega el texto a la respuesta vigente y no persiste cambio
 hasta que el vendedor pulsa "Guardar cambios". Si el navegador bloquea la apertura
 o falla la transferencia del borrador, el chat muestra un error para reintentarlo.
 
+## Confirmar notas y datos de oportunidad desde el chat
+
+Por defecto, una operación propuesta se revisa y se confirma en el Coach («Revisar operación»). Un administrador puede activar, en **Gobierno de Mi Coach** (`Confirmar notas y datos de oportunidad desde el chat de Cliente existente`, apagado por defecto), que dos tipos de cambio se confirmen dentro del chat:
+
+- registrar una **nota** en una oportunidad;
+- cambiar el **nombre, el monto o la fecha de cierre** de una oportunidad.
+
+Los demás tipos (cuenta, contacto, respuesta de etapa, resultado de llamada, actividades y altas) siguen yendo al Coach.
+
+**Cómo funciona.** El chat usa los mismos servicios y las mismas comprobaciones del Coach; no hay una ruta de escritura nueva:
+
+1. **Revisar y confirmar aquí** guarda la propuesta como operación pendiente (sin tocar el CRM) y el servidor lee el valor vigente.
+2. La tarjeta muestra el valor actual y el propuesto (o el texto de la nota) con **Confirmar cambio** / **Registrar nota** y **Descartar**. Un «sí» escrito en el chat nunca ejecuta nada.
+3. Al confirmar, el servidor exige: revisión previa, versión vigente, clave de idempotencia, `mi_coach.execute` y el permiso del dominio, acceso al registro y que el dato no haya cambiado. Si algo falla, la tarjeta muestra el error y no da el cambio por guardado.
+4. El cambio de campo puede **deshacerse** desde la tarjeta mientras el valor no haya cambiado después. Una nota no es reversible.
+
+**Controles del servidor para la confirmación desde el chat** (`confirmedVia: "customer_chat"` en `POST /api/mi-agent/coach/operations/:id/execute`):
+
+- el interruptor debe estar encendido, la operación debe haber nacido en Cliente existente y ser de uno de esos dos tipos (campos `name`, `amountUsd`, `closeDate`); si no, responde 403 con `CHAT_CONFIRMATION_DISABLED`, `CHAT_CONFIRMATION_ORIGIN` o `CHAT_CONFIRMATION_KIND_NOT_ALLOWED`;
+- exige una conversación propia (`chatSessionId`);
+- no permite confirmar dos veces la misma propuesta en una conversación (409 `CHAT_OPERATION_ALREADY_CONFIRMED`), salvo después de deshacerla;
+- registra `confirmedVia` en los eventos `approved` y `completed` de la operación, además de la auditoría habitual.
+
+Confirmar en el Coach no cambia. Apagar el interruptor no afecta lo ya guardado.
+
+**Estado de cada propuesta.** El resultado (confirmada o descartada) se guarda por conversación en `customer_chat_operation_outcomes` con una firma de la propuesta (tipo, destino, campo y valor nuevo). Al reabrir la conversación o recuperar un turno, la tarjeta muestra «Confirmado y guardado desde el chat» o «Descartado desde el chat» en lugar de ofrecerla otra vez. `GET /api/commercial-intelligence/account-chat/capabilities` informa al chat si la función está encendida y qué tipos admite.
+
 ## Comportamiento esperado ante preguntas
 
 | Situación                                                                                     | Comportamiento requerido                                                                                                                                       |

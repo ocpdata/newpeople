@@ -51,6 +51,38 @@ export function useCustomerChat({
   );
   const [customerChatPublicResearch, setCustomerChatPublicResearch] =
     useState(false);
+  // What the card may confirm in place; stays off until the server says an admin enabled it.
+  const [inChatConfirmation, setInChatConfirmation] = useState({ enabled: false, kinds: [], fields: {} });
+
+  useEffect(() => {
+    if (!hasCustomerContext) return undefined;
+    let cancelled = false;
+    api.get("/api/commercial-intelligence/account-chat/capabilities")
+      .then(({ data }) => {
+        if (!cancelled && data?.inChatConfirmation) setInChatConfirmation(data.inChatConfirmation);
+      })
+      .catch(() => {
+        if (!cancelled) setInChatConfirmation({ enabled: false, kinds: [], fields: {} });
+      });
+    return () => { cancelled = true; };
+  }, [hasCustomerContext, customerAccountId]);
+
+  // Records the answer given to a proposal (confirmed, discarded or none after an undo) on every message that shows it.
+  function setCustomerChatOperationOutcome(signature, outcome) {
+    if (!signature) return;
+    setCustomerChatMessages((current) => current.map((message) => (
+      Array.isArray(message.operations) && message.operations.some((operation) => operation.signature === signature)
+        ? {
+          ...message,
+          operations: message.operations.map((operation) => {
+            if (operation.signature !== signature) return operation;
+            const { outcome: _previous, ...rest } = operation;
+            return outcome ? { ...rest, outcome } : rest;
+          }),
+        }
+        : message
+    )));
+  }
 
   useEffect(() => {
     if (customerChatThreadRef.current) {
@@ -751,6 +783,8 @@ export function useCustomerChat({
     submitCustomerChatFeedback,
     startNewCustomerChat,
     resumeCustomerChat,
+    inChatConfirmation,
+    setCustomerChatOperationOutcome,
     reset,
   };
 }
