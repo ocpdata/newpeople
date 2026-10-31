@@ -1152,6 +1152,14 @@ Confirmar en el Coach no cambia. Apagar el interruptor no afecta lo ya guardado.
 
 **Estado de cada propuesta.** El resultado (confirmada o descartada) se guarda por conversación en `customer_chat_operation_outcomes` con una firma de la propuesta (tipo, destino, campo y valor nuevo). Al reabrir la conversación o recuperar un turno, la tarjeta muestra «Confirmado y guardado» o «Descartado» en lugar de ofrecerla otra vez. Si el vendedor la resolvió desde **Editar en el Coach**, el Coach avisa a la conversación (`chatSessionId`) y el resultado también queda registrado; el servidor lo anota cuando la operación es de Cliente existente y se completa, aunque no se haya confirmado «aquí». Si después se pulsa **Deshacer último cambio** en el Coach, también avisa a la conversación y la tarjeta vuelve a ofrecer la propuesta. `GET /api/commercial-intelligence/account-chat/capabilities` informa al chat si la función está encendida y qué tipos admite.
 
+## Reporte del vendedor sobre lo que dijo el cliente
+
+Cuando el vendedor cuenta algo que el cliente dijo, explicó o sospecha (por ejemplo «el cliente me dijo que su motivación es…»), el chat lo conserva atribuido al cliente y nunca lo guarda por su cuenta:
+
+1. **Coincide con una sola pregunta de etapa** de la oportunidad: prepara un borrador para agregarlo a esa respuesta, que el vendedor revisa y guarda en el formulario.
+2. **No coincide con una pregunta de etapa** (ambiguo, sin coincidencia, preguntas no válidas o sin permiso para leer la etapa): propone **registrar el reporte como nota** en la oportunidad, con atribución al cliente, certeza «reportado» y origen `chat_report`. Es una operación con tarjeta: solo se guarda cuando el vendedor la confirma (en el chat, si el administrador activó esa opción, o en el Coach).
+3. **No se propone la nota** si no hay una oportunidad abierta identificada, si el vendedor no tiene `oportunidades.update` y `mi_coach.execute`, o si la evidencia no pudo leerse. En esos casos el chat solo lo conserva en el historial de la conversación y lo dice con claridad: «no registrado en el CRM».
+
 ## Comportamiento esperado ante preguntas
 
 | Situación                                                                                     | Comportamiento requerido                                                                                                                                       |

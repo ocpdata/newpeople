@@ -3777,19 +3777,21 @@ describe("Customer account chat adapter", () => {
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, messageKind: "hypothesis",
       question: "Supongo que la motivación es evitar fugas de información.", expectedOutcome: "not_a_report" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, match: "ambiguous",
-      questionIds: [33, 34], expectedOutcome: "clarification" },
+      questionIds: [33, 34], canWrite: true, expectedOutcome: "note_proposed" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, match: "none",
-      questionIds: [], expectedOutcome: "clarification" },
+      questionIds: [], canWrite: true, expectedOutcome: "note_proposed" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
-      questionIds: [99999], expectedOutcome: "clarification" },
+      questionIds: [99999], canWrite: true, expectedOutcome: "note_proposed" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
-      questionIds: [33, 34], expectedOutcome: "clarification" },
+      questionIds: [33, 34], canWrite: true, expectedOutcome: "note_proposed" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
-      lifecycle: "historical", expectedOutcome: "clarification" },
+      canReadStage: false, canWrite: true, expectedOutcome: "note_proposed" },
+    { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true, match: "none",
+      questionIds: [], expectedOutcome: "acknowledged" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
-      canReadStage: false, expectedOutcome: "clarification" },
+      lifecycle: "historical", canWrite: true, expectedOutcome: "acknowledged" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
-      readError: true, expectedOutcome: "evidence_unavailable" },
+      readError: true, canWrite: true, expectedOutcome: "evidence_unavailable" },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
       question: "El cliente nos explicó que busca evitar la divulgación de datos por correo." },
     { currentAnswer: "", evidenceStatus: "sufficient", selectedInUi: true,
@@ -3810,6 +3812,7 @@ describe("Customer account chat adapter", () => {
     expectedOutcome = "draft_prepared",
     lifecycle = "open",
     canReadStage = true,
+    canWrite = false,
     readError = false,
     interpretationUnavailable = false,
     interpretationInvalid = false,
@@ -3928,6 +3931,7 @@ describe("Customer account chat adapter", () => {
           "cuentas.read",
           "oportunidades.read",
           ...(canReadStage ? ["desarrollo_comercial.read"] : []),
+          ...(canWrite ? ["oportunidades.update", "mi_coach.execute"] : []),
           "interacciones.read",
         ]),
       },
@@ -4023,18 +4027,32 @@ describe("Customer account chat adapter", () => {
       return;
     }
     expect(result.qualityTrace.diagnostics.evidence.status).toBe(readError ? "query_error" : evidenceStatus);
-    expect(result.response.operations).toEqual([]);
+    if (expectedOutcome !== "note_proposed") expect(result.response.operations).toEqual([]);
     expect(result.response.recommendedActions).toEqual([]);
     expect(selectedOpportunity.stageQuestions[0].answer).toBe(currentAnswer);
     if (expectedOutcome !== "draft_prepared") {
       expect(result.response.stageAnswerPrefill).toBeUndefined();
       expect(result.qualityTrace.diagnostics.evidence.sellerReport.outcome).toBe(expectedOutcome);
-      if (expectedOutcome === "clarification") {
-        expect(result.response.responseType).toBe("clarification");
-        expect(result.response.answer).toContain("No se ha guardado ningún cambio");
+      if (expectedOutcome === "note_proposed") {
+        // A report that matches no stage question is kept as a note, but only once the seller confirms it.
+        expect(result.response.responseType).toBe("operation");
+        expect(result.response.answer).toContain("Todavía no está registrado");
+        expect(result.response.operations).toEqual([
+          expect.objectContaining({
+            kind: "opportunity_note", opportunityId: selectedOpportunity.id, attribution: "client", certainty: "reported",
+            sourceType: "chat_report", requiresConfirmation: true, noteText: question,
+          }),
+        ]);
+        expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
+      } else if (expectedOutcome === "acknowledged") {
+        expect(result.response.responseType).toBe("informational");
+        expect(result.response.answer).toContain("no registrado en el CRM");
+        expect(result.response.operations).toEqual([]);
         expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
       } else if (expectedOutcome === "evidence_unavailable") {
-        expect(result.response.responseType).toBe("error");
+        // Nothing is proposed when the evidence could not be read.
+        expect(result.response.responseType).toBe("informational");
+        expect(result.response.operations).toEqual([]);
         expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
       } else {
         expect(result.qualityTrace.diagnostics.answerGeneration.source).toBe("structured_answer_model");

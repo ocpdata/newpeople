@@ -271,7 +271,8 @@ export function createCustomerAccountAdapter({
         context,
         permissions,
       );
-      if (!state.allowOperationsForTurn && response.operations.length) {
+      const reportNoteProposed = state.sellerReportAssessment?.outcome === "note_proposed";
+      if (!state.allowOperationsForTurn && !reportNoteProposed && response.operations.length) {
         turnDiagnostics.serverRules.decisions.push({
           ruleId: "explicit-operation-intent",
           outcome: "rejected",
@@ -285,6 +286,7 @@ export function createCustomerAccountAdapter({
           response = { ...response, recommendedActions: [] };
         }
         const operations = response.operations.filter((operation) =>
+          (reportNoteProposed && operation.kind === "opportunity_note") ||
           capability.verifier === "action" && operation.kind === capability.operationKind);
         if (operations.length !== response.operations.length) {
           turnDiagnostics.serverRules.decisions.push({

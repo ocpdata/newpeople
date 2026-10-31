@@ -16,7 +16,7 @@ import {
 import { getCustomerEvidenceLimits } from "../coach/server-policy.js";
 import { runCustomerEvidenceLoop } from "./customer-chat-evidence.js";
 import { summarizeCoachToolResults } from "../coach/observability.js";
-import { opportunityRecords, getDeadlineSignal } from "./customer-chat-records.js";
+import { opportunityRecords, getDeadlineSignal, isOpen, permissionGranted } from "./customer-chat-records.js";
 import { associateCustomerReport } from "./turn-contract-runtime.js";
 import { buildCustomerEvidenceQueryCoverage } from "./customer-chat-read-model.js";
 import { assessCustomerChatEvidence, fetchCustomerChatAdditionalEvidence } from "./customer-chat-evidence-assessment.js";
@@ -309,14 +309,33 @@ export async function requestCustomerResponse(turnCtx, {
   }
   if (!state.allowOperationsForTurn && state.sellerReportAssessment?.messageKind === "client_report") {
     const reportedText = String(payload.question || "").trim().replace(/\s+/g, " ").slice(0, 4000);
-    const answer = `Conservo el reporte atribuido al cliente: “${reportedText}”. Queda en el historial de este chat, no registrado en el CRM. No lo he verificado de forma independiente ni he guardado cambios. Si quieres incorporarlo a una respuesta de etapa, indica la pregunta correspondiente y prepararé un borrador revisable.`;
+    // A report that does not belong to a stage question can still be kept as a note, once the seller confirms it.
+    const noteTarget = reportEvidenceAvailable && prefillOpportunity && isOpen(prefillOpportunity) && reportedText &&
+      permissionGranted(permissions, "oportunidades.update") && permissionGranted(permissions, "mi_coach.execute")
+      ? prefillOpportunity
+      : null;
+    const noteOperation = noteTarget ? {
+      kind: "opportunity_note",
+      title: `Registrar nota en ${noteTarget.name}`,
+      accountId: Number(snapshot.account?.id),
+      opportunityId: Number(noteTarget.id),
+      noteText: reportedText,
+      sourceType: "chat_report",
+      attribution: "client",
+      certainty: "reported",
+    } : null;
+    if (noteOperation) state.sellerReportAssessment.outcome = "note_proposed";
+    else if (state.sellerReportAssessment.outcome === "pending") state.sellerReportAssessment.outcome = "acknowledged";
+    const answer = noteOperation
+      ? `Conservo el reporte atribuido al cliente: “${reportedText}”. Todavía no está registrado en el CRM: si quieres guardarlo como nota en ${noteTarget.name}, revisa y confirma la operación. No lo he verificado de forma independiente.`
+      : `Conservo el reporte atribuido al cliente: “${reportedText}”. Queda en el historial de este chat, no registrado en el CRM. No lo he verificado de forma independiente ni he guardado cambios. Si quieres incorporarlo a una respuesta de etapa, indica la pregunta correspondiente y prepararé un borrador revisable.`;
     const response = {
       answer,
       evidence: [],
       inferences: [],
       confidence: "medium",
-      responseType: "informational",
-      operations: [],
+      responseType: noteOperation ? "operation" : "informational",
+      operations: noteOperation ? [noteOperation] : [],
       recommendedActions: [],
       pendingItems: [],
       source: "account_intelligence",
