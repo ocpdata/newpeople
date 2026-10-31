@@ -1983,7 +1983,7 @@ sin validar.
 - [Alcance y matriz de las 46 categorías](./validacion-chat-cliente-existente.md).
 - [Capacidades, permisos y límites funcionales](./chat-cliente-existente-alcance.md).
 - [Catálogo del contrato estructurado](../apps/api/src/commercial-intelligence/turn-contract.js).
-- [Preparación de contexto y lecturas del canal](../apps/api/src/commercial-intelligence/service.js).
+- [Preparación de contexto y lecturas del canal](../apps/api/src/commercial-intelligence/chat-worker.js).
 
 Los datos de las tablas proceden de consultas de solo lectura realizadas para
 preparar este documento; no de respuestas del modelo. Si estas fuentes

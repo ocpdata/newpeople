@@ -554,10 +554,10 @@ Esta clasificación corresponde al paso 2 de la separación del motor. Es un map
 | Responsabilidad                | Módulo actual                                  | Clasificación                                                          |
 | ------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------- |
 | Entrada y polling              | `apps/web/src/MiAgentPage.jsx`                 | Adaptador de interfaz y job; no pertenece al núcleo                    |
-| Snapshot de cuenta             | `commercial-intelligence/service.js`           | Contexto específico de cuenta existente                                |
-| Agentes CRM, salud y expansión | `commercial-intelligence/service.js`           | Herramientas o proveedores específicos del canal                       |
-| Investigación pública          | `commercial-intelligence/service.js`           | Capacidad opcional, sujeta a gobierno y permisos                       |
-| Fallback de cuenta             | `commercial-intelligence/service.js`           | Debe sustituirse gradualmente por el contrato común, sin cambiar Coach |
+| Snapshot de cuenta             | `commercial-intelligence/customer-snapshot.js` | Contexto específico de cuenta existente                                |
+| Agentes CRM, salud y expansión | `commercial-intelligence/intelligence-research.js` y `customer-snapshot.js` | Herramientas o proveedores específicos del canal                       |
+| Investigación pública          | `commercial-intelligence/intelligence-research.js` | Capacidad opcional, sujeta a gobierno y permisos                       |
+| Fallback de cuenta             | `commercial-intelligence/chat-worker.js`       | Debe sustituirse gradualmente por el contrato común, sin cambiar Coach |
 | Operaciones de cuenta          | Pendiente de integrar con comandos controlados | Política específica de Cliente existente, con confirmación             |
 | Persistencia                   | `customer_intelligence_jobs`                   | Job separado; no reutiliza la sesión del Coach                         |
 
@@ -643,7 +643,7 @@ Esta matriz conecta cada responsabilidad con la prueba que protege su comportami
 | Handoff                             | `coach/handoff*.js`, `coach/service.js`         | `coach-handoff.test.js`, `coach-handoff-boundary.test.js`                                                    | Transferencia segura y límites de acceso          |
 | Preparación de etapa                | `coach/stage-readiness.js`                      | `coach-stage-readiness.test.js`                                                                              | Diagnóstico determinista de avance                |
 | Integración completa del Coach      | `routes.mi-agent.js`                            | `api.integration.test.js` con `test:coach:baseline`                                                          | Sesión, job, contexto, respuesta y permisos       |
-| Cliente existente                   | `commercial-intelligence/service.js`            | pruebas de inteligencia comercial en `api.integration.test.js`                                               | Job, snapshot, fallback y resultado de cuenta     |
+| Cliente existente                   | `commercial-intelligence/` (`chat-worker.js`, `chat-jobs.js`) | pruebas de inteligencia comercial en `api.integration.test.js`                                               | Job, snapshot, fallback y resultado de cuenta     |
 | Cuenta nueva                        | `prospect-research/service.js`                  | `prospect-research.test.js` y pruebas de integración de prospección                                          | Evidencia pública, sesión y conversión confirmada |
 
 La línea base ejecutable del Coach sigue siendo `npm run test:coach:baseline`. Las pruebas de Cliente existente y Cuenta nueva deben permanecer separadas mientras se extrae el motor, pero deben incorporarse a una matriz común cuando empiecen a consumir las reglas compartidas.

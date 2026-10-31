@@ -319,7 +319,7 @@ tipo de error que el código no puede detectar.
 | Analista | [analyst.js](../apps/api/src/commercial-intelligence/dossier/analyst.js) |
 | Verificación por código | [verifier.js](../apps/api/src/commercial-intelligence/dossier/verifier.js) |
 | Orquestación, citas, memoria y traza | [engine.js](../apps/api/src/commercial-intelligence/dossier/engine.js) |
-| Integración en el turno del chat | `processCustomerAccountChatJob` en [service.js](../apps/api/src/commercial-intelligence/service.js) |
+| Integración en el turno del chat | `runCustomerAccountChatJob` en [chat-worker.js](../apps/api/src/commercial-intelligence/chat-worker.js) y `processCustomerAccountChatJob` en [chat-jobs.js](../apps/api/src/commercial-intelligence/chat-jobs.js) |
 | Selector de oportunidad y evidencia citada | [MiAgentPage.jsx](../apps/web/src/MiAgentPage.jsx) |
 | Pruebas | [customer-dossier-engine.test.js](../apps/api/test/customer-dossier-engine.test.js) y una prueba de navegador en [mi-agent-governance.spec.js](../apps/web/e2e/mi-agent-governance.spec.js) |
 

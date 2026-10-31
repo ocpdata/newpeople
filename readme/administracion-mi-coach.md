@@ -453,7 +453,7 @@ Las rutas de revisiones para ambos catalogos permiten consultar el historial y r
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Interfaz de administracion y formularios                  | `apps/web/src/MiAgentPage.jsx`                                                      |
 | Rutas protegidas de gobierno                              | `apps/api/src/routes.commercial-intelligence.js`                                    |
-| Defaults y persistencia de configuracion global           | `apps/api/src/commercial-intelligence/service.js`                                   |
+| Defaults y persistencia de configuracion global           | `apps/api/src/commercial-intelligence/governance-settings.js`                       |
 | Defaults, normalizacion, migraciones y carga de politicas | `apps/api/src/coach/business-rules.js`                                              |
 | CRUD, scopes y carga de reglas conversacionales           | `apps/api/src/coach/admin-rules.js`                                                 |
 | Catalogo IA de Coach, modos y validacion                  | `apps/api/src/coach/intent-governance.js`                                           |
