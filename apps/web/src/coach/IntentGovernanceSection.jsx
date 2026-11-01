@@ -462,6 +462,14 @@ export function IntentGovernanceSection({ channelIntentCatalog, channelIntentCha
                     })}
                   </fieldset>
                   <div className="mi-agent-intent-preview-form">
+                    {channelIntentChannel === "customer_account" ? (
+                      <p className="mi-agent-admin-note">
+                        Esta prueba usa el clasificador por patrones. Cliente
+                        existente enruta con el motor de expedientes y un
+                        planificador de IA, así que el resultado es solo
+                        orientativo.
+                      </p>
+                    ) : null}
                     <label>
                       Pregunta de prueba
                       <input

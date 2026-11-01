@@ -4708,6 +4708,11 @@ export default function MiAgentPage({
                   </span>
                 </summary>
                 <div className="mi-agent-admin-rules-content">
+                  <p className="mi-agent-admin-note">
+                    Estas reglas orientan las acciones, Coach y Cuenta nueva.
+                    Las consultas, la guía y la redacción de Cliente existente
+                    las responde el motor de expedientes, que no las lee.
+                  </p>
                   <div className="mi-agent-admin-rules-actions">
                     <button
                       type="button"

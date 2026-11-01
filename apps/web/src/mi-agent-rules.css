@@ -70,6 +70,15 @@
   color: #173b52;
   font-size: 15px;
 }
+.mi-agent-admin-note {
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  border: 1px solid #d9c98a;
+  border-radius: 5px;
+  background: #fffbea;
+  color: #5c4a10;
+  font-size: 13px;
+}
 .mi-agent-admin-rules-actions,
 .mi-agent-admin-rule-controls {
   display: flex;

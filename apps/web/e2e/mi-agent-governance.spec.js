@@ -6832,6 +6832,39 @@ test("la prueba de enrutamiento de Administración muestra el resultado sin romp
   expect(errors).toEqual([]);
 });
 
+test("Administración aclara qué no refleja la prueba de Cliente existente ni las reglas conversacionales", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await mockMiCoachApi(page, { canAdmin: true });
+  const catalogFor = (code, label) => ({
+    catalog: [{
+      code, label, description: "Consulta.", enabled: true, examples: ["Ejemplo"], priority: 10,
+      allowedTools: ["searchOpportunities"], possibleTools: ["searchOpportunities"], requiredContext: [], possibleContext: [], fixedContext: [],
+    }],
+    revisions: [],
+  });
+  for (const [channel, code, label] of [["customer_account", "opportunity_query", "Consulta de oportunidades"], ["prospect", "prospect_profile", "Perfil"]]) {
+    await page.route(`**/api/commercial-intelligence/governance/channel-intents/${channel}`, (route) =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify(catalogFor(code, label)) }));
+  }
+  await openMiCoach(page);
+  await page.getByRole("button", { name: "Administración" }).click();
+  const intents = page.locator("details.mi-agent-intent-governance");
+  await intents.locator(":scope > summary").click();
+  const selector = intents.getByRole("combobox", { name: "Canal para intenciones y enrutamiento" });
+  await selector.selectOption("customer_account");
+  await expect(intents.getByRole("button", { name: /Consulta de oportunidades/ })).toBeVisible();
+  await expect(intents.getByText("solo orientativo", { exact: false })).toBeVisible();
+  await selector.selectOption("prospect");
+  await expect(intents.getByRole("heading", { name: "Enrutamiento · Cuenta nueva" })).toBeVisible();
+  await expect(intents.getByRole("button", { name: /Perfil/ })).toBeVisible();
+  await expect(intents.getByText("solo orientativo", { exact: false })).toHaveCount(0);
+  const rules = page.locator("details.mi-agent-admin-rules").filter({ hasText: "Reglas conversacionales" });
+  await rules.locator(":scope > summary").click();
+  await expect(rules.getByText("el motor de expedientes, que no las lee", { exact: false })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("Cliente existente explica por qué una operación propuesta no es válida sin mostrar [object Object]", async ({ page }) => {
   const { chat, send } = await mockInChatConfirmation(page, { persistFailure: true });
   await send();
