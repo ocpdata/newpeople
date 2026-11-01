@@ -1,0 +1,28 @@
+.channel-quality-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-evaluations .channel-quality-tabs button.is-active {
+  border-color: #3b7ea1;
+  background: #e8f2f8;
+  color: #173b52;
+}
+
+.channel-quality-runs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.channel-quality-runs th,
+.channel-quality-runs td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #dbe5ea;
+  text-align: left;
+}
+
+.channel-quality-runs th {
+  color: #536977;
+  font-weight: 600;
+}

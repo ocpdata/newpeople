@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { LayoutDashboard, Pencil, Settings2, Trash2 } from "lucide-react";
 import { api, getApiErrorMessage } from "./api";
 import { CustomerChatEvaluations } from "./coach/CustomerChatEvaluations";
+import { ChannelQualityPanel } from "./coach/ChannelQualityPanel";
 import { useCustomerChat } from "./coach/useCustomerChat";
 import { formatDate } from "./coach/customerChatShared";
 import "./mi-agent.css";
@@ -4131,6 +4132,9 @@ export default function MiAgentPage({
           <button type="button" className={activeWorkspace === "evaluations" ? "is-active" : ""}
             aria-current={activeWorkspace === "evaluations" ? "page" : undefined}
             onClick={() => setActiveWorkspace("evaluations")}>Pruebas del chat</button>
+          <button type="button" className={activeWorkspace === "channel-quality" ? "is-active" : ""}
+            aria-current={activeWorkspace === "channel-quality" ? "page" : undefined}
+            onClick={() => setActiveWorkspace("channel-quality")}>Calidad Coach y Cuenta nueva</button>
         </nav> : null}
         {canManageCoach ? (
           <nav className="mi-agent-workspace-admin" aria-label="Administración">
@@ -4205,6 +4209,8 @@ export default function MiAgentPage({
 
       {activeWorkspace === "evaluations" && canReadEvaluations ? (
         <CustomerChatEvaluations canExecute={canExecuteEvaluations} canWrite={canWriteEvaluations} />
+      ) : activeWorkspace === "channel-quality" && canReadEvaluations ? (
+        <ChannelQualityPanel canExecute={canExecuteEvaluations} />
       ) : activeWorkspace === "chat-diagnostics" && canDiagnoseCustomerChats ? (
         <CustomerChatDiagnosticsPanel
           canWriteEvaluations={canWriteEvaluations}

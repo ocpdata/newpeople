@@ -5,6 +5,7 @@ import {
   CUSTOMER_FINDING_STATUS_LABELS,
 } from "./miAgentConstants";
 import { CoachQualityFeedback } from "./CoachQualityFeedback";
+import { ChannelTurnFeedback } from "./ChannelTurnFeedback";
 import { isProspectConversionAction, isProspectConversionOperation } from "./miAgentHelpers";
 import { CheckCircle2 } from "lucide-react";
 import { CUSTOMER_FINDING_CONFIDENCE_LABELS } from "./customerChatShared";
@@ -427,6 +428,10 @@ export function ProspectWorkspace({ askProspectChat, canCreateAccounts, canCreat
                     <p>{message.text || message.answer}</p>
                     <CoachQualityFeedback
                       traceId={message.qualityTraceId}
+                    />
+                    <ChannelTurnFeedback
+                      traceId={message.qualityTraceId}
+                      channelLabel="Cuenta nueva"
                     />
                     {message.evidence?.length ? (
                       <small>{message.evidence.join(" ")}</small>

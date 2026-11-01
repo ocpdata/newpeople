@@ -1,0 +1,332 @@
+[
+  {
+    "id": "PROSPECT-INTENT-001",
+    "question": "¿Qué contactos potenciales encontraste?",
+    "kind": "intent",
+    "expected": {
+      "intent": "prospect_contacts"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-002",
+    "question": "Dame los contactos de la sesión",
+    "kind": "intent",
+    "expected": {
+      "intent": "prospect_contacts"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-003",
+    "question": "¿Cuáles son los hallazgos?",
+    "kind": "intent",
+    "expected": {
+      "intent": "prospect_findings"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-004",
+    "question": "¿Qué fuentes públicas tienes?",
+    "kind": "intent",
+    "expected": {
+      "intent": "public_research_review"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-005",
+    "question": "¿Qué hipótesis de oportunidad hay?",
+    "kind": "intent",
+    "expected": {
+      "intent": "opportunity_hypotheses"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-006",
+    "question": "Redacta un correo de acercamiento",
+    "kind": "intent",
+    "expected": {
+      "intent": "outreach_draft"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-007",
+    "question": "Escribe un mensaje de primer contacto",
+    "kind": "intent",
+    "expected": {
+      "intent": "outreach_draft"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-008",
+    "question": "Convierte este prospecto en cuenta",
+    "kind": "intent",
+    "expected": {
+      "intent": "conversion_request"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-009",
+    "question": "Cuéntame del perfil de la empresa",
+    "kind": "intent",
+    "expected": {
+      "intent": "prospect_profile"
+    }
+  },
+  {
+    "id": "PROSPECT-INTENT-010",
+    "question": "Hola",
+    "kind": "intent",
+    "expected": {
+      "intent": "prospect_profile"
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-001",
+    "question": "¿Qué contactos potenciales encontraste?",
+    "kind": "fallback",
+    "intent": "prospect_contacts",
+    "snapshot": "full",
+    "expected": {
+      "contains": [
+        "María García",
+        "Directora de TI"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-002",
+    "question": "¿Qué contactos potenciales encontraste?",
+    "kind": "fallback",
+    "intent": "prospect_contacts",
+    "snapshot": "empty",
+    "expected": {
+      "contains": [
+        "no contiene contactos"
+      ],
+      "notContains": [
+        "María García"
+      ]
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-003",
+    "question": "¿Cuáles son los hallazgos?",
+    "kind": "fallback",
+    "intent": "prospect_findings",
+    "snapshot": "full",
+    "expected": {
+      "contains": [
+        "Expansión de planta"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-004",
+    "question": "¿Cuáles son los hallazgos?",
+    "kind": "fallback",
+    "intent": "prospect_findings",
+    "snapshot": "empty",
+    "expected": {
+      "contains": [
+        "no contiene hallazgos"
+      ],
+      "notContains": [
+        "Expansión de planta"
+      ]
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-005",
+    "question": "¿Qué fuentes públicas tienes?",
+    "kind": "fallback",
+    "intent": "public_research_review",
+    "snapshot": "empty",
+    "expected": {
+      "contains": [
+        "aún no contiene evidencia pública"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-006",
+    "question": "¿Qué hipótesis de oportunidad hay?",
+    "kind": "fallback",
+    "intent": "opportunity_hypotheses",
+    "snapshot": "empty",
+    "expected": {
+      "contains": [
+        "no contiene hipótesis"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-007",
+    "question": "Convierte este prospecto en cuenta",
+    "kind": "fallback",
+    "intent": "conversion_request",
+    "snapshot": "full",
+    "expected": {
+      "contains": [
+        "No se creó ningún registro CRM"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-008",
+    "question": "Cuéntame del perfil de la empresa",
+    "kind": "fallback",
+    "intent": "prospect_profile",
+    "snapshot": "full",
+    "expected": {
+      "contains": [
+        "Raloy Lubricantes"
+      ],
+      "notContains": [
+        "cliente confirmado"
+      ]
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-009",
+    "question": "Redacta un correo de acercamiento",
+    "kind": "fallback",
+    "intent": "outreach_draft",
+    "snapshot": "full",
+    "expected": {
+      "contains": [
+        "Hola María"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ANSWER-010",
+    "question": "Redacta un correo de acercamiento",
+    "kind": "fallback",
+    "intent": "outreach_draft",
+    "snapshot": "empty",
+    "expected": {
+      "contains": [
+        "No hay un borrador de correo disponible"
+      ],
+      "notContains": []
+    }
+  },
+  {
+    "id": "PROSPECT-ACTION-001",
+    "question": "Convertir a oportunidad",
+    "kind": "action",
+    "action": {
+      "title": "Crear oportunidad",
+      "target": "opportunity",
+      "actionType": "convert"
+    },
+    "expected": {
+      "kept": true
+    }
+  },
+  {
+    "id": "PROSPECT-ACTION-002",
+    "question": "Convertir a cuenta con tipo create",
+    "kind": "action",
+    "action": {
+      "title": "Crear cuenta",
+      "target": "account",
+      "actionType": "create"
+    },
+    "expected": {
+      "kept": true
+    }
+  },
+  {
+    "id": "PROSPECT-ACTION-003",
+    "question": "Correo sugerido no es operación",
+    "kind": "action",
+    "action": {
+      "title": "Preparar borrador de correo",
+      "actionType": "email_draft"
+    },
+    "expected": {
+      "kept": false
+    }
+  },
+  {
+    "id": "PROSPECT-ACTION-004",
+    "question": "Destino fuera de catálogo",
+    "kind": "action",
+    "action": {
+      "title": "Crear una nota",
+      "target": "note",
+      "actionType": "create"
+    },
+    "expected": {
+      "kept": false
+    }
+  },
+  {
+    "id": "PROSPECT-ACTION-005",
+    "question": "Sin destino explícito",
+    "kind": "action",
+    "action": {
+      "title": "Crear cuenta",
+      "actionType": "convert"
+    },
+    "expected": {
+      "kept": false
+    }
+  },
+  {
+    "id": "PROSPECT-GAP-001",
+    "question": "¿Quiénes son los decisores?",
+    "kind": "intent",
+    "knownGap": true,
+    "note": "Preguntas sobre decisores se enrutan al perfil general.",
+    "expected": {
+      "intent": "prospect_contacts"
+    }
+  },
+  {
+    "id": "PROSPECT-GAP-002",
+    "question": "Crea una cuenta con esta información",
+    "kind": "intent",
+    "knownGap": true,
+    "note": "Una petición de crear cuenta no se reconoce como conversión.",
+    "expected": {
+      "intent": "conversion_request"
+    }
+  },
+  {
+    "id": "PROSPECT-GAP-003",
+    "question": "Pásalo a oportunidad",
+    "kind": "intent",
+    "knownGap": true,
+    "note": "Pasar a oportunidad se enruta a hipótesis y no a conversión.",
+    "expected": {
+      "intent": "conversion_request"
+    }
+  },
+  {
+    "id": "PROSPECT-GAP-004",
+    "question": "Crea el contacto María García en el CRM",
+    "kind": "intent",
+    "knownGap": true,
+    "note": "Una escritura de contacto se enruta a una lectura de contactos.",
+    "expected": {
+      "intent": "conversion_request"
+    }
+  },
+  {
+    "id": "PROSPECT-GAP-005",
+    "question": "¿Qué podríamos venderles?",
+    "kind": "intent",
+    "knownGap": true,
+    "note": "Preguntas sobre qué vender se enrutan al perfil general.",
+    "expected": {
+      "intent": "opportunity_hypotheses"
+    }
+  }
+]

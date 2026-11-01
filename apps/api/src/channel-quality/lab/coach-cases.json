@@ -1,0 +1,384 @@
+[
+  {
+    "id": "COACH-GEN-001",
+    "question": "Que cuentas tienen la mayor cantidad de oportunidades abiertas?",
+    "kind": "account_ranking",
+    "expected": {
+      "topAccountId": 22,
+      "topCount": 8
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-001",
+    "question": "Cuales son las oportunidades abiertas de Totalplay?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 22,
+      "openOnly": true
+    },
+    "expected": {
+      "ids": [
+        1,
+        2,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-002",
+    "question": "Cuantas oportunidades activadas tiene Totalplay, aunque esten ganadas?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 22,
+      "activeOnly": true
+    },
+    "expected": {
+      "ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-003",
+    "question": "Que oportunidades ganadas tiene Totalplay?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 22,
+      "commercialStatusCodes": [
+        "ganada"
+      ]
+    },
+    "expected": {
+      "ids": [
+        3
+      ]
+    }
+  },
+  {
+    "id": "COACH-OPP-001",
+    "question": "Dame el detalle de la oportunidad Vrf 2027 de Totalplay.",
+    "kind": "exact_entity",
+    "expected": {
+      "opportunityId": 3
+    }
+  },
+  {
+    "id": "COACH-OPP-004",
+    "question": "Dame el detalle de la oportunidad de Totalplay.",
+    "kind": "clarification",
+    "expected": {
+      "type": "select_opportunity"
+    }
+  },
+  {
+    "id": "COACH-ENTITY-002",
+    "question": "Dime las oportunidades activas de Totalplay.",
+    "kind": "collection",
+    "expected": {
+      "clarification": null
+    }
+  },
+  {
+    "id": "COACH-ACTION-001",
+    "question": "Agenda una llamada con el cliente para confirmar el siguiente paso.",
+    "kind": "operation",
+    "expected": {
+      "kind": "activity",
+      "requiresConfirmation": true
+    }
+  },
+  {
+    "id": "COACH-GEN-002",
+    "question": "Top de cuentas con más oportunidades abiertas.",
+    "kind": "account_ranking",
+    "expected": {
+      "topAccountId": 22,
+      "topCount": 8
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-004",
+    "question": "Qué oportunidades abiertas tiene Telmex?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 23,
+      "openOnly": true
+    },
+    "expected": {
+      "ids": [
+        10,
+        13
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-005",
+    "question": "Qué oportunidades activadas tiene Telmex?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 23,
+      "activeOnly": true
+    },
+    "expected": {
+      "ids": [
+        10,
+        12
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-006",
+    "question": "Qué oportunidades perdidas tenemos?",
+    "kind": "opportunity_search",
+    "filters": {
+      "commercialStatusCodes": [
+        "perdida"
+      ]
+    },
+    "expected": {
+      "ids": [
+        12
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-007",
+    "question": "Qué oportunidades están en propuesta?",
+    "kind": "opportunity_search",
+    "filters": {
+      "stageCodes": [
+        "propuesta"
+      ]
+    },
+    "expected": {
+      "ids": [
+        10
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-008",
+    "question": "Busca las oportunidades de SD-WAN.",
+    "kind": "opportunity_search",
+    "filters": {
+      "name": "sd-wan"
+    },
+    "expected": {
+      "ids": [
+        10,
+        11
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-009",
+    "question": "Qué oportunidades cierran en 2026?",
+    "kind": "opportunity_search",
+    "filters": {
+      "closeYear": 2026
+    },
+    "expected": {
+      "ids": [
+        10,
+        12
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-010",
+    "question": "Qué oportunidades perdidas tiene Telmex?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 23,
+      "commercialStatusCodes": [
+        "perdida"
+      ]
+    },
+    "expected": {
+      "ids": [
+        12
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-011",
+    "question": "Qué oportunidades abiertas tiene Megacable?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 24,
+      "openOnly": true
+    },
+    "expected": {
+      "ids": [
+        11
+      ]
+    }
+  },
+  {
+    "id": "COACH-ACCOUNT-012",
+    "question": "Qué oportunidades tiene una cuenta que no existe?",
+    "kind": "opportunity_search",
+    "filters": {
+      "accountId": 999
+    },
+    "expected": {
+      "ids": []
+    }
+  },
+  {
+    "id": "COACH-OPP-002",
+    "question": "Muéstrame Firewall perimetral.",
+    "kind": "exact_entity",
+    "expected": {
+      "opportunityId": 12
+    }
+  },
+  {
+    "id": "COACH-OPP-003",
+    "question": "Dame el detalle de Móvil corporativo.",
+    "kind": "exact_entity",
+    "expected": {
+      "opportunityId": 14
+    }
+  },
+  {
+    "id": "COACH-OPP-005",
+    "question": "Dame el detalle de la oportunidad Renovación SD-WAN.",
+    "kind": "clarification",
+    "expected": {
+      "type": "select_opportunity"
+    }
+  },
+  {
+    "id": "COACH-ENTITY-003",
+    "question": "Quiero ver a Juan Pérez.",
+    "kind": "clarification",
+    "expected": {
+      "type": "select_contact"
+    }
+  },
+  {
+    "id": "COACH-ENTITY-004",
+    "question": "Algo sobre Zzzz Inexistente.",
+    "kind": "no_entity",
+    "expected": {}
+  },
+  {
+    "id": "COACH-CONTACT-001",
+    "question": "Datos de Ana Lugo.",
+    "kind": "exact_contact",
+    "expected": {
+      "contactId": 503
+    }
+  },
+  {
+    "id": "COACH-LEAD-001",
+    "question": "Cuál es el estado del lead Raloy Lubricantes?",
+    "kind": "exact_lead",
+    "expected": {
+      "leadId": 701
+    }
+  },
+  {
+    "id": "COACH-ACTION-002",
+    "question": "Llama a Ana mañana.",
+    "kind": "operation",
+    "payload": {
+      "title": "Llamar a Ana",
+      "actionType": "call"
+    },
+    "expected": {
+      "kind": "activity",
+      "requiresConfirmation": true,
+      "actionType": "call"
+    }
+  },
+  {
+    "id": "COACH-ACTION-003",
+    "question": "Agenda una reunión de seguimiento.",
+    "kind": "operation",
+    "payload": {
+      "title": "Reunión de seguimiento",
+      "actionType": "meeting",
+      "scheduledAt": "2026-11-10T10:00"
+    },
+    "expected": {
+      "kind": "activity",
+      "requiresConfirmation": true,
+      "actionType": "meeting_virtual"
+    }
+  },
+  {
+    "id": "COACH-ACTION-004",
+    "question": "Programa una demo técnica.",
+    "kind": "operation",
+    "payload": {
+      "title": "Demo técnica",
+      "actionType": "demo"
+    },
+    "expected": {
+      "kind": "activity",
+      "requiresConfirmation": true,
+      "actionType": "demo"
+    }
+  },
+  {
+    "id": "COACH-ACTION-005",
+    "question": "Haz algo raro.",
+    "kind": "operation",
+    "payload": {
+      "title": "Tipo raro",
+      "actionType": "hackear"
+    },
+    "expected": {
+      "kind": "activity",
+      "requiresConfirmation": true,
+      "actionType": "other"
+    }
+  },
+  {
+    "id": "COACH-GAP-001",
+    "question": "Dame el detalle de Renovación SD-WAN de Telmex.",
+    "kind": "exact_entity",
+    "knownGap": true,
+    "note": "La mención de la cuenta no desambigua dos oportunidades con el mismo nombre.",
+    "expected": {
+      "opportunityId": 10
+    }
+  },
+  {
+    "id": "COACH-GAP-002",
+    "question": "Quiero ver a Juan Pérez de Telmex.",
+    "kind": "exact_contact",
+    "knownGap": true,
+    "note": "La mención de la cuenta no desambigua dos contactos con el mismo nombre.",
+    "expected": {
+      "contactId": 502
+    }
+  },
+  {
+    "id": "COACH-GAP-003",
+    "question": "Agenda una actividad sin título.",
+    "kind": "operation_rejected",
+    "knownGap": true,
+    "note": "Una actividad sin título hoy se normaliza como válida.",
+    "payload": {
+      "title": "",
+      "actionType": "call"
+    },
+    "expected": {}
+  }
+]

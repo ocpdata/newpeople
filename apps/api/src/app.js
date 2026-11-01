@@ -18,6 +18,7 @@ import auditRoutes from "./routes.audit.js";
 import executionCommercialRoutes from "./routes.execution-commercial.js";
 import miAgentRoutes from "./routes.mi-agent.js";
 import customerChatEvaluationRoutes from "./customer-chat-evaluations/routes.js";
+import channelQualityRoutes from "./channel-quality/routes.js";
 import customerChatQualityCiRoutes from "./customer-chat-quality/ci-routes.js";
 import commercialTrackingRoutes from "./routes.commercial-tracking.js";
 import commercialEnablementRoutes, {
@@ -141,6 +142,7 @@ export function createApp() {
     executionCommercialRoutes,
   );
   app.use("/api/mi-agent/evaluations", authRequired, loadUser, customerChatEvaluationRoutes);
+  app.use("/api/mi-agent/channel-quality", authRequired, loadUser, channelQualityRoutes);
   app.use("/api/mi-agent", authRequired, loadUser, miAgentRoutes);
   app.use(
     "/api/commercial-tracking",

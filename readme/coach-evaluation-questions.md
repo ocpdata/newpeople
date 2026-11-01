@@ -4,7 +4,7 @@ Esta bateria define preguntas representativas para validar el comportamiento del
 
 La version ejecutable de esta lista esta en:
 
-- `apps/api/test/fixtures/coach-evaluation-cases.json`
+- `apps/api/src/channel-quality/lab/coach-cases.json` (32 casos; los marcados `knownGap` documentan brechas conocidas)
 - `apps/api/test/coach-evaluation-matrix.test.js`
 
 Para ejecutarla:

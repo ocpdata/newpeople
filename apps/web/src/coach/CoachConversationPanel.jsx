@@ -12,6 +12,7 @@ import {
   formatCoachOperationSummary,
 } from "./miAgentHelpers";
 import { CoachQualityFeedback } from "./CoachQualityFeedback";
+import { ChannelTurnFeedback } from "./ChannelTurnFeedback";
 import { CoachStageReadiness, CoachSemanticSections } from "./MiAgentWidgets";
 
 export function CoachConversationPanel({ applyCoachClarification, askCoach, askingCoach, canCreateAccounts, canCreateActions, canCreateContacts, canReadCustomerIntelligence, canReadLeads, canResolveLeads, canUpdateAccounts, canUpdateCalendar, canUpdateContacts, canUpdateLeads, cancelPendingCoachOperation, clearCoachConversation, coachAccounts, coachContacts, coachContext, coachMessages, coachOperationAction, coachOpportunities, coachPendingOperations, coachQuestion, coachRecentOperations, coachThreadRef, coachUndoOperationId, continueCoachOperation, hasCoachConversation, hasCoachFoundation, loadingCoachContext, openCoachDetailHandoff, openCoachOperationConfirmation, requestCoachGeneralScope, setCoachQuestion, showCoachFoundation, undoCoachOperation, updateCoachFoundationVisibility }) {
@@ -568,6 +569,10 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
                     ) : null}
                     <CoachQualityFeedback
                       traceId={message.result?.qualityTraceId}
+                    />
+                    <ChannelTurnFeedback
+                      traceId={message.result?.qualityTraceId}
+                      channelLabel="Coach"
                     />
                     <CoachStageReadiness
                       readiness={message.result?.stageReadiness}

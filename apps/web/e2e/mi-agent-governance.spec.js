@@ -1302,6 +1302,7 @@ async function mockMiCoachApi(
             leadId: null,
           },
           activeContextSource: "coach_response",
+          qualityTraceId: 712,
         },
       });
     if (
@@ -3616,6 +3617,20 @@ test.describe("Mi Coach governance and workspaces", () => {
         "La hipótesis principal requiere validar continuidad operativa.",
       ),
     ).toBeVisible();
+    const prospectFeedback = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        request.url().endsWith("/api/mi-agent/coach/quality/993/feedback"),
+    );
+    await page
+      .getByRole("button", { name: "Marcar respuesta como útil y correcta" })
+      .click();
+    expect((await prospectFeedback).postDataJSON()).toMatchObject({
+      rating: "positive",
+      category: "response",
+      corrected: false,
+    });
+    await expect(page.getByText("Gracias, registrado")).toBeVisible();
     expect(prospectChatJobRequests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -4688,6 +4703,44 @@ test.describe("Mi Coach governance and workspaces", () => {
         "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
       ),
     ).toBeVisible();
+  });
+
+  test("Coach permite valorar una respuesta y registra la valoración sobre su traza", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, { withResponseContextSwitch: true });
+    await openMiCoach(page);
+    await openCoachConversation(page);
+    await page
+      .getByPlaceholder("Escribe tu pregunta para el Coach...")
+      .fill("¿Qué seguimiento corresponde a Proyecto B de Cuenta Alterna?");
+    await page.getByRole("button", { name: "Preguntar" }).click();
+    await expect(
+      page.getByText(
+        "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+      ),
+    ).toBeVisible({ timeout: 10000 });
+    const feedback = page.waitForRequest(
+      (request) =>
+        request.method() === "POST" &&
+        request.url().endsWith("/api/mi-agent/coach/quality/712/feedback"),
+    );
+    await page
+      .getByRole("button", {
+        name: "Marcar que la respuesta necesita corrección",
+      })
+      .click();
+    expect((await feedback).postDataJSON()).toMatchObject({
+      rating: "negative",
+      category: "response",
+      corrected: true,
+    });
+    await expect(page.getByText("Corrección registrada")).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Marcar respuesta como útil y correcta",
+      }),
+    ).toBeDisabled();
   });
 
   test("deriva la exploración detallada de Coach a Cliente existente con la cuenta seleccionada", async ({
