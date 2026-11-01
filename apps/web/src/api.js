@@ -71,7 +71,16 @@ function formatValidationErrors(errors) {
 
 function formatIssueList(issues) {
   if (!Array.isArray(issues)) return "";
-  return issues.filter(Boolean).join(" | ");
+  return issues
+    .filter(Boolean)
+    .map((issue) => {
+      if (typeof issue !== "object") return String(issue);
+      const path = Array.isArray(issue.path) ? issue.path.join(".") : "";
+      const message = String(issue.message || issue.code || "").trim();
+      return path && message ? `${path}: ${message}` : message || path;
+    })
+    .filter(Boolean)
+    .join(" | ");
 }
 
 function formatExtraErrorDetail(data) {

@@ -552,7 +552,8 @@ export async function runCustomerChatContractTurn({ createAdapter, question, con
           opportunityId: Number(opportunity.id),
           noteText,
           sourceType: "chat_report",
-          attribution: component.attribution,
+          // A note the seller dictates is theirs unless the contract attributes it to the client or a document.
+          attribution: ["client", "seller", "document"].includes(component.attribution) ? component.attribution : "seller",
           certainty: component.certainty,
         };
         return finish({

@@ -1,3 +1,4 @@
+import { coachOperationSchema } from "../src/coach/contract.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/coach/quotation-read-service.js", () => ({
@@ -1569,6 +1570,75 @@ describe("Customer account chat adapter", () => {
       }],
     });
     expect(result.response.answer).toContain("todavía no se ha registrado");
+  });
+
+  it("registers a dictated note as the seller's when the contract does not attribute it, and the operation is persistable", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({ channel: "customer_account", process: "default" }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(channelIntentGovernanceModule, "loadChannelIntentConfigurations").mockResolvedValue(
+      getChannelIntentDefaults("customer_account"),
+    );
+    const noteText = "El cliente quizá lo confirme; no lo confirmó.";
+    const request = `Guarda como nota en Proyecto abierto que ${noteText}`;
+    const adapter = createCustomerAccountAdapter({
+      user: {
+        id: 31,
+        permissionSet: new Set([
+          "cuentas.read",
+          "oportunidades.read",
+          "oportunidades.update",
+          "mi_coach.execute",
+        ]),
+      },
+      snapshot,
+      authoritativeIntent: {
+        turnContract: {
+          version: 1,
+          movement: "new_request",
+          resolution: "resolved",
+          clarificationQuestion: "",
+          confidence: "high",
+          components: [{
+            id: "c1",
+            category: "action.record_note",
+            text: request,
+            object: "opportunity",
+            topic: "seguimiento",
+            scope: "single",
+            reference: "Proyecto abierto",
+            attribution: "none",
+            certainty: "unspecified",
+            explicitAction: true,
+            dependsOn: [],
+            continuationOf: "none",
+          }],
+        },
+      },
+      agents: [],
+      jobId: 10,
+    });
+
+    const result = await adapter.runTurn({
+      question: request,
+      context: { accountId: 7 },
+    });
+
+    expect(result.response).toMatchObject({
+      responseType: "operation",
+      operations: [{
+        kind: "opportunity_note",
+        accountId: 7,
+        opportunityId: 11,
+        noteText,
+        sourceType: "chat_report",
+        attribution: "seller",
+        certainty: "unspecified",
+      }],
+    });
+    expect(result.response.answer).toContain("todavía no se ha registrado");
+      expect(coachOperationSchema.safeParse(result.response.operations[0]).success).toBe(true);
   });
 
   it("uses literal content from the seller request when the classifier omits it", async () => {

@@ -172,7 +172,7 @@ export function normalizeCustomerOperations(
           opportunityId,
           noteText,
           sourceType: "chat_report",
-          attribution: operation.attribution,
+          attribution: ["client", "seller", "document"].includes(operation.attribution) ? operation.attribution : "seller",
           certainty: operation.certainty,
           entityType: "opportunity",
           source: { type: "opportunity", id: opportunityId },

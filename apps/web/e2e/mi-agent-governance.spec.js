@@ -6691,7 +6691,7 @@ const proposedOperations = () => [
     field: "email", currentValue: "a@example.com", value: "b@example.com", signature: "sig-contact" },
 ];
 
-async function mockInChatConfirmation(page, { enabled = true, executeStatus = 200, kinds = ["opportunity_note", "opportunity_field"] } = {}) {
+async function mockInChatConfirmation(page, { enabled = true, executeStatus = 200, persistFailure = false, kinds = ["opportunity_note", "opportunity_field"] } = {}) {
   const requests = { persist: [], review: [], execute: [], reject: [], revert: [], read: [] };
   let nextId = 800;
   const { chat, send } = await mockCustomerChatRecovery(page, {
@@ -6721,6 +6721,9 @@ async function mockInChatConfirmation(page, { enabled = true, executeStatus = 20
         }
         if (request.method() === "POST" && url.pathname.endsWith("/coach/operations")) {
           requests.persist.push(body);
+          if (persistFailure) {
+            return json({ message: "La operación propuesta no es válida", issues: [{ code: "invalid_value", path: ["attribution"], message: "Invalid option: expected one of client|seller|document" }] }, 400);
+          }
           nextId += 1;
           return json({ sessionId: 70, operation: { id: nextId, version: 1, status: "ready", pendingOperation: { ...body.operation } } }, 201);
         }
@@ -6827,6 +6830,17 @@ test("la prueba de enrutamiento de Administración muestra el resultado sin romp
   await expect(preview).toContainText("Modo:");
   await expect(preview).toContainText("Confianza 82%");
   expect(errors).toEqual([]);
+});
+
+test("Cliente existente explica por qué una operación propuesta no es válida sin mostrar [object Object]", async ({ page }) => {
+  const { chat, send } = await mockInChatConfirmation(page, { persistFailure: true });
+  await send();
+  const noteCard = chat.locator(".mi-agent-customer-chat-actions").locator("article").filter({ hasText: "Registrar nota en Vrf 2027" });
+  await noteCard.getByRole("button", { name: "Revisar y confirmar aquí" }).click();
+  await expect(noteCard).toContainText("La operación propuesta no es válida");
+  await expect(noteCard).toContainText("attribution:");
+  await expect(noteCard).toContainText("client|seller|document");
+  await expect(noteCard).not.toContainText("[object Object]");
 });
 
 test("Cliente existente permite descartar una propuesta y no la vuelve a ofrecer", async ({ page }) => {
