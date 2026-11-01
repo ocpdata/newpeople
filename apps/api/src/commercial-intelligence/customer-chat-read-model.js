@@ -637,6 +637,6 @@ export async function buildCustomerReadModel({
                 intendedAction: "continue_request",
               }
             : null,
-    conversationHistory,
+    conversationHistory: Array.isArray(conversationHistory) ? conversationHistory.slice(-8) : [],
   };
 }

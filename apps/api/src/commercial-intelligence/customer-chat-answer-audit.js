@@ -35,7 +35,7 @@ export async function auditCustomerAnswer({ payload, deadlineAt, contractCompone
         turnComponent: contractComponent,
         question: payload.question,
         channelIntentRouting: routing,
-        conversationHistory,
+        conversationHistory: Array.isArray(conversationHistory) ? conversationHistory.slice(-8) : [],
         operationPolicy: payload.operationPolicy || {},
         proposalOrigin: deterministicOperationResponse
           ? "server_deterministic"

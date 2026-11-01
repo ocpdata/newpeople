@@ -142,6 +142,21 @@ export function buildCustomerPublicSourceLinks(publicEvidence) {
   });
 }
 
+// Matches MAX_SESSION_HISTORY_LIMIT in chat-sessions.js. The byte budget keeps the JSON column well under the
+// database packet limit when assistant messages carry a lot of evidence metadata.
+export const MAX_STORED_HISTORY_MESSAGES = 80;
+const MAX_STORED_HISTORY_BYTES = 1_500_000;
+
+function capStoredHistory(messages) {
+  let kept = messages.slice(-MAX_STORED_HISTORY_MESSAGES);
+  let bytes = Buffer.byteLength(JSON.stringify(kept));
+  while (kept.length > 2 && bytes > MAX_STORED_HISTORY_BYTES) {
+    bytes -= Buffer.byteLength(JSON.stringify(kept[0])) + 1;
+    kept = kept.slice(1);
+  }
+  return kept;
+}
+
 export function appendCustomerAccountChatHistory(
   history = [],
   question,
@@ -214,7 +229,7 @@ export function appendCustomerAccountChatHistory(
       ...(message.role === "assistant" && Array.isArray(message.opportunityOptions)
         ? { opportunityOptions: message.opportunityOptions.slice(0, 10) } : {}),
     }));
-  return [
+  const next = [
     ...normalizedHistory,
     question
       ? {
@@ -281,8 +296,8 @@ export function appendCustomerAccountChatHistory(
         }
       : null,
   ]
-    .filter(Boolean)
-    .slice(-8);
+    .filter(Boolean);
+  return capStoredHistory(next);
 }
 
 export function buildCustomerPrompt(

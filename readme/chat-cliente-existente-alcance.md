@@ -52,6 +52,7 @@ fundamento y fuentes públicas; no muestra preguntas sugeridas.
 - Nombrar otra cuenta en el texto de la pregunta no cambia la cuenta seleccionada ni amplía el alcance. El chat debe negarse a consultar o actuar sobre esa otra cuenta e indicar al vendedor que cambie la selección desde la interfaz.
 - Las consultas y operaciones deben validar permisos en el servidor. El planificador, el modelo y las instrucciones del prompt no conceden permisos.
 - El historial de este canal no se comparte con Coach ni con Cuenta nueva.
+- La sesión guarda los últimos 80 mensajes (con un presupuesto de 1,5 MB; si se excede, se descartan los más antiguos). Cada etapa lee solo una ventana reciente (6 a 8 mensajes) más una lista acotada de peticiones anteriores del vendedor; el contexto estructurado de la conversación se guarda aparte.
 - Los datos CRM, las fuentes públicas y las inferencias deben distinguirse. Un dato público no se presenta como un hecho confirmado en el CRM.
 - Ninguna escritura se ejecuta directamente desde la respuesta del modelo. Las propuestas requieren revisión, permiso de ejecución y confirmación en el flujo autorizado.
 

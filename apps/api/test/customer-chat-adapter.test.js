@@ -38,6 +38,7 @@ import { loadPlannerPrompt } from "../src/coach/planner-prompts.js";
 import * as coachBusinessRulesModule from "../src/coach/business-rules.js";
 import * as coachAdminRulesModule from "../src/coach/admin-rules.js";
 import * as channelIntentGovernanceModule from "../src/coach/channel-intent-governance.js";
+import { MAX_STORED_HISTORY_MESSAGES } from "../src/commercial-intelligence/customer-chat-history.js";
 import { resolveCoachEntities } from "../src/coach/entity-resolver.js";
 import { getCoachReadToolCatalog } from "../src/coach/read-tools.js";
 import { matchCoachQueryCase } from "../src/coach/case-catalog.js";
@@ -3381,22 +3382,33 @@ describe("Customer account chat adapter", () => {
     ]);
   });
 
-  it("agrega memoria dentro de una sesion y conserva solo ocho mensajes", () => {
-    const history = Array.from({ length: 6 }, (_, index) => index + 1).flatMap(
+  it("agrega memoria dentro de una sesion y conserva solo los ultimos 80 mensajes", () => {
+    const history = Array.from({ length: 45 }, (_, index) => index + 1).flatMap(
       (turn) => [
         { role: "user", text: `Pregunta ${turn}` },
         { role: "assistant", text: `Respuesta ${turn}` },
       ],
     );
 
-    expect(
-      appendCustomerAccountChatHistory(history, "Pregunta 7", "Respuesta 7"),
-    ).toEqual(
-      [4, 5, 6, 7].flatMap((turn) => [
+    const next = appendCustomerAccountChatHistory(history, "Pregunta 46", "Respuesta 46");
+    expect(next).toHaveLength(MAX_STORED_HISTORY_MESSAGES);
+    expect(MAX_STORED_HISTORY_MESSAGES).toBe(80);
+    expect(next[0]).toEqual({ role: "user", text: "Pregunta 7" });
+    expect(next.at(-1)).toEqual({ role: "assistant", text: "Respuesta 46" });
+  });
+
+  it("descarta los mensajes mas viejos cuando el historial supera el presupuesto de bytes", () => {
+    const big = "x".repeat(60000);
+    const history = Array.from({ length: 38 }, (_, index) => index + 1).flatMap(
+      (turn) => [
         { role: "user", text: `Pregunta ${turn}` },
-        { role: "assistant", text: `Respuesta ${turn}` },
-      ]),
+        { role: "assistant", text: `${big}${turn}` },
+      ],
     );
+    const next = appendCustomerAccountChatHistory(history, "Pregunta 39", "Respuesta 39");
+    expect(next.length).toBeLessThan(MAX_STORED_HISTORY_MESSAGES);
+    expect(Buffer.byteLength(JSON.stringify(next))).toBeLessThanOrEqual(1_500_000);
+    expect(next.at(-1)).toEqual({ role: "assistant", text: "Respuesta 39" });
   });
 
   it("persiste y conserva la estructura de historial al continuar una sesion", () => {
