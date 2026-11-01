@@ -1,3 +1,5 @@
+import { normalizeProspectConversionOperation } from "../coach/operation-contract.js";
+
 // Conversion proposals for the Cuenta nueva chat. They are built by the server from the session and the seller's
 // explicit request; the model never proposes them. A query turn (profile, findings, contacts...) never carries operations.
 
@@ -72,4 +74,38 @@ export function buildProspectRecommendedActions({ intent, question, snapshot }) 
   if (intent !== "conversion_request") return [];
   const action = resolveConversionAction({ question, snapshot });
   return action ? [action] : [];
+}
+
+const PROSPECT_CONVERSION_TARGETS = new Set([
+  "account",
+  "contact",
+  "opportunity",
+]);
+
+export function normalizeProspectRecommendedActions(actions = []) {
+  if (!Array.isArray(actions)) return [];
+  return actions
+    .filter((action) => {
+      const target = String(action?.target || "")
+        .trim()
+        .toLowerCase();
+      const actionType = String(action?.actionType || "")
+        .trim()
+        .toLowerCase();
+      return (
+        PROSPECT_CONVERSION_TARGETS.has(target) &&
+        ["convert", "conversion", "create"].includes(actionType)
+      );
+    })
+    .map((action) => ({
+      ...action,
+      target: String(action.target).trim().toLowerCase(),
+      requiresConfirmation: true,
+    }));
+}
+
+export function buildProspectOperations(actions, prospectSessionId) {
+  return actions.map((action) =>
+    normalizeProspectConversionOperation(action, { prospectSessionId, target: action.target || "account" }),
+  );
 }

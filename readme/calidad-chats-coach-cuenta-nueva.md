@@ -56,6 +56,19 @@ El modelo ya no devuelve acciones recomendadas; `prospect-research/prospect-oper
 
 Siguen fallando, por orden: sesión vacía, búsqueda en internet y fuera de alcance, peticiones de escritura que el clasificador por patrones no reconoce como conversión (fase 2), encuadre de los datos como prospección (fase 3) y los escenarios 19 y 21, que necesitan contexto de CRM (fase 4).
 
+### Después de la fase 2 · respuestas sin modelo (2026-11-01)
+
+`prospect-research/prospect-guards.js` responde sin el modelo cuando la respuesta es un hecho de la sesión o una regla del canal: sesión vacía, fuera de alcance (consultas del CRM), búsqueda en internet (aclara que no busca y muestra la evidencia guardada con su fecha), «¿ya existe en el CRM?» (no afirma ni niega) y las conversiones (propuesta confirmable o explicación de lo que falta). Los detectores son estrechos: si no reconocen un turno, responde el modelo. Si el vendedor pidió otro idioma, tampoco actúan.
+
+| Medida | Línea base | Fase 1 | Fase 2 |
+| --- | --- | --- | --- |
+| Escenarios aprobados | 2/24 | 13/24 y 14/24 | **18/24 y 20/24** |
+| Escenarios críticos | 1/10 | 3/10 | **8/10** |
+| Honestidad y límites (área C) | 0/5 | 2/5 | **5/5** |
+| Conversión segura (área D) | 1/5 | 1/5 | 3/5 |
+
+Los fallos que quedan en la mejor corrida son exactamente cuatro: los escenarios 3 y 6 (encuadre como prospección y falta de datos de contacto, fase 3) y el 19 y el 21 (contexto de CRM, fase 4). Los escenarios 11 y 22 fallaron en una corrida y pasaron en la otra: son variación del modelo.
+
 
 ## Valoraciones de las respuestas
 

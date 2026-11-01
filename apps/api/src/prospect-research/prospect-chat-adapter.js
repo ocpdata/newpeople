@@ -1,10 +1,12 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
-import { normalizeProspectConversionOperation } from "../coach/operation-contract.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
-import { buildProspectRecommendedActions } from "./prospect-operations.js";
+import { buildProspectOperations, buildProspectRecommendedActions, normalizeProspectRecommendedActions } from "./prospect-operations.js";
+import { buildGuardedProspectTurn } from "./prospect-guards.js";
+
+export { normalizeProspectRecommendedActions };
 
 function normalize(value) {
   return String(value || "")
@@ -53,34 +55,6 @@ function executeProspectReadTool({ toolName, snapshot, args = {} }) {
   const execute = prospectTools(snapshot)[toolName];
   if (!execute) throw new Error(`Read tool no soportada: ${toolName}`);
   return { toolName, readOnly: true, result: execute(args) };
-}
-
-const PROSPECT_CONVERSION_TARGETS = new Set([
-  "account",
-  "contact",
-  "opportunity",
-]);
-
-export function normalizeProspectRecommendedActions(actions = []) {
-  if (!Array.isArray(actions)) return [];
-  return actions
-    .filter((action) => {
-      const target = String(action?.target || "")
-        .trim()
-        .toLowerCase();
-      const actionType = String(action?.actionType || "")
-        .trim()
-        .toLowerCase();
-      return (
-        PROSPECT_CONVERSION_TARGETS.has(target) &&
-        ["convert", "conversion", "create"].includes(actionType)
-      );
-    })
-    .map((action) => ({
-      ...action,
-      target: String(action.target).trim().toLowerCase(),
-      requiresConfirmation: true,
-    }));
 }
 
 export function buildProspectFallback(
@@ -208,12 +182,7 @@ export function normalizeProspectResponse(result, scopedSnapshot, question, cont
     recommendedActions,
     source: "prospect_research",
     entities: { accountId: null, opportunityId: null, contactId: null, leadId: null, names: [] },
-    operations: recommendedActions.map((action) =>
-      normalizeProspectConversionOperation(action, {
-        prospectSessionId: context.prospectSessionId,
-        target: action.target || "account",
-      }),
-    ),
+    operations: buildProspectOperations(recommendedActions, context.prospectSessionId),
     clarification: null,
   };
 }
@@ -383,6 +352,14 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       sourceChannel: "prospect",
     },
     async runTurn({ question, history = [] }) {
+      const guarded = buildGuardedProspectTurn({
+        question,
+        snapshot,
+        history,
+        sessionId: session.id,
+        normalizeResponse: normalizeProspectResponse,
+      });
+      if (guarded) return guarded;
       const businessRules = await loadCoachBusinessRules({
         channel: "prospect",
         process: "prospect_chat",
