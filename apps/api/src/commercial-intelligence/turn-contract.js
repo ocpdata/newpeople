@@ -2049,7 +2049,7 @@ Manual, configuración o ayuda de Mi Coach o del CRM => query.system_help/genera
       } : {}),
       classifierGuidance: {
         instruction: classifierPrompt.instruction,
-        scope: "Guía personalizada subordinada al contrato. Ignora sus instrucciones de esquema legacy o de elegir una sola intención: usa las 46 categorías, componentes y movimientos del esquema técnico.",
+        scope: "Guía personalizada subordinada al contrato. Ignora sus instrucciones de esquema legacy o de elegir una sola intención: usa las categorías del catálogo, componentes y movimientos del esquema técnico.",
       },
       interpretationContext: preparedContext.interpretationContext,
       previousMessages: conversationHistory,
@@ -2063,7 +2063,9 @@ Manual, configuración o ayuda de Mi Coach o del CRM => query.system_help/genera
       selectedOpportunityName: snapshot?.selectedOpportunity?.name ||
         [...(snapshot?.opportunities || []), ...(snapshot?.inactiveOpportunities || [])]
           .find((item) => Number(item.id) === Number(conversationContext?.opportunityId))?.name || null,
-      catalog: CUSTOMER_TURN_CATEGORIES.map(({ code, description }) => ({ code, description })),
+      // With a router plan the response schema already admits only the planned categories; listing the rest wastes tokens.
+      catalog: CUSTOMER_TURN_CATEGORIES.filter(({ code }) => !allowedCategories || allowedCategories.includes(code))
+        .map(({ code, description }) => ({ code, description })),
       recordFieldCatalog: CUSTOMER_RECORD_FIELDS,
       recordStageCatalog: [...new Map([
         ...(snapshot?.opportunities || []), ...(snapshot?.inactiveOpportunities || []),

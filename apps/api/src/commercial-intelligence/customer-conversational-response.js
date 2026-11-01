@@ -33,6 +33,32 @@ function numericKey(value) {
   return `${integer.replace(/^0+(?=\d)/, "")}${decimals ? `.${decimals}` : ""}`;
 }
 
+const NUMBER_PATTERN = /\d+(?:[.,:/-]\d+)*/g;
+const SPANISH_MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+  "septiembre", "octubre", "noviembre", "diciembre"];
+const SPANISH_DATE = new RegExp(
+  `(\\d{1,2}) de (${SPANISH_MONTHS.join("|")})(?: de(?:l)? (\\d{4}))?`, "giu");
+
+// "27 de junio de 2026" is a natural rendering of a verified ISO date; any other day, month or year stays unsupported.
+function verifiedDateRanges(answer, verifiedText) {
+  const isoDates = [...verifiedText.matchAll(/(\d{4})-(\d{2})-(\d{2})/g)]
+    .map(([, year, month, day]) => ({ year: Number(year), month: Number(month), day: Number(day) }));
+  return [...answer.matchAll(SPANISH_DATE)].filter((match) => {
+    const day = Number(match[1]);
+    const month = SPANISH_MONTHS.indexOf(match[2].toLowerCase()) + 1;
+    const year = match[3] ? Number(match[3]) : null;
+    return isoDates.some((date) => date.day === day && date.month === month && (year === null || date.year === year));
+  }).map((match) => ({ index: match.index, length: match[0].length }));
+}
+
+// Amounts, times and dates the seller wrote in this message may be quoted back (for example in a clarification).
+// Numbers inside a requested record name or an alphanumeric identifier ("F5") are excluded: they never prove a claim.
+function requestNumbers(question, requestedNames) {
+  const withoutNames = requestedNames.reduce((text, name) => text.split(name).join(" "), String(question));
+  const withoutIdentifiers = identifiers(withoutNames).reduce((text, [value]) => text.split(value).join(" "), withoutNames);
+  return new Set((withoutIdentifiers.match(NUMBER_PATTERN) || []).map(numericKey));
+}
+
 export function hasSupportedConversationalPresentation(presentation) {
   const parsed = auditSchema.safeParse(presentation?.audit);
   return presentation?.status === "completed" && typeof presentation.verifiedAnswer === "string" &&
@@ -233,12 +259,16 @@ No copies además ese contenido. Devuelve solo answer, sin operaciones ni cambio
       }
       return ranges;
     });
-    const unsupportedNumbers = [...answer.matchAll(/\d+(?:[.,:/-]\d+)*/g)].filter((match) =>
-      !sourceNumbers.has(numericKey(match[0])) && !answerIdentifiers.some((identifier) =>
+    const quotedNumbers = requestNumbers(question, requestedNames);
+    const dateRanges = verifiedDateRanges(answer, JSON.stringify(verifiedResult));
+    const insideRange = (match, ranges) => ranges.some((range) => match.index >= range.index &&
+      match.index + match[0].length <= range.index + range.length);
+    const unsupportedNumbers = [...answer.matchAll(NUMBER_PATTERN)].filter((match) =>
+      !sourceNumbers.has(numericKey(match[0])) && !quotedNumbers.has(numericKey(match[0])) &&
+      !answerIdentifiers.some((identifier) =>
         match.index >= identifier.index &&
         match.index + match[0].length <= identifier.index + identifier[0].length) &&
-      !nameRanges.some((range) => match.index >= range.index &&
-        match.index + match[0].length <= range.index + range.length));
+      !insideRange(match, nameRanges) && !insideRange(match, dateRanges));
     if (unsupportedNumbers.length) {
       diagnostics.generation.unsupportedNumbers = [...new Set(unsupportedNumbers.map(([value]) =>
         value.slice(0, 80)))].slice(0, 10);

@@ -229,6 +229,42 @@ describe("B10 conversational response", () => {
     expect(mixed.response.answer).toContain("Consulta de soporte");
     expect(mixedProvider).toHaveBeenCalledTimes(2);
   });
+  it("lets the answer quote the amount, time and date the seller just wrote", async () => {
+    const original = input();
+    original.question = "Actualiza el monto de vrf 2027 a 55000 y registra la reunión de ayer a las 11:30 del 8 de octubre";
+    original.response.answer = "Confirma el importe en USD/dólares; no asumí ni convertí la moneda.";
+    const research = provider("Confirma si los 55,000 de vrf 2027 son en dólares; la reunión del 8 de octubre a las 11:30 queda pendiente.");
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.presentation.status).toBe("completed");
+    expect(research).toHaveBeenCalledTimes(2);
+  });
+  it("does not let the seller's numbers license a different claim", async () => {
+    const original = input();
+    original.question = "Actualiza el monto a 55000";
+    original.response.answer = "Confirma el importe en USD.";
+    const research = provider("Confirma si son 55,000 USD; el plazo es de 90 días.");
+    const result = await composeCustomerConversationalResponse(original, { research });
+    expect(result.response.presentation.reasonCode).toBe("CUSTOMER_B10_UNSUPPORTED_NUMBER");
+    expect(result.diagnostics.generation.unsupportedNumbers).toEqual(["90"]);
+  });
+  it.each([
+    ["El cierre es el 31 de enero de 2027.", true],
+    ["El cierre es el 31 de enero.", true],
+    ["El cierre es el 1 de febrero de 2027.", false],
+    ["El cierre es el 31 de enero de 2028.", false],
+  ])("accepts a verified ISO date only in its natural Spanish form: %s", async (answer, accepted) => {
+    const original = input();
+    original.response.answer = "Cierre 2027-01-31";
+    original.response.entities = { accountId: 22 };
+    original.response.evidence = [];
+    const research = provider(answer);
+    const result = await composeCustomerConversationalResponse(original, { research });
+    if (accepted) {
+      expect(result.response.presentation.status).toBe("completed");
+    } else {
+      expect(result.response.presentation.reasonCode).toBe("CUSTOMER_B10_UNSUPPORTED_NUMBER");
+    }
+  });
   it("allows the exact requested F5 identifier without allowing new numeric claims", async () => {
     const original = input();
     original.question = "Prepara un briefing de F5 Distributed Cloud Services.";

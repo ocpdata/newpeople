@@ -36,6 +36,17 @@ const reportArgs = () => ({
 });
 
 describe("Customer turn contract", () => {
+  it("lists only the planned categories in the model catalog and every category without a plan", async () => {
+    const question = "Agenda una llamada mañana a las 10:00 con Alejandro.";
+    const catalogOf = async (plannedTasks) => {
+      const classifyWithAI = vi.fn().mockResolvedValue(contract([component("action.schedule_activity", { object: "activity", text: question })]));
+      await interpretCustomerTurn({ question, snapshot, classifierPrompt: { instruction: "" }, plannedTasks, classifyWithAI }).catch(() => null);
+      return classifyWithAI.mock.calls[0][0].context.catalog.map((item) => item.code);
+    };
+    expect(await catalogOf([{ id: "t1", type: "action", kind: "schedule_activity", allowedCategories: ["action.schedule_activity"] }]))
+      .toEqual(["action.schedule_activity"]);
+    expect(await catalogOf(null)).toHaveLength(46);
+  });
   it("routes a recorded-needs account request to evidence reads rather than counting opportunities", async () => {
     const question = "Resume qué necesidades quedaron registradas en Grupo Lactalis y cuáles están relacionadas con Servicios de Pentest y Monitoreo de Api'S F5 Dcs. Distingue lo expresado por el cliente de las sugerencias del equipo comercial o del análisis automático.";
     const names = ["Servicios de Pentest", "Monitoreo de Api'S F5 Dcs"];
