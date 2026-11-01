@@ -46,8 +46,13 @@ export function validateCustomerUpdateMemory(value, snapshot) {
   return memory;
 }
 
+const CATALOG_CONTACT_QUESTION = /nivel jer[aá]rquico|nivel de influencia|tipo de relaci[oó]n|\bjefe\b|a qui[eé]n influye/i;
+const collapse = (text) => String(text).replace(/\s+/g, " ").trim().toLowerCase();
+const NAMES_A_TEXT_FIELD = /cargo|puesto|posici[oó]n|[aá]rea|departamento|correo|e-?mail|tel[eé]fono|celular|m[oó]vil|ciudad|estado|regi[oó]n|nombre|apellido/i;
+const isBareValue = (text) => collapse(text).split(" ").length <= 4 && !NAMES_A_TEXT_FIELD.test(text);
+
 export async function buildCustomerUpdateResponse({
-  component, movement, question, snapshot, previous, metrics = [], readRecord, loadStates,
+  component, movement, question, snapshot, previous, metrics = [], readRecord, loadStates, previousAssistantText = "",
 }) {
   const prior = validateCustomerUpdateMemory(previous, snapshot);
   const base = { updateMemory: prior, operations: [], evidence: [], recommendedActions: [], inferences: [], pendingItems: [],
@@ -60,6 +65,12 @@ export async function buildCustomerUpdateResponse({
   const spec = parsed.data;
   if (spec.unsupported?.length) return stop(`Estos cambios no están disponibles en A02: ${spec.unsupported.join(", ")}. No sustituí la operación.`);
   if (component.scope === "collection") return stop("Solo puedo preparar cambios para un registro a la vez. Indica un destino concreto.");
+  // A bare value answering a question about a catalog field (hierarchy, influence, relationship, manager) is not a text change.
+  if (component.object === "contact" && CATALOG_CONTACT_QUESTION.test(previousAssistantText) &&
+      spec.changes.some((item) => item.action === "set" && CUSTOMER_UPDATE_FIELDS.contact[item.field] &&
+        collapse(item.evidence) === collapse(question) && isBareValue(question))) {
+    return stop("Parece que respondes sobre el nivel jerárquico, la influencia, la relación o el jefe de un contacto. Esos campos de catálogo no se cambian con un mensaje del chat; edítalos en Mapeo de contactos o desde el Coach. No cambié el cargo ni ningún otro campo.");
+  }
   const newDraft = !prior || spec.mode === "start";
   if (prior && spec.mode === "start" && !["new_request", "change_focus"].includes(movement)) return stop("Confirma si quieres sustituir el borrador e iniciar otro destino.");
   if (!newDraft && component.object !== prior.object) return stop("El borrador corresponde a otro tipo de registro. Indica explícitamente un nuevo destino.");

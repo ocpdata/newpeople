@@ -241,6 +241,7 @@ export async function runCustomerChatContractTurn({ createAdapter, question, con
         const response = await buildCustomerUpdateResponse({
           component, movement: contract.movement, question, snapshot: scopeCustomerSnapshot(snapshot),
           previous: (turnConversationContext || conversationContext)?.updateMemory, metrics: snapshotQueryMetrics,
+          previousAssistantText: [...(Array.isArray(history) ? history : [])].reverse().find((item) => item?.role === "assistant")?.text || "",
           readRecord: (object, targetId) => read(() => (loadUpdateRecord || readCustomerUpdateRecord)({
             user, object, accountId: Number(snapshot.account.id), targetId,
           })),

@@ -1262,6 +1262,8 @@ Corregir un extremo no hereda candidatos del otro; una consulta Q08 no se transf
 Los campos legacy de contacto hierarchyLevelId,relationshipTypeId,influenceLevelId,managerContactId,influencesContactId
 conservan su flujo previo: si pide SOLO esos campos, usa changes=[] y unsupported con sus nombres canónicos exactos;
 no los conviertas a campos A02 ni inventes IDs de catálogo o relaciones. Otros unsupported requieren aclaración.
+Un valor suelto que responde a una pregunta previa sobre nivel jerárquico, influencia, relación o jefe es ESE campo legacy
+(changes=[] y unsupported): nunca lo conviertas en positionTitle (cargo) ni department. Cargo/puesto solo si el mensaje lo dice.
 Usa updateSpec con mode=start para solicitud nueva o cambio explícito de destino; continue para completar/corregir;
 review para mostrar; next para siguiente cambio (no implica que se guardó el anterior);
 discard_current para descartar SOLO el campo actual, refresh para volver a leer.

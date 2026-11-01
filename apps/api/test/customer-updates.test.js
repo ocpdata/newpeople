@@ -140,6 +140,25 @@ describe("A02 typed update drafts", () => {
   it.each(["550 mil", "$550", "550 MXN"])("asks for an unambiguous USD value from %s", async (evidence) => {
     expect((await run([change("amountUsd", "550", evidence)])).operations).toEqual([]);
   });
+  describe("a bare reply to a question about a catalog field of a contact", () => {
+    const asked = "¿Qué nivel jerárquico quieres asignar a Elena?";
+    const reply = (question, extra = {}) => run([change("positionTitle", question, question)], {
+      object: "contact", question, previousAssistantText: asked, readRecord: async () => ({ positionTitle: "Supervisor" }), ...extra,
+    });
+    it("is not applied to the job title", async () => {
+      const result = await reply("Especialista");
+      expect(result.operations).toEqual([]);
+      expect(result.answer).toContain("No cambié el cargo");
+      expect(result.answer).toContain("Mapeo de contactos");
+    });
+    it("does not block a message that names the field, nor a reply to another question", async () => {
+      const named = await reply("cambia el cargo a Especialista");
+      expect(named.operations).toHaveLength(1);
+      expect(named.operations[0]).toMatchObject({ contactId: 2, field: "positionTitle", value: "cambia el cargo a Especialista" });
+      const other = await reply("Especialista", { previousAssistantText: "¿Qué cargo quieres asignar a Elena?" });
+      expect(other.operations).toHaveLength(1);
+    });
+  });
   describe("an amount stated without a currency", () => {
     it("keeps the amount aside and accepts a reply that only confirms the currency", async () => {
       const first = await run([change("amountUsd", "55000", "Actualiza el monto de Alfa a 55000")]);

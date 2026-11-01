@@ -461,6 +461,16 @@ describe("Customer contract B6/B9/B10 integration", () => {
       expect(result.response.operations).toEqual([]);
       expect(result.response.updateMemory).toBeNull();
     });
+    it("does not turn a bare reply to a hierarchy question into a job title change", async () => {
+      const permissionsWithContacts = new Set([...permissions, "contactos.read", "contactos.update"]);
+      const reply = part([{ field: "positionTitle", value: "Especialista", evidence: "Especialista", action: "set" }], { targetReference: "Elena Muestra" }, "contact");
+      const result = await run(reply, { user: { id: 0, permissionSet: permissionsWithContacts }, loadUpdateRecord: async () => ({ positionTitle: "Supervisor" }) }, {
+        question: "Especialista",
+        history: [{ role: "user", text: "Cambia el nivel jerárquico de Elena" }, { role: "assistant", text: "¿Qué nivel jerárquico quieres asignar a Elena?" }],
+      });
+      expect(result.response.operations).toEqual([]);
+      expect(result.response.answer).toContain("No cambié el cargo");
+    });
     it("does not require opportunity read access to update the account", async () => {
       const result = await run(part([{ field: "city", value: "Puebla", evidence: "Puebla", action: "set" }], {}, "account"), {
         user: { id: 0, permissionSet: new Set(["cuentas.read_all", "cuentas.update", "mi_coach.execute"]) },
