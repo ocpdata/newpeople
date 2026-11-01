@@ -5,8 +5,9 @@ name: Customer chat quality
 # while the switch in the application (Mi Coach > Pruebas del chat > Calidad en el tiempo) is on.
 # A manual run always executes. Results are sent to the application, which keeps the history.
 #
-# Required secrets: OPENAI_API_KEY, CUSTOMER_CHAT_QUALITY_API_URL (public https URL of the application)
-# and CUSTOMER_CHAT_QUALITY_CI_TOKEN (same value as the server's CUSTOMER_CHAT_QUALITY_CI_TOKEN).
+# Required secrets: OPENAI_API_KEY and CUSTOMER_CHAT_QUALITY_CI_TOKEN (same value as the server's
+# CUSTOMER_CHAT_QUALITY_CI_TOKEN). CUSTOMER_CHAT_QUALITY_API_URL (public https URL of the application)
+# can be a repository variable or a secret.
 on:
   schedule:
     - cron: "0 11 * * 1"
@@ -27,7 +28,7 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
     env:
-      CUSTOMER_CHAT_QUALITY_API_URL: ${{ secrets.CUSTOMER_CHAT_QUALITY_API_URL }}
+      CUSTOMER_CHAT_QUALITY_API_URL: ${{ vars.CUSTOMER_CHAT_QUALITY_API_URL || secrets.CUSTOMER_CHAT_QUALITY_API_URL }}
       CUSTOMER_CHAT_QUALITY_CI_TOKEN: ${{ secrets.CUSTOMER_CHAT_QUALITY_CI_TOKEN }}
     steps:
       - name: Checkout
@@ -61,7 +62,7 @@ jobs:
     timeout-minutes: 30
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      CUSTOMER_CHAT_QUALITY_API_URL: ${{ secrets.CUSTOMER_CHAT_QUALITY_API_URL }}
+      CUSTOMER_CHAT_QUALITY_API_URL: ${{ vars.CUSTOMER_CHAT_QUALITY_API_URL || secrets.CUSTOMER_CHAT_QUALITY_API_URL }}
       CUSTOMER_CHAT_QUALITY_CI_TOKEN: ${{ secrets.CUSTOMER_CHAT_QUALITY_CI_TOKEN }}
       DB_NAME: newpeople_crm_test
       GIT_COMMIT: ${{ github.sha }}

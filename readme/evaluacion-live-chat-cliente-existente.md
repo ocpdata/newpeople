@@ -92,7 +92,7 @@ El flujo [Customer chat quality](../.github/workflows/customer-chat-quality.yml)
 - **Envío del resultado:** al terminar, el flujo envía a la aplicación los puntajes y solo los casos fallidos (el reporte completo queda como archivo adjunto del flujo). La aplicación calcula el estado y lo compara con la ejecución anterior; enviar el mismo reporte dos veces no crea duplicados.
 - **Configuración necesaria:**
   1. En el servidor, `CUSTOMER_CHAT_QUALITY_CI_TOKEN` con un valor aleatorio de al menos 32 caracteres. Sin él, la integración responde 503 y la pantalla muestra un aviso.
-  2. En GitHub (Settings > Secrets and variables > Actions): `CUSTOMER_CHAT_QUALITY_CI_TOKEN` (el mismo valor), `CUSTOMER_CHAT_QUALITY_API_URL` (URL pública `https` de la aplicación, sin ruta final) y `OPENAI_API_KEY`.
+  2. En GitHub (Settings > Secrets and variables > Actions): los secretos `CUSTOMER_CHAT_QUALITY_CI_TOKEN` (el mismo valor) y `OPENAI_API_KEY`, y `CUSTOMER_CHAT_QUALITY_API_URL` (URL pública `https` de la aplicación, sin ruta final), que puede ser una variable o un secreto.
 - **Puntos de acceso (solo para el flujo, autenticados con el token):** `GET /api/internal/customer-chat-quality/status` y `POST /api/internal/customer-chat-quality/reports`. Solo aceptan las fuentes `contract` y `pipeline`.
 - **Uso manual:** `npm run quality:submit --workspace=apps/api -- --source=contract --file=contrato.json` envía un reporte ya generado, con `CUSTOMER_CHAT_QUALITY_API_URL` y `CUSTOMER_CHAT_QUALITY_CI_TOKEN` definidos. `quality:record` sigue disponible para guardar un reporte directamente en la base de la instancia.
 
