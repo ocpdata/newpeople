@@ -166,6 +166,11 @@ export function buildProspectFallback(
   };
 }
 
+function sessionEvidenceLine(snapshot) {
+  const coverage = buildSessionCoverage(snapshot);
+  return `Sesión de prospección de ${snapshot?.profile?.companyName || "la empresa"}: ${coverage.findings} hallazgo(s), ${coverage.contacts} contacto(s) identificado(s) y ${coverage.hypotheses} hipótesis de oportunidad.`;
+}
+
 // Operations are built by the server from the seller's explicit request; whatever the model returns is ignored.
 export function normalizeProspectResponse(result, scopedSnapshot, question, context) {
   const recommendedActions = normalizeProspectRecommendedActions(
@@ -175,9 +180,11 @@ export function normalizeProspectResponse(result, scopedSnapshot, question, cont
       snapshot: scopedSnapshot,
     }),
   );
+  const modelEvidence = Array.isArray(result?.evidence) ? result.evidence : [];
   return {
     answer: String(result?.answer || "No fue posible responder."),
-    evidence: Array.isArray(result?.evidence) ? result.evidence : [],
+    // An answer built from the session is backed by it; without this the engine discards good answers that omit the list.
+    evidence: modelEvidence.length || !String(result?.answer || "").trim() ? modelEvidence : [sessionEvidenceLine(scopedSnapshot)],
     inferences: Array.isArray(result?.inferences) ? result.inferences : [],
     confidence: result?.confidence || "low",
     recommendedActions,

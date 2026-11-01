@@ -74,6 +74,15 @@ describe("operaciones de Cuenta nueva construidas por el servidor", () => {
     expect(response).toMatchObject({ answer: "Hay 2 hallazgos.", evidence: ["Nota"], inferences: ["Posible proyecto"], confidence: "high", source: "prospect_research" });
     expect(normalizeProspectResponse(null, {}, "", context).answer).toBe("No fue posible responder.");
   });
+
+  it("respalda con la sesión una respuesta del modelo que no listó evidencia", () => {
+    const withAnswer = normalizeProspectResponse(
+      { answer: "Hay 2 contactos.", evidence: [], confidence: "medium" },
+      { ...snapshot, profile: { companyName: "Aceros" }, contacts: [{ name: "A" }, { name: "B" }], channelIntentRouting: { intent: "prospect_contacts" } }, "¿Contactos?", context,
+    );
+    expect(withAnswer.evidence).toEqual(["Sesión de prospección de Aceros: 0 hallazgo(s), 2 contacto(s) identificado(s) y 3 hipótesis de oportunidad."]);
+    expect(normalizeProspectResponse({ answer: "" }, snapshot, "", context).evidence).toEqual([]);
+  });
 });
 
 describe("esquema que se le pide al modelo", () => {
