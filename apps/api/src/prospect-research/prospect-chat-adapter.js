@@ -5,6 +5,7 @@ import { listCoachAdminRules } from "../coach/admin-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
 import { buildProspectOperations, buildProspectRecommendedActions, normalizeProspectRecommendedActions } from "./prospect-operations.js";
 import { buildGuardedProspectTurn } from "./prospect-guards.js";
+import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage } from "./prospect-prompts.js";
 
 export { normalizeProspectRecommendedActions };
 
@@ -236,6 +237,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       const selectedContext = { prospectSessionId: session.id };
       const modelSnapshot = {
         ...snapshot,
+        sessionCoverage: buildSessionCoverage(snapshot),
         selectedContext,
         readToolResults,
         conversationHistory,
@@ -280,9 +282,9 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         selectedContext: context,
         conversationHistory,
         instruction:
-          "Usa solo datos de prospección. Distingue datos proporcionados por el vendedor, evidencia pública e inferencias. Nunca presentes un prospecto, contacto o hipótesis como registro CRM confirmado. Las conversiones requieren confirmación explícita." +
+          PROSPECT_CHAT_INSTRUCTION +
           (model?.channelIntentRouting
-            ? `\n\nEnrutamiento validado por el servidor: ${JSON.stringify(model.channelIntentRouting)}. Responde a esa intención usando únicamente las herramientas permitidas y esta sesión de prospecto.`
+            ? `\n\nEnrutamiento del servidor: ${JSON.stringify(model.channelIntentRouting)}. Indica qué datos de la sesión se cargaron y qué herramientas están permitidas, pero no define lo que pide el vendedor: responde a su pregunta usando únicamente esos datos. La intención prospect_profile es solo la de respaldo y no significa que pidan un resumen del perfil.`
             : "") +
           (administrativeRules.length
             ? `\n\nReglas administrativas activas para este canal; aplícalas sin presentar datos prospectivos como registros CRM ni omitir confirmaciones:\n${administrativeRules.join("\n")}`
@@ -295,10 +297,10 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         payload.question,
         payload.context?.channelIntentRouting,
       );
-      const result = await runStructuredTextResearch({
+      const askModel = () => runStructuredTextResearch({
         schemaName: "prospect_contextual_chat",
         systemPrompt:
-          "Responde sobre un prospecto usando únicamente la sesión autorizada. No confundas investigación pública con registros CRM. No propongas ni describas como ejecutada ninguna operación: las conversiones al CRM las propone el servidor y siempre requieren confirmación.",
+          PROSPECT_SYSTEM_PROMPT,
         subject: snapshot.profile?.companyName || "prospecto",
         context: payload,
         currentValues: {},
@@ -331,6 +333,8 @@ export function createProspectChatAdapter({ user, session, jobId }) {
           jobId,
         },
       });
+      // The provider sometimes returns an unparsable answer; one more attempt is cheaper than the generic fallback.
+      const result = (await askModel()) || (await askModel());
       return result || fallback;
     },
     resolveResponseContext: (_snapshot, context) => ({

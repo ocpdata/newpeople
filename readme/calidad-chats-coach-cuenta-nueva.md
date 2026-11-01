@@ -69,6 +69,20 @@ Siguen fallando, por orden: sesión vacía, búsqueda en internet y fuera de alc
 
 Los fallos que quedan en la mejor corrida son exactamente cuatro: los escenarios 3 y 6 (encuadre como prospección y falta de datos de contacto, fase 3) y el 19 y el 21 (contexto de CRM, fase 4). Los escenarios 11 y 22 fallaron en una corrida y pasaron en la otra: son variación del modelo.
 
+### Después de la fase 3 · instrucciones del modelo (2026-11-01)
+
+`prospect-research/prospect-prompts.js` reúne las instrucciones: encuadre de prospección, distinción entre lo ingresado, lo público y lo inferido, `sessionCoverage` (qué datos faltan en la sesión), «la pregunta manda», fuentes completas y respeto del idioma. Si el modelo no responde, se reintenta una vez.
+
+Hallazgo clave: la línea de enrutamiento del servidor («Responde a esa intención…») hacía que el modelo resumiera el perfil en vez de contestar la pregunta (escenarios 7 y 8). Ahora se redacta como contexto, no como la petición del vendedor.
+
+| Medida | Fase 2 | Fase 3 |
+| --- | --- | --- |
+| Escenarios aprobados | 18-20/24 | **22/24 y 21/23** |
+| Escenarios críticos | 8/10 | 8/10 |
+| Operaciones válidas | 29/29 | 29/29 |
+
+Solo fallan el 19 y el 21, que necesitan contexto de CRM (fase 4). Una corrida evaluó 23 escenarios porque el modelo no respondió a uno.
+
 
 ## Valoraciones de las respuestas
 
