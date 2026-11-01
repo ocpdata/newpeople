@@ -5,7 +5,7 @@ import { listCoachAdminRules } from "../coach/admin-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
 import { buildProspectOperations, buildProspectRecommendedActions, normalizeProspectRecommendedActions } from "./prospect-operations.js";
 import { buildGuardedProspectTurn } from "./prospect-guards.js";
-import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage } from "./prospect-prompts.js";
+import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage, languageInstruction, requestedLanguage } from "./prospect-prompts.js";
 
 export { normalizeProspectRecommendedActions };
 
@@ -201,6 +201,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     contacts: session.contacts || [],
     hypotheses: session.hypotheses || [],
     externalResearch: session.result?.externalResearch || null,
+    crm: session.crm || null,
   };
   const permissions = user?.permissionSet || new Set();
   const availableTools = [
@@ -283,6 +284,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         conversationHistory,
         instruction:
           PROSPECT_CHAT_INSTRUCTION +
+          languageInstruction(requestedLanguage({ question, history: conversationHistory })) +
           (model?.channelIntentRouting
             ? `\n\nEnrutamiento del servidor: ${JSON.stringify(model.channelIntentRouting)}. Indica qué datos de la sesión se cargaron y qué herramientas están permitidas, pero no define lo que pide el vendedor: responde a su pregunta usando únicamente esos datos. La intención prospect_profile es solo la de respaldo y no significa que pidan un resumen del perfil.`
             : "") +

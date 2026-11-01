@@ -1,3 +1,4 @@
+import { conversionBlock } from "./prospect-crm-context.js";
 import { normalizeProspectConversionOperation } from "../coach/operation-contract.js";
 
 // Conversion proposals for the Cuenta nueva chat. They are built by the server from the session and the seller's
@@ -73,7 +74,8 @@ export function resolveConversionAction({ question, snapshot }) {
 export function buildProspectRecommendedActions({ intent, question, snapshot }) {
   if (intent !== "conversion_request") return [];
   const action = resolveConversionAction({ question, snapshot });
-  return action ? [action] : [];
+  if (!action || conversionBlock(snapshot?.crm, action.target)) return [];
+  return [action];
 }
 
 const PROSPECT_CONVERSION_TARGETS = new Set([

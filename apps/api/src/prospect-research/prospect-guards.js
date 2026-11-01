@@ -1,3 +1,4 @@
+import { CONVERSION_DISABLED_ANSWER, conversionBlock, duplicatesAnswer } from "./prospect-crm-context.js";
 import { buildProspectOperations, normalizeProspectRecommendedActions, resolveConversionAction } from "./prospect-operations.js";
 
 // Turns the Cuenta nueva chat answers itself, without the model, because the answer is a fact about the session or
@@ -71,6 +72,7 @@ export function detectGuardedTurn({ question, snapshot, history = [] }) {
   const company = snapshot.profile?.companyName || "el prospecto";
 
   if (EXISTENCE_CHECK.test(text) && CRM_MENTION.test(text)) {
+    if (snapshot.crm) return { kind: "existence_check", answer: duplicatesAnswer(company, snapshot.crm) };
     return {
       kind: "existence_check",
       answer: `Desde esta sesión no puedo confirmar si ${company} ya existe en el CRM. La revisión de posibles cuentas duplicadas se hace al convertir el prospecto en cuenta y ahí decides si usar una existente o crear una nueva.`,
@@ -78,6 +80,9 @@ export function detectGuardedTurn({ question, snapshot, history = [] }) {
   }
   if (CONVERSION_VERB.test(text) && CONVERSION_TARGET.test(text) && !CREATIVE_OBJECT.test(text) && !/\bcuenta de correo\b/.test(text)) {
     const action = /\blead\b/.test(text) ? null : resolveConversionAction({ question, snapshot });
+    const block = conversionBlock(snapshot.crm, action ? action.target : "account");
+    if (block?.reason === "disabled") return { kind: "conversion_blocked", answer: CONVERSION_DISABLED_ANSWER };
+    if (block?.reason === "duplicates") return { kind: "conversion_blocked", answer: duplicatesAnswer(company, snapshot.crm) };
     return { kind: "conversion", answer: conversionAnswer({ text, snapshot, action }), action };
   }
   if (CRM_MENTION.test(text) && CRM_CONSULT_OBJECT.test(text) && !isCreative(text)) {

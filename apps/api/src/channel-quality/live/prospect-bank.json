@@ -1406,8 +1406,7 @@
           "checks": {},
           "allowClarification": false
         }
-      ],
-      "futureCapability": true
+      ]
     },
     {
       "id": "S20",
@@ -1465,8 +1464,7 @@
           "checks": {},
           "allowClarification": false
         }
-      ],
-      "futureCapability": true
+      ]
     },
     {
       "id": "S22",

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage } from "../src/prospect-research/prospect-prompts.js";
+import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage, languageInstruction, requestedLanguage } from "../src/prospect-research/prospect-prompts.js";
 import { prospectBank } from "../src/channel-quality/live/prospect-live.js";
 
 const rich = prospectBank.sessions.rica;
@@ -106,5 +106,18 @@ describe("lo que recibe el modelo", () => {
     vi.doUnmock("../src/coach/business-rules.js");
     vi.doUnmock("../src/coach/conversation-engine.js");
     vi.resetModules();
+  });
+});
+
+describe("idioma pedido por el vendedor", () => {
+  it("toma el último idioma pedido, también del historial", () => {
+    expect(requestedLanguage({ question: "¿Cuáles son los hallazgos?", history: [{ role: "user", text: "De ahora en adelante responde en inglés." }] })).toBe("inglés");
+    expect(requestedLanguage({ question: "Ahora responde en español", history: [{ role: "user", text: "Please answer in English" }] })).toBe("español");
+  });
+
+  it("ignora al asistente y las preguntas sin petición de idioma", () => {
+    expect(requestedLanguage({ question: "¿Qué contactos hay?", history: [{ role: "assistant", text: "Respondo en inglés" }] })).toBeNull();
+    expect(languageInstruction(null)).toBe("");
+    expect(languageInstruction("inglés")).toContain("TODA la respuesta en inglés");
   });
 });

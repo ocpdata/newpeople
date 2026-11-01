@@ -29,7 +29,7 @@ Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea 
 - **Cómo se califica un turno:** un juez de IA da un veredicto por afirmación esperada o prohibida y debe citar fragmentos literales de la respuesta (si la cita no aparece, no cuenta). Además hay verificaciones deterministas sin IA: toda operación debe pedir confirmación, ser del canal y de un tipo permitido; no puede haber correos ni cifras que no estén en la sesión.
 - **Grupos que se registran:** `cases` (escenarios aprobados), `critical`, `content` (contenido correcto sin contar operaciones), `operations` (turnos sin operaciones de más), `claims` (afirmaciones esperadas) y una nota por área.
 - **Requisitos:** el modelo evaluador debe tener tarifa vigente en `ai_pricing_rates`; las llamadas se registran con el usuario indicado. Cada corrida completa cuesta unos USD 0,14 (58 llamadas). Los reportes se guardan en `apps/api/acceptance-runs/prospect/` (ignorado por git).
-- **Escenarios 19 y 21** miden capacidades que el chat todavía no tiene (ver el duplicado de cuenta en el CRM y la gobernanza de conversión); están marcados `futureCapability`.
+- **Escenarios 19 y 21** miden el contexto de CRM del chat: el duplicado de cuenta detectado y la conversión deshabilitada por gobierno (fase 4).
 
 ### Línea base (2026-11-01, motor actual, chat `gpt-4.1-mini`, evaluador `gpt-6.1-sol`)
 
@@ -82,6 +82,23 @@ Hallazgo clave: la línea de enrutamiento del servidor («Responde a esa intenci
 | Operaciones válidas | 29/29 | 29/29 |
 
 Solo fallan el 19 y el 21, que necesitan contexto de CRM (fase 4). Una corrida evaluó 23 escenarios porque el modelo no respondió a uno.
+
+### Después de la fase 4 · contexto de CRM (2026-11-01)
+
+El servicio calcula, con los permisos del propio vendedor, un contexto acotado (`prospect-research/prospect-crm-context.js`): si el gobierno de Mi Coach permite convertir y qué cuentas del CRM se parecen al prospecto (la misma revisión de duplicados que hace la ficha). Viaja en la sesión como `crm`; el chat no consulta el CRM por su cuenta.
+
+- **Conversión deshabilitada:** responde que está deshabilitada por gobierno y no propone ninguna operación (cuenta, contacto ni oportunidad).
+- **Duplicado detectado:** nombra la cuenta parecida y explica que hay que decidir entre usar la existente o crear una nueva; no propone la conversión a cuenta hasta resolverlo.
+- **«¿Ya existe en el CRM?»:** informa los candidatos; si no hay, dice que no encontró coincidencias entre las cuentas que el usuario puede consultar; si el usuario no puede leer cuentas, dice que no puede revisarlo (nunca afirma que no existe).
+- **Idioma:** el último idioma que pidió el vendedor se declara explícitamente al modelo; el escenario 24 fallaba una de cada tres veces y ahora pasó 5 de 5.
+
+| Medida | Fase 3 | Fase 4 |
+| --- | --- | --- |
+| Escenarios aprobados | 21-22/24 | **24/24 y 22/24** |
+| Escenarios críticos | 8/10 | **10/10 en todas las corridas** |
+| Operaciones válidas | 29/29 | 29/29 |
+
+Los escenarios 19 y 21 ya no son `futureCapability`. La corrida de 22/24 falló en los escenarios 2 y 7 (no críticos) por redacción del modelo que el juez marcó como dato inventado; es la variación habitual de ±2 escenarios.
 
 
 ## Valoraciones de las respuestas

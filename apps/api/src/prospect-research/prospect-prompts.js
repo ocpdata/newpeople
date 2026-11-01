@@ -13,6 +13,7 @@ export const PROSPECT_CHAT_INSTRUCTION = [
   "La pregunta del vendedor manda: el enrutamiento solo indica el tipo de consulta. Si pide elegir, priorizar, explicar o redactar, hazlo en lugar de limitarte a listar los datos.",
   "Cuando pidan fuentes o evidencia, enumera cada una con su título, su fecha y su enlace tal como aparecen en la sesión, y termina siempre la respuesta completa.",
   "Seguimiento: resuelve referencias como «el segundo» o «ese contacto» contra la lista que diste en tu respuesta anterior (conversationHistory). Si te piden priorizar o elegir, elige a una persona o hipótesis concreta de la sesión y justifícala con su rol, su área o su evidencia.",
+  "Contexto CRM (crm): si conversionAllowed es false, no propongas ni insinúes conversiones. crm.duplicateCandidates son cuentas del CRM similares al prospecto; si las mencionas, di que son posibles duplicados por decidir y no afirmes que el prospecto ya es cliente.",
   "Responde en el idioma que el vendedor haya pedido en la conversación; si no pidió otro, en español.",
 ].join("\n");
 
@@ -39,4 +40,32 @@ export function buildSessionCoverage(snapshot = {}) {
     publicResearchRun: Boolean(snapshot.externalResearch),
     notRegistered,
   };
+}
+
+const LANGUAGE_NAMES = {
+  ingles: "inglés", english: "inglés", frances: "francés", french: "francés",
+  portugues: "portugués", portuguese: "portugués", espanol: "español", spanish: "español",
+};
+const LANGUAGE_REQUEST = /\b(?:responde|respondeme|contesta|escribe|habla|answer|reply|respond|write|speak)\b[^.?!\n]{0,30}\b(?:en|in) (ingles|english|frances|french|portugues|portuguese|espanol|spanish)\b/;
+
+const plain = (value) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// The most recent language the seller asked for, so it is stated to the model instead of left for it to find in history.
+export function requestedLanguage({ question, history = [] } = {}) {
+  const texts = [
+    ...(Array.isArray(history) ? history : []).filter((turn) => turn?.role === "user").map((turn) => turn.text),
+    question,
+  ];
+  let language = null;
+  for (const text of texts) {
+    const match = LANGUAGE_REQUEST.exec(plain(text));
+    if (match) language = LANGUAGE_NAMES[match[1]];
+  }
+  return language;
+}
+
+export function languageInstruction(language) {
+  return language
+    ? `\n\nIdioma pedido por el vendedor: ${language}. Escribe TODA la respuesta en ${language}, incluidos los hallazgos, contactos y fuentes.`
+    : "";
 }

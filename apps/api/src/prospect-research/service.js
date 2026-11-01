@@ -12,6 +12,7 @@ import {
   buildProspectFallback,
   createProspectChatAdapter,
 } from "./prospect-chat-adapter.js";
+import { buildProspectCrmContext } from "./prospect-crm-context.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
 
 const activeExternalResearchRunIds = new Set();
@@ -1961,6 +1962,17 @@ export async function getProspectChatJob({ user, sessionId, jobId }) {
   return mapProspectChatJobRow(rows[0]);
 }
 
+async function withProspectCrmContext(session) {
+  return {
+    ...session,
+    crm: buildProspectCrmContext({
+      duplicateReview: session.duplicateReview,
+      conversionAllowed: (await getMiCoachGovernanceSettings())
+        .allowProspectConversion,
+    }),
+  };
+}
+
 export async function processProspectChatJob({ user, jobId }) {
   await ensureProspectResearchSchema();
   const rows = await query(
@@ -2001,7 +2013,7 @@ export async function processProspectChatJob({ user, jobId }) {
     try {
       turn = await createProspectChatAdapter({
         user,
-        session,
+        session: await withProspectCrmContext(session),
         jobId: Number(jobId),
       }).runTurn({
         question,
@@ -2115,7 +2127,7 @@ export async function runProspectChat({ user, sessionId, question }) {
   try {
     result = await createProspectChatAdapter({
       user,
-      session,
+      session: await withProspectCrmContext(session),
       jobId: null,
     }).runTurn({ question, history: session.chatHistory });
   } catch (error) {
