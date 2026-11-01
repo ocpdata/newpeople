@@ -7,6 +7,8 @@ import { CUSTOMER_UPDATE_FIELDS, CUSTOMER_UPDATE_LABELS, comparableCustomerUpdat
 const itemSchema = z.object({
   id: z.string().uuid(), field: z.string(), action: z.enum(["set", "clear", "pending"]),
   value: z.string().max(10000), status: z.enum(["pending", "completed", "discarded", "no_change"]),
+  // An amount the seller gave without a currency, kept until they confirm it is in USD.
+  awaitingAmount: z.string().max(100).optional(),
 }).strict();
 const memorySchema = z.object({
   accountId: z.number().int().positive(), object: z.enum(["account", "contact", "opportunity"]),
@@ -136,15 +138,24 @@ export async function buildCustomerUpdateResponse({
       catch { validDate = false; }
       if (!validDate) change = { ...change, action: "pending", value: "" };
     }
+    const pendingAmount = change.field === "amountUsd" ? memory.items.find((item) => item.field === "amountUsd" && item.awaitingAmount) : null;
+    const confirmsPendingAmount = Boolean(pendingAmount) && change.action === "set" &&
+      parseCustomerUpdateAmount(pendingAmount.awaitingAmount) !== null &&
+      parseCustomerUpdateAmount(pendingAmount.awaitingAmount) === parseCustomerUpdateAmount(change.value) &&
+      /\b(?:USD|d[oó]lares|dollars)\b/i.test(change.evidence);
     if (seen.has(change.field) || !CUSTOMER_UPDATE_FIELDS[memory.object][change.field] ||
-        !literal(question, change.evidence) || (change.action === "set" && (!change.value || !valueIsSupportedByEvidence(change))) ||
+        !literal(question, change.evidence) || (change.action === "set" && (!change.value || !(valueIsSupportedByEvidence(change) || confirmsPendingAmount))) ||
         (change.action !== "set" && change.value !== "")) {
       return stop(targetClarification || `El cambio no es válido o no conserva los datos explícitos de tu mensaje.${prior
         ? " Conservé el borrador anterior."
         : " No preparé ningún cambio."}`, targetClarification ? { ...memory, items: newDraft ? [] : prior.items } : prior);
     }
     seen.add(change.field);
-    if (change.field === "amountUsd" && change.action === "set" && !/\b(?:USD|d[oó]lares|dollars)\b/i.test(change.evidence)) return stop("Confirma el importe en USD/dólares; no asumí ni convertí la moneda.");
+    if (change.field === "amountUsd" && change.action === "set" && !/\b(?:USD|d[oó]lares|dollars)\b/i.test(change.evidence)) {
+      // An explicit foreign currency is never converted or kept; only an unstated currency waits for the seller's confirmation.
+      if (/\b(?:MXN|MN|pesos?|EUR|euros?|CAD)\b/i.test(change.evidence)) return stop("Confirma el importe en USD/dólares; no asumí ni convertí la moneda.");
+      change = { ...change, action: "pending", awaitingAmount: change.value, value: "" };
+    }
     if (!["pending", "remove"].includes(change.action)) {
       try { normalizeCustomerUpdateValue(memory.object, change.field, change.action === "clear" ? null : change.value); }
       catch (error) { return stop(`${CUSTOMER_UPDATE_LABELS[change.field]}: ${error.message}. No modifiqué el valor.`); }
@@ -154,8 +165,16 @@ export async function buildCustomerUpdateResponse({
     if (change.action === "remove") {
       if (!existing) return stop("Ese campo no está pendiente en el borrador.");
       existing.status = "discarded";
-    } else if (existing) Object.assign(existing, { action: change.action, value: change.value });
-    else memory.items.push({ id: randomUUID(), field: change.field, value: change.value, action: change.action, status: "pending" });
+    } else if (existing) {
+      Object.assign(existing, { action: change.action, value: change.value });
+      if (change.awaitingAmount) existing.awaitingAmount = change.awaitingAmount;
+      else delete existing.awaitingAmount;
+    } else {
+      memory.items.push({
+        id: randomUUID(), field: change.field, value: change.value, action: change.action, status: "pending",
+        ...(change.awaitingAmount ? { awaitingAmount: change.awaitingAmount } : {}),
+      });
+    }
   }
   if (memory.items.length > 12) return stop("El borrador supera el máximo de 12 campos; reduce la solicitud.");
   if (spec.mode === "discard_current") {
@@ -189,6 +208,9 @@ export async function buildCustomerUpdateResponse({
   if (!active) {
     metadata.status = "finished";
     return finish("No quedan cambios pendientes en este borrador. Los estados de guardado se comprobaron contra las operaciones persistidas; retirar una propuesta no modifica el CRM.");
+  }
+  if (active.action === "pending" && active.awaitingAmount) {
+    return finish(`Confirma el importe en USD/dólares (monto indicado: ${active.awaitingAmount}); no asumí ni convertí la moneda. Cuando lo confirmes, preparo la propuesta.`, "clarification");
   }
   if (active.action === "pending") return finish(active.field === "closeDate" ? dateClarification : `Falta el valor propuesto de ${CUSTOMER_UPDATE_LABELS[active.field]}. No inventé un valor ni preparé la escritura.`, "clarification");
   let record;

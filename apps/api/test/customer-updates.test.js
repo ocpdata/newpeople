@@ -140,6 +140,38 @@ describe("A02 typed update drafts", () => {
   it.each(["550 mil", "$550", "550 MXN"])("asks for an unambiguous USD value from %s", async (evidence) => {
     expect((await run([change("amountUsd", "550", evidence)])).operations).toEqual([]);
   });
+  describe("an amount stated without a currency", () => {
+    it("keeps the amount aside and accepts a reply that only confirms the currency", async () => {
+      const first = await run([change("amountUsd", "55000", "Actualiza el monto de Alfa a 55000")]);
+      expect(first.responseType).toBe("clarification");
+      expect(first.answer).toContain("Confirma el importe en USD/dólares");
+      expect(first.answer).toContain("55000");
+      expect(first.operations).toEqual([]);
+      expect(first.updateMemory.items).toEqual([expect.objectContaining({
+        field: "amountUsd", action: "pending", value: "", awaitingAmount: "55000", status: "pending",
+      })]);
+      expect(validateCustomerUpdateMemory(first.updateMemory, snapshot)).not.toBeNull();
+
+      const confirmed = await run([change("amountUsd", "55000", "es en dólares")], {
+        mode: "continue", reference: "", question: "es en dólares", previous: first.updateMemory,
+      });
+      expect(confirmed.operations).toHaveLength(1);
+      expect(confirmed.operations[0]).toMatchObject({ opportunityId: 3, field: "amountUsd", currentValue: 500000, value: 55000, requiresConfirmation: true });
+      expect(confirmed.updateMemory.items[0].awaitingAmount).toBeUndefined();
+    });
+    it("does not accept a confirmation for a different amount, without a currency word, or for a foreign currency", async () => {
+      const first = await run([change("amountUsd", "55000", "Actualiza el monto de Alfa a 55000")]);
+      for (const [value, evidence] of [["60000", "es en dólares"], ["55000", "sí, ese es el monto"]]) {
+        const result = await run([change("amountUsd", value, evidence)], {
+          mode: "continue", reference: "", question: evidence, previous: first.updateMemory,
+        });
+        expect(result.operations, `${value} ${evidence}`).toEqual([]);
+      }
+      const pesos = await run([change("amountUsd", "55000", "Actualiza el monto de Alfa a 55000 pesos")]);
+      expect(pesos.operations).toEqual([]);
+      expect(pesos.updateMemory).toBeNull();
+    });
+  });
   it.each(["2027-02-29", "2028-04-31", "mañana", "01/02/2027"])("rejects ambiguous or impossible date %s", async (value) => {
     expect((await run([change("closeDate", value, value)])).operations).toEqual([]);
   });
