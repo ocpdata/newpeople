@@ -103,6 +103,18 @@ async function run(
 }
 
 describe("Coach blocks job persistence", () => {
+  it("le entrega al clasificador semántico la pregunta real del vendedor", async () => {
+    const question = "¿Qué cuentas tienen más oportunidades abiertas?";
+    const result = await run("supported", question);
+    const call = result.requestMiAgentJson.mock.calls.find(
+      ([request]) => request.phase === "coach_final_intent",
+    );
+    const userMessage = call[0].payload.input.find(
+      (item) => item.role === "user",
+    );
+    expect(JSON.parse(userMessage.content).message).toBe(question);
+  });
+
   it("persists B2–B11 execution and the session without changing storage contracts", async () => {
     const result = await run();
     expect(result.loadCoachBusinessRules).toHaveBeenCalledWith({

@@ -17,6 +17,7 @@
     "report:chat-channels": "node scripts/reportChatChannelUsage.js",
     "quality:lab": "node scripts/recordChannelLabQuality.js",
     "test:prospect-chat:live": "node scripts/runProspectLiveEvaluation.js --live",
+    "test:coach-chat:live": "node scripts/runCoachLiveEvaluation.js --live",
     "quality:record": "node scripts/recordCustomerChatQualityRun.js",
     "quality:submit": "node scripts/submitCustomerChatQualityReport.js",
     "test:customer-chat:evaluation": "vitest run --maxWorkers=1 test/customer-account-chat-evaluation.test.js",

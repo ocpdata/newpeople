@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createCoachBlockPipeline } from "../src/coach/block-pipeline.js";
+import { createCoachBlockPipeline, normalizePlannedReads } from "../src/coach/block-pipeline.js";
 import {
   createCoachBlockTrace,
+  serializeCoachDates,
   withCoachDeadline,
 } from "../src/coach/block-runtime.js";
 import { COACH_INTENT_CATALOG } from "../src/coach/intent-governance.js";
@@ -15,6 +16,7 @@ function fixture({
   coachIntentClassification = null,
   guide = "Guía autorizada: confirmar necesidades antes de avanzar",
   limits,
+  history = [],
 } = {}) {
   const calls = [];
   const requestMiAgentJson = vi.fn(async (request) => {
@@ -63,6 +65,8 @@ function fixture({
       prepareReadModel,
       loadProcessGuide: async () => guide,
       buildStageReadiness: vi.fn(),
+      buildCoachPrompt: vi.fn(() => ({ input: [{ role: "system", content: "Sistema" }] })),
+      normalizeCoachResult: vi.fn((result) => ({ ...result, responseType: "informational" })),
     },
     user: { id: 31 },
     businessRules: {
@@ -71,7 +75,7 @@ function fixture({
     trace,
     jobId: 9,
     question: "¿Qué debo revisar?",
-    history: [],
+    history,
     context: { accountId: 7 },
     coachIntentClassification,
     limits,
@@ -100,6 +104,54 @@ async function run(f, tools = ["searchAccounts"]) {
 }
 
 describe("Coach B6–B10 pipeline", () => {
+  it("le recuerda al modelo el idioma que pidió el vendedor", () => {
+    const withLanguage = fixture({ history: [{ role: "seller", text: "A partir de ahora responde en inglés." }] });
+    expect(withLanguage.pipeline.hooks.buildPrompt({}).input[0].content).toContain("Idioma pedido por el vendedor: inglés");
+    const plain = fixture();
+    expect(plain.pipeline.hooks.buildPrompt({}).input[0].content).toBe("Sistema");
+  });
+
+  it("normaliza los códigos de estado que propone el planificador", () => {
+    expect(
+      normalizePlannedReads([
+        { toolName: "searchOpportunities", filters: { commercialStatusCodes: ["Ganada", " En proceso "], stageCodes: ["Contacto-Inicial"], openOnly: true } },
+      ]),
+    ).toEqual([
+      { toolName: "searchOpportunities", filters: { commercialStatusCodes: ["ganada", "en_proceso"], stageCodes: ["contacto_inicial"], openOnly: true } },
+    ]);
+    expect(normalizePlannedReads(undefined)).toBeUndefined();
+    expect(normalizePlannedReads([{ toolName: "x" }])).toEqual([{ toolName: "x" }]);
+  });
+
+  it("respalda con lo que el servidor leyó una respuesta del modelo sin hechos", async () => {
+    const f = fixture();
+    await run(f);
+    const bare = f.pipeline.hooks.normalizeResponse({ answer: "La cuenta está autorizada", facts: [] });
+    expect(bare.facts).toEqual([
+      expect.objectContaining({ sourceType: "account", label: "Lectura autorizada: searchAccounts" }),
+    ]);
+    const listed = f.pipeline.hooks.normalizeResponse({
+      answer: "La cuenta está autorizada",
+      facts: [{ sourceType: "account", sourceId: 7, label: "Cuenta", excerpt: "Autorizada" }],
+    });
+    expect(listed.facts).toEqual([expect.objectContaining({ label: "Cuenta" })]);
+    expect(f.pipeline.hooks.normalizeResponse({ answer: "", facts: [] }).facts).toEqual([]);
+  });
+
+  it("respalda con la guía autorizada una respuesta de coaching sin lecturas del CRM", async () => {
+    const f = fixture({ mode: "coaching", plan: { intent: "seller_coaching" }, reads: { searchAccounts: [] } });
+    await run(f);
+    expect(f.pipeline.hooks.normalizeResponse({ answer: "Prioriza el seguimiento", facts: [] }).facts).toEqual([
+      expect.objectContaining({ sourceType: "process_guide" }),
+    ]);
+  });
+
+  it("no inventa hechos cuando la lectura no devolvió datos", async () => {
+    const f = fixture({ reads: { searchAccounts: [] } });
+    await run(f);
+    expect(f.pipeline.hooks.normalizeResponse({ answer: "Sin datos", facts: [] }).facts).toEqual([]);
+  });
+
   it("uses B6's resolved intent to constrain the planner's proposed reads", async () => {
     const f = fixture({
       coachIntentClassification: {
@@ -293,5 +345,16 @@ describe("Coach B6–B10 pipeline", () => {
     await expect(
       withCoachDeadline(async () => 1, Date.now() - 1),
     ).rejects.toMatchObject({ code: "coach_turn_timeout" });
+  });
+});
+
+describe("fechas de las aclaraciones de Coach", () => {
+  it("serializa las fechas de MySQL como yyyy-mm-dd", () => {
+    expect(
+      serializeCoachDates({
+        candidates: [{ id: 1, closeDate: new Date("2027-01-31T00:00:00.000Z") }, { id: 2, closeDate: null }],
+        invalid: new Date("nope"),
+      }),
+    ).toEqual({ candidates: [{ id: 1, closeDate: "2027-01-31" }, { id: 2, closeDate: null }], invalid: null });
   });
 });

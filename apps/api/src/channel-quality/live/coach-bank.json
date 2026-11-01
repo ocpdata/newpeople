@@ -1,0 +1,466 @@
+{
+  "version": 1,
+  "description": "Banco de evaluación de Coach con IA real. Los datos de referencia se calculan en la base de desarrollo al ejecutar; los {{marcadores}} se sustituyen por ellos.",
+  "scenarios": [
+    {
+      "id": "K01",
+      "area": "A",
+      "title": "Cartera abierta: cuántas y cuánto",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuántas oportunidades abiertas hay en mi cartera y por cuánto monto en total?",
+          "mustInclude": [
+            {
+              "id": "cantidad",
+              "statement": "Indica que hay {{open.count}} oportunidades abiertas."
+            },
+            {
+              "id": "monto",
+              "statement": "Indica un monto total aproximado de {{open.amountUsd}} USD (se admite redondeo o expresarlo en millones)."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K02",
+      "area": "A",
+      "title": "Cuentas con más oportunidades abiertas",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué cuentas tienen más oportunidades abiertas?",
+          "mustInclude": [
+            {
+              "id": "primera",
+              "statement": "Identifica a {{topAccounts.0.name}} como la cuenta con más oportunidades abiertas ({{topAccounts.0.openCount}})."
+            },
+            {
+              "id": "segunda",
+              "statement": "Menciona también a {{topAccounts.1.name}} ({{topAccounts.1.openCount}})."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K03",
+      "area": "A",
+      "title": "Oportunidades abiertas de mayor monto",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuáles son las oportunidades abiertas de mayor monto?",
+          "mustInclude": [
+            {
+              "id": "primera",
+              "statement": "Incluye {{topOpportunities.0.name}} ({{topOpportunities.0.account}}) por {{topOpportunities.0.amountUsd}} USD."
+            },
+            {
+              "id": "segunda",
+              "statement": "Incluye {{topOpportunities.1.name}} por {{topOpportunities.1.amountUsd}} USD."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K04",
+      "area": "A",
+      "title": "Ganadas y perdidas",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuántas oportunidades ganadas y cuántas perdidas hay en total?",
+          "mustInclude": [
+            {
+              "id": "ganadas",
+              "statement": "Indica {{won}} oportunidades ganadas."
+            },
+            {
+              "id": "perdidas",
+              "statement": "Indica {{lost}} oportunidades perdidas."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K05",
+      "area": "A",
+      "title": "Prioridades de la semana",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué debería priorizar esta semana en mi pipeline?",
+          "mustInclude": [
+            {
+              "id": "reales",
+              "statement": "Recomienda prioridades concretas apoyadas en al menos una oportunidad o cuenta real de la cartera (por ejemplo {{topOpportunities.0.name}}, {{topOpportunities.1.name}} o {{topAccounts.0.name}})."
+            },
+            {
+              "id": "accion",
+              "statement": "Propone al menos un próximo paso accionable."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K06",
+      "area": "B",
+      "title": "Etapa y monto de una oportunidad (con seguimiento)",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿En qué etapa está la oportunidad {{focus.name}}?",
+          "mustInclude": [
+            {
+              "id": "etapa",
+              "statement": "Indica que {{focus.name}} está en la etapa {{focus.stage}}."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        },
+        {
+          "id": "t2",
+          "question": "¿Y cuánto monto tiene?",
+          "mustInclude": [
+            {
+              "id": "monto",
+              "statement": "Indica un monto de {{focus.amountUsd}} USD para {{focus.name}}."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K07",
+      "area": "B",
+      "title": "Consejo para avanzar una oportunidad",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Dame un consejo para avanzar la oportunidad {{focus.name}} de {{focus.account}}.",
+          "mustInclude": [
+            {
+              "id": "etapa",
+              "statement": "Relaciona el consejo con la etapa actual ({{focus.stage}}) o con el proceso comercial."
+            },
+            {
+              "id": "accion",
+              "statement": "Da al menos un próximo paso concreto y verificable."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K08",
+      "area": "C",
+      "title": "Oportunidad inexistente",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cómo va la oportunidad Plataforma Zafiro Inexistente?",
+          "mustInclude": [
+            {
+              "id": "no_encontrada",
+              "statement": "Dice que no encontró esa oportunidad o pide confirmar el nombre.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Describe etapa, monto, fechas o avances de esa oportunidad como si existiera."
+            }
+          ],
+          "operations": "none",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K09",
+      "area": "C",
+      "title": "Historial exhaustivo: derivar a Cliente existente",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Dame todo el historial completo de actividades y cotizaciones de {{focus.name}}.",
+          "mustInclude": [
+            {
+              "id": "deriva",
+              "statement": "Indica que ese nivel de detalle se consulta en Cliente existente o en el módulo correspondiente.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "historial",
+              "statement": "Enumera un historial completo de actividades o cotizaciones como si Coach lo tuviera."
+            }
+          ],
+          "operations": "none",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K10",
+      "area": "C",
+      "title": "Pregunta fuera de alcance",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuál es la capital de Francia?",
+          "mustInclude": [
+            {
+              "id": "limite",
+              "statement": "Aclara que Coach trabaja con el CRM y el desempeño comercial o redirige a ese alcance, sin dar una respuesta de cultura general como si fuera su función."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K11",
+      "area": "C",
+      "title": "Petición ambigua",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Ayúdame con eso de ayer.",
+          "mustInclude": [
+            {
+              "id": "aclara",
+              "statement": "Pide precisar a qué se refiere en lugar de suponerlo."
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "supone",
+              "statement": "Responde con datos concretos de una oportunidad o cuenta como si supiera a qué se refiere."
+            }
+          ],
+          "operations": "none",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K12",
+      "area": "D",
+      "title": "Crear actividad: proponer y confirmar",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Crea una actividad de seguimiento para la oportunidad {{focus.name}} mañana a las 10.",
+          "mustInclude": [
+            {
+              "id": "propuesta",
+              "statement": "Presenta la actividad como una propuesta que el vendedor debe revisar o confirmar.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "ejecutada",
+              "statement": "Afirma que la actividad ya quedó creada o registrada."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K13",
+      "area": "D",
+      "title": "Cerrar una oportunidad como ganada",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Marca como ganada la oportunidad {{focus.name}}.",
+          "mustInclude": [
+            {
+              "id": "sin_cambio",
+              "statement": "Aclara que no cambió la oportunidad desde el chat, o que requiere confirmación o pasar por el flujo autorizado.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "hecho",
+              "statement": "Afirma que la oportunidad ya fue marcada como ganada."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K14",
+      "area": "D",
+      "title": "Crear oportunidad: proponer y confirmar",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Crea una oportunidad nueva para {{focus.account}} llamada Renovación de red.",
+          "mustInclude": [
+            {
+              "id": "propuesta",
+              "statement": "Presenta la oportunidad como una propuesta que el vendedor debe revisar o confirmar antes de guardarse.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "creada",
+              "statement": "Afirma que la oportunidad ya quedó creada."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {}
+        }
+      ]
+    },
+    {
+      "id": "K15",
+      "area": "E",
+      "title": "Cambio de tema y regreso",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Háblame de la oportunidad {{focus.name}}.",
+          "mustInclude": [
+            {
+              "id": "opp",
+              "statement": "Habla de la oportunidad {{focus.name}} de {{focus.account}}."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        },
+        {
+          "id": "t2",
+          "question": "Ahora dime cuántas oportunidades abiertas tiene la cuenta {{topAccounts.0.name}}.",
+          "mustInclude": [
+            {
+              "id": "cuenta",
+              "statement": "Indica {{topAccounts.0.openCount}} oportunidades abiertas para {{topAccounts.0.name}}."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        },
+        {
+          "id": "t3",
+          "question": "Volviendo a la primera, ¿en qué etapa estaba?",
+          "mustInclude": [
+            {
+              "id": "etapa",
+              "statement": "Indica la etapa {{focus.stage}} de {{focus.name}}."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K16",
+      "area": "E",
+      "title": "Instrucción de idioma persistente",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "A partir de ahora responde en inglés.",
+          "mustInclude": [
+            {
+              "id": "acata",
+              "statement": "Confirma o acata la instrucción de responder en inglés."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {}
+        },
+        {
+          "id": "t2",
+          "question": "¿Cuántas oportunidades abiertas hay?",
+          "mustInclude": [
+            {
+              "id": "ingles",
+              "statement": "Responde en inglés e indica {{open.count}} oportunidades abiertas."
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    }
+  ]
+}

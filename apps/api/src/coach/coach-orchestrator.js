@@ -6,13 +6,13 @@ export async function runCoachDecision(
   message,
   context = {},
   permissions = {},
-  classifySemanticIntent,
+  classifyWithModel,
 ) {
   const preDecision = classifyB3(message, context);
   const semanticDecision = await classifySemanticIntent(
     message,
     context,
-    classifySemanticIntent,
+    classifyWithModel,
   );
   const finalDecision = resolveFinalIntent(
     preDecision,

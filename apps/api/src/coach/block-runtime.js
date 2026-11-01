@@ -113,6 +113,48 @@ export function hasCoachEvidence(results = []) {
   );
 }
 
+// MySQL returns DATE columns as Date objects; the response contract expects plain yyyy-mm-dd strings.
+export function serializeCoachDates(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  if (Array.isArray(value)) return value.map(serializeCoachDates);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, serializeCoachDates(item)]),
+    );
+  }
+  return value;
+}
+
+const FACT_SOURCE_BY_TOOL = [
+  [/quotation/i, "quotation"],
+  [/activit/i, "activity"],
+  [/opportunit|pipeline/i, "opportunity"],
+  [/account/i, "account"],
+  [/contact/i, "contact"],
+  [/lead/i, "lead"],
+];
+
+// Facts describing what the server actually read, for answers whose model listed none. They state the reads
+// and their size only; the answer audit still decides whether the answer is supported by them.
+export function buildCoachEvidenceFacts(results = [], limit = 5) {
+  return results
+    .filter((item) => !item.error && hasCoachEvidence([item]))
+    .slice(0, limit)
+    .map((item) => {
+      const count = Array.isArray(item.result) ? item.result.length : 1;
+      return {
+        sourceType:
+          FACT_SOURCE_BY_TOOL.find(([pattern]) => pattern.test(item.toolName))?.[1] ||
+          "crm_context",
+        sourceId: null,
+        label: `Lectura autorizada: ${item.toolName}`,
+        excerpt: `${count} registro(s) leído(s) del CRM para responder esta pregunta.`,
+      };
+    });
+}
+
 export function coachBlockFailure(
   message,
   responseType = "error",

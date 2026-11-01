@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { languageInstruction, requestedLanguage } from "../chat-language.js";
 import { coachEvidenceSchema } from "./contract.js";
 import { aiModelFor } from "../ai-services/state.js";
 import {
@@ -12,8 +13,10 @@ import {
 import { executeCoachReadTool } from "./crm-read-tools.js";
 import {
   COACH_BLOCK_LIMITS,
+  buildCoachEvidenceFacts,
   coachBlockFailure,
   hasCoachEvidence,
+  serializeCoachDates,
   summarizeCoachEvidence,
   withCoachDeadline,
 } from "./block-runtime.js";
@@ -35,6 +38,36 @@ const filtersSchema = z
     closeYear: z.number().int().min(2000).max(2100).optional(),
   })
   .strict();
+// Coaching answers without CRM reads rest on the authorized process guide, which the evidence check already accepts.
+const GUIDE_FACT = {
+  sourceType: "process_guide",
+  sourceId: null,
+  label: "Guía del proceso comercial",
+  excerpt: "Respuesta de coaching basada en el proceso comercial autorizado.",
+};
+
+// The planner model often writes codes with capitals, accents or spaces ("Ganada", "En proceso"); the tools expect snake_case.
+const toCode = (value) =>
+  typeof value === "string"
+    ? value
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_")
+    : value;
+export function normalizePlannedReads(reads) {
+  if (!Array.isArray(reads)) return reads;
+  return reads.map((read) => {
+    const filters = read?.filters;
+    if (!filters || typeof filters !== "object") return read;
+    const normalized = { ...filters };
+    for (const key of ["stageCodes", "commercialStatusCodes"]) {
+      if (Array.isArray(normalized[key])) normalized[key] = normalized[key].map(toCode);
+    }
+    return { ...read, filters: normalized };
+  });
+}
 const planReadsSchema = z
   .array(
     z
@@ -327,10 +360,17 @@ export function createCoachBlockPipeline({
       loadAdministrativeRules,
       buildPrompt: (...args) => {
         promptArguments = args;
-        return dependencies.buildCoachPrompt(...args);
+        const prompt = dependencies.buildCoachPrompt(...args);
+        const language = languageInstruction(
+          requestedLanguage({ question, history }),
+        );
+        if (language && prompt?.input?.[0]) {
+          prompt.input[0].content = `${prompt.input[0].content}${language}`;
+        }
+        return prompt;
       },
       normalizeResponse: (source, ...args) => {
-        const facts = (Array.isArray(source?.facts) ? source.facts : [])
+        const modelFacts = (Array.isArray(source?.facts) ? source.facts : [])
           .map((fact) =>
             coachEvidenceSchema.safeParse({
               sourceType: fact?.sourceType,
@@ -341,8 +381,27 @@ export function createCoachBlockPipeline({
           )
           .filter((parsed) => parsed.success)
           .map((parsed) => parsed.data);
+        // An answer that read real CRM data but listed no facts would be discarded as unsupported.
+        const facts =
+          modelFacts.length || !String(source?.answer || "").trim()
+            ? modelFacts
+            : [
+                ...buildCoachEvidenceFacts(evidence),
+                ...(hasCoachEvidence(evidence) ||
+                !String(guide).trim() ||
+                !(
+                  readModel?.intentRouting?.mode === "coaching" ||
+                  plan?.mode === "coaching"
+                )
+                  ? []
+                  : [GUIDE_FACT]),
+              ]
+                .map((fact) => coachEvidenceSchema.safeParse(fact))
+                .filter((parsed) => parsed.success)
+                .map((parsed) => parsed.data);
         diagnostics.responseContract = {
-          rejectedFacts: (source?.facts?.length || 0) - facts.length,
+          rejectedFacts: (source?.facts?.length || 0) - modelFacts.length,
+          serverFacts: modelFacts.length ? 0 : facts.length,
         };
         const normalized = dependencies.normalizeCoachResult(
           { ...source, facts },
@@ -433,7 +492,9 @@ export function createCoachBlockPipeline({
             : proposed;
           const classification =
             validateCoachIntentClassification(planningProposal);
-          const parsedReads = planReadsSchema.safeParse(proposed.reads || []);
+          const parsedReads = planReadsSchema.safeParse(
+            normalizePlannedReads(proposed.reads || []),
+          );
           if (
             !parsedReads.success ||
             classification.requiresClarification ||
@@ -516,6 +577,9 @@ export function createCoachBlockPipeline({
               .map(([key]) => key),
           }),
         );
+        if (readModel.clarification) {
+          readModel.clarification = serializeCoachDates(readModel.clarification);
+        }
         readModel.intentRouting = input.intentRouting;
         evidence = [];
         if (

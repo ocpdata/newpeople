@@ -9,11 +9,23 @@ vi.mock("../src/coach/service.js", () => ({
 }));
 
 import {
+  buildCoachPermissionSnapshot,
   normalizeCoachGatewayRequest,
   prepareCoachTurn,
 } from "../src/coach/agent-gateway.js";
 
 describe("Coach Agent Gateway", () => {
+  it("reconoce los permisos reales del catálogo para leer y escribir oportunidades", () => {
+    const seller = buildCoachPermissionSnapshot({
+      permissionSet: new Set(["cuentas.read", "oportunidades.read", "oportunidades.update"]),
+    });
+    expect(seller).toMatchObject({ canReadAccounts: true, canReadOpportunities: true, canWriteOpportunities: true });
+    const requester = buildCoachPermissionSnapshot({ permissionSet: new Set(["oportunidades.request"]) });
+    expect(requester.canWriteOpportunities).toBe(true);
+    const readOnly = buildCoachPermissionSnapshot({ permissionSet: new Set(["cuentas.read_all", "oportunidades.read_all"]) });
+    expect(readOnly).toMatchObject({ canReadAccounts: true, canReadOpportunities: true, canWriteOpportunities: false });
+  });
+
   beforeEach(() => {
     getCoachSessionMock.mockReset();
   });

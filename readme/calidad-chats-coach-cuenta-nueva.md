@@ -7,7 +7,7 @@ Medición propia de Coach y Cuenta nueva. Es independiente de la de Cliente exis
 | Fuente | Qué es | Cómo se registra | Umbral inicial |
 | --- | --- | --- | --- |
 | Laboratorio (`lab`) | Casos deterministas, sin IA ni costo, sobre entidades, búsqueda, respuestas de la sesión y reglas de operaciones | `npm run quality:lab --workspace=apps/api -- --channel=coach\|prospect` | 90% de los casos |
-| IA real (`live`) | Banco de Cuenta nueva con IA real y juez (24 escenarios, datos sintéticos, con costo). Coach todavía no tiene uno | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` | 85% de los casos y 100% de los escenarios críticos |
+| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (24 escenarios, datos sintéticos) y Coach (16 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08]` | 85% de los casos y 100% de los escenarios críticos |
 | Producción (`production_monitor`) | Turnos y valoraciones reales de los últimos 7 días | Automático una vez al día o con **Actualizar monitoreo de producción** | 90% de turnos sin fallo, 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
 
 Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea base medida con uso real. Cada ejecución queda como **Dentro del umbral**, **Bajo el umbral** o **Bajó frente a la anterior** (cae 5 puntos o más frente a la ejecución anterior del mismo canal y fuente).
@@ -100,6 +100,45 @@ El servicio calcula, con los permisos del propio vendedor, un contexto acotado (
 
 Los escenarios 19 y 21 ya no son `futureCapability`. La corrida de 22/24 falló en los escenarios 2 y 7 (no críticos) por redacción del modelo que el juez marcó como dato inventado; es la variación habitual de ±2 escenarios.
 
+
+### Cierre del criterio de liberación de Cuenta nueva (2026-11-01)
+
+Una respuesta del modelo que no listaba evidencia era descartada por el motor con el mensaje genérico («No puedo confirmar una respuesta de negocio…»; el escenario 3 fallaba así una de cada ocho veces). Ahora, si la respuesta se apoya en la sesión, el adaptador la respalda con una línea de evidencia calculada por el servidor (cuántos hallazgos, contactos e hipótesis tiene la sesión). Resultado: **24/24 y 24/24 en dos corridas completas consecutivas, críticos 10/10**.
+
+## Banco de Coach con IA real
+
+- **Escenarios:** 16, en cinco áreas (A cartera y pipeline, B una oportunidad, C honestidad y límites, D operaciones seguras, E conversación). Los escenarios 8, 9, 12, 13 y 14 son críticos. Definición: `apps/api/src/channel-quality/live/coach-bank.json`.
+- **Datos de referencia:** se calculan con SQL en la base de desarrollo al ejecutar (`coach-facts.js`), no con las herramientas de Coach, para que un error de lectura de Coach no se oculte a sí mismo. Los `{{marcadores}}` de las preguntas y afirmaciones se sustituyen por esos datos. Abiertas = en proceso y activadas. El usuario debe tener alcance global.
+- **Cómo corre:** levanta la aplicación en el mismo proceso y usa las rutas HTTP reales (`/api/mi-agent/coach` y `/coach/jobs/:id`), igual que la web, con un token del usuario indicado. Al terminar cancela las operaciones pendientes y cierra las sesiones de prueba.
+- **Cómo se califica:** el mismo juez con citas literales que Cuenta nueva, más verificaciones deterministas: toda operación pide confirmación y una pregunta clara no puede contestarse pidiendo aclaración.
+
+### Línea base y mejoras (2026-11-01)
+
+| Medida | Línea base | Después de las mejoras |
+| --- | --- | --- |
+| Escenarios aprobados | 2/16 | **11/16 a 12/16** (últimas tres corridas) |
+| Escenarios críticos | 0/5 | 2/5 a 3/5 |
+| Cartera y pipeline (área A) | 0/5 | **5/5** |
+| Una oportunidad (área B) | 0/2 | **2/2** |
+
+La línea base mostró que Coach no contestaba ninguna pregunta real. Defectos corregidos, todos en archivos exclusivos de Coach:
+
+1. **El clasificador semántico nunca veía la pregunta** (`coach-orchestrator.js`): un parámetro tapaba la función importada y el modelo recibía el texto sin el formato `{message, context}`. Siempre devolvía «aclaración». Es la causa de que en la VM el único turno de Coach fuera una aclaración.
+2. **La puerta de permisos buscaba permisos que no existen** (`agent-gateway.js`): `oportunidades.write` y `oportunidades.editar` no están en el catálogo real (`oportunidades.create`, `.request` y `.update`), así que nadie podía crear ni actualizar desde Coach.
+3. **Prompt del clasificador:** ahora define cada intención (consejo, pipeline, dato puntual, creación, actualización), cubre las preguntas de seguimiento y no toma un consejo por una creación.
+4. **Filtros del planificador:** los códigos con mayúsculas, acentos o espacios («Ganada», «En proceso») se rechazaban; ahora se normalizan.
+5. **Respuestas sin hechos:** igual que en Cuenta nueva, una respuesta basada en lecturas reales pero sin hechos listados se descartaba; ahora el servidor los agrega a partir de lo que leyó (o de la guía del proceso, en coaching sin lecturas).
+6. **Fechas en las aclaraciones:** MySQL devuelve `Date` y el contrato exigía texto, así que cualquier aclaración entre oportunidades parecidas terminaba en «No fue posible validar el formato».
+7. **Idioma:** el último idioma pedido por el vendedor se declara al modelo.
+
+### Brechas que quedan (requieren tocar el motor compartido con Cliente existente)
+
+- **Escenario 9, historial exhaustivo:** debe derivar a Cliente existente, pero responde «selecciona account en el contexto del Coach».
+- **Escenario 13, marcar como ganada:** no cambia nada (correcto), pero responde con el mensaje genérico «La evidencia autorizada no cubre la solicitud» en lugar de explicar que no se hace desde el chat.
+- **Escenario 14, crear una oportunidad para una cuenta:** el resolvedor de entidades toma el nombre de la cuenta como oportunidad y pide elegir entre «varias coincidencias».
+- **Escenario 15, volver a una entidad anterior:** «volviendo a la primera» no recupera la oportunidad de hace dos turnos.
+
+Los criterios de liberación de Coach siguen sin cumplirse (críticos 100% y 85% de los casos). Los resultados varían entre corridas por el modelo; las cifras de arriba son de las últimas tres corridas completas.
 
 ## Valoraciones de las respuestas
 
