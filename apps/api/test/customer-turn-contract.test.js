@@ -2561,6 +2561,48 @@ describe("Customer turn contract", () => {
     expect(result.answer).not.toContain("¿A cuál pregunta");
     expect(result.stageAnswerPrefill).toBeUndefined();
   });
+  describe("report kept as a note once the seller confirms it", () => {
+    const writer = { id: 31, permissionSet: new Set(["oportunidades.update", "mi_coach.execute"]) };
+    const noMatch = () => vi.fn().mockResolvedValue({ match: "none", questionIds: [], reason: "no responde una pregunta de etapa" });
+    const reported = component("report.client_statement", { text: "El cliente me dijo que su presupuesto está aprobado", certainty: "reported" });
+    it("proposes an attributed opportunity note when no stage question matches", async () => {
+      const result = await associateCustomerReport({ ...reportArgs(), user: writer, component: reported, classifyWithAI: noMatch() });
+      expect(result.responseType).toBe("operation");
+      expect(result.answer).toContain("Todavía no está registrado en el CRM");
+      expect(result.operations).toEqual([expect.objectContaining({
+        kind: "opportunity_note", opportunityId: 9101, accountId: Number(snapshot.account.id),
+        noteText: reported.text, sourceType: "chat_report", attribution: "client", certainty: "reported",
+      })]);
+      expect(result.stageAnswerPrefill).toBeUndefined();
+    });
+    it("also offers the note for a client intention that is not a confirmed fact", async () => {
+      const result = await associateCustomerReport({
+        ...reportArgs(), user: writer, classifyWithAI: vi.fn(),
+        component: component("report.client_statement", { text: "Rene dijo que intentará revisar Vrf 2027", certainty: "suspected" }),
+      });
+      expect(result.answer).toContain("No la tomaré como una fecha");
+      expect(result.operations).toEqual([expect.objectContaining({ kind: "opportunity_note", certainty: "suspected" })]);
+    });
+    it("only keeps the report in the conversation without write permissions or an open opportunity", async () => {
+      const readOnly = await associateCustomerReport({
+        ...reportArgs(), user: { id: 31, permissionSet: new Set(["oportunidades.read"]) }, component: reported, classifyWithAI: noMatch(),
+      });
+      expect(readOnly.operations).toEqual([]);
+      expect(readOnly.responseType).toBe("informational");
+      expect(readOnly.answer).toContain("no registrado en el CRM");
+      const closed = { ...snapshot, opportunities: snapshot.opportunities.map((item) => ({ ...item, lifecycle: "historical" })) };
+      const result = await associateCustomerReport({ ...reportArgs(), user: writer, snapshot: closed, component: reported, classifyWithAI: noMatch() });
+      expect(result.operations).toEqual([]);
+    });
+    it("does not replace a matching stage answer with a note", async () => {
+      const result = await associateCustomerReport({
+        ...reportArgs(), user: writer,
+        classifyWithAI: vi.fn().mockResolvedValue({ match: "matched", questionIds: [9201], reason: "motivación" }),
+      });
+      expect(result.operations).toEqual([]);
+      expect(result.stageAnswerPrefill).toMatchObject({ questionIds: [9201] });
+    });
+  });
   it("preserves uncertainty when an explicit report has a possible review next month", async () => {
     const classifyWithAI = vi.fn();
     const result = await associateCustomerReport({

@@ -937,9 +937,12 @@ describe("Customer contract B6/B9/B10 integration", () => {
       const first = await adapter([makeComponent("report.client_statement", "opportunity", {
         text: question, reference: "Hardware Refresh", attribution: "client", certainty: "reported",
       })], { snapshot: reportSnapshot }).runTurn({ question, context: { accountId: 9001 } });
-      expect(first.response.responseType).toBe("informational");
-      expect(first.response.answer).toContain("pendiente de revisión");
-      expect(first.response.answer).toContain("no registrado en el CRM");
+      // The report matches no stage question, so it is offered as a note that is saved only once the seller confirms it.
+      expect(first.response.responseType).toBe("operation");
+      expect(first.response.answer).toContain("Todavía no está registrado en el CRM");
+      expect(first.response.operations).toEqual([expect.objectContaining({
+        kind: "opportunity_note", attribution: "client", certainty: "reported", noteText: expect.stringContaining("Kimberly me dijo"),
+      })]);
       expect(first.qualityTrace.validationStatus).toBe("valid");
       expect(first.response.stageAnswerPrefill).toBeUndefined();
 
@@ -952,10 +955,13 @@ describe("Customer contract B6/B9/B10 integration", () => {
         question: correction, context: { accountId: 9001 },
         conversationContext: { accountId: 9001, turnMemory: first.turnMemory },
       });
-      expect(second.response.responseType).toBe("informational");
+      expect(second.response.responseType).toBe("operation");
       expect(second.response.answer).toContain("Karla me dijo que está pendiente de revisión");
       expect(second.response.answer).not.toContain("Kimberly me dijo");
-      expect(second.response.operations).toEqual([]);
+      expect(second.response.operations).toEqual([expect.objectContaining({
+        kind: "opportunity_note", noteText: expect.stringContaining("Karla me dijo"),
+      })]);
+      expect(second.response.operations[0].noteText).not.toContain("Kimberly me dijo");
       expect(second.turnMemory.contract.components[0]).toMatchObject({
         object: "opportunity", reference: "Hardware Refresh",
       });

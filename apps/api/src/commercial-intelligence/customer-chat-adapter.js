@@ -145,6 +145,7 @@ export function createCustomerAccountAdapter({
     sellerReportedStageAnswerCandidates: [],
     sellerReportAssessment: null,
     allowOperationsForTurn: false,
+    reportNoteProposed: false,
   };
   const availableTools = [
     ...COACH_READ_TOOL_CATALOG,
@@ -271,7 +272,7 @@ export function createCustomerAccountAdapter({
         context,
         permissions,
       );
-      const reportNoteProposed = state.sellerReportAssessment?.outcome === "note_proposed";
+      const reportNoteProposed = state.reportNoteProposed || state.sellerReportAssessment?.outcome === "note_proposed";
       if (!state.allowOperationsForTurn && !reportNoteProposed && response.operations.length) {
         turnDiagnostics.serverRules.decisions.push({
           ruleId: "explicit-operation-intent",

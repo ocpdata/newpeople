@@ -4093,6 +4093,101 @@ describe("Customer account chat adapter", () => {
     expect(runStructuredTextResearch).toHaveBeenCalledTimes(3);
   });
 
+  it("proposes the report as a note when the contract routes it and no stage question matches", async () => {
+    vi.spyOn(coachBusinessRulesModule, "loadCoachBusinessRules").mockResolvedValue(
+      getCoachBusinessRules({
+        channel: "customer_account",
+        process: "account_chat",
+      }),
+    );
+    vi.spyOn(coachAdminRulesModule, "listCoachAdminRules").mockResolvedValue([]);
+    vi.spyOn(
+      channelIntentGovernanceModule,
+      "loadChannelIntentConfigurations",
+    ).mockResolvedValue(getChannelIntentDefaults("customer_account"));
+
+    const selectedOpportunity = {
+      ...snapshot.opportunities[0],
+      lifecycle: "open",
+      salesStageId: 4,
+      stageCode: "identificacion_oportunidad",
+      stageName: "Identificación de la oportunidad",
+      currentStage: {
+        id: 4,
+        code: "identificacion_oportunidad",
+        name: "Identificación de la oportunidad",
+        criteria: [
+          {
+            code: "identificacion_motivacion_principal",
+            title: "Motivación de negocio",
+            required: true,
+          },
+        ],
+      },
+      stageQuestions: [
+        {
+          questionId: 33,
+          code: "identificacion_motivacion_principal",
+          prompt:
+            "¿Cuál es el motivo de negocio principal detrás de este requerimiento?",
+          answer: "",
+          required: true,
+        },
+        {
+          questionId: 34,
+          code: "identificacion_resultado_esperado",
+          prompt: "¿Qué resultado espera conseguir el cliente?",
+          answer: "",
+          required: false,
+        },
+      ],
+      workspace: { criteria: [], actions: [], weaknesses: [] },
+    };
+    runStructuredTextResearch.mockReset().mockImplementation(async (request) => {
+      if (request.schemaName === "customer_account_query_plan") {
+        return {
+          objective: "Conservar un reporte del cliente", queries: ["opportunity_guidance"],
+          entities: { opportunityReference: selectedOpportunity.name }, filters: {},
+          ambiguity: { reason: "none", requiresClarification: "no", missingContext: [], question: "" },
+          referenceResolution: { targetType: "opportunity", cardinality: "single", source: "current_message", candidateKeys: ["opportunity_1"] },
+          mode: "read_only", confidence: "high",
+        };
+      }
+      if (request.schemaName === "customer_account_report_destination") {
+        return { match: "none", questionIds: [], reason: "El presupuesto no responde una pregunta de etapa." };
+      }
+      throw new Error(`Unexpected AI call: ${request.schemaName}`);
+    });
+    const question = "El cliente me dijo que su presupuesto está aprobado";
+    const buildAdapter = (permissions) => createCustomerAccountAdapter({
+      user: { id: 31, permissionSet: new Set(["cuentas.read", "oportunidades.read", "desarrollo_comercial.read", "interacciones.read", ...permissions]) },
+      snapshot: { ...snapshot, opportunities: [selectedOpportunity], selectedOpportunity },
+      authoritativeIntent: { intent: "opportunity_guidance", confidence: 0.9, requiresClarification: false },
+      contractComponent: {
+        id: "c1", category: "report.client_statement", object: "opportunity", scope: "single", reference: selectedOpportunity.name,
+        text: question, attribution: "client", certainty: "reported", explicitAction: false,
+      },
+      channelIntentConfiguration: getChannelIntentDefaults("customer_account"),
+      agents: [], jobId: 919,
+    });
+    const run = (adapter) => adapter.runTurn({ question, context: { accountId: 7, opportunityId: selectedOpportunity.id }, history: [] });
+
+    const writer = await run(buildAdapter(["oportunidades.update", "mi_coach.execute"]));
+    expect(writer.response.responseType, JSON.stringify(writer.response)).toBe("operation");
+    expect(writer.response.operations).toEqual([
+      expect.objectContaining({
+        kind: "opportunity_note", opportunityId: selectedOpportunity.id, attribution: "client", certainty: "reported",
+        sourceType: "chat_report", requiresConfirmation: true, noteText: question,
+      }),
+    ]);
+    expect(writer.response.answer).toContain("Todavía no está registrado");
+
+    runStructuredTextResearch.mockClear();
+    const reader = await run(buildAdapter([]));
+    expect(reader.response.operations).toEqual([]);
+    expect(reader.response.answer).toContain("no registrado en el CRM");
+  });
+
   it("uses a safe alternative when the final answer contains unsupported CRM claims", async () => {
     const businessRules = getCoachBusinessRules({
       channel: "customer_account",

@@ -50,6 +50,7 @@ export async function requestCustomerResponse(turnCtx, {
   state.sellerReportedStageAnswerQuestionIds = [];
   state.sellerReportedStageAnswerCandidates = [];
   state.sellerReportAssessment = null;
+  state.reportNoteProposed = false;
   const initialReadToolResults = Array.isArray(
     payload.context?.readToolResults,
   )
@@ -72,6 +73,7 @@ export async function requestCustomerResponse(turnCtx, {
       verifier: "report", rounds: 0,
     };
     recordAnswerGeneration("contract_report", result);
+    state.reportNoteProposed = Array.isArray(result.operations) && result.operations.some((operation) => operation.kind === "opportunity_note");
     return result;
   }
   const unqueriedAuthorizedTools = Array.isArray(

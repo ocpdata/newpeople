@@ -16,6 +16,31 @@ function response(answer, responseType = "informational", extra = {}) {
   };
 }
 
+// A report that does not belong to a stage question can be kept as an opportunity note, once the seller confirms it.
+function reportNoteOperation({ component, snapshot, opportunity, user }) {
+  const permissions = user?.permissionSet;
+  if (!opportunity || opportunity.lifecycle !== "open" ||
+      !permissions?.has?.("oportunidades.update") || !permissions?.has?.("mi_coach.execute")) return null;
+  const noteText = String(component.text || "").trim().replace(/\s+/g, " ").slice(0, 4000);
+  if (!noteText) return null;
+  return {
+    kind: "opportunity_note",
+    title: `Registrar nota en ${opportunity.name}`,
+    accountId: Number(snapshot.account?.id),
+    opportunityId: Number(opportunity.id),
+    noteText,
+    sourceType: "chat_report",
+    attribution: ["client", "seller", "document"].includes(component.attribution) ? component.attribution : "seller",
+    certainty: ["reported", "observed", "suspected", "hypothetical", "unspecified"].includes(component.certainty)
+      ? component.certainty : "unspecified",
+  };
+}
+
+function reportResponse(answer, noteOperation, noteAnswer = "") {
+  if (!noteOperation) return response(answer);
+  return response(`${answer} ${noteAnswer}`.trim(), "operation", { operations: [noteOperation] });
+}
+
 function normalizeCustomerText(value) {
   return String(value || "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase("es");
 }
@@ -891,6 +916,19 @@ export async function associateCustomerReport({
   selection = "", queryErrors = [], unqueriedTools = [], classifyWithAI = runStructuredTextResearch,
   documentReportEvidence = null,
 }) {
+  const reportedOpportunityId = Number(routing?.serverResolvedEntityIds?.opportunityId ||
+    readToolResults.find((item) => item.toolName === "getOpportunity" && !item.error)?.result?.id || 0);
+  const reportedOpportunity = [
+    ...(snapshot.opportunities || []), ...(snapshot.inactiveOpportunities || []),
+    ...(snapshot.selectedOpportunity ? [snapshot.selectedOpportunity] : []),
+  ].find((item) => Number(item.id) === reportedOpportunityId &&
+    Number(item.accountId) === Number(snapshot.account?.id));
+  const noteOperation = component.category === "report.client_statement" && !readToolResults.some((item) => item.error) &&
+    !queryErrors.length && !unqueriedTools.length
+    ? reportNoteOperation({ component, snapshot, opportunity: reportedOpportunity, user }) : null;
+  const noteOffer = noteOperation
+    ? `Todavía no está registrado en el CRM: si quieres guardarlo como nota en ${noteOperation.title.replace("Registrar nota en ", "")}, revisa y confirma la operación.`
+    : "";
   if (component.category === "report.hypothesis") {
     return response(customerReportAcknowledgement(component));
   }
@@ -899,7 +937,9 @@ export async function associateCustomerReport({
   }
   if (component.category === "report.client_statement" &&
       hasTemporalClientReportLanguage(component.text)) {
-    return response(`Conservo la intención en el historial de este chat, no registrada en el CRM: “${component.text}”. No la tomaré como una fecha o compromiso confirmado ni la asociaré a una respuesta de etapa que no corresponde. Si quieres incorporarla, dime a qué pregunta de etapa y preparo un borrador para que lo revises y guardes.`);
+    return noteOperation
+      ? reportResponse(`Conservo la intención en el historial de este chat: “${component.text}”. No la tomaré como una fecha o compromiso confirmado ni la asociaré a una respuesta de etapa que no corresponde.`, noteOperation, noteOffer)
+      : response(`Conservo la intención en el historial de este chat, no registrada en el CRM: “${component.text}”. No la tomaré como una fecha o compromiso confirmado ni la asociaré a una respuesta de etapa que no corresponde. Si quieres incorporarla, dime a qué pregunta de etapa y preparo un borrador para que lo revises y guardes.`);
   }
   if (component.category === "report.client_statement" && !component.reference) {
     return response(`Conservo tu reporte en el historial de este chat, no registrado en el CRM: “${component.text}”. No lo he verificado con el cliente. ¿A qué oportunidad quieres asociarlo para preparar un borrador revisable?`, "clarification");
@@ -930,6 +970,9 @@ export async function associateCustomerReport({
       .map((item) => ({ questionId: Number(item.questionId), prompt: String(item.prompt), currentAnswer: String(item.answer || "") }))
     : [];
   if (!candidates.length) {
+    if (noteOperation) {
+      return reportResponse("Recibí el reporte y lo conservo atribuido en este chat. Esa oportunidad no tiene preguntas de etapa editables.", noteOperation, noteOffer);
+    }
     return response("Recibí el reporte y lo conservaré. Indica una oportunidad autorizada con preguntas de etapa editables para preparar su revisión; no necesitas repetir el reporte.", "clarification");
   }
   const candidateIds = candidates.map((item) => item.questionId);
@@ -963,6 +1006,9 @@ export async function associateCustomerReport({
       match.questionIds.some((questionId) => !candidates.some((item) => item.questionId === questionId)) ||
       (match.match === "matched" && match.questionIds.length !== 1)) {
     throw Object.assign(new Error("Asociación de reporte inválida"), { code: "CUSTOMER_REPORT_ASSOCIATION_INVALID" });
+  }
+  if (match.match === "none" && noteOperation) {
+    return reportResponse(`El reporte queda en el historial de este chat: “${component.text}”. No encontré una pregunta de etapa a la que corresponda directamente, así que no lo asocié para no cambiar su sentido.`, noteOperation, noteOffer);
   }
   if (match.match === "none") {
     return response(`El reporte queda en el historial de este chat, no registrado en el CRM: “${component.text}”. No encontré una pregunta de etapa a la que corresponda directamente, así que no lo asocié para no cambiar su sentido. Si quieres registrarlo, indícame el destino y revisaré si hay un borrador adecuado.`);
