@@ -18,33 +18,33 @@ describe("memoria de pedidos anteriores del vendedor", () => {
   });
 
   it("conserva solo los mensajes del vendedor anteriores a la ventana", () => {
-    const history = conversation(5);
-    expect(history).toHaveLength(10);
+    const history = conversation(8);
+    expect(history).toHaveLength(16);
     expect(earlierUserRequests(history)).toEqual(["Pedido 1", "Pedido 2"]);
-    expect(RECENT_MESSAGES).toBe(6);
+    expect(RECENT_MESSAGES).toBe(12);
   });
 
   it("limita la cantidad y el largo y normaliza el espacio", () => {
     const history = [
-      ...Array.from({ length: 15 }, (_, index) => ({ role: "user", text: `P${index}` })),
+      ...Array.from({ length: 25 }, (_, index) => ({ role: "user", text: `P${index}` })),
       { role: "user", text: `  responde   siempre\n en inglés ${"x".repeat(400)} ` },
-      ...conversation(3),
+      ...conversation(6),
     ];
     const earlier = earlierUserRequests(history);
-    expect(earlier).toHaveLength(10);
+    expect(earlier).toHaveLength(20);
     expect(earlier.at(-1).startsWith("responde siempre en inglés")).toBe(true);
-    expect(earlier.at(-1)).toHaveLength(200);
+    expect(earlier.at(-1)).toHaveLength(300);
     expect(earlier.at(-1).endsWith("…")).toBe(true);
     expect(earlier[0]).toBe("P6");
   });
 
   it("ignora mensajes vacíos y los que no son del vendedor", () => {
-    const history = [{ role: "user", text: "   " }, { role: "assistant", text: "Hola" }, { role: "user", text: "Útil" }, ...conversation(3)];
+    const history = [{ role: "user", text: "   " }, { role: "assistant", text: "Hola" }, { role: "user", text: "Útil" }, ...conversation(6)];
     expect(earlierUserRequests(history)).toEqual(["Útil"]);
   });
 
   describe("contextos de los modelos", () => {
-    const long = conversation(6);
+    const long = conversation(9);
     const dossier = { account: { id: 1, name: "Cuenta" }, sections: { opportunities: { items: [] } } };
     const router = (history) => buildRouterContext({ question: "Hola", history, selectedOpportunityId: null, accountDossier: dossier, memory: null, today: "2026-10-30" });
     const analyst = (history) => buildAnalystContext({ question: "Hola", route: { obligations: [], focusLevel: "account", opportunityIds: [], recordFilters: [] },
@@ -56,9 +56,9 @@ describe("memoria de pedidos anteriores del vendedor", () => {
         const longContext = build(long);
         expect(longContext.earlierUserRequests).toEqual(["Pedido 1", "Pedido 2", "Pedido 3"]);
         const recent = longContext.recentConversation || longContext.conversationForContinuityOnly;
-        expect(recent).toHaveLength(6);
-        expect(recent.at(-1).text).toBe("Respuesta 6");
-        expect(build(conversation(2))).not.toHaveProperty("earlierUserRequests");
+        expect(recent).toHaveLength(12);
+        expect(recent.at(-1).text).toBe("Respuesta 9");
+        expect(build(conversation(5))).not.toHaveProperty("earlierUserRequests");
       }
     });
 

@@ -2,9 +2,9 @@
 // (language, scope, "no public sources"...) would be forgotten, so a clipped list of those older requests is
 // passed along as continuity only. They are the seller's own words, never evidence and never tasks to run again.
 
-export const RECENT_MESSAGES = 6;
-const MAX_EARLIER_REQUESTS = 10;
-const MAX_REQUEST_CHARS = 200;
+export const RECENT_MESSAGES = 12;
+const MAX_EARLIER_REQUESTS = 20;
+const MAX_REQUEST_CHARS = 300;
 
 export function earlierUserRequests(history = [], { recent = RECENT_MESSAGES } = {}) {
   const older = Array.isArray(history) ? history.slice(0, Math.max(0, history.length - recent)) : [];
