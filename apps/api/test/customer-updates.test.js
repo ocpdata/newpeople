@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildCustomerUpdateResponse, validateCustomerUpdateMemory } from "../src/commercial-intelligence/customer-updates.js";
+import { buildCatalogContactFieldGuidance, buildCustomerUpdateResponse, validateCustomerUpdateMemory } from "../src/commercial-intelligence/customer-updates.js";
 import { CUSTOMER_UPDATE_FIELDS, normalizeCustomerUpdateValue } from "../src/coach/customer-field-values.js";
 import { coachOperationSchema } from "../src/coach/contract.js";
 import { validateCustomerConversationContext } from "../src/commercial-intelligence/conversation-context.js";
@@ -139,6 +139,28 @@ describe("A02 typed update drafts", () => {
   });
   it.each(["550 mil", "$550", "550 MXN"])("asks for an unambiguous USD value from %s", async (evidence) => {
     expect((await run([change("amountUsd", "550", evidence)])).operations).toEqual([]);
+  });
+  describe("requests to change a catalog field of a contact", () => {
+    it.each([
+      "Cambia el nivel jerárquico de Erick Ramirez",
+      "Actualiza el nivel de influencia de Ana a alto",
+      "Quiero modificar el tipo de relación de Elena",
+      "Asigna como jefe a Pedro",
+    ])("answers up front that %j cannot be done from the chat", (question) => {
+      const response = buildCatalogContactFieldGuidance(question);
+      expect(response.responseType).toBe("informational");
+      expect(response.operations).toEqual([]);
+      expect(response.answer).toContain("Mapeo de contactos");
+      expect(response.answer).toContain("No preparé ningún cambio");
+    });
+    it.each([
+      "¿Cuál es el nivel jerárquico de Erick Ramirez?",
+      "Qué nivel de influencia tiene Ana",
+      "Cambia el cargo de Erick Ramirez a Especialista",
+      "Actualiza el monto de Alfa a 55000 USD",
+    ])("leaves %j to the normal flow", (question) => {
+      expect(buildCatalogContactFieldGuidance(question)).toBeNull();
+    });
   });
   describe("a bare reply to a question about a catalog field of a contact", () => {
     const asked = "¿Qué nivel jerárquico quieres asignar a Elena?";

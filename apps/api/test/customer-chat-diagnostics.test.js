@@ -144,6 +144,23 @@ describe.each(["development", "production"])("Customer chat diagnostics in %s", 
     expect(JSON.parse(jobWrite.params[0]).debug).toEqual(job.result.debug);
   });
 
+  it("answers a request to change a catalog field of a contact without calling the engines", async () => {
+    const baseQuery = query.getMockImplementation();
+    query.mockImplementation(async (sql, params) => {
+      if (sql.startsWith("SELECT * FROM customer_intelligence_jobs")) return [{
+        id: 1, account_id: 7, requested_by_user_id: 31,
+        request_json: JSON.stringify({ question: "Cambia el nivel jerárquico de Erick Ramirez", chatSessionId: 2 }),
+      }];
+      return baseQuery(sql, params);
+    });
+    const job = await processCustomerAccountChatJob({ jobId: 1, user });
+    expect(job.status).toBe("completed");
+    expect(job.result.answer).toContain("Mapeo de contactos");
+    expect(job.result.operations ?? []).toEqual([]);
+    expect(runCustomerDossierTurn).not.toHaveBeenCalled();
+    expect(interpretReviewedCustomerTurn).not.toHaveBeenCalled();
+  });
+
   it("stores failure diagnostics when persistence fails", async () => {
     withTransaction.mockRejectedValueOnce(new Error("Test persistence failure"));
     expect(await processCustomerAccountChatJob({ jobId: 1, user })).toBeNull();

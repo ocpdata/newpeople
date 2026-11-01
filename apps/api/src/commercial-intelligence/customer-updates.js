@@ -51,6 +51,19 @@ const collapse = (text) => String(text).replace(/\s+/g, " ").trim().toLowerCase(
 const NAMES_A_TEXT_FIELD = /cargo|puesto|posici[oó]n|[aá]rea|departamento|correo|e-?mail|tel[eé]fono|celular|m[oó]vil|ciudad|estado|regi[oó]n|nombre|apellido/i;
 const isBareValue = (text) => collapse(text).split(" ").length <= 4 && !NAMES_A_TEXT_FIELD.test(text);
 
+const CATALOG_FIELD_CHANGE_VERB = /\b(?:cambi\w*|actualiz\w*|modific\w*|asign\w*|edit\w*|pon(?:er|ga|go)?|ajust\w*|correg\w*|establec\w*|defin\w*|sub(?:e|ir)|baj(?:a|ar))\b/i;
+const IS_A_QUERY = /^\s*¿?\s*(?:cu[aá]l(?:es)?|qu[eé]|qui[eé]n(?:es)?|cu[aá]ntos?|c[oó]mo|d[oó]nde)\b/i;
+
+// Those contact fields are catalog values that the chat cannot write; saying so up front avoids asking for a value it cannot apply.
+export function buildCatalogContactFieldGuidance(question) {
+  const text = String(question || "");
+  if (!CATALOG_CONTACT_QUESTION.test(text) || !CATALOG_FIELD_CHANGE_VERB.test(text) || IS_A_QUERY.test(text)) return null;
+  return {
+    answer: "El nivel jerárquico, el nivel de influencia, el tipo de relación y los vínculos de jefe o de a quién influye son campos de catálogo de un contacto: no se cambian con un mensaje del chat. Edítalos en Mapeo de contactos o desde el Coach. No preparé ningún cambio.",
+    responseType: "informational", operations: [], evidence: [], inferences: [], pendingItems: [], recommendedActions: [], confidence: "high",
+  };
+}
+
 export async function buildCustomerUpdateResponse({
   component, movement, question, snapshot, previous, metrics = [], readRecord, loadStates, previousAssistantText = "",
 }) {

@@ -7,6 +7,7 @@ import { buildCustomerActivityDraftResponse } from "./activity-draft.js";
 import { buildCustomerConversationContext, validateCustomerConversationContext } from "./conversation-context.js";
 import { buildCustomerExtractedMaterial } from "./customer-documents.js";
 import { buildDossierQualityTrace, combineDossierAndActionResponse, runCustomerDossierTurn } from "./dossier/engine.js";
+import { buildCatalogContactFieldGuidance } from "./customer-updates.js";
 import { buildPendingActivityOptionsResponse, buildPendingActivityRouting, buildPendingScheduleClarification, buildPendingScheduleRouting, opportunityOptions, resolveActivitySchedule, resolvePendingActivitySchedule, resolvePendingActivityTarget, visibleCustomerOpportunities } from "./pending-activity-target.js";
 import { composeCustomerConversationalResponse } from "./customer-conversational-response.js";
 import { config } from "../config.js";
@@ -359,9 +360,9 @@ async function answerChatTurn(turn, { adapter, agents, continuationContext, conv
       qualityTrace: {
         process: "default",
         intentType: "crm_operation",
-        intentSubtype: "pending_activity_reply",
-        primaryEntity: "opportunity",
-        appliedRules: { channel: "customer_account", engine: "pending_activity_reply" },
+        intentSubtype: directActivityTurn.intentSubtype || "pending_activity_reply",
+        primaryEntity: directActivityTurn.engine === "catalog_contact_field" ? "contact" : "opportunity",
+        appliedRules: { channel: "customer_account", engine: directActivityTurn.engine || "pending_activity_reply" },
         validationStatus: directActivityTurn.response.responseType === "clarification" ? "clarification" : "valid",
         validationReasons: [],
         responseType: directActivityTurn.response.responseType,
@@ -972,6 +973,15 @@ async function prepareChatTurn(turn, { job, user, jobId, deadlineAt, progressRep
         Number(snapshot.selectedOpportunity?.id || 0) !== Number(focusOpportunity.id)) {
       // The opportunity chosen in the chat selector is the explicit target for actions too.
       snapshot = { ...snapshot, selectedOpportunity: focusOpportunity };
+    }
+    if (!directActivityTurn) {
+      const catalogFieldGuidance = buildCatalogContactFieldGuidance(request.question);
+      if (catalogFieldGuidance) {
+        preparationStage = "catalog_contact_field";
+        directActivityTurn = {
+          routing: null, response: catalogFieldGuidance, engine: "catalog_contact_field", intentSubtype: "catalog_contact_field",
+        };
+      }
     }
     if (!directActivityTurn) {
       preparationStage = "dossier_engine";
