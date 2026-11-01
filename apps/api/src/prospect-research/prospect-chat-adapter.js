@@ -4,6 +4,7 @@ import { normalizeProspectConversionOperation } from "../coach/operation-contrac
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
+import { buildProspectRecommendedActions } from "./prospect-operations.js";
 
 function normalize(value) {
   return String(value || "")
@@ -190,6 +191,33 @@ export function buildProspectFallback(
   };
 }
 
+// Operations are built by the server from the seller's explicit request; whatever the model returns is ignored.
+export function normalizeProspectResponse(result, scopedSnapshot, question, context) {
+  const recommendedActions = normalizeProspectRecommendedActions(
+    buildProspectRecommendedActions({
+      intent: scopedSnapshot?.channelIntentRouting?.intent,
+      question,
+      snapshot: scopedSnapshot,
+    }),
+  );
+  return {
+    answer: String(result?.answer || "No fue posible responder."),
+    evidence: Array.isArray(result?.evidence) ? result.evidence : [],
+    inferences: Array.isArray(result?.inferences) ? result.inferences : [],
+    confidence: result?.confidence || "low",
+    recommendedActions,
+    source: "prospect_research",
+    entities: { accountId: null, opportunityId: null, contactId: null, leadId: null, names: [] },
+    operations: recommendedActions.map((action) =>
+      normalizeProspectConversionOperation(action, {
+        prospectSessionId: context.prospectSessionId,
+        target: action.target || "account",
+      }),
+    ),
+    clarification: null,
+  };
+}
+
 export function createProspectChatAdapter({ user, session, jobId }) {
   const snapshot = {
     profile: session.result?.profile || {
@@ -301,7 +329,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       const result = await runStructuredTextResearch({
         schemaName: "prospect_contextual_chat",
         systemPrompt:
-          "Responde sobre un prospecto usando únicamente la sesión autorizada. No confundas investigación pública con registros CRM. Las acciones siempre requieren confirmación.",
+          "Responde sobre un prospecto usando únicamente la sesión autorizada. No confundas investigación pública con registros CRM. No propongas ni describas como ejecutada ninguna operación: las conversiones al CRM las propone el servidor y siempre requieren confirmación.",
         subject: snapshot.profile?.companyName || "prospecto",
         context: payload,
         currentValues: {},
@@ -325,44 +353,6 @@ export function createProspectChatAdapter({ user, session, jobId }) {
             enum: ["high", "medium", "low"],
             example: "medium",
           },
-          {
-            key: "recommendedActions",
-            type: "array",
-            example: [],
-            items: {
-              type: "object",
-              fields: [
-                { key: "title", type: "string", example: "Validar hipótesis" },
-                {
-                  key: "target",
-                  type: "enum",
-                  enum: ["account", "contact", "opportunity"],
-                  example: "opportunity",
-                },
-                {
-                  key: "actionType",
-                  type: "enum",
-                  enum: ["convert", "conversion", "create"],
-                  example: "convert",
-                },
-                {
-                  key: "notes",
-                  type: "string",
-                  example: "Confirmar con el prospecto",
-                },
-                {
-                  key: "successCriteria",
-                  type: "string",
-                  example: "Dato validado",
-                },
-                {
-                  key: "requiresConfirmation",
-                  type: "string",
-                  example: "true",
-                },
-              ],
-            },
-          },
           { key: "source", type: "string", example: "prospect_research" },
         ],
         aiUsageContext: {
@@ -379,33 +369,8 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       changed: false,
       conflict: null,
     }),
-    normalizeResponse: (result, _snapshot, _question, context) => {
-      const recommendedActions = normalizeProspectRecommendedActions(
-        result?.recommendedActions,
-      );
-      return {
-        answer: String(result?.answer || "No fue posible responder."),
-        evidence: Array.isArray(result?.evidence) ? result.evidence : [],
-        inferences: Array.isArray(result?.inferences) ? result.inferences : [],
-        confidence: result?.confidence || "low",
-        recommendedActions,
-        source: "prospect_research",
-        entities: {
-          accountId: null,
-          opportunityId: null,
-          contactId: null,
-          leadId: null,
-          names: [],
-        },
-        operations: recommendedActions.map((action) =>
-          normalizeProspectConversionOperation(action, {
-            prospectSessionId: context.prospectSessionId,
-            target: action.target || "account",
-          }),
-        ),
-        clarification: null,
-      };
-    },
+    normalizeResponse: (result, scopedSnapshot, question, context) =>
+      normalizeProspectResponse(result, scopedSnapshot, question, context),
     featureCode: "prospect_research.chat",
   };
   return {

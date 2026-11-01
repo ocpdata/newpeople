@@ -43,6 +43,19 @@ Lo que explica la nota:
 4. **Ignora peticiones de escritura:** «Crea el contacto Laura Medina» y «Pásalo a oportunidad» se responden como consultas.
 5. **Búsqueda en internet y fuera de alcance:** presenta la evidencia guardada como si fueran noticias nuevas y no aclara que no consulta el CRM.
 
+### Después de la fase 1 · las operaciones las construye el servidor (2026-11-01)
+
+El modelo ya no devuelve acciones recomendadas; `prospect-research/prospect-operations.js` construye, a partir de la sesión y de lo que pidió el vendedor, una sola operación confirmable y solo cuando la intención es una conversión. Dos corridas completas:
+
+| Medida | Línea base | Fase 1 |
+| --- | --- | --- |
+| Escenarios aprobados | 2/24 | 13/24 y 14/24 |
+| Escenarios críticos | 1/10 | 3/10 |
+| Turnos sin operaciones de más | 10/29 | 29/29 |
+| Preparar el acercamiento (área B) | 1/5 | 5/5 |
+
+Siguen fallando, por orden: sesión vacía, búsqueda en internet y fuera de alcance, peticiones de escritura que el clasificador por patrones no reconoce como conversión (fase 2), encuadre de los datos como prospección (fase 3) y los escenarios 19 y 21, que necesitan contexto de CRM (fase 4).
+
 
 ## Valoraciones de las respuestas
 
