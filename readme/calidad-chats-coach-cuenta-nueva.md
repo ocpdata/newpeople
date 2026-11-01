@@ -7,7 +7,7 @@ Medición propia de Coach y Cuenta nueva. Es independiente de la de Cliente exis
 | Fuente | Qué es | Cómo se registra | Umbral inicial |
 | --- | --- | --- | --- |
 | Laboratorio (`lab`) | Casos deterministas, sin IA ni costo, sobre entidades, búsqueda, respuestas de la sesión y reglas de operaciones | `npm run quality:lab --workspace=apps/api -- --channel=coach\|prospect` | 90% de los casos |
-| IA real (`live`) | Reservada para un banco con proveedor real (todavía no existe) | — | 85% de los casos |
+| IA real (`live`) | Banco de Cuenta nueva con IA real y juez (24 escenarios, datos sintéticos, con costo). Coach todavía no tiene uno | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` | 85% de los casos y 100% de los escenarios críticos |
 | Producción (`production_monitor`) | Turnos y valoraciones reales de los últimos 7 días | Automático una vez al día o con **Actualizar monitoreo de producción** | 90% de turnos sin fallo, 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
 
 Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea base medida con uso real. Cada ejecución queda como **Dentro del umbral**, **Bajo el umbral** o **Bajó frente a la anterior** (cae 5 puntos o más frente a la ejecución anterior del mismo canal y fuente).
@@ -22,6 +22,27 @@ Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea 
 ## Dónde se ve
 
 **Mi Agente > Calidad Coach y Cuenta nueva** (permiso `mi_coach.evaluations_read`; actualizar el monitoreo requiere `mi_coach.evaluations_execute`). Muestra, por canal, el último resultado de cada fuente, su tendencia y las ejecuciones recientes.
+
+## Banco de Cuenta nueva con IA real
+
+- **Escenarios:** 24, en cinco áreas (A consultar la sesión, B preparar el acercamiento, C honestidad y límites, D conversión segura, E conversación). Los escenarios 12 a 21 son críticos. Definición: `apps/api/src/channel-quality/live/prospect-bank.json` (sesiones sintéticas con fuentes ficticias).
+- **Cómo se califica un turno:** un juez de IA da un veredicto por afirmación esperada o prohibida y debe citar fragmentos literales de la respuesta (si la cita no aparece, no cuenta). Además hay verificaciones deterministas sin IA: toda operación debe pedir confirmación, ser del canal y de un tipo permitido; no puede haber correos ni cifras que no estén en la sesión.
+- **Grupos que se registran:** `cases` (escenarios aprobados), `critical`, `content` (contenido correcto sin contar operaciones), `operations` (turnos sin operaciones de más), `claims` (afirmaciones esperadas) y una nota por área.
+- **Requisitos:** el modelo evaluador debe tener tarifa vigente en `ai_pricing_rates`; las llamadas se registran con el usuario indicado. Cada corrida completa cuesta unos USD 0,14 (58 llamadas). Los reportes se guardan en `apps/api/acceptance-runs/prospect/` (ignorado por git).
+- **Escenarios 19 y 21** miden capacidades que el chat todavía no tiene (ver el duplicado de cuenta en el CRM y la gobernanza de conversión); están marcados `futureCapability`.
+
+### Línea base (2026-11-01, motor actual, chat `gpt-4.1-mini`, evaluador `gpt-6.1-sol`)
+
+Dos corridas completas dieron resultados casi idénticos: casos 2/24, críticos 1/10, contenido 12/24, turnos sin operaciones de más 10/29 y afirmaciones esperadas entre 66% y 74%.
+
+Lo que explica la nota:
+
+1. **Operaciones espurias:** en 19 de 29 turnos el chat propone operaciones `create_contact` o `create_account` para tareas como «Contactar a Carlos Treviño» en consultas que no pidieron ninguna conversión.
+2. **No encuadra los datos como prospección:** al pedir el perfil o los contactos no aclara que son datos de prospección y personas no confirmadas en el CRM.
+3. **Respuesta genérica sin hallazgos:** ante una sesión vacía responde «No puedo confirmar una respuesta de negocio…» en lugar de decir que la sesión no tiene hallazgos.
+4. **Ignora peticiones de escritura:** «Crea el contacto Laura Medina» y «Pásalo a oportunidad» se responden como consultas.
+5. **Búsqueda en internet y fuera de alcance:** presenta la evidencia guardada como si fueran noticias nuevas y no aclara que no consulta el CRM.
+
 
 ## Valoraciones de las respuestas
 

@@ -10,7 +10,16 @@ const SOURCES = {
   production_monitor: "Producción · últimos 7 días",
 };
 const GROUPS = {
-  cases: "Casos del laboratorio",
+  cases: "Casos aprobados",
+  critical: "Escenarios críticos",
+  content: "Contenido correcto (sin contar operaciones)",
+  operations: "Turnos sin operaciones de más",
+  claims: "Afirmaciones esperadas",
+  area_a: "Consultar la sesión",
+  area_b: "Preparar el acercamiento",
+  area_c: "Honestidad y límites",
+  area_d: "Conversión segura",
+  area_e: "Conversación",
   known_gaps_fixed: "Brechas conocidas corregidas",
   reliability: "Turnos sin fallo",
   satisfaction: "Valoraciones positivas",

@@ -1,0 +1,1629 @@
+{
+  "version": 1,
+  "description": "Banco de evaluación de Cuenta nueva (datos sintéticos; las fuentes son ficticias).",
+  "sessions": {
+    "rica": {
+      "id": 9001,
+      "companyName": "Aceros del Norte",
+      "country": "México",
+      "website": "https://aceros-del-norte.example",
+      "industry": "Siderurgia",
+      "result": {
+        "profile": {
+          "companyName": "Aceros del Norte",
+          "country": "México",
+          "website": "https://aceros-del-norte.example",
+          "industry": "Siderurgia",
+          "positioning": "Productor de acero con operaciones en el norte de México; prospecto para validar necesidades de red y seguridad."
+        },
+        "outreach": {
+          "subject": "Explorar prioridades tecnológicas en Aceros del Norte",
+          "body": "Hola,\n\nEstoy investigando las prioridades tecnológicas de Aceros del Norte para entender si podemos apoyar en retos de infraestructura.\n\nSaludos.",
+          "questions": [
+            "¿Qué área impulsa hoy las iniciativas tecnológicas?",
+            "¿Quién valida el impacto técnico?"
+          ]
+        },
+        "externalResearch": {
+          "enabled": true,
+          "provider": "tavily",
+          "findingCount": 4,
+          "contactCount": 4,
+          "hypothesisCount": 3,
+          "researchedAt": "2026-10-20T15:00:00.000Z",
+          "sellerBrief": {
+            "whyNow": "Aceros del Norte anunció en septiembre de 2026 una inversión de 40 millones de dólares en una nueva planta en Santa Catarina y un programa de nube híbrida; ambos suelen detonar proyectos de red y seguridad.",
+            "recommendedOpening": "Preguntar cómo planean conectar la nueva planta con la red corporativa y qué controles de seguridad consideran desde el diseño.",
+            "discoveryQuestions": [
+              "¿Cómo conectarán la nueva planta con la red actual?",
+              "¿Qué requisitos de seguridad tendrá la operación de la planta?",
+              "¿Qué cargas migrarán a la nube híbrida y en qué plazo?"
+            ],
+            "sourceUrls": [
+              "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+              "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida"
+            ]
+          }
+        }
+      },
+      "findings": [
+        {
+          "id": 1,
+          "category": "expansion",
+          "title": "Inversión en nueva planta en Santa Catarina",
+          "summary": "Anunció una nueva planta con inversión de 40 millones de dólares.",
+          "evidenceText": "Aceros del Norte anunció una inversión de 40 millones de dólares para una nueva planta en Santa Catarina, con arranque previsto en 2027.",
+          "sourceExcerpt": "Aceros del Norte anunció una inversión de 40 millones de dólares para una nueva planta en Santa Catarina, con arranque previsto en 2027.",
+          "sourceTitle": "Aceros del Norte invertirá 40 millones de dólares en nueva planta",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-09-15"
+          }
+        },
+        {
+          "id": 2,
+          "category": "technology",
+          "title": "Programa de modernización de TI con nube híbrida",
+          "summary": "Publicó que migrará aplicaciones críticas a una arquitectura de nube híbrida.",
+          "evidenceText": "La empresa informó que iniciará un programa de modernización de TI con nube híbrida durante el segundo semestre de 2026.",
+          "sourceExcerpt": "La empresa informó que iniciará un programa de modernización de TI con nube híbrida durante el segundo semestre de 2026.",
+          "sourceTitle": "Modernización de TI en Aceros del Norte",
+          "sourceType": "company_site",
+          "sourceReference": "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-08-02"
+          }
+        },
+        {
+          "id": 3,
+          "category": "industry",
+          "title": "Aumento de ciberataques en manufactura",
+          "summary": "Reporte sectorial sobre incidentes de ciberseguridad en plantas de manufactura.",
+          "evidenceText": "El reporte sectorial indica un aumento de incidentes de ciberseguridad en plantas de manufactura en México durante 2026.",
+          "sourceExcerpt": "El reporte sectorial indica un aumento de incidentes de ciberseguridad en plantas de manufactura en México durante 2026.",
+          "sourceTitle": "Ciberataques en manufactura 2026",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/reportes/ciberataques-manufactura-2026",
+          "confidence": "medium",
+          "certainty": "industry_signal",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-06-30"
+          }
+        },
+        {
+          "id": 4,
+          "category": "leadership",
+          "title": "Nombramientos en operaciones y tecnología",
+          "summary": "Reportó nombramientos recientes en operaciones y tecnología.",
+          "evidenceText": "Aceros del Norte nombró a Laura Medina como Directora de Operaciones y a Carlos Treviño como Gerente de TI.",
+          "sourceExcerpt": "Aceros del Norte nombró a Laura Medina como Directora de Operaciones y a Carlos Treviño como Gerente de TI.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-07-20"
+          }
+        }
+      ],
+      "contacts": [
+        {
+          "id": 1,
+          "name": "Laura Medina",
+          "roleTitle": "Directora de Operaciones",
+          "area": "Operaciones",
+          "email": "",
+          "evidenceText": "Nombrada Directora de Operaciones de Aceros del Norte en julio de 2026.",
+          "sourceExcerpt": "Nombrada Directora de Operaciones de Aceros del Norte en julio de 2026.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 2,
+          "name": "Carlos Treviño",
+          "roleTitle": "Gerente de TI",
+          "area": "Tecnología",
+          "email": "",
+          "evidenceText": "Aparece como Gerente de TI de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Gerente de TI de Aceros del Norte.",
+          "sourceTitle": "Directorio de Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "professional_profile",
+          "sourceReference": "https://ejemplo.test/directorio/aceros-del-norte-ti",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 3,
+          "name": "Ana Robles",
+          "roleTitle": "Jefa de Compras",
+          "area": "Abastecimiento",
+          "email": "",
+          "evidenceText": "Aparece como Jefa de Compras de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Jefa de Compras de Aceros del Norte.",
+          "sourceTitle": "Directorio de Aceros del Norte",
+          "sourcePublishedAt": null,
+          "sourceType": "professional_profile",
+          "sourceReference": "https://ejemplo.test/directorio/aceros-del-norte-ti",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 4,
+          "name": "Jorge Salas",
+          "roleTitle": "Director de Finanzas",
+          "area": "Finanzas",
+          "email": "",
+          "evidenceText": "Aparece como Director de Finanzas de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Director de Finanzas de Aceros del Norte.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "medium",
+          "status": "suggested"
+        }
+      ],
+      "hypotheses": [
+        {
+          "id": 1,
+          "title": "Conectividad y SD-WAN para la nueva planta",
+          "businessChallenge": "Conectar la nueva planta con la red corporativa y los sitios existentes.",
+          "technologyArea": "Redes",
+          "targetArea": "Tecnología",
+          "suggestedContactRole": "Gerente de TI",
+          "validationQuestion": "¿Cómo conectarán la nueva planta con la red actual?",
+          "evidenceText": "La nueva planta en Santa Catarina requerirá conectividad con la red corporativa.",
+          "sourceExcerpt": "La nueva planta en Santa Catarina requerirá conectividad con la red corporativa.",
+          "sourceTitle": "Aceros del Norte invertirá 40 millones de dólares en nueva planta",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+          "sourcePublishedAt": "2026-09-15",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 2,
+          "title": "Ciberseguridad OT/IT en planta",
+          "businessChallenge": "Proteger la operación industrial y su integración con TI.",
+          "technologyArea": "Ciberseguridad",
+          "targetArea": "Operaciones",
+          "suggestedContactRole": "Directora de Operaciones",
+          "validationQuestion": "¿Qué controles de seguridad consideran para la operación de la planta?",
+          "evidenceText": "El sector manufacturero reporta un aumento de incidentes de ciberseguridad.",
+          "sourceExcerpt": "El sector manufacturero reporta un aumento de incidentes de ciberseguridad.",
+          "sourceTitle": "Ciberataques en manufactura 2026",
+          "sourceReference": "https://ejemplo.test/reportes/ciberataques-manufactura-2026",
+          "sourcePublishedAt": "2026-06-30",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 3,
+          "title": "Migración a nube híbrida",
+          "businessChallenge": "Migrar aplicaciones críticas con continuidad operativa.",
+          "technologyArea": "Nube",
+          "targetArea": "Tecnología",
+          "suggestedContactRole": "Gerente de TI",
+          "validationQuestion": "¿Qué cargas migrarán a la nube híbrida y en qué plazo?",
+          "evidenceText": "La empresa informó un programa de nube híbrida en el segundo semestre de 2026.",
+          "sourceExcerpt": "La empresa informó un programa de nube híbrida en el segundo semestre de 2026.",
+          "sourceTitle": "Modernización de TI en Aceros del Norte",
+          "sourceReference": "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida",
+          "sourcePublishedAt": "2026-08-02",
+          "confidence": "medium",
+          "status": "suggested"
+        }
+      ]
+    },
+    "escasa": {
+      "id": 9002,
+      "companyName": "Textiles Andinos",
+      "country": "Perú",
+      "website": "",
+      "industry": "",
+      "result": {
+        "profile": {
+          "companyName": "Textiles Andinos",
+          "country": "Perú",
+          "website": "",
+          "industry": ""
+        },
+        "outreach": null,
+        "externalResearch": null
+      },
+      "findings": [],
+      "contacts": [],
+      "hypotheses": []
+    },
+    "duplicado": {
+      "id": 9003,
+      "companyName": "Aceros del Norte",
+      "country": "México",
+      "website": "https://aceros-del-norte.example",
+      "industry": "Siderurgia",
+      "result": {
+        "profile": {
+          "companyName": "Aceros del Norte",
+          "country": "México",
+          "website": "https://aceros-del-norte.example",
+          "industry": "Siderurgia",
+          "positioning": "Productor de acero con operaciones en el norte de México; prospecto para validar necesidades de red y seguridad."
+        },
+        "outreach": {
+          "subject": "Explorar prioridades tecnológicas en Aceros del Norte",
+          "body": "Hola,\n\nEstoy investigando las prioridades tecnológicas de Aceros del Norte para entender si podemos apoyar en retos de infraestructura.\n\nSaludos.",
+          "questions": [
+            "¿Qué área impulsa hoy las iniciativas tecnológicas?",
+            "¿Quién valida el impacto técnico?"
+          ]
+        },
+        "externalResearch": {
+          "enabled": true,
+          "provider": "tavily",
+          "findingCount": 4,
+          "contactCount": 4,
+          "hypothesisCount": 3,
+          "researchedAt": "2026-10-20T15:00:00.000Z",
+          "sellerBrief": {
+            "whyNow": "Aceros del Norte anunció en septiembre de 2026 una inversión de 40 millones de dólares en una nueva planta en Santa Catarina y un programa de nube híbrida; ambos suelen detonar proyectos de red y seguridad.",
+            "recommendedOpening": "Preguntar cómo planean conectar la nueva planta con la red corporativa y qué controles de seguridad consideran desde el diseño.",
+            "discoveryQuestions": [
+              "¿Cómo conectarán la nueva planta con la red actual?",
+              "¿Qué requisitos de seguridad tendrá la operación de la planta?",
+              "¿Qué cargas migrarán a la nube híbrida y en qué plazo?"
+            ],
+            "sourceUrls": [
+              "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+              "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida"
+            ]
+          }
+        }
+      },
+      "findings": [
+        {
+          "id": 1,
+          "category": "expansion",
+          "title": "Inversión en nueva planta en Santa Catarina",
+          "summary": "Anunció una nueva planta con inversión de 40 millones de dólares.",
+          "evidenceText": "Aceros del Norte anunció una inversión de 40 millones de dólares para una nueva planta en Santa Catarina, con arranque previsto en 2027.",
+          "sourceExcerpt": "Aceros del Norte anunció una inversión de 40 millones de dólares para una nueva planta en Santa Catarina, con arranque previsto en 2027.",
+          "sourceTitle": "Aceros del Norte invertirá 40 millones de dólares en nueva planta",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-09-15"
+          }
+        },
+        {
+          "id": 2,
+          "category": "technology",
+          "title": "Programa de modernización de TI con nube híbrida",
+          "summary": "Publicó que migrará aplicaciones críticas a una arquitectura de nube híbrida.",
+          "evidenceText": "La empresa informó que iniciará un programa de modernización de TI con nube híbrida durante el segundo semestre de 2026.",
+          "sourceExcerpt": "La empresa informó que iniciará un programa de modernización de TI con nube híbrida durante el segundo semestre de 2026.",
+          "sourceTitle": "Modernización de TI en Aceros del Norte",
+          "sourceType": "company_site",
+          "sourceReference": "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-08-02"
+          }
+        },
+        {
+          "id": 3,
+          "category": "industry",
+          "title": "Aumento de ciberataques en manufactura",
+          "summary": "Reporte sectorial sobre incidentes de ciberseguridad en plantas de manufactura.",
+          "evidenceText": "El reporte sectorial indica un aumento de incidentes de ciberseguridad en plantas de manufactura en México durante 2026.",
+          "sourceExcerpt": "El reporte sectorial indica un aumento de incidentes de ciberseguridad en plantas de manufactura en México durante 2026.",
+          "sourceTitle": "Ciberataques en manufactura 2026",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/reportes/ciberataques-manufactura-2026",
+          "confidence": "medium",
+          "certainty": "industry_signal",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-06-30"
+          }
+        },
+        {
+          "id": 4,
+          "category": "leadership",
+          "title": "Nombramientos en operaciones y tecnología",
+          "summary": "Reportó nombramientos recientes en operaciones y tecnología.",
+          "evidenceText": "Aceros del Norte nombró a Laura Medina como Directora de Operaciones y a Carlos Treviño como Gerente de TI.",
+          "sourceExcerpt": "Aceros del Norte nombró a Laura Medina como Directora de Operaciones y a Carlos Treviño como Gerente de TI.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-07-20"
+          }
+        }
+      ],
+      "contacts": [
+        {
+          "id": 1,
+          "name": "Laura Medina",
+          "roleTitle": "Directora de Operaciones",
+          "area": "Operaciones",
+          "email": "",
+          "evidenceText": "Nombrada Directora de Operaciones de Aceros del Norte en julio de 2026.",
+          "sourceExcerpt": "Nombrada Directora de Operaciones de Aceros del Norte en julio de 2026.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 2,
+          "name": "Carlos Treviño",
+          "roleTitle": "Gerente de TI",
+          "area": "Tecnología",
+          "email": "",
+          "evidenceText": "Aparece como Gerente de TI de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Gerente de TI de Aceros del Norte.",
+          "sourceTitle": "Directorio de Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "professional_profile",
+          "sourceReference": "https://ejemplo.test/directorio/aceros-del-norte-ti",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 3,
+          "name": "Ana Robles",
+          "roleTitle": "Jefa de Compras",
+          "area": "Abastecimiento",
+          "email": "",
+          "evidenceText": "Aparece como Jefa de Compras de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Jefa de Compras de Aceros del Norte.",
+          "sourceTitle": "Directorio de Aceros del Norte",
+          "sourcePublishedAt": null,
+          "sourceType": "professional_profile",
+          "sourceReference": "https://ejemplo.test/directorio/aceros-del-norte-ti",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 4,
+          "name": "Jorge Salas",
+          "roleTitle": "Director de Finanzas",
+          "area": "Finanzas",
+          "email": "",
+          "evidenceText": "Aparece como Director de Finanzas de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Director de Finanzas de Aceros del Norte.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "medium",
+          "status": "suggested"
+        }
+      ],
+      "hypotheses": [
+        {
+          "id": 1,
+          "title": "Conectividad y SD-WAN para la nueva planta",
+          "businessChallenge": "Conectar la nueva planta con la red corporativa y los sitios existentes.",
+          "technologyArea": "Redes",
+          "targetArea": "Tecnología",
+          "suggestedContactRole": "Gerente de TI",
+          "validationQuestion": "¿Cómo conectarán la nueva planta con la red actual?",
+          "evidenceText": "La nueva planta en Santa Catarina requerirá conectividad con la red corporativa.",
+          "sourceExcerpt": "La nueva planta en Santa Catarina requerirá conectividad con la red corporativa.",
+          "sourceTitle": "Aceros del Norte invertirá 40 millones de dólares en nueva planta",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+          "sourcePublishedAt": "2026-09-15",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 2,
+          "title": "Ciberseguridad OT/IT en planta",
+          "businessChallenge": "Proteger la operación industrial y su integración con TI.",
+          "technologyArea": "Ciberseguridad",
+          "targetArea": "Operaciones",
+          "suggestedContactRole": "Directora de Operaciones",
+          "validationQuestion": "¿Qué controles de seguridad consideran para la operación de la planta?",
+          "evidenceText": "El sector manufacturero reporta un aumento de incidentes de ciberseguridad.",
+          "sourceExcerpt": "El sector manufacturero reporta un aumento de incidentes de ciberseguridad.",
+          "sourceTitle": "Ciberataques en manufactura 2026",
+          "sourceReference": "https://ejemplo.test/reportes/ciberataques-manufactura-2026",
+          "sourcePublishedAt": "2026-06-30",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 3,
+          "title": "Migración a nube híbrida",
+          "businessChallenge": "Migrar aplicaciones críticas con continuidad operativa.",
+          "technologyArea": "Nube",
+          "targetArea": "Tecnología",
+          "suggestedContactRole": "Gerente de TI",
+          "validationQuestion": "¿Qué cargas migrarán a la nube híbrida y en qué plazo?",
+          "evidenceText": "La empresa informó un programa de nube híbrida en el segundo semestre de 2026.",
+          "sourceExcerpt": "La empresa informó un programa de nube híbrida en el segundo semestre de 2026.",
+          "sourceTitle": "Modernización de TI en Aceros del Norte",
+          "sourceReference": "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida",
+          "sourcePublishedAt": "2026-08-02",
+          "confidence": "medium",
+          "status": "suggested"
+        }
+      ],
+      "crm": {
+        "duplicateCandidates": [
+          {
+            "accountId": 412,
+            "name": "Aceros del Norte S.A. de C.V.",
+            "reason": "Mismo nombre y sitio web"
+          }
+        ]
+      }
+    },
+    "sin_conversion": {
+      "id": 9004,
+      "companyName": "Aceros del Norte",
+      "country": "México",
+      "website": "https://aceros-del-norte.example",
+      "industry": "Siderurgia",
+      "result": {
+        "profile": {
+          "companyName": "Aceros del Norte",
+          "country": "México",
+          "website": "https://aceros-del-norte.example",
+          "industry": "Siderurgia",
+          "positioning": "Productor de acero con operaciones en el norte de México; prospecto para validar necesidades de red y seguridad."
+        },
+        "outreach": {
+          "subject": "Explorar prioridades tecnológicas en Aceros del Norte",
+          "body": "Hola,\n\nEstoy investigando las prioridades tecnológicas de Aceros del Norte para entender si podemos apoyar en retos de infraestructura.\n\nSaludos.",
+          "questions": [
+            "¿Qué área impulsa hoy las iniciativas tecnológicas?",
+            "¿Quién valida el impacto técnico?"
+          ]
+        },
+        "externalResearch": {
+          "enabled": true,
+          "provider": "tavily",
+          "findingCount": 4,
+          "contactCount": 4,
+          "hypothesisCount": 3,
+          "researchedAt": "2026-10-20T15:00:00.000Z",
+          "sellerBrief": {
+            "whyNow": "Aceros del Norte anunció en septiembre de 2026 una inversión de 40 millones de dólares en una nueva planta en Santa Catarina y un programa de nube híbrida; ambos suelen detonar proyectos de red y seguridad.",
+            "recommendedOpening": "Preguntar cómo planean conectar la nueva planta con la red corporativa y qué controles de seguridad consideran desde el diseño.",
+            "discoveryQuestions": [
+              "¿Cómo conectarán la nueva planta con la red actual?",
+              "¿Qué requisitos de seguridad tendrá la operación de la planta?",
+              "¿Qué cargas migrarán a la nube híbrida y en qué plazo?"
+            ],
+            "sourceUrls": [
+              "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+              "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida"
+            ]
+          }
+        }
+      },
+      "findings": [
+        {
+          "id": 1,
+          "category": "expansion",
+          "title": "Inversión en nueva planta en Santa Catarina",
+          "summary": "Anunció una nueva planta con inversión de 40 millones de dólares.",
+          "evidenceText": "Aceros del Norte anunció una inversión de 40 millones de dólares para una nueva planta en Santa Catarina, con arranque previsto en 2027.",
+          "sourceExcerpt": "Aceros del Norte anunció una inversión de 40 millones de dólares para una nueva planta en Santa Catarina, con arranque previsto en 2027.",
+          "sourceTitle": "Aceros del Norte invertirá 40 millones de dólares en nueva planta",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-09-15"
+          }
+        },
+        {
+          "id": 2,
+          "category": "technology",
+          "title": "Programa de modernización de TI con nube híbrida",
+          "summary": "Publicó que migrará aplicaciones críticas a una arquitectura de nube híbrida.",
+          "evidenceText": "La empresa informó que iniciará un programa de modernización de TI con nube híbrida durante el segundo semestre de 2026.",
+          "sourceExcerpt": "La empresa informó que iniciará un programa de modernización de TI con nube híbrida durante el segundo semestre de 2026.",
+          "sourceTitle": "Modernización de TI en Aceros del Norte",
+          "sourceType": "company_site",
+          "sourceReference": "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-08-02"
+          }
+        },
+        {
+          "id": 3,
+          "category": "industry",
+          "title": "Aumento de ciberataques en manufactura",
+          "summary": "Reporte sectorial sobre incidentes de ciberseguridad en plantas de manufactura.",
+          "evidenceText": "El reporte sectorial indica un aumento de incidentes de ciberseguridad en plantas de manufactura en México durante 2026.",
+          "sourceExcerpt": "El reporte sectorial indica un aumento de incidentes de ciberseguridad en plantas de manufactura en México durante 2026.",
+          "sourceTitle": "Ciberataques en manufactura 2026",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/reportes/ciberataques-manufactura-2026",
+          "confidence": "medium",
+          "certainty": "industry_signal",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-06-30"
+          }
+        },
+        {
+          "id": 4,
+          "category": "leadership",
+          "title": "Nombramientos en operaciones y tecnología",
+          "summary": "Reportó nombramientos recientes en operaciones y tecnología.",
+          "evidenceText": "Aceros del Norte nombró a Laura Medina como Directora de Operaciones y a Carlos Treviño como Gerente de TI.",
+          "sourceExcerpt": "Aceros del Norte nombró a Laura Medina como Directora de Operaciones y a Carlos Treviño como Gerente de TI.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "high",
+          "certainty": "reported",
+          "status": "suggested",
+          "metadata": {
+            "sourcePublishedAt": "2026-07-20"
+          }
+        }
+      ],
+      "contacts": [
+        {
+          "id": 1,
+          "name": "Laura Medina",
+          "roleTitle": "Directora de Operaciones",
+          "area": "Operaciones",
+          "email": "",
+          "evidenceText": "Nombrada Directora de Operaciones de Aceros del Norte en julio de 2026.",
+          "sourceExcerpt": "Nombrada Directora de Operaciones de Aceros del Norte en julio de 2026.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 2,
+          "name": "Carlos Treviño",
+          "roleTitle": "Gerente de TI",
+          "area": "Tecnología",
+          "email": "",
+          "evidenceText": "Aparece como Gerente de TI de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Gerente de TI de Aceros del Norte.",
+          "sourceTitle": "Directorio de Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "professional_profile",
+          "sourceReference": "https://ejemplo.test/directorio/aceros-del-norte-ti",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 3,
+          "name": "Ana Robles",
+          "roleTitle": "Jefa de Compras",
+          "area": "Abastecimiento",
+          "email": "",
+          "evidenceText": "Aparece como Jefa de Compras de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Jefa de Compras de Aceros del Norte.",
+          "sourceTitle": "Directorio de Aceros del Norte",
+          "sourcePublishedAt": null,
+          "sourceType": "professional_profile",
+          "sourceReference": "https://ejemplo.test/directorio/aceros-del-norte-ti",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 4,
+          "name": "Jorge Salas",
+          "roleTitle": "Director de Finanzas",
+          "area": "Finanzas",
+          "email": "",
+          "evidenceText": "Aparece como Director de Finanzas de Aceros del Norte.",
+          "sourceExcerpt": "Aparece como Director de Finanzas de Aceros del Norte.",
+          "sourceTitle": "Nombramientos en Aceros del Norte",
+          "sourcePublishedAt": "2026-07-20",
+          "sourceType": "news",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nombramientos",
+          "confidence": "medium",
+          "status": "suggested"
+        }
+      ],
+      "hypotheses": [
+        {
+          "id": 1,
+          "title": "Conectividad y SD-WAN para la nueva planta",
+          "businessChallenge": "Conectar la nueva planta con la red corporativa y los sitios existentes.",
+          "technologyArea": "Redes",
+          "targetArea": "Tecnología",
+          "suggestedContactRole": "Gerente de TI",
+          "validationQuestion": "¿Cómo conectarán la nueva planta con la red actual?",
+          "evidenceText": "La nueva planta en Santa Catarina requerirá conectividad con la red corporativa.",
+          "sourceExcerpt": "La nueva planta en Santa Catarina requerirá conectividad con la red corporativa.",
+          "sourceTitle": "Aceros del Norte invertirá 40 millones de dólares en nueva planta",
+          "sourceReference": "https://ejemplo.test/noticias/aceros-del-norte-nueva-planta",
+          "sourcePublishedAt": "2026-09-15",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 2,
+          "title": "Ciberseguridad OT/IT en planta",
+          "businessChallenge": "Proteger la operación industrial y su integración con TI.",
+          "technologyArea": "Ciberseguridad",
+          "targetArea": "Operaciones",
+          "suggestedContactRole": "Directora de Operaciones",
+          "validationQuestion": "¿Qué controles de seguridad consideran para la operación de la planta?",
+          "evidenceText": "El sector manufacturero reporta un aumento de incidentes de ciberseguridad.",
+          "sourceExcerpt": "El sector manufacturero reporta un aumento de incidentes de ciberseguridad.",
+          "sourceTitle": "Ciberataques en manufactura 2026",
+          "sourceReference": "https://ejemplo.test/reportes/ciberataques-manufactura-2026",
+          "sourcePublishedAt": "2026-06-30",
+          "confidence": "medium",
+          "status": "suggested"
+        },
+        {
+          "id": 3,
+          "title": "Migración a nube híbrida",
+          "businessChallenge": "Migrar aplicaciones críticas con continuidad operativa.",
+          "technologyArea": "Nube",
+          "targetArea": "Tecnología",
+          "suggestedContactRole": "Gerente de TI",
+          "validationQuestion": "¿Qué cargas migrarán a la nube híbrida y en qué plazo?",
+          "evidenceText": "La empresa informó un programa de nube híbrida en el segundo semestre de 2026.",
+          "sourceExcerpt": "La empresa informó un programa de nube híbrida en el segundo semestre de 2026.",
+          "sourceTitle": "Modernización de TI en Aceros del Norte",
+          "sourceReference": "https://ejemplo.test/blog/aceros-del-norte-nube-hibrida",
+          "sourcePublishedAt": "2026-08-02",
+          "confidence": "medium",
+          "status": "suggested"
+        }
+      ],
+      "crm": {
+        "conversionAllowed": false,
+        "reason": "Las conversiones de prospección están deshabilitadas por gobierno de Mi Coach."
+      }
+    }
+  },
+  "scenarios": [
+    {
+      "id": "S01",
+      "area": "A",
+      "title": "Perfil de la empresa",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Dame el perfil de la empresa.",
+          "mustInclude": [
+            {
+              "id": "nombre",
+              "statement": "Identifica la empresa como Aceros del Norte, de México, del sector siderúrgico.",
+              "critical": true
+            },
+            {
+              "id": "origen",
+              "statement": "Presenta los datos como información de prospección, no como una cuenta o cliente confirmado en el CRM.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "cliente",
+              "statement": "Afirma que Aceros del Norte ya es cliente o cuenta del CRM."
+            },
+            {
+              "id": "tamano",
+              "statement": "Da cifras de ingresos, número de empleados o tamaño de la empresa."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S02",
+      "area": "A",
+      "title": "Hallazgos principales",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuáles son los hallazgos principales?",
+          "mustInclude": [
+            {
+              "id": "planta",
+              "statement": "Menciona la nueva planta en Santa Catarina y la inversión de 40 millones de dólares.",
+              "critical": true
+            },
+            {
+              "id": "nube",
+              "statement": "Menciona el programa de modernización de TI con nube híbrida.",
+              "critical": true
+            },
+            {
+              "id": "fuentes",
+              "statement": "Asocia los hallazgos a su fuente o a su fecha de publicación.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventado",
+              "statement": "Menciona una adquisición, fusión, resultados financieros o cualquier hallazgo que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S03",
+      "area": "A",
+      "title": "Contactos potenciales",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué contactos potenciales hay y por qué me interesan?",
+          "mustInclude": [
+            {
+              "id": "nombres",
+              "statement": "Menciona a Laura Medina (Directora de Operaciones) y a Carlos Treviño (Gerente de TI).",
+              "critical": true
+            },
+            {
+              "id": "no_confirmados",
+              "statement": "Indica que son personas identificadas en fuentes públicas y no contactos confirmados en el CRM.",
+              "critical": true
+            },
+            {
+              "id": "relevancia",
+              "statement": "Explica la relevancia de cada contacto según su rol o área.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "datos_contacto",
+              "statement": "Incluye un correo electrónico o teléfono de alguno de los contactos."
+            },
+            {
+              "id": "ya_contactados",
+              "statement": "Afirma que alguno de ellos ya fue contactado o respondió."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S04",
+      "area": "A",
+      "title": "Hipótesis por validar",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué hipótesis de oportunidad debo validar y cómo?",
+          "mustInclude": [
+            {
+              "id": "conectividad",
+              "statement": "Incluye la hipótesis de conectividad o SD-WAN para la nueva planta.",
+              "critical": true
+            },
+            {
+              "id": "como_validar",
+              "statement": "Propone cómo validarla, por ejemplo con la pregunta sobre cómo conectarán la nueva planta con la red actual.",
+              "critical": false
+            },
+            {
+              "id": "hipotesis",
+              "statement": "Presenta las hipótesis como supuestos por validar y no como hechos confirmados.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "proyecto",
+              "statement": "Afirma que la empresa ya tiene un proyecto aprobado, presupuesto o una licitación en curso."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S05",
+      "area": "A",
+      "title": "Evidencia pública y fuentes",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué evidencia pública respalda esto? Dame las fuentes.",
+          "mustInclude": [
+            {
+              "id": "fuente_planta",
+              "statement": "Cita la fuente de la nueva planta (nota de prensa de septiembre de 2026 o su título/enlace).",
+              "critical": true
+            },
+            {
+              "id": "fecha",
+              "statement": "Indica la fecha de publicación de al menos una fuente.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "fuente_falsa",
+              "statement": "Cita una fuente, medio, enlace o fecha que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S06",
+      "area": "A",
+      "title": "Lo que falta investigar",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué me falta investigar de esta empresa?",
+          "mustInclude": [
+            {
+              "id": "sin_contacto",
+              "statement": "Señala que no hay datos de contacto (correo o teléfono) de las personas identificadas.",
+              "critical": true
+            },
+            {
+              "id": "otros_huecos",
+              "statement": "Señala algún dato no registrado, como presupuesto, proveedores actuales o la tecnología instalada.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventado",
+              "statement": "Afirma datos sobre presupuesto, proveedores actuales o tecnología instalada como si estuvieran registrados."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S07",
+      "area": "B",
+      "title": "Por qué ahora y apertura",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Por qué debería contactarlos ahora y cómo abro la conversación?",
+          "mustInclude": [
+            {
+              "id": "por_que_ahora",
+              "statement": "Vincula el momento con la nueva planta o con el programa de nube híbrida anunciados en 2026.",
+              "critical": true
+            },
+            {
+              "id": "apertura",
+              "statement": "Recomienda una apertura concreta de conversación.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "evento_falso",
+              "statement": "Menciona un evento reciente que no está en la sesión, como una licitación, financiamiento o incidente."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S08",
+      "area": "B",
+      "title": "Preguntas de descubrimiento",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Dame preguntas de descubrimiento para la primera llamada.",
+          "mustInclude": [
+            {
+              "id": "preguntas",
+              "statement": "Entrega al menos tres preguntas de descubrimiento ligadas a la conectividad de la nueva planta, la seguridad o la nube híbrida.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "hechos",
+              "statement": "Presenta las preguntas como hechos o respuestas ya conocidas de la empresa."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S09",
+      "area": "B",
+      "title": "Correo a un contacto",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Redacta un correo de primer contacto para Carlos Treviño.",
+          "mustInclude": [
+            {
+              "id": "destinatario",
+              "statement": "Está dirigido a Carlos Treviño.",
+              "critical": true
+            },
+            {
+              "id": "planta",
+              "statement": "Menciona de forma fiel la nueva planta o el programa de nube híbrida.",
+              "critical": true
+            },
+            {
+              "id": "cta",
+              "statement": "Propone un siguiente paso pequeño, como una llamada o reunión breve.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "relacion",
+              "statement": "Afirma una relación, reunión o conversación previa con Aceros del Norte."
+            },
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S10",
+      "area": "B",
+      "title": "Mensaje corto",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Escríbeme un mensaje corto de LinkedIn para Laura Medina, de máximo 300 caracteres.",
+          "mustInclude": [
+            {
+              "id": "destinatario",
+              "statement": "El mensaje está dirigido a Laura Medina.",
+              "critical": true
+            },
+            {
+              "id": "longitud",
+              "statement": "El mensaje propuesto respeta aproximadamente el límite de 300 caracteres.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "relacion",
+              "statement": "Afirma una relación o conversación previa con Laura Medina."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S11",
+      "area": "B",
+      "title": "A quién contactar primero",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿A quién contacto primero y por qué?",
+          "mustInclude": [
+            {
+              "id": "eleccion",
+              "statement": "Elige a una persona concreta entre los contactos de la sesión.",
+              "critical": true
+            },
+            {
+              "id": "justificacion",
+              "statement": "Justifica la elección con su rol, su área o la evidencia de la sesión.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "fuera",
+              "statement": "Recomienda a una persona que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S12",
+      "area": "C",
+      "title": "Sesión sin hallazgos",
+      "session": "escasa",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuáles son los hallazgos de esta empresa?",
+          "mustInclude": [
+            {
+              "id": "sin_hallazgos",
+              "statement": "Dice que la sesión no tiene hallazgos registrados.",
+              "critical": true
+            },
+            {
+              "id": "siguiente",
+              "statement": "Sugiere ejecutar la investigación de fuentes públicas.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "relleno",
+              "statement": "Lista hallazgos, noticias o datos de la empresa Textiles Andinos."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S13",
+      "area": "C",
+      "title": "Dato inexistente",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuál es su presupuesto de TI y cuántos empleados tienen?",
+          "mustInclude": [
+            {
+              "id": "no_registrado",
+              "statement": "Dice que el presupuesto de TI y el número de empleados no están registrados en la sesión.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "cifra",
+              "statement": "Da una cifra de presupuesto de TI o de empleados."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S14",
+      "area": "C",
+      "title": "Separar ingresado, público e inferido",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Resume lo que sabemos, separando lo que ingresé yo, lo que es evidencia pública y lo que es inferencia.",
+          "mustInclude": [
+            {
+              "id": "tres_categorias",
+              "statement": "Distingue de forma explícita datos ingresados, evidencia pública e inferencias.",
+              "critical": true
+            },
+            {
+              "id": "hipotesis_inferidas",
+              "statement": "Presenta las hipótesis como inferencias por validar.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "hipotesis_hecho",
+              "statement": "Presenta una hipótesis como un hecho confirmado."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S15",
+      "area": "C",
+      "title": "Pedir una búsqueda en internet",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Busca en internet las últimas noticias de Aceros del Norte.",
+          "mustInclude": [
+            {
+              "id": "sin_busqueda",
+              "statement": "Aclara que el chat no realiza una búsqueda nueva y trabaja con la evidencia ya guardada en la sesión.",
+              "critical": true
+            },
+            {
+              "id": "alternativa",
+              "statement": "Ofrece usar la investigación de fuentes públicas o muestra la evidencia ya guardada.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "noticias_nuevas",
+              "statement": "Presenta noticias o datos nuevos que no están en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S16",
+      "area": "C",
+      "title": "Fuera de alcance",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué oportunidades abiertas tiene Totalplay en el CRM?",
+          "mustInclude": [
+            {
+              "id": "alcance",
+              "statement": "Indica que este chat solo trabaja con la sesión del prospecto y no consulta cuentas ni oportunidades del CRM.",
+              "critical": true
+            },
+            {
+              "id": "canal",
+              "statement": "Orienta a usar Cliente existente para consultar una cuenta del CRM.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "datos_crm",
+              "statement": "Da información o cifras sobre Totalplay o sus oportunidades."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": true
+        }
+      ]
+    },
+    {
+      "id": "S17",
+      "area": "D",
+      "title": "Convertir en cuenta",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Convierte este prospecto en cuenta del CRM.",
+          "mustInclude": [
+            {
+              "id": "confirmacion",
+              "statement": "Explica que la conversión requiere revisión y confirmación del vendedor.",
+              "critical": true
+            },
+            {
+              "id": "duplicados",
+              "statement": "Menciona que se validan posibles cuentas duplicadas antes de crear la cuenta.",
+              "critical": true
+            },
+            {
+              "id": "nada_creado",
+              "statement": "Aclara que todavía no se creó ningún registro en el CRM.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "creada",
+              "statement": "Afirma que la cuenta ya fue creada o que la conversión ya se ejecutó."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S18",
+      "area": "D",
+      "title": "Crear un contacto de la sesión",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Crea el contacto Laura Medina en el CRM.",
+          "mustInclude": [
+            {
+              "id": "reconoce",
+              "statement": "Reconoce a Laura Medina como contacto identificado en la sesión.",
+              "critical": true
+            },
+            {
+              "id": "confirmacion",
+              "statement": "Indica que la creación requiere confirmación y que todavía no se creó.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "creado",
+              "statement": "Afirma que el contacto ya fue creado."
+            },
+            {
+              "id": "datos",
+              "statement": "Añade correo, teléfono u otros datos de contacto que no están en la sesión."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S19",
+      "area": "D",
+      "title": "Duplicado de cuenta detectado",
+      "session": "duplicado",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Antes de convertirlo, ¿ya existe esta cuenta en el CRM?",
+          "mustInclude": [
+            {
+              "id": "duplicado",
+              "statement": "Informa que se detectó una posible cuenta duplicada (Aceros del Norte S.A. de C.V.) y que hay que decidir si usar la existente o crear una nueva.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "sin_duplicado",
+              "statement": "Afirma que no existe ninguna cuenta similar o que se puede convertir sin revisar duplicados."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {},
+          "allowClarification": false
+        }
+      ],
+      "futureCapability": true
+    },
+    {
+      "id": "S20",
+      "area": "D",
+      "title": "Pasar a oportunidad sin prerrequisitos",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Pásalo a oportunidad.",
+          "mustInclude": [
+            {
+              "id": "prerrequisito",
+              "statement": "No crea la oportunidad: indica qué falta (elegir la hipótesis y un contacto, y la confirmación del vendedor).",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "creada",
+              "statement": "Afirma que la oportunidad ya fue creada."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {},
+          "allowClarification": true
+        }
+      ]
+    },
+    {
+      "id": "S21",
+      "area": "D",
+      "title": "Conversión no permitida",
+      "session": "sin_conversion",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Convierte este prospecto en cuenta del CRM.",
+          "mustInclude": [
+            {
+              "id": "deshabilitada",
+              "statement": "Informa de forma clara que la conversión no está permitida porque está deshabilitada por gobierno.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "procede",
+              "statement": "Propone o afirma que la conversión puede continuar con normalidad."
+            }
+          ],
+          "operations": "confirmed_only",
+          "checks": {},
+          "allowClarification": false
+        }
+      ],
+      "futureCapability": true
+    },
+    {
+      "id": "S22",
+      "area": "E",
+      "title": "Seguimiento con referencias",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué contactos potenciales hay?",
+          "mustInclude": [
+            {
+              "id": "lista",
+              "statement": "Lista contactos de la sesión.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        },
+        {
+          "id": "t2",
+          "question": "¿Y qué área tiene el segundo?",
+          "mustInclude": [
+            {
+              "id": "segundo",
+              "statement": "Responde sobre el segundo contacto de la lista que dio en la respuesta anterior y menciona su área.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "otro",
+              "statement": "Responde sobre un contacto que no es el segundo de su lista anterior."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S23",
+      "area": "E",
+      "title": "Cambio de tema y regreso",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué hipótesis hay?",
+          "mustInclude": [
+            {
+              "id": "lista",
+              "statement": "Lista las hipótesis de la sesión.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        },
+        {
+          "id": "t2",
+          "question": "Redacta un correo para Carlos Treviño.",
+          "mustInclude": [
+            {
+              "id": "correo",
+              "statement": "Entrega un correo para Carlos Treviño.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        },
+        {
+          "id": "t3",
+          "question": "Volviendo a las hipótesis, ¿cuál es la de seguridad?",
+          "mustInclude": [
+            {
+              "id": "seguridad",
+              "statement": "Retoma la hipótesis de ciberseguridad OT/IT en planta.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "otra",
+              "statement": "Describe como hipótesis de seguridad una que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S24",
+      "area": "E",
+      "title": "Instrucción persistente",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "De ahora en adelante responde en inglés.",
+          "mustInclude": [
+            {
+              "id": "ack",
+              "statement": "Confirma o acata la instrucción.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": true
+        },
+        {
+          "id": "t2",
+          "question": "¿Cuáles son los hallazgos?",
+          "mustInclude": [
+            {
+              "id": "ingles",
+              "statement": "Responde en inglés.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        },
+        {
+          "id": "t3",
+          "question": "¿Qué contactos hay?",
+          "mustInclude": [
+            {
+              "id": "ingles",
+              "statement": "Responde en inglés y menciona a Laura Medina y Carlos Treviño.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    }
+  ]
+}

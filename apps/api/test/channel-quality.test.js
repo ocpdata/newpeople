@@ -18,6 +18,8 @@ describe("compuertas de calidad por canal", () => {
     expect(gateFailures("lab", { cases: { passed: 8, total: 10 } })[0]).toContain("Casos aprobados: 8/10");
     expect(gateFailures("live", { cases: { passed: 17, total: 20 } })).toEqual([]);
     expect(gateFailures("live", { cases: { passed: 16, total: 20 } })).toHaveLength(1);
+    expect(gateFailures("live", { cases: { passed: 20, total: 20 }, critical: { passed: 10, total: 10 } })).toEqual([]);
+    expect(gateFailures("live", { cases: { passed: 23, total: 24 }, critical: { passed: 9, total: 10 } })[0]).toContain("Escenarios críticos: 9/10");
     expect(gateFailures("lab", {})[0]).toContain("no se ejecutó");
   });
 

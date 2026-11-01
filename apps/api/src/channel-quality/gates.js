@@ -43,6 +43,10 @@ export function gateFailures(source, groups, metrics = {}) {
     minimumRatio(groups, "cases", LAB_MIN_RATIO, "Casos aprobados", failures);
   } else if (source === "live") {
     minimumRatio(groups, "cases", LIVE_MIN_RATIO, "Casos aprobados con IA real", failures);
+    const critical = groups.critical;
+    if (critical && critical.total > 0 && critical.passed !== critical.total) {
+      failures.push(`Escenarios críticos: ${critical.passed}/${critical.total}; se exige el 100%.`);
+    }
   } else if (source === "production_monitor") {
     if ((metrics.turns || 0) >= PRODUCTION_MIN_TURNS) {
       minimumRatio(groups, "reliability", PRODUCTION_LIMITS.minReliability, "Turnos sin fallo", failures);
