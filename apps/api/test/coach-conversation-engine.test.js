@@ -942,7 +942,7 @@ describe("Coach conversation engine", () => {
       [],
       { accountId: 12, opportunityId: 41 },
       {},
-      { exactMatchOnly: true },
+      { exactMatchOnly: true, intentMode: "coaching" },
     );
     expect(readModel.effectiveContext).toMatchObject({
       accountId: null,

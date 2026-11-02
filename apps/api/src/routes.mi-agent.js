@@ -261,13 +261,23 @@ export function resolveCoachContextEntities(
   _conversationHistory = [],
   _selectedContext = {},
   businessRules = {},
-  { exactMatchOnly = false } = {},
+  { exactMatchOnly = false, intentMode = null } = {},
 ) {
   const explicitEntities = resolveCoachEntities(
     snapshot,
     question,
     businessRules,
-    { exactMatchOnly },
+    {
+      exactMatchOnly,
+      disambiguateByAccount: true,
+      newOpportunity:
+        intentMode === "operation" &&
+        /\b(?:crea|crear|creame|genera|registra)\s+(?:una\s+)?(?:nueva\s+)?oportunidad\b|\boportunidad\s+nueva\b/i.test(
+          String(question || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, ""),
+        ),
+    },
   );
   return {
     explicitEntities,

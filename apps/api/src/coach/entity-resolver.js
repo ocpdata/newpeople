@@ -179,7 +179,15 @@ export function resolveCoachEntities(
   snapshot,
   text,
   businessRules = {},
-  { exactMatchOnly = false, ignoreStageFilters = false } = {},
+  {
+    exactMatchOnly = false,
+    ignoreStageFilters = false,
+    // Coach only: a mentioned account narrows same-named opportunities and contacts, and selects the account
+    // instead of forcing a choice among its opportunities. Stage words never hide an opportunity named in the text.
+    disambiguateByAccount = false,
+    // Coach only: the opportunity named in a request to create one is the new record, not an existing one.
+    newOpportunity = false,
+  } = {},
 ) {
   const opportunities =
     businessRules.scope?.opportunitySearchAllowed === false
@@ -218,17 +226,35 @@ export function resolveCoachEntities(
   );
   const opportunityFilters = inferCoachOpportunityFilters(text, businessRules);
   if (ignoreStageFilters) opportunityFilters.stageCodes = [];
-  const opportunityNameMatches = candidates(opportunities, text, ["name"], {
-    exactMatchOnly,
-  });
+  const mentionedAccount =
+    disambiguateByAccount && accountMatches.length === 1
+      ? accountMatches[0]
+      : null;
+  const belongsToMentionedAccount = (record) =>
+    Number(record?.account?.id || record?.accountId || 0) ===
+    Number(mentionedAccount.id);
+  let opportunityNameMatches = newOpportunity
+    ? []
+    : candidates(opportunities, text, ["name"], { exactMatchOnly });
+  if (mentionedAccount && opportunityNameMatches.length > 1) {
+    const ofAccount = opportunityNameMatches.filter(belongsToMentionedAccount);
+    if (ofAccount.length) opportunityNameMatches = ofAccount;
+  }
+  const skipStageFilter =
+    ignoreStageFilters ||
+    (disambiguateByAccount && opportunityNameMatches.length > 0);
   const opportunityMatches = (
     opportunityNameMatches.length
       ? opportunityNameMatches
-      : candidates(opportunities, text, ["accountName", "account.name"], {
-          exactMatchOnly,
-        })
+      : (mentionedAccount && !/\boportunidad(?:es)?\b/.test(normalize(text))) ||
+          newOpportunity
+        ? []
+        : candidates(opportunities, text, ["accountName", "account.name"], {
+            exactMatchOnly,
+          })
   ).filter((opportunity) => {
     if (
+      !skipStageFilter &&
       opportunityFilters.stageCodes.length &&
       !opportunityFilters.stageCodes.includes(
         String(opportunity?.stageCode || "").trim(),
@@ -258,12 +284,18 @@ export function resolveCoachEntities(
       return false;
     return true;
   });
-  const contactMatches = candidates(
+  let contactMatches = candidates(
     contacts,
     text,
     ["name", "email", "phone", "mobile"],
     { allowSingleTokenMatch: false, exactMatchOnly },
   );
+  if (mentionedAccount && contactMatches.length > 1) {
+    const ofAccount = contactMatches.filter(
+      (contact) => Number(contact?.accountId || 0) === Number(mentionedAccount.id),
+    );
+    if (ofAccount.length) contactMatches = ofAccount;
+  }
   let leadMatches = candidates(leads, text, ["title"], { exactMatchOnly });
   const normalizedText = normalize(text);
   const asksForOpportunity = /\boportunidad(?:es)?\b/.test(normalizedText);

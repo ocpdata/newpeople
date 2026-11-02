@@ -3,6 +3,7 @@ import {
   normalizeCoachGatewayRequest,
   resolveCoachTurnContext,
 } from "./conversation-engine.js";
+import { resolveCoachBackReference } from "./back-reference.js";
 import { classifyCoachIntent } from "./phase-one-engine.js";
 import {
   createCoachAdapter,
@@ -197,7 +198,7 @@ export async function prepareCoachTurn({ userId, body = {} }) {
     session?.context,
     Boolean(session),
   );
-  const conversationHistory =
+  let conversationHistory =
     session && !request.conversationHistory.length
       ? getCoachConversationHistory(
           session.messages,
@@ -206,9 +207,24 @@ export async function prepareCoachTurn({ userId, body = {} }) {
         )
       : request.conversationHistory;
 
+  const backReference = session
+    ? resolveCoachBackReference({
+        question: request.question,
+        messages: session.messages,
+        current: selectedContext,
+      })
+    : null;
+  if (backReference && !request.conversationHistory.length) {
+    conversationHistory = getCoachConversationHistory(
+      session.messages,
+      backReference,
+      backReference,
+    );
+  }
+
   return {
     ...request,
-    selectedContext,
+    selectedContext: backReference || selectedContext,
     conversationHistory,
     session,
   };
@@ -245,7 +261,7 @@ export async function runCoachJob({
               {
                 role: "system",
                 content:
-                  "Clasifica la intención del usuario para Coach usando exactamente uno de estos valores: seller_coaching (consejos, prioridades, cómo avanzar, preparar o mejorar el trabajo comercial, incluso sobre una oportunidad o cuenta concreta), account_performance (desempeño, cartera o pipeline: conteos, totales, montos y rankings de oportunidades o cuentas, ganadas, perdidas o abiertas, incluido cuántas oportunidades o qué monto tiene una cuenta concreta), account_query (datos de identificación de una cuenta: nombre, país, sitio web, contactos), opportunity_query (datos puntuales de una oportunidad: etapa, monto, estado, cierre), create_opportunity (solo si pide explícitamente crear una oportunidad o una actividad), update_opportunity (solo si pide explícitamente cambiar, cerrar o marcar una oportunidad), general_query (dudas sobre cómo funciona el proceso comercial o la herramienta, sin datos del CRM), clarify_needed. Pedir un consejo o preguntar por un dato nunca es crear ni actualizar. Las preguntas de seguimiento («¿y su monto?», «¿en qué etapa estaba?») se refieren a la entidad seleccionada en el contexto o a la que se habló en conversationHistory: clasifícalas según lo que piden, no como clarify_needed. Una instrucción sobre el estilo o el idioma de las respuestas es general_query. Usa clarify_needed si la petición es ambigua o no alcanza confianza 0.68. Devuelve JSON con intent, confidence entre 0 y 1 y reason. No propongas herramientas, no decidas permisos y no ejecutes acciones.",
+                  "Clasifica la intención del usuario para Coach usando exactamente uno de estos valores: seller_coaching (consejos, prioridades, cómo avanzar, preparar o mejorar el trabajo comercial, incluso sobre una oportunidad o cuenta concreta), account_performance (desempeño, cartera o pipeline: conteos, totales, montos y rankings de oportunidades o cuentas, ganadas, perdidas o abiertas, incluido cuántas oportunidades o qué monto tiene una cuenta concreta), account_query (datos de identificación de una cuenta: nombre, país, sitio web, contactos), opportunity_query (datos puntuales de una oportunidad: etapa, monto, estado, cierre), create_opportunity (solo si pide explícitamente crear una oportunidad o una actividad), update_opportunity (solo si pide explícitamente cambiar, cerrar o marcar una oportunidad), general_query (dudas sobre cómo funciona el proceso comercial o la herramienta, sin datos del CRM), clarify_needed. Pedir un consejo o preguntar por un dato nunca es crear ni actualizar. Las preguntas de seguimiento («¿y su monto?», «¿en qué etapa estaba?») se refieren a la entidad seleccionada en el contexto o a la que se habló en conversationHistory: clasifícalas según lo que piden, no como clarify_needed. Si la petición nombra una oportunidad, cuenta o contacto concretos, el servidor los resuelve aunque no haya nada seleccionado: no uses clarify_needed por eso; «háblame de una oportunidad» es opportunity_query. Una instrucción sobre el estilo o el idioma de las respuestas es general_query. Usa clarify_needed si la petición es ambigua o no alcanza confianza 0.68. Devuelve JSON con intent, confidence entre 0 y 1 y reason. No propongas herramientas, no decidas permisos y no ejecutes acciones.",
               },
               {
                 role: "user",

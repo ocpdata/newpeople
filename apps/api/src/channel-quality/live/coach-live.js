@@ -69,7 +69,7 @@ export function createCoachHttpClient({ baseUrl, token }) {
       const started = await call("/coach", { question, ...(sessionId ? { sessionId } : {}) });
       const jobId = started.json?.job?.id;
       if (started.status !== 202 || !jobId) {
-        return { status: "error", answer: "", response: null, sessionId, durationMs: Date.now() - startedAt, errorMessage: `HTTP ${started.status}` };
+        return { status: "error", answer: "", response: null, sessionId, durationMs: Date.now() - startedAt, errorMessage: `HTTP ${started.status} ${started.json?.message || ""}`.trim() };
       }
       for (;;) {
         await wait(POLL_INTERVAL_MS);

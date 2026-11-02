@@ -38,6 +38,40 @@ const filtersSchema = z
     closeYear: z.number().int().min(2000).max(2100).optional(),
   })
   .strict();
+// The model miscounts long lists, so the server states the size of each read and the split by commercial status.
+export function withCoachCounts(item) {
+  if (!item || !Array.isArray(item.result)) return item;
+  const counts = { resultCount: item.result.length };
+  if (item.result.some((record) => record?.commercialStatusCode)) {
+    counts.countsByCommercialStatus = item.result.reduce((total, record) => {
+      const code = record?.commercialStatusCode || "sin_estado";
+      return { ...total, [code]: (total[code] || 0) + 1 };
+    }, {});
+  }
+  return { ...item, ...counts };
+}
+
+export const COACH_OPERATION_NOT_AVAILABLE_ANSWER =
+  "No pude dejar lista esa operación para tu confirmación desde Coach, así que no se creó ni cambió ningún registro. Hazlo desde el módulo correspondiente o dime qué quieres revisar primero.";
+
+export const COACH_OUT_OF_SCOPE_ANSWER =
+  "Coach te ayuda con tu cartera, tus cuentas, oportunidades y desempeño comercial, y esa pregunta queda fuera de ese alcance. Si quieres, revisamos tu pipeline, una cuenta o una oportunidad.";
+
+const CLOSING_REQUEST = /\b(marca|marcar|cierra|cerrar|pasa|pasar|mueve|mover)\b.*\b(ganad[ao]|perdid[ao]|anulad[ao]|cerrad[ao])\b/i;
+
+// An operation request that lacks the data to become a proposal must say what Coach does and does not do.
+export function operationNotPrepared(question, mode, readsFoundNothing = false) {
+  if (mode !== "operation") {
+    return readsFoundNothing
+      ? "No encontré ningún registro que coincida con tu solicitud entre los que puedes consultar. Confirma el nombre de la cuenta, oportunidad o contacto."
+      : "La evidencia autorizada no cubre la solicitud. Precisa el dato o registro necesario para continuar.";
+  }
+  const normalized = String(question || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return CLOSING_REQUEST.test(normalized)
+    ? "No cambié nada: Coach no cierra oportunidades como ganadas, perdidas o anuladas. Propone actividades, respuestas de etapa y cambios de campos que tú revisas y confirmas; el cierre se hace desde el módulo de oportunidades."
+    : "No pude preparar esa operación con la información disponible, así que no se cambió ningún registro. Indica el registro y los datos que debo proponer y los reviso contigo antes de guardar.";
+}
+
 // Coaching answers without CRM reads rest on the authorized process guide, which the evidence check already accepts.
 const GUIDE_FACT = {
   sourceType: "process_guide",
@@ -45,6 +79,41 @@ const GUIDE_FACT = {
   label: "Guía del proceso comercial",
   excerpt: "Respuesta de coaching basada en el proceso comercial autorizado.",
 };
+
+const CREATE_OPERATION_KINDS = new Set([
+  "create_account",
+  "create_contact",
+  "create_opportunity",
+  "create_quotation",
+  "create_proposal",
+]);
+const ENTITY_ID_KEYS = new Set(["accountId", "contactId", "opportunityId", "interactionId", "quotationVersionId"]);
+const NON_PAYLOAD_KEYS = new Set([
+  "kind", "title", "notes", "evidence", "source", "entityType", "payload", "requiresConfirmation",
+  "missingFields", "persistentId", "persistenceVersion", "persistenceStatus", "sourceChannel",
+]);
+
+// The model often lists the fields of a creation next to `kind` instead of inside `payload`, and the contract then
+// discards the whole operation. The fields are the same; only their place changes.
+export function coerceCreateOperationPayloads(operations) {
+  if (!Array.isArray(operations)) return operations;
+  return operations.map((operation) => {
+    if (!operation || typeof operation !== "object") return operation;
+    if (!CREATE_OPERATION_KINDS.has(String(operation.kind || "").trim())) return operation;
+    if (operation.payload && typeof operation.payload === "object") return operation;
+    const payload = Object.fromEntries(
+      Object.entries(operation).filter(([key, value]) => !NON_PAYLOAD_KEYS.has(key) && value !== null && value !== undefined),
+    );
+    if (!Object.keys(payload).length) return operation;
+    // The contract is strict: only the identifiers and common fields may stay beside `payload`.
+    const kept = Object.fromEntries(
+      Object.entries(operation).filter(
+        ([key]) => NON_PAYLOAD_KEYS.has(key) || ENTITY_ID_KEYS.has(key),
+      ),
+    );
+    return { ...kept, payload };
+  });
+}
 
 // The planner model often writes codes with capitals, accents or spaces ("Ganada", "En proceso"); the tools expect snake_case.
 const toCode = (value) =>
@@ -56,6 +125,18 @@ const toCode = (value) =>
         .toLowerCase()
         .replace(/[\s-]+/g, "_")
     : value;
+// The planner sometimes answers in English; the CRM stores Spanish codes.
+const COMMERCIAL_STATUS_SYNONYMS = {
+  won: "ganada",
+  lost: "perdida",
+  cancelled: "anulada",
+  canceled: "anulada",
+  voided: "anulada",
+  open: "en_proceso",
+  in_progress: "en_proceso",
+  in_process: "en_proceso",
+};
+
 export function normalizePlannedReads(reads) {
   if (!Array.isArray(reads)) return reads;
   return reads.map((read) => {
@@ -64,6 +145,15 @@ export function normalizePlannedReads(reads) {
     const normalized = { ...filters };
     for (const key of ["stageCodes", "commercialStatusCodes"]) {
       if (Array.isArray(normalized[key])) normalized[key] = normalized[key].map(toCode);
+    }
+    if (Array.isArray(normalized.commercialStatusCodes)) {
+      normalized.commercialStatusCodes = [
+        ...new Set(
+          normalized.commercialStatusCodes.map(
+            (code) => COMMERCIAL_STATUS_SYNONYMS[code] || code,
+          ),
+        ),
+      ];
     }
     return { ...read, filters: normalized };
   });
@@ -224,9 +314,9 @@ export function createCoachBlockPipeline({
               }),
             deadlineAt,
           );
-          return result?.toolName
-            ? result
-            : { toolName, readOnly: true, result };
+          return withCoachCounts(
+            result?.toolName ? result : { toolName, readOnly: true, result },
+          );
         },
         (result) => summarizeCoachEvidence([result])[0],
       );
@@ -308,6 +398,21 @@ export function createCoachBlockPipeline({
         (hasCoachEvidence(evidence) || policyEvidence)
       )
         return null;
+      // A write proposal only needs the record it targets (date, time... are completed at confirmation) and advice
+      // rests on the records read plus the process guide, so the assessor's open questions must not discard them.
+      // The answer audit still checks the final text against this evidence.
+      const turnMode = readModel?.intentRouting?.mode || plan?.mode;
+      if (
+        (turnMode === "operation" || turnMode === "coaching") &&
+        result.status !== "clarification" &&
+        !errors &&
+        !result.missingTools.length &&
+        (hasCoachEvidence(evidence) ||
+          (turnMode === "coaching" && policyEvidence))
+      ) {
+        diagnostics.evidence.status = `sufficient_for_${turnMode}`;
+        return null;
+      }
       if (
         result.status === "no_results" &&
         hasReads &&
@@ -331,7 +436,11 @@ export function createCoachBlockPipeline({
         return coachBlockFailure(
           errors
             ? "No pude verificar la solicitud porque una fuente falló o quedó limitada. No interpretaré el fallo como ausencia de registros."
-            : "La evidencia autorizada no cubre la solicitud. Precisa el dato o registro necesario para continuar.",
+            : operationNotPrepared(
+                question,
+                readModel?.intentRouting?.mode || plan?.mode,
+                !errors && !hasCoachEvidence(evidence),
+              ),
           errors ? "error" : "clarification",
           result.missingFacts,
         );
@@ -404,7 +513,11 @@ export function createCoachBlockPipeline({
           serverFacts: modelFacts.length ? 0 : facts.length,
         };
         const normalized = dependencies.normalizeCoachResult(
-          { ...source, facts },
+          {
+            ...source,
+            operations: coerceCreateOperationPayloads(source?.operations),
+            facts,
+          },
           ...args,
         );
         if (
@@ -442,7 +555,16 @@ export function createCoachBlockPipeline({
             general_query: { intent: "general_query", mode: "coaching" },
             clarify_needed: { intent: "clarification", mode: "coaching" },
           };
-          const authoritativeRoute = authoritativeRoutes[finalIntent] || null;
+          const baseRoute = authoritativeRoutes[finalIntent] || null;
+          // B3 detected a request for exhaustive detail; the semantic classifier cannot express that, so it must not
+          // downgrade it to a brief-context query.
+          const authoritativeRoute =
+            baseRoute &&
+            coachIntentClassification?.decisionTrace?.preDecision?.bucket ===
+              "deep_exploration" &&
+            ["account_query", "opportunity_query"].includes(baseRoute.intent)
+              ? { ...baseRoute, mode: "deep_exploration" }
+              : baseRoute;
           const prompt = buildCoachIntentPreviewPrompt(question, catalog);
           prompt.model = aiModelFor(coachFeatureCode, "fast");
           prompt.text = { format: { type: "json_object" } };
@@ -452,7 +574,7 @@ export function createCoachBlockPipeline({
             prompt.input[0].content += ` La intención autoritativa ya fue resuelta por B6 y el servidor: intent=${authoritativeRoute.intent}, mode=${authoritativeRoute.mode}. No la reclasifiques; solo propone lecturas compatibles con ella.`;
           }
           prompt.input[0].content +=
-            " En filters omite propiedades no necesarias: no uses null, cadenas vacías para booleanos o años, ni accountId/opportunityId/contactId/leadId. Usa arrays de códigos para stageCodes/commercialStatusCodes, booleanos para activeOnly/inactiveOnly/openOnly y número entero para closeYear. Seleccionar una cuenta autorizada no es explorar su historial; una pregunta por su nombre es account_query con mode=brief_context y searchAccounts. No uses process_information para preguntar datos de una cuenta. El enum de intents clasifica la solicitud; las herramientas no son intents.";
+            " En filters omite propiedades no necesarias: no uses null, cadenas vacías para booleanos o años, ni accountId/opportunityId/contactId/leadId. Usa arrays de códigos para stageCodes/commercialStatusCodes (commercialStatusCodes válidos: en_proceso, ganada, perdida, anulada), booleanos para activeOnly/inactiveOnly/openOnly y número entero para closeYear. Seleccionar una cuenta autorizada no es explorar su historial; una pregunta por su nombre es account_query con mode=brief_context y searchAccounts. No uses process_information para preguntar datos de una cuenta. El enum de intents clasifica la solicitud; las herramientas no son intents.";
           const promptInput = JSON.parse(prompt.input[1].content);
           prompt.input[1].content = JSON.stringify({
             ...promptInput,
@@ -611,9 +733,14 @@ export function createCoachBlockPipeline({
               field,
               evidence.find((item) => item.toolName === name && !item.error)
                 ?.result ||
-                (field === "pipeline" || field === "selectedOpportunityDetail"
-                  ? null
-                  : []),
+                // Rankings and counts are computed by the server from the authorized opportunities, even when the
+                // planner read the pipeline summary instead of searching them.
+                (field === "coachOpportunities" &&
+                Array.isArray(readModel.scopedSnapshot?.coachOpportunities)
+                  ? readModel.scopedSnapshot.coachOpportunities
+                  : field === "pipeline" || field === "selectedOpportunityDetail"
+                    ? null
+                    : []),
             ]),
           ),
         };
@@ -649,7 +776,8 @@ export function createCoachBlockPipeline({
               {
                 role: "system",
                 content:
-                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado.",
+                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia; no cuentes registros a mano. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
+                  languageInstruction(requestedLanguage({ question, history })),
               },
               {
                 role: "user",
@@ -661,11 +789,36 @@ export function createCoachBlockPipeline({
               },
             ],
           };
+          const phase = request.phase || "coach";
+          const isOperationTurn =
+            (readModel?.intentRouting?.mode || plan?.mode) === "operation";
           const response = await trace.span(
             "B5",
             "B10",
             "Formar respuesta de Coach",
-            () => requestJson(payload, request.phase || "coach"),
+            async () => {
+              const first = await requestJson(payload, phase);
+              const proposesWithoutOperation =
+                isOperationTurn &&
+                first?.responseType !== "clarification" &&
+                !(Array.isArray(first?.operations) && first.operations.length);
+              if (!proposesWithoutOperation) return first;
+              // A proposal that carries no operation leaves the seller without anything to confirm; ask once more.
+              return requestJson(
+                {
+                  ...payload,
+                  input: [
+                    ...payload.input,
+                    {
+                      role: "system",
+                      content:
+                        "El vendedor pidió una operación y tu respuesta no incluyó ninguna en operations[]. Inclúyela completa para que el vendedor la revise y confirme; si faltan datos indispensables, pídelos con responseType=clarification. No afirmes que ya se guardó.",
+                    },
+                  ],
+                },
+                phase,
+              );
+            },
             (value) => ({
               hasAnswer: Boolean(value.answer),
               proposedOperations: value.operations?.length || 0,
@@ -764,15 +917,20 @@ export function createCoachBlockPipeline({
         );
         diagnostics.answerAudit = audit;
         if (audit.status !== "supported" || audit.unsupportedClaims.length) {
+          // Without a single CRM record behind it, an unsupported answer to a general question is out of scope.
+          const outOfScope =
+            plan?.intent === "general_query" && !hasCoachEvidence(evidence);
           result.response = {
-            ...coachBlockFailure(
-              "No pude respaldar la respuesta con las fuentes autorizadas. No presentaré hechos ni operaciones sin esa validación.",
-            ),
+            ...(outOfScope
+              ? coachBlockFailure(COACH_OUT_OF_SCOPE_ANSWER, "clarification")
+              : coachBlockFailure(
+                  "No pude respaldar la respuesta con las fuentes autorizadas. No presentaré hechos ni operaciones sin esa validación.",
+                )),
             entities: response.entities,
           };
           result.qualityTrace = {
             ...result.qualityTrace,
-            validationStatus: "error",
+            validationStatus: outOfScope ? "clarification" : "error",
             validationReasons: ["coach_answer_not_supported"],
             operationsRejected: response.operations?.length || 0,
           };
@@ -781,6 +939,28 @@ export function createCoachBlockPipeline({
             response.operations || [],
             businessRules.operationPolicy,
           );
+          // The channel policy decides which operations Coach may propose; a text that "proposes" one it cannot
+          // carry would leave the seller waiting for something to confirm that does not exist.
+          if (
+            (readModel?.intentRouting?.mode || plan?.mode) === "operation" &&
+            response.responseType === "action_proposal" &&
+            !result.response.operations.length
+          ) {
+            result.response = {
+              ...result.response,
+              answer: COACH_OPERATION_NOT_AVAILABLE_ANSWER,
+              responseType: "informational",
+              action: null,
+              recommendedActions: [],
+            };
+            result.qualityTrace = {
+              ...result.qualityTrace,
+              validationReasons: [
+                ...(result.qualityTrace?.validationReasons || []),
+                "coach_operation_not_available",
+              ],
+            };
+          }
         }
       } catch (error) {
         diagnostics.answerAudit = {

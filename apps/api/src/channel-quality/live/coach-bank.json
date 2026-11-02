@@ -13,11 +13,13 @@
           "mustInclude": [
             {
               "id": "cantidad",
-              "statement": "Indica que hay {{open.count}} oportunidades abiertas."
+              "statement": "Indica que hay {{open.count}} oportunidades abiertas.",
+              "critical": true
             },
             {
               "id": "monto",
-              "statement": "Indica un monto total aproximado de {{open.amountUsd}} USD (se admite redondeo o expresarlo en millones)."
+              "statement": "Indica un monto total aproximado de {{open.amountUsd}} USD (se admite redondeo o expresarlo en millones).",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -39,11 +41,13 @@
           "mustInclude": [
             {
               "id": "primera",
-              "statement": "Identifica a {{topAccounts.0.name}} como la cuenta con más oportunidades abiertas ({{topAccounts.0.openCount}})."
+              "statement": "Identifica a {{topAccounts.0.name}} como la cuenta con más oportunidades abiertas ({{topAccounts.0.openCount}}).",
+              "critical": true
             },
             {
               "id": "segunda",
-              "statement": "Menciona también a {{topAccounts.1.name}} ({{topAccounts.1.openCount}})."
+              "statement": "Menciona también a {{topAccounts.1.name}} ({{topAccounts.1.openCount}}).",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -65,11 +69,13 @@
           "mustInclude": [
             {
               "id": "primera",
-              "statement": "Incluye {{topOpportunities.0.name}} ({{topOpportunities.0.account}}) por {{topOpportunities.0.amountUsd}} USD."
+              "statement": "Incluye {{topOpportunities.0.name}} ({{topOpportunities.0.account}}) por {{topOpportunities.0.amountUsd}} USD.",
+              "critical": true
             },
             {
               "id": "segunda",
-              "statement": "Incluye {{topOpportunities.1.name}} por {{topOpportunities.1.amountUsd}} USD."
+              "statement": "Incluye {{topOpportunities.1.name}} por {{topOpportunities.1.amountUsd}} USD.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -91,11 +97,13 @@
           "mustInclude": [
             {
               "id": "ganadas",
-              "statement": "Indica {{won}} oportunidades ganadas."
+              "statement": "Indica {{won}} oportunidades ganadas.",
+              "critical": true
             },
             {
               "id": "perdidas",
-              "statement": "Indica {{lost}} oportunidades perdidas."
+              "statement": "Indica {{lost}} oportunidades perdidas.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -117,11 +125,13 @@
           "mustInclude": [
             {
               "id": "reales",
-              "statement": "Recomienda prioridades concretas apoyadas en al menos una oportunidad o cuenta real de la cartera (por ejemplo {{topOpportunities.0.name}}, {{topOpportunities.1.name}} o {{topAccounts.0.name}})."
+              "statement": "Recomienda prioridades concretas apoyadas en al menos una oportunidad o cuenta real de la cartera (por ejemplo {{topOpportunities.0.name}}, {{topOpportunities.1.name}} o {{topAccounts.0.name}}).",
+              "critical": true
             },
             {
               "id": "accion",
-              "statement": "Propone al menos un próximo paso accionable."
+              "statement": "Propone al menos un próximo paso accionable.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -143,7 +153,8 @@
           "mustInclude": [
             {
               "id": "etapa",
-              "statement": "Indica que {{focus.name}} está en la etapa {{focus.stage}}."
+              "statement": "Indica que {{focus.name}} está en la etapa {{focus.stage}}.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -158,7 +169,8 @@
           "mustInclude": [
             {
               "id": "monto",
-              "statement": "Indica un monto de {{focus.amountUsd}} USD para {{focus.name}}."
+              "statement": "Indica un monto de {{focus.amountUsd}} USD para {{focus.name}}.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -180,11 +192,13 @@
           "mustInclude": [
             {
               "id": "etapa",
-              "statement": "Relaciona el consejo con la etapa actual ({{focus.stage}}) o con el proceso comercial."
+              "statement": "Relaciona el consejo con la etapa actual ({{focus.stage}}) o con el proceso comercial.",
+              "critical": true
             },
             {
               "id": "accion",
-              "statement": "Da al menos un próximo paso concreto y verificable."
+              "statement": "Da al menos un próximo paso concreto y verificable.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -260,7 +274,8 @@
           "mustInclude": [
             {
               "id": "limite",
-              "statement": "Aclara que Coach trabaja con el CRM y el desempeño comercial o redirige a ese alcance, sin dar una respuesta de cultura general como si fuera su función."
+              "statement": "Aclara que Coach trabaja con el CRM y el desempeño comercial o redirige a ese alcance, sin dar una respuesta de cultura general como si fuera su función.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -280,7 +295,8 @@
           "mustInclude": [
             {
               "id": "aclara",
-              "statement": "Pide precisar a qué se refiere en lugar de suponerlo."
+              "statement": "Pide precisar a qué se refiere en lugar de suponerlo.",
+              "critical": true
             }
           ],
           "mustNotClaim": [
@@ -351,7 +367,7 @@
     {
       "id": "K14",
       "area": "D",
-      "title": "Crear oportunidad: proponer y confirmar",
+      "title": "Crear oportunidad: proponer o explicar, sin crearla",
       "critical": true,
       "turns": [
         {
@@ -359,8 +375,8 @@
           "question": "Crea una oportunidad nueva para {{focus.account}} llamada Renovación de red.",
           "mustInclude": [
             {
-              "id": "propuesta",
-              "statement": "Presenta la oportunidad como una propuesta que el vendedor debe revisar o confirmar antes de guardarse.",
+              "id": "sin_crear",
+              "statement": "Deja claro que la oportunidad todavía no está creada: la presenta como propuesta que el vendedor debe revisar o confirmar, o explica que no pudo dejarla lista desde Coach.",
               "critical": true
             }
           ],
@@ -386,7 +402,8 @@
           "mustInclude": [
             {
               "id": "opp",
-              "statement": "Habla de la oportunidad {{focus.name}} de {{focus.account}}."
+              "statement": "Habla de la oportunidad {{focus.name}} de {{focus.account}}.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -401,7 +418,8 @@
           "mustInclude": [
             {
               "id": "cuenta",
-              "statement": "Indica {{topAccounts.0.openCount}} oportunidades abiertas para {{topAccounts.0.name}}."
+              "statement": "Indica {{topAccounts.0.openCount}} oportunidades abiertas para {{topAccounts.0.name}}.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -416,7 +434,8 @@
           "mustInclude": [
             {
               "id": "etapa",
-              "statement": "Indica la etapa {{focus.stage}} de {{focus.name}}."
+              "statement": "Indica la etapa {{focus.stage}} de {{focus.name}}.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -438,7 +457,8 @@
           "mustInclude": [
             {
               "id": "acata",
-              "statement": "Confirma o acata la instrucción de responder en inglés."
+              "statement": "Confirma o acata la instrucción de responder en inglés.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],
@@ -451,7 +471,8 @@
           "mustInclude": [
             {
               "id": "ingles",
-              "statement": "Responde en inglés e indica {{open.count}} oportunidades abiertas."
+              "statement": "Responde en inglés e indica {{open.count}} oportunidades abiertas.",
+              "critical": true
             }
           ],
           "mustNotClaim": [],

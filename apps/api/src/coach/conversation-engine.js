@@ -1847,7 +1847,10 @@ export async function prepareCoachReadModel({
     conversationHistory,
     effectiveContext,
     businessRules,
-    { exactMatchOnly: intentRouting?.intent === "seller_coaching" },
+    {
+      exactMatchOnly: intentRouting?.intent === "seller_coaching",
+      intentMode: intentRouting?.mode,
+    },
   );
   let questionContextTransition = applyCoachEntityResolution(
     baseSnapshot,

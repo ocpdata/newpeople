@@ -353,8 +353,6 @@
     "id": "COACH-GAP-001",
     "question": "Dame el detalle de Renovación SD-WAN de Telmex.",
     "kind": "exact_entity",
-    "knownGap": true,
-    "note": "La mención de la cuenta no desambigua dos oportunidades con el mismo nombre.",
     "expected": {
       "opportunityId": 10
     }
@@ -363,8 +361,6 @@
     "id": "COACH-GAP-002",
     "question": "Quiero ver a Juan Pérez de Telmex.",
     "kind": "exact_contact",
-    "knownGap": true,
-    "note": "La mención de la cuenta no desambigua dos contactos con el mismo nombre.",
     "expected": {
       "contactId": 502
     }

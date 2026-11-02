@@ -106,10 +106,16 @@ export function resolveFinalIntent(
   }
 
   const finalIntent = selectedIntent || "general_query";
+  // A request for exhaustive detail is handed off to the detail module, not answered as a brief-context query.
+  const wantsDeepExploration =
+    preDecision?.bucket === "deep_exploration" &&
+    ["account_query", "opportunity_query"].includes(finalIntent);
 
   return {
     intent: finalIntent,
-    interactionMode: mapIntentToMode(finalIntent),
+    interactionMode: wantsDeepExploration
+      ? "deep_exploration"
+      : mapIntentToMode(finalIntent),
     policyProcess: mapIntentToPolicy(finalIntent),
     allowedTools: deriveAllowedTools(finalIntent, permissions),
     requiresClarification: false,

@@ -16,6 +16,9 @@ const opportunity = (id, name, accountId, accountName, extra = {}) => ({
   lifecycle: "open", activationStatusCode: "activada", commercialStatusCode: "en_proceso", stageCode: "calificacion", ...extra,
 });
 
+// The resolver options Coach uses in production (see resolveCoachContextEntities in routes.mi-agent.js).
+const COACH_RESOLUTION_OPTIONS = Object.freeze({ disambiguateByAccount: true });
+
 export const coachLabSnapshot = Object.freeze({
   accounts: [account(22, "Totalplay"), account(23, "Telmex"), account(24, "Megacable"), account(25, "Totalplay Móvil")],
   coachOpportunities: [
@@ -52,21 +55,21 @@ const handlers = {
     assert.deepEqual(sortedIds(searchCoachOpportunities(coachLabSnapshot, testCase.filters)), testCase.expected.ids);
   },
   exact_entity(testCase) {
-    assert.equal(resolveCoachEntities(coachLabSnapshot, testCase.question).opportunity?.id, testCase.expected.opportunityId);
+    assert.equal(resolveCoachEntities(coachLabSnapshot, testCase.question, {}, COACH_RESOLUTION_OPTIONS).opportunity?.id, testCase.expected.opportunityId);
   },
   exact_contact(testCase) {
-    assert.equal(resolveCoachEntities(coachLabSnapshot, testCase.question).contact?.id, testCase.expected.contactId);
+    assert.equal(resolveCoachEntities(coachLabSnapshot, testCase.question, {}, COACH_RESOLUTION_OPTIONS).contact?.id, testCase.expected.contactId);
   },
   exact_lead(testCase) {
-    assert.equal(resolveCoachEntities(coachLabSnapshot, testCase.question).lead?.id, testCase.expected.leadId);
+    assert.equal(resolveCoachEntities(coachLabSnapshot, testCase.question, {}, COACH_RESOLUTION_OPTIONS).lead?.id, testCase.expected.leadId);
   },
   no_entity(testCase) {
-    const resolution = resolveCoachEntities(coachLabSnapshot, testCase.question);
+    const resolution = resolveCoachEntities(coachLabSnapshot, testCase.question, {}, COACH_RESOLUTION_OPTIONS);
     assert.deepEqual([resolution.account, resolution.opportunity, resolution.contact, resolution.lead], [null, null, null, null]);
     assert.equal(buildCoachEntityClarification(resolution, testCase.question), null);
   },
   clarification(testCase) {
-    const resolution = resolveCoachEntities(coachLabSnapshot, testCase.question);
+    const resolution = resolveCoachEntities(coachLabSnapshot, testCase.question, {}, COACH_RESOLUTION_OPTIONS);
     const clarification = buildCoachEntityClarification(resolution, testCase.question);
     assert.equal(clarification?.type || null, testCase.expected.type || testCase.expected.clarification);
   },

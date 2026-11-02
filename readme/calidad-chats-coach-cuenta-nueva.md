@@ -16,7 +16,7 @@ Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea 
 
 - Coach: `apps/api/src/channel-quality/lab/coach-cases.json` (32 casos).
 - Cuenta nueva: `apps/api/src/channel-quality/lab/prospect-cases.json` (30 casos).
-- Los casos con `knownGap` documentan un comportamiento que hoy es incorrecto (por ejemplo, que mencionar la cuenta no desambigüe dos oportunidades con el mismo nombre). No cuentan en la nota principal; se reportan aparte como **Brechas conocidas corregidas**. Cuando una brecha se corrige, su prueba falla a propósito: se quita `knownGap` para que el caso pase a la nota principal.
+- Los casos con `knownGap` documentan un comportamiento que hoy es incorrecto (por ejemplo, que una actividad sin título se normalice como válida). No cuentan en la nota principal; se reportan aparte como **Brechas conocidas corregidas**. Cuando una brecha se corrige, su prueba falla a propósito: se quita `knownGap` para que el caso pase a la nota principal.
 - Pruebas: `test/coach-evaluation-matrix.test.js` y `test/prospect-evaluation-lab.test.js`.
 
 ## Dónde se ve
@@ -114,31 +114,41 @@ Una respuesta del modelo que no listaba evidencia era descartada por el motor co
 
 ### Línea base y mejoras (2026-11-01)
 
+Todas las afirmaciones de contenido del banco son obligatorias (las primeras corridas dejaban las no críticas fuera del puntaje y lo inflaban). Una afirmación contradicha, como una cifra distinta de la de la base, hace fallar el escenario.
+
 | Medida | Línea base | Después de las mejoras |
 | --- | --- | --- |
-| Escenarios aprobados | 2/16 | **11/16 a 12/16** (últimas tres corridas) |
-| Escenarios críticos | 0/5 | 2/5 a 3/5 |
-| Cartera y pipeline (área A) | 0/5 | **5/5** |
-| Una oportunidad (área B) | 0/2 | **2/2** |
+| Escenarios aprobados | 2/16 | **13/16 y 15/16** (dos corridas completas) |
+| Escenarios críticos | 0/5 | **5/5 en ambas** |
+| Cartera y pipeline (área A) | 0/5 | 4/5 y 5/5 |
+| Honestidad y límites (área C) | 2/4 | **4/4** |
+| Operaciones seguras (área D) | 0/3 | **3/3** |
 
-La línea base mostró que Coach no contestaba ninguna pregunta real. Defectos corregidos, todos en archivos exclusivos de Coach:
+La línea base mostró que Coach no contestaba ninguna pregunta real. La segunda corrida cumple los umbrales de liberación (críticos 100% y más de 85% de los casos); la primera no (13/16 = 81%), por lo que el criterio de dos corridas seguidas **todavía no se cumple**. Los fallos que alternan entre corridas son de redacción del modelo (prioridades de la semana poco específicas, consejos sin etapa) y de latencia (un turno que excede el tiempo).
+
+**Defectos corregidos en archivos exclusivos de Coach**
 
 1. **El clasificador semántico nunca veía la pregunta** (`coach-orchestrator.js`): un parámetro tapaba la función importada y el modelo recibía el texto sin el formato `{message, context}`. Siempre devolvía «aclaración». Es la causa de que en la VM el único turno de Coach fuera una aclaración.
 2. **La puerta de permisos buscaba permisos que no existen** (`agent-gateway.js`): `oportunidades.write` y `oportunidades.editar` no están en el catálogo real (`oportunidades.create`, `.request` y `.update`), así que nadie podía crear ni actualizar desde Coach.
-3. **Prompt del clasificador:** ahora define cada intención (consejo, pipeline, dato puntual, creación, actualización), cubre las preguntas de seguimiento y no toma un consejo por una creación.
-4. **Filtros del planificador:** los códigos con mayúsculas, acentos o espacios («Ganada», «En proceso») se rechazaban; ahora se normalizan.
-5. **Respuestas sin hechos:** igual que en Cuenta nueva, una respuesta basada en lecturas reales pero sin hechos listados se descartaba; ahora el servidor los agrega a partir de lo que leyó (o de la guía del proceso, en coaching sin lecturas).
+3. **Prompt del clasificador:** define cada intención, cubre las preguntas de seguimiento, las entidades nombradas y las instrucciones de estilo.
+4. **Filtros del planificador:** los códigos con mayúsculas, acentos, espacios o en inglés («Ganada», «won») se rechazaban o no encontraban nada; ahora se normalizan.
+5. **Respuestas sin hechos:** una respuesta basada en lecturas reales pero sin hechos listados se descartaba; ahora el servidor los agrega a partir de lo que leyó (o de la guía del proceso, en coaching sin lecturas). Los conteos los calcula el servidor (`resultCount`, `countsByCommercialStatus`) en lugar de dejar que el modelo cuente.
 6. **Fechas en las aclaraciones:** MySQL devuelve `Date` y el contrato exigía texto, así que cualquier aclaración entre oportunidades parecidas terminaba en «No fue posible validar el formato».
-7. **Idioma:** el último idioma pedido por el vendedor se declara al modelo.
+7. **Idioma:** el último idioma pedido por el vendedor se declara al modelo, también en la respuesta final.
+8. **Rankings por cuenta:** si el planificador leía el resumen de pipeline en vez de buscar oportunidades, el ranking quedaba vacío («No hay oportunidades abiertas»).
+9. **Mensajes claros:** una pregunta fuera de alcance se responde como tal (antes, un error); un registro que no existe se declara como no encontrado; marcar una oportunidad como ganada explica que Coach no cierra oportunidades; una «propuesta» que la política del canal deja sin operación se corrige en lugar de prometer algo que no existe.
+10. **Propuestas sin operación y creaciones mal formadas:** si el modelo propone sin incluir la operación se le pide una vez más, y los campos de una creación que dejó junto a `kind` se colocan en `payload`.
+11. **Referencias a una entidad anterior** (`back-reference.js`): «volviendo a la primera» o «regresemos a la anterior» restauran el contexto de esa entidad a partir de la sesión.
 
-### Brechas que quedan (requieren tocar el motor compartido con Cliente existente)
+**Cambios en el motor compartido con Cliente existente (autorizados el 2026-11-01)**
 
-- **Escenario 9, historial exhaustivo:** debe derivar a Cliente existente, pero responde «selecciona account en el contexto del Coach».
-- **Escenario 13, marcar como ganada:** no cambia nada (correcto), pero responde con el mensaje genérico «La evidencia autorizada no cubre la solicitud» en lugar de explicar que no se hace desde el chat.
-- **Escenario 14, crear una oportunidad para una cuenta:** el resolvedor de entidades toma el nombre de la cuenta como oportunidad y pide elegir entre «varias coincidencias».
-- **Escenario 15, volver a una entidad anterior:** «volviendo a la primera» no recupera la oportunidad de hace dos turnos.
+Se hicieron de forma aditiva: opciones que están apagadas por defecto y que solo activa Coach, de modo que Cliente existente se comporta igual (sus pruebas y la regresión completa pasan sin cambios).
 
-Los criterios de liberación de Coach siguen sin cumplirse (críticos 100% y 85% de los casos). Los resultados varían entre corridas por el modelo; las cifras de arriba son de las últimas tres corridas completas.
+- `entity-resolver.js`, opciones `disambiguateByAccount` y `newOpportunity` (apagadas por defecto): una cuenta mencionada desambigua oportunidades y contactos con el mismo nombre; mencionar solo la cuenta la selecciona en vez de obligar a elegir una de sus oportunidades (pedir «la oportunidad» de una cuenta con varias sigue pidiendo elegir); las palabras de etapa («cotizaciones») no ocultan una oportunidad nombrada; en «crea una oportunidad nueva…» el nombre no se busca entre las existentes. Corrigen las brechas COACH-GAP-001 y COACH-GAP-002 del laboratorio, que pasaron a la nota principal.
+- `conversation-engine.js`: pasa `intentMode` al resolvedor de Coach (una línea).
+- `resolveCoachContextEntities` en `routes.mi-agent.js` (la función de Coach) activa esas opciones.
+
+**Brecha que queda:** COACH-GAP-003, una actividad sin título se normaliza como válida. Vive en el contrato de operaciones que también usa Cliente existente y no estaba entre los casos autorizados.
 
 ## Valoraciones de las respuestas
 

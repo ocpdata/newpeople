@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createCoachBlockPipeline, normalizePlannedReads } from "../src/coach/block-pipeline.js";
+import { COACH_OPERATION_NOT_AVAILABLE_ANSWER, COACH_OUT_OF_SCOPE_ANSWER, coerceCreateOperationPayloads, createCoachBlockPipeline, normalizePlannedReads, operationNotPrepared, withCoachCounts } from "../src/coach/block-pipeline.js";
 import {
   createCoachBlockTrace,
   serializeCoachDates,
@@ -17,6 +17,7 @@ function fixture({
   guide = "Guía autorizada: confirmar necesidades antes de avanzar",
   limits,
   history = [],
+  responseType = "informational",
 } = {}) {
   const calls = [];
   const requestMiAgentJson = vi.fn(async (request) => {
@@ -40,7 +41,7 @@ function fixture({
     if (request.phase === "coach_answer_audit") return audit;
     return {
       answer: "La cuenta está autorizada",
-      responseType: "informational",
+      responseType,
       evidence: ["searchAccounts"],
       operations: [],
     };
@@ -104,6 +105,83 @@ async function run(f, tools = ["searchAccounts"]) {
 }
 
 describe("Coach B6–B10 pipeline", () => {
+  it("una propuesta de operación no se descarta por campos que se completan al confirmar", async () => {
+    const assessment = { status: "incomplete", missingTools: [], missingFacts: ["hora de la actividad"] };
+    const operation = fixture({ mode: "operation", plan: { intent: "operation" }, assessments: [assessment] });
+    await run(operation);
+    expect(operation.pipeline.diagnostics.evidence.status).toBe("sufficient_for_operation");
+    const query = fixture({ assessments: [assessment] });
+    await run(query);
+    expect(query.pipeline.diagnostics.evidence.status).toBe("insufficient_evidence");
+    const coaching = fixture({ mode: "coaching", plan: { intent: "seller_coaching" }, assessments: [assessment] });
+    await run(coaching);
+    expect(coaching.pipeline.diagnostics.evidence.status).toBe("sufficient_for_coaching");
+  });
+
+  it("dice que no encontró el registro cuando las lecturas salieron vacías", () => {
+    expect(operationNotPrepared("¿Cómo va X?", "brief_context", true)).toContain("No encontré ningún registro");
+    expect(operationNotPrepared("¿Cómo va X?", "brief_context", false)).toContain("evidencia autorizada");
+  });
+
+  it("pide una vez más la operación cuando una propuesta llega sin ella", async () => {
+    const operation = fixture({ mode: "operation", plan: { intent: "operation" } });
+    await run(operation);
+    expect(operation.calls.filter((item) => item.phase === "coach")).toHaveLength(2);
+    const query = fixture();
+    await run(query);
+    expect(query.calls.filter((item) => item.phase === "coach")).toHaveLength(1);
+  });
+
+  it("el servidor cuenta las lecturas para que el modelo no cuente a mano", () => {
+    const counted = withCoachCounts({
+      toolName: "searchOpportunities",
+      result: [{ commercialStatusCode: "ganada" }, { commercialStatusCode: "ganada" }, { commercialStatusCode: "perdida" }, {}],
+    });
+    expect(counted).toMatchObject({ resultCount: 4, countsByCommercialStatus: { ganada: 2, perdida: 1, sin_estado: 1 } });
+    expect(withCoachCounts({ toolName: "getOpportunity", result: { id: 1 } })).toEqual({ toolName: "getOpportunity", result: { id: 1 } });
+    expect(withCoachCounts({ toolName: "x", result: [{ id: 1 }] }).countsByCommercialStatus).toBeUndefined();
+  });
+
+  it("una pregunta general sin respaldo del CRM se responde como fuera de alcance, no como error", async () => {
+    const f = fixture({
+      mode: "coaching",
+      plan: { intent: "general_query" },
+      reads: { searchAccounts: [] },
+      audit: { status: "unsupported", unsupportedClaims: ["París"] },
+    });
+    const result = await run(f);
+    expect(result.response.responseType).toBe("clarification");
+    expect(result.response.answer).toBe(COACH_OUT_OF_SCOPE_ANSWER);
+    expect(result.qualityTrace.validationStatus).toBe("clarification");
+  });
+
+  it("coloca en payload los campos de una creación que el modelo dejó junto a kind", () => {
+    const [created, withPayload, activity] = coerceCreateOperationPayloads([
+      { kind: "create_opportunity", accountId: 22, name: "Renovación de red", title: "Crear oportunidad" },
+      { kind: "create_contact", accountId: 22, payload: { firstName: "Ana" } },
+      { kind: "activity", opportunityId: 5, title: "Llamar" },
+    ]);
+    expect(created.payload).toEqual({ accountId: 22, name: "Renovación de red" });
+    expect(created).toEqual({ kind: "create_opportunity", accountId: 22, title: "Crear oportunidad", payload: { accountId: 22, name: "Renovación de red" } });
+    expect(withPayload.payload).toEqual({ firstName: "Ana" });
+    expect(activity.payload).toBeUndefined();
+    expect(coerceCreateOperationPayloads(undefined)).toBeUndefined();
+  });
+
+  it("una propuesta que la política del canal dejó sin operación se corrige en lugar de prometer algo que no existe", async () => {
+    const f = fixture({ mode: "operation", plan: { intent: "operation" }, responseType: "action_proposal" });
+    const result = await run(f);
+    expect(result.response.answer).toBe(COACH_OPERATION_NOT_AVAILABLE_ANSWER);
+    expect(result.response.responseType).toBe("informational");
+  });
+
+  it("explica qué no hace Coach cuando no puede preparar una operación", () => {
+    expect(operationNotPrepared("Marca como ganada la oportunidad X", "operation")).toContain("no cierra oportunidades");
+    expect(operationNotPrepared("Cierra como perdida la oportunidad X", "operation")).toContain("no cierra oportunidades");
+    expect(operationNotPrepared("Crea una actividad", "operation")).toContain("no se cambió ningún registro");
+    expect(operationNotPrepared("¿Cuántas hay?", "brief_context")).toContain("evidencia autorizada");
+  });
+
   it("le recuerda al modelo el idioma que pidió el vendedor", () => {
     const withLanguage = fixture({ history: [{ role: "seller", text: "A partir de ahora responde en inglés." }] });
     expect(withLanguage.pipeline.hooks.buildPrompt({}).input[0].content).toContain("Idioma pedido por el vendedor: inglés");

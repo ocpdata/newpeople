@@ -851,7 +851,7 @@ La arquitectura objetivo descrita en las secciones anteriores debe leerse junto 
 
 Las preguntas representativas del Chat Coach se mantienen en [Preguntas de evaluación del Chat Coach](./coach-evaluation-questions.md). La versión ejecutable está separada en:
 
-- `apps/api/src/channel-quality/lab/coach-cases.json` (32 casos; los marcados `knownGap` documentan brechas conocidas): casos, preguntas, filtros y expectativas.
+- `apps/api/src/channel-quality/lab/coach-cases.json` (32 casos; el marcado `knownGap` documenta una brecha conocida): casos, preguntas, filtros y expectativas.
 - `apps/api/test/coach-evaluation-matrix.test.js`: runner Vitest de la matriz; el runner sin IA está en `apps/api/src/channel-quality/lab/coach.js`.
 
 La matriz valida de forma estructurada:
