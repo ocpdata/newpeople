@@ -15,6 +15,22 @@ import { CustomerChatAnswer } from "./CustomerChatAnswer";
 import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
 import { CustomerChatProgress } from "./CustomerChatProgress";
 import { CoachStageReadiness, CoachSemanticSections } from "./MiAgentWidgets";
+import { validCitationAnchors } from "./customerChatShared";
+
+// Message ids may carry free text; the marker link and the list item must share an id that survives URL encoding.
+const citationKey = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, "-");
+
+// A marker in the answer opens the evidence list of that message and points to the cited record.
+function selectCoachCitation(targetId) {
+  const item = document.getElementById(targetId);
+  if (!item) return;
+  const details = item.closest("details");
+  if (details) details.open = true;
+  item.scrollIntoView?.({ block: "nearest" });
+  item.focus({ preventScroll: true });
+  item.setAttribute("data-highlight", "true");
+  window.setTimeout(() => item.removeAttribute("data-highlight"), 2500);
+}
 
 // Informational answers and errors need no label: the text already says what they are.
 const COACH_VISIBLE_RESPONSE_TYPES = new Set([
@@ -537,8 +553,48 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
                     ) : null}
                     <CustomerChatAnswer
                       answer={message.result?.answer || "Lectura comercial"}
+                      citationAnchors={validCitationAnchors(
+                        message.result?.answer,
+                        message.result?.citationAnchors,
+                        message.result?.citations?.length || 0,
+                      )}
+                      citationLabels={(message.result?.citations || []).map(
+                        (citation) => citation.label,
+                      )}
+                      citationIdPrefix={`coach-${citationKey(message.id)}`}
+                      onCitationSelect={selectCoachCitation}
                     />
                     <CustomerChatCopyButton text={message.result?.answer} />
+                    {message.result?.citations?.length ? (
+                      <details className="mi-agent-dossier-citations">
+                        <summary>
+                          Evidencia del CRM citada (
+                          {message.result.citations.length})
+                        </summary>
+                        <ul>
+                          {message.result.citations.map(
+                            (citation, citationIndex) => (
+                              <li
+                                key={citation.evidenceId}
+                                id={`cita-coach-${citationKey(message.id)}-${citationIndex + 1}`}
+                                tabIndex={-1}
+                              >
+                                <span className="mi-agent-dossier-citation-number">
+                                  [{citationIndex + 1}]
+                                </span>{" "}
+                                <strong>{citation.label}</strong>
+                                {citation.detail ? (
+                                  <span> · {citation.detail}</span>
+                                ) : null}
+                                {citation.excerpt ? (
+                                  <p>{citation.excerpt}</p>
+                                ) : null}
+                              </li>
+                            ),
+                          )}
+                        </ul>
+                      </details>
+                    ) : null}
                     {message.result?.detailHandoff ? (
                       <div className="mi-agent-coach-handoff">
                         <small>

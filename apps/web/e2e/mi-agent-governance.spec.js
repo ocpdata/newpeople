@@ -36,6 +36,7 @@ async function mockMiCoachApi(
     withCoachPendingOperations = true,
     withHistoricalOpportunityContext = false,
     withResponseContextSwitch = false,
+    withCoachCitations = false,
     withSituationAnalysis = false,
     withProspect = false,
     withProspectChatAccess = withProspect,
@@ -1303,6 +1304,28 @@ async function mockMiCoachApi(
           },
           activeContextSource: "coach_response",
           qualityTraceId: 712,
+          ...(withCoachCitations
+            ? {
+                citations: [
+                  {
+                    evidenceId: "e1.1",
+                    sourceType: "opportunity",
+                    sourceId: 320,
+                    label: "Oportunidad Proyecto B",
+                    detail: "Cuenta Alterna",
+                    excerpt: "Seguimiento activo registrado en el CRM",
+                  },
+                ],
+                citationAnchors: [
+                  {
+                    start: 0,
+                    end: 69,
+                    quote: "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
+                    citations: [1],
+                  },
+                ],
+              }
+            : {}),
         },
       });
     if (
@@ -4703,6 +4726,36 @@ test.describe("Mi Coach governance and workspaces", () => {
         "La oportunidad Proyecto B de Cuenta Alterna tiene seguimiento activo.",
       ),
     ).toBeVisible();
+  });
+
+  test("Coach muestra marcadores de cita y la evidencia citada de su respuesta", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, {
+      withResponseContextSwitch: true,
+      withCoachCitations: true,
+    });
+    await openMiCoach(page);
+    await openCoachConversation(page);
+    await page
+      .getByPlaceholder("Escribe tu pregunta para el Coach...")
+      .fill("¿Qué seguimiento corresponde a Proyecto B de Cuenta Alterna?");
+    await page.getByRole("button", { name: "Preguntar" }).click();
+    const marker = page.getByRole("link", {
+      name: "Fuente 1: Oportunidad Proyecto B",
+    });
+    await expect(marker).toBeVisible({ timeout: 10000 });
+    const evidence = page.locator(".mi-agent-dossier-citations");
+    await expect(evidence).toContainText("Evidencia del CRM citada (1)");
+    await marker.click();
+    await expect(evidence.locator("details, summary").first()).toBeVisible();
+    await expect(evidence).toContainText(
+      "Seguimiento activo registrado en el CRM",
+    );
+    await expect(evidence.locator("li").first()).toHaveAttribute(
+      "data-highlight",
+      "true",
+    );
   });
 
   test("Coach permite valorar una respuesta y registra la valoración sobre su traza", async ({

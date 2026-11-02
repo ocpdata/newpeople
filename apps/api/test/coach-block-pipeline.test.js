@@ -979,6 +979,92 @@ describe("Coach: síntesis en paralelo y comprobación de valores", () => {
     expect(auditRequest).not.toHaveProperty("deterministicChecks");
     expect(f.pipeline.diagnostics.grounding).toBeUndefined();
   });
+
+  describe("síntesis verificable", () => {
+    const reads = {
+      searchAccounts: [{ id: 7, name: "Cuenta", amountUsd: 8000, stageName: "Waiting" }],
+    };
+    const answer = "El importe de la cuenta es 8,000 USD en etapa Waiting.";
+    const goodClaims = [
+      {
+        text: "El importe de la cuenta es 8,000 USD en etapa Waiting",
+        kind: "registered",
+        evidenceIds: ["e1.1"],
+        values: [
+          { type: "amount", value: "8000" },
+          { type: "text", value: "Waiting" },
+        ],
+      },
+    ];
+    const verified = (overrides = {}) =>
+      fixture({
+        flags: { coachVerifiedSynthesisEnabled: true },
+        reads,
+        synthesize: () => ({ answer, responseType: "informational", operations: [], claims: goodClaims }),
+        ...overrides,
+      });
+
+    it("acepta en código una respuesta con afirmaciones verificadas, omite la auditoría y entrega citas", async () => {
+      const f = verified();
+      const result = await runNormalizedAudit(f);
+      expect(phases(f)).not.toContain("coach_answer_audit");
+      expect(result.response.answer).toBe(answer);
+      expect(result.response.facts.length).toBeGreaterThan(0);
+      expect(result.response.citations.map((item) => item.evidenceId)).toEqual(["e1.1"]);
+      expect(result.response.citationAnchors.length).toBeGreaterThan(0);
+      expect(result.response).not.toHaveProperty("claims");
+      expect(f.pipeline.diagnostics.verifiedSynthesis).toMatchObject({ accepted: true, auditSkipped: true });
+      expect(f.pipeline.diagnostics.answerAudit).toMatchObject({ status: "supported", source: "deterministic" });
+    });
+
+    it("pide a la síntesis la evidencia indexada y el formato de afirmaciones", async () => {
+      const f = verified();
+      await runNormalizedAudit(f);
+      const request = f.calls.find((call) => call.phase === "coach");
+      const content = JSON.stringify(request.payload.input);
+      expect(content).toContain("FORMATO VERIFICABLE");
+      expect(content).toContain("e1.1");
+    });
+
+    it("si una afirmación no se verifica, decide la auditoría con los hallazgos del servidor", async () => {
+      let auditRequest = null;
+      const f = verified({
+        audit: (request) => {
+          auditRequest = JSON.parse(request.payload.input[1].content);
+          return { status: "supported" };
+        },
+        synthesize: () => ({
+          answer,
+          responseType: "informational",
+          operations: [],
+          claims: [{ ...goodClaims[0], values: [{ type: "amount", value: "9000" }] }],
+        }),
+      });
+      const result = await runNormalizedAudit(f);
+      expect(phases(f)).toContain("coach_answer_audit");
+      expect(auditRequest.deterministicChecks.claimVerification.reasons.length).toBeGreaterThan(0);
+      expect(f.pipeline.diagnostics.verifiedSynthesis).toMatchObject({ accepted: false, auditSkipped: false });
+      expect(result.response.answer).toBe(answer);
+    });
+
+    it("sin afirmaciones vuelve a la auditoría del modelo", async () => {
+      const f = verified({
+        synthesize: () => ({ answer, responseType: "informational", operations: [] }),
+      });
+      await runNormalizedAudit(f);
+      expect(phases(f)).toContain("coach_answer_audit");
+      expect(f.pipeline.diagnostics.verifiedSynthesis?.auditSkipped).not.toBe(true);
+    });
+
+    it("con la bandera apagada no pide afirmaciones ni verifica", async () => {
+      const f = verified({ flags: { coachVerifiedSynthesisEnabled: false } });
+      const result = await runNormalizedAudit(f);
+      expect(JSON.stringify(f.calls.find((call) => call.phase === "coach").payload.input)).not.toContain("FORMATO VERIFICABLE");
+      expect(phases(f)).toContain("coach_answer_audit");
+      expect(f.pipeline.diagnostics.verifiedSynthesis).toBeUndefined();
+      expect(result.response).not.toHaveProperty("citations");
+    });
+  });
 });
 
 describe("Coach: comparación de cifras y fechas con la evidencia", () => {

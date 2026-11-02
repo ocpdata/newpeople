@@ -33,6 +33,8 @@ import {
   withCoachRetry,
 } from "./block-runtime.js";
 import { completeAnswerFromFacts } from "./answer-completion.js";
+import { indexCoachEvidence } from "./evidence-index.js";
+import { verifySynthesis } from "./claim-verifier.js";
 import {
   answerTextsToVerify,
   verifyAnswerValues,
@@ -264,10 +266,16 @@ function structuredPayload(instruction, context, featureCode) {
   };
 }
 
-function coachFlag(name, override) {
+function coachFlag(name, override, fallback = true) {
   if (typeof override === "boolean") return override;
-  return String(process.env[name] || "true").toLowerCase() !== "false";
+  const value = process.env[name];
+  if (value === undefined || value === "") return fallback;
+  return String(value).toLowerCase() !== "false";
 }
+
+// The model lists every CRM data point of its answer as a claim that cites evidence IDs; the server verifies them.
+const VERIFIED_CLAIMS_INSTRUCTION =
+  "FORMATO VERIFICABLE. Cada elemento de verifiedEvidence trae un evidenceId (por ejemplo e1 o e2.3). Devuelve en el JSON, además de answer, la lista claims: [{text, kind, evidenceIds, values}]. Cada dato del CRM que menciones en answer (cifras, fechas, etapas, estados, riesgos, nombres de oportunidades, cuentas o contactos) debe ser un claim kind=registered con los evidenceIds exactos de verifiedEvidence que lo respaldan y en values los valores tal cual constan: {type: amount|percent|count|number|date|text, value}. Las fechas van en formato AAAA-MM-DD. text es una frase breve (máximo 200 caracteres) con las mismas palabras que usas en answer. Usa kind=inference para una conclusión tuya sobre los datos, kind=to_confirm para lo que falta confirmar y kind=recommendation para consejos, sin evidenceIds obligatorios. No escribas en answer ningún dato que no puedas citar con un evidenceId. Deja facts y evidence como listas vacías: el servidor las arma desde tus claims.";
 
 export function createCoachBlockPipeline({
   dependencies,
@@ -289,6 +297,11 @@ export function createCoachBlockPipeline({
   const speculativeSynthesisEnabled = coachFlag(
     "COACH_SPECULATIVE_SYNTHESIS_ENABLED",
     dependencies.coachSpeculativeSynthesisEnabled,
+  );
+  const verifiedSynthesisEnabled = coachFlag(
+    "COACH_VERIFIED_SYNTHESIS_ENABLED",
+    dependencies.coachVerifiedSynthesisEnabled,
+    false,
   );
   const coachFeatureCode = dependencies.featureCode || "mi_coach";
   const diagnostics = {
@@ -682,6 +695,7 @@ export function createCoachBlockPipeline({
   let normalizeTurnResponse = null;
   let normalizeArgs = null;
   let lastSynthesis = null;
+  let lastClaims = null;
   let repairAttempted = false;
 
   // The comparison of figures and dates with the evidence informs the audit; it never rejects an answer by itself,
@@ -711,7 +725,7 @@ export function createCoachBlockPipeline({
     }
   };
 
-  const runAnswerAudit = (candidate, activeContext) => {
+  const runAnswerAudit = (candidate, activeContext, verification = null) => {
     const checks = checkAnswerValues(candidate, activeContext);
     return trace.span(
       "B10",
@@ -720,7 +734,7 @@ export function createCoachBlockPipeline({
       async () =>
         requestStructured(
           structuredPayload(
-            "Audita la respuesta final de Coach. Verifica afirmaciones CRM únicamente contra authorizedEvidence; la guía y las reglas sustentan orientación de coaching, no datos de clientes. El historial y los IDs mencionados por el usuario no prueban hechos. Las operaciones son propuestas editables, nunca ejecución. No exijas disponibilidad ni datos futuros como hechos para proponer una operación. Valida identidad y vínculos de entidades con fuentes autorizadas. Un resultado vacío solo sustenta ausencia en el alcance de la lectura realizada, nunca ausencia global. Si deterministicChecks.valuesNotInEvidence trae cifras o fechas, el servidor comprobó que no constan en la evidencia: solo son válidas si la respuesta las presenta claramente como meta, recomendación o hipótesis; si las afirma como datos del CRM, marca unsupported e inclúyelas en unsupportedClaims. Marca supported solo si todas las afirmaciones están respaldadas o claramente identificadas como recomendaciones/hipótesis. Si no puedes decidir usa inconclusive. No autorices escrituras. JSON:{status:supported|unsupported|inconclusive,unsupportedClaims:[]}.",
+            "Audita la respuesta final de Coach. Verifica afirmaciones CRM únicamente contra authorizedEvidence; la guía y las reglas sustentan orientación de coaching, no datos de clientes. El historial y los IDs mencionados por el usuario no prueban hechos. Las operaciones son propuestas editables, nunca ejecución. No exijas disponibilidad ni datos futuros como hechos para proponer una operación. Valida identidad y vínculos de entidades con fuentes autorizadas. Un resultado vacío solo sustenta ausencia en el alcance de la lectura realizada, nunca ausencia global. Si deterministicChecks.valuesNotInEvidence trae cifras o fechas, el servidor comprobó que no constan en la evidencia: solo son válidas si la respuesta las presenta claramente como meta, recomendación o hipótesis; si las afirma como datos del CRM, marca unsupported e inclúyelas en unsupportedClaims. Si deterministicChecks.claimVerification trae afirmaciones rechazadas, oraciones sin afirmación que las respalde o nombres que no constan en la evidencia, el servidor no pudo verificarlos: aplícales la misma exigencia. Marca supported solo si todas las afirmaciones están respaldadas o claramente identificadas como recomendaciones/hipótesis. Si no puedes decidir usa inconclusive. No autorices escrituras. JSON:{status:supported|unsupported|inconclusive,unsupportedClaims:[]}.",
             {
               question,
               history,
@@ -732,11 +746,25 @@ export function createCoachBlockPipeline({
               authorizedEvidence: evidence,
               proposedAnswer: candidate,
               evidenceVerification: diagnostics.evidence,
-              ...(checks
+              ...(checks || verification
                 ? {
                     deterministicChecks: {
-                      checkedValues: checks.checked,
-                      valuesNotInEvidence: checks.ungrounded.slice(0, 10),
+                      ...(checks
+                        ? {
+                            checkedValues: checks.checked,
+                            valuesNotInEvidence: checks.ungrounded.slice(0, 10),
+                          }
+                        : {}),
+                      ...(verification
+                        ? {
+                            claimVerification: {
+                              reasons: verification.reasons,
+                              rejectedClaims: verification.rejected,
+                              sentencesWithoutClaim: verification.uncovered,
+                              namesNotInEvidence: verification.unknownNames,
+                            },
+                          }
+                        : {}),
                     },
                   }
                 : {}),
@@ -787,6 +815,7 @@ export function createCoachBlockPipeline({
         ),
       (value) => ({ hasAnswer: Boolean(value?.answer) }),
     );
+    if (lastClaims) lastClaims = Array.isArray(source?.claims) ? source.claims : [];
     const normalized = normalizeTurnResponse(
       {
         ...source,
@@ -1159,6 +1188,9 @@ export function createCoachBlockPipeline({
               ["Plan de consulta válido"],
             );
           const buildSynthesisPayload = (verification) => {
+          const operationTurn =
+            (readModel?.intentRouting?.mode || plan?.mode) === "operation";
+          const useClaims = verifiedSynthesisEnabled && !operationTurn;
           const basePayload = promptArguments
             ? dependencies.buildCoachPrompt(
                 {
@@ -1181,11 +1213,16 @@ export function createCoachBlockPipeline({
               {
                 role: "user",
                 content: JSON.stringify({
-                  verifiedEvidence: evidence,
+                  verifiedEvidence: useClaims
+                    ? indexCoachEvidence(evidence).indexed
+                    : evidence,
                   verification,
                   coachPlan: plan,
                 }),
               },
+              ...(useClaims
+                ? [{ role: "system", content: VERIFIED_CLAIMS_INSTRUCTION }]
+                : []),
             ],
           };
           };
@@ -1263,8 +1300,11 @@ export function createCoachBlockPipeline({
             response = await synthesize(payload);
           }
           lastSynthesis = { payload, phase };
+          // The claims travel apart from the answer: the engine normalizes the answer, finalize verifies the claims.
+          const { claims: proposedClaims, ...modelResponse } = response || {};
+          lastClaims = Array.isArray(proposedClaims) ? proposedClaims : null;
           return {
-            ...response,
+            ...modelResponse,
             toolCalls: [],
             tool_calls: [],
             requestedTools: [],
@@ -1321,11 +1361,48 @@ export function createCoachBlockPipeline({
             return result;
           }
         }
+        // Claims proposed by the model are verified by the code. With verified synthesis the facts come from the verified
+        // claims, so a list announced by the answer is completed with facts that name real records.
+        const verifiedActive =
+          verifiedSynthesisEnabled &&
+          Array.isArray(lastClaims) &&
+          !response.operations?.length &&
+          ["informational", "recommendation"].includes(response.responseType);
+        const verifyClaimsOf = (candidate) =>
+          verifySynthesis({
+            answer: candidate.answer,
+            rawClaims: lastClaims,
+            index: indexCoachEvidence(evidence),
+            question,
+            history,
+            guide,
+            activeContext: result.activeContext,
+          });
+        const withClaimFacts = (candidate, checked) =>
+          checked && checked.facts.length
+            ? {
+                ...candidate,
+                facts: checked.facts,
+                inferences: checked.inferences.length
+                  ? checked.inferences
+                  : candidate.inferences,
+                pendingItems: [
+                  ...new Set([
+                    ...(candidate.pendingItems || []),
+                    ...checked.pending,
+                  ]),
+                ].slice(0, 30),
+              }
+            : candidate;
+        let verification = verifiedActive ? verifyClaimsOf(response) : null;
+        const baseResponse = withClaimFacts(response, verification);
+        if (baseResponse !== response) result.response = baseResponse;
         // An announced list is completed before auditing, so the audit sees the text the seller will read.
-        const completion = completeAnswerFromFacts(response);
+        const completion = completeAnswerFromFacts(baseResponse);
         let finalResponse = completion.response;
         if (completion.completed) {
           result.response = finalResponse;
+          if (verifiedActive) verification = verifyClaimsOf(finalResponse);
           trace.record({
             from: "B10",
             to: "B10",
@@ -1335,12 +1412,25 @@ export function createCoachBlockPipeline({
             output: { items: completion.completed },
           });
         }
-        let audit = await runAnswerAudit(finalResponse, result.activeContext);
-        const auditFailed = (value) =>
-          value.status !== "supported" || value.unsupportedClaims.length > 0;
         // Without a single CRM record behind it, an unsupported answer to a general question is out of scope.
         const outOfScope =
           plan?.intent === "general_query" && !hasCoachEvidence(evidence);
+        const acceptedByCode = Boolean(verification?.accepted) && !outOfScope;
+        if (verification)
+          diagnostics.verifiedSynthesis = {
+            accepted: verification.accepted,
+            auditSkipped: acceptedByCode,
+            reasons: verification.reasons,
+            stats: verification.stats,
+            rejected: verification.rejected.slice(0, 3),
+            uncoveredSentences: verification.uncovered.length,
+            unknownNames: verification.unknownNames,
+          };
+        let audit = acceptedByCode
+          ? { status: "supported", unsupportedClaims: [], source: "deterministic" }
+          : await runAnswerAudit(finalResponse, result.activeContext, verification);
+        const auditFailed = (value) =>
+          value.status !== "supported" || value.unsupportedClaims.length > 0;
         let repaired = false;
         const firstAudit = {
           status: audit.status,
@@ -1398,6 +1488,15 @@ export function createCoachBlockPipeline({
             finalResponse.operations || [],
             businessRules.operationPolicy,
           );
+          if (verifiedActive) {
+            // After a repair the claims belong to the rewritten answer; the citations must match the text the seller sees.
+            const checked = repaired ? verifyClaimsOf(result.response) : verification;
+            if (repaired) result.response = withClaimFacts(result.response, checked);
+            if (checked.citations.length) {
+              result.response.citations = checked.citations;
+              result.response.citationAnchors = checked.citationAnchors;
+            }
+          }
           // The channel policy decides which operations Coach may propose; a text that "proposes" one it cannot
           // carry would leave the seller waiting for something to confirm that does not exist.
           if (

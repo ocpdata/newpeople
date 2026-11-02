@@ -22,7 +22,7 @@ const normalizeText = (value) =>
     .toLowerCase();
 
 // A figure can be written with commas (US) or dots (EU) as thousands separators; both readings are candidates.
-function numericCandidates(raw) {
+export function numericCandidates(raw) {
   const compact = raw.replace(/\s+/g, "");
   const candidates = new Set();
   const us = Number(compact.replace(/,/g, ""));
@@ -37,7 +37,7 @@ function numericCandidates(raw) {
   return [...candidates];
 }
 
-function multiplierFor(word) {
+export function multiplierFor(word) {
   const normalized = normalizeText(word);
   if (normalized.startsWith("millon")) return 1e6;
   if (normalized === "mil") return 1e3;
@@ -98,7 +98,7 @@ function isSignificant({ value, hasPercent, hasDecimal, raw }) {
   return value >= 100;
 }
 
-function matchesAny(value, evidenceNumbers, scaled) {
+export function matchesAny(value, evidenceNumbers, scaled) {
   const tolerance = scaled ? Math.max(0.51, value * 0.05) : Math.max(0.51, value * 0.0005);
   return evidenceNumbers.some((candidate) => Math.abs(candidate - value) <= tolerance);
 }

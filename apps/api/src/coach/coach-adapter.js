@@ -113,6 +113,7 @@ export function createCoachAdapter({
           grounding: pipeline.diagnostics.grounding || null,
           speculativeSynthesis:
             pipeline.diagnostics.speculativeSynthesis || null,
+          verifiedSynthesis: pipeline.diagnostics.verifiedSynthesis || null,
         },
       };
       return result;
