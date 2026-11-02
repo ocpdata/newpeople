@@ -148,7 +148,11 @@ Se hicieron de forma aditiva: opciones que están apagadas por defecto y que sol
 - `conversation-engine.js`: pasa `intentMode` al resolvedor de Coach (una línea).
 - `resolveCoachContextEntities` en `routes.mi-agent.js` (la función de Coach) activa esas opciones.
 
-**Brecha que queda:** COACH-GAP-003, una actividad sin título se normaliza como válida. Vive en el contrato de operaciones que también usa Cliente existente y no estaba entre los casos autorizados.
+**Brecha que queda:** COACH-GAP-003, una actividad sin título. El caso prueba `normalizeActivityOperation`, el ayudante de Cliente existente, cuyo título por defecto («Actividad sugerida») es intencional ahí. Coach usa su propia normalización (título por defecto «Actividad comercial») y el formulario de calendario exige el título al confirmar, así que no es un defecto de Coach y no se modificó el ayudante compartido.
+
+### Criterio de liberación de Coach (2026-11-01)
+
+Cuatro corridas completas seguidas con el banco estricto: 15/16, 15/16, 15/16 y 16/16, con los 5 escenarios críticos en todas. Cumple los umbrales (críticos 100% y más del 85% de los casos). El monitor marca «bajó» entre corridas por un escenario que alterna (instrucción de idioma o prioridades de la semana), que es la variación habitual del modelo. En K05 el juez no podía verificar las oportunidades que Coach nombraba porque solo conocía las tres mayores; ahora recibe todas las abiertas.
 
 ## Valoraciones de las respuestas
 

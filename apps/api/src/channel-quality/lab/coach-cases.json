@@ -370,7 +370,7 @@
     "question": "Agenda una actividad sin título.",
     "kind": "operation_rejected",
     "knownGap": true,
-    "note": "Una actividad sin título hoy se normaliza como válida.",
+    "note": "Prueba normalizeActivityOperation, el ayudante de Cliente existente. Su título por defecto («Actividad sugerida») es intencional ahí; Coach usa su propia normalización (título por defecto «Actividad comercial») y el formulario de calendario exige el título al confirmar. No se modifica porque el ayudante lo usa Cliente existente.",
     "payload": {
       "title": "",
       "actionType": "call"

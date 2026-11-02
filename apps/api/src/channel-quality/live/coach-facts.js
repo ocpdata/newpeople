@@ -21,6 +21,10 @@ export async function loadCoachFacts(run) {
      WHERE ${OPEN} ORDER BY o.amount_usd DESC, o.id LIMIT 3`,
   );
   // Coach counts activated records by default, so the closed totals do too.
+  // Every open opportunity, so the judge can verify any record Coach names when it recommends priorities.
+  const openList = await run(
+    `SELECT o.name, a.name AS account, o.amount_usd AS amountUsd, st.name AS stage ${FROM_OPPORTUNITIES} WHERE ${OPEN} ORDER BY o.amount_usd DESC, o.id`,
+  );
   const closed = await run(`SELECT cs.code AS status, COUNT(*) AS count ${FROM_OPPORTUNITIES} WHERE aas.code = 'activada' GROUP BY cs.code`);
   const closedCount = (code) => Number(closed.find((row) => row.status === code)?.count || 0);
   const named = (rows) => rows.map((row) => ({ ...row, amountUsd: row.amountUsd === undefined ? undefined : money(row.amountUsd) }));
@@ -28,6 +32,7 @@ export async function loadCoachFacts(run) {
   return {
     definition: "Abiertas = comerciales en proceso y activadas; ganadas, perdidas y anuladas = también solo activadas. Montos en USD.",
     open: { count: Number(totals.count), amountUsd: money(totals.amount) },
+    openOpportunities: named(openList),
     topAccounts: topAccounts.map((row) => ({ name: row.name, openCount: Number(row.openCount) })),
     topOpportunities: opportunities,
     focus: opportunities[0] || null,

@@ -125,7 +125,7 @@
           "mustInclude": [
             {
               "id": "reales",
-              "statement": "Recomienda prioridades concretas apoyadas en al menos una oportunidad o cuenta real de la cartera (por ejemplo {{topOpportunities.0.name}}, {{topOpportunities.1.name}} o {{topAccounts.0.name}}).",
+              "statement": "Recomienda prioridades apoyadas en al menos una oportunidad o cuenta que exista en referenceFacts.openOpportunities (coinciden nombre y cuenta).",
               "critical": true
             },
             {
