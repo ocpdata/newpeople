@@ -6,6 +6,7 @@ import { summarizeProspectRun } from "./prospect-live.js";
 
 export const coachBank = bank;
 
+const MAX_ATTEMPTS = 3;
 const POLL_INTERVAL_MS = 1500;
 const TURN_DEADLINE_MS = 120000;
 const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -107,23 +108,34 @@ export async function runCoachScenario({ scenario, facts, user, client, judgeMod
   let sessionId = null;
   for (const turn of rendered.turns) {
     log(`${scenario.id}/${turn.id}: ejecutando`);
-    const execution = await client.ask({ question: turn.question, sessionId });
+    // The provider answers an occasional 429 even with credit; that is not Coach's quality, so a turn that ended in an
+    // error response is asked again (a real Coach failure repeats and still counts).
+    let execution;
+    let attempts = 0;
+    do {
+      attempts += 1;
+      execution = await client.ask({ question: turn.question, sessionId });
+    } while (execution.response?.responseType === "error" && attempts < MAX_ATTEMPTS);
     sessionId = execution.sessionId || sessionId;
     for (const operation of execution.response?.operations || []) if (operation?.persistentId) operationIds.push(operation.persistentId);
     const deterministicIssues = execution.status === "completed" ? coachDeterministicIssues({ turn, response: execution.response }) : [];
     let judgement = null;
     let judgeError = null;
     if (judgeModel && execution.answer) {
-      try {
-        judgement = await judge({ facts, turn, previousTurns: [...previousTurns], answer: execution.answer, model: judgeModel, userId: user.id });
-      } catch (error) {
-        judgeError = String(error?.message || error).slice(0, 500);
+      for (let attempt = 1; !judgement && attempt <= MAX_ATTEMPTS; attempt += 1) {
+        try {
+          judgement = await judge({ facts, turn, previousTurns: [...previousTurns], answer: execution.answer, model: judgeModel, userId: user.id });
+          judgeError = null;
+        } catch (error) {
+          judgeError = String(error?.message || error).slice(0, 500);
+          if (!/\b429\b/.test(judgeError)) break;
+        }
       }
     }
     const grade = gradeProspectTurn({ turn, execution, judgement, deterministicIssues });
     turns.push({
       turnId: turn.id, question: turn.question, answer: execution.answer, status: grade.status, durationMs: execution.durationMs,
-      errorMessage: execution.errorMessage || null, judgeError, grade, responseType: execution.response?.responseType || null,
+      errorMessage: execution.errorMessage || null, judgeError, attempts, grade, responseType: execution.response?.responseType || null,
       intent: execution.response?.intent || null,
       operations: (execution.response?.operations || []).map((operation) => ({ kind: operation.kind, title: operation.title })),
     });
@@ -135,8 +147,8 @@ export async function runCoachScenario({ scenario, facts, user, client, judgeMod
   return { id: scenario.id, title: scenario.title, area: scenario.area, critical: Boolean(scenario.critical), status: notGraded ? "not_graded" : passed ? "passed" : "failed", turns };
 }
 
-export async function runCoachBank({ user, client, facts, judgeModel = null, only = null, concurrency = 3, log = () => {}, ...options }) {
-  const selected = coachBank.scenarios.filter((scenario) => !only || only.includes(scenario.id));
+export async function runCoachBank({ user, client, facts, judgeModel = null, only = null, concurrency = 3, log = () => {}, bank: selectedBank = coachBank, ...options }) {
+  const selected = selectedBank.scenarios.filter((scenario) => !only || only.includes(scenario.id));
   const results = new Array(selected.length);
   let cursor = 0;
   async function worker() {

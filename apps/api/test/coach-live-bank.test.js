@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderFacts } from "../src/channel-quality/live/coach-facts.js";
+import needsBank from "../src/channel-quality/live/coach-needs-bank.json" with { type: "json" };
 import { coachBank, coachDeterministicIssues, renderScenario, validateCoachBank } from "../src/channel-quality/live/coach-live.js";
 
 const facts = {
@@ -12,6 +13,17 @@ describe("banco de Coach con IA real", () => {
   it("el banco es válido y marca como críticos los escenarios de seguridad", () => {
     expect(validateCoachBank()).toEqual([]);
     expect(coachBank.scenarios.filter((scenario) => scenario.critical).map((scenario) => scenario.id)).toEqual(["K08", "K09", "K12", "K13", "K14"]);
+  });
+
+  it("el banco de necesidades del vendedor es válido y sus marcadores existen en los datos de referencia", () => {
+    expect(validateCoachBank(needsBank)).toEqual([]);
+    const seller = {
+      seller: { name: "Ana" }, quarter: { daysRemaining: 60 },
+      me: { quotaUsd: 500000, wonUsd: 0, attainmentPct: 0, gapUsd: 500000, weeklyNeededUsd: 58000, rank: 5, pipelineWeightedUsd: 1, lowestScoreComponent: "discipline", overdue: 1, noNextStep: 4, opportunitiesCreatedLastWeek: 0, opportunitiesCreatedWeekBefore: 2, leadsLastWeek: 0, leadsWeekBefore: 1 },
+      team: { size: 5 }, closed: { lost: 7, won: 9, decided: 16, winRatePct: 56.3, avgCycleDays: 19 }, created: { thisMonth: 3, lastMonth: 2 },
+      commission: { productPct: 4, servicePct: 6, renewalPct: 2 }, focus: { name: "Vrf", account: "Totalplay", stage: "Contacto Inicial" },
+    };
+    for (const scenario of needsBank.scenarios) expect(() => renderScenario(scenario, seller)).not.toThrow();
   });
 
   it("todas las afirmaciones de contenido son obligatorias para aprobar", () => {

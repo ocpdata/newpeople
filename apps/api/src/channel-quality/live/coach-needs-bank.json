@@ -1,0 +1,553 @@
+{
+  "version": 1,
+  "description": "Preguntas que un vendedor haría sobre su desempeño. Línea base de lo que Coach responde con los datos que tiene hoy; no entra a la tendencia de calidad.",
+  "scenarios": [
+    {
+      "id": "N01",
+      "area": "A",
+      "title": "Cómo voy contra mi cuota",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cómo voy contra mi cuota este trimestre?",
+          "mustInclude": [
+            {
+              "id": "cuota",
+              "statement": "Indica la cuota del trimestre ({{me.quotaUsd}} USD).",
+              "critical": true
+            },
+            {
+              "id": "avance",
+              "statement": "Indica lo cerrado ({{me.wonUsd}} USD, {{me.attainmentPct}}% de la cuota).",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N02",
+      "area": "A",
+      "title": "Cuánto falta y cuántos días quedan",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuánto me falta para llegar a mi meta y cuántos días quedan del trimestre?",
+          "mustInclude": [
+            {
+              "id": "falta",
+              "statement": "Indica que faltan {{me.gapUsd}} USD.",
+              "critical": true
+            },
+            {
+              "id": "dias",
+              "statement": "Indica que quedan {{quarter.daysRemaining}} días.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N03",
+      "area": "A",
+      "title": "Cuánto cerrar por semana",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuánto debería cerrar por semana para llegar a mi cuota?",
+          "mustInclude": [
+            {
+              "id": "semana",
+              "statement": "Indica aproximadamente {{me.weeklyNeededUsd}} USD por semana (se admite redondeo).",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N04",
+      "area": "A",
+      "title": "Cobertura del pipeline",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Mi pipeline abierto alcanza para cubrir lo que me falta?",
+          "mustInclude": [
+            {
+              "id": "cobertura",
+              "statement": "Compara el pipeline ponderado ({{me.pipelineWeightedUsd}} USD) con lo que falta ({{me.gapUsd}} USD) y concluye si alcanza o no.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N05",
+      "area": "A",
+      "title": "Mi lugar frente al equipo",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿En qué lugar estoy frente al equipo?",
+          "mustInclude": [
+            {
+              "id": "lugar",
+              "statement": "Indica el lugar {{me.rank}} de {{team.size}} vendedores.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N06",
+      "area": "A",
+      "title": "Qué baja mi puntuación",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué me está bajando la puntuación?",
+          "mustInclude": [
+            {
+              "id": "componente",
+              "statement": "Identifica la dimensión más baja de la puntuación: {{me.lowestScoreComponent}} (cierre, construcción o disciplina).",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N07",
+      "area": "B",
+      "title": "Qué tengo vencido",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué tengo vencido?",
+          "mustInclude": [
+            {
+              "id": "vencidos",
+              "statement": "Indica {{me.overdue}} actividad(es) vencida(s).",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N08",
+      "area": "B",
+      "title": "Sin siguiente paso",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué oportunidades no tienen siguiente paso?",
+          "mustInclude": [
+            {
+              "id": "sinpaso",
+              "statement": "Indica {{me.noNextStep}} oportunidades sin siguiente paso.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N09",
+      "area": "B",
+      "title": "Qué hacer hoy",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué debería hacer hoy?",
+          "mustInclude": [
+            {
+              "id": "pendientes",
+              "statement": "Propone acciones concretas apoyadas en actividades pendientes reales de referenceFacts.agenda.pendingActions.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N10",
+      "area": "C",
+      "title": "Por qué perdí",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Por qué perdí mis últimas oportunidades?",
+          "mustInclude": [
+            {
+              "id": "motivos",
+              "statement": "Menciona al menos un motivo de pérdida registrado en referenceFacts.closed.lostReasons.",
+              "critical": true
+            },
+            {
+              "id": "cantidad",
+              "statement": "Indica que ha perdido {{closed.lost}} oportunidades.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N11",
+      "area": "C",
+      "title": "Mi tasa de cierre",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuál es mi tasa de cierre?",
+          "mustInclude": [
+            {
+              "id": "tasa",
+              "statement": "Indica una tasa de cierre de {{closed.winRatePct}}% ({{closed.won}} ganadas de {{closed.decided}} cerradas).",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N12",
+      "area": "C",
+      "title": "Cuánto tardo en cerrar",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuánto tardo en promedio en cerrar una oportunidad ganada?",
+          "mustInclude": [
+            {
+              "id": "ciclo",
+              "statement": "Indica un promedio de alrededor de {{closed.avgCycleDays}} días.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N13",
+      "area": "D",
+      "title": "Cotizaciones pendientes",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué cotizaciones tengo pendientes de respuesta?",
+          "mustInclude": [
+            {
+              "id": "honesto",
+              "statement": "Informa cotizaciones reales o dice claramente que no tiene esa información; no responde con datos de otra cosa.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N14",
+      "area": "D",
+      "title": "Qué falta para avanzar",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué me falta para avanzar la oportunidad {{focus.name}} a la siguiente etapa?",
+          "mustInclude": [
+            {
+              "id": "etapa",
+              "statement": "Habla de los requisitos o pendientes de la etapa {{focus.stage}} de {{focus.name}}.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N15",
+      "area": "D",
+      "title": "Material para una etapa",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué material puedo usar en esta etapa con {{focus.account}}?",
+          "mustInclude": [
+            {
+              "id": "honesto",
+              "statement": "Recomienda material concreto de la biblioteca comercial o dice claramente que no tiene acceso a ella; no inventa documentos.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N16",
+      "area": "E",
+      "title": "Mejor o peor que la semana pasada",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Voy mejor o peor que la semana pasada?",
+          "mustInclude": [
+            {
+              "id": "tendencia",
+              "statement": "Compara con la semana anterior usando datos reales (oportunidades creadas {{me.opportunitiesCreatedLastWeek}} vs {{me.opportunitiesCreatedWeekBefore}}, o leads {{me.leadsLastWeek}} vs {{me.leadsWeekBefore}}) o dice claramente que no tiene historial.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N17",
+      "area": "E",
+      "title": "Pipeline nuevo este mes",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuántas oportunidades nuevas creé este mes frente al mes anterior?",
+          "mustInclude": [
+            {
+              "id": "mes",
+              "statement": "Indica {{created.thisMonth}} este mes y {{created.lastMonth}} el mes anterior.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N18",
+      "area": "F",
+      "title": "Comisión acumulada",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuánto llevo de comisión acumulada este trimestre?",
+          "mustInclude": [
+            {
+              "id": "honesto",
+              "statement": "Calcula la comisión con datos reales (porcentajes {{commission.productPct}}% productos, {{commission.servicePct}}% servicios, {{commission.renewalPct}}% renovaciones) o dice claramente que no puede calcularla.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N19",
+      "area": "F",
+      "title": "Comisión si cierro",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Si cierro {{focus.name}}, ¿cuánto ganaría de comisión?",
+          "mustInclude": [
+            {
+              "id": "honesto",
+              "statement": "Calcula la comisión con los porcentajes reales o dice claramente que no tiene el dato; no inventa un monto.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    }
+  ]
+}

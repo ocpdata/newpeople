@@ -154,6 +154,32 @@ Se hicieron de forma aditiva: opciones que están apagadas por defecto y que sol
 
 Cuatro corridas completas seguidas con el banco estricto: 15/16, 15/16, 15/16 y 16/16, con los 5 escenarios críticos en todas. Cumple los umbrales (críticos 100% y más del 85% de los casos). El monitor marca «bajó» entre corridas por un escenario que alterna (instrucción de idioma o prioridades de la semana), que es la variación habitual del modelo. En K05 el juez no podía verificar las oportunidades que Coach nombraba porque solo conocía las tres mayores; ahora recibe todas las abiertas.
 
+## Necesidades del vendedor: línea base de Coach (2026-11-01)
+
+Segundo banco de Coach (`coach-needs-bank.json`, 19 preguntas): lo que un vendedor preguntaría sobre su propio desempeño. No entra a la tendencia de calidad; mide la brecha antes de construir. Se corre como un vendedor con datos (usuario 5: cuota de 500,000, 9 ganadas, 7 perdidas, actividades pendientes) al que se le simula acceso a Coach solo durante la prueba (`--bank needs --as-user 5`). Las cifras de referencia salen de Ritmo comercial (el mismo endpoint de la pantalla) y de SQL, nunca de las herramientas de Coach.
+
+**Resultado con los datos actuales: 0/19.**
+
+| Grupo | Qué respondió Coach |
+| --- | --- |
+| Cuota, brecha, ritmo semanal, cobertura, lugar en el equipo, puntuación, vencidos y sin siguiente paso (8 preguntas) | «No identifiqué con suficiente certeza qué necesitas». No hay herramienta que entregue esos datos. |
+| Qué hacer hoy, tasa de cierre, ciclo de venta, cotizaciones, tendencia, oportunidades nuevas y comisión (7 preguntas) | Responde con el resumen de su pipeline en vez de lo preguntado. En varias dice que no tiene el dato, pero no calcula nada. |
+| Por qué perdí | Afirma que no hay oportunidades perdidas, cuando el vendedor tiene 7 con su motivo registrado. |
+| Material para una etapa | Habla de una oportunidad en vez de decir que no tiene la biblioteca comercial. |
+| Qué me falta para avanzar | Responde con la preparación de la etapa (es la única necesidad que sí cubre). |
+
+**Hallazgo: tres cifras distintas para el mismo vendedor.** Oportunidades abiertas de Oscar Amaya:
+
+| Fuente | Oportunidades | Monto USD | Cómo cuenta |
+| --- | --- | --- | --- |
+| Ritmo comercial | 5 | — | Las que cierran en el trimestre |
+| SQL por vendedor de la oportunidad | 13 | 362,000 | `seller_user_id = 5` |
+| Coach | 14 | 408,324.77 | Oportunidades de las **cuentas** que el usuario tiene asignadas (`account_owners`), incluida una cuyo vendedor es otro |
+
+Antes de dar cuota, ranking o comisión hay que definir una sola regla de «mis oportunidades» y usarla en Coach y en Ritmo comercial.
+
+**Límites de esta medición.** El juez marcó «inventa» en varias respuestas, pero casi todas son diferencias de definición (arriba) o detalles reales de la oportunidad (días sin actividad, requisitos de la etapa) que no están en los datos de referencia; no se deben leer como invenciones. El proveedor de IA devuelve de forma intermitente `429 insufficient_quota` (alrededor de 17% de las llamadas, aun con crédito); el banco repite hasta tres veces un turno que termina en error y la calificación del juez.
+
 ## Valoraciones de las respuestas
 
 Cada respuesta de Coach y de Cuenta nueva muestra 👍/👎. Se guardan en `coach_turn_quality_traces` (`feedback_rating`) mediante `POST /api/mi-agent/coach/quality/:traceId/feedback`, y alimentan la satisfacción del monitoreo de producción.
