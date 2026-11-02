@@ -4,19 +4,25 @@ export const COACH_BLOCK_LIMITS = Object.freeze({
   maxEvidenceRounds: 2,
 });
 
-export function createCoachBlockTrace({ jobId, now = Date.now } = {}) {
+export function createCoachBlockTrace({ jobId, now = Date.now, onEvent } = {}) {
   const events = [];
   let sequence = 0;
   return {
     events,
     record(event) {
-      events.push({
+      const entry = {
         channel: "coach",
         jobId: Number(jobId) || null,
         sequence: ++sequence,
         at: new Date(now()).toISOString(),
         ...event,
-      });
+      };
+      events.push(entry);
+      try {
+        onEvent?.(entry);
+      } catch {
+        // Observers are informational and must never affect the turn.
+      }
     },
     async span(from, to, label, work, summary = () => ({})) {
       const spanId = `coach-${jobId || "turn"}-${sequence + 1}`;

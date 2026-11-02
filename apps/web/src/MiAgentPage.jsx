@@ -24,7 +24,6 @@ import SemanticClassifierSection from "./SemanticClassifierSection";
 import { normalizeCommercialActivityType } from "../../../shared/commercial-activity-types.js";
 import { stageAnswerPrefillStorageKey } from "../../../shared/stage-answer-prefill.js";
 import {
-  COACH_FOUNDATION_VISIBILITY_KEY,
   COACH_HANDOFF_OPERATION_KINDS,
   COACH_OPERATION_OPTIONS,
   COACH_POLL_TIMEOUT_MS,
@@ -131,11 +130,8 @@ export default function MiAgentPage({
   const [selectedAction, setSelectedAction] = useState(null);
   const [coachQuestion, setCoachQuestion] = useState("");
   const [askingCoach, setAskingCoach] = useState(false);
+  const [cancelingCoach, setCancelingCoach] = useState(false);
   const [coachMessages, setCoachMessages] = useState([]);
-  const [showCoachFoundation, setShowCoachFoundation] = useState(
-    () =>
-      window.localStorage.getItem(COACH_FOUNDATION_VISIBILITY_KEY) === "true",
-  );
   const [coachActionDraft, setCoachActionDraft] = useState(null);
   const [coachOperationDraft, setCoachOperationDraft] = useState(null);
   const [
@@ -2122,7 +2118,12 @@ export default function MiAgentPage({
     setCoachMessages((current) => [
       ...current,
       { id: `${messageId}-question`, role: "seller", text: normalizedQuestion },
-      { id: `${messageId}-pending`, role: "coach", pending: true },
+      {
+        id: `${messageId}-pending`,
+        role: "coach",
+        pending: true,
+        startedAt: Date.now(),
+      },
     ]);
     setCoachQuestion("");
     try {
@@ -2152,6 +2153,13 @@ export default function MiAgentPage({
       if (queued?.sessionId) setCoachSessionId(Number(queued.sessionId));
       const jobId = Number(queued?.job?.id || 0);
       if (!jobId) throw new Error("No se pudo iniciar la consulta al Coach");
+      setCoachMessages((current) =>
+        current.map((message) =>
+          message.id === `${messageId}-pending`
+            ? { ...message, jobId }
+            : message,
+        ),
+      );
       const deadline = Date.now() + COACH_POLL_TIMEOUT_MS;
       for (;;) {
         if (Date.now() >= deadline) {
@@ -2162,6 +2170,17 @@ export default function MiAgentPage({
         await new Promise((resolve) => setTimeout(resolve, 1000));
         if (contextRevision !== coachContextRevisionRef.current) return;
         const { data } = await api.get(`/api/mi-agent/coach/jobs/${jobId}`);
+        if (data?.job?.status === "cancelled") return;
+        if (data?.job?.progress?.label) {
+          setCoachMessages((current) =>
+            current.map((message) =>
+              message.id === `${messageId}-pending` &&
+              message.progress?.phase !== data.job.progress.phase
+                ? { ...message, progress: data.job.progress }
+                : message,
+            ),
+          );
+        }
         if (data?.job?.status === "completed") {
           if (
             contextRevision !== coachContextRevisionRef.current ||
@@ -2235,6 +2254,39 @@ export default function MiAgentPage({
       );
     } finally {
       setAskingCoach(false);
+    }
+  }
+
+  async function cancelCoachTurn(pendingMessage) {
+    const jobId = Number(pendingMessage?.jobId || 0);
+    if (!jobId || cancelingCoach) return;
+    setCancelingCoach(true);
+    try {
+      const { data } = await api.post(
+        `/api/mi-agent/coach/jobs/${jobId}/cancel`,
+      );
+      if (data?.job?.status !== "cancelled") return;
+      const questionId = String(pendingMessage.id).replace(
+        /-pending$/,
+        "-question",
+      );
+      const cancelledQuestion = coachMessages.find(
+        (message) => message.id === questionId,
+      )?.text;
+      setCoachMessages((current) =>
+        current.filter(
+          (message) =>
+            message.id !== pendingMessage.id && message.id !== questionId,
+        ),
+      );
+      if (cancelledQuestion) setCoachQuestion(cancelledQuestion);
+      setCoachNotice("Pregunta cancelada. Tu pregunta volvió al cuadro de texto.");
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(requestError, "No fue posible cancelar la pregunta"),
+      );
+    } finally {
+      setCancelingCoach(false);
     }
   }
 
@@ -3982,14 +4034,6 @@ export default function MiAgentPage({
     }));
   }
 
-  function updateCoachFoundationVisibility(visible) {
-    setShowCoachFoundation(visible);
-    window.localStorage.setItem(
-      COACH_FOUNDATION_VISIBILITY_KEY,
-      String(visible),
-    );
-  }
-
   const coachDraftSerialized = coachOperationDraft
     ? serializeCoachOperationDraft(coachOperationDraft)
     : null;
@@ -3997,15 +4041,6 @@ export default function MiAgentPage({
     ? unresolvedCoachFields(coachDraftSerialized)
     : [];
   const coachDraftMissingSet = new Set(coachDraftMissingFields);
-  const hasCoachFoundation = coachMessages.some((message) => {
-    const result = message.result;
-    return Boolean(
-      result?.facts?.length ||
-      result?.evidence?.length ||
-      result?.inferences?.length ||
-      result?.recommendation,
-    );
-  });
   const hasCoachConversation = Boolean(
     coachSessionId ||
     coachMessages.length ||
@@ -4339,6 +4374,8 @@ export default function MiAgentPage({
                 canUpdateCalendar={canUpdateCalendar}
                 canUpdateContacts={canUpdateContacts}
                 canUpdateLeads={canUpdateLeads}
+                cancelCoachTurn={cancelCoachTurn}
+                cancelingCoach={cancelingCoach}
                 cancelPendingCoachOperation={cancelPendingCoachOperation}
                 clearCoachConversation={clearCoachConversation}
                 coachAccounts={coachAccounts}
@@ -4354,15 +4391,12 @@ export default function MiAgentPage({
                 coachUndoOperationId={coachUndoOperationId}
                 continueCoachOperation={continueCoachOperation}
                 hasCoachConversation={hasCoachConversation}
-                hasCoachFoundation={hasCoachFoundation}
                 loadingCoachContext={loadingCoachContext}
                 openCoachDetailHandoff={openCoachDetailHandoff}
                 openCoachOperationConfirmation={openCoachOperationConfirmation}
                 requestCoachGeneralScope={requestCoachGeneralScope}
                 setCoachQuestion={setCoachQuestion}
-                showCoachFoundation={showCoachFoundation}
                 undoCoachOperation={undoCoachOperation}
-                updateCoachFoundationVisibility={updateCoachFoundationVisibility}
               />
             </>
           ) : null}

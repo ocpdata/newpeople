@@ -430,6 +430,7 @@ async function ensureMiAgentSchema() {
   for (const [column, definition] of [
     ["observability_json", "JSON NULL AFTER result_json"],
     ["latency_ms", "INT UNSIGNED NULL AFTER observability_json"],
+    ["progress_json", "JSON NULL AFTER latency_ms"],
   ]) {
     const rows = await query(
       `SHOW COLUMNS FROM mi_agent_analysis_jobs LIKE '${column}'`,
@@ -5900,7 +5901,7 @@ router.get(
   async (req, res) => {
     await ensureMiAgentSchema();
     const rows = await query(
-      `SELECT id, status, question, context_snapshot, result_json, observability_json, latency_ms, error_message, created_at, updated_at
+      `SELECT id, status, question, context_snapshot, result_json, observability_json, progress_json, latency_ms, error_message, created_at, updated_at
        FROM mi_agent_analysis_jobs
        WHERE id = ? AND created_by_user_id = ? AND job_kind = 'coach'
        LIMIT 1`,
@@ -5939,6 +5940,16 @@ router.get(
     } catch {
       observability = null;
     }
+    let progress = null;
+    try {
+      progress = job.progress_json
+        ? typeof job.progress_json === "string"
+          ? JSON.parse(job.progress_json)
+          : job.progress_json
+        : null;
+    } catch {
+      progress = null;
+    }
     return res.json({
       job: {
         id: Number(job.id),
@@ -5946,6 +5957,7 @@ router.get(
         question: job.question,
         contextSnapshot,
         observability,
+        progress,
         latencyMs: Number(job.latency_ms || 0) || null,
         errorMessage: job.error_message || null,
         createdAt: job.created_at,
@@ -5953,6 +5965,47 @@ router.get(
       },
       result,
     });
+  },
+);
+
+router.post(
+  "/coach/jobs/:jobId/cancel",
+  requirePermission(MI_COACH_USE_PERMISSION),
+  async (req, res) => {
+    const jobId = Number(req.params.jobId || 0);
+    if (!Number.isInteger(jobId) || jobId <= 0)
+      return res.status(400).json({ message: "Pregunta inválida" });
+    await ensureMiAgentSchema();
+    const rows = await query(
+      `SELECT id, status, question
+       FROM mi_agent_analysis_jobs
+       WHERE id = ? AND created_by_user_id = ? AND job_kind = 'coach'
+       LIMIT 1`,
+      [jobId, Number(req.user.id)],
+    );
+    const job = rows[0];
+    if (!job)
+      return res.status(404).json({ message: "Pregunta no encontrada" });
+    const cancelled = await query(
+      `UPDATE mi_agent_analysis_jobs
+       SET status = 'cancelled', updated_at = NOW(3)
+       WHERE id = ? AND status IN ('pending', 'running')`,
+      [jobId],
+    );
+    if (!cancelled.affectedRows)
+      return res.json({ job: { id: jobId, status: job.status } });
+    // The turn was announced as pending in its session; the cancelled question must not linger there.
+    const sessions = await query(
+      `SELECT id FROM coach_conversation_sessions
+       WHERE user_id = ? AND pending_question = ?
+       ORDER BY updated_at DESC LIMIT 1`,
+      [Number(req.user.id), job.question],
+    );
+    if (sessions[0])
+      await setCoachPendingQuestion(req.user.id, sessions[0].id, null).catch(
+        () => undefined,
+      );
+    return res.json({ job: { id: jobId, status: "cancelled" } });
   },
 );
 

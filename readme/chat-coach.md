@@ -351,7 +351,7 @@ pregunta -> respuesta -> propuesta -> revisión editable -> confirmar o cancelar
 
 ## Sesiones y continuidad
 
-La interfaz conserva el identificador de sesión en `localStorage` bajo `mi-agent-coach-session`. Al regresar, solicita la sesión al API y restaura su contexto y mensajes. La preferencia para mostrar el fundamento de las respuestas se guarda de forma independiente bajo `mi-agent-coach-show-foundation`.
+La interfaz conserva el identificador de sesión en `localStorage` bajo `mi-agent-coach-session`. Al regresar, solicita la sesión al API y restaura su contexto y mensajes.
 
 El backend:
 
@@ -451,7 +451,15 @@ Respuesta `202 Accepted`:
 GET /api/mi-agent/coach/jobs/:jobId
 ```
 
-Solo devuelve jobs de tipo `coach` creados por el usuario autenticado. Incluye estado, pregunta, contexto, error y resultado normalizado.
+Solo devuelve jobs de tipo `coach` creados por el usuario autenticado. Incluye estado, pregunta, contexto, error, resultado normalizado y, mientras el job está pendiente o en curso, `progress` con la fase actual (`phase` y `label`).
+
+### Cancelar job
+
+```http
+POST /api/mi-agent/coach/jobs/:jobId/cancel
+```
+
+Cancela un job propio pendiente o en curso y responde `{ "job": { "id", "status": "cancelled" } }`. Un job ajeno responde `404`; uno ya terminado devuelve su estado sin cambios. Un turno cancelado no guarda sesión, operaciones ni resultado, y su pregunta deja de figurar como pendiente en la sesión. La llamada al proveedor de IA en curso no se interrumpe, por lo que el consumo de esa llamada se registra igualmente.
 
 ### Recuperar sesión
 
@@ -608,13 +616,22 @@ La respuesta del Coach separa explícitamente cuatro tipos de contenido:
   vendedor.
 - **Recomendaciones:** sugerencias que todavía no modifican el CRM.
 
-Estos cuatro bloques forman el **fundamento** de la respuesta. El switch
-**Mostrar fundamento**, situado en el extremo derecho del encabezado
-**Conversación**, los oculta inicialmente para mantener el hilo compacto y
-permite mostrarlos en todas las respuestas de la sesión. La preferencia se
-conserva al recargar. El switch solo aparece cuando al menos una respuesta tiene
-fundamento disponible y no oculta la respuesta principal, el diagnóstico de
-etapa ni las operaciones propuestas.
+Estos cuatro bloques forman el **fundamento** de la respuesta. Se muestran
+debajo de la respuesta en una sección **Fundamento de la respuesta**, abierta de
+forma predeterminada y plegable con un clic. No hay interruptor global ni
+preferencia guardada, y la sección no oculta la respuesta principal, el
+diagnóstico de etapa ni las operaciones propuestas.
+
+La respuesta principal se presenta con formato Markdown (listas, negritas y
+tablas) con el mismo componente que Cliente existente. Incluye un botón
+**Copiar respuesta**. Solo las respuestas de tipo recomendación, solicitud de
+cambio, operación o derivación llevan una etiqueta de tipo; no se muestra
+etiqueta de confianza.
+
+Mientras el Coach responde, el hilo muestra la fase en curso (por ejemplo,
+**Consultando tus datos del CRM**), los segundos transcurridos y el botón
+**Cancelar**. Al cancelar, la pregunta no queda en el historial y vuelve al
+cuadro de texto.
 
 El diagnóstico de etapa muestra etapa y objetivo actuales, nivel general de
 preparación, dimensiones confirmadas, principal punto de atención, avances,

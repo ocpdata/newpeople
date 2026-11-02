@@ -14,8 +14,6 @@ export const ACTION_STATUS_LABELS = {
 
 export const COACH_POLL_TIMEOUT_MS = 180000;
 
-export const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
-
 export const PROSPECT_SESSION_STORAGE_KEY = "mi-agent-prospect-session";
 
 export const COACH_HANDOFF_OPERATION_KINDS = new Set([
@@ -141,12 +139,6 @@ export const COACH_OPERATION_DESCRIPTIONS = {
     "Propone una oportunidad nueva bajo la cuenta seleccionada; se completa y guarda en Oportunidades.",
   link_contact_to_opportunity:
     "Propone cambiar el contacto asociado; ambos registros deben pertenecer a esta cuenta.",
-};
-
-export const COACH_CONFIDENCE_LABELS = {
-  high: "Alta confianza",
-  medium: "Confianza media",
-  low: "Baja confianza",
 };
 
 export const STAGE_READINESS_RECOMMENDATION_LABELS = {

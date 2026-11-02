@@ -2,7 +2,6 @@ import { Trash2, CheckCircle2, AlertCircle, Clock3, ArrowRight, Pencil, X } from
 import {
   COACH_OPERATION_STATUS_META,
   COACH_RESPONSE_TYPE_LABELS,
-  COACH_CONFIDENCE_LABELS,
 } from "./miAgentConstants";
 import {
   formatCoachTargetModule,
@@ -11,11 +10,30 @@ import {
   formatCoachFieldLabel,
   formatCoachOperationSummary,
 } from "./miAgentHelpers";
-import { CoachQualityFeedback } from "./CoachQualityFeedback";
 import { ChannelTurnFeedback } from "./ChannelTurnFeedback";
+import { CustomerChatAnswer } from "./CustomerChatAnswer";
+import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
+import { CustomerChatProgress } from "./CustomerChatProgress";
 import { CoachStageReadiness, CoachSemanticSections } from "./MiAgentWidgets";
 
-export function CoachConversationPanel({ applyCoachClarification, askCoach, askingCoach, canCreateAccounts, canCreateActions, canCreateContacts, canReadCustomerIntelligence, canReadLeads, canResolveLeads, canUpdateAccounts, canUpdateCalendar, canUpdateContacts, canUpdateLeads, cancelPendingCoachOperation, clearCoachConversation, coachAccounts, coachContacts, coachContext, coachMessages, coachOperationAction, coachOpportunities, coachPendingOperations, coachQuestion, coachRecentOperations, coachThreadRef, coachUndoOperationId, continueCoachOperation, hasCoachConversation, hasCoachFoundation, loadingCoachContext, openCoachDetailHandoff, openCoachOperationConfirmation, requestCoachGeneralScope, setCoachQuestion, showCoachFoundation, undoCoachOperation, updateCoachFoundationVisibility }) {
+// Informational answers and errors need no label: the text already says what they are.
+const COACH_VISIBLE_RESPONSE_TYPES = new Set([
+  "recommendation",
+  "change_request",
+  "operation",
+  "handoff",
+]);
+
+function hasCoachFoundation(result) {
+  return Boolean(
+    result?.facts?.length ||
+      result?.evidence?.length ||
+      result?.inferences?.length ||
+      result?.recommendation,
+  );
+}
+
+export function CoachConversationPanel({ applyCoachClarification, askCoach, askingCoach, canCreateAccounts, canCreateActions, canCreateContacts, canReadCustomerIntelligence, canReadLeads, canResolveLeads, canUpdateAccounts, canUpdateCalendar, canUpdateContacts, canUpdateLeads, cancelCoachTurn, cancelingCoach, cancelPendingCoachOperation, clearCoachConversation, coachAccounts, coachContacts, coachContext, coachMessages, coachOperationAction, coachOpportunities, coachPendingOperations, coachQuestion, coachRecentOperations, coachThreadRef, coachUndoOperationId, continueCoachOperation, hasCoachConversation, loadingCoachContext, openCoachDetailHandoff, openCoachOperationConfirmation, requestCoachGeneralScope, setCoachQuestion, undoCoachOperation }) {
   return (
     <section className="mi-agent-coach-panel">
       <div className="mi-agent-section-heading">
@@ -186,23 +204,6 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
           <Trash2 size={14} aria-hidden="true" />
           Limpiar conversación
         </button>
-        {hasCoachFoundation ? (
-          <label className="mi-agent-coach-foundation-toggle">
-            <span>Mostrar fundamento</span>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={showCoachFoundation}
-              onChange={(event) =>
-                updateCoachFoundationVisibility(event.target.checked)
-              }
-            />
-            <span
-              className="mi-agent-coach-foundation-toggle-track"
-              aria-hidden="true"
-            />
-          </label>
-        ) : null}
       </div>
       <form
         className="mi-agent-coach-form"
@@ -506,26 +507,38 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
               >
                 <span>Coach</span>
                 {message.pending ? (
-                  <p>Analizando tu contexto comercial...</p>
+                  <CustomerChatProgress
+                    turn={{
+                      startedAt: message.startedAt,
+                      jobId: message.jobId,
+                      progress: message.progress || {
+                        label: "Analizando tu contexto comercial",
+                      },
+                    }}
+                    onCancel={() => cancelCoachTurn(message)}
+                    canceling={cancelingCoach}
+                  />
                 ) : message.error ? (
                   <p>{message.error}</p>
                 ) : (
                   <>
-                    <div className="mi-agent-coach-result-meta">
-                      <span>
-                        {COACH_RESPONSE_TYPE_LABELS[
-                          message.result?.responseType
-                        ] || "Respuesta del Coach"}
-                      </span>
-                      <span>
-                        {COACH_CONFIDENCE_LABELS[
-                          message.result?.confidence
-                        ] || "Confianza media"}
-                      </span>
-                    </div>
-                    <p className="mi-agent-coach-answer-text">
-                      {message.result?.answer || "Lectura comercial"}
-                    </p>
+                    {COACH_VISIBLE_RESPONSE_TYPES.has(
+                      message.result?.responseType,
+                    ) ? (
+                      <div className="mi-agent-coach-result-meta">
+                        <span>
+                          {
+                            COACH_RESPONSE_TYPE_LABELS[
+                              message.result.responseType
+                            ]
+                          }
+                        </span>
+                      </div>
+                    ) : null}
+                    <CustomerChatAnswer
+                      answer={message.result?.answer || "Lectura comercial"}
+                    />
+                    <CustomerChatCopyButton text={message.result?.answer} />
                     {message.result?.detailHandoff ? (
                       <div className="mi-agent-coach-handoff">
                         <small>
@@ -567,9 +580,6 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
                         ) : null}
                       </div>
                     ) : null}
-                    <CoachQualityFeedback
-                      traceId={message.result?.qualityTraceId}
-                    />
                     <ChannelTurnFeedback
                       traceId={message.result?.qualityTraceId}
                       channelLabel="Coach"
@@ -577,10 +587,11 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
                     <CoachStageReadiness
                       readiness={message.result?.stageReadiness}
                     />
-                    {showCoachFoundation ? (
-                      <CoachSemanticSections
-                        result={message.result}
-                      />
+                    {hasCoachFoundation(message.result) ? (
+                      <details className="mi-agent-coach-foundation" open>
+                        <summary>Fundamento de la respuesta</summary>
+                        <CoachSemanticSections result={message.result} />
+                      </details>
                     ) : null}
                     {message.result?.operations
                       ?.filter(

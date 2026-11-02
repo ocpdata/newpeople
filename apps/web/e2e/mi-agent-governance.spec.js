@@ -6479,6 +6479,105 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(page.getByLabel("Cuenta", { exact: true })).toHaveValue("160");
   });
 
+  test("Coach presenta la respuesta con formato y muestra el fundamento sin interruptor", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page);
+    await page.route("**/api/mi-agent/coach/jobs/711", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: { id: 711, status: "completed" },
+          result: {
+            intent: "context_query",
+            responseType: "informational",
+            confidence: "high",
+            answer: [
+              "Tus oportunidades de mayor monto son:",
+              "",
+              "1. **Proyecto B** - 90,000 USD",
+              "2. Proyecto C - 70,000 USD",
+            ].join("\n"),
+            facts: [
+              {
+                sourceType: "opportunity",
+                sourceId: 320,
+                label: "Proyecto B",
+                excerpt: "Riesgo alto por falta de siguiente paso.",
+              },
+            ],
+            evidence: [],
+            inferences: [],
+            recommendation: null,
+            operations: [],
+            clarification: null,
+            entities: {},
+          },
+        }),
+      }),
+    );
+    await openMiCoach(page);
+    await page
+      .getByPlaceholder("Escribe tu pregunta para el Coach...")
+      .fill("¿Cuáles son mis oportunidades de mayor monto?");
+    await page.getByRole("button", { name: "Preguntar" }).click();
+
+    const answer = page.locator(".mi-agent-coach-message.is-coach .customer-chat-answer");
+    await expect(answer.locator("ol > li")).toHaveCount(2, { timeout: 10000 });
+    await expect(answer.locator("strong")).toHaveText("Proyecto B");
+    await expect(page.getByText("Alta confianza")).toHaveCount(0);
+    await expect(page.getByText("Consulta informativa")).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Copiar respuesta" }),
+    ).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Mostrar fundamento" })).toHaveCount(0);
+    await expect(
+      page
+        .getByLabel("Fundamento del Coach")
+        .getByRole("heading", { name: "Hechos" }),
+    ).toBeVisible();
+  });
+
+  test("Coach muestra la fase en curso y permite cancelar la pregunta", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page);
+    let cancelRequests = 0;
+    await page.route("**/api/mi-agent/coach/jobs/711", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: {
+            id: 711,
+            status: "running",
+            progress: { phase: "crm", label: "Consultando tus datos del CRM" },
+          },
+          result: null,
+        }),
+      }),
+    );
+    await page.route("**/api/mi-agent/coach/jobs/711/cancel", (route) => {
+      cancelRequests += 1;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ job: { id: 711, status: "cancelled" } }),
+      });
+    });
+    await openMiCoach(page);
+    const input = page.getByPlaceholder("Escribe tu pregunta para el Coach...");
+    await input.fill("¿Qué oportunidades tienen riesgo?");
+    await page.getByRole("button", { name: "Preguntar" }).click();
+
+    await expect(
+      page.getByText("Consultando tus datos del CRM…"),
+    ).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: "Cancelar pregunta" }).click();
+
+    await expect(input).toHaveValue("¿Qué oportunidades tienen riesgo?");
+    await expect(page.locator(".mi-agent-coach-thread")).toHaveCount(0);
+    expect(cancelRequests).toBe(1);
+  });
+
   test("restaura diagnóstico estructurado y operaciones accionables", async ({
     page,
   }) => {
@@ -6508,14 +6607,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     const semantic = page.getByLabel("Fundamento del Coach");
-    const foundationSwitch = page.getByRole("switch", {
-      name: "Mostrar fundamento",
-    });
-    await expect(foundationSwitch).not.toBeChecked();
-    await expect(semantic).toHaveCount(0);
-
-    await foundationSwitch.click();
-    await expect(foundationSwitch).toBeChecked();
+    await expect(page.getByRole("switch", { name: "Mostrar fundamento" })).toHaveCount(0);
+    const foundation = page.locator(".mi-agent-coach-foundation");
+    await expect(foundation).toHaveJSProperty("open", true);
     await expect(
       semantic.getByRole("heading", { name: "Hechos" }),
     ).toBeVisible();
@@ -6529,13 +6623,10 @@ test.describe("Mi Coach governance and workspaces", () => {
       semantic.getByRole("heading", { name: "Recomendación" }),
     ).toBeVisible();
 
-    await page.reload();
-    await openCoachConversation(page);
-    await expect(foundationSwitch).toBeChecked();
+    await foundation.getByText("Fundamento de la respuesta").click();
+    await expect(semantic).toBeHidden();
+    await foundation.getByText("Fundamento de la respuesta").click();
     await expect(semantic).toBeVisible();
-    await foundationSwitch.click();
-    await expect(foundationSwitch).not.toBeChecked();
-    await expect(semantic).toHaveCount(0);
     await expect(diagnosis).toBeVisible();
 
     const pending = page.getByRole("region", {

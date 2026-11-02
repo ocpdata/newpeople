@@ -3014,6 +3014,60 @@ describe("API integration baseline", () => {
     }
   });
 
+  test("mi coach cancela jobs propios en curso y respeta jobs ajenos o terminados", async () => {
+    const operatorLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.operator@example.com`,
+    );
+    const otherLogin = await login(
+      request(app),
+      `${TEST_PREFIX}.mi.coach.use@example.com`,
+    );
+    const authorization = `Bearer ${operatorLogin.body.token}`;
+    const otherAuthorization = `Bearer ${otherLogin.body.token}`;
+    const insertJob = async (status, question) =>
+      Number(
+        (
+          await query(
+            `INSERT INTO mi_agent_analysis_jobs
+              (created_by_user_id, job_kind, question, context_snapshot, status)
+             VALUES (?, 'coach', ?, ?, ?)`,
+            [ctx.miCoachOperatorUserId, question, JSON.stringify({}), status],
+          )
+        ).insertId,
+      );
+    const runningJobId = await insertJob("running", "Pregunta que se cancelará");
+    const finishedJobId = await insertJob("completed", "Pregunta terminada");
+    try {
+      const foreignCancel = await request(app)
+        .post(`/api/mi-agent/coach/jobs/${runningJobId}/cancel`)
+        .set("Authorization", otherAuthorization);
+      expect(foreignCancel.status).toBe(404);
+
+      const ownCancel = await request(app)
+        .post(`/api/mi-agent/coach/jobs/${runningJobId}/cancel`)
+        .set("Authorization", authorization);
+      expect(ownCancel.status).toBe(200);
+      expect(ownCancel.body.job.status).toBe("cancelled");
+      const cancelledJob = await request(app)
+        .get(`/api/mi-agent/coach/jobs/${runningJobId}`)
+        .set("Authorization", authorization);
+      expect(cancelledJob.body.job.status).toBe("cancelled");
+      expect(cancelledJob.body.job.progress).toBeNull();
+
+      const cancelFinished = await request(app)
+        .post(`/api/mi-agent/coach/jobs/${finishedJobId}/cancel`)
+        .set("Authorization", authorization);
+      expect(cancelFinished.status).toBe(200);
+      expect(cancelFinished.body.job.status).toBe("completed");
+    } finally {
+      await query(`DELETE FROM mi_agent_analysis_jobs WHERE id IN (?, ?)`, [
+        runningJobId,
+        finishedJobId,
+      ]);
+    }
+  });
+
   test("inteligencia comercial crea jobs y hallazgos respetando permisos por registro", async () => {
     const accountId = await createDirectAccount({
       ownerUserId: ctx.commercialIntelligenceUpdateUserId,

@@ -819,6 +819,19 @@
   margin: 0 !important;
   color: #637984;
 }
+.mi-agent-coach-foundation {
+  margin-top: 12px;
+}
+.mi-agent-coach-foundation > summary {
+  cursor: pointer;
+  color: #1f5f86;
+  font-size: 12px;
+  font-weight: 700;
+}
+.mi-agent-coach-foundation > summary:focus-visible {
+  outline: 2px solid #1f5f86;
+  outline-offset: 2px;
+}
 .mi-agent-coach-semantic {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

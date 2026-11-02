@@ -16,8 +16,23 @@ async function run(
   auditStatus = "supported",
   question = "¿Qué cuenta es?",
   finalIntent = "account_query",
+  { cancelAfterChecks = null } = {},
 ) {
-  const query = vi.fn().mockResolvedValue({ affectedRows: 1 });
+  let statusChecks = 0;
+  const query = vi.fn(async (sql) => {
+    if (sql.includes("SELECT status FROM mi_agent_analysis_jobs")) {
+      statusChecks += 1;
+      return [
+        {
+          status:
+            cancelAfterChecks !== null && statusChecks > cancelAfterChecks
+              ? "cancelled"
+              : "running",
+        },
+      ];
+    }
+    return { affectedRows: 1 };
+  });
   const appendCoachSessionTurn = vi.fn().mockResolvedValue(null);
   const persistCoachOperations = vi.fn().mockResolvedValue([]);
   const loadCoachBusinessRules = vi.fn(async ({ channel, process }) =>
@@ -169,6 +184,41 @@ describe("Coach blocks job persistence", () => {
     expect(
       observability.executionTrace.every((event) => event.channel === "coach"),
     ).toBe(true);
+  });
+
+  it("una pregunta cancelada no guarda sesión, operaciones ni resultado", async () => {
+    // The first check runs before the engine; the second one, right before persisting the turn.
+    const result = await run("supported", "¿Qué cuenta es?", "account_query", {
+      cancelAfterChecks: 1,
+    });
+    expect(result.requestMiAgentJson).toHaveBeenCalled();
+    expect(result.appendCoachSessionTurn).not.toHaveBeenCalled();
+    expect(result.persistCoachOperations).not.toHaveBeenCalled();
+    expect(
+      result.query.mock.calls.some(([sql]) =>
+        sql.includes("SET status = 'completed'"),
+      ),
+    ).toBe(false);
+  });
+
+  it("una pregunta cancelada antes de iniciar no consulta al motor", async () => {
+    const result = await run("supported", "¿Qué cuenta es?", "account_query", {
+      cancelAfterChecks: 0,
+    });
+    expect(
+      result.requestMiAgentJson.mock.calls.some(
+        ([request]) => request.phase === "coach_answer_audit",
+      ),
+    ).toBe(false);
+    expect(result.appendCoachSessionTurn).not.toHaveBeenCalled();
+  });
+
+  it("el cierre del job no sobrescribe un job cancelado", async () => {
+    const result = await run();
+    const finalWrite = result.query.mock.calls.find(([sql]) =>
+      sql.includes("SET status = 'completed'"),
+    );
+    expect(finalWrite[0]).toContain("status <> 'cancelled'");
   });
 
   it("loads seller coaching policy for portfolio-priority requests", async () => {

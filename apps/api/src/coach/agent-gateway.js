@@ -10,6 +10,7 @@ import {
   coachBlockPipelineEnabled,
 } from "./coach-adapter.js";
 import { createCoachBlockTrace } from "./block-runtime.js";
+import { createCoachProgressReporter } from "./progress.js";
 import { loadCoachBusinessRules } from "./business-rules.js";
 import { recordCoachTurnQualityTrace } from "./observability.js";
 import { runCoachDecision } from "./coach-orchestrator.js";
@@ -242,9 +243,20 @@ export async function runCoachJob({
   const startedAt = Date.now();
   const { query, persistCoachOperations, appendCoachSessionTurn } =
     dependencies;
+  const progressReporter = createCoachProgressReporter({
+    jobId,
+    run: query,
+  });
   const executionTrace = coachBlockPipelineEnabled(dependencies)
-    ? createCoachBlockTrace({ jobId })
+    ? createCoachBlockTrace({ jobId, onEvent: progressReporter.onEvent })
     : null;
+  const jobWasCancelled = async () => {
+    const rows = await query(
+      `SELECT status FROM mi_agent_analysis_jobs WHERE id = ? LIMIT 1`,
+      [jobId],
+    ).catch(() => null);
+    return Array.isArray(rows) && rows[0]?.status === "cancelled";
+  };
   const permissionSnapshot = buildCoachPermissionSnapshot(user);
   const decisionContext = {
     ...selectedContext,
@@ -324,9 +336,10 @@ export async function runCoachJob({
 
   try {
     await query(
-      `UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ?`,
+      `UPDATE mi_agent_analysis_jobs SET status = 'running', updated_at = NOW(3) WHERE id = ? AND status = 'pending'`,
       [jobId],
     );
+    if (await jobWasCancelled()) return;
     const businessRules = dependencies.loadCoachBusinessRules
       ? await dependencies.loadCoachBusinessRules({
           channel: "coach",
@@ -402,6 +415,8 @@ export async function runCoachJob({
     };
     if (qualityTraceId) normalizedResult.qualityTraceId = qualityTraceId;
     conversationHistory = engineResult.conversationHistory;
+    // A cancelled turn leaves no operations, history or result behind.
+    if (await jobWasCancelled()) return;
     executionTrace?.record({
       from: "B3",
       to: "B11",
@@ -481,7 +496,7 @@ export async function runCoachJob({
       `UPDATE mi_agent_analysis_jobs
        SET status = 'completed', result_json = ?, observability_json = ?, latency_ms = ?,
            error_message = NULL, updated_at = NOW(3)
-       WHERE id = ?`,
+       WHERE id = ? AND status <> 'cancelled'`,
       [
         JSON.stringify(normalizedResult),
         JSON.stringify({
@@ -550,7 +565,7 @@ export async function runCoachJob({
     await query(
       `UPDATE mi_agent_analysis_jobs
        SET status = 'failed', error_message = ?, observability_json = ?, latency_ms = ?, updated_at = NOW(3)
-       WHERE id = ?`,
+       WHERE id = ? AND status <> 'cancelled'`,
       [
         String(error?.message || "No fue posible responder la pregunta").slice(
           0,
