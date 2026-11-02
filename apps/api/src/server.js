@@ -73,6 +73,8 @@ import { startStaleJobReaper } from "./commercial-intelligence/stale-jobs.js";
 import { startFeedbackRetentionWorker } from "./commercial-intelligence/turn-feedback.js";
 import { startProductionMonitorWorker } from "./customer-chat-quality/production-monitor.js";
 import { startChannelQualityMonitorWorker } from "./channel-quality/production-monitor.js";
+import { startSellerSnapshotWorker } from "./commercial-tracking/seller-snapshots.js";
+import { buildSellerLeaguePayload } from "./routes.commercial-tracking.js";
 import { ensureEvaluationAdministratorAccess } from "./customer-chat-evaluations/permissions.js";
 import { ensureDocumentacionRagPermissions } from "./documentacion-rag/permissions.js";
 import { ensureDocumentacionRagSchema } from "./documentacion-rag/schema.js";
@@ -155,6 +157,7 @@ export async function startServer() {
   startFeedbackRetentionWorker();
   startProductionMonitorWorker();
   startChannelQualityMonitorWorker();
+  startSellerSnapshotWorker({ buildLeague: buildSellerLeaguePayload });
   return server;
 }
 

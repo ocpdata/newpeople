@@ -1,3 +1,4 @@
+import { snapshotReferenceFacts } from "../src/channel-quality/live/coach-needs-snapshots.js";
 import { describe, expect, it } from "vitest";
 import { renderFacts } from "../src/channel-quality/live/coach-facts.js";
 import needsBank from "../src/channel-quality/live/coach-needs-bank.json" with { type: "json" };
@@ -22,8 +23,18 @@ describe("banco de Coach con IA real", () => {
       me: { quotaUsd: 500000, wonUsd: 0, attainmentPct: 0, gapUsd: 500000, weeklyNeededUsd: 58000, rank: 5, pipelineWeightedUsd: 1, lowestScoreComponent: "discipline", overdue: 1, noNextStep: 4, opportunitiesCreatedLastWeek: 0, opportunitiesCreatedWeekBefore: 2, leadsLastWeek: 0, leadsWeekBefore: 1 },
       team: { size: 5 }, closed: { lost: 7, won: 9, decided: 16, winRatePct: 56.3, avgCycleDays: 19 }, created: { thisMonth: 3, lastMonth: 2 }, trend: { lastWeekCreated: 1, weekBeforeCreated: 2 },
       commission: { productPct: 4, servicePct: 6, renewalPct: 2, totalAmount: 0, acceptedSales: 0, attainmentPct: 0, missingToEnable: 350000 }, focus: { name: "Vrf", account: "Totalplay", stage: "Contacto Inicial" },
+      snapshots: snapshotReferenceFacts({ seeded: true, current: { openPipelineUsd: 362000, quarterWeightedUsd: 48700, scoreTotal: 2.06, rankPosition: 5, overdueCount: 1, noNextStepCount: 4 }, now: new Date(2026, 10, 4) }),
     };
     for (const scenario of needsBank.scenarios) expect(() => renderScenario(scenario, seller)).not.toThrow();
+  });
+
+  it("calcula los cambios esperados de la historia sembrada y los apaga sin historia", () => {
+    const current = { openPipelineUsd: 362000, quarterWeightedUsd: 48700, scoreTotal: 2.06, rankPosition: 5, overdueCount: 1, noNextStepCount: 4 };
+    const seeded = snapshotReferenceFacts({ seeded: true, current, now: new Date(2026, 10, 4) });
+    expect(seeded).toMatchObject({ currentWeek: "2026-11-02", previousWeek: "2026-10-26", fourWeeksAgoWeek: "2026-10-05" });
+    expect(seeded.changeVsPreviousWeek).toMatchObject({ openPipelineUsd: 22000, scoreTotal: -2.94, rankPosition: 1 });
+    expect(seeded.changeVsFourWeeksAgo).toMatchObject({ openPipelineUsd: 62000, rankPosition: 2 });
+    expect(snapshotReferenceFacts({ seeded: false, current }).changeVsPreviousWeek.openPipelineUsd).toBe("n/d");
   });
 
   it("todas las afirmaciones de contenido son obligatorias para aprobar", () => {

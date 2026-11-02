@@ -13,6 +13,9 @@ import { signToken } from "../src/utils.js";
 import { assertModelPriced } from "../src/customer-chat-acceptance/runner.js";
 import { recordChannelQualityRun } from "../src/channel-quality/store.js";
 import { loadCoachFacts } from "../src/channel-quality/live/coach-facts.js";
+import { captureWeeklySnapshots } from "../src/commercial-tracking/seller-snapshots.js";
+import { buildSellerLeaguePayload } from "../src/routes.commercial-tracking.js";
+import { removeSeededSnapshotHistory, seedSnapshotHistory, snapshotReferenceFacts } from "../src/channel-quality/live/coach-needs-snapshots.js";
 import { listCommercialEnablementAssets } from "../src/commercial-enablement/library-service.js";
 import { loadSellerNeedsFacts } from "../src/channel-quality/live/coach-needs-facts.js";
 import needsBank from "../src/channel-quality/live/coach-needs-bank.json" with { type: "json" };
@@ -91,6 +94,7 @@ async function main() {
   const servers = [];
   let facts;
   let client;
+  let seededSellerId = null;
   if (needs) {
     // The league payload is read with the global-scope user, as the Ritmo comercial screen would show it.
     const adminServer = await listen(app);
@@ -105,6 +109,18 @@ async function main() {
     actorForLibrary.permissionSet = new Set([...actorForLibrary.permissionSet, "enablement_comercial.use"]);
     const library = await listCommercialEnablementAssets({ user: actorForLibrary, filters: { pageSize: 100 } }).catch(() => ({ items: [] }));
     facts = await loadSellerNeedsFacts({ run: query, league, sellerId: actorId, commissionTracking, libraryAssets: library.items });
+    // The weekly history is seeded for the asking seller (and removed at the end) unless --no-seed checks the no-history answer.
+    const seeded = !flag("--no-seed");
+    await captureWeeklySnapshots({ buildLeague: buildSellerLeaguePayload });
+    if (seeded) {
+      await seedSnapshotHistory({ run: query, sellerId: actorId });
+      seededSellerId = actorId;
+    }
+    const mine = (league.leaderboard || []).find((row) => Number(row.sellerUserId) === Number(actorId));
+    facts.snapshots = snapshotReferenceFacts({
+      seeded,
+      current: { openPipelineUsd: facts.openAllStages.amountUsd, quarterWeightedUsd: Math.round(Number(mine.pipelineWeightedUsd || 0)), scoreTotal: Number(Number(mine.scoreTotal).toFixed(2)), rankPosition: Number(mine.rankPosition), overdueCount: Number(mine.overdueCount || 0), noNextStepCount: Number(mine.noNextStepCount || 0) },
+    });
     // The seller does not have Coach or library access in this database, so access is simulated for the run without changing any data.
     const actor = await getUserAuthContext(actorId);
     actor.permissionSet = new Set([...actor.permissionSet, "mi_coach.use", ...(flag("--without-library") ? [] : ["enablement_comercial.use"])]);
@@ -159,6 +175,7 @@ async function main() {
       log("Ejecución parcial o --no-record: no se registra en la tendencia.");
     }
   } finally {
+    if (seededSellerId) await removeSeededSnapshotHistory({ run: query, sellerId: seededSellerId });
     for (const server of servers) await new Promise((resolve) => { server.close(resolve); });
   }
 }

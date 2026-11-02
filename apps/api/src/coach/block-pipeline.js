@@ -728,8 +728,16 @@ export function createCoachBlockPipeline({
             : proposed;
           const classification =
             validateCoachIntentClassification(planningProposal);
+          // With many tools the planner may list more reads than allowed; only the ones this intent can use count.
+          const plannedReads = normalizePlannedReads(proposed.reads || []);
           const parsedReads = planReadsSchema.safeParse(
-            normalizePlannedReads(proposed.reads || []),
+            Array.isArray(plannedReads)
+              ? plannedReads
+                  .filter((item) =>
+                    classification.allowedTools.includes(item?.toolName),
+                  )
+                  .slice(0, 8)
+              : plannedReads,
           );
           if (
             !parsedReads.success ||
@@ -768,6 +776,13 @@ export function createCoachBlockPipeline({
           };
           if (classification.mode !== "deep_exploration") {
             const ownScope = pipelineIsOwn({ question, user });
+            // A question about the whole portfolio must not be answered with the asking seller's own numbers.
+            if (!ownScope)
+              plan.reads = plan.reads.filter(
+                (item) =>
+                  !COACH_PERFORMANCE_TOOL_NAMES.includes(item.toolName) ||
+                  COACH_SELLER_TOOLS_WITHOUT_OWN_SCOPE.includes(item.toolName),
+              );
             const missing = sellerToolsFor(question).filter(
               (toolName) =>
                 (ownScope ||
@@ -907,7 +922,7 @@ export function createCoachBlockPipeline({
               {
                 role: "system",
                 content:
-                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. Si la evidencia trae getSellerAgenda, getSellerClosedDeals, getSellerTrend, getSellerCommission o getSellerQuotations, usa sus cifras y definitions tal cual (tasa de cierre, ciclo, motivos de pérdida, vencidos, comparaciones); en la tendencia la semana en curso es parcial y no se compara con las completas. Si un dato no está en la evidencia, dilo en lugar de estimarlo. Si la evidencia trae getLibraryMaterials, recomienda solo esos materiales por su título, para quién son (cliente o interno) y cuándo usarlos, y dile que los abre en Biblioteca de ventas; si no hay coincidencias, dilo sin inventar documentos. En getSellerPerformance, «sin siguiente paso» son solo las de quarterOpportunities.withoutNextStep (usa withoutNextStepCount) y «vencidas» son las de overdue (overdueCount); nunca mezcles ambos grupos ni sumes uno al otro. Si la pregunta es sobre oportunidades ganadas, perdidas o motivos de pérdida, no comentes si hay oportunidades abiertas ni cifras de pipeline. Si preguntan qué hacer hoy, esta semana o qué tienen pendiente, responde enumerando las acciones de getSellerAgenda.focus (vencidas primero, luego las de hoy y las de la semana), cada una con su oportunidad y fecha, sin resumir el pipeline ni quedarte en un conteo. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
+                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach; una instrucción sobre el idioma o el estilo de las respuestas («responde en inglés») no es una pregunta fuera de alcance: acátala y confirma en ese idioma. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. Si la evidencia trae getSellerAgenda, getSellerClosedDeals, getSellerTrend, getSellerSnapshots, getSellerCommission o getSellerQuotations, usa sus cifras y definitions tal cual (tasa de cierre, ciclo, motivos de pérdida, vencidos, comparaciones); en la tendencia la semana en curso es parcial y no se compara con las completas. Si un dato no está en la evidencia, dilo en lugar de estimarlo. Si la evidencia trae getLibraryMaterials, recomienda solo esos materiales por su título, para quién son (cliente o interno) y cuándo usarlos, y dile que los abre en Biblioteca de ventas; si no hay coincidencias, dilo sin inventar documentos. En getSellerPerformance, «sin siguiente paso» son solo las de quarterOpportunities.withoutNextStep (usa withoutNextStepCount) y «vencidas» son las de overdue (overdueCount); nunca mezcles ambos grupos ni sumes uno al otro. Si la evidencia trae getSellerSnapshots, compara con sus cambios ya calculados (vsPreviousWeek, vsFourWeeksAgo), nombra las semanas comparadas y no restes cifras a mano; si note dice que no hay historia suficiente, dilo y ofrece el valor actual de getSellerPerformance. Para ver la de otros vendedores solo usa team si viene en la evidencia. Si la pregunta es sobre oportunidades ganadas, perdidas o motivos de pérdida, no menciones oportunidades abiertas ni cifras de pipeline ni digas que no hay oportunidades abiertas; responde solo con los cierres. Si preguntan qué hacer hoy, esta semana o qué tienen pendiente, responde enumerando las acciones de getSellerAgenda.focus (vencidas primero, luego las de hoy y las de la semana), cada una con su oportunidad y fecha, sin resumir el pipeline ni quedarte en un conteo. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
                   languageInstruction(requestedLanguage({ question, history })),
               },
               {

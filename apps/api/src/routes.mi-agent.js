@@ -91,6 +91,7 @@ import {
 } from "./coach/observability.js";
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
 import { readSellerTool } from "./coach/performance-tools.js";
+import { loadSnapshots as loadSellerSnapshots } from "./commercial-tracking/seller-snapshots.js";
 import { listCommercialEnablementAssets } from "./commercial-enablement/library-service.js";
 import { buildCommissionTrackingPayload } from "./routes.commercial-planning.js";
 import {
@@ -4562,6 +4563,7 @@ router.post(
           user: sellerUser,
           context,
           listLibraryAssets: listCommercialEnablementAssets,
+          loadSnapshots: loadSellerSnapshots,
           buildLeague: buildSellerLeaguePayload,
           listQuarterItems: listSellerQuarterOpenItems,
           buildCommissionTracking: buildCommissionTrackingPayload,

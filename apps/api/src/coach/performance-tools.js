@@ -1,3 +1,4 @@
+import { shapeSellerSnapshots, shapeTeamSnapshots } from "../commercial-tracking/seller-snapshots.js";
 // Seller performance for the Coach chat: quota, gap, pipeline, discipline and rank. The numbers come from the same
 // calculation that feeds Ritmo comercial, so Coach and that screen always agree. "Mis oportunidades" means the
 // opportunities where the asking user is the seller; account ownership only decides what the user may see.
@@ -47,6 +48,13 @@ export const COACH_PERFORMANCE_TOOLS = Object.freeze([
     description:
       "Material de la biblioteca de ventas (presentaciones, casos de uso, folletos) recomendado para la etapa, la oportunidad o el tema que pregunta el vendedor.",
     requiredPermission: "enablement_comercial.use",
+    readOnly: true,
+  }),
+  Object.freeze({
+    name: "getSellerSnapshots",
+    description:
+      "Historia semanal de la cuota, el pipeline, la puntuación y el lugar de Ritmo comercial del vendedor (y del equipo si tiene acceso global), con los cambios frente a la semana anterior y a hace cuatro semanas.",
+    requiredPermission: "ritmo_comercial.read",
     readOnly: true,
   }),
   Object.freeze({
@@ -467,12 +475,13 @@ export async function loadSellerTrend({ run, sellerId, today = localIso(new Date
   return shapeTrend({ opportunities: rows, today });
 }
 
-export async function readSellerTool({ toolName, user, buildLeague, listQuarterItems = null, buildCommissionTracking = null, listLibraryAssets = null, context = {}, run }) {
+export async function readSellerTool({ toolName, user, buildLeague, listQuarterItems = null, buildCommissionTracking = null, listLibraryAssets = null, loadSnapshots = null, context = {}, run }) {
   const sellerId = Number(user?.id || 0);
   if (toolName === "getSellerPerformance") return readSellerPerformance({ user, buildLeague, listQuarterItems, run });
   if (toolName === "getSellerAgenda") return loadSellerAgenda({ run, sellerId });
   if (toolName === "getSellerClosedDeals") return loadSellerClosedDeals({ run, sellerId });
   if (toolName === "getSellerTrend") return loadSellerTrend({ run, sellerId });
+  if (toolName === "getSellerSnapshots") return readSellerSnapshots({ user, loadSnapshots });
   if (toolName === "getSellerQuotations") return loadSellerQuotations({ run, sellerId });
   if (toolName === "getLibraryMaterials") return loadLibraryMaterials({ user, listAssets: listLibraryAssets, question: context.question, opportunity: context.opportunity });
   if (toolName === "getSellerCommission") return loadSellerCommission({ run, sellerId, buildCommissionTracking });
@@ -485,6 +494,7 @@ const TOOL_QUESTION_PATTERNS = {
   getSellerQuotations: /\b(cotizaciones?|propuestas?)\b.*\b(pendientes?|respuesta|enviadas?|vigencia|vencen|vencidas?|por vencer|aprobacion|sin aceptar|abiertas?|tengo|tienen)\b/,
   getLibraryMaterials: /\b(material|materiales|biblioteca|folletos?|brochures?|casos? de (?:exito|uso)|presentacion|presentaciones|que puedo (?:enviar|mandar|compartir)|que le (?:envio|mando))\b/,
   getSellerCommission: /\b(comision|comisiones|comisionar|cuanto gano|cuanto ganaria|cuanto voy a ganar)\b/,
+  getSellerSnapshots: /\b(pipeline|cuota|avance|puntuacion|puntos|lugar|ranking|posicion|vencid[oa]s?|siguiente paso|brecha|cobertura)\b.*\b(semana pasada|mes pasado|mes anterior|tendencia|evolucion|historial|hace \d+ semanas?|subi|baj[eo]|mejor|peor|vs|frente a)\b|\b(semana pasada|mes pasado|mes anterior|tendencia|evolucion|historial|hace \d+ semanas?|subi|baj[eo]|mejor o peor)\b.*\b(pipeline|cuota|avance|puntuacion|puntos|lugar|ranking|posicion|vencid[oa]s?|siguiente paso|brecha|cobertura)\b/,
   getSellerTrend: /\b(semana pasada|mes anterior|mes pasado|mejor o peor|tendencia|este mes|mensual|semanal|vs|frente al)\b/,
 };
 
@@ -672,11 +682,33 @@ export async function loadLibraryMaterials({ user, listAssets, question, opportu
   return shapeLibraryMaterials({ assets: result?.items || [], question, opportunity });
 }
 
-// Library suggestions do not depend on whose opportunities are asked about.
-export const COACH_SELLER_TOOLS_WITHOUT_OWN_SCOPE = Object.freeze(["getLibraryMaterials"]);
+// Library suggestions and snapshots (scoped by permission inside the tool) do not depend on whose opportunities are asked about.
+export const COACH_SELLER_TOOLS_WITHOUT_OWN_SCOPE = Object.freeze(["getLibraryMaterials", "getSellerSnapshots"]);
 
 // A direct request for library material, used to explain that the account cannot read the library.
 export function asksForLibraryMaterial(question) {
   const text = String(question || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   return /\b(biblioteca|que material(?:es)? (?:puedo|podria|hay|tengo|uso|usar|envio|enviar|mando|mandar|comparto|compartir|me recomiendas|recomiendas)|cual material|material (?:de ventas|comercial|para (?:esta|la) etapa|para (?:enviar|compartir|el cliente))|casos? de exito)\b/.test(text);
+}
+
+// Each seller reads their own history; whoever has global Ritmo comercial access also reads the team's.
+export async function readSellerSnapshots({ user, loadSnapshots }) {
+  const sellerId = Number(user?.id || 0);
+  const canSeeTeam = Boolean(user?.permissionSet?.has?.("ritmo_comercial.read_all"));
+  const rows = await loadSnapshots({ sellerIds: canSeeTeam ? null : [sellerId] });
+  const own = rows.filter((row) => row.sellerUserId === sellerId);
+  const mine = shapeSellerSnapshots(own);
+  return {
+    entityType: "seller_snapshots",
+    definitions: {
+      scope: canSeeTeam ? "Tu historia semanal y la del equipo (tienes acceso global a Ritmo comercial)." : "Solo tu historia semanal; la de otros vendedores no está disponible para ti.",
+      snapshots: "Cada semana, el primer día que el sistema corre, guarda las cifras de Ritmo comercial de cada vendedor; no hay fotos de antes de que empezara a guardarse.",
+      pipelines: "openPipeline* es todo el pipeline abierto del vendedor; quarterPipeline* es el del trimestre (Ritmo comercial); quarterWeightedUsd es el ponderado.",
+      changes: "Cada cambio trae from (semana fromWeek), to (semana toWeek) y change (to menos from); usa esos tres valores y no los de otras semanas de la serie; en rankPosition un número menor es mejor lugar, así que un cambio negativo es subir. Si sameQuarter es false, la cuota, lo ganado, el avance y la brecha reinician y no son comparables.",
+      current: "Para el valor de hoy usa getSellerPerformance; las fotos son de la fecha de captura.",
+    },
+    mine,
+    note: mine.weeksAvailable < 2 ? "Aún no hay suficiente historia para comparar semanas; la comparación estará disponible cuando haya al menos dos fotos." : null,
+    ...(canSeeTeam ? { team: shapeTeamSnapshots(rows) } : {}),
+  };
 }

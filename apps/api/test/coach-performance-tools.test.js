@@ -14,7 +14,7 @@ const open = { count: 13, amountUsd: 362000 };
 
 describe("herramienta de desempeño del vendedor para Coach", () => {
   it("se declara de solo lectura con el permiso de Ritmo comercial", () => {
-    expect(COACH_PERFORMANCE_TOOLS.map((tool) => tool.name)).toEqual(["getSellerPerformance", "getSellerAgenda", "getSellerClosedDeals", "getSellerCommission", "getSellerQuotations", "getLibraryMaterials", "getSellerTrend"]);
+    expect(COACH_PERFORMANCE_TOOLS.map((tool) => tool.name)).toEqual(["getSellerPerformance", "getSellerAgenda", "getSellerClosedDeals", "getSellerCommission", "getSellerQuotations", "getLibraryMaterials", "getSellerSnapshots", "getSellerTrend"]);
     expect(COACH_PERFORMANCE_TOOLS.every((tool) => tool.readOnly === true)).toBe(true);
     expect(COACH_PERFORMANCE_TOOLS[0]).toMatchObject({ requiredPermission: "ritmo_comercial.read" });
     expect(Object.fromEntries(COACH_PERFORMANCE_TOOLS.map((tool) => [tool.name, tool.requiredPermission]))).toMatchObject({

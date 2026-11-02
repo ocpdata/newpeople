@@ -221,6 +221,22 @@ Se corrigió además que el planificador a veces devolvía la cadena `"null"` co
 
 Banco de necesidades: N13 y N15 pasan (se agregaron hechos independientes de referencia: conteo de cotizaciones por estado desde SQL y títulos de la biblioteca). El vendedor de prueba no tiene `enablement_comercial.use` en la base de desarrollo, así que el script lo simula igual que `mi_coach.use` (`--without-library` apaga esa simulación). Banco de regresión de Coach: 16/16 con los 5 críticos.
 
+### Foto semanal de Ritmo comercial y tendencia (2026-11-02)
+
+Hasta ahora solo había tendencia de oportunidades creadas y ganadas. Para comparar cuota, pipeline, puntuación y lugar se guarda una foto semanal por vendedor.
+
+- **Tabla `seller_weekly_snapshots`** (se crea sola con `CREATE TABLE IF NOT EXISTS`, como las tablas de calidad): una fila por vendedor y semana (lunes), con cuota, ganado, avance, brecha, pipeline abierto, del trimestre y ponderado, vencidos, sin siguiente paso, puntuación y sus tres dimensiones, lugar y tamaño del equipo. Llave única `(week_start, seller_user_id)`; se conservan 104 semanas.
+- **Misma cuenta que la pantalla:** la captura usa `buildSellerLeaguePayload` con alcance global (el cálculo de Ritmo comercial) y el pipeline abierto por vendedor (en proceso y activadas), sin recalcular nada.
+- **Cuándo se guarda:** `startSellerSnapshotWorker` (en `server.js`) revisa cada 6 horas y guarda la foto si la semana actual no tiene; así se recupera de reinicios o fallas y no depende de que corra justo el lunes. Repetir la captura reemplaza la fila (`ON DUPLICATE KEY UPDATE`), por lo que varias instancias no duplican. No corre en pruebas.
+- **Herramienta `getSellerSnapshots`** (`ritmo_comercial.read`): cada vendedor ve solo su historia; quien tiene `ritmo_comercial.read_all` ve además al equipo, ordenado por lugar. Entrega la serie y los cambios frente a la semana anterior y a hace cuatro semanas como `{from, to, change}`, con aviso si cruzan de trimestre (cuota, ganado, avance y brecha reinician) y la regla de que en el lugar un número menor es mejor. Con menos de dos fotos lo dice y ofrece el valor actual.
+- **Sin historia previa:** la historia empieza el día que se despliega; no se reconstruye porque no hay historial de cambios de monto y etapa. Durante las primeras semanas Coach responde que aún no hay historia suficiente.
+
+Banco de necesidades: N20 (pipeline frente al mes pasado) y N21 (puntuación y lugar frente a la semana pasada). Como la base de desarrollo no tiene historia, el script siembra dos semanas anteriores para el vendedor que pregunta (marcadas con `captured_at = 2000-01-01`) y las borra al terminar; `--no-seed` comprueba la respuesta sin historia. Resultado: N20 y N21 pasaron 3 de 3 con historia sembrada y con `--no-seed`; banco completo 20/21 en dos corridas y regresión 16/16 en dos corridas.
+
+Correcciones que salieron al agregar herramientas (el planificador veía 15 herramientas y devolvía más de las 8 lecturas permitidas, lo que descartaba el plan con una aclaración, por ejemplo en «responde en inglés»):
+- Las lecturas planificadas se filtran por las herramientas de la intención antes de validar y se limitan a 8.
+- Una pregunta de cartera completa (sin «mi» y con alcance global) ya no se responde con las herramientas del vendedor que pregunta, salvo biblioteca y fotos (que filtran por permiso dentro de la herramienta).
+
 ### Estabilización del banco de necesidades (2026-11-02)
 
 Las fallas que alternaban eran errores reales del modelo, no del evaluador, y se corrigieron en la herramienta y en el prompt:

@@ -556,6 +556,62 @@
           }
         }
       ]
+    },
+    {
+      "id": "N20",
+      "area": "E",
+      "title": "Pipeline frente al mes pasado",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Mi pipeline subió o bajó frente al mes pasado?",
+          "mustInclude": [
+            {
+              "id": "cambio",
+              "statement": "Si snapshots.seeded es true: dice que el pipeline abierto subió (de 300,000 a {{snapshots.current.openPipelineUsd}} USD, es decir {{snapshots.changeVsFourWeeksAgo.openPipelineUsd}} USD más que hace cuatro semanas), o que subió frente a la semana anterior ({{snapshots.changeVsPreviousWeek.openPipelineUsd}} USD más). Si snapshots.seeded es false: dice que aún no hay historia semanal suficiente para comparar y no inventa una tendencia.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Da cifras de pipeline, puntuación, lugar, vencidos o sin siguiente paso, actuales o de semanas pasadas, que contradicen referenceFacts (snapshots y me)."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "N21",
+      "area": "E",
+      "title": "Puntuación y lugar frente a la semana pasada",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cómo va mi puntuación y mi lugar frente a la semana pasada?",
+          "mustInclude": [
+            {
+              "id": "puntuacion",
+              "statement": "Si snapshots.seeded es true: indica que la puntuación bajó ({{snapshots.changeVsPreviousWeek.scoreTotal}} puntos frente a la semana anterior, de 5 a {{snapshots.current.scoreTotal}}) y que el lugar empeoró de 4 a {{snapshots.current.rankPosition}} (un número mayor es peor lugar; debe decirlo como caída, no como mejora). Si snapshots.seeded es false: dice que aún no hay historia suficiente.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventa",
+              "statement": "Da cifras de pipeline, puntuación, lugar, vencidos o sin siguiente paso, actuales o de semanas pasadas, que contradicen referenceFacts (snapshots y me)."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
     }
   ]
 }

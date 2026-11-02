@@ -13,7 +13,7 @@ const round = (value, digits = 1) => Number(Number(value || 0).toFixed(digits));
 const last = (list) => (Array.isArray(list) && list.length ? Number(list[list.length - 1] || 0) : 0);
 const previous = (list) => (Array.isArray(list) && list.length > 1 ? Number(list[list.length - 2] || 0) : 0);
 
-export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTracking = null, libraryAssets = [] }) {
+export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTracking = null, libraryAssets = [], snapshots = null }) {
   const rows = Array.isArray(league?.leaderboard) ? league.leaderboard : [];
   const me = rows.find((row) => Number(row.sellerUserId) === Number(sellerId));
   if (!me) throw new Error(`El vendedor ${sellerId} no aparece en Ritmo comercial.`);
@@ -164,6 +164,7 @@ export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTr
       titles: libraryAssets.filter((asset) => asset.isActive && !asset.isExpired).map((asset) => asset.title),
       note: "El material recomendado debe ser uno de estos títulos; decir que no hay coincidencias para el contexto también es válido.",
     },
+    snapshots,
     focus: focus ? { name: focus.name, account: focus.account, stage: focus.stage, amountUsd: Number(focus.amountUsd) } : null,
   };
 }

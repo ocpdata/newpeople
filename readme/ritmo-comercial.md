@@ -52,3 +52,7 @@ Hay tres cifras que no deben confundirse. Se usan los mismos nombres en Coach.
 
 El cálculo del tablero está en `buildSellerLeaguePayload` (`routes.commercial-tracking.js`), que usan la pantalla y la herramienta de Coach, de modo que las cifras siempre coinciden.
 
+
+## Foto semanal (2026-11-02)
+
+Cada semana se guarda una foto de las cifras de cada vendedor en `seller_weekly_snapshots` (cuota, avance, brecha, pipeline abierto, del trimestre y ponderado, vencidos, sin siguiente paso, puntuación y lugar). Se calcula con el mismo `buildSellerLeaguePayload` de esta pantalla y la usa Coach para responder si el vendedor va mejor o peor. Cada vendedor consulta solo su historia; con `ritmo_comercial.read_all` se consulta la del equipo. Detalle en `readme/calidad-chats-coach-cuenta-nueva.md`.
