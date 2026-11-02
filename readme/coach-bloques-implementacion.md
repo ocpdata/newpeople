@@ -63,6 +63,7 @@ El filtro de texto del plan (por ejemplo, «Protección de Documentos Sealpath d
 - **Cuenta identificada** y plan `account_query`: `searchAccounts` se ejecuta acotada por el ID de la cuenta, sin el texto del plan.
 - Una búsqueda de oportunidades vacía no llega al modelo junto al registro leído por ID, para no parecer una negación.
 - Si el verificador concluye `no_results` y hay un registro identificado que aún no se leyó, se lee por ID y se vuelve a verificar antes de dar el resultado por ausente.
+- Si la oportunidad nombrada ya se leyó y el verificador pide datos que ninguna herramienta autorizada aporta (por ejemplo, actividades), el turno continúa con estado `sufficient_with_gaps`: la respuesta usa lo que consta y dice lo que falta, y la auditoría sigue comprobando el texto. Sin esta regla, «Dame el detalle de la oportunidad X de Y» fallaba una de cada dos veces con «No encontré en tus registros…».
 
 `diagnostics.deterministicReads` lista las lecturas añadidas por el servidor. Las herramientas de lectura comparten código con Cliente existente, por lo que esta lógica vive solo en el pipeline de Coach.
 

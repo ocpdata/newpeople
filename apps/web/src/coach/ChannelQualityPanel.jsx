@@ -22,6 +22,8 @@ const GROUPS = {
   area_e: "Conversación",
   known_gaps_fixed: "Brechas conocidas corregidas",
   reliability: "Turnos sin fallo",
+  resolution: "Turnos resueltos",
+  stability: "Estabilidad entre repeticiones",
   satisfaction: "Valoraciones positivas",
   cat_gen: "General",
   cat_account: "Búsqueda de oportunidades",
@@ -34,6 +36,38 @@ const GROUPS = {
   cat_answer: "Respuestas de la sesión",
 };
 const STATUS = { passed: "Dentro del umbral", failed: "Bajo el umbral", regressed: "Bajó frente a la anterior" };
+const INTENTS = {
+  seller_coaching: "Coaching del vendedor",
+  account_performance: "Desempeño y cartera",
+  account_query: "Consulta de cuenta",
+  opportunity_query: "Consulta de oportunidad",
+  general_query: "Proceso y herramienta",
+  clarification: "Aclaración",
+  operation: "Operaciones",
+  create_opportunity: "Crear oportunidad",
+  update_opportunity: "Actualizar oportunidad",
+  sin_clasificar: "Sin clasificar",
+};
+const RATING_COVERAGE_MIN = 0.05;
+
+// A weak class of questions must not hide behind the overall rate, so each one shows its own failures.
+function IntentBreakdown({ items }) {
+  if (!Array.isArray(items) || !items.length) return null;
+  return <details className="chat-quality-intents">
+    <summary>Por tipo de pregunta</summary>
+    <ul>
+      {items.map((item) => <li key={item.intent}>
+        <span>{INTENTS[item.intent] || item.intent}</span>
+        <strong>{item.turns} turnos · {item.failed} fallidos · {item.unanswered} sin resolver</strong>
+      </li>)}
+    </ul>
+  </details>;
+}
+
+function RatingHint({ metrics }) {
+  if (metrics?.ratingCoverage === null || metrics?.ratingCoverage === undefined || metrics.ratingCoverage >= RATING_COVERAGE_MIN) return null;
+  return <p className="chat-quality-hint">Solo {metrics.ratedTurns} de {metrics.turns} turnos tienen valoración (👍/👎). Pide a los vendedores valorar las respuestas para medir la satisfacción.</p>;
+}
 
 const dateFormat = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short" });
 const formatDate = (value) => dateFormat.format(new Date(value));
@@ -74,6 +108,8 @@ function SourceCard({ source, latest, runs }) {
         {latest.metrics.turns} turnos · {latest.metrics.failedTurns} fallidos · {latest.metrics.negativeRatings} valoraciones 👎
         {latest.metrics.latencyP95Seconds !== null && latest.metrics.latencyP95Seconds !== undefined ? ` · p95 ${Math.round(latest.metrics.latencyP95Seconds)} s` : ""}
       </small> : null}
+      <RatingHint metrics={latest.metrics} />
+      <IntentBreakdown items={latest.metrics?.byIntent} />
       {latest.reasons.length ? <ul className="chat-quality-reasons">{latest.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
       <Sparkline runs={trend} label={`Tendencia de ${SOURCES[source]}`} />
       <small>{formatDate(latest.evaluatedAt)}{latest.model ? ` · ${latest.model}` : ""}{latest.commit ? ` · ${latest.commit.slice(0, 7)}` : ""}</small>

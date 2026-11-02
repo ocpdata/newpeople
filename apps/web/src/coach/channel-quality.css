@@ -26,3 +26,28 @@
   color: #536977;
   font-weight: 600;
 }
+
+.chat-quality-intents {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.chat-quality-intents > summary {
+  cursor: pointer;
+  color: #1f5f86;
+  font-weight: 600;
+}
+
+.chat-quality-intents ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-quality-intents li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid #e3ecf0;
+}

@@ -626,6 +626,20 @@ export function createCoachBlockPipeline({
           authorizedTools.some((tool) => tool.name === name) &&
           !evidence.some((item) => item.toolName === name),
       );
+      // The opportunity the question names was read and no authorized tool can add more: answer with what the CRM holds
+      // and say what is missing, instead of discarding a turn that has the record in hand. The audit still checks the text.
+      if (
+        result.status !== "clarification" &&
+        !errors &&
+        !missing.length &&
+        byId === "getOpportunity" &&
+        evidence.some(
+          (item) => item.toolName === byId && hasCoachEvidence([item]),
+        )
+      ) {
+        diagnostics.evidence.status = "sufficient_with_gaps";
+        return null;
+      }
       if (
         round === limits.maxEvidenceRounds ||
         !missing.length ||

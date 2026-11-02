@@ -482,6 +482,130 @@
           }
         }
       ]
+    },
+    {
+      "id": "K17",
+      "area": "B",
+      "title": "Detalle de una oportunidad por nombre y cuenta",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Dame el detalle de la oportunidad {{focus.name}} de {{focus.account}}",
+          "mustInclude": [
+            {
+              "id": "encuentra",
+              "statement": "Da el detalle de la oportunidad {{focus.name}} de {{focus.account}}: no dice que no la encuentra ni pide seleccionarla.",
+              "critical": true
+            },
+            {
+              "id": "etapa",
+              "statement": "Indica la etapa {{focus.stage}}.",
+              "critical": true
+            },
+            {
+              "id": "monto",
+              "statement": "Indica un monto de {{focus.amountUsd}} USD.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K18",
+      "area": "B",
+      "title": "Qué falta para avanzar de etapa",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué me falta para avanzar la oportunidad {{focus.name}} a la siguiente etapa?",
+          "mustInclude": [
+            {
+              "id": "etapa",
+              "statement": "Parte de la etapa actual {{focus.stage}} de {{focus.name}}.",
+              "critical": true
+            },
+            {
+              "id": "pendientes",
+              "statement": "Indica qué falta o qué criterios de la etapa están pendientes, o aclara qué información no consta en el CRM; no se limita a decir que no puede responder.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "pide_seleccion",
+              "statement": "Pide al vendedor que seleccione la oportunidad aunque ya la nombró."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K19",
+      "area": "A",
+      "title": "Oportunidades con riesgo: la lista completa",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué oportunidades tienen riesgo? Muéstrame la evidencia y el siguiente paso.",
+          "mustInclude": [
+            {
+              "id": "lista",
+              "statement": "Enumera al menos tres oportunidades concretas con su nivel de riesgo y el motivo; no se limita a anunciar que las va a mostrar.",
+              "critical": true
+            },
+            {
+              "id": "siguiente_paso",
+              "statement": "Indica el siguiente paso registrado de cada una o que no tiene ninguno.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "K20",
+      "area": "C",
+      "title": "Comisión si se cierra una oportunidad",
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Si cierro {{focus.name}}, ¿cuánto ganaría de comisión?",
+          "mustInclude": [
+            {
+              "id": "responde",
+              "statement": "Responde sobre la comisión de esa oportunidad con datos del CRM: da una cifra, o explica las condiciones (cuota, margen u otras reglas) que determinan si hay comisión y si se cumplen; no responde con un mensaje de error genérico.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "error_generico",
+              "statement": "Dice que no pudo verificar o formar la respuesta sin explicar qué falta."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "mustAnswer": true
+          }
+        }
+      ]
     }
   ]
 }

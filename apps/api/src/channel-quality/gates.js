@@ -7,7 +7,7 @@ export const REGRESSION_POINTS = 5;
 export const PRODUCTION_MIN_TURNS = 5;
 export const LAB_MIN_RATIO = 0.9;
 export const LIVE_MIN_RATIO = 0.85;
-export const PRODUCTION_LIMITS = Object.freeze({ minReliability: 0.9, minSatisfaction: 0.75, maxP95Seconds: 30 });
+export const PRODUCTION_LIMITS = Object.freeze({ minReliability: 0.95, minResolution: 0.9, minSatisfaction: 0.75, maxP95Seconds: 30 });
 
 const ratio = (group) => (group && group.total > 0 ? group.passed / group.total : null);
 const pct = (value) => `${Math.round(value * 1000) / 10}%`;
@@ -50,6 +50,9 @@ export function gateFailures(source, groups, metrics = {}) {
   } else if (source === "production_monitor") {
     if ((metrics.turns || 0) >= PRODUCTION_MIN_TURNS) {
       minimumRatio(groups, "reliability", PRODUCTION_LIMITS.minReliability, "Turnos sin fallo", failures);
+      if ((groups.resolution?.total || 0) >= PRODUCTION_MIN_TURNS) {
+        minimumRatio(groups, "resolution", PRODUCTION_LIMITS.minResolution, "Turnos resueltos", failures);
+      }
       if ((groups.satisfaction?.total || 0) >= PRODUCTION_MIN_TURNS) {
         minimumRatio(groups, "satisfaction", PRODUCTION_LIMITS.minSatisfaction, "Valoraciones positivas", failures);
       }

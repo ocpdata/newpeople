@@ -14,7 +14,7 @@ export function percentile(values, ratio) {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))];
 }
 
-function buildSummary({ turns, flaggedFor, latencies, positive, negative, extraMetrics = {} }) {
+function buildSummary({ turns, flaggedFor, latencies, positive, negative, extraMetrics = {}, extraGroups = {} }) {
   const flagged = [];
   const control = [];
   for (const turn of turns) {
@@ -25,6 +25,7 @@ function buildSummary({ turns, flaggedFor, latencies, positive, negative, extraM
   return {
     groups: {
       reliability: { passed: turns.length - failed, total: turns.length },
+      ...extraGroups,
       satisfaction: { passed: positive, total: positive + negative },
     },
     metrics: {
@@ -33,6 +34,7 @@ function buildSummary({ turns, flaggedFor, latencies, positive, negative, extraM
       failedTurns: failed,
       ratedTurns: positive + negative,
       negativeRatings: negative,
+      ratingCoverage: turns.length ? Math.round(((positive + negative) / turns.length) * 1000) / 1000 : null,
       latencyP50Seconds: percentile(latencies, 0.5),
       latencyP95Seconds: percentile(latencies, 0.95),
       ...extraMetrics,
@@ -44,24 +46,69 @@ function buildSummary({ turns, flaggedFor, latencies, positive, negative, extraM
   };
 }
 
+// A turn that ended asking the seller for evidence the question did not lack is not an error, but it did not answer.
+// The pipeline records it as an insufficient-evidence verdict; the reasons cover turns that carry it explicitly.
+export const UNANSWERED_REASONS = Object.freeze(["coach_evidence_incomplete", "coach_plan_invalid"]);
+export const UNANSWERED_EVIDENCE_STATUSES = Object.freeze(["insufficient_evidence"]);
+const BY_INTENT_LIMIT = 12;
+
+function parseReasons(value) {
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Turns, failures and unanswered turns per class of question, so a weak class is not hidden by the overall rate.
+export function summarizeByIntent(turns) {
+  const byIntent = new Map();
+  for (const turn of turns) {
+    const key = turn.intent || "sin_clasificar";
+    const entry = byIntent.get(key) || { intent: key, turns: 0, failed: 0, unanswered: 0 };
+    entry.turns += 1;
+    if (turn.failed) entry.failed += 1;
+    if (turn.unanswered) entry.unanswered += 1;
+    byIntent.set(key, entry);
+  }
+  return [...byIntent.values()]
+    .sort((a, b) => b.failed + b.unanswered - (a.failed + a.unanswered) || b.turns - a.turns)
+    .slice(0, BY_INTENT_LIMIT);
+}
+
 // Coach: each persisted quality trace is one turn.
 export function summarizeCoachWindow(traces) {
-  const turns = traces.map((trace) => ({
-    id: trace.id,
-    failed: trace.validation_status === "error" || Boolean(trace.error_code),
-    rejected: Number(trace.operations_rejected) > 0,
-    negative: trace.feedback_rating === "negative",
-  }));
+  const turns = traces.map((trace) => {
+    const failed =
+      trace.validation_status === "error" || trace.validation_status === "invalid" || Boolean(trace.error_code);
+    return {
+      id: trace.id,
+      intent: trace.intent_type || null,
+      failed,
+      unanswered:
+        !failed &&
+        (parseReasons(trace.validation_reasons_json).some((reason) => UNANSWERED_REASONS.includes(reason)) ||
+          UNANSWERED_EVIDENCE_STATUSES.includes(trace.evidence_status)),
+      rejected: Number(trace.operations_rejected) > 0,
+      negative: trace.feedback_rating === "negative",
+    };
+  });
+  const unanswered = turns.filter((turn) => turn.unanswered).length;
   return buildSummary({
     turns,
     flaggedFor: (turn) => [
       ...(turn.failed ? ["trace_error"] : []),
+      ...(turn.unanswered ? ["unanswered"] : []),
       ...(turn.rejected ? ["operation_rejected"] : []),
       ...(turn.negative ? ["negative_feedback"] : []),
     ],
     latencies: traces.map((trace) => (trace.latency_ms == null ? NaN : Number(trace.latency_ms) / 1000)),
     positive: traces.filter((trace) => trace.feedback_rating === "positive").length,
     negative: traces.filter((trace) => trace.feedback_rating === "negative").length,
+    extraGroups: { resolution: { passed: turns.length - unanswered, total: turns.length } },
+    extraMetrics: { unansweredTurns: unanswered, byIntent: summarizeByIntent(turns) },
   });
 }
 
@@ -94,7 +141,9 @@ export function summarizeProspectWindow({ jobs, traces }) {
 export async function loadChannelWindow(channel, days = MONITOR_WINDOW_DAYS, { run = query } = {}) {
   if (channel === "coach") {
     return run(
-      `SELECT id, validation_status, error_code, operations_rejected, feedback_rating, latency_ms
+      `SELECT id, validation_status, error_code, operations_rejected, feedback_rating, latency_ms,
+              intent_type, validation_reasons_json,
+              JSON_UNQUOTE(JSON_EXTRACT(diagnostics_json, '$.evidence.status')) AS evidence_status
        FROM coach_turn_quality_traces
        WHERE channel = 'coach' AND created_at_utc >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)
        ORDER BY id DESC LIMIT 20000`,

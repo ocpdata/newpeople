@@ -162,3 +162,35 @@ export async function runCoachBank({ user, client, facts, judgeModel = null, onl
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, selected.length)) }, worker));
   return { scenarios: results, ...summarizeProspectRun(results) };
 }
+
+export const MAX_REPETITIONS = 5;
+
+// A scenario passes only when every graded repetition passes. The stability group counts the scenarios that gave the same
+// verdict every time, so an answer that passes by luck shows up even when the overall score looks fine.
+export function combineRepetitions(runs) {
+  const byId = new Map();
+  for (const run of runs) for (const scenario of run.scenarios) byId.set(scenario.id, [...(byId.get(scenario.id) || []), scenario]);
+  const scenarios = [...byId.values()].map((list) => {
+    const graded = list.filter((item) => item.status !== "not_graded");
+    const passed = graded.filter((item) => item.status === "passed").length;
+    const representative = graded.find((item) => item.status !== "passed") || list[0];
+    const status = !graded.length ? "not_graded" : passed === graded.length ? "passed" : "failed";
+    return { ...representative, status, repetitions: { total: graded.length, passed } };
+  });
+  const summary = summarizeProspectRun(scenarios);
+  const repeated = scenarios.filter((item) => item.repetitions.total > 1);
+  const consistent = repeated.filter((item) => item.repetitions.passed === 0 || item.repetitions.passed === item.repetitions.total);
+  const groups = repeated.length ? { ...summary.groups, stability: { passed: consistent.length, total: repeated.length } } : summary.groups;
+  const results = summary.results.map((result) => {
+    const { passed, total } = scenarios.find((item) => item.id === result.id)?.repetitions || {};
+    return passed > 0 && passed < total ? { ...result, flaky: true, error: `inestable ${passed}/${total}: ${result.error}` } : result;
+  });
+  return { scenarios, ...summary, groups, results };
+}
+
+export async function runCoachBankRepeated({ repeat = 1, ...options }) {
+  const count = Math.min(MAX_REPETITIONS, Math.max(1, Math.floor(Number(repeat)) || 1));
+  const runs = [];
+  for (let index = 0; index < count; index += 1) runs.push(await runCoachBank(options));
+  return count === 1 ? runs[0] : combineRepetitions(runs);
+}

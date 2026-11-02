@@ -19,7 +19,7 @@ import { removeSeededSnapshotHistory, seedSnapshotHistory, snapshotReferenceFact
 import { listCommercialEnablementAssets } from "../src/commercial-enablement/library-service.js";
 import { loadSellerNeedsFacts } from "../src/channel-quality/live/coach-needs-facts.js";
 import needsBank from "../src/channel-quality/live/coach-needs-bank.json" with { type: "json" };
-import { coachBank, createCoachHttpClient, runCoachBank, validateCoachBank } from "../src/channel-quality/live/coach-live.js";
+import { MAX_REPETITIONS, coachBank, createCoachHttpClient, runCoachBankRepeated, validateCoachBank } from "../src/channel-quality/live/coach-live.js";
 
 const USAGE = `Banco de evaluación de Coach con IA real (datos de la base de desarrollo, con costo).
 
@@ -30,6 +30,7 @@ const USAGE = `Banco de evaluación de Coach con IA real (datos de la base de de
   --as-user <id>          Con --bank needs: vendedor que pregunta (se le simula acceso a Coach; no se modifica la base).
   --only K01,K08          Limita los escenarios.
   --concurrency <n>       Escenarios en paralelo (por defecto 3).
+  --repeat <n>            Repite cada escenario n veces (1 a 5) para medir la variabilidad. Solo aprueba el que pasa todas; el costo se multiplica.
   --out <directorio>      Destino del reporte (por defecto acceptance-runs/coach/).
   --no-record             No registra el resultado en «Calidad Coach y Cuenta nueva».`;
 
@@ -142,7 +143,9 @@ async function main() {
   const startedAt = new Date();
   try {
     log(`Evaluando ${only ? only.length : selectedBank.scenarios.length} escenarios con el usuario ${userId} y evaluador ${judgeModel}.`);
-    const run = await runCoachBank({ user, client, facts, judgeModel, only, concurrency, log, bank: selectedBank });
+    const repeat = Math.min(MAX_REPETITIONS, Math.max(1, Math.floor(Number(option("--repeat", 1))) || 1));
+    if (repeat > 1) log(`Cada escenario se ejecuta ${repeat} veces; el costo se multiplica y solo aprueba el que pasa todas.`);
+    const run = await runCoachBankRepeated({ repeat, user, client, facts, judgeModel, only, concurrency, log, bank: selectedBank });
     const usage = await loadUsage({ since: startedAt, userIds: [...new Set([userId, actorId])] });
 
     const report = {
@@ -168,7 +171,7 @@ async function main() {
     if (!needs && !only && !flag("--no-record") && !run.notGraded) {
       const recorded = await recordChannelQualityRun({
         channel: "coach", source: "live", report: { groups: run.groups, results: run.results },
-        metrics: { costUsd: usage.costUsd, calls: usage.calls }, model: judgeModel, commitSha: report.commit, trigger: "manual", evaluatedAt: startedAt,
+        metrics: { costUsd: usage.costUsd, calls: usage.calls, repetitions: repeat }, model: judgeModel, commitSha: report.commit, trigger: "manual", evaluatedAt: startedAt,
       });
       console.log(`Registrado en Calidad Coach y Cuenta nueva: ${recorded.status}${recorded.reasons.length ? ` · ${recorded.reasons.join(" | ")}` : ""}`);
     } else if (needs || only || flag("--no-record")) {

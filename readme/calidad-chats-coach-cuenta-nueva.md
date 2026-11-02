@@ -7,10 +7,18 @@ Medición propia de Coach y Cuenta nueva. Es independiente de la de Cliente exis
 | Fuente | Qué es | Cómo se registra | Umbral inicial |
 | --- | --- | --- | --- |
 | Laboratorio (`lab`) | Casos deterministas, sin IA ni costo, sobre entidades, búsqueda, respuestas de la sesión y reglas de operaciones | `npm run quality:lab --workspace=apps/api -- --channel=coach\|prospect` | 90% de los casos |
-| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (24 escenarios, datos sintéticos) y Coach (16 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08]` | 85% de los casos y 100% de los escenarios críticos |
-| Producción (`production_monitor`) | Turnos y valoraciones reales de los últimos 7 días | Automático una vez al día o con **Actualizar monitoreo de producción** | 90% de turnos sin fallo, 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
+| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (24 escenarios, datos sintéticos) y Coach (20 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08] [--repeat 3]` | 85% de los casos y 100% de los escenarios críticos |
+| Producción (`production_monitor`) | Turnos y valoraciones reales de los últimos 7 días | Automático una vez al día o con **Actualizar monitoreo de producción** | 95% de turnos sin fallo, 90% de turnos resueltos (Coach), 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
 
 Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea base medida con uso real. Cada ejecución queda como **Dentro del umbral**, **Bajo el umbral** o **Bajó frente a la anterior** (cae 5 puntos o más frente a la ejecución anterior del mismo canal y fuente).
+
+### Monitoreo de producción de Coach
+
+- **Turnos sin fallo (95%):** un turno falla si termina en error, con código de error o con validación `invalid` (respuesta sin evidencia de negocio). Antes el mínimo era 90% y los turnos inválidos no contaban.
+- **Turnos resueltos (90%):** un turno queda sin resolver cuando terminó pidiendo evidencia que la pregunta no debía faltar (veredicto `insufficient_evidence` o motivos `coach_evidence_incomplete` / `coach_plan_invalid`). No es un error, pero tampoco contestó. Una aclaración legítima, como «Ayúdame con eso de ayer», no cuenta.
+- **Por tipo de pregunta:** el panel muestra, por intención (`byIntent`), turnos, fallidos y sin resolver, para que una clase débil no quede oculta por el promedio.
+- **Valoraciones:** `ratingCoverage` indica qué parte de los turnos recibió 👍/👎. Con menos del 5% el panel avisa que la satisfacción no es medible.
+- Los turnos de pruebas automáticas comparten tabla con los de vendedores; en una base de desarrollo los porcentajes mezclan ambos.
 
 ### Casos del laboratorio
 
@@ -107,7 +115,9 @@ Una respuesta del modelo que no listaba evidencia era descartada por el motor co
 
 ## Banco de Coach con IA real
 
-- **Escenarios:** 16, en cinco áreas (A cartera y pipeline, B una oportunidad, C honestidad y límites, D operaciones seguras, E conversación). Los escenarios 8, 9, 12, 13 y 14 son críticos. Definición: `apps/api/src/channel-quality/live/coach-bank.json`.
+- **Escenarios:** 20, en cinco áreas (A cartera y pipeline, B una oportunidad, C honestidad y límites, D operaciones seguras, E conversación). Los escenarios 8, 9, 12, 13, 14, 17 y 19 son críticos. Definición: `apps/api/src/channel-quality/live/coach-bank.json`.
+- **Escenarios añadidos con las fallas reales (K17–K20):** detalle de una oportunidad por nombre y cuenta (el caso «Protección de Documentos Sealpath de Grupo Diestra»), qué falta para avanzar de etapa, oportunidades con riesgo con la lista completa (una respuesta que solo anuncia la lista falla) y comisión al cerrar una oportunidad (debe dar una cifra respaldada o decir qué falta, nunca un error genérico).
+- **Repeticiones:** `--repeat <n>` (1 a 5) ejecuta cada escenario n veces. Un escenario solo aprueba si pasa todas las repeticiones, y el grupo `stability` cuenta los que dieron el mismo veredicto cada vez; los inestables se listan como `inestable 2/3`. El costo se multiplica por n.
 - **Datos de referencia:** se calculan con SQL en la base de desarrollo al ejecutar (`coach-facts.js`), no con las herramientas de Coach, para que un error de lectura de Coach no se oculte a sí mismo. Los `{{marcadores}}` de las preguntas y afirmaciones se sustituyen por esos datos. Abiertas = en proceso y activadas. El usuario debe tener alcance global.
 - **Cómo corre:** levanta la aplicación en el mismo proceso y usa las rutas HTTP reales (`/api/mi-agent/coach` y `/coach/jobs/:id`), igual que la web, con un token del usuario indicado. Al terminar cancela las operaciones pendientes y cierra las sesiones de prueba.
 - **Cómo se califica:** el mismo juez con citas literales que Cuenta nueva, más verificaciones deterministas: toda operación pide confirmación y una pregunta clara no puede contestarse pidiendo aclaración.

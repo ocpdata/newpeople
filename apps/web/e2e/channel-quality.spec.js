@@ -18,7 +18,7 @@ const overviews = {
   prospect: { channel: "prospect", days: 90, runs: [], latest: {} },
 };
 
-async function openQuality(page, { read = true, execute = true } = {}) {
+async function openQuality(page, { read = true, execute = true, coachOverview = null } = {}) {
   const requests = { overview: [], snapshots: [] };
   await page.addInitScript(() => localStorage.setItem("crm_token", "channel-quality-browser-test"));
   await page.route("**/api/**", async (route) => {
@@ -38,7 +38,7 @@ async function openQuality(page, { read = true, execute = true } = {}) {
     }
     if (match && req.method() === "GET") {
       requests.overview.push(match[1]);
-      return json(overviews[match[1]]);
+      return json(match[1] === "coach" && coachOverview ? coachOverview : overviews[match[1]]);
     }
     // The page opens on "Pruebas del chat" for evaluators; give it the minimum it needs to render.
     if (pathname.endsWith("/evaluations/catalog")) return json({ version: "catalog-test", categories: [], smokeCaseIds: [], operationBusinessImpacts: {}, cases: [] });
@@ -72,6 +72,33 @@ test("la calidad de Coach y Cuenta nueva muestra el laboratorio, la producción 
   await expect(section.getByText("Todavía no hay ejecuciones registradas para este canal.")).toBeVisible();
   expect(new Set(requests.overview)).toEqual(new Set(["coach", "prospect"]));
   expect(requests.overview.at(-1)).toBe("prospect");
+});
+
+test("la producción muestra el desglose por tipo de pregunta y avisa cuando casi no hay valoraciones", async ({ page }) => {
+  const production = run(9, "coach", "production_monitor",
+    { reliability: { passed: 90, total: 100 }, resolution: { passed: 80, total: 100 }, satisfaction: { passed: 0, total: 0 } },
+    {
+      status: "failed", reasons: ["Turnos sin fallo: 90/100 (90%); mínimo 95%."],
+      metrics: {
+        turns: 100, failedTurns: 10, ratedTurns: 0, negativeRatings: 0, ratingCoverage: 0, latencyP95Seconds: 19,
+        byIntent: [
+          { intent: "opportunity_query", turns: 40, failed: 8, unanswered: 12 },
+          { intent: "seller_coaching", turns: 60, failed: 2, unanswered: 0 },
+        ],
+      },
+    });
+  await openQuality(page, { coachOverview: { channel: "coach", days: 90, runs: [production], latest: { production_monitor: production } } });
+  await page.getByRole("button", { name: "Calidad Coach y Cuenta nueva" }).click();
+  const section = page.getByRole("region", { name: "Calidad de Coach y Cuenta nueva" });
+  await expect(section.getByText("Turnos resueltos")).toBeVisible();
+  await expect(section.getByText("80/100 · 80%")).toBeVisible();
+  await expect(section.getByText("Solo 0 de 100 turnos tienen valoración")).toBeVisible();
+  const breakdown = section.locator(".chat-quality-intents");
+  await expect(breakdown.getByText("Consulta de oportunidad")).toBeHidden();
+  await breakdown.getByText("Por tipo de pregunta").click();
+  await expect(breakdown.getByText("Consulta de oportunidad")).toBeVisible();
+  await expect(breakdown).toContainText("40 turnos · 8 fallidos · 12 sin resolver");
+  await expect(breakdown).toContainText("Coaching del vendedor");
 });
 
 test("quien puede ejecutar actualiza el monitoreo del canal elegido", async ({ page }) => {

@@ -818,6 +818,28 @@ describe("Coach: lectura por ID del registro identificado", () => {
     expect(f.pipeline.diagnostics.deterministicReads).toEqual(["getOpportunity"]);
   });
 
+  it("responde con lo que consta del registro identificado cuando el verificador pide datos que ninguna herramienta autorizada aporta", async () => {
+    const f = fixture({
+      plan: { intent: "opportunity_query", reads: [{ toolName: "getOpportunity", filters: {} }] },
+      effectiveContext: { accountId: 163, opportunityId: 121 },
+      reads: { getOpportunity: sealpath },
+      assessments: [{ status: "incomplete", missingTools: [], missingFacts: ["actividades recientes"] }],
+    });
+    const result = await run(f, ["getOpportunity"]);
+    expect(result.response.responseType).toBe("informational");
+    expect(f.pipeline.diagnostics.evidence.status).toBe("sufficient_with_gaps");
+
+    const unresolved = fixture({
+      plan: { intent: "opportunity_query", reads: [{ toolName: "getOpportunity", filters: {} }] },
+      effectiveContext: { accountId: 163 },
+      reads: { getOpportunity: sealpath },
+      assessments: [{ status: "incomplete", missingTools: [], missingFacts: ["actividades recientes"] }],
+    });
+    const blocked = await run(unresolved, ["getOpportunity"]);
+    expect(blocked.response.responseType).toBe("clarification");
+    expect(unresolved.pipeline.diagnostics.evidence.status).toBe("insufficient_evidence");
+  });
+
   it("reinforceCoachReads deja margen para las lecturas adicionales del verificador", () => {
     const planned = Array.from({ length: 6 }, (_, index) => ({
       toolName: `tool${index}`,

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const query = vi.fn();
 vi.mock("../src/db.js", () => ({ query: (...args) => query(...args) }));
 
-const { assessQualityReport, gateFailures, QUALITY_CHANNELS, QUALITY_SOURCES } = await import("../src/channel-quality/gates.js");
+const { assessQualityReport, gateFailures, PRODUCTION_LIMITS, QUALITY_CHANNELS, QUALITY_SOURCES } = await import("../src/channel-quality/gates.js");
 const { summarizeCoachWindow, summarizeProspectWindow, runChannelProductionMonitor } = await import("../src/channel-quality/production-monitor.js");
 const { recordChannelQualityRun, getChannelQualityOverview } = await import("../src/channel-quality/store.js");
 
@@ -48,9 +48,61 @@ describe("monitoreo de producción por canal", () => {
       { id: 2, validation_status: "error", error_code: "X", operations_rejected: 0, feedback_rating: null, latency_ms: 9000 },
       { id: 3, validation_status: "valid", error_code: null, operations_rejected: 1, feedback_rating: "negative", latency_ms: null },
     ]);
-    expect(summary.groups).toEqual({ reliability: { passed: 2, total: 3 }, satisfaction: { passed: 1, total: 2 } });
+    expect(summary.groups).toEqual({
+      reliability: { passed: 2, total: 3 },
+      resolution: { passed: 3, total: 3 },
+      satisfaction: { passed: 1, total: 2 },
+    });
     expect(summary.metrics).toMatchObject({ turns: 3, failedTurns: 1, ratedTurns: 2, negativeRatings: 1, latencyP95Seconds: 9 });
     expect(summary.sample.find((item) => item.id === 3).flags).toEqual(["operation_rejected", "negative_feedback"]);
+  });
+
+  it("cuenta como fallo un turno inválido y como sin resolver el que pidió evidencia que no faltaba", () => {
+    const summary = summarizeCoachWindow([
+      { id: 1, intent_type: "opportunity_query", validation_status: "valid", validation_reasons_json: "[]" },
+      { id: 2, intent_type: "opportunity_query", validation_status: "invalid", validation_reasons_json: ["missing_business_evidence"] },
+      { id: 3, intent_type: "opportunity_query", validation_status: "clarification", validation_reasons_json: "[\"coach_evidence_incomplete\"]" },
+      { id: 4, intent_type: "general_query", validation_status: "clarification", validation_reasons_json: "[\"coach_answer_not_supported\"]" },
+      { id: 5, intent_type: "seller_coaching", validation_status: "error", validation_reasons_json: "[\"coach_evidence_incomplete\"]" },
+      { id: 6, intent_type: null, validation_status: "valid", validation_reasons_json: "no es json" },
+      { id: 7, intent_type: "opportunity_query", validation_status: "clarification", validation_reasons_json: "[]", evidence_status: "insufficient_evidence" },
+      { id: 8, intent_type: "opportunity_query", validation_status: "clarification", validation_reasons_json: "[]", evidence_status: "clarification" },
+    ]);
+    expect(summary.groups.reliability).toEqual({ passed: 6, total: 8 });
+    expect(summary.groups.resolution).toEqual({ passed: 6, total: 8 });
+    expect(summary.metrics.unansweredTurns).toBe(2);
+    expect(summary.sample.find((item) => item.id === 3).flags).toEqual(["unanswered"]);
+    expect(summary.sample.find((item) => item.id === 7).flags).toEqual(["unanswered"]);
+    expect(summary.sample.find((item) => item.id === 8).flags).toEqual([]);
+    expect(summary.metrics.byIntent).toEqual([
+      { intent: "opportunity_query", turns: 5, failed: 1, unanswered: 2 },
+      { intent: "seller_coaching", turns: 1, failed: 1, unanswered: 0 },
+      { intent: "general_query", turns: 1, failed: 0, unanswered: 0 },
+      { intent: "sin_clasificar", turns: 1, failed: 0, unanswered: 0 },
+    ]);
+  });
+
+  it("informa qué parte de los turnos recibió valoración", () => {
+    const summary = summarizeCoachWindow([
+      { id: 1, validation_status: "valid", feedback_rating: "positive" },
+      { id: 2, validation_status: "valid" },
+      { id: 3, validation_status: "valid" },
+      { id: 4, validation_status: "valid" },
+    ]);
+    expect(summary.metrics.ratingCoverage).toBe(0.25);
+    expect(summarizeCoachWindow([]).metrics.ratingCoverage).toBeNull();
+  });
+
+  it("un 5% de turnos fallidos ya no se considera dentro del umbral", () => {
+    expect(PRODUCTION_LIMITS.minReliability).toBe(0.95);
+    expect(gateFailures("production_monitor", { reliability: { passed: 1497, total: 1580 } }, { turns: 1580 })[0]).toContain("Turnos sin fallo");
+    expect(gateFailures("production_monitor", { reliability: { passed: 1520, total: 1580 } }, { turns: 1580 })).toEqual([]);
+  });
+
+  it("exige que la mayoría de los turnos se resuelvan sin pedir evidencia de más", () => {
+    const groups = { reliability: { passed: 100, total: 100 }, resolution: { passed: 80, total: 100 } };
+    expect(gateFailures("production_monitor", groups, { turns: 100 })[0]).toContain("Turnos resueltos: 80/100");
+    expect(gateFailures("production_monitor", { ...groups, resolution: { passed: 4, total: 4 } }, { turns: 100 })).toEqual([]);
   });
 
   it("resume los turnos de Cuenta nueva desde sus jobs y sus trazas", () => {

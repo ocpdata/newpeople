@@ -200,6 +200,7 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
     // Statuses of the Coach pipeline that were reported as verification_error.
     "sufficient_for_operation",
     "sufficient_for_coaching",
+    "sufficient_with_gaps",
     "library_not_authorized",
     "error",
   ]);
