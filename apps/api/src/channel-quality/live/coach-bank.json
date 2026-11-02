@@ -9,7 +9,7 @@
       "turns": [
         {
           "id": "t1",
-          "question": "¿Cuántas oportunidades abiertas hay en mi cartera y por cuánto monto en total?",
+          "question": "¿Cuántas oportunidades abiertas hay en el CRM y por cuánto monto en total?",
           "mustInclude": [
             {
               "id": "cantidad",
@@ -121,7 +121,7 @@
       "turns": [
         {
           "id": "t1",
-          "question": "¿Qué debería priorizar esta semana en mi pipeline?",
+          "question": "¿Qué oportunidades del CRM debería priorizar esta semana?",
           "mustInclude": [
             {
               "id": "reales",

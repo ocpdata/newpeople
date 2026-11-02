@@ -37,3 +37,18 @@ Visualizar el ritmo competitivo de ejecucion comercial por vendedor para seguimi
 
 - Modulo activo con vista principal, detalle y modo pantalla.
 - Integrado con metricas de planeacion/tracking para metas y brechas.
+
+## Nombres de las cifras de pipeline (2026-11-01)
+
+Hay tres cifras que no deben confundirse. Se usan los mismos nombres en Coach.
+
+| Nombre | Qué cuenta |
+| --- | --- |
+| **Pipeline abierto** | Oportunidades donde el usuario es el vendedor, en proceso y activadas, sin importar su fecha de cierre. No aparece en esta pantalla; Coach lo da como «Mi pipeline abierto». |
+| **Pipeline del trimestre** | Las abiertas con fecha de cierre en el trimestre actual. Es la base del funnel (antes «Monto abierto»), la cobertura, los vencidos y los sin siguiente paso. |
+| **Pipeline del siguiente Q** | Las abiertas con cierre en el trimestre siguiente. |
+
+**Mis oportunidades** son siempre las del vendedor de la oportunidad (`seller_user_id`). Que un usuario vea oportunidades de sus cuentas asignadas solo decide el acceso, no a quién se le atribuyen la cuota, el ranking ni la comisión.
+
+El cálculo del tablero está en `buildSellerLeaguePayload` (`routes.commercial-tracking.js`), que usan la pantalla y la herramienta de Coach, de modo que las cifras siempre coinciden.
+

@@ -249,6 +249,7 @@ function SellerStageFunnel({
   stages,
   totalAmountUsd,
   requiredAmountUsd = null,
+  label = "Pipeline del trimestre",
 }) {
   const normalizedStages = Array.isArray(stages)
     ? [...stages].sort(
@@ -326,7 +327,7 @@ function SellerStageFunnel({
       </div>
       <div className="seller-league-funnel-meta">
         <strong>{formatCurrencyUsd(totalAmountUsd)}</strong>
-        <span>Monto abierto</span>
+        <span>{label}</span>
       </div>
       <div className="seller-league-funnel-legend">
         {normalizedStages.slice(0, 4).map((stage) => (
@@ -841,6 +842,7 @@ function FunnelComparisonCard({ comparison }) {
         stages={comparison.stages}
         totalAmountUsd={comparison.openPipelineAmountUsd}
         requiredAmountUsd={comparison.requiredAmountUsd}
+        label="Pipeline del siguiente Q"
       />
 
       <p className="seller-detail-funnel-compare-note">{comparison.note}</p>

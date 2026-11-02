@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { COACH_OPERATION_NOT_AVAILABLE_ANSWER, COACH_OUT_OF_SCOPE_ANSWER, coerceCreateOperationPayloads, createCoachBlockPipeline, normalizePlannedReads, operationNotPrepared, withCoachCounts } from "../src/coach/block-pipeline.js";
+import { COACH_OPERATION_NOT_AVAILABLE_ANSWER, COACH_OUT_OF_SCOPE_ANSWER, withoutOwnQuota, coerceCreateOperationPayloads, createCoachBlockPipeline, normalizePlannedReads, operationNotPrepared, withCoachCounts } from "../src/coach/block-pipeline.js";
 import {
   createCoachBlockTrace,
   serializeCoachDates,
@@ -138,6 +138,8 @@ describe("Coach B6–B10 pipeline", () => {
       result: [{ commercialStatusCode: "ganada" }, { commercialStatusCode: "ganada" }, { commercialStatusCode: "perdida" }, {}],
     });
     expect(counted).toMatchObject({ resultCount: 4, countsByCommercialStatus: { ganada: 2, perdida: 1, sin_estado: 1 } });
+    expect(counted.totalAmountUsd).toBeUndefined();
+    expect(withCoachCounts({ toolName: "searchOpportunities", result: [{ amountUsd: 100.5 }, { amountUsd: 20 }, { amountUsd: null }] }).totalAmountUsd).toBe(120.5);
     expect(withCoachCounts({ toolName: "getOpportunity", result: { id: 1 } })).toEqual({ toolName: "getOpportunity", result: { id: 1 } });
     expect(withCoachCounts({ toolName: "x", result: [{ id: 1 }] }).countsByCommercialStatus).toBeUndefined();
   });
@@ -173,6 +175,13 @@ describe("Coach B6–B10 pipeline", () => {
     const result = await run(f);
     expect(result.response.answer).toBe(COACH_OPERATION_NOT_AVAILABLE_ANSWER);
     expect(result.response.responseType).toBe("informational");
+  });
+
+  it("retira la cuota propia del contexto cuando la lectura de desempeño es la fuente", () => {
+    const snapshot = { quota: { gapAmount: 343563 }, currencyConversion: { available: true }, pipeline: { openCount: 1 } };
+    expect(withoutOwnQuota(snapshot, [{ toolName: "getSellerPerformance", result: {} }])).toEqual({ pipeline: { openCount: 1 } });
+    expect(withoutOwnQuota(snapshot, [{ toolName: "getSellerPipeline", result: {} }])).toBe(snapshot);
+    expect(withoutOwnQuota(snapshot, [{ toolName: "getSellerPerformance", error: true }])).toBe(snapshot);
   });
 
   it("explica qué no hace Coach cuando no puede preparar una operación", () => {

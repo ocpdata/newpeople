@@ -180,6 +180,21 @@ Antes de dar cuota, ranking o comisión hay que definir una sola regla de «mis 
 
 **Límites de esta medición.** El juez marcó «inventa» en varias respuestas, pero casi todas son diferencias de definición (arriba) o detalles reales de la oportunidad (días sin actividad, requisitos de la etapa) que no están en los datos de referencia; no se deben leer como invenciones. El proveedor de IA devuelve de forma intermitente `429 insufficient_quota` (alrededor de 17% de las llamadas, aun con crédito); el banco repite hasta tres veces un turno que termina en error y la calificación del juez.
 
+### Desempeño del vendedor en Coach (2026-11-01)
+
+Coach tiene la herramienta `getSellerPerformance` (`coach/performance-tools.js`), de solo lectura y exclusiva de Coach, con el permiso `ritmo_comercial.read`. Entrega cuota, ganado, avance, brecha, ritmo semanal necesario, días restantes, pipeline abierto, pipeline del trimestre (con su ponderado y cobertura), vencidos y sin siguiente paso (con la lista de oportunidades, calculada como Ritmo comercial), y el lugar y la puntuación del vendedor. Reutiliza `buildSellerLeaguePayload`, la misma función que alimenta la pantalla, así que las cifras coinciden.
+
+- **Lugar frente al equipo:** el vendedor ve su posición, su puntuación por dimensión, la distancia a la siguiente posición y la puntuación del primero. Los nombres de los demás solo los ve quien tiene `ritmo_comercial.read_all`.
+- **«Mis oportunidades»:** las del vendedor de la oportunidad. `getSellerPipeline` y las listas que se piden como «mis…» o sobre cifras propias se limitan a ellas; un usuario con alcance global que pregunta por toda la cartera conserva el alcance completo.
+- **Una sola fuente:** cuando se lee `getSellerPerformance`, el contexto no incluye la cuota que Coach calculaba por su cuenta (daba una brecha distinta). Las preguntas sobre cuota, brecha, lugar, puntuación, vencidos o sin siguiente paso siempre la leen, aunque el planificador elija otra herramienta. Los totales de monto los calcula el servidor.
+
+| Banco de necesidades (`--bank needs --as-user 5`) | Antes | Después |
+| --- | --- | --- |
+| Cuota, ritmo, cobertura, lugar, puntuación, vencidos y sin siguiente paso (N01–N08) | 0/8 | **8/8 en dos corridas seguidas** |
+| Las 19 preguntas | 0/19 | 7/19 (el resto necesita herramientas nuevas: agenda, cierres, tendencia, comisiones, cotizaciones y material) |
+
+El banco de regresión de Coach quedó en 14/16 y 15/16 con los 5 críticos en todas las corridas con el proveedor estable. Las preguntas K01 y K05 se reformularon sin «mi» para el usuario administrador, porque «mi cartera» ahora significa las oportunidades donde él es el vendedor (el administrador no tiene abiertas). Las dos últimas corridas, ya con la nueva redacción de K05, no son válidas: el proveedor de IA devolvió `429 insufficient_quota`. Esa redacción está sin medir.
+
 ## Valoraciones de las respuestas
 
 Cada respuesta de Coach y de Cuenta nueva muestra 👍/👎. Se guardan en `coach_turn_quality_traces` (`feedback_rating`) mediante `POST /api/mi-agent/coach/quality/:traceId/feedback`, y alimentan la satisfacción del monitoreo de producción.

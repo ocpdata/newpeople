@@ -90,6 +90,11 @@ import {
   submitCoachTurnFeedback,
 } from "./coach/observability.js";
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
+import { readSellerPerformance } from "./coach/performance-tools.js";
+import {
+  buildSellerLeaguePayload,
+  listSellerQuarterOpenItems,
+} from "./routes.commercial-tracking.js";
 import { getMiCoachGovernanceSettings } from "./commercial-intelligence/service.js";
 import {
   CONFIRMED_VIA_CUSTOMER_CHAT,
@@ -775,7 +780,7 @@ async function getMiAgentContext(user) {
     }),
     canReadOpportunities
       ? query(
-          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+          `SELECT o.id, o.seller_user_id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
               o.sales_stage_id,
               o.updated_at, oss.code AS stage_code, oss.name AS stage_name,
               oss.stage_order,
@@ -843,7 +848,7 @@ async function getMiAgentContext(user) {
   const inactiveScopeJoin = buildOpportunityScope(user, inactiveParams);
   const inactiveRows = canReadOpportunities
     ? await query(
-        `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd,
+        `SELECT o.id, o.seller_user_id, o.name, o.account_id, o.contact_id, o.amount_usd,
                   o.close_date, o.sales_stage_id, o.updated_at,
                   oss.code AS stage_code, oss.name AS stage_name,
                   oss.stage_order, ocs.code AS commercial_status_code,
@@ -892,7 +897,7 @@ async function getMiAgentContext(user) {
   const historicalRows =
     canReadOpportunities && terminalStatusCodes.length
       ? await query(
-          `SELECT o.id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
+          `SELECT o.id, o.seller_user_id, o.name, o.account_id, o.contact_id, o.amount_usd, o.close_date,
                   o.sales_stage_id, o.updated_at, oss.code AS stage_code,
                   oss.name AS stage_name, oss.stage_order,
                   ocs.code AS commercial_status_code,
@@ -1061,6 +1066,7 @@ async function getMiAgentContext(user) {
             department: row.contact_department || "",
           }
         : null,
+      sellerUserId: Number(row.seller_user_id || 0) || null,
       amountUsd: Number(row.amount_usd || 0),
       closeDate: row.close_date || null,
       updatedAt: row.updated_at || null,
@@ -4548,6 +4554,13 @@ router.post(
       appendCoachSessionTurn,
       featureCode: MI_COACH_FEATURE_CODE,
       getAuthorizedCoachQuotationContent,
+      getSellerPerformance: ({ user: sellerUser }) =>
+        readSellerPerformance({
+          user: sellerUser,
+          buildLeague: buildSellerLeaguePayload,
+          listQuarterItems: listSellerQuarterOpenItems,
+          run: query,
+        }),
     };
     setImmediate(() => {
       return runCoachJob({

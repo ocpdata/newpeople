@@ -19,7 +19,8 @@ export async function loadSellerNeedsFacts({ run, league, sellerId }) {
   if (!me) throw new Error(`El vendedor ${sellerId} no aparece en Ritmo comercial.`);
   const quarter = league.quarterContext.current;
   const scores = { closing: me.scoreClosing, build: me.scoreBuild, discipline: me.scoreDiscipline };
-  const lowest = Object.entries(scores).sort((left, right) => Number(left[1]) - Number(right[1]))[0];
+  const minimumScore = Math.min(...Object.values(scores).map(Number));
+  const lowest = Object.entries(scores).filter(([, value]) => Number(value) === minimumScore).map(([key]) => key);
   const gap = Number(me.gapAmountUsd || 0);
 
   const [focus] = await run(
@@ -68,15 +69,16 @@ export async function loadSellerNeedsFacts({ run, league, sellerId }) {
   );
   const decided = count("ganada") + count("perdida");
   return {
-    definition: "Datos del vendedor que pregunta. Cuota, avance, puntuación, ranking, vencidos y sin siguiente paso son los de Ritmo comercial del trimestre actual. Montos en USD.",
+    definition: "Datos del vendedor que pregunta. Cuota, avance, puntuación, ranking, vencidos y sin siguiente paso son los de Ritmo comercial del trimestre actual. «Pipeline abierto» (openAllStages) = oportunidades donde el vendedor es el vendedor, en proceso y activadas; «Pipeline del trimestre» (quarterPipeline*) = las abiertas con cierre en el trimestre. Montos en USD.",
     seller: { name: me.sellerUserName },
     quarter: { label: quarter.label, daysElapsed: quarter.daysElapsed, daysRemaining: quarter.daysRemaining, weeksRemaining: quarter.weeksRemaining },
     me: {
       quotaUsd: Number(me.quotaAmountUsd || 0), wonUsd: Number(me.wonAmountUsd || 0), attainmentPct: Number(me.attainmentPct || 0),
       gapUsd: gap, weeklyNeededUsd: Math.round(gap / Math.max(Number(quarter.weeksRemaining) || 1, 1)),
       rank: me.rankPosition, score: round(me.scoreTotal), scoreClosing: round(scores.closing), scoreBuild: round(scores.build),
-      scoreDiscipline: round(scores.discipline), lowestScoreComponent: lowest[0], rankGapToNext: round(me.rankGapToNext),
-      overdue: Number(me.overdueCount || 0), noNextStep: Number(me.noNextStepCount || 0), openCount: Number(me.openOpportunities || 0),
+      scoreDiscipline: round(scores.discipline), lowestScoreComponent: lowest.join(" y "), rankGapToNext: round(me.rankGapToNext),
+      overdue: Number(me.overdueCount || 0), noNextStep: Number(me.noNextStepCount || 0), quarterPipelineCount: Number(me.openOpportunities || 0),
+      quarterPipelineUsd: Math.round(Number(me.funnelOpenAmountUsd || 0)),
       pipelineWeightedUsd: Math.round(Number(me.pipelineWeightedUsd || 0)), coverageRatio: round(me.coverageRatio, 2),
       opportunitiesCreatedLastWeek: last(me.opportunitiesPerWeekWeeklyCounts), opportunitiesCreatedWeekBefore: previous(me.opportunitiesPerWeekWeeklyCounts),
       leadsLastWeek: last(me.leadsPerWeekWeeklyCounts), leadsWeekBefore: previous(me.leadsPerWeekWeeklyCounts),

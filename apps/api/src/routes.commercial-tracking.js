@@ -4587,25 +4587,29 @@ async function loadLeadToOpportunityWeeklySeriesBySeller({
   );
 }
 
-router.get(
-  "/seller-league-tv",
-  requireAnyPermission(["ritmo_comercial.read"]),
-  async (req, res) => {
-    const canReadAllSellerLeague = hasSellerLeagueGlobalScope(req.user);
-    const currentUserId = Number(req.user?.id || 0);
-    const requestedSellerUserId = toPositiveInt(req.query?.sellerUserId);
+// Ritmo comercial's quarter calculation, shared by the screen and by the Coach performance tool. With
+// forceGlobalScope the whole team is computed (needed to rank a seller) and the caller decides what to expose.
+export async function buildSellerLeaguePayload({
+  user,
+  requestedSellerUserId = null,
+  forceGlobalScope = false,
+}) {
+    const canReadAllSellerLeague =
+      forceGlobalScope || hasSellerLeagueGlobalScope(user);
+    const currentUserId = Number(user?.id || 0);
     if (
       requestedSellerUserId &&
       requestedSellerUserId !== currentUserId &&
       !canReadAllSellerLeague
     ) {
-      return res.status(403).json({
-        error: "No tienes permiso para ver el detalle de este vendedor",
-      });
+      throw Object.assign(
+        new Error("No tienes permiso para ver el detalle de este vendedor"),
+        { status: 403 },
+      );
     }
 
     const leagueScopeUser = buildSellerLeagueOpportunityScopeUser(
-      req.user,
+      user,
       canReadAllSellerLeague,
     );
     const selectedSellerUserId =
@@ -5012,7 +5016,7 @@ router.get(
         ? toAmount((teamWonAmountUsd / teamQuotaAmountUsd) * 100)
         : null;
 
-    res.json({
+    return {
       screenDisplayMinutes: Number(
         commercialSettings?.sellerLeagueScreenDisplayMinutes || 1,
       ),
@@ -5085,7 +5089,38 @@ router.get(
         ),
       },
       leaderboard: withRank,
-    });
+    };
+
+}
+
+// The seller's open opportunities that close in the current quarter, built exactly as the league counts them.
+export async function listSellerQuarterOpenItems({ user, sellerUserId }) {
+  const quarterSelection = getQuarterSelection(new Date());
+  return buildOpenOpportunityItems(buildGlobalOpportunityScopeUser(user), {
+    closeDateFrom: formatIsoDate(quarterSelection.start),
+    closeDateTo: formatIsoDate(quarterSelection.end),
+    sellerUserId: Number(sellerUserId),
+    weekRange: getWeekRange(new Date()),
+  });
+}
+
+router.get(
+  "/seller-league-tv",
+  requireAnyPermission(["ritmo_comercial.read"]),
+  async (req, res) => {
+    try {
+      return res.json(
+        await buildSellerLeaguePayload({
+          user: req.user,
+          requestedSellerUserId: toPositiveInt(req.query?.sellerUserId),
+        }),
+      );
+    } catch (error) {
+      if (error?.status === 403) {
+        return res.status(403).json({ error: error.message });
+      }
+      throw error;
+    }
   },
 );
 

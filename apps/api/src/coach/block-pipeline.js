@@ -1,5 +1,13 @@
 import { z } from "zod";
 import { languageInstruction, requestedLanguage } from "../chat-language.js";
+import {
+  COACH_PERFORMANCE_TOOL_NAMES,
+  asksForOwnOpportunities,
+  keepOwnOpportunities,
+  keepOwnOpportunityList,
+  needsSellerPerformance,
+  pipelineIsOwn,
+} from "./performance-tools.js";
 import { coachEvidenceSchema } from "./contract.js";
 import { aiModelFor } from "../ai-services/state.js";
 import {
@@ -42,6 +50,10 @@ const filtersSchema = z
 export function withCoachCounts(item) {
   if (!item || !Array.isArray(item.result)) return item;
   const counts = { resultCount: item.result.length };
+  const amounts = item.result.map((record) => record?.amountUsd).filter((value) => typeof value === "number" && Number.isFinite(value));
+  if (amounts.length) {
+    counts.totalAmountUsd = Number(amounts.reduce((sum, value) => sum + value, 0).toFixed(2));
+  }
   if (item.result.some((record) => record?.commercialStatusCode)) {
     counts.countsByCommercialStatus = item.result.reduce((total, record) => {
       const code = record?.commercialStatusCode || "sin_estado";
@@ -92,6 +104,17 @@ const NON_PAYLOAD_KEYS = new Set([
   "kind", "title", "notes", "evidence", "source", "entityType", "payload", "requiresConfirmation",
   "missingFields", "persistentId", "persistenceVersion", "persistenceStatus", "sourceChannel",
 ]);
+
+// Ritmo comercial is the single source for quota, progress and gap. The context snapshot carries another quota
+// calculation whose figures differ, so it is withheld whenever the performance read is part of the evidence.
+export function withoutOwnQuota(snapshot, evidence = []) {
+  const hasPerformance = evidence.some(
+    (item) => item.toolName === "getSellerPerformance" && !item.error,
+  );
+  if (!hasPerformance || !snapshot || typeof snapshot !== "object") return snapshot;
+  const { quota, currencyConversion, ...rest } = snapshot;
+  return rest;
+}
 
 // The model often lists the fields of a creation next to `kind` instead of inside `payload`, and the contract then
 // discards the whole operation. The fields are the same; only their place changes.
@@ -300,6 +323,16 @@ export function createCoachBlockPipeline({
               selectedOpportunityQuotation: content,
             };
           }
+          if (
+            COACH_PERFORMANCE_TOOL_NAMES.includes(toolName) &&
+            typeof dependencies.getSellerPerformance === "function"
+          ) {
+            const performance = await withCoachDeadline(
+              () => dependencies.getSellerPerformance({ user }),
+              deadlineAt,
+            );
+            return withCoachCounts({ toolName, readOnly: true, result: performance });
+          }
           const result = await withCoachDeadline(
             () =>
               execute({
@@ -314,8 +347,37 @@ export function createCoachBlockPipeline({
               }),
             deadlineAt,
           );
+          const shaped = result?.toolName
+            ? result
+            : { toolName, readOnly: true, result };
+          if (
+            toolName === "searchOpportunities" &&
+            Array.isArray(shaped.result) &&
+            asksForOwnOpportunities(question)
+          ) {
+            return withCoachCounts({
+              ...shaped,
+              result: keepOwnOpportunityList(
+                shaped.result,
+                user?.id,
+                readModel.scopedSnapshot?.coachOpportunities,
+              ),
+              scope: "Solo oportunidades donde eres el vendedor.",
+            });
+          }
           return withCoachCounts(
-            result?.toolName ? result : { toolName, readOnly: true, result },
+            toolName === "getSellerPipeline" &&
+              shaped.result &&
+              pipelineIsOwn({ question, user })
+              ? {
+                  ...shaped,
+                  result: keepOwnOpportunities(
+                    shaped.result,
+                    user?.id,
+                    readModel.scopedSnapshot?.coachOpportunities,
+                  ),
+                }
+              : shaped,
           );
         },
         (result) => summarizeCoachEvidence([result])[0],
@@ -652,6 +714,17 @@ export function createCoachBlockPipeline({
                     classification.allowedTools.includes(item.toolName),
                   ),
           };
+          if (
+            classification.mode !== "deep_exploration" &&
+            classification.allowedTools.includes("getSellerPerformance") &&
+            needsSellerPerformance(question) &&
+            !plan.reads.some((item) => item.toolName === "getSellerPerformance")
+          ) {
+            plan.reads = [
+              { toolName: "getSellerPerformance", filters: {} },
+              ...plan.reads,
+            ];
+          }
           diagnostics.planner = {
             source: "structured_plan",
             status: "valid",
@@ -765,7 +838,10 @@ export function createCoachBlockPipeline({
           if (failure) return failure;
           const basePayload = promptArguments
             ? dependencies.buildCoachPrompt(
-                { ...promptArguments[0], readToolResults: evidence },
+                {
+                  ...withoutOwnQuota(promptArguments[0], evidence),
+                  readToolResults: evidence,
+                },
                 ...promptArguments.slice(1),
               )
             : request.payload;
@@ -776,7 +852,7 @@ export function createCoachBlockPipeline({
               {
                 role: "system",
                 content:
-                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia; no cuentes registros a mano. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
+                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
                   languageInstruction(requestedLanguage({ question, history })),
               },
               {

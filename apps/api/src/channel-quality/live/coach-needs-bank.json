@@ -25,7 +25,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -58,7 +58,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -86,7 +86,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -107,14 +107,14 @@
           "mustInclude": [
             {
               "id": "cobertura",
-              "statement": "Compara el pipeline ponderado ({{me.pipelineWeightedUsd}} USD) con lo que falta ({{me.gapUsd}} USD) y concluye si alcanza o no.",
+              "statement": "Compara el pipeline del trimestre ponderado ({{me.pipelineWeightedUsd}} USD) con lo que falta ({{me.gapUsd}} USD) y concluye que no alcanza o qué porcentaje cubre.",
               "critical": true
             }
           ],
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -142,7 +142,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -163,14 +163,14 @@
           "mustInclude": [
             {
               "id": "componente",
-              "statement": "Identifica la dimensión más baja de la puntuación: {{me.lowestScoreComponent}} (cierre, construcción o disciplina).",
+              "statement": "Identifica la dimensión más baja de la puntuación: {{me.lowestScoreComponent}} (closing = cierre, build = construcción, discipline = disciplina). Si hay empate, basta con nombrar una de las empatadas.",
               "critical": true
             }
           ],
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -191,14 +191,14 @@
           "mustInclude": [
             {
               "id": "vencidos",
-              "statement": "Indica {{me.overdue}} actividad(es) vencida(s).",
+              "statement": "Indica {{me.overdue}} actividad(es) vencida(s) en el pipeline del trimestre (según Ritmo comercial).",
               "critical": true
             }
           ],
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -219,14 +219,14 @@
           "mustInclude": [
             {
               "id": "sinpaso",
-              "statement": "Indica {{me.noNextStep}} oportunidades sin siguiente paso.",
+              "statement": "Indica {{me.noNextStep}} oportunidades sin siguiente paso en el pipeline del trimestre (según Ritmo comercial).",
               "critical": true
             }
           ],
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -254,7 +254,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -287,7 +287,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -315,7 +315,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -343,7 +343,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -371,7 +371,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -399,7 +399,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -427,7 +427,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -455,7 +455,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -483,7 +483,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -511,7 +511,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",
@@ -539,7 +539,7 @@
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Presenta como dato real cifras, nombres o fechas que no están en referenceFacts."
+              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
             }
           ],
           "operations": "none",

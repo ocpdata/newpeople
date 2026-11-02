@@ -1,4 +1,5 @@
 import { getCoachReadToolCatalog } from "./read-tools.js";
+import { COACH_PERFORMANCE_TOOLS } from "./performance-tools.js";
 import { runConversationEngine } from "./conversation-engine.js";
 import { getCoachBusinessRules } from "./business-rules.js";
 import { listCoachAdminRules } from "./admin-rules.js";
@@ -20,7 +21,7 @@ export function createCoachAdapter({
   businessRules = null,
   coachIntentClassification = null,
 }) {
-  const availableTools = getCoachReadToolCatalog();
+  const availableTools = [...getCoachReadToolCatalog(), ...COACH_PERFORMANCE_TOOLS];
   const permissions = user?.permissionSet || new Set();
   const effectiveBusinessRules =
     businessRules || getCoachBusinessRules({ channel: "coach" });
