@@ -1082,6 +1082,57 @@ async function hasQuotationSummaryRow(createModal, label) {
 }
 
 test.describe("quotations", () => {
+  test("lista cotizaciones muestra y permite buscar por vendedor", async ({
+    page,
+  }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.route("**/api/**", createQuotationsFixture());
+    await page.goto("/quotations");
+
+    await expect(
+      page.getByRole("heading", { name: "Cotizaciones" }),
+    ).toBeVisible();
+    const table = page.locator(".quotation-layout table").first();
+    await expect(
+      table.getByRole("columnheader", { name: /Vendedor/ }),
+    ).toBeVisible();
+    await expect(table.getByRole("row").filter({ hasText: "Demo Seller" })).toBeVisible();
+
+    await page
+      .getByPlaceholder(/Buscar por ID, cuenta, oportunidad, vendedor/)
+      .fill("Demo Seller");
+    await expect(
+      table.getByRole("row").filter({ hasText: "Demo Seller" }),
+    ).toBeVisible();
+  });
+
+  test("filtra cotizaciones aceptadas", async ({ page }) => {
+    await bootstrapAuthenticatedSession(page);
+    await page.route(
+      "**/api/**",
+      createQuotationsFixture({
+        quotationVersionOverrides: {
+          statusCode: "aceptada",
+          statusName: "Aceptada",
+        },
+      }),
+    );
+    await page.goto("/quotations");
+
+    await expect(
+      page.getByRole("heading", { name: "Cotizaciones" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: /Aceptadas/ })
+      .click();
+
+    const table = page.locator(".quotation-layout table").first();
+    await expect(table.getByRole("row").filter({ hasText: "Cuenta Demo" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Aceptadas/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
   for (const [actionLabel, targetStatus] of [
     ["Marcar perdida", "Perdida"],
     ["Marcar anulada", "Anulada"],

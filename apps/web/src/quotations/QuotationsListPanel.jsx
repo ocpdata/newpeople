@@ -412,6 +412,22 @@ function QuotationsListPanel({
           <button
             type="button"
             className={
+              quotationStatusFilter === "accepted"
+                ? "status-filter-pill status-filter-pill-all is-selected"
+                : "status-filter-pill status-filter-pill-all"
+            }
+            aria-pressed={quotationStatusFilter === "accepted"}
+            onClick={() => setQuotationStatusFilter("accepted")}
+          >
+            <span className="status-filter-pill-dot" aria-hidden="true" />
+            <span className="status-filter-pill-text">Aceptadas</span>
+            <span className="status-filter-pill-count">
+              {quotationStatusCounts.accepted}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={
               quotationStatusFilter === "all"
                 ? "status-filter-pill status-filter-pill-all is-selected"
                 : "status-filter-pill status-filter-pill-all"
@@ -429,7 +445,7 @@ function QuotationsListPanel({
         <input
           className="accounts-search-inline"
           type="text"
-          placeholder="Buscar por ID, cuenta, oportunidad, etapa, importe, cierre o estado"
+          placeholder="Buscar por ID, cuenta, oportunidad, vendedor, etapa, importe, cierre o estado"
           value={quotationQuery}
           onChange={(event) => setQuotationQuery(event.target.value)}
         />
@@ -472,6 +488,15 @@ function QuotationsListPanel({
                 onClick={() => toggleQuotationSort("oportunidad")}
               >
                 Oportunidad <span>{getQuotationSortArrow("oportunidad")}</span>
+              </button>
+            </th>
+            <th>
+              <button
+                type="button"
+                className="sort-header-btn"
+                onClick={() => toggleQuotationSort("vendedor")}
+              >
+                Vendedor <span>{getQuotationSortArrow("vendedor")}</span>
               </button>
             </th>
             <th>
@@ -529,7 +554,7 @@ function QuotationsListPanel({
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={10} className="empty-state">
+              <td colSpan={11} className="empty-state">
                 Cargando cotizaciones...
               </td>
             </tr>
@@ -540,6 +565,7 @@ function QuotationsListPanel({
                 <td>{quotation.latestVersionNumber || "-"}</td>
                 <td>{quotation.accountName || "-"}</td>
                 <td>{quotation.opportunityName || "-"}</td>
+                <td>{quotation.sellerUserName || "-"}</td>
                 <td>{quotation.opportunitySalesStageName || "-"}</td>
                 <td className="quotation-amount-cell">
                   {formattedAmount(
@@ -805,7 +831,7 @@ function QuotationsListPanel({
             ))
           ) : (
             <tr>
-              <td colSpan={10} className="empty-state">
+              <td colSpan={11} className="empty-state">
                 No hay cotizaciones que coincidan con los filtros
               </td>
             </tr>

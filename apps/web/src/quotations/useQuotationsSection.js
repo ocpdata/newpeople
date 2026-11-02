@@ -34,6 +34,7 @@ import { setQuotationNavigationGuard } from "./quotationNavigationGuard";
 const PROVIDER_DOCUMENT_IMPORT_JOB_POLL_INTERVAL_MS = 3000;
 const PROVIDER_DOCUMENT_IMPORT_TOTAL_POLL_TIMEOUT_MS = 300000;
 const PROVIDER_DOCUMENT_IMPORT_REQUEST_TIMEOUT_MS = 30000;
+const ACCEPTED_QUOTATION_STATUS_TOKENS = new Set(["aceptada", "accepted"]);
 const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_KEYS = [
   "deliveryTime",
   "quotationValidity",
@@ -59,6 +60,16 @@ const PROVIDER_DOCUMENT_IMPORT_COMMERCIAL_TERM_FIELD_CONFIG = {
     label: "Pago",
   },
 };
+
+function isAcceptedQuotation(quotation) {
+  return [
+    quotation.latestStatusCode,
+    quotation.latestStatusName,
+    quotation.latestStatusUiKey,
+  ].some((status) =>
+    ACCEPTED_QUOTATION_STATUS_TOKENS.has(normalizeText(status)),
+  );
+}
 const PROVIDER_DOCUMENT_IMPORT_SUGGESTED_MATCH_STATUSES = [
   "suggested_match_pending_confirmation",
   "ambiguous_similar_match",
@@ -7664,6 +7675,7 @@ export function useQuotationsSection({
       inactive: quotations.filter(
         (quotation) => getQuotationActivationBucket(quotation) === "inactive",
       ).length,
+      accepted: quotations.filter(isAcceptedQuotation).length,
     }),
     [quotations],
   );
@@ -7673,8 +7685,12 @@ export function useQuotationsSection({
 
     return quotations
       .filter((quotation) => {
+        if (quotationStatusFilter === "accepted" && !isAcceptedQuotation(quotation)) {
+          return false;
+        }
+
         if (
-          quotationStatusFilter !== "all" &&
+          ["active", "inactive"].includes(quotationStatusFilter) &&
           getQuotationActivationBucket(quotation) !== quotationStatusFilter
         ) {
           return false;
@@ -7686,6 +7702,7 @@ export function useQuotationsSection({
           quotation.id,
           quotation.accountName,
           quotation.opportunityName,
+          quotation.sellerUserName,
           quotation.opportunitySalesStageName,
           quotation.opportunityAmountUsd,
           quotation.opportunityCloseDate,
@@ -7716,6 +7733,10 @@ export function useQuotationsSection({
           case "oportunidad":
             leftValue = left.opportunityName || "";
             rightValue = right.opportunityName || "";
+            break;
+          case "vendedor":
+            leftValue = left.sellerUserName || "";
+            rightValue = right.sellerUserName || "";
             break;
           case "etapa_oportunidad":
             leftValue = left.opportunitySalesStageName || "";
